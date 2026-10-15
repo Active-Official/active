@@ -50,7 +50,7 @@ struct Formatter<'a> {
     /// Reverse map: node id → the name it is bound or keyed under.
     names: HashMap<NodeId, String>,
     leading: HashMap<String, Vec<String>>,
-    trailing: HashMap<String, String>,
+    trailing: HashMap<String, Vec<String>>,
     trailing_block: HashMap<String, Vec<String>>,
     trailing_document: Vec<String>,
     out: String,
@@ -86,7 +86,12 @@ impl<'a> Formatter<'a> {
                     .or_default()
                     .push(c.text.clone()),
                 Attachment::Trailing(key) => {
-                    self.trailing.insert(key.clone(), c.text.clone());
+                    // Duplicate keys share one surviving statement; keep
+                    // every comment so none is lost.
+                    self.trailing
+                        .entry(key.clone())
+                        .or_default()
+                        .push(c.text.clone());
                 }
                 Attachment::TrailingBlock(path) => self
                     .trailing_block
@@ -138,18 +143,35 @@ impl<'a> Formatter<'a> {
             Some(Node::Table { fields }) => fields.clone(),
             _ => return,
         };
-        let mut scalars: Vec<(String, NodeId)> = Vec::new();
-        let mut tables: Vec<(String, NodeId)> = Vec::new();
-        for (k, v) in &fields {
-            match self.module.get(*v) {
-                Some(Node::Table { .. }) => tables.push((k.clone(), *v)),
-                _ => scalars.push((k.clone(), *v)),
+        let is_table_node =
+            |f: &Formatter, n: &NodeId| matches!(f.module.get(*n), Some(Node::Table { .. }));
+        // At the document root, scalars must be hoisted above tables: a
+        // `key = value` line after a table header would otherwise be
+        // absorbed by that table (spec §5.1). Inside a block, the original
+        // order is preserved.
+        let ordered: Vec<(String, NodeId)> = if is_root {
+            let mut scalars: Vec<(String, NodeId)> = Vec::new();
+            let mut tables: Vec<(String, NodeId)> = Vec::new();
+            for (k, v) in &fields {
+                if is_table_node(self, v) {
+                    tables.push((k.clone(), *v));
+                } else {
+                    scalars.push((k.clone(), *v));
+                }
             }
-        }
+            scalars.into_iter().chain(tables).collect()
+        } else {
+            fields.iter().map(|(k, v)| (k.clone(), *v)).collect()
+        };
+        let tables: Vec<(String, NodeId)> = ordered
+            .iter()
+            .filter(|(_, v)| is_table_node(self, v))
+            .cloned()
+            .collect();
 
-        // Scalars first, then tables: canonical and stable.
+        // Scalars-first at the root, source order inside blocks.
         let mut first = true;
-        for (key, node) in scalars.iter().chain(tables.iter()) {
+        for (key, node) in ordered.iter() {
             let child_path = if path.is_empty() {
                 key.clone()
             } else {
@@ -195,6 +217,14 @@ impl<'a> Formatter<'a> {
                 if empty {
                     self.out
                         .push_str(&format!("{}{key} = {{}}\n", INDENT.repeat(depth)));
+                    // An empty table can still own trailing comments.
+                    if let Some(comments) = self.trailing_block.get(path).cloned() {
+                        for text in comments {
+                            self.out.push_str(&INDENT.repeat(depth));
+                            self.out.push_str(&text);
+                            self.out.push('\n');
+                        }
+                    }
                     return;
                 }
                 self.out
@@ -203,8 +233,11 @@ impl<'a> Formatter<'a> {
             }
             _ => {
                 if is_root && depth == 0 {
-                    // Top-level tables use `[name]` headers (TOML-ish).
-                    self.out.push_str(&format!("[{key}]\n"));
+                    // Top-level tables use `[name]` headers (TOML-ish); a
+                    // trailing comment stays on the header line.
+                    self.out.push_str(&format!("[{key}]"));
+                    self.emit_trailing(path);
+                    self.out.push('\n');
                     self.emit_table_body(id, 0, path, false);
                 } else {
                     self.out
@@ -226,9 +259,11 @@ impl<'a> Formatter<'a> {
     }
 
     fn emit_trailing(&mut self, key: &str) {
-        if let Some(text) = self.trailing.get(key) {
-            self.out.push(' ');
-            self.out.push_str(text);
+        if let Some(texts) = self.trailing.get(key).cloned() {
+            for text in texts {
+                self.out.push(' ');
+                self.out.push_str(&text);
+            }
         }
     }
 
@@ -270,12 +305,7 @@ impl<'a> Formatter<'a> {
                 s.push('"');
                 s
             }
-            Some(Node::Binary { op, lhs, rhs }) => {
-                let parent = prec(*op);
-                let l = self.render_child(*lhs, parent, false);
-                let r = self.render_child(*rhs, parent, true);
-                format!("{l} {} {r}", op_symbol(*op))
-            }
+            Some(Node::Binary { .. }) => self.render_binary(id),
             Some(Node::Unary { op, expr }) => {
                 let symbol = match op {
                     UnOp::Neg => "-",
@@ -301,14 +331,74 @@ impl<'a> Formatter<'a> {
         }
     }
 
+    /// Render a binary expression by walking its left spine iteratively, so
+    /// a long left-associative chain (`1 + 1 + …`) cannot exhaust the stack.
+    /// Right-nested trees only arise through parentheses, which the parser
+    /// bounds at MAX_EXPR_DEPTH.
+    fn render_binary(&self, id: NodeId) -> String {
+        let top_prec = match self.module.get(id) {
+            Some(Node::Binary { op, .. }) => prec(*op),
+            _ => 0,
+        };
+        let mut rights: Vec<String> = Vec::new();
+        let mut ops: Vec<BinOp> = Vec::new();
+        let mut cur = id;
+        loop {
+            match self.module.get(cur) {
+                Some(Node::Binary { op, lhs, rhs }) => {
+                    ops.push(*op);
+                    rights.push(self.render_child(*rhs, prec(*op), true));
+                    // Only continue along the spine while the left child is
+                    // the same precedence (a left-associative chain); a
+                    // tighter or looser left child is an operand that may
+                    // need parentheses.
+                    let next = *lhs;
+                    match self.module.get(next) {
+                        Some(Node::Binary { op: next_op, .. }) if prec(*next_op) == top_prec => {
+                            cur = next;
+                        }
+                        _ => {
+                            let leftmost = self.render_child(next, top_prec, false);
+                            rights.push(leftmost);
+                            break;
+                        }
+                    }
+                }
+                _ => {
+                    let leftmost = self.render_child(cur, top_prec, false);
+                    rights.push(leftmost);
+                    break;
+                }
+            }
+        }
+        // rights/ops are innermost-first; emit outermost-first.
+        rights.reverse();
+        ops.reverse();
+        let mut out = rights[0].clone();
+        for (i, op) in ops.iter().enumerate() {
+            out.push_str(&format!(" {} {}", op_symbol(*op), rights[i + 1]));
+        }
+        out
+    }
+
     /// Render a binary operand, parenthesizing when precedence requires it.
+    /// An `env` node with a default consumes an expression, so it binds
+    /// looser than any operator and is always parenthesized as an operand.
     fn render_child(&self, id: NodeId, parent_prec: u8, is_right: bool) -> String {
         let text = self.render_expr(id);
-        if let Some(Node::Binary { op, .. }) = self.module.get(id) {
-            let child = prec(*op);
-            if child < parent_prec || (child == parent_prec && is_right) {
+        match self.module.get(id) {
+            Some(Node::Binary { op, .. }) => {
+                let child = prec(*op);
+                if child < parent_prec || (child == parent_prec && is_right) {
+                    return format!("({text})");
+                }
+            }
+            Some(Node::Env {
+                default: Some(_), ..
+            }) => {
                 return format!("({text})");
             }
+            _ => {}
         }
         text
     }
@@ -348,12 +438,14 @@ fn render_literal(v: &Value) -> String {
         Value::Bool(b) => b.to_string(),
         Value::Int(i) => i.to_string(),
         Value::Float(f) => {
-            let s = format!("{f:?}");
-            if s.contains('.') || s.contains('e') {
-                s
-            } else {
-                format!("{s}.0")
+            // Display never uses scientific notation (which the lexer does
+            // not accept) and round-trips exactly; ensure a decimal point so
+            // the value stays a float.
+            let mut s = format!("{f}");
+            if !s.contains('.') {
+                s.push_str(".0");
             }
+            s
         }
         Value::String(s) => format!("\"{}\"", escape(s)),
         Value::DurationMs(ms) => format!("{ms}ms"),

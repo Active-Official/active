@@ -136,25 +136,29 @@ impl Parser {
 
     fn attach_one(&self, span: &Span, stmts: &[StmtInfo], blocks: &[BlockInfo]) -> Attachment {
         let line = span.line;
+        let level = span.column.saturating_sub(1) as usize;
 
-        // Rule 1: after code on the same line as a statement.
+        // Rule 1: after code on the same line as any statement — either the
+        // line the statement begins on (a table header, `[app] # note`) or
+        // the line it ends on (a multi-line value).
         if let Some(stmt) = stmts
             .iter()
-            .filter(|s| s.end_line == line && !s.is_table)
+            .filter(|s| s.start_line == line || s.end_line == line)
             .max_by_key(|s| s.start_line)
         {
             return Attachment::Trailing(qualified(&stmt.path, &stmt.key));
         }
 
-        // Determine the comment's block: the innermost block that owns the
-        // comment's line, extending to the next statement at or above the
-        // block's own level (spec §7.1).
-        let owner = self.owning_block(line, stmts, blocks);
+        // Determine the comment's block (spec §7.1): the innermost block
+        // that still owns the comment's line, preferring one whose body is
+        // at exactly the comment's own indentation level.
+        let owner = self.owning_block(line, level, stmts, blocks);
         if let Some(b) = &owner {
-            // Rule 2: a statement follows within the same block.
+            // Rule 2: any statement (including a nested table header)
+            // follows within the same block.
             if let Some(stmt) = stmts
                 .iter()
-                .filter(|s| s.start_line > line && s.path == b.path && !s.is_table)
+                .filter(|s| s.start_line > line && s.path == b.path)
                 .min_by_key(|s| s.start_line)
             {
                 return Attachment::Leading(qualified(&stmt.path, &stmt.key));
@@ -166,7 +170,7 @@ impl Parser {
         // Rule 2 at document level, then rule 4.
         if let Some(stmt) = stmts
             .iter()
-            .filter(|s| s.start_line > line && s.path.is_empty() && !s.is_table)
+            .filter(|s| s.start_line > line && s.path.is_empty())
             .min_by_key(|s| s.start_line)
         {
             return Attachment::Leading(qualified(&stmt.path, &stmt.key));
@@ -174,21 +178,26 @@ impl Parser {
         Attachment::TrailingDocument
     }
 
-    /// The innermost block owning `line`, per spec §7.1.
+    /// The innermost block owning `line` at indentation `level`, per §7.1.
     fn owning_block(
         &self,
         line: u32,
+        level: usize,
         stmts: &[StmtInfo],
         blocks: &[BlockInfo],
     ) -> Option<BlockInfo> {
-        let mut best: Option<BlockInfo> = None;
+        // Score prefers an exact indentation-level match, then a deeper
+        // block, then a later start.
+        fn score(b: &BlockInfo, level: usize) -> (u8, usize, u32) {
+            (if b.level == level { 1 } else { 0 }, b.level, b.start_line)
+        }
+        let mut best: Option<&BlockInfo> = None;
         for b in blocks {
             if b.start_line > line {
                 continue;
             }
             // The block owns lines up to the next statement at or above its
-            // own level *after this comment*, so trailing comments inside it
-            // belong to it.
+            // own level *after this comment*.
             let next_sibling = stmts
                 .iter()
                 .filter(|s| s.start_line > line && s.level <= b.level)
@@ -198,16 +207,15 @@ impl Parser {
             if line >= next_sibling {
                 continue;
             }
-            // Prefer the innermost block (deepest level, then latest start).
-            let better = match &best {
+            let better = match best {
                 None => true,
-                Some(prev) => (b.level, b.start_line) >= (prev.level, prev.start_line),
+                Some(prev) => score(b, level) >= score(prev, level),
             };
             if better {
-                best = Some(b.clone());
+                best = Some(b);
             }
         }
-        best
+        best.cloned()
     }
 }
 
@@ -265,21 +273,13 @@ impl Parser {
     }
 
     /// Record a statement for comment attachment.
-    fn record_stmt(
-        &mut self,
-        key: &str,
-        start_line: u32,
-        end_line: u32,
-        level: usize,
-        is_table: bool,
-    ) {
+    fn record_stmt(&mut self, key: &str, start_line: u32, end_line: u32, level: usize) {
         self.statements.push(StmtInfo {
             key: key.to_string(),
             path: self.path_str(),
             start_line,
             end_line,
             level,
-            is_table,
         });
     }
 }
@@ -292,7 +292,6 @@ struct StmtInfo {
     start_line: u32,
     end_line: u32,
     level: usize,
-    is_table: bool,
 }
 
 /// A table/block's source extent, for comment attachment.
@@ -551,7 +550,7 @@ impl Parser {
             TokenKind::Assign => {
                 if let Some((k, id)) = self.parse_key_value_sep(TokenKind::Assign) {
                     let end = self.last_end_line();
-                    self.record_stmt(&k, start.line, end, level, false);
+                    self.record_stmt(&k, start.line, end, level);
                     fields.insert(k, id);
                 }
             }
@@ -560,7 +559,7 @@ impl Parser {
                     self.parse_block_header(fields);
                 } else if let Some((k, id)) = self.parse_key_value_sep(TokenKind::Colon) {
                     let end = self.last_end_line();
-                    self.record_stmt(&k, start.line, end, level, false);
+                    self.record_stmt(&k, start.line, end, level);
                     fields.insert(k, id);
                 }
             }
@@ -604,7 +603,6 @@ impl Parser {
             start_line: key_tok.line,
             end_line: key_tok.line,
             level: key_tok.col.saturating_sub(1) as usize,
-            is_table: true,
         });
         self.current_path.push(key.clone());
         self.blocks.push(BlockInfo {
@@ -639,7 +637,6 @@ impl Parser {
             start_line: key_tok.line,
             end_line: key_tok.line,
             level: key_tok.col.saturating_sub(1) as usize,
-            is_table: true,
         });
         self.current_path.push(key.clone());
         self.blocks.push(BlockInfo {
@@ -801,7 +798,6 @@ impl Parser {
             let_tok.line,
             self.last_end_line(),
             let_tok.col.saturating_sub(1) as usize,
-            false,
         );
         self.module.bindings.insert(name_tok.text, expr);
     }
@@ -831,7 +827,6 @@ impl Parser {
             start_line: open.line,
             end_line: open.line,
             level: header_level,
-            is_table: true,
         });
         self.current_path.push(name.clone());
         self.blocks.push(BlockInfo {

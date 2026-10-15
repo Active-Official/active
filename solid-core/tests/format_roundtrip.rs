@@ -72,23 +72,135 @@ fn formatting_is_idempotent_on_the_whole_positive_corpus() {
             });
             let twice = format(&reparsed, style);
             assert_eq!(once, twice, "not idempotent for {f:?} ({style:?})");
-            // The formatted output must describe the same tree.
+            // The formatted output must describe the same tree, and must
+            // succeed or fail exactly like the original.
             let engine = Engine::new();
-            let original = engine.evaluate(&module);
-
-            let restored = engine.evaluate(&reparsed);
-            if let (Ok((a, _)), Ok((b, _))) = (original, restored) {
-                let (ja, jb) = (
-                    solid_core::convert::value_to_pretty_json(&a),
-                    solid_core::convert::value_to_pretty_json(&b),
-                );
-                assert_eq!(
-                    ja, jb,
-                    "{f:?}: formatted output changed the tree ({style:?})"
-                );
+            match (engine.evaluate(&module), engine.evaluate(&reparsed)) {
+                (Ok((a, _)), Ok((b, _))) => {
+                    let (ja, jb) = (
+                        solid_core::convert::value_to_pretty_json(&a),
+                        solid_core::convert::value_to_pretty_json(&b),
+                    );
+                    assert_eq!(
+                        ja, jb,
+                        "{f:?}: formatted output changed the tree ({style:?})"
+                    );
+                }
+                (Err(_), Err(_)) => {}
+                (a, b) => panic!(
+                    "{f:?}: formatting changed the evaluation outcome ({style:?}): \
+                     original ok={}, formatted ok={}",
+                    a.is_ok(),
+                    b.is_ok()
+                ),
             }
         }
     }
+}
+
+#[test]
+fn comment_placement_is_exact() {
+    // Placement follows spec/dual-syntax.md §7.2: a comment between the last
+    // key of a table and the next table header has no following statement in
+    // that block, so it is that block's trailing comment.
+    let src = "# document header\n[app]\n# leading on name\nname = \"svc\" # trailing\n# before database\n\n[database]\nhost = \"db\"\n";
+    let out = fmt(src, Style::Brace);
+    assert_eq!(out, src, "canonical comment placement must round-trip");
+    for needle in [
+        "# document header",
+        "# leading on name",
+        "# trailing",
+        "# before database",
+    ] {
+        assert_eq!(out.matches(needle).count(), 1, "{needle:?} in:\n{out}");
+    }
+    // Placement is stable under re-formatting.
+    assert_eq!(
+        fmt(&out, Style::Brace),
+        out,
+        "comment placement must be idempotent"
+    );
+}
+
+#[test]
+fn trailing_comment_stays_on_a_table_header_line() {
+    let out = fmt("[app] # the app table\nname = \"svc\"\n", Style::Brace);
+    assert!(
+        out.starts_with("[app] # the app table"),
+        "header comment must stay on the header line:\n{out}"
+    );
+}
+
+#[test]
+fn duplicate_key_comments_are_not_dropped() {
+    // The IR keeps the last statement for a duplicate key; neither comment
+    // may vanish.
+    let out = fmt("[app]\nx = 1 # first\nx = 2 # second\n", Style::Brace);
+    assert!(out.contains("# first"), "{out}");
+    assert!(out.contains("# second"), "{out}");
+}
+
+#[test]
+fn empty_table_keeps_its_trailing_comment_in_indent_style() {
+    let src = "outer:\n  empty = {}\n  # belongs to outer\n";
+    let out = fmt(src, Style::Indent);
+    assert!(
+        out.contains("# belongs to outer"),
+        "block comment must survive the empty-table path:\n{out}"
+    );
+}
+
+#[test]
+fn large_and_small_floats_re_parse() {
+    let src = "[nums]\nbig = 100000000000000000000.0\ntiny = 0.00000000000000000001\nplain = 2.0\n";
+    let module = parse_ok(src);
+    let out = format(&module, Style::Brace);
+    let reparsed = parse(&out, "fmt")
+        .unwrap_or_else(|d| panic!("formatted floats must re-parse: {d:?}\n{out}"));
+    let engine = Engine::new();
+    let (a, _) = engine.evaluate(&module).expect("original evaluates");
+    let (b, _) = engine.evaluate(&reparsed).expect("formatted evaluates");
+    assert_eq!(
+        solid_core::convert::value_to_pretty_json(&a),
+        solid_core::convert::value_to_pretty_json(&b),
+        "float values must survive formatting:\n{out}"
+    );
+}
+
+#[test]
+fn env_default_operand_is_parenthesized() {
+    // `(env.X ?: 1) + 2` must keep its grouping: the default swallows the
+    // rest of the expression otherwise.
+    let src = "[calc]\nv = (env.SOLID_FMT_TEST ?: 1) + 2\n";
+    let module = parse_ok(src);
+    let out = format(&module, Style::Brace);
+    assert!(
+        out.contains("(env.SOLID_FMT_TEST ?: 1) + 2"),
+        "env default operand must be parenthesized:\n{out}"
+    );
+    let reparsed = parse(&out, "fmt").expect("must re-parse");
+    let engine = Engine::new();
+    let (a, _) = engine.evaluate(&module).expect("original evaluates");
+    let (b, _) = engine.evaluate(&reparsed).expect("formatted evaluates");
+    assert_eq!(
+        solid_core::convert::value_to_pretty_json(&a),
+        solid_core::convert::value_to_pretty_json(&b)
+    );
+}
+
+#[test]
+fn long_left_associative_chains_do_not_overflow() {
+    // 20k terms: the tree is deep on the left spine, so rendering must be
+    // iterative.
+    let mut src = String::from("[calc]\nv = 1");
+    for _ in 0..20_000 {
+        src.push_str(" + 1");
+    }
+    src.push('\n');
+    let module = parse_ok(&src);
+    let out = format(&module, Style::Brace);
+    assert!(out.contains("+ 1"), "chain must be rendered");
+    parse(&out, "fmt").expect("formatted chain must re-parse");
 }
 
 #[test]

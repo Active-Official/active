@@ -94,12 +94,131 @@ pub fn parse_recovering(
         depth: 0,
         options,
         block_depth: 0,
+        comments: lexed.comments,
+        statements: Vec::new(),
+        blocks: Vec::new(),
+        current_path: Vec::new(),
+        brace_tables: 0,
+        indent_tables: 0,
     };
     parser.module.healing.extend(lexed.repairs);
     parser.errors.extend(lexed.errors);
     parser.parse_document();
+    parser.attach_trivia();
+    parser.module.source_style = if parser.indent_tables > parser.brace_tables {
+        Style::Indent
+    } else {
+        Style::Brace
+    };
     parser.build_graph();
     (parser.module, parser.errors)
+}
+
+/// Compute each comment's normative attachment (spec/dual-syntax.md §7.2)
+/// and store it in the module's trivia list.
+impl Parser {
+    fn attach_trivia(&mut self) {
+        let comments = std::mem::take(&mut self.comments);
+        let statements = std::mem::take(&mut self.statements);
+        let blocks = std::mem::take(&mut self.blocks);
+
+        let mut trivia = Vec::with_capacity(comments.len());
+        for (text, span) in comments {
+            let attachment = self.attach_one(&span, &statements, &blocks);
+            trivia.push(TriviaComment {
+                text,
+                span,
+                attachment,
+            });
+        }
+        self.module.trivia = trivia;
+    }
+
+    fn attach_one(&self, span: &Span, stmts: &[StmtInfo], blocks: &[BlockInfo]) -> Attachment {
+        let line = span.line;
+
+        // Rule 1: after code on the same line as a statement.
+        if let Some(stmt) = stmts
+            .iter()
+            .filter(|s| s.end_line == line && !s.is_table)
+            .max_by_key(|s| s.start_line)
+        {
+            return Attachment::Trailing(qualified(&stmt.path, &stmt.key));
+        }
+
+        // Determine the comment's block: the innermost block that owns the
+        // comment's line, extending to the next statement at or above the
+        // block's own level (spec §7.1).
+        let owner = self.owning_block(line, stmts, blocks);
+        if let Some(b) = &owner {
+            // Rule 2: a statement follows within the same block.
+            if let Some(stmt) = stmts
+                .iter()
+                .filter(|s| s.start_line > line && s.path == b.path && !s.is_table)
+                .min_by_key(|s| s.start_line)
+            {
+                return Attachment::Leading(qualified(&stmt.path, &stmt.key));
+            }
+            // Rule 3: trailing comment of that block.
+            return Attachment::TrailingBlock(b.path.clone());
+        }
+
+        // Rule 2 at document level, then rule 4.
+        if let Some(stmt) = stmts
+            .iter()
+            .filter(|s| s.start_line > line && s.path.is_empty() && !s.is_table)
+            .min_by_key(|s| s.start_line)
+        {
+            return Attachment::Leading(qualified(&stmt.path, &stmt.key));
+        }
+        Attachment::TrailingDocument
+    }
+
+    /// The innermost block owning `line`, per spec §7.1.
+    fn owning_block(
+        &self,
+        line: u32,
+        stmts: &[StmtInfo],
+        blocks: &[BlockInfo],
+    ) -> Option<BlockInfo> {
+        let mut best: Option<BlockInfo> = None;
+        for b in blocks {
+            if b.start_line > line {
+                continue;
+            }
+            // The block owns lines up to the next statement at or above its
+            // own level *after this comment*, so trailing comments inside it
+            // belong to it.
+            let next_sibling = stmts
+                .iter()
+                .filter(|s| s.start_line > line && s.level <= b.level)
+                .min_by_key(|s| s.start_line)
+                .map(|s| s.start_line)
+                .unwrap_or(u32::MAX);
+            if line >= next_sibling {
+                continue;
+            }
+            // Prefer the innermost block (deepest level, then latest start).
+            let better = match &best {
+                None => true,
+                Some(prev) => (b.level, b.start_line) >= (prev.level, prev.start_line),
+            };
+            if better {
+                best = Some(b.clone());
+            }
+        }
+        best
+    }
+}
+
+/// The fully qualified key of a statement (`table.key`, or just `key` at
+/// document level) — the identity comments attach to.
+fn qualified(path: &str, key: &str) -> String {
+    if path.is_empty() {
+        key.to_string()
+    } else {
+        format!("{path}.{key}")
+    }
 }
 
 struct Parser {
@@ -118,6 +237,70 @@ struct Parser {
     options: ParseOptions,
     /// Current block nesting depth, guarded by MAX_BLOCK_DEPTH.
     block_depth: usize,
+    /// Comments from the lexer, awaiting attachment computation.
+    comments: Vec<(String, Span)>,
+    /// Statement records used for comment attachment (spec §7).
+    statements: Vec<StmtInfo>,
+    /// Block (table) records used for comment attachment (spec §7).
+    blocks: Vec<BlockInfo>,
+    /// Enclosing table path while parsing.
+    current_path: Vec<String>,
+    /// Counts of brace-style and indentation-style table declarations.
+    brace_tables: usize,
+    indent_tables: usize,
+}
+
+impl Parser {
+    /// The dotted path of the enclosing table (empty at document level).
+    fn path_str(&self) -> String {
+        self.current_path.join(".")
+    }
+
+    /// End line of the most recently consumed token.
+    fn last_end_line(&self) -> u32 {
+        self.tokens
+            .get(self.pos.saturating_sub(1))
+            .map(|t| t.end_line)
+            .unwrap_or(1)
+    }
+
+    /// Record a statement for comment attachment.
+    fn record_stmt(
+        &mut self,
+        key: &str,
+        start_line: u32,
+        end_line: u32,
+        level: usize,
+        is_table: bool,
+    ) {
+        self.statements.push(StmtInfo {
+            key: key.to_string(),
+            path: self.path_str(),
+            start_line,
+            end_line,
+            level,
+            is_table,
+        });
+    }
+}
+
+/// A statement's source extent, for comment attachment.
+#[derive(Debug, Clone)]
+struct StmtInfo {
+    key: String,
+    path: String,
+    start_line: u32,
+    end_line: u32,
+    level: usize,
+    is_table: bool,
+}
+
+/// A table/block's source extent, for comment attachment.
+#[derive(Debug, Clone)]
+struct BlockInfo {
+    path: String,
+    level: usize,
+    start_line: u32,
 }
 
 /// What terminates a statement body (spec/dual-syntax.md §5.1).
@@ -362,9 +545,13 @@ impl Parser {
     /// Dispatch a statement that begins with an identifier: `key = value`,
     /// `key: value`, `key:` block header, or `key { … }` table block.
     fn parse_ident_statement(&mut self, fields: &mut indexmap::IndexMap<String, NodeId>) {
+        let start = self.peek().clone();
+        let level = start.col.saturating_sub(1) as usize;
         match self.peek_kind_at(1) {
             TokenKind::Assign => {
                 if let Some((k, id)) = self.parse_key_value_sep(TokenKind::Assign) {
+                    let end = self.last_end_line();
+                    self.record_stmt(&k, start.line, end, level, false);
                     fields.insert(k, id);
                 }
             }
@@ -372,6 +559,8 @@ impl Parser {
                 if matches!(self.peek_kind_at(2), TokenKind::Newline | TokenKind::Eof) {
                     self.parse_block_header(fields);
                 } else if let Some((k, id)) = self.parse_key_value_sep(TokenKind::Colon) {
+                    let end = self.last_end_line();
+                    self.record_stmt(&k, start.line, end, level, false);
                     fields.insert(k, id);
                 }
             }
@@ -387,6 +576,7 @@ impl Parser {
 
     /// `key:` followed by an indented block (indentation style, §2 and §5).
     fn parse_block_header(&mut self, parent: &mut indexmap::IndexMap<String, NodeId>) {
+        let key_tok = self.peek().clone();
         let key = self
             .expect(TokenKind::Ident)
             .map(|t| t.text)
@@ -406,28 +596,65 @@ impl Parser {
             );
             return;
         };
+        self.indent_tables += 1;
+        let stmt_idx = self.statements.len();
+        self.statements.push(StmtInfo {
+            key: key.clone(),
+            path: self.path_str(),
+            start_line: key_tok.line,
+            end_line: key_tok.line,
+            level: key_tok.col.saturating_sub(1) as usize,
+            is_table: true,
+        });
+        self.current_path.push(key.clone());
+        self.blocks.push(BlockInfo {
+            path: self.path_str(),
+            level,
+            start_line: key_tok.line,
+        });
         self.ident_scopes.push(Vec::new());
         let mut fields = indexmap::IndexMap::new();
         self.parse_body(&mut fields, BodyEnd::Block(level));
         let idents = self.ident_scopes.pop().unwrap_or_default();
         self.resolve_sibling_refs(idents, &fields);
         let table_id = self.module.add_node(Node::Table { fields });
+        self.statements[stmt_idx].end_line = self.last_end_line();
+        self.current_path.pop();
         parent.insert(key, table_id);
     }
 
     /// `key { … }` brace-style table block (HCL-style, §2).
     fn parse_table_block(&mut self, parent: &mut indexmap::IndexMap<String, NodeId>) {
+        let key_tok = self.peek().clone();
         let key = self
             .expect(TokenKind::Ident)
             .map(|t| t.text)
             .unwrap_or_default();
         self.expect(TokenKind::LBrace);
+        self.brace_tables += 1;
+        let stmt_idx = self.statements.len();
+        self.statements.push(StmtInfo {
+            key: key.clone(),
+            path: self.path_str(),
+            start_line: key_tok.line,
+            end_line: key_tok.line,
+            level: key_tok.col.saturating_sub(1) as usize,
+            is_table: true,
+        });
+        self.current_path.push(key.clone());
+        self.blocks.push(BlockInfo {
+            path: self.path_str(),
+            level: key_tok.col.saturating_sub(1) as usize,
+            start_line: key_tok.line,
+        });
         self.ident_scopes.push(Vec::new());
         let mut fields = indexmap::IndexMap::new();
         self.parse_body(&mut fields, BodyEnd::Brace);
         let idents = self.ident_scopes.pop().unwrap_or_default();
         self.resolve_sibling_refs(idents, &fields);
         let table_id = self.module.add_node(Node::Table { fields });
+        self.statements[stmt_idx].end_line = self.last_end_line();
+        self.current_path.pop();
         parent.insert(key, table_id);
     }
 
@@ -559,6 +786,7 @@ impl Parser {
     // ------------------------------------------------------------------
 
     fn parse_let(&mut self) {
+        let let_tok = self.peek().clone();
         self.bump(); // consume `let`
         let name_tok = match self.expect(TokenKind::Ident) {
             Some(t) => t,
@@ -568,6 +796,13 @@ impl Parser {
             return;
         }
         let expr = self.parse_expression();
+        self.record_stmt(
+            &name_tok.text,
+            let_tok.line,
+            self.last_end_line(),
+            let_tok.col.saturating_sub(1) as usize,
+            false,
+        );
         self.module.bindings.insert(name_tok.text, expr);
     }
 
@@ -588,6 +823,22 @@ impl Parser {
         if self.expect(TokenKind::RBracket).is_none() {
             return;
         }
+        self.brace_tables += 1;
+        let stmt_idx = self.statements.len();
+        self.statements.push(StmtInfo {
+            key: name.clone(),
+            path: self.path_str(),
+            start_line: open.line,
+            end_line: open.line,
+            level: header_level,
+            is_table: true,
+        });
+        self.current_path.push(name.clone());
+        self.blocks.push(BlockInfo {
+            path: self.path_str(),
+            level: header_level,
+            start_line: open.line,
+        });
 
         self.ident_scopes.push(Vec::new());
         let mut fields = indexmap::IndexMap::new();
@@ -595,6 +846,8 @@ impl Parser {
         let idents = self.ident_scopes.pop().unwrap_or_default();
         self.resolve_sibling_refs(idents, &fields);
         let table_id = self.module.add_node(Node::Table { fields });
+        self.statements[stmt_idx].end_line = self.last_end_line();
+        self.current_path.pop();
         parent.insert(name, table_id);
     }
 

@@ -17,12 +17,14 @@
 
 use crate::diag::{thresholds, Diagnostic, Repair, RepairKind, Severity, Span};
 
-/// Result of tokenizing: the token stream, hard lexical errors, and any
-/// healing diagnostics discovered along the way.
+/// Result of tokenizing: the token stream, hard lexical errors, healing
+/// diagnostics, and the comments found along the way (trivia for the
+/// formatter).
 pub struct Lexed {
     pub tokens: Vec<Token>,
     pub repairs: Vec<Diagnostic>,
     pub errors: Vec<Diagnostic>,
+    pub comments: Vec<(String, Span)>,
 }
 
 /// Build the H001 repair for a string that reached EOF without a closing
@@ -291,6 +293,7 @@ impl Lexer {
         let mut tokens = Vec::new();
         let mut repairs: Vec<Diagnostic> = Vec::new();
         let mut errors: Vec<Diagnostic> = Vec::new();
+        let mut comments: Vec<(String, Span)> = Vec::new();
 
         loop {
             // Indentation is measured at the start of each physical line, and
@@ -326,14 +329,27 @@ impl Lexer {
                     self.at_line_start = true;
                 }
 
-                // Full-line comment
+                // Full-line or trailing comment: retained as trivia with its
+                // span so the formatter can re-emit it (§7-§8).
                 '#' => {
+                    let (l, col) = (self.line, self.col);
+                    let mut text = String::new();
                     while let Some(ch) = self.peek() {
                         if ch == '\n' {
                             break;
                         }
+                        text.push(ch);
                         self.bump();
                     }
+                    comments.push((
+                        text,
+                        Span {
+                            line: l,
+                            column: col,
+                            end_line: self.line,
+                            end_column: self.col,
+                        },
+                    ));
                 }
 
                 // Multi-character operators
@@ -678,6 +694,7 @@ impl Lexer {
             tokens,
             repairs,
             errors,
+            comments,
         }
     }
 

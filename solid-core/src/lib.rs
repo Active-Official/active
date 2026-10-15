@@ -6,6 +6,7 @@ pub mod ast;
 pub mod convert;
 pub mod diag;
 pub mod eval;
+pub mod fmt;
 pub mod heal;
 pub mod ir;
 pub mod parser;
@@ -13,7 +14,7 @@ pub mod types;
 
 pub use diag::{Diagnostic, Repair, RepairKind, Severity};
 pub use eval::Engine;
-pub use ir::{BinOp, Module, Node, NodeId, UnOp, Value};
+pub use ir::{Attachment, BinOp, Module, Node, NodeId, Style, TriviaComment, UnOp, Value};
 pub use parser::{parse, parse_recovering, parse_with, ParseOptions};
 pub use types::{Constraint, Unit};
 

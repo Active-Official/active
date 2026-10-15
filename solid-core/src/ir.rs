@@ -28,6 +28,44 @@ pub struct Module {
     /// with confidence scores. Separate from `diagnostics` so callers can
     /// apply mode-dependent gating.
     pub healing: Vec<Diagnostic>,
+    /// Comments with their normative attachment (spec/dual-syntax.md §7-§8),
+    /// recorded so the formatter can re-emit them losslessly.
+    pub trivia: Vec<TriviaComment>,
+    /// The layout style the source predominantly used (for Preserve mode).
+    pub source_style: Style,
+}
+
+/// Layout style for output (spec/dual-syntax.md §8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Style {
+    /// `[name]` headers and `key = value`; nested tables as `name { … }`.
+    Brace,
+    /// `key:` headers with two-space indentation.
+    Indent,
+    /// Re-emit in the style the source used.
+    Preserve,
+}
+
+/// Where a comment belongs (spec/dual-syntax.md §7.2). Every comment
+/// receives exactly one attachment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Attachment {
+    /// Own-line comment(s) before a statement, identified by key.
+    Leading(String),
+    /// After code on the same line as a statement.
+    Trailing(String),
+    /// No following statement in that block.
+    TrailingBlock(String),
+    /// No following statement in the document.
+    TrailingDocument,
+}
+
+/// A source comment retained for lossless round-tripping.
+#[derive(Debug, Clone)]
+pub struct TriviaComment {
+    pub text: String,
+    pub span: Span,
+    pub attachment: Attachment,
 }
 
 impl Module {
@@ -43,6 +81,8 @@ impl Module {
             source_name: source_name.into(),
             node_spans: HashMap::new(),
             healing: Vec::new(),
+            trivia: Vec::new(),
+            source_style: Style::Brace,
         }
     }
 

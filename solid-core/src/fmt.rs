@@ -1,0 +1,390 @@
+//! Dual-style formatter (C-022).
+//!
+//! Re-emits a parsed module in **brace style**, **indentation style**, or
+//! the **source's own style**, preserving every comment (with its normative
+//! attachment, spec/dual-syntax.md §7) and canonical blank-line structure.
+//!
+//! Canonical layout (spec §8):
+//! - indentation style: two spaces per level, `key:` headers;
+//! - brace style: `[name]` headers at the top level, `key = value` pairs,
+//!   nested tables as `name { … }` blocks;
+//! - no blank lines inside a block; one blank line between top-level
+//!   entries when either side is a table;
+//! - a leading comment sits directly above its statement, a trailing
+//!   comment on the same line after the value.
+//!
+//! The guarantees tested in C-022 are: idempotence (`fmt(fmt(d)) == fmt(d)`),
+//! byte-for-byte preservation of canonical documents, and comment survival
+//! in every mode.
+
+use crate::ir::*;
+use std::collections::HashMap;
+
+const INDENT: &str = "  ";
+
+/// Format a module in the requested style. `Preserve` uses the style the
+/// source predominantly used.
+pub fn format(module: &Module, style: Style) -> String {
+    let style = match style {
+        Style::Preserve => module.source_style,
+        other => other,
+    };
+    let mut f = Formatter {
+        module,
+        style,
+        names: build_names(module),
+        leading: HashMap::new(),
+        trailing: HashMap::new(),
+        trailing_block: HashMap::new(),
+        trailing_document: Vec::new(),
+        out: String::new(),
+    };
+    f.index_trivia();
+    f.emit_module();
+    f.out
+}
+
+struct Formatter<'a> {
+    module: &'a Module,
+    style: Style,
+    /// Reverse map: node id → the name it is bound or keyed under.
+    names: HashMap<NodeId, String>,
+    leading: HashMap<String, Vec<String>>,
+    trailing: HashMap<String, String>,
+    trailing_block: HashMap<String, Vec<String>>,
+    trailing_document: Vec<String>,
+    out: String,
+}
+
+/// Map every named node back to its name (let bindings and table keys).
+fn build_names(module: &Module) -> HashMap<NodeId, String> {
+    fn walk(module: &Module, id: NodeId, names: &mut HashMap<NodeId, String>) {
+        if let Some(Node::Table { fields }) = module.get(id) {
+            for (key, child) in fields {
+                names.entry(*child).or_insert_with(|| key.clone());
+                walk(module, *child, names);
+            }
+        }
+    }
+    let mut names = HashMap::new();
+    for (name, id) in &module.bindings {
+        names.entry(*id).or_insert_with(|| name.clone());
+    }
+    if let Some(root) = module.root {
+        walk(module, root, &mut names);
+    }
+    names
+}
+
+impl<'a> Formatter<'a> {
+    fn index_trivia(&mut self) {
+        for c in &self.module.trivia {
+            match &c.attachment {
+                Attachment::Leading(key) => self
+                    .leading
+                    .entry(key.clone())
+                    .or_default()
+                    .push(c.text.clone()),
+                Attachment::Trailing(key) => {
+                    self.trailing.insert(key.clone(), c.text.clone());
+                }
+                Attachment::TrailingBlock(path) => self
+                    .trailing_block
+                    .entry(path.clone())
+                    .or_default()
+                    .push(c.text.clone()),
+                Attachment::TrailingDocument => self.trailing_document.push(c.text.clone()),
+            }
+        }
+    }
+
+    fn emit_module(&mut self) {
+        // Let bindings first, in source order.
+        let mut lets: Vec<(&String, &NodeId)> = self.module.bindings.iter().collect();
+        lets.sort_by_key(|(_, id)| {
+            self.module
+                .node_spans
+                .get(id)
+                .map(|s| (s.line, s.column))
+                .unwrap_or((u32::MAX, 0))
+        });
+        for (name, id) in lets {
+            let id = *id;
+            self.emit_leading(name);
+            let value = self.render_expr(id);
+            self.out.push_str(&format!("let {name} = {value}"));
+            self.emit_trailing(name);
+            self.out.push('\n');
+        }
+
+        if let Some(root) = self.module.root {
+            let has_entries = !self.out.is_empty()
+                && matches!(self.module.get(root), Some(Node::Table { fields }) if !fields.is_empty());
+            if has_entries && !self.out.ends_with("\n\n") {
+                self.out.push('\n');
+            }
+            self.emit_table_body(root, 0, "", true);
+        }
+        for text in self.trailing_document.clone() {
+            self.out.push_str(&text);
+            self.out.push('\n');
+        }
+    }
+
+    /// Emit a table's entries. `path` is the dotted path of the table
+    /// (empty for the document root); `is_root` marks the document level.
+    fn emit_table_body(&mut self, id: NodeId, depth: usize, path: &str, is_root: bool) {
+        let fields = match self.module.get(id) {
+            Some(Node::Table { fields }) => fields.clone(),
+            _ => return,
+        };
+        let mut scalars: Vec<(String, NodeId)> = Vec::new();
+        let mut tables: Vec<(String, NodeId)> = Vec::new();
+        for (k, v) in &fields {
+            match self.module.get(*v) {
+                Some(Node::Table { .. }) => tables.push((k.clone(), *v)),
+                _ => scalars.push((k.clone(), *v)),
+            }
+        }
+
+        // Scalars first, then tables: canonical and stable.
+        let mut first = true;
+        for (key, node) in scalars.iter().chain(tables.iter()) {
+            let child_path = if path.is_empty() {
+                key.clone()
+            } else {
+                format!("{path}.{key}")
+            };
+            let is_table = tables.iter().any(|(k, _)| k == key);
+            if is_root && !first {
+                self.out.push('\n');
+            }
+            first = false;
+
+            let qkey = child_path.clone();
+            self.emit_leading(&qkey);
+            if is_table {
+                self.emit_table_block(*node, &child_path, key, depth, is_root);
+            } else {
+                let value = self.render_expr(*node);
+                let indent = INDENT.repeat(depth);
+                self.out.push_str(&format!("{indent}{key} = {value}"));
+                self.emit_trailing(&qkey);
+                self.out.push('\n');
+            }
+        }
+
+        if let Some(comments) = self.trailing_block.get(path).cloned() {
+            for text in comments {
+                self.out.push_str(&INDENT.repeat(depth));
+                self.out.push_str(&text);
+                self.out.push('\n');
+            }
+        }
+    }
+
+    fn emit_table_block(&mut self, id: NodeId, path: &str, key: &str, depth: usize, is_root: bool) {
+        match self.style {
+            Style::Indent => {
+                // Indentation style cannot express a bodyless block, so an
+                // empty table is emitted in its inline form (`key = {}`).
+                let empty = matches!(
+                    self.module.get(id),
+                    Some(Node::Table { fields }) if fields.is_empty()
+                );
+                if empty {
+                    self.out
+                        .push_str(&format!("{}{key} = {{}}\n", INDENT.repeat(depth)));
+                    return;
+                }
+                self.out
+                    .push_str(&format!("{}{key}:\n", INDENT.repeat(depth)));
+                self.emit_table_body(id, depth + 1, path, false);
+            }
+            _ => {
+                if is_root && depth == 0 {
+                    // Top-level tables use `[name]` headers (TOML-ish).
+                    self.out.push_str(&format!("[{key}]\n"));
+                    self.emit_table_body(id, 0, path, false);
+                } else {
+                    self.out
+                        .push_str(&format!("{}{key} {{\n", INDENT.repeat(depth)));
+                    self.emit_table_body(id, depth + 1, path, false);
+                    self.out.push_str(&format!("{}}}\n", INDENT.repeat(depth)));
+                }
+            }
+        }
+    }
+
+    fn emit_leading(&mut self, key: &str) {
+        if let Some(comments) = self.leading.get(key).cloned() {
+            for text in comments {
+                self.out.push_str(&text);
+                self.out.push('\n');
+            }
+        }
+    }
+
+    fn emit_trailing(&mut self, key: &str) {
+        if let Some(text) = self.trailing.get(key) {
+            self.out.push(' ');
+            self.out.push_str(text);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Expressions
+    // ------------------------------------------------------------------
+
+    fn render_expr(&self, id: NodeId) -> String {
+        match self.module.get(id) {
+            Some(Node::Literal(v)) => render_literal(v),
+            Some(Node::Env { name, default }) => match default {
+                Some(d) => {
+                    let d = self.render_expr(*d);
+                    format!("env.{name} ?: {d}")
+                }
+                None => format!("env.{name}"),
+            },
+            Some(Node::Secret { locator }) => {
+                format!("secret({})", self.render_expr(*locator))
+            }
+            Some(Node::Ref(target)) => self
+                .names
+                .get(target)
+                .cloned()
+                .unwrap_or_else(|| "<?>".into()),
+            Some(Node::Ident(name)) => name.clone(),
+            Some(Node::Interpolate { parts }) => {
+                let mut s = String::from("\"");
+                for part in parts {
+                    match part {
+                        InterpPart::Literal(t) => s.push_str(&escape(t)),
+                        InterpPart::Expr(e) => {
+                            s.push_str("${");
+                            s.push_str(&self.render_expr(*e));
+                            s.push('}');
+                        }
+                    }
+                }
+                s.push('"');
+                s
+            }
+            Some(Node::Binary { op, lhs, rhs }) => {
+                let parent = prec(*op);
+                let l = self.render_child(*lhs, parent, false);
+                let r = self.render_child(*rhs, parent, true);
+                format!("{l} {} {r}", op_symbol(*op))
+            }
+            Some(Node::Unary { op, expr }) => {
+                let symbol = match op {
+                    UnOp::Neg => "-",
+                    UnOp::Not => "!",
+                };
+                format!("{symbol}{}", self.render_child(*expr, 7, false))
+            }
+            Some(Node::Array { elements }) => {
+                let parts: Vec<String> = elements.iter().map(|e| self.render_expr(*e)).collect();
+                format!("[{}]", parts.join(", "))
+            }
+            Some(Node::Table { fields }) => {
+                let parts: Vec<String> = fields
+                    .iter()
+                    .map(|(k, v)| format!("{k} = {}", self.render_expr(*v)))
+                    .collect();
+                format!("{{ {} }}", parts.join(", "))
+            }
+            Some(Node::Quantity { value, unit }) => {
+                format!("{}{}", self.render_expr(*value), unit.suffix())
+            }
+            _ => "<?>".into(),
+        }
+    }
+
+    /// Render a binary operand, parenthesizing when precedence requires it.
+    fn render_child(&self, id: NodeId, parent_prec: u8, is_right: bool) -> String {
+        let text = self.render_expr(id);
+        if let Some(Node::Binary { op, .. }) = self.module.get(id) {
+            let child = prec(*op);
+            if child < parent_prec || (child == parent_prec && is_right) {
+                return format!("({text})");
+            }
+        }
+        text
+    }
+}
+
+fn prec(op: BinOp) -> u8 {
+    match op {
+        BinOp::Or => 1,
+        BinOp::And => 2,
+        BinOp::Eq | BinOp::Ne => 3,
+        BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => 4,
+        BinOp::Add | BinOp::Sub => 5,
+        BinOp::Mul | BinOp::Div => 6,
+    }
+}
+
+fn op_symbol(op: BinOp) -> &'static str {
+    match op {
+        BinOp::Add => "+",
+        BinOp::Sub => "-",
+        BinOp::Mul => "*",
+        BinOp::Div => "/",
+        BinOp::Eq => "==",
+        BinOp::Ne => "!=",
+        BinOp::Lt => "<",
+        BinOp::Le => "<=",
+        BinOp::Gt => ">",
+        BinOp::Ge => ">=",
+        BinOp::And => "&&",
+        BinOp::Or => "||",
+    }
+}
+
+fn render_literal(v: &Value) -> String {
+    match v {
+        Value::Null => "null".into(),
+        Value::Bool(b) => b.to_string(),
+        Value::Int(i) => i.to_string(),
+        Value::Float(f) => {
+            let s = format!("{f:?}");
+            if s.contains('.') || s.contains('e') {
+                s
+            } else {
+                format!("{s}.0")
+            }
+        }
+        Value::String(s) => format!("\"{}\"", escape(s)),
+        Value::DurationMs(ms) => format!("{ms}ms"),
+        Value::Quantity(n, unit) => format!("{n}{}", unit.suffix()),
+        Value::Array(a) => {
+            let parts: Vec<String> = a.iter().map(render_literal).collect();
+            format!("[{}]", parts.join(", "))
+        }
+        Value::Table(t) => {
+            let parts: Vec<String> = t
+                .iter()
+                .map(|(k, v)| format!("{k} = {}", render_literal(v)))
+                .collect();
+            format!("{{ {} }}", parts.join(", "))
+        }
+        // Never emit secret material; the marker is the canonical form.
+        Value::Secret(_) => "\"***SECRET***\"".into(),
+    }
+}
+
+fn escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}

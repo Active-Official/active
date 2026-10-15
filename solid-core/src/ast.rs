@@ -1,7 +1,8 @@
 //! Concrete Syntax Tree (placeholder for future expansion)
-//! TODO(solid C-022): the dual-syntax parser may re-introduce a concrete
-//! syntax tree for lossless layout round-tripping; the alpha lowers directly
-//! to IR. The parser currently builds the IR directly.
+//! The dual-syntax round-trip (C-022) is implemented without a CST: the IR
+//! carries source spans for every node plus comment trivia with normative
+//! attachments, which is enough to re-emit either canonical style. The
+//! parser builds the IR directly.
 //! The alpha parser currently builds the IR directly.
 
 #![allow(dead_code)]

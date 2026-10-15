@@ -216,7 +216,9 @@ impl<'a> Formatter<'a> {
                 );
                 if empty {
                     self.out
-                        .push_str(&format!("{}{key} = {{}}\n", INDENT.repeat(depth)));
+                        .push_str(&format!("{}{key} = {{}}", INDENT.repeat(depth)));
+                    self.emit_trailing(path);
+                    self.out.push('\n');
                     // An empty table can still own trailing comments.
                     if let Some(comments) = self.trailing_block.get(path).cloned() {
                         for text in comments {
@@ -228,7 +230,9 @@ impl<'a> Formatter<'a> {
                     return;
                 }
                 self.out
-                    .push_str(&format!("{}{key}:\n", INDENT.repeat(depth)));
+                    .push_str(&format!("{}{key}:", INDENT.repeat(depth)));
+                self.emit_trailing(path);
+                self.out.push('\n');
                 self.emit_table_body(id, depth + 1, path, false);
             }
             _ => {
@@ -241,7 +245,9 @@ impl<'a> Formatter<'a> {
                     self.emit_table_body(id, 0, path, false);
                 } else {
                     self.out
-                        .push_str(&format!("{}{key} {{\n", INDENT.repeat(depth)));
+                        .push_str(&format!("{}{key} {{", INDENT.repeat(depth)));
+                    self.emit_trailing(path);
+                    self.out.push('\n');
                     self.emit_table_body(id, depth + 1, path, false);
                     self.out.push_str(&format!("{}}}\n", INDENT.repeat(depth)));
                 }

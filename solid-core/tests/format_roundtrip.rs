@@ -132,6 +132,33 @@ fn trailing_comment_stays_on_a_table_header_line() {
 }
 
 #[test]
+fn trailing_comments_survive_on_every_header_form() {
+    // Indentation-style header.
+    let indent_src = "app: # the app block\n  name = \"svc\"\n";
+    let indent_out = fmt(indent_src, Style::Indent);
+    assert!(
+        indent_out.starts_with("app: # the app block"),
+        "indent header comment lost:\n{indent_out}"
+    );
+
+    // Nested brace header.
+    let nested_src = "outer {\n  inner { # the inner block\n    a = 1\n  }\n}\n";
+    let nested_out = fmt(nested_src, Style::Brace);
+    assert!(
+        nested_out.contains("inner { # the inner block"),
+        "nested header comment lost:\n{nested_out}"
+    );
+
+    // Empty table emitted as an inline value in indentation style.
+    let empty_src = "[outer]\nempty = {} # the empty table\n";
+    let empty_out = fmt(empty_src, Style::Indent);
+    assert!(
+        empty_out.contains("empty = {} # the empty table"),
+        "empty-table comment lost:\n{empty_out}"
+    );
+}
+
+#[test]
 fn duplicate_key_comments_are_not_dropped() {
     // The IR keeps the last statement for a duplicate key; neither comment
     // may vanish.

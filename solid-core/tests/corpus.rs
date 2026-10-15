@@ -96,9 +96,12 @@ fn spec_corpus_matches_expected_values() {
         let expected_path = f.with_extension("expected.json");
         let expected = read(&expected_path);
         let actual = solid_core::convert::value_to_pretty_json(&value);
+        // Normalize line endings: Windows checkouts use CRLF, the JSON
+        // output uses LF. Compare on a common footing.
+        let normalize = |s: &str| s.replace("\r\n", "\n").trim().to_string();
         assert_eq!(
-            actual.trim(),
-            expected.trim(),
+            normalize(&actual),
+            normalize(&expected),
             "{name}: evaluated value does not match {expected_path:?}"
         );
     }

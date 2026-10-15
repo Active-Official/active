@@ -1,0 +1,10 @@
+# Normalize line endings to LF on checkout so tests and tools see the same
+# bytes on Windows, macOS, and Linux.
+* text=auto eol=lf
+
+# Binary files must never be line-ending converted
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.pdf binary

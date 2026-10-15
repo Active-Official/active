@@ -1,5 +1,10 @@
 //! solid-ls — Language Server (alpha stub)
 //!
+//! TODO(solid C-043): replace with a real LSP server (JSON-RPC over stdio,
+//! semantic tokens, hover, go-to-definition, find-references, rename);
+//! C-044 adds completions, incremental diagnostics, inlay hints; C-045 adds
+//! code actions (healing, extract let, style conversion).
+//!
 //! A real implementation would speak LSP over stdio and provide:
 //! - semantic tokens
 //! - hover (type + origin + @intent)

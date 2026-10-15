@@ -1,4 +1,8 @@
 //! Self-healing logic (alpha stubs with real confidence thresholds)
+//!
+//! TODO(solid C-016): implement the three-phase production healer
+//! (syntactic repair, semantic key repair, type/constraint healing) per the
+//! healing policy in docs/DESIGN.md and the origin design document.
 
 use crate::diag::{thresholds, Diagnostic, Repair, RepairKind, Severity};
 use crate::ir::Module;
@@ -12,7 +16,7 @@ pub fn heal(module: &mut Module) -> usize {
     // For the alpha we only record example diagnostics.
 
     if module.diagnostics.is_empty() {
-        // placeholder so the module compiles and demonstrates the API
+        // TODO(solid C-016): real healing passes replace this placeholder.
         let _ = thresholds::AUTO_APPLY;
     }
 

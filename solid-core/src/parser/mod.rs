@@ -185,7 +185,7 @@ impl Parser {
             Some(t) => t.text,
             None => return,
         };
-        // Future: dotted table paths [a.b.c]
+        // TODO(solid C-021): dotted table paths [a.b.c] (nested tables)
         if self.expect(TokenKind::RBracket).is_none() {
             return;
         }
@@ -508,7 +508,7 @@ impl Parser {
             if let Some(end) = rest.find('}') {
                 let name = rest[..end].trim();
                 // Alpha: only simple identifiers inside ${}.
-                // Future: full expression parsing inside the braces.
+                // TODO(solid C-023): full expression parsing inside the braces.
                 let id = self.module.add_node(Node::Ident(name.to_string()));
                 parts.push(InterpPart::Expr(id));
                 rest = &rest[end + 1..];

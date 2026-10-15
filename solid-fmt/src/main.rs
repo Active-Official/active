@@ -23,7 +23,8 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let src = fs::read_to_string(&cli.file)?;
 
-    // Alpha: just echo with a header. Real implementation rewrites layout.
+    // TODO(solid C-040): real dual-style formatter replaces this echo
+    // (indentation style, bracketed style, layout-preserving mode).
     let style = if cli.bracketed {
         "bracketed"
     } else {

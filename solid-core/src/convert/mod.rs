@@ -28,6 +28,8 @@ pub fn value_to_pretty_json(v: &Value) -> String {
 }
 
 /// Extremely simple TOML-ish dump (not a full TOML serializer)
+/// TODO(solid C-046): replace with a full bidirectional TOML/YAML/JSON
+/// converter with uniform secret redaction.
 pub fn value_to_simple_toml(v: &Value, prefix: &str) -> String {
     let mut out = String::new();
     if let Value::Table(map) = v {

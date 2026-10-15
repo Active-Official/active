@@ -1,4 +1,7 @@
 //! Concrete Syntax Tree (placeholder for future expansion)
+//! TODO(solid C-022): the dual-syntax parser may re-introduce a concrete
+//! syntax tree for lossless layout round-tripping; the alpha lowers directly
+//! to IR. The parser currently builds the IR directly.
 //! The alpha parser currently builds the IR directly.
 
 #![allow(dead_code)]

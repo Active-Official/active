@@ -247,12 +247,31 @@ Attachment = Leading(statement)        // own-line comment(s) before a statement
 | E006 | tab in leading whitespace | the tab | each tab counts as one column for measurement, so the leading width is spaces + tabs; the first tab on the line emits E006 once; measurement continues |
 | E007 | inconsistent dedentation (unmatched column **below** the top) | line start | pop to the nearest level below, do not push (§4.2) |
 | E008 | `key:` header with no indented body (including inside a brace block) | the colon | consume the header; no table is created |
-| E010 | unexpected indentation | line start | consume the Indent, parse the line in the enclosing block, and consume the matching Dedent (§6) |
+| E010 | unexpected indentation | line start | consume the Indent, parse the line in the enclosing block, and discard its matching Dedent by level comparison (§6) |
+| E011 | structural nesting limit exceeded (64 levels) | line start | the body is skipped to its terminator; no further recursion (§11) |
 
 E001 continues to cover delimiter mismatches. All codes are added to
 `docs/diagnostics.md` with the severity/span policy stated here.
 
-## 10. Non-goals
+## 10. Structural nesting limit
+
+Block nesting (`key:` blocks, brace blocks, and `[header]` bodies) is bounded
+at **64 levels** by `MAX_BLOCK_DEPTH`, mirroring `MAX_EXPR_DEPTH` for
+expressions. Exceeding it emits **E011** at the offending line, skips the body
+to its terminator, and continues — so pathological input can never exhaust the
+parser's stack. The evaluator-side budgets arrive with C-037.
+
+## 11. Dedent levels
+
+To make recovery precise, an **Indent token carries the column it opens** and
+a **Dedent token carries the column it dedents to**, both as token text. A
+block body ends only at a Dedent whose target is **below** the block's own
+level; a Dedent at or above it closes a nested (possibly recovered) block
+instead. This is what makes E010 recovery scope-preserving: a stray Indent
+adds exactly one level, and its Dedent is recognised by level rather than by
+position, so it can never swallow an enclosing block's Dedent.
+
+## 12. Non-goals
 
 - No significant indentation inside expressions or bracketed constructs (§3).
 - No tab/space mixing arithmetic; spaces or E006.

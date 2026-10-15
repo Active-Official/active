@@ -52,10 +52,14 @@ fn unclosed_string_repair(line: u32, col: u32, quote: char) -> Diagnostic {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TokenKind {
     Eof,
     Newline,
+    /// Opened an indented block (spec/dual-syntax.md §4).
+    Indent,
+    /// Closed an indented block.
+    Dedent,
 
     // Literals & identifiers
     Ident,
@@ -97,6 +101,7 @@ pub enum TokenKind {
     RBrace,   // }
     LParen,   // (
     RParen,   // )
+    Colon,    // :
 
     // Unit suffix emitted right after a number when a known unit is present
     Unit(String),
@@ -112,11 +117,29 @@ pub struct Token {
     pub end_col: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineClass {
+    /// Blank line, or a line whose first content is a comment: no tokens,
+    /// no indentation-stack change.
+    Blank,
+    /// A line carrying real content.
+    Content,
+}
+
 pub struct Lexer {
     chars: Vec<char>,
     pos: usize,
     line: u32,
     col: u32,
+    /// Stack of open `(`/`[`/`{` delimiters. Indentation is measured only
+    /// when this is empty (spec/dual-syntax.md §3): inside brackets, layout
+    /// is cosmetic. Only a *matching* closer pops, so malformed input cannot
+    /// change layout state.
+    open_delims: Vec<char>,
+    /// Indentation columns of the open blocks, initialised to `[0]`.
+    indent_stack: Vec<usize>,
+    /// True at the start of a physical line that still needs measurement.
+    at_line_start: bool,
 }
 
 impl Lexer {
@@ -126,6 +149,9 @@ impl Lexer {
             pos: 0,
             line: 1,
             col: 1,
+            open_delims: Vec::new(),
+            indent_stack: vec![0],
+            at_line_start: true,
         }
     }
 
@@ -160,12 +186,132 @@ impl Lexer {
         }
     }
 
+    /// Measure one line's indentation and update the stack, emitting Indent
+    /// and Dedent tokens (spec/dual-syntax.md §4). Returns whether the line
+    /// carries content.
+    fn measure_indentation(
+        &mut self,
+        tokens: &mut Vec<Token>,
+        errors: &mut Vec<Diagnostic>,
+        repairs: &mut Vec<Diagnostic>,
+    ) -> LineClass {
+        let line = self.line;
+        let start_col = self.col;
+        let mut column: usize = 0;
+        let mut had_tab = false;
+        let mut tab_span: Option<(u32, u32)> = None;
+
+        while let Some(ch) = self.peek() {
+            match ch {
+                ' ' => {
+                    column += 1;
+                    self.bump();
+                }
+                '\t' => {
+                    // Each tab counts as one column; the first one is E006.
+                    if !had_tab {
+                        had_tab = true;
+                        tab_span = Some((self.line, self.col));
+                    }
+                    column += 1;
+                    self.bump();
+                }
+                _ => break,
+            }
+        }
+
+        if let Some((l, col)) = tab_span {
+            errors.push(Diagnostic {
+                severity: Severity::Error,
+                code: "E006".into(),
+                message: "tab character in leading whitespace; use spaces".into(),
+                path: None,
+                span: Some(Span {
+                    line: l,
+                    column: col,
+                    end_line: l,
+                    end_column: col + 1,
+                }),
+                repair: None,
+                confidence: 0.0,
+            });
+        }
+
+        // Blank line, or a line whose first content is a comment: no tokens
+        // and no stack change. (A comment-only line's comment is skipped by
+        // the main loop, which then sees the newline.)
+        match self.peek() {
+            None | Some('\n') | Some('#') => return LineClass::Blank,
+            _ => {}
+        }
+
+        let top = *self.indent_stack.last().unwrap_or(&0);
+        if column > top {
+            self.indent_stack.push(column);
+            tokens.push(self.make_token(TokenKind::Indent, column.to_string(), line, start_col));
+        } else if column < top {
+            while let Some(&level) = self.indent_stack.last() {
+                if level <= column {
+                    break;
+                }
+                self.indent_stack.pop();
+                let target = self.indent_stack.last().copied().unwrap_or(0);
+                tokens.push(self.make_token(
+                    TokenKind::Dedent,
+                    target.to_string(),
+                    line,
+                    start_col,
+                ));
+            }
+            if self.indent_stack.last().copied() != Some(column) {
+                // Unmatched dedentation: the stack has already popped to the
+                // nearest level below, and the column is not pushed.
+                errors.push(Diagnostic {
+                    severity: Severity::Error,
+                    code: "E007".into(),
+                    message: format!("inconsistent dedentation to column {column}"),
+                    path: None,
+                    span: Some(Span {
+                        line,
+                        column: start_col,
+                        end_line: line,
+                        end_column: start_col + column as u32,
+                    }),
+                    repair: None,
+                    confidence: 0.0,
+                });
+            }
+        }
+
+        let _ = repairs; // lexical repairs are recorded elsewhere in the loop
+        LineClass::Content
+    }
+
     pub fn tokenize(&mut self) -> Lexed {
         let mut tokens = Vec::new();
         let mut repairs: Vec<Diagnostic> = Vec::new();
         let mut errors: Vec<Diagnostic> = Vec::new();
 
-        while let Some(c) = self.peek() {
+        loop {
+            // Indentation is measured at the start of each physical line, and
+            // only at bracket depth 0 (spec/dual-syntax.md §3).
+            if self.at_line_start {
+                self.at_line_start = false;
+                if self.open_delims.is_empty() {
+                    let class = self.measure_indentation(&mut tokens, &mut errors, &mut repairs);
+                    if class == LineClass::Blank {
+                        // Blank or comment-only line: the stack must not
+                        // change, and the next physical line is measured.
+                        self.at_line_start = true;
+                    }
+                }
+            }
+
+            let c = match self.peek() {
+                Some(c) => c,
+                None => break,
+            };
+
             match c {
                 // Horizontal whitespace
                 ' ' | '\t' | '\r' => {
@@ -177,6 +323,7 @@ impl Lexer {
                     let (l, col) = (self.line, self.col);
                     self.bump();
                     tokens.push(self.make_token(TokenKind::Newline, "\n".into(), l, col));
+                    self.at_line_start = true;
                 }
 
                 // Full-line comment
@@ -287,32 +434,51 @@ impl Lexer {
                 '[' => {
                     let (l, col) = (self.line, self.col);
                     self.bump();
+                    self.open_delims.push('[');
                     tokens.push(self.make_token(TokenKind::LBracket, "[".into(), l, col));
                 }
                 ']' => {
                     let (l, col) = (self.line, self.col);
                     self.bump();
+                    if self.open_delims.last() == Some(&'[') {
+                        self.open_delims.pop();
+                    }
                     tokens.push(self.make_token(TokenKind::RBracket, "]".into(), l, col));
                 }
                 '{' => {
                     let (l, col) = (self.line, self.col);
                     self.bump();
+                    self.open_delims.push('{');
                     tokens.push(self.make_token(TokenKind::LBrace, "{".into(), l, col));
                 }
                 '}' => {
                     let (l, col) = (self.line, self.col);
                     self.bump();
+                    if self.open_delims.last() == Some(&'{') {
+                        self.open_delims.pop();
+                    }
                     tokens.push(self.make_token(TokenKind::RBrace, "}".into(), l, col));
                 }
                 '(' => {
                     let (l, col) = (self.line, self.col);
                     self.bump();
+                    self.open_delims.push('(');
                     tokens.push(self.make_token(TokenKind::LParen, "(".into(), l, col));
                 }
                 ')' => {
                     let (l, col) = (self.line, self.col);
                     self.bump();
+                    if self.open_delims.last() == Some(&'(') {
+                        self.open_delims.pop();
+                    }
                     tokens.push(self.make_token(TokenKind::RParen, ")".into(), l, col));
+                }
+                ':' => {
+                    // A bare colon (block headers, `key: value`). The `?:`
+                    // combination is matched earlier as QuestionColon.
+                    let (l, col) = (self.line, self.col);
+                    self.bump();
+                    tokens.push(self.make_token(TokenKind::Colon, ":".into(), l, col));
                 }
 
                 // Double-quoted strings (escapes + ${…} left intact for the parser)
@@ -492,6 +658,19 @@ impl Lexer {
                     });
                 }
             }
+        }
+
+        // End of input closes every open indentation block
+        // (spec/dual-syntax.md §4.2).
+        while self.indent_stack.len() > 1 {
+            self.indent_stack.pop();
+            let target = self.indent_stack.last().copied().unwrap_or(0);
+            tokens.push(self.make_token(
+                TokenKind::Dedent,
+                target.to_string(),
+                self.line,
+                self.col,
+            ));
         }
 
         tokens.push(self.make_token(TokenKind::Eof, String::new(), self.line, self.col));

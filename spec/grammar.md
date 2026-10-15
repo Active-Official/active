@@ -125,6 +125,29 @@ statement position are still skipped by the parser's error recovery.
 
 ## 2. Syntactic grammar
 
+### 2.0 Statement forms (dual syntax)
+
+A document may be written in brace style, indentation style, or a mix. The
+normative design is `spec/dual-syntax.md` (C-020); this section summarizes it.
+
+```
+statement     = let-decl | table-header | table-block | block-header | key-value
+table-header  = "[" identifier "]"                  TOML-style
+table-block   = identifier "{" [ newline { statement } ] "}"   HCL-style
+block-header  = identifier ":" newline indent      indentation style
+key-value     = identifier ( "=" | ":" ) expression
+```
+
+- `identifier "{"` at statement position is always a table block; an inline
+  table can only appear as a value, so the forms never conflict.
+- `identifier ":"` followed by a value on the same line is a key-value pair;
+  followed by a newline and an indent it is a block header.
+- Indentation is measured only at bracket depth 0: inside `(`, `[`, `{` the
+  layout is cosmetic (`spec/dual-syntax.md` §3).
+- A table body (`[name]`) ends at the next header, `let`, EOF, or a Dedent
+  belonging to an enclosing block.
+- An indented block ends at its Dedent; a brace block at its `}`.
+
 ### 2.1 Document
 
 ```
@@ -302,6 +325,11 @@ configuration. Unresolved identifiers warn (W001) in both modes.
 | E003 | malformed `secret.env` argument | parser |
 | E004 | expression nesting limit exceeded | parser |
 | E005 | unexpected character | lexer |
+| E006 | tab in leading whitespace | lexer |
+| E007 | inconsistent dedentation | lexer |
+| E008 | `key:` header with no indented body | parser |
+| E010 | unexpected indentation | parser |
+| H001–H004 | healing repairs | lexer/parser |
 | W001 | unresolved identifier | evaluator |
 
 Full catalog: `docs/diagnostics.md` (C-015), including the H0xx healing range

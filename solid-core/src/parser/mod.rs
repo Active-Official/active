@@ -39,6 +39,10 @@ fn span_of(tok: &Token) -> Span {
 /// parser-side half of the execution budget (see C-037).
 const MAX_EXPR_DEPTH: usize = 64;
 
+/// Maximum structural (table/block) nesting depth. Bounds parser recursion
+/// on pathological input; exceeding it is E011 (see C-037).
+const MAX_BLOCK_DEPTH: usize = 64;
+
 use crate::diag::{thresholds, Diagnostic, Repair, RepairKind, Severity, Span};
 use crate::ir::*;
 use crate::types::Unit;
@@ -61,6 +65,24 @@ pub fn parse_with(
     name: &str,
     options: ParseOptions,
 ) -> Result<Module, Vec<Diagnostic>> {
+    let (module, errors) = parse_recovering(source, name, options);
+    if errors.is_empty() {
+        Ok(module)
+    } else {
+        Err(errors)
+    }
+}
+
+/// Parse and return the module even when diagnostics were recorded.
+///
+/// Tooling (editor diagnostics on broken files) and recovery tests need the
+/// partial tree; `parse` stays the strict entry point that fails on any
+/// error. Trivia and spans remain accurate for the parts that parsed.
+pub fn parse_recovering(
+    source: &str,
+    name: &str,
+    options: ParseOptions,
+) -> (Module, Vec<Diagnostic>) {
     let mut lexer = Lexer::new(source);
     let lexed = lexer.tokenize();
     let mut parser = Parser {
@@ -71,16 +93,13 @@ pub fn parse_with(
         ident_scopes: Vec::new(),
         depth: 0,
         options,
+        block_depth: 0,
     };
     parser.module.healing.extend(lexed.repairs);
     parser.errors.extend(lexed.errors);
     parser.parse_document();
-    if parser.errors.is_empty() {
-        parser.build_graph();
-        Ok(parser.module)
-    } else {
-        Err(parser.errors)
-    }
+    parser.build_graph();
+    (parser.module, parser.errors)
 }
 
 struct Parser {
@@ -97,6 +116,28 @@ struct Parser {
     depth: usize,
     /// Healing mode for this parse.
     options: ParseOptions,
+    /// Current block nesting depth, guarded by MAX_BLOCK_DEPTH.
+    block_depth: usize,
+}
+
+/// What terminates a statement body (spec/dual-syntax.md §5.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BodyEnd {
+    /// Document root: Dedents are the EOF flush and carry no block meaning.
+    Document,
+    /// An indented block at indentation level `n`: ends at a Dedent whose
+    /// target level is below `n`, which it consumes.
+    Block(usize),
+    /// A brace block (`key { … }`): ends at and consumes its `}`.
+    Brace,
+    /// The body of a `[header]` written at column `n`: ends (without
+    /// consuming) when the next statement belongs to the enclosing scope.
+    HeaderBody(usize),
+}
+
+/// The indentation level an Indent/Dedent token refers to (its text).
+fn indent_level(tok: &Token) -> usize {
+    tok.text.parse().unwrap_or(0)
 }
 
 impl Parser {
@@ -162,6 +203,214 @@ impl Parser {
         while matches!(self.peek_kind(), TokenKind::Newline) {
             self.bump();
         }
+    }
+
+    /// Token kind `n` positions ahead (0 = current). Used for the two-token
+    /// lookahead that distinguishes `key =`, `key:`, and `key {`.
+    fn peek_kind_at(&self, n: usize) -> TokenKind {
+        self.tokens
+            .get(self.pos + n)
+            .map(|t| t.kind.clone())
+            .unwrap_or(TokenKind::Eof)
+    }
+
+    /// Parse statements into `fields` until the body terminator
+    /// (spec/dual-syntax.md §2, §5). Structural nesting is bounded by
+    /// MAX_BLOCK_DEPTH so pathological input cannot exhaust the stack.
+    fn parse_body(&mut self, fields: &mut indexmap::IndexMap<String, NodeId>, end: BodyEnd) {
+        self.block_depth += 1;
+        if self.block_depth > MAX_BLOCK_DEPTH {
+            self.error(
+                "E011",
+                format!("maximum block nesting depth ({MAX_BLOCK_DEPTH}) exceeded"),
+            );
+            self.block_depth -= 1;
+            self.recover_block(end);
+            return;
+        }
+        self.parse_body_inner(fields, end);
+        self.block_depth -= 1;
+    }
+
+    /// Skip tokens until the terminator of an over-deep body, so recovery
+    /// makes progress without recursing further.
+    fn recover_block(&mut self, end: BodyEnd) {
+        loop {
+            match self.peek_kind() {
+                TokenKind::Eof => return,
+                TokenKind::Dedent => {
+                    self.bump();
+                    return;
+                }
+                TokenKind::RBrace if end == BodyEnd::Brace => return,
+                _ => {
+                    self.bump();
+                }
+            }
+        }
+    }
+
+    fn parse_body_inner(&mut self, fields: &mut indexmap::IndexMap<String, NodeId>, end: BodyEnd) {
+        loop {
+            self.skip_newlines();
+            match self.peek_kind() {
+                TokenKind::Eof => {
+                    if end == BodyEnd::Brace {
+                        self.error("E001", "expected `}`, found end of input");
+                    }
+                    return;
+                }
+                TokenKind::Dedent => {
+                    let tok = self.peek().clone();
+                    let target = indent_level(&tok);
+                    match end {
+                        // The EOF flush emits Dedent tokens; they carry no
+                        // block meaning at document level.
+                        BodyEnd::Document | BodyEnd::Brace => {
+                            self.bump();
+                        }
+                        BodyEnd::Block(level) => {
+                            self.bump();
+                            if target >= level {
+                                // Closes a nested block that was recovered
+                                // under E010 (§6), not this block.
+                                continue;
+                            }
+                            return;
+                        }
+                        BodyEnd::HeaderBody(level) => {
+                            if target >= level {
+                                self.bump();
+                                continue;
+                            }
+                            return;
+                        }
+                    }
+                }
+                TokenKind::RBrace => match end {
+                    BodyEnd::Brace => {
+                        self.bump();
+                        return;
+                    }
+                    // §5.3: a brace cannot close an indentation block.
+                    BodyEnd::Block(_) => {
+                        self.error("E001", "expected Dedent to close this block, found `}`");
+                        self.bump();
+                        return;
+                    }
+                    BodyEnd::HeaderBody(_) => return,
+                    BodyEnd::Document => {
+                        self.error("E002", "unexpected `}`");
+                        self.bump();
+                    }
+                },
+                // A header body ends (without consuming) when the next
+                // statement belongs to the enclosing scope.
+                TokenKind::LBracket | TokenKind::Let if matches!(end, BodyEnd::HeaderBody(_)) => {
+                    return
+                }
+                TokenKind::Indent => {
+                    // E010 unexpected indentation (§6): consume the Indent,
+                    // parse the line in the enclosing block, and let the
+                    // level-aware Dedent rule above discard its matching
+                    // Dedent (the enclosing block's level comparison).
+                    self.error("E010", "unexpected indentation");
+                    self.bump();
+                }
+                TokenKind::Let => self.parse_let(),
+                TokenKind::LBracket => self.parse_table_header(fields),
+                TokenKind::Ident => self.parse_ident_statement(fields),
+                _ => {
+                    // Alpha resilience: skip an unexpected token.
+                    self.bump();
+                }
+            }
+        }
+    }
+
+    /// Dispatch a statement that begins with an identifier: `key = value`,
+    /// `key: value`, `key:` block header, or `key { … }` table block.
+    fn parse_ident_statement(&mut self, fields: &mut indexmap::IndexMap<String, NodeId>) {
+        match self.peek_kind_at(1) {
+            TokenKind::Assign => {
+                if let Some((k, id)) = self.parse_key_value_sep(TokenKind::Assign) {
+                    fields.insert(k, id);
+                }
+            }
+            TokenKind::Colon => {
+                if matches!(self.peek_kind_at(2), TokenKind::Newline | TokenKind::Eof) {
+                    self.parse_block_header(fields);
+                } else if let Some((k, id)) = self.parse_key_value_sep(TokenKind::Colon) {
+                    fields.insert(k, id);
+                }
+            }
+            TokenKind::LBrace => self.parse_table_block(fields),
+            _ => {
+                // Not a statement form the grammar accepts; keep progress.
+                let tok = self.peek().clone();
+                self.error_at("E002", "unexpected token after identifier", &tok);
+                self.bump();
+            }
+        }
+    }
+
+    /// `key:` followed by an indented block (indentation style, §2 and §5).
+    fn parse_block_header(&mut self, parent: &mut indexmap::IndexMap<String, NodeId>) {
+        let key = self
+            .expect(TokenKind::Ident)
+            .map(|t| t.text)
+            .unwrap_or_default();
+        let colon = self.expect(TokenKind::Colon);
+        self.skip_newlines();
+        let level = if matches!(self.peek_kind(), TokenKind::Indent) {
+            let indent = self.bump();
+            indent_level(&indent)
+        } else {
+            // E008: the header has no indented body (including at EOF).
+            let tok = colon.unwrap_or_else(|| self.peek().clone());
+            self.error_at(
+                "E008",
+                format!("block header `{key}:` has no indented body"),
+                &tok,
+            );
+            return;
+        };
+        self.ident_scopes.push(Vec::new());
+        let mut fields = indexmap::IndexMap::new();
+        self.parse_body(&mut fields, BodyEnd::Block(level));
+        let idents = self.ident_scopes.pop().unwrap_or_default();
+        self.resolve_sibling_refs(idents, &fields);
+        let table_id = self.module.add_node(Node::Table { fields });
+        parent.insert(key, table_id);
+    }
+
+    /// `key { … }` brace-style table block (HCL-style, §2).
+    fn parse_table_block(&mut self, parent: &mut indexmap::IndexMap<String, NodeId>) {
+        let key = self
+            .expect(TokenKind::Ident)
+            .map(|t| t.text)
+            .unwrap_or_default();
+        self.expect(TokenKind::LBrace);
+        self.ident_scopes.push(Vec::new());
+        let mut fields = indexmap::IndexMap::new();
+        self.parse_body(&mut fields, BodyEnd::Brace);
+        let idents = self.ident_scopes.pop().unwrap_or_default();
+        self.resolve_sibling_refs(idents, &fields);
+        let table_id = self.module.add_node(Node::Table { fields });
+        parent.insert(key, table_id);
+    }
+
+    /// Diagnostic at an explicit token's span.
+    fn error_at(&mut self, code: &str, message: impl Into<String>, tok: &Token) {
+        self.errors.push(Diagnostic {
+            severity: Severity::Error,
+            code: code.into(),
+            message: message.into(),
+            path: None,
+            span: Some(span_of(tok)),
+            repair: None,
+            confidence: 1.0,
+        });
     }
 
     /// Add a node and record the span of the token that produced it, so
@@ -263,26 +512,7 @@ impl Parser {
         let mut root_fields = indexmap::IndexMap::new();
         self.ident_scopes.push(Vec::new());
 
-        while !matches!(self.peek_kind(), TokenKind::Eof) {
-            self.skip_newlines();
-            if matches!(self.peek_kind(), TokenKind::Eof) {
-                break;
-            }
-
-            match self.peek_kind() {
-                TokenKind::Let => self.parse_let(),
-                TokenKind::LBracket => self.parse_table_header(&mut root_fields),
-                TokenKind::Ident => {
-                    if let Some((k, id)) = self.parse_key_value() {
-                        root_fields.insert(k, id);
-                    }
-                }
-                _ => {
-                    // Alpha resilience: skip unexpected token instead of dying
-                    self.bump();
-                }
-            }
-        }
+        self.parse_body(&mut root_fields, BodyEnd::Document);
 
         let root_idents = self.ident_scopes.pop().unwrap_or_default();
         self.resolve_sibling_refs(root_idents, &root_fields);
@@ -315,6 +545,8 @@ impl Parser {
     // ------------------------------------------------------------------
 
     fn parse_table_header(&mut self, parent: &mut indexmap::IndexMap<String, NodeId>) {
+        let open = self.peek().clone();
+        let header_level = open.col as usize;
         self.bump(); // [
         let name = match self.expect(TokenKind::Ident) {
             Some(t) => t.text,
@@ -327,20 +559,7 @@ impl Parser {
 
         self.ident_scopes.push(Vec::new());
         let mut fields = indexmap::IndexMap::new();
-        loop {
-            self.skip_newlines();
-            match self.peek_kind() {
-                TokenKind::Eof | TokenKind::LBracket | TokenKind::Let => break,
-                TokenKind::Ident => {
-                    if let Some((k, id)) = self.parse_key_value() {
-                        fields.insert(k, id);
-                    } else {
-                        break;
-                    }
-                }
-                _ => break,
-            }
-        }
+        self.parse_body(&mut fields, BodyEnd::HeaderBody(header_level));
         let idents = self.ident_scopes.pop().unwrap_or_default();
         self.resolve_sibling_refs(idents, &fields);
         let table_id = self.module.add_node(Node::Table { fields });
@@ -352,8 +571,13 @@ impl Parser {
     // ------------------------------------------------------------------
 
     fn parse_key_value(&mut self) -> Option<(String, NodeId)> {
+        self.parse_key_value_sep(TokenKind::Assign)
+    }
+
+    /// `key = expr` or `key: expr` (spec/dual-syntax.md §2).
+    fn parse_key_value_sep(&mut self, sep: TokenKind) -> Option<(String, NodeId)> {
         let key = self.expect(TokenKind::Ident)?.text;
-        self.expect(TokenKind::Assign)?;
+        self.expect(sep)?;
         // Tag Ident nodes created directly in this key's value expression
         // with the owning key so sibling resolution can skip self-references.
         let scope_start = self.ident_scopes.last().map_or(0, |s| s.len());

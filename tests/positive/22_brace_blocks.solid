@@ -1,0 +1,10 @@
+app {
+  name = "svc"
+  port = 8080
+}
+
+empty { }
+
+[both]
+indented:
+  style = "mixed"

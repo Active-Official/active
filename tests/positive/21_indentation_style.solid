@@ -1,0 +1,10 @@
+app:
+  name = "svc"
+  port = 8080
+
+  nested:
+    deep = 1
+
+database:
+  host = "db"
+  port = 5432

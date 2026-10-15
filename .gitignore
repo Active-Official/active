@@ -10,10 +10,15 @@ scratch/
 # file it produced. Reference only; NEVER committed or published.
 original-reference-files/
 
-# Private working notes — docs/ is public, these two files are NOT.
-# Agent handbooks and memory logs live only on this machine.
+# Private working notes — docs/ is public, these files are NOT.
+# Agent handbooks, memory logs, and the Grok origin documents
+# (copied here for reference) live only on this machine.
 docs/Agent-Handbook.md
 docs/Memories-and-Observations.md
+docs/DESIGN.md
+docs/checklist.md
+docs/proposal.md
+docs/Grok-Better\ TOML\ Language\ Design\ with\ YAML\ JSON\ Features-20261015-0719.md
 
 # OS junk
 .DS_Store

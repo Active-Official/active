@@ -25,7 +25,7 @@ This repository contains the **alpha production foundation** with a working pars
 ## Quick start
 
 ```bash
-cargo build -p solid-cli --release   # needs recent stable Rust (1.78+)
+cargo build -p solid-cli --release   # needs recent stable Rust (1.85+)
 
 # simple demo
 ./target/release/solid eval examples/demo.solid

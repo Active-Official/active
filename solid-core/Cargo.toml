@@ -2,6 +2,7 @@
 name = "solid-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "Core parser, IR, evaluator and type system for the SOLID configuration language"
 

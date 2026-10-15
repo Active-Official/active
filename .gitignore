@@ -1,0 +1,42 @@
+# ============================================================
+# SOLID language repository — .gitignore
+# ============================================================
+
+# Scratch work area — experiments, drafts, throwaway code.
+# NEVER committed. This is the only place for untracked mess.
+scratch/
+
+# Private working notes — docs/ is public, these two files are NOT.
+# Agent handbooks and memory logs live only on this machine.
+docs/Agent-Handbook.md
+docs/Memories-and-Observations.md
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build artifacts & dependencies (implementation language TBD —
+# these cover the usual suspects so nothing leaks early)
+node_modules/
+target/
+dist/
+build/
+out/
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Temp / log files
+*.tmp
+*.log
+*.bak

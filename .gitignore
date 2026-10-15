@@ -6,6 +6,10 @@
 # NEVER committed. This is the only place for untracked mess.
 scratch/
 
+# Original reference material — the founding Grok conversation and every
+# file it produced. Reference only; NEVER committed or published.
+original-reference-files/
+
 # Private working notes — docs/ is public, these two files are NOT.
 # Agent handbooks and memory logs live only on this machine.
 docs/Agent-Handbook.md

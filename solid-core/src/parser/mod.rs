@@ -50,9 +50,11 @@ struct Parser {
     pos: usize,
     module: Module,
     errors: Vec<Diagnostic>,
-    /// Stack of per-scope Ident node ids, used to resolve sibling-key
-    /// references (e.g. `can_scale = !is_prod` inside the same table).
-    ident_scopes: Vec<Vec<NodeId>>,
+    /// Stack of per-scope (owning key, Ident node id) pairs, used to resolve
+    /// sibling-key references (e.g. `can_scale = !is_prod` inside the same
+    /// table). The owning key prevents a key's own value from resolving to
+    /// itself.
+    ident_scopes: Vec<Vec<(String, NodeId)>>,
 }
 
 impl Parser {
@@ -219,7 +221,15 @@ impl Parser {
     fn parse_key_value(&mut self) -> Option<(String, NodeId)> {
         let key = self.expect(TokenKind::Ident)?.text;
         self.expect(TokenKind::Assign)?;
+        // Tag Ident nodes created directly in this key's value expression
+        // with the owning key so sibling resolution can skip self-references.
+        let scope_start = self.ident_scopes.last().map_or(0, |s| s.len());
         let value = self.parse_expression();
+        if let Some(scope) = self.ident_scopes.last_mut() {
+            for entry in scope.iter_mut().skip(scope_start) {
+                entry.0 = key.clone();
+            }
+        }
         Some((key, value))
     }
 
@@ -229,14 +239,19 @@ impl Parser {
     /// resolve too.
     fn resolve_sibling_refs(
         &mut self,
-        idents: Vec<NodeId>,
+        idents: Vec<(String, NodeId)>,
         fields: &indexmap::IndexMap<String, NodeId>,
     ) {
-        for id in idents {
+        for (owner_key, id) in idents {
             let name = match self.module.get(id) {
                 Some(Node::Ident(n)) => n.clone(),
                 _ => continue,
             };
+            // A key's own value expression must not resolve to its own
+            // binding; it falls through to let-binding resolution instead.
+            if name == owner_key {
+                continue;
+            }
             if let Some(&target) = fields.get(&name) {
                 if let Some(slot) = self.module.get_mut(id) {
                     *slot = Node::Ref(target);
@@ -452,9 +467,45 @@ impl Parser {
 
             TokenKind::Secret => {
                 self.bump();
+                // `secret(expr)` — locator is the expression; or
+                // `secret.env(name)` — name is a string literal and the
+                // secret is the env var's value.
+                let from_env = if matches!(self.peek_kind(), TokenKind::Dot) {
+                    self.bump();
+                    if !matches!(self.peek_kind(), TokenKind::Env) {
+                        self.error(
+                            "E003",
+                            "expected `env` after `secret.` (use secret.env(name))",
+                        );
+                    } else {
+                        self.bump();
+                    }
+                    true
+                } else {
+                    false
+                };
                 self.expect(TokenKind::LParen);
-                let locator = self.parse_expression();
+                let arg = self.parse_expression();
                 self.expect(TokenKind::RParen);
+                let locator = if from_env {
+                    match self.module.get(arg) {
+                        Some(Node::Literal(Value::String(name))) => {
+                            self.module.add_node(Node::Env {
+                                name: name.clone(),
+                                default: None,
+                            })
+                        }
+                        _ => {
+                            self.error(
+                                "E003",
+                                "secret.env() requires a string literal env var name",
+                            );
+                            arg
+                        }
+                    }
+                } else {
+                    arg
+                };
                 self.module.add_node(Node::Secret { locator })
             }
 
@@ -465,7 +516,7 @@ impl Parser {
                 // enclosing table scope.
                 let id = self.module.add_node(Node::Ident(tok.text));
                 if let Some(scope) = self.ident_scopes.last_mut() {
-                    scope.push(id);
+                    scope.push((String::new(), id));
                 }
                 id
             }

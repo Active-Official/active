@@ -25,8 +25,6 @@ This repository contains the **alpha production foundation** with a working pars
 ## Quick start
 
 ```bash
-tar xzf solid-alpha.tar.gz
-cd solid
 cargo build -p solid-cli --release   # needs recent stable Rust (1.78+)
 
 # simple demo

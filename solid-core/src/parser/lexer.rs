@@ -17,6 +17,15 @@
 
 use crate::diag::{thresholds, Diagnostic, Repair, RepairKind, Severity, Span};
 
+/// Internal sentinel for an escaped dollar (`\$`) in a double-quoted string.
+///
+/// The lexer decodes escapes, which would otherwise erase the difference
+/// between `\$` (a literal dollar) and `\\` followed by `$` (a backslash and
+/// an interpolation opener). The sentinel preserves that distinction to the
+/// parser. It is rendered back as `$` in every string value, and the formatter
+/// re-emits it as `\$`, so it never reaches user data.
+pub const ESCAPED_DOLLAR: char = '\u{E000}';
+
 /// Result of tokenizing: the token stream, hard lexical errors, healing
 /// diagnostics, and the comments found along the way (trivia for the
 /// formatter).
@@ -516,6 +525,10 @@ impl Lexer {
                                 '\\' => s.push('\\'),
                                 '"' => s.push('"'),
                                 '0' => s.push('\0'),
+                                // `\$` keeps its own identity through the
+                                // escape table so the parser can tell it
+                                // apart from a real backslash before `${`.
+                                '$' => s.push(ESCAPED_DOLLAR),
                                 other => {
                                     s.push('\\');
                                     s.push(other);

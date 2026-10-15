@@ -147,7 +147,21 @@ impl Engine {
                                             return Err(EvalError::SecretLeak);
                                         }
                                         Value::Null => out.push_str("null"),
-                                        _ => out.push_str("<?>"),
+                                        // Structured values have no string
+                                        // form: interpolating them is a type
+                                        // error, never a placeholder.
+                                        Value::Array(_) | Value::Table(_) => {
+                                            return Err(EvalError::type_error(
+                                                format!(
+                                                    "cannot interpolate a {} into a string",
+                                                    match v {
+                                                        Value::Array(_) => "array",
+                                                        _ => "table",
+                                                    }
+                                                ),
+                                                module.node_spans.get(id).cloned(),
+                                            ));
+                                        }
                                     }
                                 } else {
                                     out.push_str("null");

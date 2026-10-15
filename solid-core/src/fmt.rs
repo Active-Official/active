@@ -498,16 +498,15 @@ fn escape(s: &str) -> String {
     out
 }
 
-/// Escape for a single-quoted string (only `'` and `\` are special there).
+/// Escape for a single-quoted string. Only `'` and `\` are special there:
+/// the single-quote lexer does not decode `\n`/`\t`/`\r`, so those are
+/// emitted literally (a single-quoted string may contain them).
 fn escape_single(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
         match ch {
             '\'' => out.push_str("\\'"),
             '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\t' => out.push_str("\\t"),
-            '\r' => out.push_str("\\r"),
             _ => out.push(ch),
         }
     }

@@ -21,6 +21,7 @@
 
 mod lexer;
 
+use lexer::ESCAPED_DOLLAR;
 pub use lexer::{Lexer, Token, TokenKind};
 
 /// Extract the span of a token.
@@ -1228,9 +1229,10 @@ impl Parser {
     /// Convert a raw string that may contain `${…}` into either a plain
     /// Literal or a full Interpolate node with Expr parts.
     fn parse_string_literal(&mut self, raw: &str, tok: &Token) -> NodeId {
-        // Fast path: no interpolation and no escaped dollar.
-        if !raw.contains("${") && !raw.contains("\\$") {
-            return self.add_spanned(Node::Literal(Value::String(raw.to_string())), tok);
+        // The lexer marks `\$` with a sentinel; un-sentinel the fast path too.
+        if !raw.contains("${") && !raw.contains(ESCAPED_DOLLAR) {
+            let text = raw.replace(ESCAPED_DOLLAR, "$");
+            return self.add_spanned(Node::Literal(Value::String(text)), tok);
         }
 
         let chars: Vec<char> = raw.chars().collect();
@@ -1239,20 +1241,26 @@ impl Parser {
         let mut i = 0usize;
 
         while i < chars.len() {
-            // `\$` is an escaped dollar: literal, never interpolation.
-            if chars[i] == '\\' && i + 1 < chars.len() && chars[i + 1] == '$' {
+            // An escaped dollar is literal text, never interpolation — and
+            // because the lexer marked it, a real `\` before `${` stays a
+            // backslash (parity is preserved).
+            if chars[i] == ESCAPED_DOLLAR {
                 literal.push('$');
-                i += 2;
+                i += 1;
                 continue;
             }
             if chars[i] == '$' && i + 1 < chars.len() && chars[i + 1] == '{' {
                 match self.find_interpolation_end(&chars, i + 2) {
                     Some(end) => {
                         if !literal.is_empty() {
+                            literal = literal.replace(ESCAPED_DOLLAR, "$");
                             parts.push(InterpPart::Literal(std::mem::take(&mut literal)));
                         }
                         let inner: String = chars[i + 2..end].iter().collect();
-                        let id = self.parse_embedded_expression(&inner, tok);
+                        // Offset of the expression's first character inside
+                        // the token, for precise diagnostic spans.
+                        let offset = i + 2;
+                        let id = self.parse_embedded_expression(&inner, tok, offset);
                         parts.push(InterpPart::Expr(id));
                         i = end + 1;
                         continue;
@@ -1275,14 +1283,15 @@ impl Parser {
             i += 1;
         }
         if !literal.is_empty() {
-            parts.push(InterpPart::Literal(literal));
+            parts.push(InterpPart::Literal(literal.replace(ESCAPED_DOLLAR, "$")));
         }
 
         self.add_spanned(Node::Interpolate { parts }, tok)
     }
 
-    /// Find the `}` matching a `${` that starts at `start`, skipping over
-    /// string literals and nested interpolations.
+    /// Find the `}` matching a `${` that starts at `start`, skipping string
+    /// literals, nested interpolations, and plain brace nesting (an inline
+    /// table inside `${ … }` is an expression with its own braces).
     fn find_interpolation_end(&self, chars: &[char], start: usize) -> Option<usize> {
         let mut i = start;
         let mut depth = 0usize;
@@ -1308,6 +1317,7 @@ impl Parser {
                     i += 2;
                     continue;
                 }
+                '{' => depth += 1,
                 '}' => {
                     if depth == 0 {
                         return Some(i);
@@ -1321,7 +1331,10 @@ impl Parser {
         None
     }
 
-    /// A span pointing inside the string token at character offset `offset`.
+    /// A span pointing inside the string token at character offset `offset`
+    /// (offset 0 is the first character after the opening quote; the lexer's
+    /// token text is the decoded content, so offsets are approximate when the
+    /// source contained escapes).
     fn interp_span(&self, tok: &Token, offset: usize) -> Token {
         let mut t = tok.clone();
         t.col = tok.col + 1 + offset as u32;
@@ -1333,13 +1346,16 @@ impl Parser {
     /// resulting nodes into this module's arena. Supports nested
     /// interpolation, env defaults, arithmetic, and every other expression
     /// form; sub-expression diagnostics have their spans rebased onto the
-    /// enclosing string's position.
-    fn parse_embedded_expression(&mut self, text: &str, tok: &Token) -> NodeId {
+    /// enclosing string's position (`offset` is the expression's first
+    /// character inside the token).
+    fn parse_embedded_expression(&mut self, text: &str, tok: &Token, offset: usize) -> NodeId {
         // Embedded expressions are not laid out: trim the padding so the
         // sub-lexer never measures indentation inside `${ … }`.
+        let leading_ws = text.len() - text.trim_start().len();
         let text = text.trim();
+        let offset = offset + leading_ws;
         if text.is_empty() {
-            let span = self.interp_span(tok, 0);
+            let span = self.interp_span(tok, offset);
             self.error_at(
                 "E013",
                 "empty interpolation: `${}` has no expression",
@@ -1353,6 +1369,10 @@ impl Parser {
         // Move the arena into a sub-parser so embedded nodes land in the
         // same module.
         let module = std::mem::replace(&mut self.module, Module::new(""));
+        // Length of the inherited scope: only identifiers created *by this
+        // expression* are transferred back, so repeated interpolations cannot
+        // duplicate the enclosing scope.
+        let inherited_len = self.ident_scopes.last().map_or(0, |s| s.len());
         let mut sub = Parser {
             tokens: lexed.tokens,
             pos: 0,
@@ -1370,27 +1390,60 @@ impl Parser {
             indent_tables: 0,
         };
         let id = sub.parse_expression();
-        // Expression idents inside `${}` must be visible to the enclosing
-        // scope's sibling/let resolution.
-        let sub_idents = sub.ident_scopes.clone();
+
+        // Anything left over that is not a newline is unconsumed input.
+        while matches!(sub.peek_kind(), TokenKind::Newline) {
+            sub.bump();
+        }
+        if !matches!(sub.peek_kind(), TokenKind::Eof) {
+            let leftover = sub.peek().clone();
+            sub.error_at(
+                "E002",
+                format!(
+                    "unexpected {:?} after the interpolated expression",
+                    leftover.kind
+                ),
+                &leftover,
+            );
+        }
+
+        let new_idents: Vec<(String, NodeId)> = sub
+            .ident_scopes
+            .last()
+            .map(|s| s[inherited_len.min(s.len())..].to_vec())
+            .unwrap_or_default();
+        let mut sub_errors = std::mem::take(&mut sub.errors);
+        let mut sub_repairs = std::mem::take(&mut sub.module.healing);
+        let mut sub_lex_errors = lexed.errors;
+        let mut sub_lex_repairs = lexed.repairs;
         self.module = std::mem::replace(&mut sub.module, Module::new(""));
+
         if let Some(scope) = self.ident_scopes.last_mut() {
-            if let Some(inner) = sub_idents.last() {
-                scope.extend(inner.iter().cloned());
-            }
+            scope.extend(new_idents);
         }
         // Rebase embedded diagnostics onto the string token's position.
-        for mut d in sub.errors {
+        let rebase = |d: &mut Diagnostic| {
             if let Some(s) = &mut d.span {
                 if s.line == 1 {
-                    s.column += tok.col;
-                    s.end_column += tok.col;
+                    s.column += tok.col + 1 + offset as u32;
+                    s.end_column += tok.col + 1 + offset as u32;
                 }
                 s.line += tok.line.saturating_sub(1);
                 s.end_line += tok.line.saturating_sub(1);
             }
-            self.errors.push(d);
+        };
+        for d in sub_lex_errors
+            .iter_mut()
+            .chain(sub_lex_repairs.iter_mut())
+            .chain(sub_errors.iter_mut())
+            .chain(sub_repairs.iter_mut())
+        {
+            rebase(d);
         }
+        self.errors.extend(sub_lex_errors);
+        self.errors.extend(sub_errors);
+        self.module.healing.extend(sub_lex_repairs);
+        self.module.healing.extend(sub_repairs);
         id
     }
 

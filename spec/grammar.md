@@ -232,13 +232,16 @@ themselves interpolate — nested interpolation). The matching `}` is found by
 scanning with awareness of nested `${` and of string literals inside the
 braces.
 
-Escaping: `\$` is a literal dollar sign, so `"\${5}"` is the text `${5}`.
-**[impl note]** The lexer keeps `\$` as an unknown escape (backslash plus
-dollar) and the parser resolves it, so the distinction between an escaped
-dollar and an interpolation opener survives lexing.
+Escaping and parity: `\$` is a literal dollar sign, so `"\${5}"` is the text
+`${5}`; `\\` is a literal backslash, so `"a\\${x}b"` is a backslash followed by
+an interpolation of `x`. The two cases stay distinct because the lexer marks an
+escaped dollar internally and the parser resolves that mark (an implementation
+detail: a private-use sentinel character that never reaches string values).
 
 **Single-quoted strings do not interpolate** (spec §1.4): `'${x}'` is the
-literal text `${x}`. They still process backslash escapes.
+literal text `${x}`. They process `\\` and `\'` only; other backslash sequences
+are preserved verbatim, so a single-quoted string can carry `\n` as two
+characters and a real newline literally.
 
 Diagnostics: **E012** unterminated interpolation (no matching `}`), **E013**
 empty interpolation (`${}`).

@@ -115,7 +115,98 @@ fn interpolation_span_is_reported_for_broken_expressions() {
                 .expect("an error diagnostic");
             let span = d.span.as_ref().expect("span");
             assert_eq!(span.line, 2, "span must be on the string's line: {span:?}");
+            assert!(
+                span.column > 9,
+                "span must point inside the string, got column {}",
+                span.column
+            );
         }
         Ok(_) => panic!("broken embedded expression must fail"),
     }
+}
+
+#[test]
+fn backslash_parity_is_preserved() {
+    // `\\` is a literal backslash, so `${x}` after it still interpolates.
+    let out = json("[t]\nx = 7\ns = \"a\\\\${x}b\"\n");
+    assert!(
+        out.contains("\"a\\\\7b\""),
+        "backslash + interpolation: {out}"
+    );
+    // `\$` is a literal dollar: no interpolation.
+    let out2 = json("[t]\nx = 7\ns = \"a\\${x}b\"\n");
+    assert!(
+        out2.contains("\"a${x}b\""),
+        "escaped dollar is literal: {out2}"
+    );
+}
+
+#[test]
+fn inline_table_inside_interpolation_is_a_type_error() {
+    // The brace scanner must not mistake the table's `}` for the
+    // interpolation's own, and a structured value has no string form.
+    let diags = codes("[t]\ns = \"${{k = 1}}\"\n");
+    assert_eq!(
+        diags,
+        vec!["T001"],
+        "interpolating a table must be a type error, never a placeholder"
+    );
+}
+
+#[test]
+fn leftover_tokens_after_the_expression_are_diagnosed() {
+    let diags = codes("[t]\nbad = \"${1 2}\"\n");
+    assert!(
+        diags.iter().any(|c| c == "E002"),
+        "trailing tokens must be diagnosed: {diags:?}"
+    );
+}
+
+#[test]
+fn sub_expression_lexical_errors_are_preserved() {
+    // `@` is not a lexical rule the sub-lexer accepts: E005 must survive.
+    let diags = codes("[t]\nbad = \"${1 @ 2}\"\n");
+    assert!(
+        diags.iter().any(|c| c == "E005" || c == "E002"),
+        "sub-lexer diagnostics must be preserved: {diags:?}"
+    );
+}
+
+#[test]
+fn repeated_interpolation_does_not_blow_up_the_scope() {
+    // Each `${a}` must transfer only its own identifiers; with the previous
+    // copy-back the scope grew per segment, making this quadratic.
+    let mut src = String::from("[t]\na = 1\ns = \"");
+    for _ in 0..4000 {
+        src.push_str("${a}");
+    }
+    src.push_str("\"\n");
+    let module = parse(&src, "interp").expect("must parse");
+    let engine = Engine::new();
+    let (value, diags) = engine.evaluate(&module).expect("must evaluate");
+    assert!(diags.is_empty(), "{diags:?}");
+    let out = solid_core::convert::value_to_pretty_json(&value);
+    assert!(
+        out.contains("1111"),
+        "each segment interpolates: {}",
+        &out[..80.min(out.len())]
+    );
+}
+
+#[test]
+fn single_quoted_values_with_dollar_and_newline_round_trip() {
+    use solid_core::{fmt::format, Style};
+    let src = "[t]\ns = 'a ${b}\nc'\n";
+    let module = parse(src, "interp").expect("must parse");
+    let formatted = format(&module, Style::Brace);
+    let reparsed = parse(&formatted, "interp")
+        .unwrap_or_else(|d| panic!("formatted output must re-parse: {d:?}\n{formatted}"));
+    let engine = Engine::new();
+    let (a, _) = engine.evaluate(&module).expect("original evaluates");
+    let (b, _) = engine.evaluate(&reparsed).expect("formatted evaluates");
+    assert_eq!(
+        solid_core::convert::value_to_pretty_json(&a),
+        solid_core::convert::value_to_pretty_json(&b),
+        "value must survive formatting:\n{formatted}"
+    );
 }

@@ -125,6 +125,27 @@ fn secrets_never_appear_in_type_error_messages() {
 }
 
 #[test]
+fn nested_secrets_never_appear_in_error_messages() {
+    // Redaction must be recursive: a secret inside an array or table is
+    // just as sensitive as a top-level one.
+    for src in [
+        "x = [secret(\"NESTEDSECRET\")] + 1\n",
+        "x = { token = secret(\"NESTEDSECRET\") } + 1\n",
+        "x = [[{ deep = secret(\"NESTEDSECRET\") }]] + 1\n",
+    ] {
+        let module = parse_with(src, "healing", STRICT).expect("must parse");
+        let err = solid_core::Engine::new()
+            .evaluate(&module)
+            .expect_err("type error expected");
+        let rendered = format!("{}", err);
+        assert!(
+            !rendered.contains("NESTEDSECRET"),
+            "nested secret leaked for {src:?}: {rendered}"
+        );
+    }
+}
+
+#[test]
 fn bracket_mismatch_fails_strict_and_heals_resilient() {
     // Strict: mismatched closer is an error.
     let err = parse_with("x = [1}\n", "healing", STRICT).expect_err("strict must fail");

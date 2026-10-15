@@ -68,8 +68,8 @@ still fails the process); `--resilient` exits zero in that case. Repairs below
 the 0.70 floor are never applied — the input is rejected instead (E005 for
 characters no rule accepts).
 
-Phase 1 codes (H001–H004, H006) are emitted by the lexer and parser. H005 is
-the phase-2 semantic key repair: the similarity engine
+Phase 1 codes (H001–H004) are emitted by the lexer and parser; H005 is the
+phase-2 semantic key repair: the similarity engine
 (`normalized_levenshtein` + `keyboard_similarity` + `phonetic_similarity`,
 combined with a noisy-OR) and `best_key_match` are implemented and tested;
 the schema-driven wiring lands with C-030. Phase-3 coercions
@@ -94,9 +94,9 @@ Every diagnostic may carry a `Repair { original, suggested, kind, safe }` and a
 | 0.70 – 0.84 | apply only in resilient mode |
 | < 0.70 | never auto-apply |
 
-No current code emits repairs yet — E004/W001 are exact-position diagnostics
-where a repair is either trivial (nesting limit) or impossible (unknown name).
-C-016 turns on the H0xx repair range.
+C-016 implements the H0xx repair range (see the table above); E004 is an
+exact-position hard limit and W001 an unknown-name warning, neither of which
+carries a repair suggestion.
 
 ## Severity levels
 

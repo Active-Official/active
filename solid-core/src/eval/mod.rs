@@ -210,9 +210,22 @@ impl Engine {
 
 /// Render a value for a diagnostic message without ever revealing secret
 /// material (security invariant: secrets never appear in errors or logs).
+/// Redaction is recursive — a secret nested inside an array or table is
+/// just as sensitive as a top-level one.
 fn redacted(v: &Value) -> String {
     match v {
         Value::Secret(_) => "Secret(***)".to_string(),
+        Value::Array(items) => {
+            let inner: Vec<String> = items.iter().map(redacted).collect();
+            format!("[{}]", inner.join(", "))
+        }
+        Value::Table(map) => {
+            let inner: Vec<String> = map
+                .iter()
+                .map(|(k, val)| format!("{:?}: {}", k, redacted(val)))
+                .collect();
+            format!("{{{}}}", inner.join(", "))
+        }
         other => format!("{:?}", other),
     }
 }

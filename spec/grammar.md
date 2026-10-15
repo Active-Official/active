@@ -301,6 +301,8 @@ configuration. Unresolved identifiers warn (W001) in both modes.
 | E002 | unexpected token | parser |
 | E003 | malformed `secret.env` argument | parser |
 | E004 | expression nesting limit exceeded | parser |
+| E005 | unexpected character | lexer |
 | W001 | unresolved identifier | evaluator |
 
-Full catalog: `docs/diagnostics.md` (C-015).
+Full catalog: `docs/diagnostics.md` (C-015), including the H0xx healing range
+and the confidence policy (C-016).

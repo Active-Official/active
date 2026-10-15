@@ -110,19 +110,33 @@ fn unexpected_character_is_rejected_in_both_modes() {
 
 #[test]
 fn secrets_never_reach_stdout_or_stderr() {
-    // A secret-bearing document that also fails must not leak the value.
-    let f = fixture(
-        "cfg_secret_leak.solid",
-        "x = secret(\"TOPSECRETVALUE\") + 1\n",
-    );
-    let out = solid().arg("eval").arg(&f).output().expect("run solid");
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(
-        !combined.contains("TOPSECRETVALUE"),
-        "secret leaked to the console: {combined}"
-    );
+    // A secret-bearing document that also fails must not leak the value —
+    // including nested inside collections.
+    for (name, src) in [
+        (
+            "cfg_secret_leak.solid",
+            "x = secret(\"TOPSECRETVALUE\") + 1\n",
+        ),
+        (
+            "cfg_secret_nested.solid",
+            "x = [secret(\"TOPSECRETVALUE\")] + 1\n",
+        ),
+        (
+            "cfg_secret_table.solid",
+            "x = { token = secret(\"TOPSECRETVALUE\") } + 1\n",
+        ),
+    ] {
+        let f = fixture(name, src);
+        let out = solid().arg("eval").arg(&f).output().expect("run solid");
+        assert!(!out.status.success(), "{name}: expected failure");
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            !combined.contains("TOPSECRETVALUE"),
+            "{name}: secret leaked to the console: {combined}"
+        );
+    }
 }

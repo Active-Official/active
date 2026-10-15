@@ -283,6 +283,9 @@ impl Parser {
                 format!("maximum expression nesting depth ({MAX_EXPR_DEPTH}) exceeded"),
             );
             self.depth -= 1;
+            // Consume the current token so enclosing loops (arrays, inline
+            // tables) always make progress and cannot spin on the error.
+            self.bump();
             return self.module.add_node(Node::Literal(Value::Null));
         }
         let node = self.parse_or();

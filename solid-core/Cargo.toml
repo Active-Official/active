@@ -15,3 +15,5 @@ petgraph = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
+proptest = "1"
+indexmap = { workspace = true }

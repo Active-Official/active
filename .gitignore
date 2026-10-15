@@ -49,3 +49,7 @@ __pycache__/
 *.tmp
 *.log
 *.bak
+
+# Fuzzing artifacts (cargo-fuzz)
+fuzz/artifacts/
+fuzz/corpus/

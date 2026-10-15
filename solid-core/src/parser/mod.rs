@@ -21,10 +21,17 @@
 
 mod lexer;
 
+pub use lexer::{Lexer, Token, TokenKind};
+
+/// Maximum expression nesting depth (parenthesized expressions, unary
+/// operator chains, nested arrays, nested inline tables). A hard limit
+/// that prevents stack exhaustion from pathological input — the
+/// parser-side half of the execution budget (see C-037).
+const MAX_EXPR_DEPTH: usize = 64;
+
 use crate::diag::{Diagnostic, Severity, Span};
 use crate::ir::*;
 use crate::types::Unit;
-use lexer::{Lexer, Token, TokenKind};
 
 pub fn parse(source: &str, name: &str) -> Result<Module, Vec<Diagnostic>> {
     let mut lexer = Lexer::new(source);
@@ -35,6 +42,7 @@ pub fn parse(source: &str, name: &str) -> Result<Module, Vec<Diagnostic>> {
         module: Module::new(name),
         errors: Vec::new(),
         ident_scopes: Vec::new(),
+        depth: 0,
     };
     parser.parse_document();
     if parser.errors.is_empty() {
@@ -55,6 +63,8 @@ struct Parser {
     /// table). The owning key prevents a key's own value from resolving to
     /// itself.
     ident_scopes: Vec<Vec<(String, NodeId)>>,
+    /// Current expression nesting depth, guarded by MAX_EXPR_DEPTH.
+    depth: usize,
 }
 
 impl Parser {
@@ -266,7 +276,18 @@ impl Parser {
     // ------------------------------------------------------------------
 
     fn parse_expression(&mut self) -> NodeId {
-        self.parse_or()
+        self.depth += 1;
+        if self.depth > MAX_EXPR_DEPTH {
+            self.error(
+                "E004",
+                format!("maximum expression nesting depth ({MAX_EXPR_DEPTH}) exceeded"),
+            );
+            self.depth -= 1;
+            return self.module.add_node(Node::Literal(Value::Null));
+        }
+        let node = self.parse_or();
+        self.depth -= 1;
+        node
     }
 
     fn parse_or(&mut self) -> NodeId {
@@ -377,21 +398,28 @@ impl Parser {
 
     fn parse_unary(&mut self) -> NodeId {
         match self.peek_kind() {
-            TokenKind::Minus => {
+            TokenKind::Minus | TokenKind::Bang => {
+                // Unary chains recurse through parse_unary, so the depth
+                // guard must live here too (parse_expression cannot see it).
+                self.depth += 1;
+                if self.depth > MAX_EXPR_DEPTH {
+                    self.error(
+                        "E004",
+                        format!("maximum expression nesting depth ({MAX_EXPR_DEPTH}) exceeded"),
+                    );
+                    self.depth -= 1;
+                    self.bump(); // consume the operator to guarantee progress
+                    return self.module.add_node(Node::Literal(Value::Null));
+                }
+                let op = if matches!(self.peek_kind(), TokenKind::Minus) {
+                    UnOp::Neg
+                } else {
+                    UnOp::Not
+                };
                 self.bump();
                 let expr = self.parse_unary();
-                self.module.add_node(Node::Unary {
-                    op: UnOp::Neg,
-                    expr,
-                })
-            }
-            TokenKind::Bang => {
-                self.bump();
-                let expr = self.parse_unary();
-                self.module.add_node(Node::Unary {
-                    op: UnOp::Not,
-                    expr,
-                })
+                self.depth -= 1;
+                self.module.add_node(Node::Unary { op, expr })
             }
             _ => self.parse_primary(),
         }

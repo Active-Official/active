@@ -63,6 +63,8 @@ impl Unit {
             "/req/s" => Some(Unit::RequestsPerSecond),
             "/req/m" => Some(Unit::RequestsPerMinute),
             "/req/h" => Some(Unit::RequestsPerHour),
+            "req/m" | "req_m" => Some(Unit::RequestsPerMinute),
+            "req/h" | "req_h" => Some(Unit::RequestsPerHour),
 
             other => Some(Unit::Custom(other.to_string())),
         }

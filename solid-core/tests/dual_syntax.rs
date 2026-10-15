@@ -238,3 +238,50 @@ fn mismatched_pair_does_not_disable_indentation_measurement() {
         "the following statement must still parse: {json}"
     );
 }
+
+#[test]
+fn header_body_ends_below_the_headers_own_column() {
+    // A `[header]` inside a block is a child of that block; statements at
+    // the header's own column belong to the header, and the sibling after
+    // the header keeps its own placement (0-based level comparison).
+    let src = "outer:\n  [nested]\n  a = 1\nsibling = 2\n";
+    let json = tree(src);
+    assert!(
+        json.contains("\"nested\"") && json.contains("\"a\": 1"),
+        "header body must hold its own statements: {json}"
+    );
+    let nested_start = json.find("\"nested\"").expect("nested present");
+    let sibling_start = json.find("\"sibling\"").expect("sibling present");
+    assert!(
+        nested_start < sibling_start,
+        "sibling must follow the nested table: {json}"
+    );
+    // `sibling` is a root key, so it must appear after outer's table closes.
+    let outer_start = json.find("\"outer\"").expect("outer present");
+    let between = &json[outer_start..sibling_start];
+    assert!(
+        between.matches('}').count() >= 2,
+        "outer and nested must both close before sibling: {json}"
+    );
+}
+
+#[test]
+fn depth_limit_recovery_keeps_following_siblings() {
+    // Deep nesting inside a block, then a sibling at the outer level: the
+    // E011 recovery must not swallow the sibling into the deep block.
+    let mut src = String::from("root:\n");
+    for level in 1..80 {
+        src.push_str(&"  ".repeat(level + 1));
+        src.push_str("k:\n");
+    }
+    src.push_str("sibling = 7\n");
+    let (json, errs) = recovered(&src);
+    assert!(
+        errs.contains(&"E011".to_string()),
+        "expected E011 for over-deep nesting: {errs:?}"
+    );
+    assert!(
+        json.contains("\"sibling\": 7"),
+        "the sibling after the deep block must survive recovery: {json}"
+    );
+}

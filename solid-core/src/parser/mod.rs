@@ -233,16 +233,47 @@ impl Parser {
     }
 
     /// Skip tokens until the terminator of an over-deep body, so recovery
-    /// makes progress without recursing further.
+    /// makes progress without recursing further. Terminator- and
+    /// level-aware: a Dedent that closes a deeper child must not stop the
+    /// skip early, or later statements would leak into an outer scope.
     fn recover_block(&mut self, end: BodyEnd) {
+        let mut open_braces = 0usize;
         loop {
             match self.peek_kind() {
                 TokenKind::Eof => return,
-                TokenKind::Dedent => {
+                TokenKind::LBrace => {
+                    open_braces += 1;
                     self.bump();
-                    return;
                 }
-                TokenKind::RBrace if end == BodyEnd::Brace => return,
+                TokenKind::RBrace => {
+                    if open_braces > 0 {
+                        open_braces -= 1;
+                        self.bump();
+                    } else if end == BodyEnd::Brace {
+                        self.bump();
+                        return;
+                    } else {
+                        self.bump();
+                    }
+                }
+                TokenKind::Dedent => {
+                    let tok = self.peek().clone();
+                    let target = indent_level(&tok);
+                    match end {
+                        BodyEnd::Block(level) | BodyEnd::HeaderBody(level) => {
+                            self.bump();
+                            if target < level {
+                                return;
+                            }
+                        }
+                        _ => {
+                            self.bump();
+                        }
+                    }
+                }
+                TokenKind::LBracket | TokenKind::Let if matches!(end, BodyEnd::HeaderBody(_)) => {
+                    return
+                }
                 _ => {
                     self.bump();
                 }
@@ -546,7 +577,8 @@ impl Parser {
 
     fn parse_table_header(&mut self, parent: &mut indexmap::IndexMap<String, NodeId>) {
         let open = self.peek().clone();
-        let header_level = open.col as usize;
+        // Source columns are 1-based; indentation levels are 0-based.
+        let header_level = open.col.saturating_sub(1) as usize;
         self.bump(); // [
         let name = match self.expect(TokenKind::Ident) {
             Some(t) => t.text,

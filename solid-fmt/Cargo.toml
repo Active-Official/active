@@ -1,0 +1,14 @@
+[package]
+name = "solid-fmt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Formatter for SOLID (dual-syntax aware)"
+
+[[bin]]
+name = "solid-fmt"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+anyhow = { workspace = true }

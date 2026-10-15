@@ -1,0 +1,14 @@
+[package]
+name = "solid-ls"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Language Server Protocol implementation for SOLID"
+
+[[bin]]
+name = "solid-ls"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+serde_json = { workspace = true }

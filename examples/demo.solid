@@ -1,0 +1,23 @@
+# Minimal working example for the alpha evaluator
+
+let region = env.AWS_REGION ?: "us-east-1"
+let timeout = 5
+
+[app]
+name = "solid-demo"
+environment = "development"
+debug = true
+
+[server]
+host = "0.0.0.0"
+port = 8080
+read_timeout = timeout
+
+[services]
+auth_url = "https://api.example.com/auth"
+users_url = "https://api.example.com/users"
+
+feature_flags = [
+  { name = "new_checkout", enabled = true },
+  { name = "dark_mode", enabled = false }
+]

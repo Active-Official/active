@@ -1,0 +1,72 @@
+# ============================================================
+# complete.solid — Exercises almost every feature of the alpha
+# ============================================================
+
+# ----- Local bindings -----
+let region       = env.AWS_REGION ?: "us-east-1"
+let base_domain  = "example.com"
+let api_base     = "https://api.${region}.${base_domain}"
+let default_timeout = 5s
+let cache_size   = 512MiB
+let rate_limit   = 100
+
+# ----- Application -----
+[app]
+name        = "solid-complete-demo"
+environment = env.APP_ENV ?: "development"
+debug       = true
+version     = "0.2.0-alpha"
+
+# ----- Server with units -----
+[server]
+host          = "0.0.0.0"
+port          = 8080
+read_timeout  = 10s
+write_timeout = 30s
+idle_timeout  = default_timeout * 2
+
+# ----- Services (interpolation + calculated values) -----
+[services]
+auth_url  = "${api_base}/auth/v1"
+users_url = "${api_base}/users/v2"
+billing_url = "${api_base}/billing"
+
+auth_timeout  = default_timeout
+users_timeout = default_timeout * 2
+billing_timeout = 8s
+
+# ----- Database with secret -----
+[database]
+host     = env.DB_HOST ?: "localhost"
+port     = env.DB_PORT ?: 5432
+name     = "solid_app"
+user     = env.DB_USER ?: "app"
+password = secret("prod/db/password")
+pool_size = 20
+
+# ----- Cache -----
+[cache]
+size          = cache_size
+ttl           = 15m
+max_item_size = 2MiB
+
+# ----- Feature flags (array of inline tables) -----
+feature_flags = [
+  { name = "new_checkout", enabled = true,  rollout = 25 },
+  { name = "dark_mode",    enabled = true,  rollout = 100 },
+  { name = "ai_search",    enabled = false, rollout = 0 }
+]
+
+# ----- Workers (array of tables style via repeated keys is future;
+#       for now we use a single array) -----
+workers = [
+  { name = "image-processor", queue = "images",  concurrency = 4, timeout = 45s },
+  { name = "email-sender",    queue = "emails",  concurrency = 8, timeout = 15s },
+  { name = "report-generator", queue = "reports", concurrency = 2, timeout = 120s }
+]
+
+# ----- Simple calculated / boolean logic -----
+[limits]
+max_replicas = rate_limit / 10
+is_prod      = false
+can_scale    = !is_prod

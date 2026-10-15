@@ -28,6 +28,8 @@ pub enum Unit {
     PerMinute,
     PerHour,
     RequestsPerSecond,
+    RequestsPerMinute,
+    RequestsPerHour,
     // Custom
     Custom(String),
 }
@@ -58,6 +60,9 @@ impl Unit {
             "/m" | "per_m" => Some(Unit::PerMinute),
             "/h" | "per_h" => Some(Unit::PerHour),
             "req/s" | "req_s" => Some(Unit::RequestsPerSecond),
+            "/req/s" => Some(Unit::RequestsPerSecond),
+            "/req/m" => Some(Unit::RequestsPerMinute),
+            "/req/h" => Some(Unit::RequestsPerHour),
 
             other => Some(Unit::Custom(other.to_string())),
         }

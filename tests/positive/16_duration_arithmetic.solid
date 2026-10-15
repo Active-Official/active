@@ -1,0 +1,10 @@
+let base = 5s
+
+[timeouts]
+base = base
+doubled = base * 2
+sum = 30s + 10s
+half = 10s / 2
+diff = 30s - 10s
+ratio = 10s / 5s
+plus_scalar = 30s + 15s

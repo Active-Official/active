@@ -1,0 +1,6 @@
+[cache]
+size = 512MiB
+small = 2KiB
+large = 1GiB
+decimal = 100MB
+raw = 4096B

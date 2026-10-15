@@ -1,0 +1,5 @@
+[lists]
+numbers = [1, 2, 3]
+strings = ["a", "b", "c"]
+mixed = [1, "two", true, null]
+nested = [[1, 2], [3, 4]]

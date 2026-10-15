@@ -1,0 +1,7 @@
+[timeouts]
+fast = 500ms
+normal = 5s
+long = 15m
+very_long = 2h
+tiny = 100us
+sub_ms = 250ns

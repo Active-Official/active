@@ -1,0 +1,7 @@
+let base = 5s
+
+[t]
+base = base
+doubled = base * 2
+sum = 30s + 10s
+ratio = 10s / 5s

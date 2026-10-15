@@ -1,0 +1,6 @@
+[floats]
+ratio = 3.14
+half = 0.5
+sum = 1.5 + 2.25
+product = 2.5 * 4.0
+big = 1_000_000

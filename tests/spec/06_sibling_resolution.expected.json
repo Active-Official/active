@@ -1,0 +1,11 @@
+{
+  "app": {
+    "name": "outer"
+  },
+  "limits": {
+    "base": 10,
+    "doubled": 20,
+    "ref": 42,
+    "target": 42
+  }
+}

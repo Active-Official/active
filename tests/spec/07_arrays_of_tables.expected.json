@@ -1,0 +1,14 @@
+{
+  "servers": {
+    "hosts": [
+      {
+        "name": "alpha",
+        "port": 1
+      },
+      {
+        "name": "beta",
+        "port": 2
+      }
+    ]
+  }
+}

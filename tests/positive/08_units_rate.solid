@@ -1,0 +1,5 @@
+[limits]
+requests = 100/req/s
+checks = 50/m
+hourly = 60/h
+per_second = 25/s

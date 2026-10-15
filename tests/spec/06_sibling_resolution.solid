@@ -1,0 +1,10 @@
+let name = "outer"
+
+[app]
+name = name
+
+[limits]
+base = 10
+doubled = base * 2
+ref = target
+target = 42

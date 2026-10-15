@@ -1,0 +1,9 @@
+[units]
+t1 = 5s
+t2 = 500ms
+t3 = 1m
+t4 = 2h
+b1 = 512MiB
+b2 = 2KiB
+b3 = 1GiB
+r1 = 100/req/s

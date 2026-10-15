@@ -1,0 +1,7 @@
+[flags]
+enabled = true
+is_prod = false
+can_scale = !is_prod
+both = enabled && !is_prod
+either = is_prod || enabled
+double_negation = !!enabled

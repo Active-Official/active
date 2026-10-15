@@ -1,0 +1,5 @@
+let host = "api.example.com"
+let port = 8080
+
+[service]
+url = "https://${host}:${port}/v1"

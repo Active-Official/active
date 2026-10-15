@@ -1,0 +1,4 @@
+let optional = env.DEFINITELY_NOT_SET_SOLID_VAR ?: null
+
+[flags]
+feature = optional

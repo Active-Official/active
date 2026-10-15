@@ -1,0 +1,7 @@
+[strings]
+escaped = "tab\there"
+newline = "line1\nline2"
+quoted = "say \"hi\""
+backslash = "a\\b"
+single = 'literal string'
+empty = ""

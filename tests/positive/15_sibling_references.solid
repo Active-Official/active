@@ -1,0 +1,8 @@
+[limits]
+base = 10
+doubled = base * 2
+tripled = base * 3
+
+[derived]
+ref = value
+value = 42

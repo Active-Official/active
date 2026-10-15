@@ -1,0 +1,9 @@
+[calc]
+sum = 2 + 3
+diff = 10 - 4
+product = 6 * 7
+quotient = 20 / 4
+mixed = 2 * 3 + 1
+precedence = 2 + 3 * 4
+grouped = (2 + 3) * 4
+negative = 5 - 10

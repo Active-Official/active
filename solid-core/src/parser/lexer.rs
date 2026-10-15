@@ -437,6 +437,7 @@ impl Lexer {
         const KNOWN: &[&str] = &[
             "ns", "us", "µs", "ms", "s", "m", "h", "d", "B", "KiB", "MiB", "GiB", "TiB", "KB",
             "MB", "GB", "TB", "/s", "/m", "/h", "per_s", "per_m", "per_h", "req/s", "req_s",
+            "/req/s", "/req/m", "/req/h",
         ];
 
         if KNOWN.contains(&s.as_str()) {

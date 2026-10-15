@@ -108,6 +108,9 @@ impl Engine {
                                         Value::Float(f) => out.push_str(&f.to_string()),
                                         Value::Bool(b) => out.push_str(&b.to_string()),
                                         Value::DurationMs(ms) => out.push_str(&format!("{}ms", ms)),
+                                        Value::Quantity(n, unit) => {
+                                            out.push_str(&format!("{}{}", n, unit.suffix()))
+                                        }
                                         Value::Secret(_) => {
                                             return Err(EvalError::SecretLeak);
                                         }
@@ -186,8 +189,8 @@ fn normalize_quantity(v: &Value, unit: &Unit) -> Result<Value, EvalError> {
         // Represent bytes as Int for simplicity in the alpha
         return Ok(Value::Int(bytes as i64));
     }
-    // Fallback: keep original number
-    Ok(Value::Int(num as i64))
+    // Rates and custom units retain their dimension (e.g. 100/req/s).
+    Ok(Value::Quantity(num, unit.clone()))
 }
 
 fn eval_binary(op: BinOp, lhs: &Value, rhs: &Value) -> Result<Value, EvalError> {
@@ -284,6 +287,7 @@ fn value_eq(a: &Value, b: &Value) -> bool {
         (Value::Float(x), Value::Float(y)) => (x - y).abs() < f64::EPSILON,
         (Value::String(x), Value::String(y)) => x == y,
         (Value::DurationMs(x), Value::DurationMs(y)) => x == y,
+        (Value::Quantity(x, ux), Value::Quantity(y, uy)) => x == y && ux == uy,
         _ => false,
     }
 }

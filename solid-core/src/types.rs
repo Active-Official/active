@@ -68,6 +68,35 @@ impl Unit {
         }
     }
 
+    /// The canonical source suffix for this unit (inverse of `from_suffix`).
+    pub fn suffix(&self) -> String {
+        match self {
+            Unit::Nanoseconds => "ns".into(),
+            Unit::Microseconds => "us".into(),
+            Unit::Milliseconds => "ms".into(),
+            Unit::Seconds => "s".into(),
+            Unit::Minutes => "m".into(),
+            Unit::Hours => "h".into(),
+            Unit::Days => "d".into(),
+            Unit::Bytes => "B".into(),
+            Unit::Kibibytes => "KiB".into(),
+            Unit::Mebibytes => "MiB".into(),
+            Unit::Gibibytes => "GiB".into(),
+            Unit::Tebibytes => "TiB".into(),
+            Unit::Kilobytes => "KB".into(),
+            Unit::Megabytes => "MB".into(),
+            Unit::Gigabytes => "GB".into(),
+            Unit::Terabytes => "TB".into(),
+            Unit::PerSecond => "/s".into(),
+            Unit::PerMinute => "/m".into(),
+            Unit::PerHour => "/h".into(),
+            Unit::RequestsPerSecond => "req/s".into(),
+            Unit::RequestsPerMinute => "req/m".into(),
+            Unit::RequestsPerHour => "req/h".into(),
+            Unit::Custom(s) => s.clone(),
+        }
+    }
+
     /// Normalize a numeric value + time unit into milliseconds.
     pub fn normalize_time_to_ms(&self, value: f64) -> Option<u64> {
         let ms = match self {

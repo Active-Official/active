@@ -141,7 +141,8 @@ pub enum Value {
     Int(i64),
     Float(f64),
     String(String),
-    DurationMs(u64), // normalized to milliseconds for simplicity in alpha
+    DurationMs(u64),     // normalized to milliseconds for simplicity in alpha
+    Quantity(f64, Unit), // rate/custom units retain their dimension
     Array(Vec<Value>),
     Table(IndexMap<String, Value>),
     Secret(String), // in production this is zeroized; here plain for demo

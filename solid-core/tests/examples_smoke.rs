@@ -1,6 +1,6 @@
 //! Smoke tests: the shipped examples must parse and evaluate cleanly.
-//! TODO(solid C-010): replace with the full positive/negative/spec/fuzz
-//! test corpus (first 20 positive and 10 negative `.solid` files).
+//! Fast subset of the full corpus in tests/ (positive/negative/spec);
+//! kept deliberately small for quick local feedback.
 
 use solid_core::{parse, Engine, Value};
 

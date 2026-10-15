@@ -14,7 +14,7 @@ pub mod types;
 pub use diag::{Diagnostic, Repair, RepairKind, Severity};
 pub use eval::Engine;
 pub use ir::{BinOp, Module, Node, NodeId, UnOp, Value};
-pub use parser::parse;
+pub use parser::{parse, parse_with, ParseOptions};
 pub use types::{Constraint, Unit};
 
 /// Library version

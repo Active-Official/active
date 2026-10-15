@@ -52,12 +52,25 @@ creates). A diagnostic without an attainable position omits the
 |---|---|---|---|
 | W001 | `unresolved identifier '<name>'` | node | An identifier matches no sibling key and no `let` binding; the value becomes `null` |
 
-### H0xx — Healing (reserved for C-016)
+### H0xx — Healing (implemented in C-016)
 
-H001 (`key typo suggestion`) exists as scaffolding in `solid-core/src/heal.rs`
-and becomes live with the three-phase production healer (C-016). The full H0xx
-range is reserved for healing diagnostics: syntactic repairs, semantic key
-repairs, and type/constraint healing.
+| Code | Message | Confidence | Strict | Resilient |
+|---|---|---|---|---|
+| H001 | `string literal reached end of input without a closing <q>; inserted` | 0.98 | applied (Info) | applied (Info) |
+| H002 | `removed trailing comma before closing <delim>` / `removed stray comma` | 0.98 | applied (Info) | applied (Info) |
+| H003 | `inserted missing comma between <elements\|table entries>` | 0.90 | E001 error | applied (Warning) |
+| H004 | `mismatched closing delimiter; replaced <a> with <b>` | 0.82 | E001 error | applied (Warning) |
+| H005 | `unknown key '<typo>', did you mean '<suggestion>'?` | caller-set | — | — |
+| H006 | `unexpected character '<c>' skipped` | 0.60 | warning | warning |
+
+Phase 1 codes (H001–H004, H006) are emitted by the lexer and parser. H005 is
+the phase-2 semantic key repair: the similarity engine
+(`normalized_levenshtein` + `keyboard_similarity` + `phonetic_similarity`,
+combined with a noisy-OR) and `best_key_match` are implemented and tested;
+the schema-driven wiring lands with C-030. Phase-3 coercions
+(`try_coerce_int`, `try_coerce_duration`, `sentinel_meaning`,
+`coerce_string_to`) are implemented as pure functions, likewise wired to
+schemas in C-030.
 
 ### X0xx — Execution budget (reserved for C-037)
 

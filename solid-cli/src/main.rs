@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use solid_core::convert::{value_to_pretty_json, value_to_simple_toml};
-use solid_core::{parse, Engine};
+use solid_core::diag::{Diagnostic, Severity};
+use solid_core::{parse, parse_with, Engine, ParseOptions};
 use std::fs;
 use std::path::PathBuf;
 
@@ -24,9 +25,17 @@ enum Commands {
         /// Output format
         #[arg(short, long, default_value = "json")]
         format: String,
+        /// Enable medium-confidence healing repairs (resilient mode)
+        #[arg(long)]
+        resilient: bool,
     },
     /// Check a file for errors / cycles / unresolved names
-    Check { file: PathBuf },
+    Check {
+        file: PathBuf,
+        /// Enable medium-confidence healing repairs (resilient mode)
+        #[arg(long)]
+        resilient: bool,
+    },
     /// Show dependency graph in simple text form
     Graph { file: PathBuf },
     /// Convert evaluated result to JSON or simple TOML
@@ -37,7 +46,13 @@ enum Commands {
     },
 }
 
-use solid_core::diag::Diagnostic;
+/// True when the exit code must be non-zero: strict mode fails on any
+/// Warning-or-Error; resilient mode fails only on Error.
+fn had_failure(diags: &[Diagnostic], resilient: bool) -> bool {
+    diags
+        .iter()
+        .any(|d| d.severity == Severity::Error || (!resilient && d.severity == Severity::Warning))
+}
 
 /// Print a diagnostic with its span (path:line:col) when available.
 fn report(d: &Diagnostic, file: &str) {
@@ -54,10 +69,15 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Eval { file, format } => {
+        Commands::Eval {
+            file,
+            format,
+            resilient,
+        } => {
             let src = fs::read_to_string(&file)?;
             let name = file.to_string_lossy().to_string();
-            let module = parse(&src, &name).map_err(|diags| {
+            let options = ParseOptions { resilient };
+            let module = parse_with(&src, &name, options).map_err(|diags| {
                 for d in &diags {
                     report(d, &name);
                 }
@@ -88,11 +108,15 @@ fn main() -> anyhow::Result<()> {
                 "toml" => println!("{}", value_to_simple_toml(&value, "")),
                 other => anyhow::bail!("unsupported format: {}", other),
             }
+            if had_failure(&diags, resilient) {
+                std::process::exit(1);
+            }
         }
-        Commands::Check { file } => {
+        Commands::Check { file, resilient } => {
             let src = fs::read_to_string(&file)?;
             let name = file.to_string_lossy().to_string();
-            match parse(&src, &name) {
+            let options = ParseOptions { resilient };
+            match parse_with(&src, &name, options) {
                 Ok(module) => {
                     let engine = Engine::new();
                     match engine.evaluate(&module) {
@@ -100,9 +124,12 @@ fn main() -> anyhow::Result<()> {
                             if diags.is_empty() {
                                 println!("OK");
                             } else {
-                                for d in diags {
-                                    report(&d, &name);
+                                for d in &diags {
+                                    report(d, &name);
                                 }
+                            }
+                            if had_failure(&diags, resilient) {
+                                std::process::exit(1);
                             }
                         }
                         Err(e) => {

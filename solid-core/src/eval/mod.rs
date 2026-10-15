@@ -84,6 +84,7 @@ impl Engine {
 
         let mut values: HashMap<NodeId, Value> = HashMap::new();
         let mut diagnostics = module.diagnostics.clone();
+        diagnostics.extend(module.healing.iter().cloned());
 
         for node_idx in order {
             let node_id = module.graph[node_idx];

@@ -39,21 +39,40 @@ fn span_of(tok: &Token) -> Span {
 /// parser-side half of the execution budget (see C-037).
 const MAX_EXPR_DEPTH: usize = 64;
 
-use crate::diag::{Diagnostic, Severity, Span};
+use crate::diag::{thresholds, Diagnostic, Repair, RepairKind, Severity, Span};
 use crate::ir::*;
 use crate::types::Unit;
 
+/// Options controlling parsing and healing behavior.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ParseOptions {
+    /// When true, medium-confidence repairs (0.70–0.94) are applied and
+    /// reported as warnings. When false (strict, the default), they are
+    /// declined and the underlying syntax diagnostic stands.
+    pub resilient: bool,
+}
+
 pub fn parse(source: &str, name: &str) -> Result<Module, Vec<Diagnostic>> {
+    parse_with(source, name, ParseOptions::default())
+}
+
+pub fn parse_with(
+    source: &str,
+    name: &str,
+    options: ParseOptions,
+) -> Result<Module, Vec<Diagnostic>> {
     let mut lexer = Lexer::new(source);
-    let tokens = lexer.tokenize();
+    let lexed = lexer.tokenize();
     let mut parser = Parser {
-        tokens,
+        tokens: lexed.tokens,
         pos: 0,
         module: Module::new(name),
         errors: Vec::new(),
         ident_scopes: Vec::new(),
         depth: 0,
+        options,
     };
+    parser.module.healing.extend(lexed.repairs);
     parser.parse_document();
     if parser.errors.is_empty() {
         parser.build_graph();
@@ -75,6 +94,8 @@ struct Parser {
     ident_scopes: Vec<Vec<(String, NodeId)>>,
     /// Current expression nesting depth, guarded by MAX_EXPR_DEPTH.
     depth: usize,
+    /// Healing mode for this parse.
+    options: ParseOptions,
 }
 
 impl Parser {
@@ -148,6 +169,84 @@ impl Parser {
         let id = self.module.add_node(node);
         self.module.record_span(id, span_of(tok));
         id
+    }
+
+    // ------------------------------------------------------------------
+    // Healing (C-016): syntactic repairs with confidence scoring
+    // ------------------------------------------------------------------
+
+    /// Record a healing diagnostic. Repairs below the AUTO_APPLY threshold
+    /// are only applied in resilient mode; in strict mode the caller keeps
+    /// the original syntax diagnostic instead.
+    fn heal(
+        &mut self,
+        code: &str,
+        message: String,
+        tok: &Token,
+        repair: Repair,
+        confidence: f64,
+    ) -> bool {
+        let applies = confidence >= thresholds::AUTO_APPLY || self.options.resilient;
+        if !applies {
+            return false;
+        }
+        self.module.healing.push(Diagnostic {
+            severity: if confidence >= thresholds::AUTO_APPLY {
+                Severity::Info
+            } else {
+                Severity::Warning
+            },
+            code: code.into(),
+            message,
+            path: None,
+            span: Some(span_of(tok)),
+            repair: Some(repair),
+            confidence,
+        });
+        true
+    }
+
+    /// Consume a closing delimiter, healing a bracket/brace mismatch when
+    /// the mode allows it (H004, medium confidence: single-token
+    /// substitution). Returns true when the delimiter was consumed.
+    fn expect_closing_healing(&mut self, expected: TokenKind, heal_code: &str) -> bool {
+        let next = self.peek().clone();
+        if next.kind == expected {
+            self.bump();
+            return true;
+        }
+        let healable = matches!(
+            (&expected, &next.kind),
+            (TokenKind::RBracket, TokenKind::RBrace) | (TokenKind::RBrace, TokenKind::RBracket)
+        );
+        if healable {
+            let applied = self.heal(
+                heal_code,
+                format!(
+                    "mismatched closing delimiter; replaced {:?} with {:?}",
+                    next.kind, expected
+                ),
+                &next,
+                Repair {
+                    original: format!("{:?}", next.kind),
+                    suggested: format!("{:?}", expected),
+                    kind: RepairKind::Other("bracket_mismatch".into()),
+                    safe: false,
+                },
+                thresholds::MEDIUM + 0.12, // 0.82 — resilient mode only
+            );
+            if applied {
+                self.bump();
+                return true;
+            }
+        }
+        // Not healed: report the missing delimiter and leave the token for
+        // the caller's error path.
+        self.error(
+            "E001",
+            format!("expected {:?}, found {:?}", expected, next.kind),
+        );
+        false
     }
 
     // ------------------------------------------------------------------
@@ -653,20 +752,81 @@ impl Parser {
         let mut elements = Vec::new();
         loop {
             self.skip_newlines();
-            if matches!(self.peek_kind(), TokenKind::RBracket | TokenKind::Eof) {
+            // RBrace is a mismatched closer: stop so the closing-delimiter
+            // healer (H004) can see it instead of parse_primary eating it.
+            if matches!(
+                self.peek_kind(),
+                TokenKind::RBracket | TokenKind::RBrace | TokenKind::Eof
+            ) {
                 break;
             }
             if matches!(self.peek_kind(), TokenKind::Comma) {
-                self.bump();
+                // Stray or repeated comma: heal as a removal.
+                let comma = self.bump();
+                if !self.heal(
+                    "H002",
+                    "removed stray comma".into(),
+                    &comma,
+                    Repair {
+                        original: ",".into(),
+                        suggested: String::new(),
+                        kind: RepairKind::RemoveTrailingComma,
+                        safe: true,
+                    },
+                    thresholds::AUTO_APPLY + 0.03,
+                ) {
+                    self.error("E002", "unexpected comma");
+                }
                 continue;
             }
             elements.push(self.parse_expression());
             self.skip_newlines();
             if matches!(self.peek_kind(), TokenKind::Comma) {
-                self.bump();
+                let comma = self.bump();
+                self.skip_newlines();
+                if matches!(
+                    self.peek_kind(),
+                    TokenKind::RBracket | TokenKind::RBrace | TokenKind::Eof
+                ) {
+                    self.heal(
+                        "H002",
+                        "removed trailing comma before closing bracket".into(),
+                        &comma,
+                        Repair {
+                            original: ",".into(),
+                            suggested: String::new(),
+                            kind: RepairKind::RemoveTrailingComma,
+                            safe: true,
+                        },
+                        thresholds::AUTO_APPLY + 0.03,
+                    );
+                }
+            } else if !matches!(
+                self.peek_kind(),
+                TokenKind::RBracket | TokenKind::RBrace | TokenKind::Eof
+            ) {
+                // Missing comma between elements.
+                let tok = self.peek().clone();
+                if !self.heal(
+                    "H003",
+                    "inserted missing comma between array elements".into(),
+                    &tok,
+                    Repair {
+                        original: String::new(),
+                        suggested: ",".into(),
+                        kind: RepairKind::Other("insert_comma".into()),
+                        safe: false,
+                    },
+                    thresholds::HIGH + 0.05, // 0.90 — auto-apply with warning
+                ) {
+                    self.error(
+                        "E001",
+                        format!("expected `,` between array elements, found {:?}", tok.kind),
+                    );
+                }
             }
         }
-        self.expect(TokenKind::RBracket);
+        self.expect_closing_healing(TokenKind::RBracket, "H004");
         self.add_spanned(Node::Array { elements }, &open)
     }
 
@@ -677,11 +837,28 @@ impl Parser {
         let mut fields = indexmap::IndexMap::new();
         loop {
             self.skip_newlines();
-            if matches!(self.peek_kind(), TokenKind::RBrace | TokenKind::Eof) {
+            if matches!(
+                self.peek_kind(),
+                TokenKind::RBrace | TokenKind::RBracket | TokenKind::Eof
+            ) {
                 break;
             }
             if matches!(self.peek_kind(), TokenKind::Comma) {
-                self.bump();
+                let comma = self.bump();
+                if !self.heal(
+                    "H002",
+                    "removed stray comma".into(),
+                    &comma,
+                    Repair {
+                        original: ",".into(),
+                        suggested: String::new(),
+                        kind: RepairKind::RemoveTrailingComma,
+                        safe: true,
+                    },
+                    thresholds::AUTO_APPLY + 0.03,
+                ) {
+                    self.error("E002", "unexpected comma");
+                }
                 continue;
             }
             if let Some((k, id)) = self.parse_key_value() {
@@ -691,10 +868,50 @@ impl Parser {
             }
             self.skip_newlines();
             if matches!(self.peek_kind(), TokenKind::Comma) {
-                self.bump();
+                let comma = self.bump();
+                self.skip_newlines();
+                if matches!(
+                    self.peek_kind(),
+                    TokenKind::RBrace | TokenKind::RBracket | TokenKind::Eof
+                ) {
+                    self.heal(
+                        "H002",
+                        "removed trailing comma before closing brace".into(),
+                        &comma,
+                        Repair {
+                            original: ",".into(),
+                            suggested: String::new(),
+                            kind: RepairKind::RemoveTrailingComma,
+                            safe: true,
+                        },
+                        thresholds::AUTO_APPLY + 0.03,
+                    );
+                }
+            } else if !matches!(
+                self.peek_kind(),
+                TokenKind::RBrace | TokenKind::RBracket | TokenKind::Eof
+            ) {
+                let tok = self.peek().clone();
+                if !self.heal(
+                    "H003",
+                    "inserted missing comma between table entries".into(),
+                    &tok,
+                    Repair {
+                        original: String::new(),
+                        suggested: ",".into(),
+                        kind: RepairKind::Other("insert_comma".into()),
+                        safe: false,
+                    },
+                    thresholds::HIGH + 0.05, // 0.90 — auto-apply with warning
+                ) {
+                    self.error(
+                        "E001",
+                        format!("expected `,` between table entries, found {:?}", tok.kind),
+                    );
+                }
             }
         }
-        self.expect(TokenKind::RBrace);
+        self.expect_closing_healing(TokenKind::RBrace, "H004");
         let idents = self.ident_scopes.pop().unwrap_or_default();
         self.resolve_sibling_refs(idents, &fields);
         self.add_spanned(Node::Table { fields }, &open)

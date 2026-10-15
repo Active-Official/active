@@ -24,6 +24,10 @@ pub struct Module {
     /// Source spans for nodes, recorded by the parser so evaluation-time
     /// diagnostics can point at real positions.
     pub node_spans: HashMap<NodeId, Span>,
+    /// Healing diagnostics (H0xx): repairs the parser applied or declined,
+    /// with confidence scores. Separate from `diagnostics` so callers can
+    /// apply mode-dependent gating.
+    pub healing: Vec<Diagnostic>,
 }
 
 impl Module {
@@ -38,6 +42,7 @@ impl Module {
             diagnostics: Vec::new(),
             source_name: source_name.into(),
             node_spans: HashMap::new(),
+            healing: Vec::new(),
         }
     }
 

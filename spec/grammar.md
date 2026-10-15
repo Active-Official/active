@@ -272,15 +272,23 @@ alpha exactly.
 - A key whose value references its own name falls through to `let`
   resolution (never a self-cycle) — see `solid-core/tests/regressions.rs`.
 
-### 4.2 Known resilience gaps (not diagnostics, by design)
+### 4.2 Resilience and healing (C-016)
 
-- Unclosed strings consume to EOF without a diagnostic.
-- Unknown characters are silently skipped by the lexer.
-- Trailing/leading/repeated commas in arrays and inline tables are accepted.
-- Unresolved identifiers warn (W001) rather than error.
+Resilient inputs are diagnosed, not silently swallowed. Every repair carries a
+confidence and is governed by the mode policy (see `docs/diagnostics.md`):
 
-C-016 (the production healer) converts the first three into diagnosed, healed
-repairs; the fourth remains a warning by design.
+| Situation | Code | Confidence | Strict mode | Resilient mode |
+|---|---|---|---|---|
+| String reaches EOF unclosed | H001 | 0.98 | healed (Info) | healed (Info) |
+| Trailing comma before a closer | H002 | 0.98 | healed (Info) | healed (Info) |
+| Missing comma between elements/entries | H003 | 0.90 | **error E001** | healed (Warning) |
+| Mismatched `]` / `}` closer | H004 | 0.82 | **error E001** | healed (Warning) |
+| Unexpected character skipped | H006 | 0.60 | warning | warning |
+
+Strict is the default: only safe repairs (≥ 0.95) apply, and any remaining
+Warning fails the process (`--resilient` relaxes this). Unresolved identifiers
+warn (W001) in both modes rather than error — that is a semantic warning, not
+a syntax repair.
 
 ### 4.3 Diagnostic codes referenced by this grammar
 

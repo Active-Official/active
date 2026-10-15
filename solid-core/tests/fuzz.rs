@@ -41,9 +41,9 @@ proptest! {
         bytes in prop::collection::vec(any::<u8>(), 0..1024)
     ) {
         let src = source_from_bytes(&bytes);
-        let tokens = Lexer::new(&src).tokenize();
+        let lexed = Lexer::new(&src).tokenize();
         assert!(
-            matches!(tokens.last().map(|t| &t.kind), Some(TokenKind::Eof)),
+            matches!(lexed.tokens.last().map(|t| &t.kind), Some(TokenKind::Eof)),
             "token stream must always end with Eof"
         );
     }

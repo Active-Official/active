@@ -9,6 +9,47 @@
 //! - Delimiters: [ ] { } ( )
 //! - Newlines and full-line comments (# …)
 //! - Exact source spans on every token
+//!
+//! Healing: the lexer detects unterminated strings and records a repair
+//! diagnostic (H001) rather than rejecting the input. All other healing
+//! phases live in the parser (comma and bracket repairs) and in
+//! `crate::heal` (semantic and type healing).
+
+use crate::diag::{thresholds, Diagnostic, Repair, RepairKind, Severity, Span};
+
+/// Result of tokenizing: the token stream plus any lexical healing
+/// diagnostics discovered along the way.
+pub struct Lexed {
+    pub tokens: Vec<Token>,
+    pub repairs: Vec<Diagnostic>,
+}
+
+/// Build the H001 repair for a string that reached EOF without a closing
+/// quote: insert the matching quote. Safe repair (confidence ≥ 0.95).
+fn unclosed_string_repair(line: u32, col: u32, quote: char) -> Diagnostic {
+    Diagnostic {
+        severity: Severity::Info, // safe repair: ≥ AUTO_APPLY
+        code: "H001".into(),
+        message: format!(
+            "string literal reached end of input without a closing {}; inserted",
+            quote
+        ),
+        path: None,
+        span: Some(Span {
+            line,
+            column: col,
+            end_line: line,
+            end_column: col + 1,
+        }),
+        repair: Some(Repair {
+            original: String::new(),
+            suggested: quote.to_string(),
+            kind: RepairKind::InsertQuote,
+            safe: true,
+        }),
+        confidence: thresholds::AUTO_APPLY + 0.03,
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
@@ -118,8 +159,9 @@ impl Lexer {
         }
     }
 
-    pub fn tokenize(&mut self) -> Vec<Token> {
+    pub fn tokenize(&mut self) -> Lexed {
         let mut tokens = Vec::new();
+        let mut repairs: Vec<Diagnostic> = Vec::new();
 
         while let Some(c) = self.peek() {
             match c {
@@ -277,6 +319,7 @@ impl Lexer {
                     self.bump(); // opening "
                     let mut s = String::new();
                     let mut escaped = false;
+                    let mut terminated = false;
                     while let Some(ch) = self.peek() {
                         if escaped {
                             match ch {
@@ -298,11 +341,16 @@ impl Lexer {
                             self.bump();
                         } else if ch == '"' {
                             self.bump();
+                            terminated = true;
                             break;
                         } else {
                             s.push(ch);
                             self.bump();
                         }
+                    }
+                    if !terminated {
+                        // Healing phase 1: insert the missing closing quote.
+                        repairs.push(unclosed_string_repair(l, col, '"'));
                     }
                     tokens.push(self.make_token(TokenKind::String, s, l, col));
                 }
@@ -313,6 +361,7 @@ impl Lexer {
                     self.bump();
                     let mut s = String::new();
                     let mut escaped = false;
+                    let mut terminated = false;
                     while let Some(ch) = self.peek() {
                         if escaped {
                             match ch {
@@ -330,11 +379,16 @@ impl Lexer {
                             self.bump();
                         } else if ch == '\'' {
                             self.bump();
+                            terminated = true;
                             break;
                         } else {
                             s.push(ch);
                             self.bump();
                         }
+                    }
+                    if !terminated {
+                        // Healing phase 1: insert the missing closing quote.
+                        repairs.push(unclosed_string_repair(l, col, '\''));
                     }
                     tokens.push(self.make_token(TokenKind::String, s, l, col));
                 }
@@ -403,15 +457,38 @@ impl Lexer {
                     tokens.push(self.make_token(kind, s, l, col));
                 }
 
-                // Unknown character — skip (resilient alpha behaviour)
+                // Unknown character — skipped, but diagnosed so typos
+                // (curly quotes, stray symbols) are visible rather than
+                // silently swallowed. Confidence is below the medium band,
+                // so it is never auto-applied — only reported.
                 _ => {
+                    let (l, col) = (self.line, self.col);
                     self.bump();
+                    repairs.push(Diagnostic {
+                        severity: Severity::Warning,
+                        code: "H006".into(),
+                        message: format!("unexpected character {:?} skipped", c),
+                        path: None,
+                        span: Some(Span {
+                            line: l,
+                            column: col,
+                            end_line: l,
+                            end_column: col + 1,
+                        }),
+                        repair: Some(Repair {
+                            original: c.to_string(),
+                            suggested: String::new(),
+                            kind: RepairKind::Other("skip_character".into()),
+                            safe: false,
+                        }),
+                        confidence: 0.60,
+                    });
                 }
             }
         }
 
         tokens.push(self.make_token(TokenKind::Eof, String::new(), self.line, self.col));
-        tokens
+        Lexed { tokens, repairs }
     }
 
     /// Consume a known unit suffix if present.

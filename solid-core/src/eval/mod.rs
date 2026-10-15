@@ -11,6 +11,7 @@ use petgraph::algo::{is_cyclic_directed, toposort};
 use std::collections::HashMap;
 use thiserror::Error;
 
+use crate::diag::Span;
 use crate::diag::{Diagnostic, Severity};
 use crate::ir::*;
 use crate::types::Unit;
@@ -23,10 +24,40 @@ pub enum EvalError {
     MissingRoot,
     #[error("node {0:?} not found")]
     MissingNode(NodeId),
-    #[error("type error: {0}")]
-    TypeError(String),
+    #[error("type error: {message}")]
+    TypeError { message: String, span: Option<Span> },
     #[error("secret used in unsafe context")]
     SecretLeak,
+}
+
+impl EvalError {
+    /// Stable diagnostic code for this error class (see docs/diagnostics.md).
+    pub fn code(&self) -> &'static str {
+        match self {
+            EvalError::CycleDetected => "S001",
+            EvalError::MissingRoot => "S002",
+            EvalError::MissingNode(_) => "S003",
+            EvalError::TypeError { .. } => "T001",
+            EvalError::SecretLeak => "S004",
+        }
+    }
+
+    /// Source span when the error can be attributed to a node position.
+    pub fn span(&self) -> Option<&Span> {
+        match self {
+            EvalError::TypeError { span, .. } => span.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Attach a source span to a type error (used by the evaluation loop,
+    /// which knows the failing node's id).
+    fn type_error(message: impl Into<String>, span: Option<Span>) -> Self {
+        EvalError::TypeError {
+            message: message.into(),
+            span,
+        }
+    }
 }
 
 pub struct Engine {
@@ -88,7 +119,7 @@ impl Engine {
                         code: "W001".into(),
                         message: format!("unresolved identifier '{}'", name),
                         path: Some(name.clone()),
-                        span: None,
+                        span: module.node_spans.get(&node_id).cloned(),
                         repair: None,
                         confidence: 1.0,
                     });
@@ -129,12 +160,16 @@ impl Engine {
                 Node::Binary { op, lhs, rhs } => {
                     let l = values.get(lhs).cloned().unwrap_or(Value::Null);
                     let r = values.get(rhs).cloned().unwrap_or(Value::Null);
-                    eval_binary(*op, &l, &r)?
+                    eval_binary(*op, &l, &r).map_err(|m| {
+                        EvalError::type_error(m, module.node_spans.get(&node_id).cloned())
+                    })?
                 }
 
                 Node::Unary { op, expr } => {
                     let v = values.get(expr).cloned().unwrap_or(Value::Null);
-                    eval_unary(*op, &v)?
+                    eval_unary(*op, &v).map_err(|m| {
+                        EvalError::type_error(m, module.node_spans.get(&node_id).cloned())
+                    })?
                 }
 
                 Node::Array { elements } => {
@@ -155,7 +190,9 @@ impl Engine {
 
                 Node::Quantity { value, unit } => {
                     let v = values.get(value).cloned().unwrap_or(Value::Null);
-                    normalize_quantity(&v, unit)?
+                    normalize_quantity(&v, unit).map_err(|m| {
+                        EvalError::type_error(m, module.node_spans.get(&node_id).cloned())
+                    })?
                 }
 
                 _ => Value::Null,
@@ -170,15 +207,12 @@ impl Engine {
     }
 }
 
-fn normalize_quantity(v: &Value, unit: &Unit) -> Result<Value, EvalError> {
+fn normalize_quantity(v: &Value, unit: &Unit) -> Result<Value, String> {
     let num = match v {
         Value::Int(n) => *n as f64,
         Value::Float(f) => *f,
         _ => {
-            return Err(EvalError::TypeError(format!(
-                "quantity requires numeric value, got {:?}",
-                v
-            )))
+            return Err(format!("quantity requires numeric value, got {:?}", v));
         }
     };
 
@@ -193,7 +227,7 @@ fn normalize_quantity(v: &Value, unit: &Unit) -> Result<Value, EvalError> {
     Ok(Value::Quantity(num, unit.clone()))
 }
 
-fn eval_binary(op: BinOp, lhs: &Value, rhs: &Value) -> Result<Value, EvalError> {
+fn eval_binary(op: BinOp, lhs: &Value, rhs: &Value) -> Result<Value, String> {
     use BinOp::*;
     match (op, lhs, rhs) {
         (Add, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a + b)),
@@ -255,10 +289,10 @@ fn eval_binary(op: BinOp, lhs: &Value, rhs: &Value) -> Result<Value, EvalError> 
         (And, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(*a && *b)),
         (Or, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(*a || *b)),
 
-        _ => Err(EvalError::TypeError(format!(
+        _ => Err(format!(
             "unsupported binary op {:?} on {:?} and {:?}",
             op, lhs, rhs
-        ))),
+        )),
     }
 }
 
@@ -267,15 +301,12 @@ fn scale_dur(ms: u64, factor: f64) -> u64 {
     (ms as f64 * factor).round().max(0.0) as u64
 }
 
-fn eval_unary(op: UnOp, v: &Value) -> Result<Value, EvalError> {
+fn eval_unary(op: UnOp, v: &Value) -> Result<Value, String> {
     match (op, v) {
         (UnOp::Neg, Value::Int(n)) => Ok(Value::Int(-n)),
         (UnOp::Neg, Value::Float(f)) => Ok(Value::Float(-f)),
         (UnOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
-        _ => Err(EvalError::TypeError(format!(
-            "unsupported unary op {:?} on {:?}",
-            op, v
-        ))),
+        _ => Err(format!("unsupported unary op {:?} on {:?}", op, v)),
     }
 }
 

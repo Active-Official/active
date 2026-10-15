@@ -23,6 +23,16 @@ mod lexer;
 
 pub use lexer::{Lexer, Token, TokenKind};
 
+/// Extract the span of a token.
+fn span_of(tok: &Token) -> Span {
+    Span {
+        line: tok.line,
+        column: tok.col,
+        end_line: tok.end_line,
+        end_column: tok.end_col,
+    }
+}
+
 /// Maximum expression nesting depth (parenthesized expressions, unary
 /// operator chains, nested arrays, nested inline tables). A hard limit
 /// that prevents stack exhaustion from pathological input — the
@@ -130,6 +140,14 @@ impl Parser {
         while matches!(self.peek_kind(), TokenKind::Newline) {
             self.bump();
         }
+    }
+
+    /// Add a node and record the span of the token that produced it, so
+    /// evaluation-time diagnostics can point at real source positions.
+    fn add_spanned(&mut self, node: Node, tok: &Token) -> NodeId {
+        let id = self.module.add_node(node);
+        self.module.record_span(id, span_of(tok));
+        id
     }
 
     // ------------------------------------------------------------------
@@ -276,6 +294,7 @@ impl Parser {
     // ------------------------------------------------------------------
 
     fn parse_expression(&mut self) -> NodeId {
+        let guard_tok = self.peek().clone();
         self.depth += 1;
         if self.depth > MAX_EXPR_DEPTH {
             self.error(
@@ -283,10 +302,8 @@ impl Parser {
                 format!("maximum expression nesting depth ({MAX_EXPR_DEPTH}) exceeded"),
             );
             self.depth -= 1;
-            // Consume the current token so enclosing loops (arrays, inline
-            // tables) always make progress and cannot spin on the error.
-            self.bump();
-            return self.module.add_node(Node::Literal(Value::Null));
+            self.bump(); // consume the current token to guarantee progress
+            return self.add_spanned(Node::Literal(Value::Null), &guard_tok);
         }
         let node = self.parse_or();
         self.depth -= 1;
@@ -296,13 +313,16 @@ impl Parser {
     fn parse_or(&mut self) -> NodeId {
         let mut left = self.parse_and();
         while matches!(self.peek_kind(), TokenKind::OrOr) {
-            self.bump();
+            let op_tok = self.bump();
             let right = self.parse_and();
-            left = self.module.add_node(Node::Binary {
-                op: BinOp::Or,
-                lhs: left,
-                rhs: right,
-            });
+            left = self.add_spanned(
+                Node::Binary {
+                    op: BinOp::Or,
+                    lhs: left,
+                    rhs: right,
+                },
+                &op_tok,
+            );
         }
         left
     }
@@ -310,13 +330,16 @@ impl Parser {
     fn parse_and(&mut self) -> NodeId {
         let mut left = self.parse_equality();
         while matches!(self.peek_kind(), TokenKind::AndAnd) {
-            self.bump();
+            let op_tok = self.bump();
             let right = self.parse_equality();
-            left = self.module.add_node(Node::Binary {
-                op: BinOp::And,
-                lhs: left,
-                rhs: right,
-            });
+            left = self.add_spanned(
+                Node::Binary {
+                    op: BinOp::And,
+                    lhs: left,
+                    rhs: right,
+                },
+                &op_tok,
+            );
         }
         left
     }
@@ -329,13 +352,16 @@ impl Parser {
                 TokenKind::NotEq => BinOp::Ne,
                 _ => break,
             };
-            self.bump();
+            let op_tok = self.bump();
             let right = self.parse_comparison();
-            left = self.module.add_node(Node::Binary {
-                op,
-                lhs: left,
-                rhs: right,
-            });
+            left = self.add_spanned(
+                Node::Binary {
+                    op,
+                    lhs: left,
+                    rhs: right,
+                },
+                &op_tok,
+            );
         }
         left
     }
@@ -350,13 +376,16 @@ impl Parser {
                 TokenKind::GtEq => BinOp::Ge,
                 _ => break,
             };
-            self.bump();
+            let op_tok = self.bump();
             let right = self.parse_term();
-            left = self.module.add_node(Node::Binary {
-                op,
-                lhs: left,
-                rhs: right,
-            });
+            left = self.add_spanned(
+                Node::Binary {
+                    op,
+                    lhs: left,
+                    rhs: right,
+                },
+                &op_tok,
+            );
         }
         left
     }
@@ -369,13 +398,16 @@ impl Parser {
                 TokenKind::Minus => BinOp::Sub,
                 _ => break,
             };
-            self.bump();
+            let op_tok = self.bump();
             let right = self.parse_factor();
-            left = self.module.add_node(Node::Binary {
-                op,
-                lhs: left,
-                rhs: right,
-            });
+            left = self.add_spanned(
+                Node::Binary {
+                    op,
+                    lhs: left,
+                    rhs: right,
+                },
+                &op_tok,
+            );
         }
         left
     }
@@ -388,13 +420,16 @@ impl Parser {
                 TokenKind::Slash => BinOp::Div,
                 _ => break,
             };
-            self.bump();
+            let op_tok = self.bump();
             let right = self.parse_unary();
-            left = self.module.add_node(Node::Binary {
-                op,
-                lhs: left,
-                rhs: right,
-            });
+            left = self.add_spanned(
+                Node::Binary {
+                    op,
+                    lhs: left,
+                    rhs: right,
+                },
+                &op_tok,
+            );
         }
         left
     }
@@ -402,6 +437,7 @@ impl Parser {
     fn parse_unary(&mut self) -> NodeId {
         match self.peek_kind() {
             TokenKind::Minus | TokenKind::Bang => {
+                let op_tok = self.peek().clone();
                 // Unary chains recurse through parse_unary, so the depth
                 // guard must live here too (parse_expression cannot see it).
                 self.depth += 1;
@@ -412,7 +448,7 @@ impl Parser {
                     );
                     self.depth -= 1;
                     self.bump(); // consume the operator to guarantee progress
-                    return self.module.add_node(Node::Literal(Value::Null));
+                    return self.add_spanned(Node::Literal(Value::Null), &op_tok);
                 }
                 let op = if matches!(self.peek_kind(), TokenKind::Minus) {
                     UnOp::Neg
@@ -422,7 +458,7 @@ impl Parser {
                 self.bump();
                 let expr = self.parse_unary();
                 self.depth -= 1;
-                self.module.add_node(Node::Unary { op, expr })
+                self.add_spanned(Node::Unary { op, expr }, &op_tok)
             }
             _ => self.parse_primary(),
         }
@@ -437,18 +473,18 @@ impl Parser {
         match &tok.kind {
             TokenKind::String => {
                 self.bump();
-                self.parse_string_literal(&tok.text)
+                self.parse_string_literal(&tok.text, &tok)
             }
 
             TokenKind::Integer => {
                 self.bump();
                 let n: i64 = tok.text.parse().unwrap_or(0);
-                let mut node = self.module.add_node(Node::Literal(Value::Int(n)));
+                let mut node = self.add_spanned(Node::Literal(Value::Int(n)), &tok);
                 // optional unit suffix
                 if let TokenKind::Unit(_) = self.peek_kind() {
                     let unit_tok = self.bump();
                     if let Some(unit) = Unit::from_suffix(&unit_tok.text) {
-                        node = self.module.add_node(Node::Quantity { value: node, unit });
+                        node = self.add_spanned(Node::Quantity { value: node, unit }, &tok);
                     }
                 }
                 node
@@ -457,11 +493,11 @@ impl Parser {
             TokenKind::Float => {
                 self.bump();
                 let f: f64 = tok.text.parse().unwrap_or(0.0);
-                let mut node = self.module.add_node(Node::Literal(Value::Float(f)));
+                let mut node = self.add_spanned(Node::Literal(Value::Float(f)), &tok);
                 if let TokenKind::Unit(_) = self.peek_kind() {
                     let unit_tok = self.bump();
                     if let Some(unit) = Unit::from_suffix(&unit_tok.text) {
-                        node = self.module.add_node(Node::Quantity { value: node, unit });
+                        node = self.add_spanned(Node::Quantity { value: node, unit }, &tok);
                     }
                 }
                 node
@@ -469,15 +505,15 @@ impl Parser {
 
             TokenKind::True => {
                 self.bump();
-                self.module.add_node(Node::Literal(Value::Bool(true)))
+                self.add_spanned(Node::Literal(Value::Bool(true)), &tok)
             }
             TokenKind::False => {
                 self.bump();
-                self.module.add_node(Node::Literal(Value::Bool(false)))
+                self.add_spanned(Node::Literal(Value::Bool(false)), &tok)
             }
             TokenKind::Null => {
                 self.bump();
-                self.module.add_node(Node::Literal(Value::Null))
+                self.add_spanned(Node::Literal(Value::Null), &tok)
             }
 
             TokenKind::Env => {
@@ -493,7 +529,7 @@ impl Parser {
                 } else {
                     None
                 };
-                self.module.add_node(Node::Env { name: var, default })
+                self.add_spanned(Node::Env { name: var, default }, &tok)
             }
 
             TokenKind::Secret => {
@@ -520,12 +556,13 @@ impl Parser {
                 self.expect(TokenKind::RParen);
                 let locator = if from_env {
                     match self.module.get(arg) {
-                        Some(Node::Literal(Value::String(name))) => {
-                            self.module.add_node(Node::Env {
+                        Some(Node::Literal(Value::String(name))) => self.add_spanned(
+                            Node::Env {
                                 name: name.clone(),
                                 default: None,
-                            })
-                        }
+                            },
+                            &tok,
+                        ),
                         _ => {
                             self.error(
                                 "E003",
@@ -537,7 +574,7 @@ impl Parser {
                 } else {
                     arg
                 };
-                self.module.add_node(Node::Secret { locator })
+                self.add_spanned(Node::Secret { locator }, &tok)
             }
 
             TokenKind::Ident => {
@@ -545,7 +582,8 @@ impl Parser {
                 // Will be turned into Ref during build_graph if it matches a
                 // let, or during sibling resolution if it matches a key in the
                 // enclosing table scope.
-                let id = self.module.add_node(Node::Ident(tok.text));
+                let text = tok.text.clone();
+                let id = self.add_spanned(Node::Ident(text), &tok);
                 if let Some(scope) = self.ident_scopes.last_mut() {
                     scope.push((String::new(), id));
                 }
@@ -572,11 +610,9 @@ impl Parser {
 
     /// Convert a raw string that may contain `${…}` into either a plain
     /// Literal or a full Interpolate node with Expr parts.
-    fn parse_string_literal(&mut self, raw: &str) -> NodeId {
+    fn parse_string_literal(&mut self, raw: &str, tok: &Token) -> NodeId {
         if !raw.contains("${") {
-            return self
-                .module
-                .add_node(Node::Literal(Value::String(raw.to_string())));
+            return self.add_spanned(Node::Literal(Value::String(raw.to_string())), tok);
         }
 
         let mut parts: Vec<InterpPart> = Vec::new();
@@ -591,7 +627,10 @@ impl Parser {
                 let name = rest[..end].trim();
                 // Alpha: only simple identifiers inside ${}.
                 // TODO(solid C-023): full expression parsing inside the braces.
-                let id = self.module.add_node(Node::Ident(name.to_string()));
+                let id = self.add_spanned(Node::Ident(name.to_string()), tok);
+                if let Some(scope) = self.ident_scopes.last_mut() {
+                    scope.push((String::new(), id));
+                }
                 parts.push(InterpPart::Expr(id));
                 rest = &rest[end + 1..];
             } else {
@@ -605,10 +644,11 @@ impl Parser {
             parts.push(InterpPart::Literal(rest.to_string()));
         }
 
-        self.module.add_node(Node::Interpolate { parts })
+        self.add_spanned(Node::Interpolate { parts }, tok)
     }
 
     fn parse_array(&mut self) -> NodeId {
+        let open = self.peek().clone();
         self.bump(); // [
         let mut elements = Vec::new();
         loop {
@@ -627,10 +667,11 @@ impl Parser {
             }
         }
         self.expect(TokenKind::RBracket);
-        self.module.add_node(Node::Array { elements })
+        self.add_spanned(Node::Array { elements }, &open)
     }
 
     fn parse_inline_table(&mut self) -> NodeId {
+        let open = self.peek().clone();
         self.bump(); // {
         self.ident_scopes.push(Vec::new());
         let mut fields = indexmap::IndexMap::new();
@@ -656,7 +697,7 @@ impl Parser {
         self.expect(TokenKind::RBrace);
         let idents = self.ident_scopes.pop().unwrap_or_default();
         self.resolve_sibling_refs(idents, &fields);
-        self.module.add_node(Node::Table { fields })
+        self.add_spanned(Node::Table { fields }, &open)
     }
 
     // ------------------------------------------------------------------

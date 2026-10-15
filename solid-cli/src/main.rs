@@ -37,23 +37,50 @@ enum Commands {
     },
 }
 
+use solid_core::diag::Diagnostic;
+
+/// Print a diagnostic with its span (path:line:col) when available.
+fn report(d: &Diagnostic, file: &str) {
+    match &d.span {
+        Some(s) => eprintln!(
+            "{}:{}:{}: [{:?}] {}: {}",
+            file, s.line, s.column, d.severity, d.code, d.message
+        ),
+        None => eprintln!("[{:?}] {}: {}", d.severity, d.code, d.message),
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
         Commands::Eval { file, format } => {
             let src = fs::read_to_string(&file)?;
-            let module = parse(&src, file.to_string_lossy().as_ref()).map_err(|diags| {
+            let name = file.to_string_lossy().to_string();
+            let module = parse(&src, &name).map_err(|diags| {
                 for d in &diags {
-                    eprintln!("[{:?}] {}: {}", d.severity, d.code, d.message);
+                    report(d, &name);
                 }
                 anyhow::anyhow!("parse failed")
             })?;
 
             let engine = Engine::new();
-            let (value, diags) = engine.evaluate(&module)?;
+            let (value, diags) = engine.evaluate(&module).map_err(|e| {
+                match e.span() {
+                    Some(s) => eprintln!(
+                        "{}:{}:{}: [Error] {}: {}",
+                        name,
+                        s.line,
+                        s.column,
+                        e.code(),
+                        e
+                    ),
+                    None => eprintln!("[Error] {}: {}", e.code(), e),
+                }
+                e
+            })?;
             for d in &diags {
-                eprintln!("[{:?}] {}: {}", d.severity, d.code, d.message);
+                report(d, &name);
             }
 
             match format.as_str() {
@@ -64,7 +91,8 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Check { file } => {
             let src = fs::read_to_string(&file)?;
-            match parse(&src, file.to_string_lossy().as_ref()) {
+            let name = file.to_string_lossy().to_string();
+            match parse(&src, &name) {
                 Ok(module) => {
                     let engine = Engine::new();
                     match engine.evaluate(&module) {
@@ -73,19 +101,29 @@ fn main() -> anyhow::Result<()> {
                                 println!("OK");
                             } else {
                                 for d in diags {
-                                    println!("[{:?}] {}: {}", d.severity, d.code, d.message);
+                                    report(&d, &name);
                                 }
                             }
                         }
                         Err(e) => {
-                            eprintln!("evaluation error: {}", e);
+                            match e.span() {
+                                Some(s) => eprintln!(
+                                    "{}:{}:{}: [Error] {}: {}",
+                                    name,
+                                    s.line,
+                                    s.column,
+                                    e.code(),
+                                    e
+                                ),
+                                None => eprintln!("[Error] {}: {}", e.code(), e),
+                            }
                             std::process::exit(1);
                         }
                     }
                 }
                 Err(diags) => {
                     for d in diags {
-                        eprintln!("[{:?}] {}: {}", d.severity, d.code, d.message);
+                        report(&d, &name);
                     }
                     std::process::exit(1);
                 }

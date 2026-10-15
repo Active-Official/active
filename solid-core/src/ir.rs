@@ -5,7 +5,7 @@ use petgraph::graph::{DiGraph, NodeIndex};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::diag::Diagnostic;
+use crate::diag::{Diagnostic, Span};
 use crate::types::{Constraint, Unit};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -21,6 +21,9 @@ pub struct Module {
     pub schemas: HashMap<String, NodeId>,
     pub diagnostics: Vec<Diagnostic>,
     pub source_name: String,
+    /// Source spans for nodes, recorded by the parser so evaluation-time
+    /// diagnostics can point at real positions.
+    pub node_spans: HashMap<NodeId, Span>,
 }
 
 impl Module {
@@ -34,6 +37,7 @@ impl Module {
             schemas: HashMap::new(),
             diagnostics: Vec::new(),
             source_name: source_name.into(),
+            node_spans: HashMap::new(),
         }
     }
 
@@ -59,6 +63,11 @@ impl Module {
 
     pub fn get_mut(&mut self, id: NodeId) -> Option<&mut Node> {
         self.arena.get_mut(id.0 as usize)
+    }
+
+    /// Record the source span of a node for evaluation-time diagnostics.
+    pub fn record_span(&mut self, id: NodeId, span: Span) {
+        self.node_spans.insert(id, span);
     }
 }
 

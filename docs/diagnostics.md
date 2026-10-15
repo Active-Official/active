@@ -31,6 +31,10 @@ creates). A diagnostic without an attainable position omits the
 | E003 | `expected \`env\` after \`secret.\` (use secret.env(name))` / `secret.env() requires a string literal env var name` | token | Malformed `secret.env` form |
 | E004 | `maximum expression nesting depth (64) exceeded` | token | Expression nesting exceeds the parser-side budget (C-037) |
 | E005 | `unexpected character '<c>'` | token | A character no lexical rule accepts — never silently skipped |
+| E006 | `tab character in leading whitespace; use spaces` | the tab | Indentation is spaces only (spec/dual-syntax.md §4.1); each tab counts as one column |
+| E007 | `inconsistent dedentation` | line start | No enclosing indentation level matches; pops to the nearest level below |
+| E008 | `block header has no indented body` | the colon | A `key:` header requires a deeper following line; no table is created |
+| E010 | `unexpected indentation` | line start | An Indent where no block header opened one; the line joins the enclosing block |
 
 ### S0xx — Semantic (evaluation, severity Error)
 

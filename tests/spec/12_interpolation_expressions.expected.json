@@ -1,0 +1,10 @@
+{
+  "calc": {
+    "arith": "20",
+    "compare": "true",
+    "escaped": "${literal}",
+    "mixed": "a10bsvcc",
+    "nested": "in svc",
+    "single": "${literal}"
+  }
+}

@@ -217,19 +217,37 @@ secret-ref    = "secret" [ "." "env" ] "(" expression ")"
 - `env` / `secret` as plain identifiers (not in primary position) are ordinary
   identifiers.
 
-### 2.5 Interpolation (parse-time)
+### 2.5 Interpolation (parse-time, double-quoted strings only)
 
 Within a double-quoted string token:
 
 ```
-interpolation = "${" identifier "}"
+interpolation = "${" expression "}"
 ```
 
-The parser splits the raw string at each `${`. Text before/between/after
-becomes literal parts; each `${name}` becomes a reference to `name`, resolved
-by the same rules as a bare identifier (2.6). An unclosed `${` (no `}`) is
-treated as literal text. **[impl note]** Alpha accepts a bare identifier
-inside the braces only; nested/recursive interpolation is C-023.
+The contents of `${ … }` are a **complete expression** (C-023): arithmetic,
+comparisons, boolean logic, env defaults, unit literals, function-free
+expressions of any depth, and further double-quoted strings (which may
+themselves interpolate — nested interpolation). The matching `}` is found by
+scanning with awareness of nested `${` and of string literals inside the
+braces.
+
+Escaping: `\$` is a literal dollar sign, so `"\${5}"` is the text `${5}`.
+**[impl note]** The lexer keeps `\$` as an unknown escape (backslash plus
+dollar) and the parser resolves it, so the distinction between an escaped
+dollar and an interpolation opener survives lexing.
+
+**Single-quoted strings do not interpolate** (spec §1.4): `'${x}'` is the
+literal text `${x}`. They still process backslash escapes.
+
+Diagnostics: **E012** unterminated interpolation (no matching `}`), **E013**
+empty interpolation (`${}`).
+
+A `Secret` value reaching an interpolation is a hard error (S004) — secrets
+may never be rendered into strings.
+
+Every sub-expression inside `${ … }` participates in the dependency graph
+exactly as if it appeared in expression position (C-023).
 
 ### 2.6 Arrays and inline tables
 

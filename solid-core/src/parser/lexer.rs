@@ -65,7 +65,10 @@ pub enum TokenKind {
 
     // Literals & identifiers
     Ident,
+    /// Double-quoted string: escapes processed, `${…}` interpolated.
     String,
+    /// Single-quoted string: escapes processed, `${…}` literal (spec §2.5).
+    SingleString,
     Integer,
     Float,
     True,
@@ -585,7 +588,7 @@ impl Lexer {
                         // Healing phase 1: insert the missing closing quote.
                         repairs.push(unclosed_string_repair(l, col, '\''));
                     }
-                    tokens.push(self.make_token(TokenKind::String, s, l, col));
+                    tokens.push(self.make_token(TokenKind::SingleString, s, l, col));
                 }
 
                 // Numbers + optional unit

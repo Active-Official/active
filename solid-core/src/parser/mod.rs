@@ -1085,6 +1085,14 @@ impl Parser {
                 self.parse_string_literal(&tok.text, &tok)
             }
 
+            TokenKind::SingleString => {
+                // Single-quoted strings are literal: `${…}` is not special
+                // (spec/grammar.md §2.5).
+                self.bump();
+                let text = tok.text.clone();
+                self.add_spanned(Node::Literal(Value::String(text)), &tok)
+            }
+
             TokenKind::Integer => {
                 self.bump();
                 let n: i64 = tok.text.parse().unwrap_or(0);
@@ -1220,40 +1228,170 @@ impl Parser {
     /// Convert a raw string that may contain `${…}` into either a plain
     /// Literal or a full Interpolate node with Expr parts.
     fn parse_string_literal(&mut self, raw: &str, tok: &Token) -> NodeId {
-        if !raw.contains("${") {
+        // Fast path: no interpolation and no escaped dollar.
+        if !raw.contains("${") && !raw.contains("\\$") {
             return self.add_spanned(Node::Literal(Value::String(raw.to_string())), tok);
         }
 
+        let chars: Vec<char> = raw.chars().collect();
         let mut parts: Vec<InterpPart> = Vec::new();
-        let mut rest = raw;
+        let mut literal = String::new();
+        let mut i = 0usize;
 
-        while let Some(start) = rest.find("${") {
-            if start > 0 {
-                parts.push(InterpPart::Literal(rest[..start].to_string()));
+        while i < chars.len() {
+            // `\$` is an escaped dollar: literal, never interpolation.
+            if chars[i] == '\\' && i + 1 < chars.len() && chars[i + 1] == '$' {
+                literal.push('$');
+                i += 2;
+                continue;
             }
-            rest = &rest[start + 2..];
-            if let Some(end) = rest.find('}') {
-                let name = rest[..end].trim();
-                // Alpha: only simple identifiers inside ${}.
-                // TODO(solid C-023): full expression parsing inside the braces.
-                let id = self.add_spanned(Node::Ident(name.to_string()), tok);
-                if let Some(scope) = self.ident_scopes.last_mut() {
-                    scope.push((String::new(), id));
+            if chars[i] == '$' && i + 1 < chars.len() && chars[i + 1] == '{' {
+                match self.find_interpolation_end(&chars, i + 2) {
+                    Some(end) => {
+                        if !literal.is_empty() {
+                            parts.push(InterpPart::Literal(std::mem::take(&mut literal)));
+                        }
+                        let inner: String = chars[i + 2..end].iter().collect();
+                        let id = self.parse_embedded_expression(&inner, tok);
+                        parts.push(InterpPart::Expr(id));
+                        i = end + 1;
+                        continue;
+                    }
+                    None => {
+                        // Unterminated interpolation: diagnose and treat the
+                        // remainder as literal text.
+                        let span = self.interp_span(tok, i);
+                        self.error_at(
+                            "E012",
+                            "unterminated interpolation: `${` has no matching `}`",
+                            &span,
+                        );
+                        literal.push_str(&chars[i..].iter().collect::<String>());
+                        break;
+                    }
                 }
-                parts.push(InterpPart::Expr(id));
-                rest = &rest[end + 1..];
-            } else {
-                // Unclosed — treat remainder as literal
-                parts.push(InterpPart::Literal(format!("${{{}", rest)));
-                rest = "";
-                break;
             }
+            literal.push(chars[i]);
+            i += 1;
         }
-        if !rest.is_empty() {
-            parts.push(InterpPart::Literal(rest.to_string()));
+        if !literal.is_empty() {
+            parts.push(InterpPart::Literal(literal));
         }
 
         self.add_spanned(Node::Interpolate { parts }, tok)
+    }
+
+    /// Find the `}` matching a `${` that starts at `start`, skipping over
+    /// string literals and nested interpolations.
+    fn find_interpolation_end(&self, chars: &[char], start: usize) -> Option<usize> {
+        let mut i = start;
+        let mut depth = 0usize;
+        let mut in_string: Option<char> = None;
+        let mut escaped = false;
+        while i < chars.len() {
+            let c = chars[i];
+            if let Some(quote) = in_string {
+                if escaped {
+                    escaped = false;
+                } else if c == '\\' {
+                    escaped = true;
+                } else if c == quote {
+                    in_string = None;
+                }
+                i += 1;
+                continue;
+            }
+            match c {
+                '"' | '\'' => in_string = Some(c),
+                '$' if i + 1 < chars.len() && chars[i + 1] == '{' => {
+                    depth += 1;
+                    i += 2;
+                    continue;
+                }
+                '}' => {
+                    if depth == 0 {
+                        return Some(i);
+                    }
+                    depth -= 1;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        None
+    }
+
+    /// A span pointing inside the string token at character offset `offset`.
+    fn interp_span(&self, tok: &Token, offset: usize) -> Token {
+        let mut t = tok.clone();
+        t.col = tok.col + 1 + offset as u32;
+        t.end_col = t.col + 1;
+        t
+    }
+
+    /// Parse the contents of `${ … }` as a full expression, splicing the
+    /// resulting nodes into this module's arena. Supports nested
+    /// interpolation, env defaults, arithmetic, and every other expression
+    /// form; sub-expression diagnostics have their spans rebased onto the
+    /// enclosing string's position.
+    fn parse_embedded_expression(&mut self, text: &str, tok: &Token) -> NodeId {
+        // Embedded expressions are not laid out: trim the padding so the
+        // sub-lexer never measures indentation inside `${ … }`.
+        let text = text.trim();
+        if text.is_empty() {
+            let span = self.interp_span(tok, 0);
+            self.error_at(
+                "E013",
+                "empty interpolation: `${}` has no expression",
+                &span,
+            );
+            return self.add_spanned(Node::Literal(Value::Null), tok);
+        }
+        let mut lexer = Lexer::new(text);
+        let lexed = lexer.tokenize();
+
+        // Move the arena into a sub-parser so embedded nodes land in the
+        // same module.
+        let module = std::mem::replace(&mut self.module, Module::new(""));
+        let mut sub = Parser {
+            tokens: lexed.tokens,
+            pos: 0,
+            module,
+            errors: Vec::new(),
+            ident_scopes: self.ident_scopes.clone(),
+            depth: self.depth,
+            options: self.options,
+            block_depth: 0,
+            comments: Vec::new(),
+            statements: Vec::new(),
+            blocks: Vec::new(),
+            current_path: self.current_path.clone(),
+            brace_tables: 0,
+            indent_tables: 0,
+        };
+        let id = sub.parse_expression();
+        // Expression idents inside `${}` must be visible to the enclosing
+        // scope's sibling/let resolution.
+        let sub_idents = sub.ident_scopes.clone();
+        self.module = std::mem::replace(&mut sub.module, Module::new(""));
+        if let Some(scope) = self.ident_scopes.last_mut() {
+            if let Some(inner) = sub_idents.last() {
+                scope.extend(inner.iter().cloned());
+            }
+        }
+        // Rebase embedded diagnostics onto the string token's position.
+        for mut d in sub.errors {
+            if let Some(s) = &mut d.span {
+                if s.line == 1 {
+                    s.column += tok.col;
+                    s.end_column += tok.col;
+                }
+                s.line += tok.line.saturating_sub(1);
+                s.end_line += tok.line.saturating_sub(1);
+            }
+            self.errors.push(d);
+        }
+        id
     }
 
     fn parse_array(&mut self) -> NodeId {

@@ -1,0 +1,10 @@
+let base = 10
+let name = "svc"
+
+[calc]
+arith = "${base * 2}"
+compare = "${base > 5}"
+mixed = "a${base}b${name}c"
+escaped = "\${literal}"
+single = '${literal}'
+nested = "${ \"in ${name}\" }"

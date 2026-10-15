@@ -300,10 +300,13 @@ impl<'a> Formatter<'a> {
                 let mut s = String::from("\"");
                 for part in parts {
                     match part {
-                        InterpPart::Literal(t) => s.push_str(&escape(t)),
+                        // A literal `${` can only have come from an escaped
+                        // dollar; re-escape it so it stays literal.
+                        InterpPart::Literal(t) => s.push_str(&escape_interp_literal(t)),
                         InterpPart::Expr(e) => {
                             s.push_str("${");
-                            s.push_str(&self.render_expr(*e));
+                            let inner = self.render_expr(*e);
+                            s.push_str(&escape_embedded(&inner));
                             s.push('}');
                         }
                     }
@@ -453,7 +456,15 @@ fn render_literal(v: &Value) -> String {
             }
             s
         }
-        Value::String(s) => format!("\"{}\"", escape(s)),
+        Value::String(s) => {
+            // A string containing `${` must not interpolate when re-read, so
+            // emit it single-quoted (single-quoted strings are literal).
+            if s.contains("${") {
+                format!("'{}'", escape_single(s))
+            } else {
+                format!("\"{}\"", escape(s))
+            }
+        }
         Value::DurationMs(ms) => format!("{ms}ms"),
         Value::Quantity(n, unit) => format!("{n}{}", unit.suffix()),
         Value::Array(a) => {
@@ -481,6 +492,42 @@ fn escape(s: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\t' => out.push_str("\\t"),
             '\r' => out.push_str("\\r"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// Escape for a single-quoted string (only `'` and `\` are special there).
+fn escape_single(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\'' => out.push_str("\\'"),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// Escape the literal text of an interpolation part so a `${` that was
+/// escaped in the source stays literal.
+fn escape_interp_literal(s: &str) -> String {
+    escape(s).replace("${", "\\${")
+}
+
+/// Escape a rendered sub-expression for embedding inside a double-quoted
+/// interpolation: the outer lexer must see the original expression text.
+fn escape_embedded(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
             _ => out.push(ch),
         }
     }

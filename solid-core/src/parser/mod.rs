@@ -73,6 +73,7 @@ pub fn parse_with(
         options,
     };
     parser.module.healing.extend(lexed.repairs);
+    parser.errors.extend(lexed.errors);
     parser.parse_document();
     if parser.errors.is_empty() {
         parser.build_graph();
@@ -175,9 +176,13 @@ impl Parser {
     // Healing (C-016): syntactic repairs with confidence scoring
     // ------------------------------------------------------------------
 
-    /// Record a healing diagnostic. Repairs below the AUTO_APPLY threshold
-    /// are only applied in resilient mode; in strict mode the caller keeps
-    /// the original syntax diagnostic instead.
+    /// Record a healing diagnostic. The confidence policy decides whether
+    /// the repair is applied at all:
+    /// - ≥ 0.95: applied in every mode (Info)
+    /// - 0.85–0.94: applied in every mode (Warning; strict fails on it at
+    ///   the exit-code level)
+    /// - 0.70–0.84: applied only in resilient mode
+    /// - < 0.70: never applied — the caller's error path stands
     fn heal(
         &mut self,
         code: &str,
@@ -186,7 +191,8 @@ impl Parser {
         repair: Repair,
         confidence: f64,
     ) -> bool {
-        let applies = confidence >= thresholds::AUTO_APPLY || self.options.resilient;
+        let applies = confidence >= thresholds::HIGH
+            || (self.options.resilient && confidence >= thresholds::MEDIUM);
         if !applies {
             return false;
         }

@@ -116,9 +116,10 @@ Longest match wins (`==` beats `=` `=`; `?:` beats `?`).
 ### 1.8 The token stream
 
 The token stream ends with exactly one `Eof` token. Newline tokens are emitted
-verbatim; the parser treats them as soft separators (2.1). **[impl note]**
-Unknown characters are silently skipped by the lexer — there is no
-"unexpected character" diagnostic (see 4.2).
+verbatim; the parser treats them as soft separators (2.1). **[impl note]** A
+character that no lexical rule accepts is a hard error (**E005**), reported
+with a precise span — never silently skipped (see 4.2). Stray *tokens* at
+statement position are still skipped by the parser's error recovery.
 
 ---
 
@@ -281,14 +282,16 @@ confidence and is governed by the mode policy (see `docs/diagnostics.md`):
 |---|---|---|---|---|
 | String reaches EOF unclosed | H001 | 0.98 | healed (Info) | healed (Info) |
 | Trailing comma before a closer | H002 | 0.98 | healed (Info) | healed (Info) |
-| Missing comma between elements/entries | H003 | 0.90 | **error E001** | healed (Warning) |
+| Missing comma between elements/entries | H003 | 0.90 | healed (Warning) | healed (Warning) |
 | Mismatched `]` / `}` closer | H004 | 0.82 | **error E001** | healed (Warning) |
-| Unexpected character skipped | H006 | 0.60 | warning | warning |
+| Character no rule accepts | E005 | — | **error** | **error** |
 
-Strict is the default: only safe repairs (≥ 0.95) apply, and any remaining
-Warning fails the process (`--resilient` relaxes this). Unresolved identifiers
-warn (W001) in both modes rather than error — that is a semantic warning, not
-a syntax repair.
+`--resilient` relaxes strict mode in two ways: it allows the resilient-only
+0.70–0.84 band to apply, and it exits zero despite Warning-severity repairs.
+Strict mode (the default) additionally exits non-zero whenever any Warning is
+present, even when the repair itself was applied. Characters that no rule
+accepts are rejected in both modes — skipping them would silently change the
+configuration. Unresolved identifiers warn (W001) in both modes.
 
 ### 4.3 Diagnostic codes referenced by this grammar
 

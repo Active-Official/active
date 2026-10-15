@@ -54,22 +54,74 @@ fn trailing_comma_is_healed_in_both_modes() {
 }
 
 #[test]
-fn missing_comma_fails_strict_and_heals_resilient() {
-    // Strict: the missing comma is a syntax error (E001) — no silent acceptance.
-    let err = parse_with("x = [1 2]\n", "healing", STRICT).expect_err("strict must fail");
+fn missing_comma_is_healed_in_both_modes_with_a_warning() {
+    // H003 sits in the 0.85–0.94 band: applied in every mode, but as a
+    // Warning — which makes strict mode exit non-zero at the CLI level.
+    for options in [STRICT, RESILIENT] {
+        let module = parse_with("x = [1 2]\n", "healing", options).expect("must parse");
+        let d = module
+            .healing
+            .iter()
+            .find(|d| d.code == "H003")
+            .expect("H003 expected");
+        assert_eq!(d.severity, Severity::Warning);
+        assert!((0.85..0.95).contains(&d.confidence));
+    }
+}
+
+#[test]
+fn unexpected_character_is_a_hard_error_in_both_modes() {
+    // Below the medium band, so it is never auto-applied — the input is
+    // rejected rather than silently altered.
+    for options in [STRICT, RESILIENT] {
+        let err = parse_with("x = 1 @ 2\n", "healing", options)
+            .expect_err("unknown characters must be rejected");
+        assert!(err.iter().any(|d| d.code == "E005"), "got {err:?}");
+    }
+}
+
+#[test]
+fn dangling_escape_backslash_is_preserved() {
+    // `x = "abc\` — the trailing escape has nothing to escape; the
+    // backslash must survive into the healed value.
+    let module = parse_with("x = \"abc\\\n", "healing", STRICT).expect("must parse");
     assert!(
-        err.iter().any(|d| d.code == "E001"),
-        "strict must report E001, got {err:?}"
+        module.healing.iter().any(|d| d.code == "H001"),
+        "H001 expected"
     );
-    // Resilient: healed with a Warning.
-    let module = parse_with("x = [1 2]\n", "healing", RESILIENT).expect("resilient must parse");
-    let d = module
-        .healing
-        .iter()
-        .find(|d| d.code == "H003")
-        .expect("H003 expected");
-    assert_eq!(d.severity, Severity::Warning);
-    assert!((0.85..0.95).contains(&d.confidence));
+    let (value, _) = solid_core::Engine::new()
+        .evaluate(&module)
+        .expect("must evaluate");
+    let json = solid_core::convert::value_to_pretty_json(&value);
+    assert!(json.contains("abc\\\\"), "backslash preserved, got {json}");
+}
+
+#[test]
+fn microsecond_suffix_is_lexable() {
+    // The whitelist documents `µs`; the scanner must collect it.
+    let module = parse_with("x = 1µs\n", "healing", STRICT).expect("must parse");
+    let (value, _) = solid_core::Engine::new()
+        .evaluate(&module)
+        .expect("must evaluate");
+    let json = solid_core::convert::value_to_pretty_json(&value);
+    assert!(json.contains("0"), "1µs normalizes to sub-ms, got {json}");
+}
+
+#[test]
+fn secrets_never_appear_in_type_error_messages() {
+    // Security invariant: secret material must not leak through
+    // diagnostics, and type errors are a diagnostic surface.
+    let module =
+        parse_with("x = secret(\"TOPSECRET\") + 1\n", "healing", STRICT).expect("must parse");
+    let err = solid_core::Engine::new()
+        .evaluate(&module)
+        .expect_err("type error expected");
+    let rendered = format!("{}", err);
+    assert!(
+        !rendered.contains("TOPSECRET"),
+        "secret leaked into the error message: {rendered}"
+    );
+    assert!(rendered.contains("***"), "expected a redaction marker");
 }
 
 #[test]

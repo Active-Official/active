@@ -17,11 +17,12 @@
 
 use crate::diag::{thresholds, Diagnostic, Repair, RepairKind, Severity, Span};
 
-/// Result of tokenizing: the token stream plus any lexical healing
-/// diagnostics discovered along the way.
+/// Result of tokenizing: the token stream, hard lexical errors, and any
+/// healing diagnostics discovered along the way.
 pub struct Lexed {
     pub tokens: Vec<Token>,
     pub repairs: Vec<Diagnostic>,
+    pub errors: Vec<Diagnostic>,
 }
 
 /// Build the H001 repair for a string that reached EOF without a closing
@@ -162,6 +163,7 @@ impl Lexer {
     pub fn tokenize(&mut self) -> Lexed {
         let mut tokens = Vec::new();
         let mut repairs: Vec<Diagnostic> = Vec::new();
+        let mut errors: Vec<Diagnostic> = Vec::new();
 
         while let Some(c) = self.peek() {
             match c {
@@ -349,6 +351,12 @@ impl Lexer {
                         }
                     }
                     if !terminated {
+                        // A dangling escape (string ended inside `\`) has
+                        // nothing to escape: preserve the backslash so the
+                        // content is not silently altered.
+                        if escaped {
+                            s.push('\\');
+                        }
                         // Healing phase 1: insert the missing closing quote.
                         repairs.push(unclosed_string_repair(l, col, '"'));
                     }
@@ -387,6 +395,11 @@ impl Lexer {
                         }
                     }
                     if !terminated {
+                        // A dangling escape has nothing to escape; preserve
+                        // the backslash so the content is not altered.
+                        if escaped {
+                            s.push('\\');
+                        }
                         // Healing phase 1: insert the missing closing quote.
                         repairs.push(unclosed_string_repair(l, col, '\''));
                     }
@@ -457,17 +470,16 @@ impl Lexer {
                     tokens.push(self.make_token(kind, s, l, col));
                 }
 
-                // Unknown character — skipped, but diagnosed so typos
-                // (curly quotes, stray symbols) are visible rather than
-                // silently swallowed. Confidence is below the medium band,
-                // so it is never auto-applied — only reported.
+                // Unknown character — a hard error in every mode: no rule
+                // accepts it, and skipping it would silently change the
+                // configuration. Reported with a precise span.
                 _ => {
                     let (l, col) = (self.line, self.col);
                     self.bump();
-                    repairs.push(Diagnostic {
-                        severity: Severity::Warning,
-                        code: "H006".into(),
-                        message: format!("unexpected character {:?} skipped", c),
+                    errors.push(Diagnostic {
+                        severity: Severity::Error,
+                        code: "E005".into(),
+                        message: format!("unexpected character {:?}", c),
                         path: None,
                         span: Some(Span {
                             line: l,
@@ -475,20 +487,19 @@ impl Lexer {
                             end_line: l,
                             end_column: col + 1,
                         }),
-                        repair: Some(Repair {
-                            original: c.to_string(),
-                            suggested: String::new(),
-                            kind: RepairKind::Other("skip_character".into()),
-                            safe: false,
-                        }),
-                        confidence: 0.60,
+                        repair: None,
+                        confidence: 0.0,
                     });
                 }
             }
         }
 
         tokens.push(self.make_token(TokenKind::Eof, String::new(), self.line, self.col));
-        Lexed { tokens, repairs }
+        Lexed {
+            tokens,
+            repairs,
+            errors,
+        }
     }
 
     /// Consume a known unit suffix if present.
@@ -499,7 +510,9 @@ impl Lexer {
 
         let mut s = String::new();
         while let Some(ch) = self.peek() {
-            if ch.is_ascii_alphanumeric() || ch == '/' || ch == '_' {
+            // Unicode-aware so the documented `µs` microsecond suffix is
+            // collectable (the whitelist carries it).
+            if ch.is_alphanumeric() || ch == '/' || ch == '_' {
                 s.push(ch);
                 self.bump();
             } else {

@@ -20,7 +20,8 @@ use crate::types::{SolidType, Unit};
 // Phase 2: similarity scoring for semantic key repair
 // ---------------------------------------------------------------------------
 
-/// Normalized Damerau-Levenshtein similarity: 1.0 for identical strings,
+/// Normalized string-similarity based on optimal string alignment (the
+/// restricted Damerau-Levenshtein variant): 1.0 for identical strings,
 /// 0.0 when every character differs. Case-insensitive, and a transposition
 /// (the most common typo, `prot`/`port`) counts as a single edit.
 pub fn normalized_levenshtein(a: &str, b: &str) -> f64 {
@@ -37,8 +38,11 @@ pub fn normalized_levenshtein(a: &str, b: &str) -> f64 {
     1.0 - (dist as f64 / al.max(bl) as f64)
 }
 
-/// Optimal string alignment (Damerau-Levenshtein): insertion, deletion,
-/// substitution, and adjacent transposition, each costing one edit.
+/// Optimal string alignment (the restricted Damerau-Levenshtein variant):
+/// insertion, deletion, substitution, and adjacent transposition, each
+/// costing one edit. Unrestricted Damerau-Levenshtein differs only for
+/// substrings with repeated characters edited more than once; OSA is the
+/// standard choice for typo detection.
 /// The indexed loops mirror the classic DP table definition, where the
 /// transposition rule needs the i-1/i-2 and j-1/j-2 neighbourhood.
 #[allow(clippy::needless_range_loop)]
@@ -171,25 +175,41 @@ pub fn key_similarity(typo: &str, candidate: &str) -> f64 {
 }
 
 /// Choose the best matching key from a legal set. Only candidates with
-/// similarity ≥ threshold are considered; ties resolve to the first
-/// (argument order). Returns the legal key and the score.
+/// similarity ≥ threshold are considered; on an exact tie the earliest
+/// candidate in argument order wins.
 pub fn best_key_match(typo: &str, legal: &[String], threshold: f64) -> Option<(String, f64)> {
-    legal
-        .iter()
-        .map(|k| (k.clone(), key_similarity(typo, k)))
-        .filter(|(_, s)| *s >= threshold)
-        .max_by(|a, b| a.1.total_cmp(&b.1))
+    let mut best: Option<(String, f64)> = None;
+    for k in legal {
+        let score = key_similarity(typo, k);
+        if score < threshold {
+            continue;
+        }
+        let better = match &best {
+            Some((_, best_score)) => score > *best_score,
+            None => true,
+        };
+        if better {
+            best = Some((k.clone(), score));
+        }
+    }
+    best
 }
 
 /// Build an H005 (key typo suggestion) diagnostic.
+///
+/// The composite score ranks candidates, but it overstates certainty
+/// (the three signals are correlated). The `safe` flag — i.e. permission
+/// to auto-apply — therefore requires a near-identical edit distance,
+/// not merely a high composite.
 pub fn make_key_typo_diagnostic(
     typo: &str,
     suggestion: &str,
     confidence: f64,
     span: Option<Span>,
 ) -> Diagnostic {
+    let safe = normalized_levenshtein(typo, suggestion) >= thresholds::AUTO_APPLY;
     Diagnostic {
-        severity: if confidence >= thresholds::AUTO_APPLY {
+        severity: if safe {
             Severity::Info
         } else {
             Severity::Warning
@@ -202,7 +222,7 @@ pub fn make_key_typo_diagnostic(
             original: typo.into(),
             suggested: suggestion.into(),
             kind: RepairKind::KeyTypo,
-            safe: confidence >= thresholds::AUTO_APPLY,
+            safe,
         }),
         confidence,
     }

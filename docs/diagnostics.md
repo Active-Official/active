@@ -30,6 +30,7 @@ creates). A diagnostic without an attainable position omits the
 | E002 | `unexpected token <TokenKind>` | token | A token appears where no production accepts it |
 | E003 | `expected \`env\` after \`secret.\` (use secret.env(name))` / `secret.env() requires a string literal env var name` | token | Malformed `secret.env` form |
 | E004 | `maximum expression nesting depth (64) exceeded` | token | Expression nesting exceeds the parser-side budget (C-037) |
+| E005 | `unexpected character '<c>'` | token | A character no lexical rule accepts — never silently skipped |
 
 ### S0xx — Semantic (evaluation, severity Error)
 
@@ -58,10 +59,14 @@ creates). A diagnostic without an attainable position omits the
 |---|---|---|---|---|
 | H001 | `string literal reached end of input without a closing <q>; inserted` | 0.98 | applied (Info) | applied (Info) |
 | H002 | `removed trailing comma before closing <delim>` / `removed stray comma` | 0.98 | applied (Info) | applied (Info) |
-| H003 | `inserted missing comma between <elements\|table entries>` | 0.90 | E001 error | applied (Warning) |
+| H003 | `inserted missing comma between <elements\|table entries>` | 0.90 | applied (Warning) | applied (Warning) |
 | H004 | `mismatched closing delimiter; replaced <a> with <b>` | 0.82 | E001 error | applied (Warning) |
 | H005 | `unknown key '<typo>', did you mean '<suggestion>'?` | caller-set | — | — |
-| H006 | `unexpected character '<c>' skipped` | 0.60 | warning | warning |
+
+Strict mode exits non-zero whenever any Warning is present (so an applied H003
+still fails the process); `--resilient` exits zero in that case. Repairs below
+the 0.70 floor are never applied — the input is rejected instead (E005 for
+characters no rule accepts).
 
 Phase 1 codes (H001–H004, H006) are emitted by the lexer and parser. H005 is
 the phase-2 semantic key repair: the similarity engine

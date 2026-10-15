@@ -208,12 +208,24 @@ impl Engine {
     }
 }
 
+/// Render a value for a diagnostic message without ever revealing secret
+/// material (security invariant: secrets never appear in errors or logs).
+fn redacted(v: &Value) -> String {
+    match v {
+        Value::Secret(_) => "Secret(***)".to_string(),
+        other => format!("{:?}", other),
+    }
+}
+
 fn normalize_quantity(v: &Value, unit: &Unit) -> Result<Value, String> {
     let num = match v {
         Value::Int(n) => *n as f64,
         Value::Float(f) => *f,
         _ => {
-            return Err(format!("quantity requires numeric value, got {:?}", v));
+            return Err(format!(
+                "quantity requires numeric value, got {}",
+                redacted(v)
+            ));
         }
     };
 
@@ -291,8 +303,10 @@ fn eval_binary(op: BinOp, lhs: &Value, rhs: &Value) -> Result<Value, String> {
         (Or, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(*a || *b)),
 
         _ => Err(format!(
-            "unsupported binary op {:?} on {:?} and {:?}",
-            op, lhs, rhs
+            "unsupported binary op {:?} on {} and {}",
+            op,
+            redacted(lhs),
+            redacted(rhs)
         )),
     }
 }
@@ -307,7 +321,7 @@ fn eval_unary(op: UnOp, v: &Value) -> Result<Value, String> {
         (UnOp::Neg, Value::Int(n)) => Ok(Value::Int(-n)),
         (UnOp::Neg, Value::Float(f)) => Ok(Value::Float(-f)),
         (UnOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
-        _ => Err(format!("unsupported unary op {:?} on {:?}", op, v)),
+        _ => Err(format!("unsupported unary op {:?} on {}", op, redacted(v))),
     }
 }
 

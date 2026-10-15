@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use solid_core::convert::{value_to_pretty_json, value_to_simple_toml};
 use solid_core::diag::{Diagnostic, Severity};
-use solid_core::{parse, parse_with, Engine, ParseOptions};
+use solid_core::{parse_with, Engine, ParseOptions};
 use std::fs;
 use std::path::PathBuf;
 
@@ -37,12 +37,20 @@ enum Commands {
         resilient: bool,
     },
     /// Show dependency graph in simple text form
-    Graph { file: PathBuf },
+    Graph {
+        file: PathBuf,
+        /// Enable medium-confidence healing repairs (resilient mode)
+        #[arg(long)]
+        resilient: bool,
+    },
     /// Convert evaluated result to JSON or simple TOML
     Convert {
         file: PathBuf,
         #[arg(short, long, default_value = "json")]
         to: String,
+        /// Enable medium-confidence healing repairs (resilient mode)
+        #[arg(long)]
+        resilient: bool,
     },
 }
 
@@ -156,10 +164,18 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Commands::Graph { file } => {
+        Commands::Graph { file, resilient } => {
             let src = fs::read_to_string(&file)?;
-            let module = parse(&src, file.to_string_lossy().as_ref())
-                .map_err(|d| anyhow::anyhow!("parse failed: {} diagnostics", d.len()))?;
+            let name = file.to_string_lossy().to_string();
+            let module = parse_with(&src, &name, ParseOptions { resilient }).map_err(|diags| {
+                for d in &diags {
+                    report(d, &name);
+                }
+                anyhow::anyhow!("parse failed")
+            })?;
+            for d in &module.healing {
+                report(d, &name);
+            }
 
             println!("Bindings:");
             for (name, id) in &module.bindings {
@@ -171,17 +187,38 @@ fn main() -> anyhow::Result<()> {
                 let to = module.graph[edge.target()];
                 println!("  NodeId({}) → NodeId({})", from.0, to.0);
             }
+            if had_failure(&module.healing, resilient) {
+                std::process::exit(1);
+            }
         }
-        Commands::Convert { file, to } => {
+        Commands::Convert {
+            file,
+            to,
+            resilient,
+        } => {
             let src = fs::read_to_string(&file)?;
-            let module = parse(&src, file.to_string_lossy().as_ref())
-                .map_err(|_| anyhow::anyhow!("parse failed"))?;
+            let name = file.to_string_lossy().to_string();
+            let module = parse_with(&src, &name, ParseOptions { resilient }).map_err(|diags| {
+                for d in &diags {
+                    report(d, &name);
+                }
+                anyhow::anyhow!("parse failed")
+            })?;
             let engine = Engine::new();
-            let (value, _) = engine.evaluate(&module)?;
+            let (value, diags) = engine.evaluate(&module).map_err(|e| {
+                eprintln!("[Error] {}: {}", e.code(), e);
+                e
+            })?;
+            for d in &diags {
+                report(d, &name);
+            }
             match to.as_str() {
                 "json" => println!("{}", value_to_pretty_json(&value)),
                 "toml" => println!("{}", value_to_simple_toml(&value, "")),
                 other => anyhow::bail!("unsupported target: {}", other),
+            }
+            if had_failure(&diags, resilient) {
+                std::process::exit(1);
             }
         }
     }

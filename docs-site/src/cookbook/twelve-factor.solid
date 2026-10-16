@@ -1,0 +1,13 @@
+# 12-factor application: every deployment-varying value reads the
+# environment with a default, so the same file runs locally and in
+# production. Evaluation is hermetic: only injected variables resolve.
+[server]
+host = env.APP_HOST ?: "localhost"
+port = 8080
+
+[database]
+url = env.DATABASE_URL ?: "postgres://localhost/app_dev"
+pool = 5
+
+[logging]
+level = env.LOG_LEVEL ?: "info"

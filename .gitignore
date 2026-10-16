@@ -38,6 +38,7 @@ target/
 dist/
 build/
 *.vsix
+docs-site/book/
 out/
 .venv/
 venv/

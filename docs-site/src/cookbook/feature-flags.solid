@@ -1,0 +1,15 @@
+# Feature flags: typed, bounded, self-documenting rollout state.
+schema = {
+  closed = true,
+  flags = Table {
+    closed = true,
+    new_checkout = Bool,
+    rollout_pct = Int(min = 0, max = 100),
+    dark_launch = Bool,
+  },
+}
+
+[flags]
+new_checkout = true
+rollout_pct = 25
+dark_launch = false

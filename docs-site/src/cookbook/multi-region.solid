@@ -1,0 +1,27 @@
+# Multi-region: base values plus per-region overlays. Select with
+# active_profile (or --profile): scalars last-win, tables deep-merge.
+[server]
+host = "localhost"
+port = 8080
+tls = false
+
+[limits]
+rps = 100
+
+profile "us-east" {
+  [server]
+  host = "us-east.example.com"
+  tls = true
+  [limits]
+  rps = 1000
+}
+
+profile "eu-west" {
+  [server]
+  host = "eu-west.example.com"
+  tls = true
+  [limits]
+  rps = 500
+}
+
+active_profile = "eu-west"

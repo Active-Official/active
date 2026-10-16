@@ -1,0 +1,13 @@
+[book]
+authors = ["SOLID Language Team"]
+language = "en"
+src = "src"
+title = "SOLID — Configuration for Humans and AI Agents"
+
+[build]
+build-dir = "book"
+
+[output.html]
+git-repository-url = "https://github.com/RatioArtificiosa/solid-lang"
+edit-url-template = "https://github.com/RatioArtificiosa/solid-lang/edit/main/docs-site/src/{path}"
+search = { enable = true }

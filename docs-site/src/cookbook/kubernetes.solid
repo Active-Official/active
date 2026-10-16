@@ -1,0 +1,29 @@
+# Kubernetes-style service: one document from image to probes.
+schema = {
+  closed = true,
+  name = String,
+  image = String,
+  replicas = Int(min = 1, max = 64),
+  resources = Table {
+    closed = true,
+    cpu_millicores = Int(min = 10),
+    memory = Bytes(max = 8GiB),
+  },
+  health = Table {
+    closed = true,
+    readiness = Duration(max = 5m),
+    liveness = Duration(max = 5m),
+  },
+}
+
+name = "checkout-api"
+image = "registry.internal/checkout-api:2.14.0"
+replicas = 3
+
+[resources]
+cpu_millicores = 500
+memory = 1GiB
+
+[health]
+readiness = 30s
+liveness = 60s

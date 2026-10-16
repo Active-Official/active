@@ -27,11 +27,12 @@ unit-char    = ident-char | "/"
 ```
 whitespace   = " " | "\t" | "\r"
 newline      = "\n"                       — emitted as a Newline token
-comment      = "#" { any-but-newline }     — skipped entirely, no token
+comment      = "#" { any-but-newline }     — trivia: no token, no semantics
 ```
 
-Comments have no semantic effect. They are not retained in the IR and do not
-survive formatting yet (C-040 adds comment preservation).
+Comments have no semantic effect. They are retained as trivia on
+the module (normative attachment, spec/dual-syntax.md §7) and
+survive formatting round-trips (C-022/C-040).
 
 ### 1.3 Identifiers and keywords
 

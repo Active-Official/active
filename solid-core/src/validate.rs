@@ -2,16 +2,20 @@
 //!
 //! Walks the fully evaluated value tree (post-profile, post-patch)
 //! against the schema tree and reports every violation. Validation never
-//! mutates the tree and never echoes evaluated values into messages:
-//! kinds and schema-authored literals only, so secrets cannot leak.
+//! echoes evaluated values into messages: kinds and schema-authored
+//! literals only, so secrets cannot leak. Strict mode never mutates the
+//! tree; resilient mode applies schema-driven repairs after the walk —
+//! default fills (W005), key renames (H005), string coercions (H007) —
+//! and revalidates each repaired subtree like a written one.
 
 use std::collections::HashMap;
 
-use crate::diag::{Diagnostic, Severity, Span};
+use crate::diag::{thresholds, Diagnostic, Repair, RepairKind, Severity, Span};
 use crate::eval::{
     eval_binary, eval_unary, measure_value, value_kind_name, Accountant, BudgetCx, BudgetKind,
     Engine, EvalError,
 };
+use crate::heal::{best_key_match, coerce_string_to, normalized_levenshtein, sentinel_meaning};
 use crate::ir::{AnnotationKind, Module, Node, NodeId, SchemaField, Value};
 use crate::parser::PathSeg;
 use crate::types::SolidType;
@@ -40,6 +44,8 @@ impl Engine {
             schema_bugs: std::collections::HashSet::new(),
             resilient: self.resilient,
             fills: Vec::new(),
+            renames: Vec::new(),
+            coercions: Vec::new(),
             deadline: cx.deadline,
             wall_limit: cx.wall_limit,
             ticks: 0,
@@ -47,7 +53,43 @@ impl Engine {
         };
         validator.validate_node(schema_id, module.root, result, &mut Vec::new())?;
         if self.resilient {
-            validator.apply_fills(result)?;
+            // Fixpoint: renames expose nested typos, coercions, and
+            // missing keys; fills insert values that need validating;
+            // coercions replace values that need re-checking. Each
+            // repair strictly reduces outstanding work, so the queues
+            // drain (wall-clock ticks inside revalidation bound
+            // pathological shapes first). The counter is a backstop:
+            // leftovers degrade to explicit diagnostics below, never
+            // silence.
+            for _ in 0..1024 {
+                if validator.renames.is_empty()
+                    && validator.coercions.is_empty()
+                    && validator.fills.is_empty()
+                {
+                    break;
+                }
+                validator.apply_renames(result)?;
+                validator.apply_coercions(result)?;
+                validator.apply_fills(result)?;
+            }
+            for req in std::mem::take(&mut validator.renames) {
+                validator.rename_fallback(&req);
+            }
+            for req in std::mem::take(&mut validator.coercions) {
+                validator.coercion_fallback(&req);
+            }
+            for fill in std::mem::take(&mut validator.fills) {
+                let path = render_path(&fill.segments);
+                validator.push(
+                    "T004",
+                    format!(
+                        "schema violation at '{}': missing required key (schema default could not be applied)",
+                        display_path(&path)
+                    ),
+                    &path,
+                    (fill.span, fill.file),
+                );
+            }
         }
         if !validator.diagnostics.is_empty() && !self.resilient {
             // An expired deadline takes precedence over collected
@@ -207,6 +249,34 @@ struct FillRequest {
     file: Option<String>,
 }
 
+/// One resilient key rename: an unexpected closed-table key whose
+/// similarity to a schema field clears the auto-apply band, whose
+/// value type-checks against that field, and whose target is absent.
+/// Applied after the walk (spec/validation.md §10); the renamed
+/// subtree is then validated like a written one.
+struct RenameRequest {
+    segments: Vec<PathSeg>,
+    from: String,
+    to: String,
+    field_id: NodeId,
+    value_id: Option<NodeId>,
+    span: Option<Span>,
+    file: Option<String>,
+    confidence: f64,
+}
+
+/// One resilient string coercion: a T002 mismatch where the string
+/// parses as the target type. Applied after the walk; the coerced
+/// value is then constraint-checked like a written one.
+struct CoerceRequest {
+    segments: Vec<PathSeg>,
+    field_id: NodeId,
+    value_id: Option<NodeId>,
+    coerced: Value,
+    span: Option<Span>,
+    file: Option<String>,
+}
+
 struct Validator<'a> {
     module: &'a Module,
     values: &'a HashMap<NodeId, Value>,
@@ -223,6 +293,12 @@ struct Validator<'a> {
     /// Resilient default insertions collected during the walk, applied
     /// after it (spec/validation.md §9).
     fills: Vec<FillRequest>,
+    /// Resilient key renames and string coercions collected during
+    /// the walk (and during rename revalidation), applied after it
+    /// (spec/validation.md §10). Strict mode records none: it only
+    /// attaches suggestions to the violations it reports.
+    renames: Vec<RenameRequest>,
+    coercions: Vec<CoerceRequest>,
     /// Evaluation deadline for the wall-clock backstop (spec/budgets.md
     /// §2); sampled every 64 validated nodes. `wall_limit` is the
     /// configured milliseconds, carried for the error message.
@@ -330,10 +406,15 @@ impl<'a> Validator<'a> {
             segments.pop();
         }
         // Extra value keys are ignored in open tables; closed tables
-        // reject them (spec/validation.md §10). Iteration follows value
-        // order, so diagnostics stay deterministic.
+        // reject them (spec/validation.md §10), with phase-2 key
+        // repair (C-016): the typo is matched against the schema
+        // field names, and under resilient mode a confident,
+        // type-checking, collision-free match renames the key instead
+        // of failing. Iteration follows value order, so diagnostics
+        // stay deterministic.
         if closed {
-            for (key, _) in map {
+            let legal: Vec<String> = fields.keys().cloned().collect();
+            for (key, value) in map {
                 if fields.contains_key(key) {
                     continue;
                 }
@@ -342,15 +423,97 @@ impl<'a> Validator<'a> {
                 let key_id = arena_children
                     .as_ref()
                     .and_then(|children| children.get(key).copied());
-                self.push(
-                    "T005",
-                    format!(
+                let spans = self.spans(key_id, schema_id);
+                // Suggestions clear the medium band in both modes
+                // (informational only); renames additionally require
+                // the high band (C-016 item threshold), checked
+                // explicitly below.
+                let suggestion = best_key_match(key, &legal, thresholds::MEDIUM);
+                // Resilient auto-rename guards (C-016 confidence
+                // policy): the match must clear the high band, the
+                // target must be absent (never clobber a written key),
+                // and the value must already type-check against the
+                // suggested field — applied renames are revalidated
+                // for constraints afterwards. Shared borrows end here;
+                // the push below needs `&mut self`.
+                let candidate: Option<(NodeId, bool)> = match &suggestion {
+                    Some((suggested, score))
+                        if *score >= thresholds::HIGH && map.get(suggested).is_none() =>
+                    {
+                        match fields.get(suggested) {
+                            Some(field_id) => match self.module.get(*field_id) {
+                                // Every schema-node kind participates:
+                                // fields check their declared type,
+                                // tables/arrays check the value shape
+                                // (constraints re-run post-rename).
+                                Some(Node::SchemaField { field }) => {
+                                    Some((*field_id, type_accepts(&field.typ, value)))
+                                }
+                                Some(Node::SchemaTable { .. }) => {
+                                    Some((*field_id, matches!(value, Value::Table(_))))
+                                }
+                                Some(Node::SchemaArray { .. }) => {
+                                    Some((*field_id, matches!(value, Value::Array(_))))
+                                }
+                                _ => None,
+                            },
+                            None => None,
+                        }
+                    }
+                    _ => None,
+                };
+                let mut renamed = false;
+                if self.resilient {
+                    if let (Some((field_id, true)), Some((suggested, score))) =
+                        (candidate, &suggestion)
+                    {
+                        self.renames.push(RenameRequest {
+                            segments: segments.clone(),
+                            from: key.clone(),
+                            to: suggested.clone(),
+                            field_id,
+                            value_id: key_id,
+                            span: spans.0.clone(),
+                            file: spans.1.clone(),
+                            confidence: *score,
+                        });
+                        renamed = true;
+                    }
+                }
+                if !renamed {
+                    let mut message = format!(
                         "schema violation at '{}': unexpected key '{key}' in closed table",
                         display_path(&key_path)
-                    ),
-                    &key_path,
-                    self.spans(key_id, schema_id),
-                );
+                    );
+                    let mut repair = None;
+                    // Suggest-only confidence is the match score, never
+                    // 1.0: tooling auto-applies on confidence, and a
+                    // 0.70 suggestion must not look certain.
+                    let mut confidence = 1.0;
+                    if let Some((suggested, score)) = &suggestion {
+                        message.push_str(&format!("; did you mean '{suggested}'?"));
+                        // Canonical safe signal (heal.rs): near-identical
+                        // edit distance, not the composite score.
+                        repair = Some(Repair {
+                            original: key.clone(),
+                            suggested: suggested.clone(),
+                            kind: RepairKind::KeyTypo,
+                            safe: normalized_levenshtein(key, suggested) >= thresholds::AUTO_APPLY,
+                        });
+                        confidence = *score;
+                    }
+                    self.push_diag(
+                        "T005",
+                        message,
+                        &key_path,
+                        spans,
+                        DiagMeta {
+                            severity: Severity::Error,
+                            repair,
+                            confidence,
+                        },
+                    );
+                }
                 segments.pop();
             }
         }
@@ -413,6 +576,60 @@ impl<'a> Validator<'a> {
     ) {
         let path = render_path(segments);
         if !type_accepts(&field.typ, value) {
+            // Phase-3 wiring (C-016): a string that parses as the
+            // target type is coercible. Strict reports the mismatch
+            // with the coercion noted; resilient applies it and
+            // constraint-checks the coerced value like a written one.
+            // Sentinel words are recognized but never mapped: no
+            // schema syntax designates their values, so guessing
+            // would invent data (spec/validation.md §10).
+            if let Value::String(text) = value {
+                if let Some(coerced) = coerce_string_to(text, &field.typ) {
+                    let spans = self.spans(value_id, schema_id);
+                    if self.resilient {
+                        self.coercions.push(CoerceRequest {
+                            segments: segments.to_vec(),
+                            field_id: schema_id,
+                            value_id,
+                            coerced,
+                            span: spans.0,
+                            file: spans.1,
+                        });
+                    } else {
+                        self.push(
+                            "T002",
+                            format!(
+                                "schema violation at '{}': expected {}, got {} (coercible under --resilient)",
+                                display_path(&path),
+                                field.typ.name(),
+                                value_kind_name(value)
+                            ),
+                            &path,
+                            spans,
+                        );
+                    }
+                    return;
+                }
+                if let Some(intent) = sentinel_meaning(text) {
+                    // Echoing the word is safe: `sentinel_meaning`
+                    // matched, so the lowercase form is one of a
+                    // dozen fixed dictionary words — never user data.
+                    self.push(
+                        "T002",
+                        format!(
+                            "schema violation at '{}': expected {}, got {} (sentinel '{}' signals {} but the schema designates no value — set an explicit value or a schema default)",
+                            display_path(&path),
+                            field.typ.name(),
+                            value_kind_name(value),
+                            text.to_lowercase(),
+                            intent,
+                        ),
+                        &path,
+                        self.spans(value_id, schema_id),
+                    );
+                    return;
+                }
+            }
             self.push(
                 "T002",
                 format!(
@@ -495,6 +712,12 @@ impl<'a> Validator<'a> {
     fn apply_fills(&mut self, result: &mut Value) -> Result<(), EvalError> {
         let fills = std::mem::take(&mut self.fills);
         for mut fill in fills {
+            // A rename may have healed this path after the walk queued
+            // the fill (or a renamed subtree may already carry the
+            // key): present keys are never overwritten by defaults.
+            if value_at(result, &fill.segments).is_some() {
+                continue;
+            }
             // Both skips are defensive (the walk verified the parents
             // and evaluation fills the node map), but a missing key
             // must never go silent: report T004 when the default
@@ -547,6 +770,218 @@ impl<'a> Validator<'a> {
                 &default_value,
                 &mut fill.segments,
             )?;
+        }
+        Ok(())
+    }
+
+    /// Apply resilient key renames collected during the walk
+    /// (spec/validation.md §10): move each typo'd value onto its
+    /// schema field, record H005, and revalidate the renamed subtree
+    /// like a written one so constraints still bite. Revalidation can
+    /// discover nested typos (a renamed table's own unexpected keys),
+    /// which queue further renames; every pass eliminates one
+    /// unexpected key and only schema-known targets are introduced,
+    /// so the queue drains. The pass counter is a backstop against
+    /// pathological shapes, not expected to fire: on overflow,
+    /// pending renames degrade to suggest-only T005s so nothing goes
+    /// silent.
+    fn apply_renames(&mut self, result: &mut Value) -> Result<(), EvalError> {
+        let mut passes = 0u32;
+        while !self.renames.is_empty() {
+            passes += 1;
+            if passes > 1024 {
+                let pending = std::mem::take(&mut self.renames);
+                for req in pending {
+                    let RenameRequest {
+                        segments,
+                        from,
+                        to,
+                        span,
+                        file,
+                        confidence,
+                        ..
+                    } = req;
+                    let path = render_path(&segments);
+                    let safe = normalized_levenshtein(&from, &to) >= thresholds::AUTO_APPLY;
+                    self.push_diag(
+                        "T005",
+                        format!(
+                            "schema violation at '{}': unexpected key '{}' in closed table; did you mean '{}'?",
+                            display_path(&path),
+                            from,
+                            to
+                        ),
+                        &path,
+                        (span, file),
+                        DiagMeta {
+                            severity: Severity::Error,
+                            repair: Some(Repair {
+                                original: from,
+                                suggested: to,
+                                kind: RepairKind::KeyTypo,
+                                safe,
+                            }),
+                            confidence,
+                        },
+                    );
+                }
+                break;
+            }
+            let pending = std::mem::take(&mut self.renames);
+            for req in pending {
+                let Some((last, parent_segs)) = req.segments.split_last() else {
+                    continue;
+                };
+                if !matches!(last, PathSeg::Key(key) if key == &req.from) {
+                    continue;
+                }
+                let Some(table) = value_at_mut(result, parent_segs) else {
+                    self.rename_fallback(&req);
+                    continue;
+                };
+                let Value::Table(map) = table else {
+                    self.rename_fallback(&req);
+                    continue;
+                };
+                // Recheck at apply time: a sibling rename may have
+                // taken the target since the walk (two typos, one
+                // field) — first wins, the other degrades.
+                if map.contains_key(&req.to) {
+                    self.rename_fallback(&req);
+                    continue;
+                }
+                let Some(moved) = map.shift_remove(&req.from) else {
+                    self.rename_fallback(&req);
+                    continue;
+                };
+                map.insert(req.to.clone(), moved);
+                let mut fixed: Vec<PathSeg> = parent_segs
+                    .iter()
+                    .cloned()
+                    .chain(std::iter::once(PathSeg::Key(req.to.clone())))
+                    .collect();
+                let fixed_path = render_path(&fixed);
+                // The rename satisfies the absence the walk already
+                // reported: retract the stale missing-key T004 for
+                // this exact path, and cancel any queued default fill
+                // for it — the healed value wins over the default
+                // (C1: fills applied afterwards must not clobber
+                // renames). Other paths are untouched.
+                self.diagnostics.retain(|d| {
+                    !(d.code == "T004" && d.path.as_deref() == Some(fixed_path.as_str()))
+                });
+                self.fills
+                    .retain(|f| render_path(&f.segments) != fixed_path);
+                self.push_diag(
+                    "H005",
+                    format!(
+                        "renamed key '{}' to '{}' (confidence {:.2})",
+                        req.from, req.to, req.confidence
+                    ),
+                    &fixed_path,
+                    (req.span.clone(), req.file.clone()),
+                    DiagMeta {
+                        severity: Severity::Warning,
+                        repair: Some(Repair {
+                            original: req.from.clone(),
+                            suggested: req.to.clone(),
+                            kind: RepairKind::KeyTypo,
+                            safe: normalized_levenshtein(&req.from, &req.to)
+                                >= thresholds::AUTO_APPLY,
+                        }),
+                        confidence: req.confidence,
+                    },
+                );
+                if let Some(current) = value_at(result, &fixed).cloned() {
+                    self.validate_node(req.field_id, req.value_id, &current, &mut fixed)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Suggest-only T005 for a rename that cannot apply (target taken
+    /// or subtree vanished): the violation must still be reported,
+    /// carrying the original match confidence.
+    fn rename_fallback(&mut self, req: &RenameRequest) {
+        let path = render_path(&req.segments);
+        self.push_diag(
+            "T005",
+            format!(
+                "schema violation at '{}': unexpected key '{}' in closed table; did you mean '{}'?",
+                display_path(&path),
+                req.from,
+                req.to
+            ),
+            &path,
+            (req.span.clone(), req.file.clone()),
+            DiagMeta {
+                severity: Severity::Error,
+                repair: Some(Repair {
+                    original: req.from.clone(),
+                    suggested: req.to.clone(),
+                    kind: RepairKind::KeyTypo,
+                    safe: normalized_levenshtein(&req.from, &req.to) >= thresholds::AUTO_APPLY,
+                }),
+                confidence: req.confidence,
+            },
+        );
+    }
+
+    /// Suggest-only T002 for a coercion that cannot apply (the
+    /// subtree vanished): the violation must still be reported.
+    fn coercion_fallback(&mut self, req: &CoerceRequest) {
+        let path = render_path(&req.segments);
+        let expected = match self.module.get(req.field_id) {
+            Some(Node::SchemaField { field }) => field.typ.name().to_string(),
+            _ => "schema type".to_string(),
+        };
+        self.push(
+            "T002",
+            format!(
+                "schema violation at '{}': expected {}, got string (coercion could not be applied)",
+                display_path(&path),
+                expected
+            ),
+            &path,
+            (req.span.clone(), req.file.clone()),
+        );
+    }
+
+    /// Apply resilient string coercions collected during the walk:
+    /// swap in the parsed value, record H007 (value-free, per the
+    /// no-echo policy), and revalidate constraints on the coerced
+    /// value like a written one. Coerced values are scalars, so no
+    /// materialization charge is needed (unlike default fills).
+    fn apply_coercions(&mut self, result: &mut Value) -> Result<(), EvalError> {
+        let pending = std::mem::take(&mut self.coercions);
+        for req in pending {
+            if !insert_at(result, &req.segments, req.coerced.clone()) {
+                // Defensive (the walk verified the path): re-report
+                // as a plain T002 so nothing goes silent.
+                self.coercion_fallback(&req);
+                continue;
+            }
+            let path = render_path(&req.segments);
+            self.push_diag(
+                "H007",
+                format!(
+                    "resilient: coerced value at '{}' from string to {}",
+                    display_path(&path),
+                    value_kind_name(&req.coerced)
+                ),
+                &path,
+                (req.span.clone(), req.file.clone()),
+                DiagMeta {
+                    severity: Severity::Warning,
+                    repair: None,
+                    confidence: 0.90,
+                },
+            );
+            if let Some(current) = value_at(result, &req.segments).cloned() {
+                let mut segs = req.segments.clone();
+                self.validate_node(req.field_id, req.value_id, &current, &mut segs)?;
+            }
         }
         Ok(())
     }
@@ -841,18 +1276,51 @@ impl<'a> Validator<'a> {
         path: &str,
         spans: (Option<Span>, Option<String>),
     ) {
+        self.push_diag(
+            code,
+            message,
+            path,
+            spans,
+            DiagMeta {
+                severity: Severity::Error,
+                repair: None,
+                confidence: 1.0,
+            },
+        );
+    }
+
+    /// Full-shape diagnostic push: healing codes (H005/H007) and
+    /// T005 suggestions carry repairs with confidence scores and
+    /// non-error severities; plain violations stay errors without
+    /// repairs. The severity/repair/confidence triple travels as one
+    /// struct to keep the arity lint-clean.
+    fn push_diag(
+        &mut self,
+        code: &str,
+        message: String,
+        path: &str,
+        spans: (Option<Span>, Option<String>),
+        meta: DiagMeta,
+    ) {
         let (span, file) = spans;
         self.diagnostics.push(Diagnostic {
-            severity: Severity::Error,
+            severity: meta.severity,
             code: code.into(),
             message,
             path: Some(path.to_string()),
             span,
-            repair: None,
-            confidence: 1.0,
+            repair: meta.repair,
+            confidence: meta.confidence,
             file,
         });
     }
+}
+
+/// Severity + repair + confidence for repair-carrying diagnostics.
+struct DiagMeta {
+    severity: Severity,
+    repair: Option<Repair>,
+    confidence: f64,
 }
 
 /// Root-level violations would render as `at ''`; name the root instead.
@@ -1080,6 +1548,35 @@ fn render_path(segments: &[PathSeg]) -> String {
         }
     }
     out
+}
+
+/// Read a value at a structured path (the immutable twin of
+/// `insert_at` below): used to revalidate renamed and coerced
+/// subtrees after resilient repairs move them.
+fn value_at<'v>(result: &'v Value, segments: &[PathSeg]) -> Option<&'v Value> {
+    let mut cursor = result;
+    for segment in segments {
+        match (segment, cursor) {
+            (PathSeg::Key(key), Value::Table(map)) => cursor = map.get(key)?,
+            (PathSeg::Index(i), Value::Array(elements)) => cursor = elements.get(*i)?,
+            _ => return None,
+        }
+    }
+    Some(cursor)
+}
+
+/// Mutable twin of `value_at`: navigates to a parent container so
+/// resilient renames can move keys within it.
+fn value_at_mut<'v>(result: &'v mut Value, segments: &[PathSeg]) -> Option<&'v mut Value> {
+    let mut cursor = result;
+    for segment in segments {
+        match (segment, cursor) {
+            (PathSeg::Key(key), Value::Table(map)) => cursor = map.get_mut(key)?,
+            (PathSeg::Index(i), Value::Array(elements)) => cursor = elements.get_mut(*i)?,
+            _ => return None,
+        }
+    }
+    Some(cursor)
 }
 
 /// Insert a filled default at a structured path, descending tables by

@@ -103,7 +103,8 @@ parses leave it unset and tools fall back to the input filename.
 | H002 | `removed trailing comma before closing <delim>` / `removed stray comma` | 0.98 | applied (Info) | applied (Info) |
 | H003 | `inserted missing comma between <elements\|table entries>` | 0.90 | applied (Warning) | applied (Warning) |
 | H004 | `mismatched closing delimiter; replaced <a> with <b>` | 0.82 | E001 error | applied (Warning) |
-| H005 | `unknown key '<typo>', did you mean '<suggestion>'?` | caller-set | — | — |
+| H005 | `unknown key '<typo>', did you mean '<suggestion>'?` / `renamed key '<a>' to '<b>' (confidence <n>)` | repair score | strict: T005 error + suggestion (threshold 0.70) + `KeyTypo` repair (never renames — key identity is semantic, and strict requires explicitness) | resilient: suggestion at ≥ 0.70; score ≥ 0.85 + value type-checks + target absent → rename + H005 warning (always warns, even ≥ 0.95); revalidated for constraints; stale missing-key T004 retracted; queued fills for the healed path cancelled; otherwise T005 warning + suggestion |
+| H007 | `resilient: coerced value at '<path>' from string to <Kind>` | 0.90 | strict: T002 error noting coercibility under `--resilient` (sentinels recognized by intent, never mapped — no schema syntax designates their values) | resilient: parse + replace + H007 warning; coerced value constraint-checked like a written one |
 
 Strict mode exits non-zero whenever any Warning is present (so an applied H003
 still fails the process); `--resilient` exits zero in that case. Repairs below
@@ -111,13 +112,16 @@ the 0.70 floor are never applied — the input is rejected instead (E005 for
 characters no rule accepts).
 
 Phase 1 codes (H001–H004) are emitted by the lexer and parser; H005 is the
-phase-2 semantic key repair: the similarity engine
-(`normalized_levenshtein` + `keyboard_similarity` + `phonetic_similarity`,
-combined with a noisy-OR) and `best_key_match` are implemented and tested;
-the schema-driven wiring lands with C-030. Phase-3 coercions
-(`try_coerce_int`, `try_coerce_duration`, `sentinel_meaning`,
-`coerce_string_to`) are implemented as pure functions, likewise wired to
-schemas in C-030.
+phase-2 semantic key repair, wired to schema-controlled tables in
+validation: the similarity engine (`normalized_levenshtein` +
+`keyboard_similarity` + `phonetic_similarity`, combined with a noisy-OR)
+scores the typo against the schema field names via `best_key_match`
+(≥ 0.85 band). Phase-3 coercions (`try_coerce_int`,
+`try_coerce_duration`, `coerce_string_to`) are wired to validation
+type mismatches (H007); `sentinel_meaning` is recognized in strict
+T002 messages but never mapped to a value — the schema language has
+no syntax for designating sentinel values, so guessing would invent
+data (use an explicit value or a schema default instead).
 
 ### X0xx — Execution budget (evaluator, severity Error, always fatal)
 

@@ -58,7 +58,9 @@ silent drops.
 `json_to_solid`, `yaml_to_solid`, `toml_to_solid` return
 `(String, Vec<Diagnostic>)`: best-effort SOLID source plus
 diagnostics for lossy corners. Emission style is brace blocks
-(`server { … }`) — never dotted headers (unsupported, C-021).
+(`server { … }`) — never dotted headers (canonical emission is
+nested blocks; the parser accepts dotted headers and they lower
+to the same IR).
 
 - Objects → nested brace blocks; arrays → `[...]`; strings with
   exact escaping; numbers → Int (i64) else Float (u64 past i64::MAX

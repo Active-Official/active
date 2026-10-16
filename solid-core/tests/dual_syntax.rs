@@ -5,7 +5,7 @@
 //! lower to the identical IR. Also pins the diagnostics introduced by the
 //! dual-syntax design (E006, E007, E008, E010).
 
-use solid_core::{parse, parse_recovering, Engine, ParseOptions};
+use solid_core::{parse, parse_recovering, Engine, ParseOptions, Style};
 
 fn tree(src: &str) -> String {
     let module = parse(src, "dual").unwrap_or_else(|d| panic!("parse failed: {d:?}"));
@@ -284,4 +284,109 @@ fn depth_limit_recovery_keeps_following_siblings() {
         json.contains("\"sibling\": 7"),
         "the sibling after the deep block must survive recovery: {json}"
     );
+}
+
+#[test]
+fn dotted_header_nests_like_braces() {
+    let dotted = "[a.b]\nc = 1\n";
+    let braces = "a {\n  b {\n    c = 1\n  }\n}\n";
+    assert_eq!(tree(dotted), tree(braces), "dotted must nest: {dotted}");
+}
+
+#[test]
+fn dotted_headers_merge_across_headers() {
+    let src = "[a.b]\nc = 1\n[a.d]\ne = 2\ntop = 3\n";
+    let json = tree(src);
+    let v: serde_json::Value = serde_json::from_str(&json).expect("valid json");
+    assert_eq!(v["a"]["b"]["c"], 1);
+    assert_eq!(v["a"]["d"]["e"], 2);
+    assert_eq!(v["a"]["d"]["top"], 3);
+}
+
+#[test]
+fn deep_dotted_header_nests_three_levels() {
+    let json = tree("[a.b.c]\nx = 1\n");
+    let v: serde_json::Value = serde_json::from_str(&json).expect("valid json");
+    assert_eq!(v["a"]["b"]["c"]["x"], 1);
+}
+
+#[test]
+fn dotted_header_repeated_leaf_is_last_wins() {
+    // Same last-wins rule as repeated single headers.
+    let json = tree("[a.b]\nc = 1\n[a.b]\nc = 2\n");
+    let v: serde_json::Value = serde_json::from_str(&json).expect("valid json");
+    assert_eq!(v["a"]["b"]["c"], 2);
+}
+
+#[test]
+fn dotted_conflict_with_scalar_is_e001() {
+    let errs = codes("x = 1\n[x.y]\nz = 2\n");
+    assert!(errs.contains(&"E001".to_string()), "{errs:?}");
+}
+
+#[test]
+fn dotted_header_missing_segment_is_e001() {
+    let errs = codes("[a.]\nx = 1\n");
+    assert!(!errs.is_empty(), "trailing dot must fail");
+}
+
+#[test]
+fn dotted_table_takes_constraints_at_its_path() {
+    // A constraint above [a.b] attaches to a.b itself — the dotted
+    // form must enforce exactly like the brace equivalent (C2: the
+    // leaf-only attachment silently skipped enforcement).
+    fn strict_codes(src: &str) -> Vec<(String, Option<String>)> {
+        let module = parse(src, "dual").unwrap_or_else(|d| panic!("parse failed: {d:?}"));
+        let mut engine = Engine::new();
+        engine.resilient = false;
+        match engine.evaluate(&module) {
+            Ok(_) => panic!("must fail: {src}"),
+            Err(solid_core::EvalError::ValidationFailed { diagnostics }) => diagnostics,
+            Err(e) => panic!("unexpected error: {e:?}"),
+        }
+        .into_iter()
+        .map(|d| (d.code, d.path))
+        .collect()
+    }
+    let dotted = "# @constraint: 1 > 2\n[a.b]\nc = 1\n";
+    let braces = "a {\n  # @constraint: 1 > 2\n  b {\n    c = 1\n  }\n}\n";
+    let (dotted_diags, brace_diags) = (strict_codes(dotted), strict_codes(braces));
+    assert_eq!(dotted_diags, brace_diags, "dotted must enforce like braces");
+    assert!(
+        dotted_diags
+            .iter()
+            .any(|(c, p)| c == "T006" && p.as_deref() == Some("a.b")),
+        "{dotted_diags:?}"
+    );
+}
+
+#[test]
+fn dotted_tables_work_under_profiles() {
+    let src = "[a.b]\nc = 1\nprofile \"p\" {\n  [a.b]\n  c = 2\n}\nactive_profile = \"p\"\n";
+    let v: serde_json::Value = serde_json::from_str(&tree(src)).expect("valid json");
+    assert_eq!(v["a"]["b"]["c"], 2);
+}
+
+#[test]
+fn dotted_tables_work_with_patches() {
+    let src = "[a.b]\nc = 5\n@patch(\"a.b.c\", 99)\n";
+    let json = tree(src);
+    let v: serde_json::Value = serde_json::from_str(&json).expect("valid json");
+    assert_eq!(v["a"]["b"]["c"], 99);
+}
+
+#[test]
+fn dotted_header_round_trips_through_formatter() {
+    // The formatter emits nested blocks (never dotted headers); the
+    // reparse must yield the identical tree (semantic round-trip).
+    let dotted = "[a.b]\nc = 1\n[a.d]\ne = 2\n";
+    for style in [Style::Brace, Style::Indent] {
+        let module = parse(dotted, "dual").unwrap_or_else(|d| panic!("parse failed: {d:?}"));
+        let once = solid_core::fmt::format(&module, style);
+        assert_eq!(
+            tree(&once),
+            tree(dotted),
+            "fmt round-trip in {style:?}:\n{once}"
+        );
+    }
 }

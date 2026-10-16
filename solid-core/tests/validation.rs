@@ -413,3 +413,185 @@ fn closed_tables_accept_exact_keys() {
     eval_inline_strict("schema = { closed = true, port = Int }\nport = 1\n")
         .expect("exact keys pass");
 }
+
+use solid_core::diag::Severity;
+
+fn strict_diags(src: &str) -> Vec<solid_core::Diagnostic> {
+    let module = parse(src, "inline").unwrap_or_else(|d| panic!("parse failed: {d:?}"));
+    match strict_engine().evaluate(&module) {
+        Ok(_) => panic!("strict must fail: {src}"),
+        Err(EvalError::ValidationFailed { diagnostics }) => diagnostics,
+        Err(e) => panic!("unexpected error: {e:?}"),
+    }
+}
+
+fn resilient_eval(src: &str) -> (serde_json::Value, Vec<solid_core::Diagnostic>) {
+    let module = parse(src, "inline").unwrap_or_else(|d| panic!("parse failed: {d:?}"));
+    let (value, diags) = Engine::new()
+        .evaluate(&module)
+        .unwrap_or_else(|e| panic!("resilient must succeed: {e:?}"));
+    let json = solid_core::convert::value_to_pretty_json(&value);
+    (serde_json::from_str(&json).expect("valid json"), diags)
+}
+
+// --- C-016 phase-2/3 schema wiring ------------------------------------
+
+#[test]
+fn closed_table_typo_suggests_in_strict() {
+    let diags = strict_diags("schema = { closed = true, port = Int }\nprt = 8080\n");
+    let t005 = diags
+        .iter()
+        .find(|d| d.code == "T005")
+        .expect("T005 expected");
+    assert!(t005.message.contains("did you mean 'port'?"), "{t005:?}");
+    let repair = t005.repair.as_ref().expect("repair attached");
+    assert_eq!(repair.suggested, "port");
+    assert_eq!(repair.original, "prt");
+    // Suggest-only confidence is the match score, never 1.0; the
+    // near-identical-edit rule keeps `safe` false here.
+    assert!(t005.confidence >= 0.70 && t005.confidence < 1.0, "{t005:?}");
+    assert!(!repair.safe, "{t005:?}");
+    // Strict never renames: the missing key still fails alongside.
+    assert!(diags.iter().any(|d| d.code == "T004"), "{diags:?}");
+}
+
+#[test]
+fn resilient_renames_confident_typo_and_retracts_absence() {
+    let (v, diags) = resilient_eval("schema = { closed = true, port = Int }\nprt = 8080\n");
+    assert_eq!(v["port"], 8080);
+    assert!(v.get("prt").is_none(), "{v}");
+    // Exactly one diagnostic: the H005 warning. The stale T004 for
+    // the healed absence is retracted; no T005 remains.
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert_eq!(diags[0].code, "H005");
+    assert_eq!(diags[0].severity, Severity::Warning);
+    assert!(diags[0].confidence >= 0.85, "{:?}", diags[0]);
+    assert!(
+        diags[0].message.contains("renamed key 'prt' to 'port'"),
+        "{:?}",
+        diags[0]
+    );
+}
+
+#[test]
+fn resilient_keeps_typo_when_target_taken() {
+    let (v, diags) = resilient_eval("schema = { closed = true, port = Int }\nport = 1\nprt = 2\n");
+    assert_eq!(v["port"], 1);
+    assert_eq!(v["prt"], 2);
+    assert!(diags.iter().any(|d| d.code == "T005"), "{diags:?}");
+    assert!(!diags.iter().any(|d| d.code == "H005"), "{diags:?}");
+}
+
+#[test]
+fn resilient_keeps_typo_when_value_mistyped() {
+    // `prt` suggests `port`, but the string value does not
+    // type-check as Int: suggest-only, no rename, no coerce-across
+    // (the value stays under its written key, unvalidated).
+    let (v, diags) = resilient_eval("schema = { closed = true, port = Int }\nprt = \"8080\"\n");
+    assert_eq!(v["prt"], "8080");
+    assert!(v.get("port").is_none(), "{v}");
+    assert!(diags.iter().any(|d| d.code == "T005"), "{diags:?}");
+    assert!(!diags.iter().any(|d| d.code == "H005"), "{diags:?}");
+}
+
+#[test]
+fn strict_notes_coercible_mismatch() {
+    let diags = strict_diags("schema = { timeout = Duration }\ntimeout = \"5s\"\n");
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert_eq!(diags[0].code, "T002");
+    assert!(
+        diags[0].message.contains("coercible under --resilient"),
+        "{:?}",
+        diags[0]
+    );
+    // No evaluated value in the message (no-echo policy).
+    assert!(!diags[0].message.contains("5s"), "{:?}", diags[0]);
+}
+
+#[test]
+fn resilient_coerces_string_to_target() {
+    let (v, diags) = resilient_eval("schema = { timeout = Duration }\ntimeout = \"5s\"\n");
+    assert_eq!(v["timeout"]["ms"], 5000, "{v}");
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert_eq!(diags[0].code, "H007");
+    assert_eq!(diags[0].severity, Severity::Warning);
+    assert!(
+        diags[0].repair.is_none(),
+        "applied repairs need no Repair attachment"
+    );
+}
+
+#[test]
+fn resilient_coerced_value_still_constraint_checked() {
+    let (v, diags) = resilient_eval("schema = { n = Int(min = 0, max = 10) }\nn = \"500\"\n");
+    assert_eq!(v["n"], 500, "{v}");
+    // Coerced, then the range check fires on the coerced value.
+    assert!(diags.iter().any(|d| d.code == "H007"), "{diags:?}");
+    assert!(diags.iter().any(|d| d.code == "T003"), "{diags:?}");
+}
+
+#[test]
+fn sentinel_word_is_recognized_not_mapped() {
+    let diags = strict_diags("schema = { retries = Int }\nretries = \"unlimited\"\n");
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert_eq!(diags[0].code, "T002");
+    assert!(
+        diags[0]
+            .message
+            .contains("sentinel 'unlimited' signals limit"),
+        "{:?}",
+        diags[0]
+    );
+    // Resilient cannot map it either (no schema syntax designates
+    // sentinel values): the violation is collected, tree unchanged.
+    let (v, diags) = resilient_eval("schema = { retries = Int }\nretries = \"unlimited\"\n");
+    assert_eq!(v["retries"], "unlimited");
+    assert!(diags.iter().any(|d| d.code == "T002"), "{diags:?}");
+    assert!(!diags.iter().any(|d| d.code == "H007"), "{diags:?}");
+}
+
+#[test]
+fn nested_rename_revalidates_subtree() {
+    // Typos at two levels: the outer rename exposes the inner one,
+    // which the fixpoint pass then heals too.
+    let src = "schema = { closed = true, server = Table { closed = true, port = Int } }\n\
+         serverr = { prot = 1 }\n";
+    let (v, diags) = resilient_eval(src);
+    assert_eq!(v["server"]["port"], 1, "{v}");
+    assert!(v.get("serverr").is_none(), "{v}");
+    let h005: Vec<_> = diags.iter().filter(|d| d.code == "H005").collect();
+    assert_eq!(h005.len(), 2, "{diags:?}");
+    assert!(!diags.iter().any(|d| d.code.starts_with('T')), "{diags:?}");
+}
+
+#[test]
+fn rename_wins_over_default_fill() {
+    // The walk queues both a fill (port missing, has a default) and
+    // a rename (prt typo): the healed user value must survive, not
+    // be clobbered by the default afterwards.
+    let src = "schema = { closed = true, port = Int(default = 1) }\nprt = 8080\n";
+    let (v, diags) = resilient_eval(src);
+    assert_eq!(v["port"], 8080, "{v}");
+    assert!(v.get("prt").is_none(), "{v}");
+    assert!(diags.iter().any(|d| d.code == "H005"), "{diags:?}");
+    assert!(
+        !diags.iter().any(|d| d.code == "W005"),
+        "healed path must not fill: {diags:?}"
+    );
+    // Strict still fails explicitly (T004 + T005, no rename).
+    let diags = strict_diags(src);
+    assert!(diags.iter().any(|d| d.code == "T004"), "{diags:?}");
+    assert!(diags.iter().any(|d| d.code == "T005"), "{diags:?}");
+}
+
+#[test]
+fn fill_then_coerce_chains_through_fixpoint() {
+    // A filled default that needs coercion: the fill pass inserts
+    // "5s", revalidation queues a coercion, and the fixpoint loop
+    // applies it (a single fill pass would leave the string).
+    let src = "schema = { timeout = Duration(default = \"5s\") }\n";
+    let (v, diags) = resilient_eval(src);
+    assert_eq!(v["timeout"]["ms"], 5000, "{v}");
+    assert!(diags.iter().any(|d| d.code == "W005"), "{diags:?}");
+    assert!(diags.iter().any(|d| d.code == "H007"), "{diags:?}");
+}

@@ -4,13 +4,12 @@
 //! and parser (H002: trailing commas, H003: missing commas, H004: bracket
 //! recovery). This module hosts:
 //! - Phase 2 (semantic key repair): similarity scoring and best-candidate
-//!   selection over a set of legal keys.
-//! - Phase 3 (type/constraint healing): safe coercion functions.
-//!
-//! TODO(solid C-030): wire semantic key repair to schema-controlled tables
-//! and type/constraint healing to schema-guided validation. The similarity
-//! engine and coercion functions below are the production code; the
-//! integration point with schemas lands with the schema language (C-030).
+//!   selection over a set of legal keys, wired to schema-controlled
+//!   tables in validation (H005 suggestions in strict mode, guarded
+//!   auto-rename under resilient mode).
+//! - Phase 3 (type/constraint healing): safe coercion functions, wired
+//!   to validation mismatches (H007 under resilient mode) with
+//!   sentinel recognition in strict messages.
 
 use crate::diag::{thresholds, Diagnostic, Repair, RepairKind, Severity, Span};
 use crate::ir::Module;
@@ -300,9 +299,8 @@ pub fn coerce_string_to(value: &str, target: &SolidType) -> Option<crate::ir::Va
 
 /// Run the self-healing passes over a module. Returns the number of repairs
 /// recorded. Phase 1 repairs are already in `module.healing`; phases 2 and
-/// 3 append to it when the schema language lands (C-030).
-/// TODO(solid C-030): wire schema-controlled table healing and schema-guided
-/// coercion into this entry point.
+/// 3 run schema-driven inside validation (H005/H007), which owns the
+/// schema tree and the evaluated values they need.
 pub fn heal(module: &mut Module) -> usize {
     module.healing.len()
 }

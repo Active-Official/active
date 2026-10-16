@@ -122,7 +122,8 @@ at).
   diagnostic and exits 1.
 - **Resilient** (`Engine.resilient == true`, CLI `--resilient`): the
   same diagnostics are collected and returned alongside the value
-  tree, with schema defaults filled (§9). Export proceeds; the CLI
+  tree, with schema defaults filled (§9) and schema-driven repairs
+  applied (§10.1–§10.2). Export proceeds; the CLI
   exit code follows the standard policy (any Error diagnostic exits
   1, but the output is still produced).
 
@@ -184,8 +185,52 @@ corresponding schema field: T005 (`unexpected key '<key>' in closed
 table`) at the value expression's span (the parser records spans on
 value nodes, so this is the token that produced the value — same line
 as the key in practice), falling back to the schema table span when
-unresolvable. Closed enforcement is validation, not mutation: the
-extra keys stay in the resilient tree, and strict mode fails with all
-violations collected, exactly like any other T-diagnostic. Open
-tables (the default) keep ignoring extra keys. Nesting composes:
-each table enforces its own flag.
+unresolvable. Open tables (the default) keep ignoring extra keys.
+Nesting composes: each table enforces its own flag.
+
+### 10.1 Key repair (C-016 phase 2, wired here)
+
+An unexpected key is scored against the schema field names with the
+phase-2 similarity engine (`best_key_match`). Suggestions clear the
+medium band (≥ 0.70) in both modes — informational only, never
+applied there. Renames additionally require the high band
+(≥ 0.85, the C-016 item threshold). On a match:
+
+- **Strict**: the T005 message gains `; did you mean '<field>'?`
+  and a `KeyTypo` repair attachment (confidence = the score;
+  `safe` follows the canonical near-identical-edit rule) for
+  tooling (the LSP `apply healing` action). The tree is untouched:
+  key identity is semantic, and strict mode requires explicitness —
+  the missing field still reports T004 alongside.
+- **Resilient**: when the value already type-checks against the
+  suggested field and the target key is absent (never clobber a
+  written key), the key is renamed in the result tree and an H005
+  warning is recorded (`renamed key '<a>' to '<b>' (confidence
+  <n>)`, with the applied repair attached; renames always warn,
+  even at ≥ 0.95, because a key identity changed). The stale
+  missing-key T004 for the healed path is retracted, queued
+  default fills for it are cancelled, and the renamed subtree
+  is revalidated like a written value — constraints still bite,
+  and nested typos queue further renames to a fixpoint. Otherwise
+  (low score, mistyped value, or taken target) the T005 is
+  collected with its suggestion and the tree is kept as-is.
+
+### 10.2 String coercion (C-016 phase 3, wired here)
+
+A T002 mismatch where the value is a string that parses as the
+target type (`Int`, `Float`, `Bool`, `Duration` via the phase-3
+functions) is coercible:
+
+- **Strict**: the T002 message notes coercibility (`expected
+  Duration, got string (coercible under --resilient)`). A
+  recognized sentinel word (`"unlimited"`, `"none"`, `"inf"`, …)
+  is named by intent instead (`sentinel 'unlimited' signals limit
+  but the schema designates no value — set an explicit value or a
+  schema default`): sentinels are never mapped, because the schema
+  language has no syntax for designating their values and guessing
+  would invent data. The echoed word is safe — it is one of a
+  fixed dictionary, never user data.
+- **Resilient**: the parsed value replaces the string, an H007
+  warning is recorded (value-free, per §7), and the coerced value
+  is constraint-checked like a written one (an out-of-range
+  coercion still reports T003).

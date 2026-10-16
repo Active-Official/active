@@ -214,14 +214,18 @@ reject. The test corpus's negative cases pin the diagnostics that ARE emitted
 
 ```
 let-decl      = "let" identifier "=" expression
-table-header  = "[" identifier "]"             — single segment only
+table-header  = "[" dotted-path "]"            — one or more segments
+dotted-path   = identifier ("." identifier)*
 key-value     = identifier "=" expression
 ```
 
-**[impl note]** Dotted table headers `[a.b]` are not yet supported (C-021) —
-the parser emits E001 and returns. After a table header, key-values belong to
-that table until EOF, the next `[`-header, or a `let` (a `let` inside a table
-body ends the table).
+Dotted headers (`[a.b.c]`) descend through (or create) nested tables;
+the body belongs to the leaf. Repeated headers merge at shared
+prefixes (`[a.b]` then `[a.c]` keep both); a repeated leaf is
+last-wins, exactly like repeated single headers. Descending through
+a present non-table value is E001. After a table header, key-values
+belong to that table until EOF, the next `[`-header, or a `let`
+(a `let` inside a table body ends the table).
 
 ### 2.7 Include statements (C-025)
 

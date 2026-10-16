@@ -2486,12 +2486,82 @@ impl Parser {
             Some(t) => t,
             None => return,
         };
-        let name = name_tok.text.clone();
-        // TODO(solid C-021): dotted table paths [a.b.c] (nested tables)
-        if self.expect(TokenKind::RBracket).is_none() {
-            return;
+        // Dotted table paths [a.b.c]: each further segment descends
+        // into (or creates) a nested table; the body belongs to the
+        // leaf. Single-segment headers behave exactly as before.
+        let mut segments = vec![name_tok.text.clone()];
+        while matches!(self.peek_kind(), TokenKind::Dot) {
+            self.bump(); // .
+            match self.expect(TokenKind::Ident) {
+                Some(t) => segments.push(t.text.clone()),
+                None => return,
+            }
         }
+        let close = match self.expect(TokenKind::RBracket) {
+            Some(t) => t,
+            None => return,
+        };
         self.brace_tables += 1;
+        // Descend to the leaf container, creating intermediate tables
+        // (span-less synthetics, like the document root). A present
+        // non-table is a structural conflict, not a silent overwrite.
+        // The descent resolves owned ids with short-lived borrows only,
+        // so no map borrow is held across the body parse below.
+        let mut scope: Option<NodeId> = None;
+        for seg in &segments[..segments.len() - 1] {
+            let found = match scope {
+                None => parent.get(seg).copied(),
+                Some(id) => match self.module.get(id) {
+                    Some(Node::Table { fields }) => fields.get(seg).copied(),
+                    _ => None,
+                },
+            };
+            let next = match found {
+                Some(id) => match self.module.get(id) {
+                    Some(Node::Table { .. }) => id,
+                    _ => {
+                        self.error(
+                            "E001",
+                            format!(
+                                "table path '{}' conflicts with a non-table value at '{}'",
+                                segments.join("."),
+                                seg
+                            ),
+                        );
+                        return;
+                    }
+                },
+                None => {
+                    let id = self.module.add_node(Node::Table {
+                        fields: indexmap::IndexMap::new(),
+                    });
+                    match scope {
+                        None => {
+                            parent.insert(seg.clone(), id);
+                        }
+                        Some(pid) => match self.module.get_mut(pid) {
+                            Some(Node::Table { fields }) => {
+                                fields.insert(seg.clone(), id);
+                            }
+                            _ => {
+                                self.error(
+                                    "E001",
+                                    format!(
+                                        "table path '{}' conflicts with a non-table value",
+                                        segments.join(".")
+                                    ),
+                                );
+                                return;
+                            }
+                        },
+                    }
+                    id
+                }
+            };
+            scope = Some(next);
+        }
+        let name = segments.join(".");
+        let leaf = segments.last().cloned().unwrap_or_default();
         let stmt_idx = self.statements.len();
         self.statements.push(StmtInfo {
             key: name.clone(),
@@ -2501,7 +2571,9 @@ impl Parser {
             level: header_level,
             file: self.current_file_name(),
         });
-        self.current_path.push(name.clone());
+        for seg in &segments {
+            self.current_path.push(seg.clone());
+        }
         self.blocks.push(BlockInfo {
             path: self.path_str(),
             level: header_level,
@@ -2515,12 +2587,46 @@ impl Parser {
         self.splice_includes(&mut fields, pending, false);
         let idents = self.ident_scopes.pop().unwrap_or_default();
         let _ = self.resolve_sibling_refs(idents, &fields);
-        // Name-token span and file stamp, as above (C-043 scopes).
-        let table_id = self.add_spanned(Node::Table { fields }, &name_tok);
+        // Name-token span and file stamp, as above (C-043 scopes),
+        // widened to the full header so dotted tables point at
+        // `[a.b]`, not just `a`.
+        let table_id = self.module.add_node(Node::Table { fields });
+        self.module.record_span(
+            table_id,
+            Span {
+                line: open.line,
+                column: open.col,
+                end_line: close.end_line,
+                end_column: close.end_col,
+            },
+        );
+        if let Some(file) = self.current_file_name() {
+            self.module.record_file(table_id, file);
+        }
         self.statements[stmt_idx].end_line = self.last_end_line();
-        self.current_path.pop();
+        for _ in &segments {
+            self.current_path.pop();
+        }
         self.extract_annotations(&name, table_id, open.line);
-        parent.insert(name, table_id);
+        match scope {
+            None => {
+                parent.insert(leaf, table_id);
+            }
+            Some(pid) => match self.module.get_mut(pid) {
+                Some(Node::Table { fields }) => {
+                    fields.insert(leaf, table_id);
+                }
+                _ => {
+                    self.error(
+                        "E001",
+                        format!(
+                            "table path '{}' conflicts with a non-table value",
+                            segments.join(".")
+                        ),
+                    );
+                }
+            },
+        }
     }
 
     // ------------------------------------------------------------------

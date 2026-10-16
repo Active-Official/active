@@ -49,6 +49,7 @@ parses leave it unset and tools fall back to the input filename.
 | E020 | `schema tables need valid type expressions` / `unknown schema type` / `unknown argument for <Type>` / `Enum needs at least one value` | token | Malformed schema blocks (C-030): non-type entries, unknown types or arguments |
 | E021 | `invalid @<kind> annotation: <detail>` | annotation comment span | Malformed annotations (C-033): bad `@intent` string, non-boolean `@ai_immutable`, empty or trailing `@constraint` payload. Truncated predicates keep their precise expression codes with rebased spans |
 | E022 | ``depends_on` entries must be string literals` / ``depends_on` is only allowed as a direct table member` | token | Malformed dependency blocks (C-042): non-string array elements, or inline-table occurrences |
+| E032 | `<file>: unsigned (no signature sidecar …)` / `<file>: unknown signing key '<kid>'` / `<file>: signature mismatch (key '<kid>')` | include statement | An included file failed overlay enforcement (C-052): no sibling sidecar, a key outside the trusted set, or a bad signature. Fail-closed before a byte parses; key material never quoted |
 
 ### S0xx — Semantic (evaluation, severity Error)
 

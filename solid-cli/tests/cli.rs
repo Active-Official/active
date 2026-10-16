@@ -846,3 +846,214 @@ fn lock_writes_output_files_and_fails_cleanly() {
     let out = solid().args(["lock"]).arg(&f).output().expect("run solid");
     assert!(!out.status.success(), "broken input must fail");
 }
+
+// ------------------------------------------------------------------
+// Signing CLI contract (C-052, spec/threat-model.md §4).
+// ------------------------------------------------------------------
+
+#[test]
+fn keygen_sign_verify_round_trip() {
+    let dir = std::env::temp_dir().join("solid-cli-tests");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let prefix = dir.join("roundtrip");
+    let out = solid()
+        .args(["keygen", "--out"])
+        .arg(&prefix)
+        .output()
+        .expect("run solid");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let secret_path = dir.join("roundtrip.secret");
+    let public_path = dir.join("roundtrip.public");
+    assert!(secret_path.exists() && public_path.exists());
+    let public_hex = std::fs::read_to_string(&public_path).expect("public");
+    assert_eq!(public_hex.len(), 64);
+    // Sign a document overlay with the fresh key.
+    let f = fixture("sign_lib.solid", "host = \"db\"\n");
+    let out = solid()
+        .args(["sign", "--key"])
+        .arg(&secret_path)
+        .args(["--kid", "test-key"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let sidecar = dir.join("sign_lib.solid.sig");
+    assert!(sidecar.exists());
+    // Verify against a trust file carrying the public half.
+    let trust = dir.join("trust.toml");
+    std::fs::write(
+        &trust,
+        format!("[[keys]]\nid = \"test-key\"\npublic = \"{public_hex}\"\n"),
+    )
+    .expect("write trust");
+    let out = solid()
+        .args(["verify", "--trust-keys"])
+        .arg(&trust)
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("valid signature"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    // Tampering breaks verification without leaking key material.
+    std::fs::write(&f, "host = \"evil\"\n").expect("tamper");
+    let out = solid()
+        .args(["verify", "--trust-keys"])
+        .arg(&trust)
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(!out.status.success(), "tampered must fail");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(combined.contains("signature mismatch"), "{combined}");
+    assert!(!combined.contains(&public_hex), "{combined}");
+}
+
+#[test]
+fn trust_keys_gate_include_loading() {
+    let dir = std::env::temp_dir().join("solid-cli-tests");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    // Key setup through the real commands.
+    let prefix = dir.join("gate");
+    assert!(solid()
+        .args(["keygen", "--out"])
+        .arg(&prefix)
+        .output()
+        .expect("run")
+        .status
+        .success());
+    let public_hex = std::fs::read_to_string(dir.join("gate.public")).expect("public");
+    let trust = dir.join("gate-trust.toml");
+    std::fs::write(
+        &trust,
+        format!("[[keys]]\nid = \"k\"\npublic = \"{public_hex}\"\n"),
+    )
+    .expect("write trust");
+    // Unsigned include: clean without the flag, E032 with it.
+    let _lib = fixture("gate_lib.solid", "host = \"db\"\n");
+    let main = fixture("gate_main.solid", "include \"gate_lib.solid\"\nport = 1\n");
+    let out = solid()
+        .args(["check"])
+        .arg(&main)
+        .output()
+        .expect("run solid");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = solid()
+        .args(["check", "--trust-keys"])
+        .arg(&trust)
+        .arg(&main)
+        .output()
+        .expect("run solid");
+    assert!(!out.status.success(), "unsigned must fail under trust");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E032"), "{stderr}");
+    // Signed include: passes under trust.
+    let out = solid()
+        .args(["sign", "--key"])
+        .arg(dir.join("gate.secret"))
+        .args(["--kid", "k"])
+        .arg(dir.join("gate_lib.solid"))
+        .output()
+        .expect("run solid");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = solid()
+        .args(["check", "--trust-keys"])
+        .arg(&trust)
+        .arg(&main)
+        .output()
+        .expect("run solid");
+    assert!(
+        out.status.success(),
+        "signed must pass: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn signing_commands_fail_cleanly_on_bad_inputs() {
+    let dir = std::env::temp_dir().join("solid-cli-tests");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    // Malformed trust file: clean error, no key material shown.
+    let bad_trust = dir.join("bad-trust.toml");
+    std::fs::write(&bad_trust, "[[keys]]\n").expect("write trust");
+    let f = fixture("sign_bad_trust.solid", "port = 1\n");
+    let out = solid()
+        .args(["check", "--trust-keys"])
+        .arg(&bad_trust)
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(!out.status.success(), "bad trust must fail");
+    // Invalid kid: refused before any file is touched.
+    let prefix = dir.join("badkid");
+    assert!(solid()
+        .args(["keygen", "--out"])
+        .arg(&prefix)
+        .output()
+        .expect("run")
+        .status
+        .success());
+    let f = fixture("sign_bad_kid.solid", "port = 1\n");
+    let sidecar = dir.join("sign_bad_kid.solid.sig");
+    let _ = std::fs::remove_file(&sidecar);
+    let out = solid()
+        .args(["sign", "--key"])
+        .arg(dir.join("badkid.secret"))
+        .args(["--kid", "bad\"kid"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(!out.status.success(), "bad kid must fail");
+    assert!(!sidecar.exists(), "no sidecar on refusal");
+}
+
+#[test]
+#[cfg(unix)]
+fn keygen_restricts_secret_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join("solid-cli-tests");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let prefix = dir.join("perms");
+    let out = solid()
+        .args(["keygen", "--out"])
+        .arg(&prefix)
+        .output()
+        .expect("run solid");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let mode = std::fs::metadata(dir.join("perms.secret"))
+        .expect("meta")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o600, "secret key must be owner-only");
+}

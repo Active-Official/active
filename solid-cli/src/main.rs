@@ -76,6 +76,9 @@ enum Commands {
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
+        /// Require sibling signatures on includes (C-052)
+        #[arg(long)]
+        trust_keys: Option<PathBuf>,
         /// Select a profile by name, overriding the active_profile key
         #[arg(long)]
         profile: Option<String>,
@@ -91,6 +94,9 @@ enum Commands {
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
+        /// Require sibling signatures on includes (C-052)
+        #[arg(long)]
+        trust_keys: Option<PathBuf>,
         /// Select a profile by name, overriding the active_profile key
         #[arg(long)]
         profile: Option<String>,
@@ -109,6 +115,9 @@ enum Commands {
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
+        /// Require sibling signatures on includes (C-052)
+        #[arg(long)]
+        trust_keys: Option<PathBuf>,
         /// Select a profile by name, overriding the active_profile key
         #[arg(long)]
         profile: Option<String>,
@@ -127,6 +136,9 @@ enum Commands {
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
+        /// Require sibling signatures on includes (C-052)
+        #[arg(long)]
+        trust_keys: Option<PathBuf>,
     },
     /// List what a key's value is built from (transitive dependencies)
     Why {
@@ -142,6 +154,9 @@ enum Commands {
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
+        /// Require sibling signatures on includes (C-052)
+        #[arg(long)]
+        trust_keys: Option<PathBuf>,
     },
     /// Convert evaluated result to JSON, YAML, or TOML
     Convert {
@@ -154,6 +169,9 @@ enum Commands {
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
+        /// Require sibling signatures on includes (C-052)
+        #[arg(long)]
+        trust_keys: Option<PathBuf>,
         /// Select a profile by name, overriding the active_profile key
         #[arg(long)]
         profile: Option<String>,
@@ -179,6 +197,9 @@ enum Commands {
         /// Root type name
         #[arg(long, default_value = "Config")]
         name: String,
+        /// Require sibling signatures on includes (C-052)
+        #[arg(long)]
+        trust_keys: Option<PathBuf>,
     },
     /// Render schema, intent, and comments as documentation
     Doc {
@@ -191,6 +212,9 @@ enum Commands {
         /// Document title (defaults to the file stem)
         #[arg(long)]
         title: Option<String>,
+        /// Require sibling signatures on includes (C-052)
+        #[arg(long)]
+        trust_keys: Option<PathBuf>,
     },
     /// Emit a reproducible lockfile (content hash + provenance)
     Lock {
@@ -205,11 +229,39 @@ enum Commands {
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
+        /// Require sibling signatures on includes (C-052)
+        #[arg(long)]
+        trust_keys: Option<PathBuf>,
         /// Select a profile by name, overriding the active_profile key
         #[arg(long)]
         profile: Option<String>,
         #[command(flatten)]
         budget: BudgetArgs,
+    },
+    /// Generate an Ed25519 key pair for overlay signing
+    Keygen {
+        /// Output prefix: writes <prefix>.secret (0600) and <prefix>.public
+        #[arg(short, long)]
+        out: PathBuf,
+    },
+    /// Sign a file into a detached `<file>.sig` sidecar
+    Sign {
+        /// File to sign
+        file: PathBuf,
+        /// Secret key file (64 hex chars)
+        #[arg(long)]
+        key: PathBuf,
+        /// Key id recorded in the sidecar
+        #[arg(long)]
+        kid: String,
+    },
+    /// Verify a file against its sidecar and a trusted-keys file
+    Verify {
+        /// File to verify
+        file: PathBuf,
+        /// Trusted keys TOML
+        #[arg(long)]
+        trust_keys: PathBuf,
     },
     /// Format files in a canonical style (spec/formatter.md)
     Fmt {
@@ -246,6 +298,43 @@ fn options(resilient: bool, allow_parent_escapes: bool) -> ParseOptions {
     }
 }
 
+/// Load a trusted-keys file for overlay enforcement (C-052), or
+/// nothing when the flag is absent (legacy behavior preserved).
+fn load_trust(path: &Option<PathBuf>) -> anyhow::Result<Option<solid_core::sign::TrustedKeys>> {
+    match path {
+        None => Ok(None),
+        Some(file) => {
+            let text = std::fs::read_to_string(file)
+                .map_err(|e| anyhow::anyhow!("cannot read trust file {}: {e}", file.display()))?;
+            solid_core::sign::load_trusted_keys(&text)
+                .map(Some)
+                .map_err(|e| anyhow::anyhow!("{e}"))
+        }
+    }
+}
+
+/// Parse a file, enforcing overlay signatures when trust is set.
+fn parse_input(
+    file: &std::path::Path,
+    resilient: bool,
+    allow_parent_escapes: bool,
+    trust: &Option<solid_core::sign::TrustedKeys>,
+) -> anyhow::Result<solid_core::Module> {
+    let name = file.to_string_lossy().to_string();
+    let result = match trust {
+        Some(keys) => {
+            solid_core::parse_file_with_trust(file, options(resilient, allow_parent_escapes), keys)
+        }
+        None => parse_file(file, options(resilient, allow_parent_escapes)),
+    };
+    result.map_err(|diags| {
+        for d in &diags {
+            report(d, &name);
+        }
+        anyhow::anyhow!("parse failed")
+    })
+}
+
 fn engine(resilient: bool, profile: &Option<String>, budget: Budget) -> Engine {
     let mut engine = Engine::new();
     // The CLI is strict by default: only --resilient tolerates
@@ -262,14 +351,10 @@ fn parse_graph_input(
     file: &std::path::Path,
     resilient: bool,
     allow_parent_escapes: bool,
+    trust: &Option<solid_core::sign::TrustedKeys>,
 ) -> anyhow::Result<(solid_core::Module, String)> {
     let name = file.to_string_lossy().to_string();
-    let module = parse_file(file, options(resilient, allow_parent_escapes)).map_err(|diags| {
-        for d in &diags {
-            report(d, &name);
-        }
-        anyhow::anyhow!("parse failed")
-    })?;
+    let module = parse_input(file, resilient, allow_parent_escapes, trust)?;
     Ok((module, name))
 }
 
@@ -325,17 +410,13 @@ fn main() -> anyhow::Result<()> {
             format,
             resilient,
             allow_parent_escapes,
+            trust_keys,
             profile,
             budget,
         } => {
             let name = file.to_string_lossy().to_string();
-            let module =
-                parse_file(&file, options(resilient, allow_parent_escapes)).map_err(|diags| {
-                    for d in &diags {
-                        report(d, &name);
-                    }
-                    anyhow::anyhow!("parse failed")
-                })?;
+            let trust = load_trust(&trust_keys)?;
+            let module = parse_input(&file, resilient, allow_parent_escapes, &trust)?;
 
             let engine = engine(resilient, &profile, budget.budget());
             let (value, diags) = engine
@@ -370,11 +451,13 @@ fn main() -> anyhow::Result<()> {
             file,
             resilient,
             allow_parent_escapes,
+            trust_keys,
             profile,
             budget,
         } => {
             let name = file.to_string_lossy().to_string();
-            match parse_file(&file, options(resilient, allow_parent_escapes)) {
+            let trust = load_trust(&trust_keys)?;
+            match parse_input(&file, resilient, allow_parent_escapes, &trust) {
                 Ok(module) => {
                     let engine = engine(resilient, &profile, budget.budget());
                     match engine.evaluate(&module) {
@@ -396,10 +479,8 @@ fn main() -> anyhow::Result<()> {
                         }
                     }
                 }
-                Err(diags) => {
-                    for d in diags {
-                        report(&d, &name);
-                    }
+                Err(e) => {
+                    eprintln!("{e}");
                     std::process::exit(1);
                 }
             }
@@ -409,16 +490,12 @@ fn main() -> anyhow::Result<()> {
             format,
             resilient,
             allow_parent_escapes,
+            trust_keys,
             profile: _,
         } => {
             let name = file.to_string_lossy().to_string();
-            let module =
-                parse_file(&file, options(resilient, allow_parent_escapes)).map_err(|diags| {
-                    for d in &diags {
-                        report(d, &name);
-                    }
-                    anyhow::anyhow!("parse failed")
-                })?;
+            let trust = load_trust(&trust_keys)?;
+            let module = parse_input(&file, resilient, allow_parent_escapes, &trust)?;
             for d in &module.healing {
                 report(d, &name);
             }
@@ -462,8 +539,11 @@ fn main() -> anyhow::Result<()> {
             format,
             resilient,
             allow_parent_escapes,
+            trust_keys,
         } => {
-            let (module, filename) = parse_graph_input(&file, resilient, allow_parent_escapes)?;
+            let trust = load_trust(&trust_keys)?;
+            let (module, filename) =
+                parse_graph_input(&file, resilient, allow_parent_escapes, &trust)?;
             let id = solid_core::graph::resolve_key(&module, &key)
                 .ok_or_else(|| anyhow::anyhow!("unknown key '{key}' in {filename}"))?;
             let paths = solid_core::graph::impact_paths(&module, id);
@@ -483,8 +563,11 @@ fn main() -> anyhow::Result<()> {
             format,
             resilient,
             allow_parent_escapes,
+            trust_keys,
         } => {
-            let (module, filename) = parse_graph_input(&file, resilient, allow_parent_escapes)?;
+            let trust = load_trust(&trust_keys)?;
+            let (module, filename) =
+                parse_graph_input(&file, resilient, allow_parent_escapes, &trust)?;
             let id = solid_core::graph::resolve_key(&module, &key)
                 .ok_or_else(|| anyhow::anyhow!("unknown key '{key}' in {filename}"))?;
             let paths = solid_core::graph::why_paths(&module, id);
@@ -503,17 +586,13 @@ fn main() -> anyhow::Result<()> {
             to,
             resilient,
             allow_parent_escapes,
+            trust_keys,
             profile,
             budget,
         } => {
             let name = file.to_string_lossy().to_string();
-            let module =
-                parse_file(&file, options(resilient, allow_parent_escapes)).map_err(|diags| {
-                    for d in &diags {
-                        report(d, &name);
-                    }
-                    anyhow::anyhow!("parse failed")
-                })?;
+            let trust = load_trust(&trust_keys)?;
+            let module = parse_input(&file, resilient, allow_parent_escapes, &trust)?;
             let engine = engine(resilient, &profile, budget.budget());
             let (value, diags) = engine
                 .evaluate(&module)
@@ -559,14 +638,14 @@ fn main() -> anyhow::Result<()> {
             }
             print!("{source}");
         }
-        Commands::Generate { from, to, name } => {
-            let filename = from.to_string_lossy().to_string();
-            let module = parse_file(&from, ParseOptions::default()).map_err(|diags| {
-                for d in &diags {
-                    report(d, &filename);
-                }
-                anyhow::anyhow!("parse failed")
-            })?;
+        Commands::Generate {
+            from,
+            to,
+            name,
+            trust_keys,
+        } => {
+            let trust = load_trust(&trust_keys)?;
+            let module = parse_input(&from, false, false, &trust)?;
             // Documents without a schema block exit non-zero (spec §5).
             let output = match to.as_str() {
                 "jsonschema" => schema_to_json_schema(&module)
@@ -581,19 +660,20 @@ fn main() -> anyhow::Result<()> {
             .map_err(|e| anyhow::anyhow!("{e}"))?;
             println!("{output}");
         }
-        Commands::Doc { from, to, title } => {
+        Commands::Doc {
+            from,
+            to,
+            title,
+            trust_keys,
+        } => {
             let filename = from.to_string_lossy().to_string();
             let title = title.unwrap_or_else(|| {
                 from.file_stem()
                     .map(|stem| stem.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "Configuration".to_string())
             });
-            let module = parse_file(&from, ParseOptions::default()).map_err(|diags| {
-                for d in &diags {
-                    report(d, &filename);
-                }
-                anyhow::anyhow!("parse failed")
-            })?;
+            let trust = load_trust(&trust_keys)?;
+            let module = parse_input(&from, false, false, &trust)?;
             let (value, diags) = Engine::new()
                 .evaluate(&module)
                 .map_err(|e| anyhow::anyhow!("evaluation failed: {e}"))?;
@@ -613,17 +693,13 @@ fn main() -> anyhow::Result<()> {
             output,
             resilient,
             allow_parent_escapes,
+            trust_keys,
             profile,
             budget,
         } => {
             let name = file.to_string_lossy().to_string();
-            let module =
-                parse_file(&file, options(resilient, allow_parent_escapes)).map_err(|diags| {
-                    for d in &diags {
-                        report(d, &name);
-                    }
-                    anyhow::anyhow!("parse failed")
-                })?;
+            let trust = load_trust(&trust_keys)?;
+            let module = parse_input(&file, resilient, allow_parent_escapes, &trust)?;
             let engine = engine(resilient, &profile, budget.budget());
             let (value, diags) = engine
                 .evaluate(&module)
@@ -667,6 +743,60 @@ fn main() -> anyhow::Result<()> {
             }
             if had_failure(&diags, resilient) {
                 std::process::exit(1);
+            }
+        }
+        Commands::Keygen { out } => {
+            // Fresh Ed25519 seed from OS randomness; the secret file
+            // is created owner-only (0600 on Unix).
+            let key =
+                solid_core::sign::generate_secret_key().map_err(|e| anyhow::anyhow!("{e}"))?;
+            let secret_path = out.with_extension("secret");
+            let public_path = out.with_extension("public");
+            std::fs::write(&secret_path, solid_core::sign::secret_hex(&key))
+                .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", secret_path.display()))?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&secret_path, std::fs::Permissions::from_mode(0o600))
+                    .map_err(|e| anyhow::anyhow!("cannot chmod {}: {e}", secret_path.display()))?;
+            }
+            let verifying = key.verifying_key();
+            std::fs::write(&public_path, solid_core::sign::public_hex(&verifying))
+                .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", public_path.display()))?;
+            println!(
+                "wrote {} and {}",
+                secret_path.display(),
+                public_path.display()
+            );
+        }
+        Commands::Sign { file, key, kid } => {
+            let label = file.to_string_lossy().to_string();
+            let secret_text = std::fs::read_to_string(&key)
+                .map_err(|e| anyhow::anyhow!("cannot read key {}: {e}", key.display()))?;
+            let secret = solid_core::sign::load_secret_key(&secret_text)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let bytes =
+                std::fs::read(&file).map_err(|e| anyhow::anyhow!("cannot read {label}: {e}"))?;
+            let sidecar = solid_core::sign::sign_bytes(&secret, &kid, &bytes)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let sidecar_path = solid_core::sign::sidecar_path_for(&file);
+            std::fs::write(&sidecar_path, sidecar).map_err(|e| {
+                anyhow::anyhow!(
+                    "cannot write {}: {e}",
+                    std::path::PathBuf::from(&sidecar_path).display()
+                )
+            })?;
+            println!("signed {label} for key '{kid}'");
+        }
+        Commands::Verify { file, trust_keys } => {
+            let label = file.to_string_lossy().to_string();
+            let trust = load_trust(&Some(trust_keys))?.expect("trust file given");
+            match solid_core::sign::verify_file(&file, &trust) {
+                Ok(kid) => println!("{label}: valid signature from key '{kid}'"),
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
             }
         }
         Commands::Fmt {

@@ -13,6 +13,7 @@ pub mod ir;
 pub mod lint;
 pub mod parser;
 pub mod provenance;
+pub mod sign;
 pub mod types;
 pub mod validate;
 
@@ -24,8 +25,8 @@ pub use ir::{
 };
 pub use lint::{lint, lint_with, LintOptions};
 pub use parser::{
-    parse, parse_file, parse_recovering, parse_text_recovering_with_file, parse_text_with_file,
-    parse_with, Lexed, ParseOptions,
+    parse, parse_file, parse_file_with_trust, parse_recovering, parse_text_recovering_with_file,
+    parse_text_with_file, parse_with, Lexed, ParseOptions,
 };
 pub use types::{Constraint, Unit};
 

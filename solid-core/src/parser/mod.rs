@@ -186,7 +186,7 @@ pub fn parse_text_with_file(
 ) -> Result<Module, Vec<Diagnostic>> {
     let mut options = options;
     options.enable_includes = true;
-    let (module, errors) = parse_recovering_impl(source, name, options, Some(path));
+    let (module, errors) = parse_recovering_impl(source, name, options, Some(path), None);
     if errors.is_empty() {
         Ok(module)
     } else {
@@ -207,7 +207,7 @@ pub fn parse_text_recovering_with_file(
 ) -> (Module, Vec<Diagnostic>) {
     let mut options = options;
     options.enable_includes = true;
-    parse_recovering_impl(source, name, options, Some(path))
+    parse_recovering_impl(source, name, options, Some(path), None)
 }
 
 /// Parse a file from the filesystem, resolving `include` statements
@@ -233,7 +233,45 @@ pub fn parse_file(
     let mut options = options;
     options.enable_includes = true;
     let (module, errors) =
-        parse_recovering_impl(&src, &path.to_string_lossy(), options, Some(path));
+        parse_recovering_impl(&src, &path.to_string_lossy(), options, Some(path), None);
+    if errors.is_empty() {
+        Ok(module)
+    } else {
+        Err(errors)
+    }
+}
+
+/// Parse a file with overlay enforcement (C-052): identical to
+/// `parse_file`, but every `include` must carry a valid sibling
+/// signature from `trusted` (E032 otherwise). Use with
+/// `--trust-keys`; without it, `parse_file` preserves legacy
+/// behavior exactly.
+pub fn parse_file_with_trust(
+    path: &std::path::Path,
+    options: ParseOptions,
+    trusted: &crate::sign::TrustedKeys,
+) -> Result<Module, Vec<Diagnostic>> {
+    let src = std::fs::read_to_string(path).map_err(|e| {
+        vec![Diagnostic {
+            severity: Severity::Error,
+            code: "E017".into(),
+            message: format!("cannot read file {}: {e}", path.display()),
+            path: None,
+            span: None,
+            repair: None,
+            confidence: 1.0,
+            file: Some(path.to_string_lossy().into_owned()),
+        }]
+    })?;
+    let mut options = options;
+    options.enable_includes = true;
+    let (module, errors) = parse_recovering_impl(
+        &src,
+        &path.to_string_lossy(),
+        options,
+        Some(path),
+        Some(trusted.clone()),
+    );
     if errors.is_empty() {
         Ok(module)
     } else {
@@ -251,7 +289,7 @@ pub fn parse_recovering(
     name: &str,
     options: ParseOptions,
 ) -> (Module, Vec<Diagnostic>) {
-    parse_recovering_impl(source, name, options, None)
+    parse_recovering_impl(source, name, options, None, None)
 }
 
 fn parse_recovering_impl(
@@ -259,6 +297,7 @@ fn parse_recovering_impl(
     name: &str,
     options: ParseOptions,
     root_file: Option<&std::path::Path>,
+    trust: Option<crate::sign::TrustedKeys>,
 ) -> (Module, Vec<Diagnostic>) {
     let mut lexer = Lexer::new(source);
     let mut lexed = lexer.tokenize();
@@ -291,6 +330,7 @@ fn parse_recovering_impl(
         array_depth: 0,
         binding_spliced: std::collections::HashSet::new(),
         pending_profiles: Vec::new(),
+        trust,
     };
     // Lexer diagnostics carry no file; stamp the session file (includes
     // attribute their own file when their sub-parse runs).
@@ -554,6 +594,10 @@ struct Parser {
     /// nodes plus a copy of their fields. Resolved after the document
     /// root completes so profiles see root keys (forward-safe).
     pending_profiles: Vec<ProfileScope>,
+    /// Trusted overlay keys (C-052): when set, every `include` load
+    /// must carry a valid sibling signature from this set (E032
+    /// otherwise). `None` preserves all legacy behavior.
+    trust: Option<crate::sign::TrustedKeys>,
 }
 
 impl Parser {
@@ -1303,6 +1347,14 @@ impl Parser {
                 ),
             );
         }
+        // Signed overlays (C-052): with a trusted set, the include
+        // must carry a valid sibling signature — fail closed before
+        // a single byte is parsed. The content below is read once
+        // and verified in memory (no check/use gap); only the
+        // sidecar itself is read separately, which cannot smuggle
+        // unverified content past the check. (Cloned: the failure
+        // path needs `self` mutably.)
+        let trust = self.trust.clone();
         let src = match std::fs::read_to_string(&canonical) {
             Ok(s) => s,
             Err(e) => {
@@ -1313,6 +1365,19 @@ impl Parser {
                 );
             }
         };
+        if let Some(keys) = &trust {
+            let label = canonical.to_string_lossy().into_owned();
+            match crate::sign::read_sidecar(&canonical, &label) {
+                Err(reason) => return fail(self, "E032", reason),
+                Ok(sidecar) => {
+                    if let Err(reason) =
+                        crate::sign::verify_bytes(&label, src.as_bytes(), &sidecar, keys)
+                    {
+                        return fail(self, "E032", reason);
+                    }
+                }
+            }
+        }
         // Save per-file session state; the arena, bindings, graph,
         // diagnostics, and options are intentionally shared.
         let saved_file = self.current_file.clone();
@@ -2782,6 +2847,7 @@ impl Parser {
             in_profile: self.in_profile,
             binding_spliced: self.binding_spliced.clone(),
             pending_profiles: Vec::new(),
+            trust: self.trust.clone(),
         };
         let node_base = sub.module.arena.len() as u32;
         let id = sub.parse_expression();
@@ -4240,6 +4306,7 @@ impl Parser {
             array_depth: self.array_depth,
             binding_spliced: self.binding_spliced.clone(),
             pending_profiles: Vec::new(),
+            trust: self.trust.clone(),
         };
         // Arena ids below this base predate the embedded expression (the
         // sub-parser shares the outer arena); only spans at or above it

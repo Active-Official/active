@@ -318,13 +318,16 @@ fn withdraw(
         // remaining owner instead of clearing. Owners sort by URI:
         // co-owners should agree (same file content), but the choice
         // is deterministic either way (HashMap order is random).
+        // Ownership compares by file identity, not URI spelling:
+        // client URIs and canonical include stamps for the same file
+        // can differ textually (Windows 8.3 short-names).
         let mut owners: Vec<(&String, &Doc)> = open
             .iter()
             .filter(|(other_key, _)| *other_key != closing_key)
             .filter(|(other_key, _)| {
                 published
                     .get(*other_key)
-                    .is_some_and(|set| set.contains(&stale))
+                    .is_some_and(|set| set.iter().any(|u| analysis::same_uri(u, &stale)))
             })
             .collect();
         owners.sort_by(|a, b| a.0.cmp(b.0));
@@ -332,7 +335,7 @@ fn withdraw(
         for (_, other_doc) in owners {
             if let Some((uri, diagnostics)) = analysis::diagnostics_by_file(other_doc, &lookup)
                 .into_iter()
-                .find(|(uri, _)| uri.to_string() == stale)
+                .find(|(uri, _)| analysis::same_uri(uri.as_ref(), &stale))
             {
                 outgoing.push(publish(
                     &uri,

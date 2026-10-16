@@ -752,52 +752,80 @@ fn def_range(doc: &Doc, target: &Target) -> Option<Range> {
 // Cross-file text.
 // ------------------------------------------------------------------
 
-/// Text lookup by file path: open buffers first, then disk (saved
-/// state). Unreadable files yield None and their references degrade
-/// gracefully (node-span ranges still work — spans are file-local).
-/// Buffer matching is exact first, then case-insensitive: include
-/// stamps carry canonical paths (Windows case/short-names) that may
-/// differ textually from the client's URI for the same file, and a
-/// live buffer always beats stale disk.
-pub fn lookup_text(open: &HashMap<String, Doc>, path: &str) -> Option<String> {
-    let mut insensitive = None;
-    for doc in open.values() {
-        if let Ok(p) = doc.uri.to_file_path() {
-            let candidate = p.to_string_lossy();
-            if candidate == path {
-                return Some(doc.text.clone());
-            }
-            if candidate.eq_ignore_ascii_case(path) {
-                insensitive = Some(doc.text.clone());
-            }
-        }
+/// File-identity comparison for paths: exact, case-insensitive
+/// (Windows client URIs vs canonical stamps), then filesystem
+/// canonicalization (8.3 short-names vs long names — the CI Temp
+/// lesson). Unresolvable paths fall back to string equality.
+fn paths_equal(a: &str, b: &str) -> bool {
+    if a == b || a.eq_ignore_ascii_case(b) {
+        return true;
     }
-    insensitive.or_else(|| std::fs::read_to_string(path).ok())
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => false,
+    }
+}
+
+/// URI-identity comparison for published groups: same string, or
+/// same file by `paths_equal`. Non-file URIs (untitled:) compare by
+/// string only — there is no filesystem identity to consult.
+pub fn same_uri(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    let (Ok(ua), Ok(ub)) = (Url::parse(a), Url::parse(b)) else {
+        return false;
+    };
+    match (ua.to_file_path(), ub.to_file_path()) {
+        (Ok(pa), Ok(pb)) => paths_equal(&pa.to_string_lossy(), &pb.to_string_lossy()),
+        _ => false,
+    }
 }
 
 /// Version of the open buffer behind a URI: exact URI match first,
-/// then the same canonical-tolerant file matching as `lookup_text`.
-/// Unknown files yield None (the publisher omits the version rather
-/// than stamping another file's).
+/// then file-identity matching. Unknown files yield None (the
+/// publisher omits the version rather than stamping another file's).
 pub fn open_version(open: &HashMap<String, Doc>, uri: &Url) -> Option<i32> {
     if let Some(doc) = open.get(&uri.to_string()) {
         return Some(doc.version);
     }
     let target = uri.to_file_path().ok()?;
     let target_str = target.to_string_lossy();
-    let mut insensitive = None;
+    let mut fuzzy = None;
     for doc in open.values() {
         if let Ok(p) = doc.uri.to_file_path() {
             let candidate = p.to_string_lossy();
             if candidate == target_str {
                 return Some(doc.version);
             }
-            if candidate.eq_ignore_ascii_case(&target_str) {
-                insensitive = Some(doc.version);
+            if fuzzy.is_none() && paths_equal(&candidate, &target_str) {
+                fuzzy = Some(doc.version);
             }
         }
     }
-    insensitive
+    fuzzy
+}
+
+/// Text lookup by file path: open buffers first, then disk (saved
+/// state). Unreadable files yield None and their references degrade
+/// gracefully (node-span ranges still work — spans are file-local).
+/// Buffer matching is by file identity: include stamps carry
+/// canonical paths that may differ textually from the client's URI
+/// for the same file, and a live buffer always beats stale disk.
+pub fn lookup_text(open: &HashMap<String, Doc>, path: &str) -> Option<String> {
+    let mut fuzzy = None;
+    for doc in open.values() {
+        if let Ok(p) = doc.uri.to_file_path() {
+            let candidate = p.to_string_lossy();
+            if candidate == path {
+                return Some(doc.text.clone());
+            }
+            if fuzzy.is_none() && paths_equal(&candidate, path) {
+                fuzzy = Some(doc.text.clone());
+            }
+        }
+    }
+    fuzzy.or_else(|| std::fs::read_to_string(path).ok())
 }
 
 /// File URI for a node, falling back to the owning document.

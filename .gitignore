@@ -55,3 +55,6 @@ __pycache__/
 # Fuzzing artifacts (cargo-fuzz)
 fuzz/artifacts/
 fuzz/corpus/
+
+# Agent goal prompts (private working prompts, never committed)
+goal-prompts/

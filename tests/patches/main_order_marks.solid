@@ -1,0 +1,5 @@
+include "order_a.solid"
+
+@patch("x", "local")
+
+include "order_b.solid"

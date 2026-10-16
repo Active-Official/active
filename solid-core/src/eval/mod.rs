@@ -14,6 +14,7 @@ use thiserror::Error;
 use crate::diag::Span;
 use crate::diag::{Diagnostic, Severity};
 use crate::ir::*;
+use crate::parser::{validate_patch_path, PathSeg};
 use crate::types::Unit;
 
 #[derive(Debug, Error)]
@@ -30,6 +31,15 @@ pub enum EvalError {
         span: Option<Span>,
         file: Option<String>,
     },
+    /// A patch application failure with its own stable code (E019):
+    /// rename conflicts and invalid paths discovered at apply time.
+    /// Missing remove/rename targets warn (W004) instead of failing.
+    #[error("patch error: {message}")]
+    PatchError {
+        message: String,
+        span: Option<Span>,
+        file: Option<String>,
+    },
     #[error("secret used in unsafe context")]
     SecretLeak { file: Option<String> },
 }
@@ -42,6 +52,7 @@ impl EvalError {
             EvalError::MissingRoot => "S002",
             EvalError::MissingNode(_) => "S003",
             EvalError::TypeError { .. } => "T001",
+            EvalError::PatchError { .. } => "E019",
             EvalError::SecretLeak { .. } => "S004",
         }
     }
@@ -49,7 +60,7 @@ impl EvalError {
     /// Source span when the error can be attributed to a node position.
     pub fn span(&self) -> Option<&Span> {
         match self {
-            EvalError::TypeError { span, .. } => span.as_ref(),
+            EvalError::TypeError { span, .. } | EvalError::PatchError { span, .. } => span.as_ref(),
             _ => None,
         }
     }
@@ -58,7 +69,9 @@ impl EvalError {
     /// (multi-file documents via includes, C-025).
     pub fn file(&self) -> Option<&str> {
         match self {
-            EvalError::TypeError { file, .. } => file.as_deref(),
+            EvalError::TypeError { file, .. } | EvalError::PatchError { file, .. } => {
+                file.as_deref()
+            }
             EvalError::SecretLeak { file } => file.as_deref(),
             _ => None,
         }
@@ -68,6 +81,16 @@ impl EvalError {
     /// loop, which knows the failing node's id).
     fn type_error(message: impl Into<String>, module: &Module, node: NodeId) -> Self {
         EvalError::TypeError {
+            message: message.into(),
+            span: module.node_spans.get(&node).cloned(),
+            file: module.node_files.get(&node).cloned(),
+        }
+    }
+
+    /// Attach a source position to a patch error (rename conflicts and
+    /// invalid paths discovered at apply time).
+    fn patch_error(message: impl Into<String>, module: &Module, node: NodeId) -> Self {
+        EvalError::PatchError {
             message: message.into(),
             span: module.node_spans.get(&node).cloned(),
             file: module.node_files.get(&node).cloned(),
@@ -247,7 +270,105 @@ impl Engine {
         let root = module.root.ok_or(EvalError::MissingRoot)?;
         let result = values.get(&root).cloned().unwrap_or(Value::Null);
         let result = self.apply_profile(module, &values, result, &mut diagnostics);
+        let mut result = result;
+        self.apply_patches(module, &values, &mut result, &mut diagnostics)?;
         Ok((result, diagnostics))
+    }
+
+    /// Apply structural patch directives in source order (spec §2.9):
+    /// after evaluation (and profile merge), before schema validation.
+    /// Values were computed with the base tree intact, so a patch may
+    /// reference the very key it overwrites. Missing remove/rename
+    /// targets warn (W004); an existing rename target is E019.
+    fn apply_patches(
+        &self,
+        module: &Module,
+        values: &HashMap<NodeId, Value>,
+        result: &mut Value,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) -> Result<(), EvalError> {
+        use crate::ir::PatchOp;
+
+        for &patch_id in &module.patches {
+            let (op, span, file) = match module.get(patch_id) {
+                Some(Node::PatchDirective { op }) => (
+                    op.clone(),
+                    module.node_spans.get(&patch_id).cloned(),
+                    module.node_files.get(&patch_id).cloned(),
+                ),
+                _ => continue,
+            };
+            let mut warn = |code: &str, message: String| {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    code: code.into(),
+                    message,
+                    path: None,
+                    span: span.clone(),
+                    repair: None,
+                    confidence: 1.0,
+                    file: file.clone(),
+                });
+            };
+            match op {
+                PatchOp::Set { path, value } => {
+                    let segs = validate_patch_path(&path).map_err(|why| {
+                        EvalError::patch_error(
+                            format!("invalid patch path `{path}`: {why}"),
+                            module,
+                            patch_id,
+                        )
+                    })?;
+                    let v = values.get(&value).cloned().unwrap_or(Value::Null);
+                    // Failed sets roll back: navigation may have
+                    // materialized intermediate tables before hitting a
+                    // blocked hop, and a failed patch must leave no trace.
+                    let snapshot = result.clone();
+                    if !patch_set(result, &segs, v) {
+                        *result = snapshot;
+                        warn(
+                            "W004",
+                            format!("patch target `{path}` is blocked or out of bounds"),
+                        );
+                    }
+                }
+                PatchOp::Remove { path } => {
+                    let segs = validate_patch_path(&path).map_err(|why| {
+                        EvalError::patch_error(
+                            format!("invalid patch path `{path}`: {why}"),
+                            module,
+                            patch_id,
+                        )
+                    })?;
+                    if !patch_remove(result, &segs) {
+                        warn("W004", format!("remove target `{path}` does not exist"));
+                    }
+                }
+                PatchOp::Rename { from, to } => {
+                    let segs = validate_patch_path(&from).map_err(|why| {
+                        EvalError::patch_error(
+                            format!("invalid patch path `{from}`: {why}"),
+                            module,
+                            patch_id,
+                        )
+                    })?;
+                    match patch_rename(result, &segs, &to) {
+                        RenameOutcome::Ok => {}
+                        RenameOutcome::Missing => {
+                            warn("W004", format!("rename source `{from}` does not exist"));
+                        }
+                        RenameOutcome::Exists => {
+                            return Err(EvalError::patch_error(
+                                format!("rename target `{to}` already exists"),
+                                module,
+                                patch_id,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Select and merge the active profile (spec §3.5). The `--profile`
@@ -501,8 +622,138 @@ fn merge_profile_value(
     }
 }
 
-/// Render a value for a diagnostic message without ever revealing secret
-/// material (security invariant: secrets never appear in errors or logs).
+/// Outcome of a rename application.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RenameOutcome {
+    Ok,
+    Missing,
+    Exists,
+}
+
+/// Navigate to the parent of a path's final segment. With `create`,
+/// missing intermediate keys materialize as tables (or arrays when the
+/// following segment indexes); without it, navigation is read-only and
+/// anything missing returns None. A scalar blocking the way, or an
+/// array index that does not exist, always returns None (no sparse
+/// extension, no clobbering). Read-only navigation keeps failed
+/// remove/rename operations side-effect free (spec §2.9).
+fn patch_parent<'a>(root: &'a mut Value, segs: &[PathSeg], create: bool) -> Option<&'a mut Value> {
+    let mut cur = root;
+    let last = segs.len().checked_sub(1)?;
+    let mut i = 0;
+    while i < last {
+        match &segs[i] {
+            PathSeg::Key(k) => {
+                let need_array = matches!(segs.get(i + 1), Some(PathSeg::Index(_)));
+                cur = match cur {
+                    Value::Table(map) => {
+                        if !create && !map.contains_key(k) {
+                            return None;
+                        }
+                        map.entry(k.clone()).or_insert_with(|| {
+                            if need_array {
+                                Value::Array(Vec::new())
+                            } else {
+                                Value::Table(indexmap::IndexMap::new())
+                            }
+                        })
+                    }
+                    _ => return None,
+                };
+            }
+            PathSeg::Index(idx) => {
+                cur = match cur {
+                    Value::Array(items) => items.get_mut(*idx)?,
+                    _ => return None,
+                };
+            }
+        }
+        i += 1;
+    }
+    Some(cur)
+}
+
+/// Set the value at `path`, creating missing intermediate tables.
+/// Returns false when the path is blocked (scalar in the way) or an
+/// array index does not exist.
+fn patch_set(root: &mut Value, segs: &[PathSeg], value: Value) -> bool {
+    let Some(last) = segs.last() else {
+        return false;
+    };
+    let Some(parent) = patch_parent(root, segs, true) else {
+        return false;
+    };
+    match (parent, last) {
+        (Value::Table(map), PathSeg::Key(k)) => {
+            map.insert(k.clone(), value);
+            true
+        }
+        (Value::Array(items), PathSeg::Index(i)) => {
+            if let Some(slot) = items.get_mut(*i) {
+                *slot = value;
+                true
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Delete the value at `path`. Array removals shift later elements.
+/// Returns false when the target does not exist.
+fn patch_remove(root: &mut Value, segs: &[PathSeg]) -> bool {
+    let Some(last) = segs.last() else {
+        return false;
+    };
+    let Some(parent) = patch_parent(root, segs, false) else {
+        return false;
+    };
+    match (parent, last) {
+        (Value::Table(map), PathSeg::Key(k)) => map.shift_remove(k).is_some(),
+        (Value::Array(items), PathSeg::Index(i)) if *i < items.len() => {
+            items.remove(*i);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Rename a key within its parent table. Returns Missing when the source
+/// path does not resolve (checked before the target, so a missing
+/// source warns W004 even when the target exists), Exists when the new
+/// name is taken.
+fn patch_rename(root: &mut Value, segs: &[PathSeg], new_name: &str) -> RenameOutcome {
+    let Some(last) = segs.last() else {
+        return RenameOutcome::Missing;
+    };
+    // Renaming an array element is meaningless: only plain keys rename.
+    if !matches!(last, PathSeg::Key(_)) {
+        return RenameOutcome::Missing;
+    }
+    let Some(parent) = patch_parent(root, segs, false) else {
+        return RenameOutcome::Missing;
+    };
+    let Value::Table(map) = parent else {
+        return RenameOutcome::Missing;
+    };
+    let PathSeg::Key(old) = last else {
+        return RenameOutcome::Missing;
+    };
+    if !map.contains_key(old) {
+        return RenameOutcome::Missing;
+    }
+    if map.contains_key(new_name) {
+        return RenameOutcome::Exists;
+    }
+    match map.shift_remove(old) {
+        Some(v) => {
+            map.insert(new_name.to_string(), v);
+            RenameOutcome::Ok
+        }
+        None => RenameOutcome::Missing,
+    }
+}
 /// Redaction is recursive — a secret nested inside an array or table is
 /// just as sensitive as a top-level one.
 fn redacted(v: &Value) -> String {

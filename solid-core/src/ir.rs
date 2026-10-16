@@ -43,6 +43,9 @@ pub struct Module {
     /// directly; the selected one merges into the root value at
     /// evaluation.
     pub profiles: IndexMap<String, NodeId>,
+    /// Structural patch directives in source order (spec §2.9, C-028).
+    /// Applied to the evaluated value tree after profile merge.
+    pub patches: Vec<NodeId>,
 }
 
 /// An `include "path" [as alias] [private]` statement (spec §2.7).
@@ -111,6 +114,7 @@ impl Module {
             source_style: Style::Brace,
             includes: Vec::new(),
             profiles: IndexMap::new(),
+            patches: Vec::new(),
         }
     }
 
@@ -187,9 +191,12 @@ pub enum Node {
         target: NodeId,
         constraint: Constraint,
     },
-    Patch {
-        target: NodeId,
-        ops: Vec<PatchOp>,
+    /// A structural patch directive (spec §2.9, C-028): one operation
+    /// applied to the evaluated value tree after evaluation (and after
+    /// profile merge), before schema validation. The value expressions
+    /// are ordinary graph nodes, so patches are dependency-aware.
+    PatchDirective {
+        op: PatchOp,
     },
     /// A multi-line string carrying a semantic tag (`@prompt`, `@policy`,
     /// `@template`). The tag is tool treatment only — evaluation is

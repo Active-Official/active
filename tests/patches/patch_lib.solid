@@ -1,0 +1,4 @@
+[server]
+host = "lib.local"
+
+@patch("server.port", 7777)

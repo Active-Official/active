@@ -1,0 +1,22 @@
+let new_port = 9090
+let bump = 1
+
+[server]
+host = "localhost"
+port = 8080
+debug = true
+old_name = "x"
+
+[servers]
+list = [
+  { name = "a", port = 1 },
+  { name = "b", port = 2 }
+]
+
+@patch("server.port", new_port)
+@patch("server.tls.enabled", true)
+@remove("server.debug")
+@rename("server.old_name", "new_name")
+@patch("servers.list[0].port", 10)
+@remove("servers.list[1]")
+@patch("computed", new_port + bump)

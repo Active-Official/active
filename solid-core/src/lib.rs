@@ -15,7 +15,8 @@ pub mod types;
 pub use diag::{Diagnostic, Repair, RepairKind, Severity};
 pub use eval::Engine;
 pub use ir::{
-    Attachment, BinOp, Module, Node, NodeId, SemanticTag, Style, TriviaComment, UnOp, Value,
+    Attachment, BinOp, IncludeStmt, Module, Node, NodeId, PatchOp, SemanticTag, Style,
+    TriviaComment, UnOp, Value,
 };
 pub use parser::{parse, parse_file, parse_recovering, parse_with, ParseOptions};
 pub use types::{Constraint, Unit};

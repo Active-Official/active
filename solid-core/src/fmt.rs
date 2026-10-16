@@ -139,6 +139,41 @@ impl<'a> Formatter<'a> {
             self.emit_profile(*id, name, 0);
         }
 
+        // Patch directives, in source order (spec §2.9). They apply
+        // post-evaluation and never export, but formatting preserves
+        // them so the composition structure survives a fmt pass.
+        // Root includes and patches emit together sorted by source line:
+        // patch application order is positional, so hoisting includes
+        // above textually-earlier patches would change values on
+        // reparse. Includes in nested scopes emit with their scope.
+        let mut root_items: Vec<(u32, bool, NodeId, Option<IncludeStmt>)> = Vec::new();
+        for id in &self.module.patches {
+            let line = self
+                .module
+                .node_spans
+                .get(id)
+                .map(|s| s.line)
+                .unwrap_or(u32::MAX);
+            root_items.push((line, false, *id, None));
+        }
+        for inc in self
+            .module
+            .includes
+            .iter()
+            .filter(|inc| inc.scope_path.is_empty())
+        {
+            root_items.push((inc.line, true, NodeId(u32::MAX), Some(inc.clone())));
+        }
+        root_items.sort_by_key(|(line, is_include, id, _)| (*line, *is_include, id.0));
+        for (_, is_include, id, inc) in &root_items {
+            if *is_include {
+                let inc = inc.as_ref().expect("include entry");
+                self.emit_include(inc, 0);
+            } else {
+                self.emit_patch(*id);
+            }
+        }
+
         if let Some(root) = self.module.root {
             let has_entries = !self.out.is_empty()
                 && matches!(self.module.get(root), Some(Node::Table { fields }) if !fields.is_empty());
@@ -162,24 +197,20 @@ impl<'a> Formatter<'a> {
         };
         // Include statements recorded for this scope come first, in
         // source order: under the defaults rule (spec §2.7) their
-        // position relative to keys never changes semantics.
-        let mut includes: Vec<&IncludeStmt> = self
-            .module
-            .includes
-            .iter()
-            .filter(|inc| inc.scope_path.join(".") == path)
-            .collect();
-        includes.sort_by_key(|inc| inc.line);
-        for inc in includes {
-            self.out.push_str(&INDENT.repeat(depth));
-            self.out.push_str(&format!("include {:?}", inc.path));
-            if let Some(alias) = &inc.alias {
-                self.out.push_str(&format!(" as {alias}"));
+        // position relative to keys never changes semantics. Root
+        // includes emit with root patches (positional application
+        // order), so only nested scopes emit here.
+        if !path.is_empty() {
+            let mut includes: Vec<&IncludeStmt> = self
+                .module
+                .includes
+                .iter()
+                .filter(|inc| inc.scope_path.join(".") == path)
+                .collect();
+            includes.sort_by_key(|inc| inc.line);
+            for inc in includes {
+                self.emit_include(inc, depth);
             }
-            if inc.private {
-                self.out.push_str(" private");
-            }
-            self.out.push('\n');
         }
         let is_table_node =
             |f: &Formatter, n: &NodeId| matches!(f.module.get(*n), Some(Node::Table { .. }));
@@ -329,6 +360,49 @@ impl<'a> Formatter<'a> {
                 }
             }
         }
+    }
+
+    /// Emit one `include` statement (spec §2.7) at the given depth.
+    fn emit_include(&mut self, inc: &IncludeStmt, depth: usize) {
+        self.out.push_str(&INDENT.repeat(depth));
+        self.out.push_str(&format!("include {:?}", inc.path));
+        if let Some(alias) = &inc.alias {
+            self.out.push_str(&format!(" as {alias}"));
+        }
+        if inc.private {
+            self.out.push_str(" private");
+        }
+        self.out.push('\n');
+    }
+
+    /// Emit one patch directive (`@patch` / `@remove` / `@rename`,
+    /// spec §2.9). Paths render as quoted strings; patch values render
+    /// as expressions. Statement comments attach under the `@op(path)`
+    /// key recorded at parse time.
+    fn emit_patch(&mut self, id: NodeId) {
+        fn q(s: &str) -> String {
+            format!("\"{}\"", escape(s))
+        }
+        let (text, key) = match self.module.get(id) {
+            Some(Node::PatchDirective { op }) => match op {
+                PatchOp::Set { path, value } => (
+                    format!("@patch({}, {})", q(path), self.render_expr(*value)),
+                    format!("@patch({path})"),
+                ),
+                PatchOp::Remove { path } => {
+                    (format!("@remove({})", q(path)), format!("@remove({path})"))
+                }
+                PatchOp::Rename { from, to } => (
+                    format!("@rename({}, {})", q(from), q(to)),
+                    format!("@rename({from})"),
+                ),
+            },
+            _ => return,
+        };
+        self.emit_leading(&key);
+        self.out.push_str(&text);
+        self.emit_trailing(&key);
+        self.out.push('\n');
     }
 
     fn emit_leading(&mut self, key: &str) {

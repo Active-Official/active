@@ -287,6 +287,42 @@ profile-block = "profile" string-literal "{" [ newline { statement } ] "}"
   the base value still wins, with a W003 warning. Profile blocks never
   appear in the exported tree; `active_profile` itself stays visible.
 
+### 2.9 Structural patches (C-028)
+
+```
+patch-stmt    = "@patch" "(" string-literal "," expression ")"
+              | "@remove" "(" string-literal ")"
+              | "@rename" "(" string-literal "," string-literal ")"
+path          = segment { "." segment }
+segment       = identifier { "[" integer "]" }
+identifier    = ASCII letter or "_" followed by ASCII alphanumerics or "_"
+```
+
+- `@patch`, `@remove`, `@rename` are **reserved at statement level**:
+  `@` followed by one of those names never forms an ordinary key (keys
+  cannot contain `@`), so any continuation other than `(` is E019. Other
+  `@tag` forms are semantic blocks (§1.4.1).
+- Patch statements may appear **only at document root** (E019 elsewhere,
+  including inside profiles). Paths are absolute from the document root.
+- The first argument (and both rename arguments) must be string
+  literals; interpolation in a path is E019 (paths are static so the
+  affected tree is computable without evaluation). The `@patch` value
+  is a full expression — patches are dependency-aware and may reference
+  computed base values (even the patched key itself: values evaluate
+  before application, so no cycle is possible).
+- `@patch(path, value)` sets the value at path (set semantics, not
+  merge). Missing intermediate tables are created silently; the path
+  itself is the declaration.
+- `@remove(path)` deletes the key or array element. A missing target
+  warns (W004) and succeeds (idempotent). Array indices must be
+  non-negative; out-of-bounds warns (W004).
+- `@rename(old, new)`: `old` is a path, `new` is the new key name in the
+  same parent. A missing source warns (W004); an existing target is a
+  hard error (E019).
+- Patches apply in source order, after evaluation (and after profile
+  merge), before schema validation. Patch statements never appear in
+  the exported tree.
+
 ### 2.3 Expressions (precedence, loosest to tightest)
 
 ```

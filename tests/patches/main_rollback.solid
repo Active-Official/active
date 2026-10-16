@@ -1,0 +1,4 @@
+[t]
+v = 1
+
+@patch("new.deep[3]", 9)

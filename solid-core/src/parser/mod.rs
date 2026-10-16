@@ -327,6 +327,63 @@ fn qualified(path: &str, key: &str) -> String {
     }
 }
 
+/// Validate and split a patch path (`a.b[0].c`) into segments.
+/// Keys follow identifier syntax (ASCII letter or `_` first, then ASCII
+/// alphanumerics or `_`); an index suffix `[n]` may repeat (`a[0][1]`
+/// walks nested arrays). Empty paths/segments, malformed brackets, and
+/// non-integer indices are E019 at parse time; missing targets are W004
+/// at apply.
+pub fn validate_patch_path(path: &str) -> Result<Vec<PathSeg>, String> {
+    fn is_key(s: &str) -> bool {
+        let mut chars = s.chars();
+        match chars.next() {
+            Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+            _ => return false,
+        }
+        chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    }
+    if path.is_empty() {
+        return Err("empty path".into());
+    }
+    let mut segs = Vec::new();
+    for part in path.split('.') {
+        if part.is_empty() {
+            return Err("empty segment".into());
+        }
+        // Split `key`, `key[0]`, `key[0][1]` (multi-index, applied left
+        // to right).
+        let mut rest = part;
+        let key_end = rest.find('[').unwrap_or(rest.len());
+        let key = &rest[..key_end];
+        if !is_key(key) {
+            return Err(format!("invalid key `{key}` in segment `{part}`"));
+        }
+        segs.push(PathSeg::Key(key.to_string()));
+        rest = &rest[key_end..];
+        while !rest.is_empty() {
+            if !rest.starts_with('[') {
+                return Err(format!("unexpected text in segment `{part}`"));
+            }
+            let close = rest
+                .find(']')
+                .ok_or_else(|| format!("unclosed bracket in segment `{part}`"))?;
+            let idx: usize = rest[1..close]
+                .parse()
+                .map_err(|_| format!("array index must be a non-negative integer in `{part}`"))?;
+            segs.push(PathSeg::Index(idx));
+            rest = &rest[close + 1..];
+        }
+    }
+    Ok(segs)
+}
+
+/// One segment of a patch path (spec §2.9): a table key, optionally
+/// followed by an array index (`servers[0]` lexes as Key+Index).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PathSeg {
+    Key(String),
+    Index(usize),
+}
 struct Parser {
     tokens: Vec<Token>,
     pos: usize,
@@ -424,6 +481,10 @@ struct PendingInclude {
     alias: Option<String>,
     private: bool,
     tok: Token,
+    /// Length of `module.patches` when the statement was encountered:
+    /// included patches splice in at this position so application order
+    /// matches textual source order across files (spec §2.9).
+    patch_mark: usize,
 }
 
 /// A profile scope stashed for the final resolution pass: ident nodes
@@ -519,10 +580,13 @@ impl Parser {
     /// Token kind `n` positions ahead (0 = current). Used for the two-token
     /// lookahead that distinguishes `key =`, `key:`, and `key {`.
     fn peek_kind_at(&self, n: usize) -> TokenKind {
-        self.tokens
-            .get(self.pos + n)
+        self.peek_at(n)
             .map(|t| t.kind.clone())
             .unwrap_or(TokenKind::Eof)
+    }
+
+    fn peek_at(&self, n: usize) -> Option<Token> {
+        self.tokens.get(self.pos + n).cloned()
     }
 
     /// Parse statements into `fields` until the body terminator
@@ -683,22 +747,48 @@ impl Parser {
                     }
                     self.parse_ident_statement(fields, pending);
                 }
-                TokenKind::Indent => {
-                    // E010 unexpected indentation (§6): consume the Indent,
-                    // parse the line in the enclosing block, and let the
-                    // level-aware Dedent rule above discard its matching
-                    // Dedent (the enclosing block's level comparison).
-                    self.error("E010", "unexpected indentation");
-                    self.bump();
-                }
                 TokenKind::Let => self.parse_let(),
                 TokenKind::LBracket => self.parse_table_header(fields),
                 TokenKind::At => {
-                    // Bare `@tag """…"""` statement: binds under the tag
-                    // name itself (spec §1.4.1), so AI prompt files read
-                    // naturally. `key = @tag """…"""` also works via the
-                    // expression path.
+                    // `@…` statements: patch directives (`@patch`, `@remove`,
+                    // `@rename` with `(`) or bare semantic blocks. Patches
+                    // live at document root only (spec §2.9). A
+                    // document-level patch directive ends a header body
+                    // (like profile/include/let); nested content stays in
+                    // its scope.
+                    if let BodyEnd::HeaderBody(level) = end {
+                        let is_patch = matches!(self.peek_kind_at(1), TokenKind::Ident) && {
+                            let tag = self.peek_at(1).map(|t| t.text.clone()).unwrap_or_default();
+                            (tag == "patch" || tag == "remove" || tag == "rename")
+                                && matches!(self.peek_kind_at(2), TokenKind::LParen)
+                        };
+                        let t = self.peek().clone();
+                        if is_patch && t.col.saturating_sub(1) as usize <= level {
+                            return;
+                        }
+                    }
                     let at_tok = self.peek().clone();
+                    if matches!(self.peek_kind_at(1), TokenKind::Ident) {
+                        let tag = self.peek_at(1).map(|t| t.text.clone()).unwrap_or_default();
+                        if tag == "patch" || tag == "remove" || tag == "rename" {
+                            // Reserved directives (spec §2.9): only `(` can
+                            // follow. Keys cannot contain `@`, so no
+                            // ordinary-key fallback exists — E019.
+                            if !matches!(self.peek_kind_at(2), TokenKind::LParen) {
+                                let tag_tok = self.peek_at(1).unwrap_or_else(|| at_tok.clone());
+                                self.error_at(
+                                    "E019",
+                                    format!("expected `(` after `@{tag}`"),
+                                    &tag_tok,
+                                );
+                                self.bump();
+                                self.bump();
+                                continue;
+                            }
+                            self.parse_patch_statement(&at_tok);
+                            continue;
+                        }
+                    }
                     self.bump();
                     let id = self.parse_semantic_block(&at_tok);
                     if let Some(Node::Semantic { tag, .. }) = self.module.get(id) {
@@ -711,6 +801,14 @@ impl Parser {
                         );
                         fields.insert(key, id);
                     }
+                }
+                TokenKind::Indent => {
+                    // E010 unexpected indentation (§6): consume the Indent,
+                    // parse the line in the enclosing block, and let the
+                    // level-aware Dedent rule above discard its matching
+                    // Dedent (the enclosing block's level comparison).
+                    self.error("E010", "unexpected indentation");
+                    self.bump();
                 }
                 _ => {
                     // Alpha resilience: skip an unexpected token.
@@ -960,6 +1058,7 @@ impl Parser {
             alias,
             private,
             tok: path_tok,
+            patch_mark: self.module.patches.len(),
         });
     }
 
@@ -1121,7 +1220,7 @@ impl Parser {
     fn splice_includes(
         &mut self,
         fields: &mut indexmap::IndexMap<String, NodeId>,
-        pending: Vec<PendingInclude>,
+        mut pending: Vec<PendingInclude>,
     ) {
         if pending.is_empty() {
             return;
@@ -1145,8 +1244,35 @@ impl Parser {
         // unmarked path is local content that never loses. Subtree paths
         // are marked on insert so nested levels decide correctly.
         let mut spliced: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for inc in pending {
-            let Some(sub_root) = self.load_include(&inc) else {
+        let mut pi = 0usize;
+        while pi < pending.len() {
+            let inc = pending[pi].clone();
+            let patches_before = self.module.patches.len();
+            let loaded = self.load_include(&inc);
+            // Included patches belong textually at the include statement:
+            // move everything the load appended back to the recorded mark
+            // so cross-file application order matches source order.
+            // Layout: [head..mark] ++ [mark..old] ++ [new...] becomes
+            // [head..mark] ++ [new...] ++ [mark..old]. Marks recorded
+            // after this insertion point shift by the inserted count so
+            // later includes keep stable source-order positions.
+            let mark = inc.patch_mark.min(patches_before);
+            let old_tail_len = patches_before - mark;
+            let mut inserted = 0usize;
+            if self.module.patches.len() > patches_before {
+                let mut tail: Vec<NodeId> = self.module.patches.drain(mark..).collect();
+                let new_part: Vec<NodeId> = tail.split_off(old_tail_len.min(tail.len()));
+                inserted = new_part.len();
+                self.module.patches.extend(new_part);
+                self.module.patches.extend(tail);
+            }
+            for later in pending.iter_mut().skip(pi + 1) {
+                if later.patch_mark >= mark {
+                    later.patch_mark += inserted;
+                }
+            }
+            pi += 1;
+            let Some(sub_root) = loaded else {
                 continue;
             };
             let sub_fields = match self.module.get(sub_root) {
@@ -2013,6 +2139,21 @@ impl Parser {
 
             TokenKind::At => {
                 self.bump();
+                // Patch directives are statements, never values.
+                if matches!(self.peek_kind(), TokenKind::Ident) {
+                    let tag_tok = self.peek().clone();
+                    let tag = tag_tok.text.clone();
+                    if (tag == "patch" || tag == "remove" || tag == "rename")
+                        && matches!(self.peek_kind_at(1), TokenKind::LParen)
+                    {
+                        self.error_at(
+                            "E019",
+                            "patch statements may only appear at document root, never as values",
+                            &tag_tok,
+                        );
+                        return self.add_spanned(Node::Literal(Value::Null), &tok);
+                    }
+                }
                 self.parse_semantic_block(&tok)
             }
 
@@ -2379,6 +2520,139 @@ fn strip_common_indent_mapped(
 }
 
 impl Parser {
+    // ------------------------------------------------------------------
+    // @patch / @remove / @rename  (spec §2.9, C-028)
+    // ------------------------------------------------------------------
+
+    /// Parse a patch directive statement. The `@tag` and `(` are already
+    /// confirmed by the caller; `at_tok` is the `@` token for spans.
+    /// Directives live at document root only and are recorded in
+    /// encounter order on `module.patches`. The full statement is always
+    /// consumed (even on error) so the enclosing loop makes progress.
+    fn parse_patch_statement(&mut self, at_tok: &Token) {
+        let nested = !self.current_path.is_empty();
+        self.bump(); // consume `@`
+        let tag_tok = self.bump(); // consume patch/remove/rename
+        let tag = tag_tok.text.clone();
+        if self.expect(TokenKind::LParen).is_none() {
+            return;
+        }
+        let path_tok = self.peek().clone();
+        let path = match &path_tok.kind {
+            TokenKind::String(_) | TokenKind::SingleString => {
+                self.bump();
+                path_tok.text.clone()
+            }
+            _ => {
+                self.error_at("E019", "patch paths must be string literals", &path_tok);
+                return;
+            }
+        };
+        if path.contains("${") || path.contains(ESCAPED_DOLLAR) {
+            self.error_at(
+                "E019",
+                "interpolation in patch paths is a hard error; paths must be static",
+                &path_tok,
+            );
+            return;
+        }
+        if let Err(why) = validate_patch_path(&path) {
+            self.error_at(
+                "E019",
+                format!("invalid patch path `{path}`: {why}"),
+                &path_tok,
+            );
+            return;
+        }
+        let op = match tag.as_str() {
+            "remove" => {
+                if self.expect(TokenKind::RParen).is_none() {
+                    return;
+                }
+                PatchOp::Remove { path: path.clone() }
+            }
+            "rename" => {
+                if self.expect(TokenKind::Comma).is_none() {
+                    return;
+                }
+                let new_tok = self.peek().clone();
+                let new_name = match &new_tok.kind {
+                    TokenKind::String(_) | TokenKind::SingleString => {
+                        self.bump();
+                        new_tok.text.clone()
+                    }
+                    _ => {
+                        self.error_at(
+                            "E019",
+                            "rename needs a new key name as a string literal",
+                            &new_tok,
+                        );
+                        return;
+                    }
+                };
+                if new_name.contains('.') || new_name.contains('[') || new_name.is_empty() {
+                    self.error_at(
+                        "E019",
+                        "rename target must be a plain key name in the same parent",
+                        &new_tok,
+                    );
+                    return;
+                }
+                if self.expect(TokenKind::RParen).is_none() {
+                    return;
+                }
+                PatchOp::Rename {
+                    from: path.clone(),
+                    to: new_name,
+                }
+            }
+            _ => {
+                // patch
+                if self.expect(TokenKind::Comma).is_none() {
+                    return;
+                }
+                let value = self.parse_expression();
+                if self.expect(TokenKind::RParen).is_none() {
+                    return;
+                }
+                PatchOp::Set {
+                    path: path.clone(),
+                    value,
+                }
+            }
+        };
+        let stmt_key = match &op {
+            PatchOp::Set { path, .. } => format!("@patch({path})"),
+            PatchOp::Remove { path } => format!("@remove({path})"),
+            PatchOp::Rename { from, .. } => format!("@rename({from})"),
+        };
+        if nested {
+            self.error_at(
+                "E019",
+                "patch statements may only appear at document root",
+                at_tok,
+            );
+            return;
+        }
+        self.record_stmt(
+            &stmt_key,
+            at_tok.line,
+            self.last_end_line(),
+            at_tok.col.saturating_sub(1) as usize,
+        );
+        let id = self.add_spanned(Node::PatchDirective { op }, at_tok);
+        // The value expression participates in the graph so patches are
+        // dependency-aware; paths are static and need no edges.
+        if let Some(Node::PatchDirective {
+            op: PatchOp::Set { value, .. },
+        }) = self.module.get(id)
+        {
+            let value = *value;
+            self.module.add_edge(value, id);
+        }
+        self.module.patches.push(id);
+    }
+
     /// Convert a raw string that may contain `${…}` into either a plain
     /// Literal or a full Interpolate node with Expr parts. `linemap` maps
     /// stripped-text lines back to source positions (multi-line strings);

@@ -1,0 +1,13 @@
+active_profile = "production"
+
+[server]
+host = "localhost"
+port = 8080
+
+profile "production" {
+  server {
+    port = 443
+  }
+}
+
+@patch("server.debug", true)

@@ -1,0 +1,8 @@
+[server]
+host = "a.local"
+port = 1
+
+@patch("server.port", 2)
+@patch("server.port", 3)
+@remove("missing.key")
+@rename("server.gone", "fresh")

@@ -1,0 +1,5 @@
+[server]
+port = 1
+
+@rename("server.port", "port")
+@patch("server.port", 2)

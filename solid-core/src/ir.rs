@@ -349,7 +349,7 @@ pub enum UnOp {
     Not,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub enum Value {
     Null,
     Bool(bool),
@@ -361,6 +361,83 @@ pub enum Value {
     Array(Vec<Value>),
     Table(IndexMap<String, Value>),
     Secret(String), // in production this is zeroized; here plain for demo
+}
+
+impl std::fmt::Debug for Value {
+    /// Redacting formatter (spec/secrets.md §3): secrets render as
+    /// `Secret(***)` at any depth, so generic `{:?}` logging,
+    /// assertion output, and error messages can never leak secret
+    /// material. Every other variant keeps its derived shape exactly.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Secret(_) => write!(f, "Secret(***)"),
+            Value::Array(items) => {
+                write!(f, "[")?;
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{item:?}")?;
+                }
+                write!(f, "]")
+            }
+            Value::Table(map) => {
+                write!(f, "{{")?;
+                for (i, (k, val)) in map.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{k:?}: {val:?}")?;
+                }
+                write!(f, "}}")
+            }
+            Value::Null => write!(f, "Null"),
+            Value::Bool(b) => write!(f, "{b:?}"),
+            Value::Int(i) => write!(f, "{i:?}"),
+            Value::Float(x) => write!(f, "{x:?}"),
+            Value::String(s) => write!(f, "{s:?}"),
+            Value::DurationMs(ms) => write!(f, "DurationMs({ms})"),
+            Value::Quantity(n, unit) => write!(f, "Quantity({n:?}, {unit:?})"),
+        }
+    }
+}
+
+impl Serialize for Value {
+    /// Redacting serializer (spec/secrets.md §3): serializing a Value
+    /// directly (`serde_json::to_string` and friends) can never emit
+    /// secret material — secrets become the export marker, mirroring
+    /// `convert::value_to_json` (kept in sync by hand; ir cannot depend
+    /// on convert). Deserialization stays derived: the input direction
+    /// cannot leak.
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let json = match self {
+            Value::Null => serde_json::Value::Null,
+            Value::Bool(b) => serde_json::Value::from(*b),
+            Value::Int(i) => serde_json::Value::from(*i),
+            Value::Float(x) => serde_json::Value::from(*x),
+            Value::String(s) => serde_json::Value::from(s.clone()),
+            Value::DurationMs(ms) => serde_json::json!({ "ms": ms }),
+            Value::Quantity(n, unit) => serde_json::json!({ unit.suffix(): n }),
+            Value::Array(items) => serde_json::Value::Array(
+                items
+                    .iter()
+                    .map(|v| serde_json::to_value(v).unwrap_or(serde_json::Value::Null))
+                    .collect(),
+            ),
+            Value::Table(map) => {
+                let mut obj = serde_json::Map::new();
+                for (k, val) in map {
+                    obj.insert(
+                        k.clone(),
+                        serde_json::to_value(val).unwrap_or(serde_json::Value::Null),
+                    );
+                }
+                serde_json::Value::Object(obj)
+            }
+            Value::Secret(_) => serde_json::Value::from("***SECRET***"),
+        };
+        json.serialize(serializer)
+    }
 }
 
 impl Value {

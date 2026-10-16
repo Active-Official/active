@@ -841,35 +841,13 @@ fn patch_rename(root: &mut Value, segs: &[PathSeg], new_name: &str) -> RenameOut
         None => RenameOutcome::Missing,
     }
 }
-/// Redaction is recursive — a secret nested inside an array or table is
-/// just as sensitive as a top-level one.
-fn redacted(v: &Value) -> String {
-    match v {
-        Value::Secret(_) => "Secret(***)".to_string(),
-        Value::Array(items) => {
-            let inner: Vec<String> = items.iter().map(redacted).collect();
-            format!("[{}]", inner.join(", "))
-        }
-        Value::Table(map) => {
-            let inner: Vec<String> = map
-                .iter()
-                .map(|(k, val)| format!("{:?}: {}", k, redacted(val)))
-                .collect();
-            format!("{{{}}}", inner.join(", "))
-        }
-        other => format!("{:?}", other),
-    }
-}
 
 fn normalize_quantity(v: &Value, unit: &Unit) -> Result<Value, String> {
     let num = match v {
         Value::Int(n) => *n as f64,
         Value::Float(f) => *f,
         _ => {
-            return Err(format!(
-                "quantity requires numeric value, got {}",
-                redacted(v)
-            ));
+            return Err(format!("quantity requires numeric value, got {v:?}"));
         }
     };
 
@@ -947,10 +925,7 @@ pub(crate) fn eval_binary(op: BinOp, lhs: &Value, rhs: &Value) -> Result<Value, 
         (Or, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(*a || *b)),
 
         _ => Err(format!(
-            "unsupported binary op {:?} on {} and {}",
-            op,
-            redacted(lhs),
-            redacted(rhs)
+            "unsupported binary op {op:?} on {lhs:?} and {rhs:?}"
         )),
     }
 }
@@ -965,7 +940,7 @@ pub(crate) fn eval_unary(op: UnOp, v: &Value) -> Result<Value, String> {
         (UnOp::Neg, Value::Int(n)) => Ok(Value::Int(-n)),
         (UnOp::Neg, Value::Float(f)) => Ok(Value::Float(-f)),
         (UnOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
-        _ => Err(format!("unsupported unary op {:?} on {}", op, redacted(v))),
+        _ => Err(format!("unsupported unary op {op:?} on {v:?}")),
     }
 }
 

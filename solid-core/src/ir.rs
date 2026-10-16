@@ -158,6 +158,40 @@ pub enum Node {
         target: NodeId,
         ops: Vec<PatchOp>,
     },
+    /// A multi-line string carrying a semantic tag (`@prompt`, `@policy`,
+    /// `@template`). The tag is tool treatment only — evaluation is
+    /// transparent to the inner string value (spec §1.4.1).
+    Semantic {
+        tag: SemanticTag,
+        inner: NodeId,
+    },
+}
+
+/// Semantic-block tag for multi-line strings (spec §1.4.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SemanticTag {
+    Prompt,
+    Policy,
+    Template,
+}
+
+impl SemanticTag {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SemanticTag::Prompt => "prompt",
+            SemanticTag::Policy => "policy",
+            SemanticTag::Template => "template",
+        }
+    }
+
+    pub fn parse_tag(s: &str) -> Option<Self> {
+        match s {
+            "prompt" => Some(SemanticTag::Prompt),
+            "policy" => Some(SemanticTag::Policy),
+            "template" => Some(SemanticTag::Template),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

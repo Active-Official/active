@@ -1,0 +1,13 @@
+[doc]
+body = """
+  Hello, world.
+    Deep.
+  Back.
+  """
+raw = '''
+  Keep \n literal.
+  '''
+system = @prompt """
+  Be helpful, ${who}.
+  """
+who = "friend"

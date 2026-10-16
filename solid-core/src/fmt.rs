@@ -336,7 +336,42 @@ impl<'a> Formatter<'a> {
             Some(Node::Quantity { value, unit }) => {
                 format!("{}{}", self.render_expr(*value), unit.suffix())
             }
+            Some(Node::Semantic { tag, inner }) => {
+                format!("@{} {}", tag.as_str(), self.render_ml(*inner))
+            }
             _ => "<?>".into(),
+        }
+    }
+
+    /// Render a multi-line string payload (spec §1.4.1): `"""` form for
+    /// interpolated strings, `'''` verbatim form for plain literals that
+    /// avoid the delimiter, with escaping fallback when both delimiters
+    /// appear in the content.
+    fn render_ml(&self, id: NodeId) -> String {
+        match self.module.get(id) {
+            Some(Node::Interpolate { parts }) => {
+                let mut s = String::from("\"\"\"");
+                for part in parts {
+                    match part {
+                        InterpPart::Literal(t) => s.push_str(&escape_ml_literal(t)),
+                        InterpPart::Expr(e) => {
+                            s.push_str("${");
+                            let inner = self.render_expr(*e);
+                            s.push_str(&escape_embedded(&inner));
+                            s.push('}');
+                        }
+                    }
+                }
+                s.push_str("\"\"\"");
+                s
+            }
+            Some(Node::Literal(Value::String(text))) if !text.contains("'''") => {
+                format!("'''{text}'''")
+            }
+            Some(Node::Literal(Value::String(text))) => {
+                format!("\"\"\"{}\"\"\"", escape_ml_literal(text))
+            }
+            _ => self.render_expr(id),
         }
     }
 
@@ -517,6 +552,15 @@ fn escape_single(s: &str) -> String {
 /// escaped in the source stays literal.
 fn escape_interp_literal(s: &str) -> String {
     escape(s).replace("${", "\\${")
+}
+
+/// Escape a literal part for the `"""` multi-line form. This is exactly
+/// `escape_interp_literal`: `escape` already covers `"`, `\`, and newlines,
+/// and the `${` rule keeps literal dollars from becoming interpolation.
+/// No further substitution — an extra pass would double-escape (e.g. `\"`
+/// becoming `\\"` and corrupting the content on reparse).
+fn escape_ml_literal(s: &str) -> String {
+    escape_interp_literal(s)
 }
 
 /// Escape a rendered sub-expression for embedding inside a double-quoted

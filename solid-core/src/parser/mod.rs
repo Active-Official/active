@@ -45,7 +45,7 @@ const MAX_EXPR_DEPTH: usize = 64;
 const MAX_BLOCK_DEPTH: usize = 64;
 
 use crate::diag::{thresholds, Diagnostic, Repair, RepairKind, Severity, Span};
-use crate::ir::*;
+use crate::ir::{NodeId, SemanticTag, *};
 use crate::types::Unit;
 
 /// Options controlling parsing and healing behavior.
@@ -534,6 +534,25 @@ impl Parser {
                 TokenKind::Let => self.parse_let(),
                 TokenKind::LBracket => self.parse_table_header(fields),
                 TokenKind::Ident => self.parse_ident_statement(fields),
+                TokenKind::At => {
+                    // Bare `@tag """…"""` statement: binds under the tag
+                    // name itself (spec §1.4.1), so AI prompt files read
+                    // naturally. `key = @tag """…"""` also works via the
+                    // expression path.
+                    let at_tok = self.peek().clone();
+                    self.bump();
+                    let id = self.parse_semantic_block(&at_tok);
+                    if let Some(Node::Semantic { tag, .. }) = self.module.get(id) {
+                        let key = tag.as_str().to_string();
+                        self.record_stmt(
+                            &key,
+                            at_tok.line,
+                            self.last_end_line(),
+                            at_tok.col.saturating_sub(1) as usize,
+                        );
+                        fields.insert(key, id);
+                    }
+                }
                 _ => {
                     // Alpha resilience: skip an unexpected token.
                     self.bump();
@@ -1081,9 +1100,10 @@ impl Parser {
     fn parse_primary(&mut self) -> NodeId {
         let tok = self.peek().clone();
         match &tok.kind {
-            TokenKind::String => {
+            TokenKind::String(src_pos) => {
                 self.bump();
-                self.parse_string_literal(&tok.text, &tok)
+                let linemap = linemap_from_charmap(&tok.text, tok.line, src_pos);
+                self.parse_string_literal(&tok.text, &tok, Some(&linemap))
             }
 
             TokenKind::SingleString => {
@@ -1092,6 +1112,31 @@ impl Parser {
                 self.bump();
                 let text = tok.text.clone();
                 self.add_spanned(Node::Literal(Value::String(text)), &tok)
+            }
+
+            TokenKind::MlString(src_pos) => {
+                // Triple-double-quoted: common-indent stripping, then full
+                // `${…}` expression interpolation (spec §1.4.1). The line
+                // map keeps interpolation diagnostics on their true source
+                // positions after stripping; src_pos corrects for `\n`
+                // escapes decoded into newlines.
+                self.bump();
+                let (stripped, linemap) =
+                    strip_common_indent_mapped(&tok.text, tok.line, tok.col, 3, Some(src_pos));
+                self.parse_string_literal(&stripped, &tok, Some(&linemap))
+            }
+
+            TokenKind::MlSingleString => {
+                // Triple-single-quoted: common-indent stripping, fully
+                // literal (spec §1.4.1).
+                self.bump();
+                let stripped = strip_common_indent(&tok.text);
+                self.add_spanned(Node::Literal(Value::String(stripped)), &tok)
+            }
+
+            TokenKind::At => {
+                self.bump();
+                self.parse_semantic_block(&tok)
             }
 
             TokenKind::Integer => {
@@ -1226,9 +1271,247 @@ impl Parser {
         }
     }
 
+    /// Parse `@tag """…"""` — a multi-line string with a semantic tag
+    /// (spec §1.4.1). The tag is tool treatment only; the value is the
+    /// inner string. Unknown tags and non-multi-line payloads are E014.
+    fn parse_semantic_block(&mut self, at_tok: &Token) -> NodeId {
+        let tag_tok = self.peek().clone();
+        let tag = match &tag_tok.kind {
+            TokenKind::Ident => {
+                self.bump();
+                tag_tok.text.clone()
+            }
+            _ => {
+                self.error_at(
+                    "E014",
+                    "expected a semantic tag (prompt, policy, template) after `@`",
+                    &tag_tok,
+                );
+                String::new()
+            }
+        };
+        let tag = match SemanticTag::parse_tag(&tag) {
+            Some(t) => t,
+            None => {
+                self.error_at(
+                    "E014",
+                    format!("unknown semantic tag `@{tag}` (expected prompt, policy, or template)"),
+                    &tag_tok,
+                );
+                SemanticTag::Prompt
+            }
+        };
+        let str_tok = self.peek().clone();
+        let inner = match &str_tok.kind {
+            TokenKind::MlString(src_pos) => {
+                self.bump();
+                let (stripped, linemap) = strip_common_indent_mapped(
+                    &str_tok.text,
+                    str_tok.line,
+                    str_tok.col,
+                    3,
+                    Some(src_pos),
+                );
+                self.parse_string_literal(&stripped, &str_tok, Some(&linemap))
+            }
+            TokenKind::MlSingleString => {
+                self.bump();
+                let stripped = strip_common_indent(&str_tok.text);
+                self.add_spanned(Node::Literal(Value::String(stripped)), &str_tok)
+            }
+            _ => {
+                self.error_at(
+                    "E014",
+                    "a semantic tag must be followed by a multi-line string (`\"\"\"…\"\"\"` or `'''…'''`)",
+                    &str_tok,
+                );
+                self.add_spanned(Node::Literal(Value::String(String::new())), at_tok)
+            }
+        };
+        let id = self.add_spanned(Node::Semantic { tag, inner }, at_tok);
+        // The inner→outer edge is recorded in build_graph with every other
+        // node kind (single place for edge creation).
+        id
+    }
+}
+
+/// Strip the common leading-whitespace prefix from a multi-line string
+/// (spec §1.4.1): drop the leading newline when the first line is blank,
+/// remove the longest common whitespace prefix of all non-blank lines
+/// (tabs and spaces are distinct characters — a line whose indentation
+/// diverges keeps its excess), and drop a trailing whitespace-only line
+/// before the closing delimiter.
+fn strip_common_indent(raw: &str) -> String {
+    strip_common_indent_mapped(raw, 1, 1, 0, None).0
+}
+
+/// Where one stripped line sits in the source: the source line number and
+/// the source column of every stripped character on that line.
+#[derive(Debug, Clone)]
+struct MlLineMap {
+    src_line: u32,
+    src_cols: Vec<u32>,
+}
+
+/// Build a line map from a token's per-character source positions:
+/// group decoded characters into lines, recording each line's source
+/// line and per-character source columns. Used for single-line strings
+/// (whose escapes still decode (\n, \t) and shift positions).
+fn linemap_from_charmap(text: &str, tok_line: u32, charmap: &[(u32, u32)]) -> Vec<MlLineMap> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut lines: Vec<(usize, usize)> = Vec::new();
+    let mut start = 0usize;
+    for (i, c) in chars.iter().enumerate() {
+        if *c == '\n' {
+            lines.push((start, i));
+            start = i + 1;
+        }
+    }
+    lines.push((start, chars.len()));
+    lines
+        .iter()
+        .map(|&(s, e)| {
+            let src_line = tok_line + charmap.get(s).map(|&(off, _)| off).unwrap_or(0);
+            let src_cols = (s..e)
+                .map(|k| charmap.get(k).map(|&(_, c)| c).unwrap_or(0))
+                .collect();
+            MlLineMap { src_line, src_cols }
+        })
+        .collect()
+}
+
+/// Strip common indent and record, for every stripped line, its source
+/// position. `tok_line`/`tok_col` locate the opening delimiter;
+/// `src_pos` holds the source position (physical line offset, column) of
+/// every decoded character (`None` means decoded and physical positions
+/// coincide, as for verbatim strings).
+fn strip_common_indent_mapped(
+    raw: &str,
+    tok_line: u32,
+    tok_col: u32,
+    delim_len: u32,
+    src_pos: Option<&[(u32, u32)]>,
+) -> (String, Vec<MlLineMap>) {
+    let mut lines: Vec<&str> = raw.split('\n').collect();
+    // Raw line indices that survive: drop a blank first line (the newline
+    // after the delimiter) and a whitespace-only last line (indentation
+    // before the closing delimiter).
+    let mut kept: Vec<usize> = (0..lines.len()).collect();
+    if !lines.is_empty() && lines[0].trim().is_empty() {
+        kept.remove(0);
+        lines.remove(0);
+    }
+    if !lines.is_empty() && lines.last().is_some_and(|l| l.trim().is_empty()) {
+        kept.pop();
+        lines.pop();
+    }
+    // Longest shared whitespace prefix over the surviving content lines.
+    let mut prefix: Vec<char> = Vec::new();
+    let mut seen_content = false;
+    for line in lines.iter() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let indent: Vec<char> = line
+            .chars()
+            .take_while(|c| *c == ' ' || *c == '\t')
+            .collect();
+        if !seen_content {
+            prefix = indent;
+            seen_content = true;
+        } else {
+            let shared = prefix
+                .iter()
+                .zip(indent.iter())
+                .take_while(|(a, b)| a == b)
+                .count();
+            prefix.truncate(shared);
+        }
+        if prefix.is_empty() {
+            break;
+        }
+    }
+    let mut out = Vec::with_capacity(lines.len());
+    let mut map = Vec::with_capacity(lines.len());
+    // Decoded character index of each surviving line's first character,
+    // for looking up per-character source positions. Recomputed from the
+    // original split (before blank-line removal): each line starts after
+    // the previous line's characters plus its newline.
+    let all: Vec<&str> = raw.split('\n').collect();
+    let mut line_start: Vec<usize> = Vec::with_capacity(all.len());
+    let mut acc = 0usize;
+    for l in &all {
+        line_start.push(acc);
+        acc += l.chars().count() + 1; // +1 for the newline
+    }
+    let line_start_for =
+        |raw_idx: usize| -> usize { line_start.get(raw_idx).copied().unwrap_or(0) };
+    for (j, l) in lines.iter().enumerate() {
+        let raw_idx = kept[j];
+        let decoded_start = line_start_for(raw_idx);
+        let at = |k: usize| -> (u32, u32) {
+            src_pos
+                .and_then(|p| p.get(k).copied())
+                .unwrap_or((raw_idx as u32, k as u32))
+        };
+        let shared = if l.trim().is_empty() {
+            0
+        } else {
+            prefix
+                .iter()
+                .zip(l.chars())
+                .take_while(|(a, b)| *a == b)
+                .count()
+        };
+        // Whitespace-only interior lines normalize to empty (spec §1.4.1).
+        if l.trim().is_empty() {
+            let (line_off, _) = at(decoded_start);
+            map.push(MlLineMap {
+                src_line: tok_line + line_off,
+                src_cols: Vec::new(),
+            });
+            out.push(String::new());
+            continue;
+        }
+        let text: String = l.chars().skip(shared).collect();
+        // Source line/columns of the kept characters.
+        let first_kept = decoded_start + shared;
+        let (line_off, _) = at(first_kept.min(decoded_start + l.chars().count()));
+        let src_line = tok_line + line_off;
+        let cols: Vec<u32> = if src_pos.is_some() {
+            (0..text.chars().count())
+                .map(|c| at(first_kept + c).1)
+                .collect()
+        } else if raw_idx == 0 {
+            // Synthetic positions: content follows the opening delimiter.
+            (0..text.chars().count())
+                .map(|c| tok_col + delim_len + shared as u32 + c as u32)
+                .collect()
+        } else {
+            (0..text.chars().count())
+                .map(|c| shared as u32 + 1 + c as u32)
+                .collect()
+        };
+        out.push(text);
+        map.push(MlLineMap {
+            src_line,
+            src_cols: cols,
+        });
+    }
+    (out.join("\n"), map)
+}
+
+impl Parser {
     /// Convert a raw string that may contain `${…}` into either a plain
-    /// Literal or a full Interpolate node with Expr parts.
-    fn parse_string_literal(&mut self, raw: &str, tok: &Token) -> NodeId {
+    /// Literal or a full Interpolate node with Expr parts. `linemap` maps
+    /// stripped-text lines back to source positions (multi-line strings);
+    /// `None` keeps the single-line offset rebase.
+    fn parse_string_literal(
+        &mut self,
+        raw: &str,
+        tok: &Token,
+        linemap: Option<&[MlLineMap]>,
+    ) -> NodeId {
         // The lexer marks `\$` with a sentinel; un-sentinel the fast path too.
         if !raw.contains("${") && !raw.contains(ESCAPED_DOLLAR) {
             let text = raw.replace(ESCAPED_DOLLAR, "$");
@@ -1260,7 +1543,7 @@ impl Parser {
                         // Offset of the expression's first character inside
                         // the token, for precise diagnostic spans.
                         let offset = i + 2;
-                        let id = self.parse_embedded_expression(&inner, tok, offset);
+                        let id = self.parse_embedded_expression(&inner, tok, raw, offset, linemap);
                         parts.push(InterpPart::Expr(id));
                         i = end + 1;
                         continue;
@@ -1268,7 +1551,7 @@ impl Parser {
                     None => {
                         // Unterminated interpolation: diagnose and treat the
                         // remainder as literal text.
-                        let span = self.interp_span(tok, i);
+                        let span = self.interp_span(tok, raw, i, linemap);
                         self.error_at(
                             "E012",
                             "unterminated interpolation: `${` has no matching `}`",
@@ -1334,11 +1617,52 @@ impl Parser {
     /// A span pointing inside the string token at character offset `offset`
     /// (offset 0 is the first character after the opening quote; the lexer's
     /// token text is the decoded content, so offsets are approximate when the
-    /// source contained escapes).
-    fn interp_span(&self, tok: &Token, offset: usize) -> Token {
+    /// source contained escapes). With a line map (multi-line strings),
+    /// `stripped` locates the offset's stripped line and the map converts
+    /// it to the true source position.
+    fn interp_span(
+        &self,
+        tok: &Token,
+        stripped: &str,
+        offset: usize,
+        linemap: Option<&[MlLineMap]>,
+    ) -> Token {
         let mut t = tok.clone();
-        t.col = tok.col + 1 + offset as u32;
-        t.end_col = t.col + 1;
+        match linemap {
+            Some(map) => {
+                // Walk the stripped text to the offset's stripped line and
+                // column, then map through the per-character source columns.
+                let mut line = 0usize;
+                let mut col = 0usize;
+                for c in stripped.chars().take(offset) {
+                    if c == '\n' {
+                        line += 1;
+                        col = 0;
+                    } else {
+                        col += 1;
+                    }
+                }
+                match map
+                    .get(line)
+                    .and_then(|m| m.src_cols.get(col).map(|&c| (m.src_line, c)))
+                {
+                    Some((src_line, src_col)) => {
+                        t.line = src_line;
+                        t.col = src_col;
+                        t.end_line = src_line;
+                        t.end_col = src_col + 1;
+                    }
+                    None => {
+                        t.col = tok.col + 1 + offset as u32;
+                        t.end_col = t.col + 1;
+                    }
+                }
+            }
+            None => {
+                t.col = tok.col + 1 + offset as u32;
+                t.end_col = t.col + 1;
+            }
+        }
         t
     }
 
@@ -1346,16 +1670,26 @@ impl Parser {
     /// resulting nodes into this module's arena. Supports nested
     /// interpolation, env defaults, arithmetic, and every other expression
     /// form; sub-expression diagnostics have their spans rebased onto the
-    /// enclosing string's position (`offset` is the expression's first
-    /// character inside the token).
-    fn parse_embedded_expression(&mut self, text: &str, tok: &Token, offset: usize) -> NodeId {
+    /// enclosing string's position (`stripped` is the scanned string and
+    /// `offset` the expression's first character within it; `linemap`
+    /// maps stripped lines to source positions for multi-line strings).
+    fn parse_embedded_expression(
+        &mut self,
+        text: &str,
+        tok: &Token,
+        stripped: &str,
+        offset: usize,
+        linemap: Option<&[MlLineMap]>,
+    ) -> NodeId {
         // Embedded expressions are not laid out: trim the padding so the
-        // sub-lexer never measures indentation inside `${ … }`.
-        let leading_ws = text.len() - text.trim_start().len();
+        // sub-lexer never measures indentation inside `${ … }`. Count
+        // trimmed characters (not bytes) — `offset` is a char count used
+        // by span rebasing.
+        let leading_ws = text.chars().count() - text.trim_start().chars().count();
         let text = text.trim();
         let offset = offset + leading_ws;
         if text.is_empty() {
-            let span = self.interp_span(tok, offset);
+            let span = self.interp_span(tok, stripped, offset, linemap);
             self.error_at(
                 "E013",
                 "empty interpolation: `${}` has no expression",
@@ -1365,6 +1699,30 @@ impl Parser {
         }
         let mut lexer = Lexer::new(text);
         let lexed = lexer.tokenize();
+
+        // Anchor of this expression within the stripped string: the
+        // stripped line/column where the expression's first character
+        // sits. Sub-lexer spans are expression-local; adding the anchor
+        // lands them in the stripped frame, and the line map converts
+        // stripped coordinates to source positions exactly once — for
+        // direct spans and (recursively) for nested spans alike, because
+        // nested calls first land their spans in *their* parent
+        // expression's frame, which this same step then lifts.
+        let (anchor_line, anchor_col) = if linemap.is_some() {
+            let mut al = 0u32;
+            let mut ac = 0u32;
+            for c in stripped.chars().take(offset) {
+                if c == '\n' {
+                    al += 1;
+                    ac = 0;
+                } else {
+                    ac += 1;
+                }
+            }
+            (al, ac)
+        } else {
+            (0, 0)
+        };
 
         // Move the arena into a sub-parser so embedded nodes land in the
         // same module.
@@ -1389,8 +1747,11 @@ impl Parser {
             brace_tables: 0,
             indent_tables: 0,
         };
+        // Arena ids below this base predate the embedded expression (the
+        // sub-parser shares the outer arena); only spans at or above it
+        // may be rebased.
+        let node_base = sub.module.arena.len() as u32;
         let id = sub.parse_expression();
-
         // Anything left over that is not a newline is unconsumed input.
         while matches!(sub.peek_kind(), TokenKind::Newline) {
             sub.bump();
@@ -1416,20 +1777,74 @@ impl Parser {
         let mut sub_repairs = std::mem::take(&mut sub.module.healing);
         let mut sub_lex_errors = lexed.errors;
         let mut sub_lex_repairs = lexed.repairs;
+        // Embedded nodes carry sub-parser-relative spans in node_spans;
+        // rebase only the spans created by this embedded expression
+        // (arena ids at or above node_base) so evaluation-time errors
+        // point correctly without touching outer nodes.
+        // Must run before the module swap below. With a line map the
+        // tokens were pre-shifted into the stripped frame, so the map
+        // lookup suffices; without one, the same tok+offset shift as
+        // diagnostics applies (this also lands nested spans in the
+        // stripped frame for the outer map pass).
+        // Lift an expression-local span into source coordinates. With a
+        // line map, the anchor lands the span in the stripped frame and
+        // the map converts stripped coordinates to source positions;
+        // nested spans compose because each level's map targets its own
+        // parent frame. Without a map, the tok+offset shift lands it in
+        // source coordinates directly.
+        let lift = |line_1: u32, col_1: u32| -> Option<(u32, u32)> {
+            match linemap {
+                Some(map) => {
+                    let sl = anchor_line as usize + (line_1 as usize).saturating_sub(1);
+                    let sc = if line_1 <= 1 {
+                        anchor_col as usize + (col_1 as usize).saturating_sub(1)
+                    } else {
+                        (col_1 as usize).saturating_sub(1)
+                    };
+                    let m = map.get(sl)?;
+                    let col = m.src_cols.get(sc).copied()?;
+                    Some((m.src_line, col))
+                }
+                None => {
+                    let line = tok.line + line_1.saturating_sub(1);
+                    let col = if line_1 <= 1 {
+                        tok.col + offset as u32 + col_1.saturating_sub(1)
+                    } else {
+                        col_1
+                    };
+                    Some((line, col))
+                }
+            }
+        };
+        for (node, span) in sub.module.node_spans.iter_mut() {
+            if node.0 >= node_base {
+                if let Some((line, col)) = lift(span.line, span.column) {
+                    span.line = line;
+                    span.column = col;
+                }
+                if let Some((line, col)) = lift(span.end_line, span.end_column) {
+                    span.end_line = line;
+                    span.end_column = col;
+                }
+            }
+        }
         self.module = std::mem::replace(&mut sub.module, Module::new(""));
 
         if let Some(scope) = self.ident_scopes.last_mut() {
             scope.extend(new_idents);
         }
-        // Rebase embedded diagnostics onto the string token's position.
+        // Rebase embedded diagnostics onto the string's source position
+        // through the same lift: expression-local → stripped → source.
         let rebase = |d: &mut Diagnostic| {
             if let Some(s) = &mut d.span {
-                if s.line == 1 {
-                    s.column += tok.col + 1 + offset as u32;
-                    s.end_column += tok.col + 1 + offset as u32;
+                if let Some((line, col)) = lift(s.line, s.column) {
+                    s.line = line;
+                    s.column = col;
                 }
-                s.line += tok.line.saturating_sub(1);
-                s.end_line += tok.line.saturating_sub(1);
+                if let Some((line, col)) = lift(s.end_line, s.end_column) {
+                    s.end_line = line;
+                    s.end_column = col;
+                }
             }
         };
         for d in sub_lex_errors
@@ -1659,6 +2074,9 @@ impl Parser {
                 }
                 Some(Node::Quantity { value, .. }) => {
                     self.module.add_edge(value, id);
+                }
+                Some(Node::Semantic { inner, .. }) => {
+                    self.module.add_edge(inner, id);
                 }
                 Some(Node::Array { elements }) => {
                     for e in &elements {

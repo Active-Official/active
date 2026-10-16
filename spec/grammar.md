@@ -63,8 +63,56 @@ string consumes to EOF without error (see 4.2).
 
 Interpolation is lexically inert: the characters `${`, `}`, and everything
 between them are part of the string token. Interpolation is resolved at parse
-time (see 2.5). **[impl note]** Alpha interpolation accepts a bare identifier
-between the braces only; full expression interpolation is C-023.
+time (see 2.5).
+
+### 1.4.1 Multi-line strings (C-024)
+
+```
+ml-string     = '"""' ml-body '"""'
+              | "'''" ml-body-literal "'''"
+ml-body       = { ml-char }                    (double-quoted form)
+ml-body-literal = { ml-char-literal }          (single-quoted form)
+ml-char       = any-char | escape | newline    (may span lines)
+ml-char-literal = any-char | newline           (escapes inert, no interpolation)
+```
+
+- The token opens at `"""` / `'''` and closes at the next matching triple
+  quote. An unterminated multi-line string consumes to EOF and records an
+  H001 repair diagnostic (same channel as single-line unterminated strings)
+  rather than rejecting the input.
+- **Common-indent stripping:** if the first line after the opening delimiter
+  is blank (only whitespace up to the first newline), that leading newline is
+  dropped. Then the longest common leading-whitespace prefix of all non-blank
+  lines is removed from every line. Tabs and spaces are distinct characters —
+  a line is only part of the common prefix measurement when its indentation
+  characters match the prefix exactly; mixed-indent lines keep their excess.
+  A final line containing only whitespace before the closing delimiter is
+  dropped. Whitespace-only lines in the interior are normalized to empty
+  (matching Python's `textwrap.dedent`); they contribute no prefix and keep
+  no trailing whitespace.
+- **Escapes:** the `"""` form processes escapes exactly like `"…"` (see 1.4).
+  The `'''` form is literal: backslashes are kept verbatim and `${…}` is not
+  interpolation.
+- **Interpolation:** the `"""` form supports full `${…}` expression
+  interpolation (same machinery as 2.5). The `'''` form never interpolates.
+- **Semantic blocks:** an optional annotation marks the string's role for
+  tools (formatter, LSP, doc generator):
+
+```
+semantic-tag  = "prompt" | "policy" | "template"
+ml-annotated  = "@" semantic-tag ws* ml-string
+```
+
+  The tag is trivia: it does not change the value, only tool treatment.
+  Unknown tags are an E014 hard error (a mistyped tag silently ignored
+  would be worse than a rejection); Phase 2 annotations are C-033/034.
+- **Statement form:** a bare `@tag ml-string` at statement level binds
+  under the tag name itself (`@prompt """…"""` → key `prompt`), so AI
+  prompt files read naturally. In value position (`key = @tag """…"""`,
+  array elements) the tag wraps that value.
+- **Spans:** the token span covers the opening delimiter through the closing
+  delimiter (or EOF when unterminated); interpolation sub-expression spans
+  are rebased onto the string position exactly as in 2.5.
 
 ### 1.5 Numbers
 

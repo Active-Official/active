@@ -227,6 +227,10 @@ Attachment = Leading(statement)        // own-line comment(s) before a statement
   inside a block in canonical mode). Preservation is a guarantee about
   *canonical* documents and about comments/blank-line structure, not about
   arbitrary whitespace.
+- **CLI flag names:** `solid-fmt --bracketed` emits brace style and
+  `solid-fmt --indented` emits indentation style (`--write` edits in place).
+  "Bracketed" and "brace style" are the same layout; "indented" and
+  "indentation style" are the same layout.
 
 ### 8.1 The round-trip guarantee (tested in C-022)
 

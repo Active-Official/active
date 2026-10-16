@@ -1,0 +1,18 @@
+[doc]
+body = """
+  Hello, world.
+    Indented line.
+  Back again.
+  """
+
+[other]
+raw = '''
+  Verbatim \n stays.
+  ${no_interp} stays.
+  '''
+
+[interp]
+name = "world"
+greeting = """
+  Hello, ${name}!
+  """

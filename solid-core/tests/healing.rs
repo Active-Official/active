@@ -72,9 +72,10 @@ fn missing_comma_is_healed_in_both_modes_with_a_warning() {
 #[test]
 fn unexpected_character_is_a_hard_error_in_both_modes() {
     // Below the medium band, so it is never auto-applied — the input is
-    // rejected rather than silently altered.
+    // rejected rather than silently altered. (Backtick: `@` became a real
+    // token with semantic blocks in C-024.)
     for options in [STRICT, RESILIENT] {
-        let err = parse_with("x = 1 @ 2\n", "healing", options)
+        let err = parse_with("x = 1 ` 2\n", "healing", options)
             .expect_err("unknown characters must be rejected");
         assert!(err.iter().any(|d| d.code == "E005"), "got {err:?}");
     }

@@ -97,7 +97,10 @@ fn declined_repair_fails_in_strict_and_heals_in_resilient() {
 
 #[test]
 fn unexpected_character_is_rejected_in_both_modes() {
-    let f = fixture("cfg_bad_char.solid", "x = 1 @ 2\n");
+    // Backtick is not part of the language in any position (note: `@`
+    // became a real token with semantic blocks in C-024, so it no longer
+    // qualifies as an unexpected character).
+    let f = fixture("cfg_bad_char.solid", "x = 1 ` 2\n");
     for args in [vec!["check"], vec!["check", "--resilient"]] {
         let out = solid().args(&args).arg(&f).output().expect("run solid");
         assert!(

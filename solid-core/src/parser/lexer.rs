@@ -36,15 +36,15 @@ pub struct Lexed {
     pub comments: Vec<(String, Span)>,
 }
 
-/// Build the H001 repair for a string that reached EOF without a closing
-/// quote: insert the matching quote. Safe repair (confidence ≥ 0.95).
-fn unclosed_string_repair(line: u32, col: u32, quote: char) -> Diagnostic {
+/// Build the H001 repair for a string that reached EOF without its closing
+/// delimiter: insert the missing delimiter. Safe repair (confidence ≥ 0.95).
+fn unclosed_string_repair(line: u32, col: u32, delimiter: &str) -> Diagnostic {
     Diagnostic {
         severity: Severity::Info, // safe repair: ≥ AUTO_APPLY
         code: "H001".into(),
         message: format!(
-            "string literal reached end of input without a closing {}; inserted",
-            quote
+            "string literal reached end of input without its closing {}; inserted",
+            delimiter
         ),
         path: None,
         span: Some(Span {
@@ -55,7 +55,7 @@ fn unclosed_string_repair(line: u32, col: u32, quote: char) -> Diagnostic {
         }),
         repair: Some(Repair {
             original: String::new(),
-            suggested: quote.to_string(),
+            suggested: delimiter.to_string(),
             kind: RepairKind::InsertQuote,
             safe: true,
         }),
@@ -75,9 +75,23 @@ pub enum TokenKind {
     // Literals & identifiers
     Ident,
     /// Double-quoted string: escapes processed, `${…}` interpolated.
-    String,
+    /// Carries the source position (line offset, column) of every decoded
+    /// character, exactly like MlString: nested interpolation inside
+    /// sub-lexed expression text needs the same position fidelity.
+    String(Vec<(u32, u32)>),
     /// Single-quoted string: escapes processed, `${…}` literal (spec §2.5).
     SingleString,
+    /// Triple-double-quoted multi-line string: escapes processed, `${…}`
+    /// interpolated, common-indent stripping at parse time (spec §1.4.1).
+    /// Carries the source position (line offset, column) of every decoded
+    /// character: escapes decode to characters of different source width
+    /// (`\n` is two source columns becoming one decoded newline on the
+    /// same physical line), so only a per-character map keeps diagnostics
+    /// on their true positions.
+    MlString(Vec<(u32, u32)>),
+    /// Triple-single-quoted multi-line string: fully literal — backslashes
+    /// kept verbatim, `${…}` never interpolated (spec §1.4.1).
+    MlSingleString,
     Integer,
     Float,
     True,
@@ -116,6 +130,7 @@ pub enum TokenKind {
     LParen,   // (
     RParen,   // )
     Colon,    // :
+    At,       // @ (semantic-block tags, spec §1.4.1)
 
     // Unit suffix emitted right after a number when a known unit is present
     Unit(String),
@@ -198,6 +213,123 @@ impl Lexer {
             end_line: self.line,
             end_col: self.col,
         }
+    }
+
+    /// Lex a triple-double-quoted body after the opening `"""`. Processes
+    /// escapes exactly like `"…"` (including the `\$` sentinel) and leaves
+    /// `${…}` intact for the parser. Returns the decoded text, whether the
+    /// closing `"""` was found, and the source position (physical line
+    /// offset, column) of every decoded character for diagnostic mapping.
+    /// Newlines, brackets, braces, and `#` inside
+    /// the body are content — they never affect layout, delimiter, or
+    /// comment state, because the loop below consumes them directly.
+    fn lex_ml_string(&mut self, quote: char) -> (String, bool, Vec<(u32, u32)>) {
+        let mut s = String::new();
+        // Source position (physical line offset, column) of every decoded
+        // character, recorded *before* consuming: self.col is the column
+        // of the current peek character and advances with each bump().
+        let mut pos: Vec<(u32, u32)> = Vec::new();
+        let mut real_off: u32 = 0;
+        let mut escaped = false;
+        while let Some(ch) = self.peek() {
+            if escaped {
+                // The decoded character takes the backslash's position;
+                // bump() then advances past both source characters.
+                let at = (real_off, self.col);
+                match ch {
+                    'n' => {
+                        s.push('\n');
+                        pos.push(at);
+                    }
+                    '\n' => {
+                        // Backslash followed by a physical newline: an
+                        // unknown escape, so both characters are kept — and
+                        // the physical line still advances for mapping.
+                        s.push('\\');
+                        pos.push(at);
+                        s.push('\n');
+                        pos.push((real_off, self.col + 1));
+                        real_off += 1;
+                    }
+                    't' => {
+                        s.push('\t');
+                        pos.push(at);
+                    }
+                    'r' => {
+                        s.push('\r');
+                        pos.push(at);
+                    }
+                    '\\' => {
+                        s.push('\\');
+                        pos.push(at);
+                    }
+                    '"' => {
+                        s.push('"');
+                        pos.push(at);
+                    }
+                    '0' => {
+                        s.push('\0');
+                        pos.push(at);
+                    }
+                    '$' => {
+                        s.push(ESCAPED_DOLLAR);
+                        pos.push(at);
+                    }
+                    other => {
+                        s.push('\\');
+                        pos.push(at);
+                        s.push(other);
+                        pos.push((real_off, self.col + 1));
+                    }
+                }
+                escaped = false;
+                self.bump();
+            } else if ch == '\\' {
+                escaped = true;
+                self.bump();
+            } else if ch == quote
+                && self.peek_ahead(1) == Some(quote)
+                && self.peek_ahead(2) == Some(quote)
+            {
+                self.bump();
+                self.bump();
+                self.bump();
+                return (s, true, pos);
+            } else {
+                if ch == '\n' {
+                    pos.push((real_off, self.col));
+                    real_off += 1;
+                } else {
+                    pos.push((real_off, self.col));
+                }
+                s.push(ch);
+                self.bump();
+            }
+        }
+        if escaped {
+            s.push('\\');
+            pos.push((real_off, self.col));
+        }
+        (s, false, pos)
+    }
+
+    /// Lex a triple-single-quoted body after the opening `'''`. Fully
+    /// literal: no escapes, no interpolation. Returns the raw text and
+    /// whether the closing `'''` was found.
+    fn lex_ml_literal(&mut self, quote: char) -> (String, bool) {
+        let mut s = String::new();
+        while let Some(ch) = self.peek() {
+            if ch == quote && self.peek_ahead(1) == Some(quote) && self.peek_ahead(2) == Some(quote)
+            {
+                self.bump();
+                self.bump();
+                self.bump();
+                return (s, true);
+            }
+            s.push(ch);
+            self.bump();
+        }
+        (s, false)
     }
 
     /// Measure one line's indentation and update the stack, emitting Indent
@@ -508,30 +640,101 @@ impl Lexer {
                     self.bump();
                     tokens.push(self.make_token(TokenKind::Colon, ":".into(), l, col));
                 }
+                '@' => {
+                    let (l, col) = (self.line, self.col);
+                    self.bump();
+                    tokens.push(self.make_token(TokenKind::At, "@".into(), l, col));
+                }
+
+                // Triple-quoted multi-line strings (spec §1.4.1). The
+                // triple-quote check must come before the single-quote
+                // arms: `"""` and `'''` open a multi-line string.
+                '"' if self.peek_ahead(1) == Some('"') && self.peek_ahead(2) == Some('"') => {
+                    let (l, col) = (self.line, self.col);
+                    self.bump();
+                    self.bump();
+                    self.bump(); // opening """
+                    let (raw, terminated, src_pos) = self.lex_ml_string('"');
+                    if !terminated {
+                        repairs.push(unclosed_string_repair(l, col, "\"\"\""));
+                    }
+                    tokens.push(self.make_token(TokenKind::MlString(src_pos), raw, l, col));
+                }
+                '\'' if self.peek_ahead(1) == Some('\'') && self.peek_ahead(2) == Some('\'') => {
+                    let (l, col) = (self.line, self.col);
+                    self.bump();
+                    self.bump();
+                    self.bump(); // opening '''
+                    let (raw, terminated) = self.lex_ml_literal('\'');
+                    if !terminated {
+                        repairs.push(unclosed_string_repair(l, col, "'''"));
+                    }
+                    tokens.push(self.make_token(TokenKind::MlSingleString, raw, l, col));
+                }
 
                 // Double-quoted strings (escapes + ${…} left intact for the parser)
                 '"' => {
                     let (l, col) = (self.line, self.col);
                     self.bump(); // opening "
                     let mut s = String::new();
+                    // Per-character source positions (physical line offset,
+                    // column), recorded before consuming: self.col is the
+                    // column of the current peek character.
+                    let mut pos: Vec<(u32, u32)> = Vec::new();
+                    let mut real_off: u32 = 0;
                     let mut escaped = false;
                     let mut terminated = false;
                     while let Some(ch) = self.peek() {
                         if escaped {
+                            let at = (real_off, self.col);
                             match ch {
-                                'n' => s.push('\n'),
-                                't' => s.push('\t'),
-                                'r' => s.push('\r'),
-                                '\\' => s.push('\\'),
-                                '"' => s.push('"'),
-                                '0' => s.push('\0'),
+                                'n' => {
+                                    s.push('\n');
+                                    pos.push(at);
+                                }
+                                '\n' => {
+                                    // Backslash followed by a physical
+                                    // newline: an unknown escape, so both
+                                    // characters are kept — and the
+                                    // physical line still advances.
+                                    s.push('\\');
+                                    pos.push(at);
+                                    s.push('\n');
+                                    pos.push((real_off, self.col + 1));
+                                    real_off += 1;
+                                }
+                                't' => {
+                                    s.push('\t');
+                                    pos.push(at);
+                                }
+                                'r' => {
+                                    s.push('\r');
+                                    pos.push(at);
+                                }
+                                '\\' => {
+                                    s.push('\\');
+                                    pos.push(at);
+                                }
+                                '"' => {
+                                    s.push('"');
+                                    pos.push(at);
+                                }
+                                '0' => {
+                                    s.push('\0');
+                                    pos.push(at);
+                                }
                                 // `\$` keeps its own identity through the
                                 // escape table so the parser can tell it
                                 // apart from a real backslash before `${`.
-                                '$' => s.push(ESCAPED_DOLLAR),
+                                '$' => {
+                                    s.push(ESCAPED_DOLLAR);
+                                    pos.push(at);
+                                }
                                 other => {
                                     s.push('\\');
+                                    pos.push(at);
                                     s.push(other);
+                                    pos.push((real_off, self.col + 1));
                                 }
                             }
                             escaped = false;
@@ -544,6 +747,12 @@ impl Lexer {
                             terminated = true;
                             break;
                         } else {
+                            if ch == '\n' {
+                                pos.push((real_off, self.col));
+                                real_off += 1;
+                            } else {
+                                pos.push((real_off, self.col));
+                            }
                             s.push(ch);
                             self.bump();
                         }
@@ -554,11 +763,12 @@ impl Lexer {
                         // content is not silently altered.
                         if escaped {
                             s.push('\\');
+                            pos.push((real_off, self.col));
                         }
                         // Healing phase 1: insert the missing closing quote.
-                        repairs.push(unclosed_string_repair(l, col, '"'));
+                        repairs.push(unclosed_string_repair(l, col, "\""));
                     }
-                    tokens.push(self.make_token(TokenKind::String, s, l, col));
+                    tokens.push(self.make_token(TokenKind::String(pos), s, l, col));
                 }
 
                 // Single-quoted strings (no interpolation semantics)
@@ -599,7 +809,7 @@ impl Lexer {
                             s.push('\\');
                         }
                         // Healing phase 1: insert the missing closing quote.
-                        repairs.push(unclosed_string_repair(l, col, '\''));
+                        repairs.push(unclosed_string_repair(l, col, "'"));
                     }
                     tokens.push(self.make_token(TokenKind::SingleString, s, l, col));
                 }

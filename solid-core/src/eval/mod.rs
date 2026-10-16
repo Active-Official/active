@@ -114,6 +114,8 @@ impl Engine {
 
                 Node::Ref(id) => values.get(id).cloned().unwrap_or(Value::Null),
 
+                // Semantic tags are tool treatment only: transparent to the value.
+                Node::Semantic { inner, .. } => values.get(inner).cloned().unwrap_or(Value::Null),
                 Node::Ident(name) => {
                     diagnostics.push(Diagnostic {
                         severity: Severity::Warning,

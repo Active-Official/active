@@ -62,6 +62,9 @@ parses leave it unset and tools fall back to the input filename.
 | Code | Message | Span | Emitted when |
 |---|---|---|---|
 | T001 | `type error: unsupported binary op <op> on <lhs> and <rhs>` / `unsupported unary op <op> on <v>` / `quantity requires numeric value, got <v>` | node | An operator is applied to unsupported operands; dimension mismatches land here (e.g. `5s + 512MiB`) |
+| T002 | `schema violation at '<path>': expected <type>, got <kind>` | value node when resolvable through the arena, else the schema field span, else none | A value's kind does not match its schema type (spec/validation.md §3). `Int` is accepted where `Float` is expected (widening); every other mismatch fails, including `Float` where `Int` is expected |
+| T003 | `schema violation at '<path>': <detail>` | same as T002 | A constraint fails: `<detail>` is one of `below minimum`, `above maximum`, `too short`, `too long`, `does not match pattern`, `not a member of Enum(<members>)`, `invalid pattern in schema`, `incomparable <bound> bound for <type> fields`. Enum members are schema literals, safe to quote; evaluated values and bounds are never echoed (secret invariant) |
+| T004 | `schema violation at '<path>': missing required key (no default)` | schema field span | A schema field has no value and declares no `default` (C-032 fills defaults; C-031 only reports). Absent `Null`-typed keys are allowed and never reported |
 
 ### W0xx — Warnings
 

@@ -82,6 +82,18 @@ const ALL_TYPES: &str = r#"schema = {
 }
 
 int_f = 5
+float_f = 0.75
+str_f = "hi"
+bool_f = true
+null_f = null
+dur_f = 5s
+bytes_f = 512KiB
+secret_f = secret("k")
+any_f = 42
+table_f = { a = 1 }
+enum_f = "a"
+arr_f = [1, 2]
+nested = { inner = "x" }
 "#;
 
 #[test]

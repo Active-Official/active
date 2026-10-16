@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use solid_core::convert::{value_to_pretty_json, value_to_simple_toml};
 use solid_core::diag::{Diagnostic, Severity};
-use solid_core::{parse_file, Engine, ParseOptions};
+use solid_core::{parse_file, Engine, EvalError, ParseOptions};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -85,8 +85,11 @@ fn options(resilient: bool, allow_parent_escapes: bool) -> ParseOptions {
     }
 }
 
-fn engine(profile: &Option<String>) -> Engine {
+fn engine(resilient: bool, profile: &Option<String>) -> Engine {
     let mut engine = Engine::new();
+    // The CLI is strict by default: only --resilient tolerates
+    // violations. Engine::new stays resilient for library use.
+    engine.resilient = resilient;
     engine.profile_override = profile.clone();
     engine
 }
@@ -112,6 +115,28 @@ fn report(d: &Diagnostic, fallback_file: &str) {
     }
 }
 
+/// Print an evaluation failure. Schema violations (strict mode) print
+/// every carried diagnostic before the summary error.
+fn report_eval_error(e: &EvalError, name: &str) {
+    if let EvalError::ValidationFailed { diagnostics } = e {
+        for d in diagnostics {
+            report(d, name);
+        }
+    }
+    let file = e.file().unwrap_or(name);
+    match e.span() {
+        Some(s) => eprintln!(
+            "{}:{}:{}: [Error] {}: {}",
+            file,
+            s.line,
+            s.column,
+            e.code(),
+            e
+        ),
+        None => eprintln!("[Error] {}: {}", e.code(), e),
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
@@ -132,22 +157,10 @@ fn main() -> anyhow::Result<()> {
                     anyhow::anyhow!("parse failed")
                 })?;
 
-            let engine = engine(&profile);
-            let (value, diags) = engine.evaluate(&module).map_err(|e| {
-                let file = e.file().unwrap_or(&name);
-                match e.span() {
-                    Some(s) => eprintln!(
-                        "{}:{}:{}: [Error] {}: {}",
-                        file,
-                        s.line,
-                        s.column,
-                        e.code(),
-                        e
-                    ),
-                    None => eprintln!("[Error] {}: {}", e.code(), e),
-                }
-                e
-            })?;
+            let engine = engine(resilient, &profile);
+            let (value, diags) = engine
+                .evaluate(&module)
+                .inspect_err(|e| report_eval_error(e, &name))?;
             for d in &diags {
                 report(d, &name);
             }
@@ -170,7 +183,7 @@ fn main() -> anyhow::Result<()> {
             let name = file.to_string_lossy().to_string();
             match parse_file(&file, options(resilient, allow_parent_escapes)) {
                 Ok(module) => {
-                    let engine = engine(&profile);
+                    let engine = engine(resilient, &profile);
                     match engine.evaluate(&module) {
                         Ok((_, diags)) => {
                             if diags.is_empty() {
@@ -185,18 +198,7 @@ fn main() -> anyhow::Result<()> {
                             }
                         }
                         Err(e) => {
-                            let file = e.file().unwrap_or(&name);
-                            match e.span() {
-                                Some(s) => eprintln!(
-                                    "{}:{}:{}: [Error] {}: {}",
-                                    file,
-                                    s.line,
-                                    s.column,
-                                    e.code(),
-                                    e
-                                ),
-                                None => eprintln!("[Error] {}: {}", e.code(), e),
-                            }
+                            report_eval_error(&e, &name);
                             std::process::exit(1);
                         }
                     }
@@ -256,22 +258,10 @@ fn main() -> anyhow::Result<()> {
                     }
                     anyhow::anyhow!("parse failed")
                 })?;
-            let engine = engine(&profile);
-            let (value, diags) = engine.evaluate(&module).map_err(|e| {
-                let file = e.file().unwrap_or(&name);
-                match e.span() {
-                    Some(s) => eprintln!(
-                        "{}:{}:{}: [Error] {}: {}",
-                        file,
-                        s.line,
-                        s.column,
-                        e.code(),
-                        e
-                    ),
-                    None => eprintln!("[Error] {}: {}", e.code(), e),
-                }
-                e
-            })?;
+            let engine = engine(resilient, &profile);
+            let (value, diags) = engine
+                .evaluate(&module)
+                .inspect_err(|e| report_eval_error(e, &name))?;
             for d in &diags {
                 report(d, &name);
             }

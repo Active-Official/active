@@ -1,0 +1,30 @@
+schema = {
+  port = Int(min = 1, max = 65535),
+  ratio = Float(min = 0.0, max = 1.0),
+  host = String(min_len = 1, max_len = 64, pattern = "^[a-z0-9.-]+$"),
+  tls = Bool,
+  delay = Duration(min = 1s, max = 5m),
+  quota = Bytes(max = 1GiB),
+  mode = Enum("dev", "prod"),
+  tags = Array<String>,
+  level = Int(default = 3),
+  nothing = Null,
+  token = Secret,
+  anything = Any,
+  server = Table {
+    host = String,
+    port = Int,
+  },
+}
+
+port = 8080
+ratio = 0.5
+host = "example.com"
+tls = true
+delay = 30s
+quota = 512MiB
+mode = "prod"
+tags = ["a", "b"]
+token = secret("deploy-key")
+anything = { nested = [1, 2] }
+server = { host = "db", port = 5432 }

@@ -1,0 +1,9 @@
+let real_port = 70000
+
+schema = {
+  port = Int(min = 1, max = 1024),
+}
+
+port = 80
+
+@patch("port", real_port)

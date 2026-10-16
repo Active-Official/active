@@ -42,6 +42,12 @@ pub enum EvalError {
     },
     #[error("secret used in unsafe context")]
     SecretLeak { file: Option<String> },
+    /// Schema validation failures (C-031, spec/validation.md): every
+    /// violation diagnostic, collected in deterministic schema order.
+    /// Strict mode returns these instead of a value tree; resilient mode
+    /// keeps them as ordinary diagnostics alongside the tree.
+    #[error("schema validation failed")]
+    ValidationFailed { diagnostics: Vec<Diagnostic> },
 }
 
 impl EvalError {
@@ -54,6 +60,13 @@ impl EvalError {
             EvalError::TypeError { .. } => "T001",
             EvalError::PatchError { .. } => "E019",
             EvalError::SecretLeak { .. } => "S004",
+            EvalError::ValidationFailed { diagnostics } => {
+                match diagnostics.first().map(|d| d.code.as_str()) {
+                    Some("T003") => "T003",
+                    Some("T004") => "T004",
+                    _ => "T002",
+                }
+            }
         }
     }
 
@@ -61,6 +74,9 @@ impl EvalError {
     pub fn span(&self) -> Option<&Span> {
         match self {
             EvalError::TypeError { span, .. } | EvalError::PatchError { span, .. } => span.as_ref(),
+            EvalError::ValidationFailed { diagnostics } => {
+                diagnostics.first().and_then(|d| d.span.as_ref())
+            }
             _ => None,
         }
     }
@@ -73,6 +89,9 @@ impl EvalError {
                 file.as_deref()
             }
             EvalError::SecretLeak { file } => file.as_deref(),
+            EvalError::ValidationFailed { diagnostics } => {
+                diagnostics.first().and_then(|d| d.file.as_deref())
+            }
             _ => None,
         }
     }
@@ -280,6 +299,9 @@ impl Engine {
         let result = self.apply_profile(module, &values, result, &mut diagnostics);
         let mut result = result;
         self.apply_patches(module, &values, &mut result, &mut diagnostics)?;
+        // Schema validation runs last: post-evaluation, post-profile,
+        // post-patch, pre-export (spec/validation.md §1).
+        self.validate_schema(module, &values, &result, &mut diagnostics)?;
         Ok((result, diagnostics))
     }
 
@@ -553,7 +575,7 @@ fn active_key_file(module: &Module, result: &Value) -> Option<String> {
 /// Short kind name for diagnostics (never includes values, so secrets
 /// cannot leak through it). Numbers share a kind; quantities carry
 /// their unit so different dimensions compare unequal.
-fn value_kind_name(v: &Value) -> String {
+pub(crate) fn value_kind_name(v: &Value) -> String {
     match v {
         Value::Null => "null".into(),
         Value::Bool(_) => "boolean".into(),

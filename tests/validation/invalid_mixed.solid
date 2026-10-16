@@ -1,0 +1,17 @@
+schema = {
+  port = Int(min = 1, max = 100),
+  host = String(min_len = 3),
+  mode = Enum("dev", "prod"),
+  ratio = Float,
+  delay = Duration,
+  tags = Array<Int>,
+  missing_no_default = Bool,
+  with_default = Int(default = 7),
+}
+
+port = 999
+host = 42
+mode = "staging"
+ratio = "half"
+delay = "soon"
+tags = [1, "two", 3]

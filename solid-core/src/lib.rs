@@ -11,9 +11,10 @@ pub mod heal;
 pub mod ir;
 pub mod parser;
 pub mod types;
+pub mod validate;
 
 pub use diag::{Diagnostic, Repair, RepairKind, Severity};
-pub use eval::Engine;
+pub use eval::{Engine, EvalError};
 pub use ir::{
     Attachment, BinOp, IncludeStmt, Module, Node, NodeId, PatchOp, SchemaField, SemanticTag, Style,
     TriviaComment, UnOp, Value,

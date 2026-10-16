@@ -646,3 +646,26 @@ fn aliased_includes_scope_annotation_paths() {
     assert_eq!(anns.len(), 3, "{anns:?}");
     assert!(anns.iter().all(|a| a.path == "lib.port"), "{anns:?}");
 }
+
+#[test]
+fn crlf_terminators_never_reach_annotation_payloads() {
+    // A CRLF document's `\r` is a line terminator, not comment
+    // content: `true\r` must read as `true` (caught by the C-054
+    // agent loop, which writes CRLF on Windows).
+    let module = parse_ok("# @ai_immutable: true\r\nport = 8080\r\n");
+    let id = root_field(&module, "port");
+    let anns = annotations_of(&module, id);
+    assert!(
+        anns.iter()
+            .any(|a| matches!(a.kind, AnnotationKind::AiImmutable(true))),
+        "{anns:?}"
+    );
+    let module = parse_ok("# @intent: \"Hi\"\r\n# plain note\r\nport = 1\r\n");
+    let id = root_field(&module, "port");
+    let anns = annotations_of(&module, id);
+    assert!(
+        anns.iter()
+            .any(|a| matches!(&a.kind, AnnotationKind::Intent(text) if text == "Hi")),
+        "{anns:?}"
+    );
+}

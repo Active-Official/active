@@ -1,0 +1,13 @@
+id = "t7-explain-depends"
+system = "explainer"
+kind = "explain"
+
+user = """
+What happens when a table uses a key it did not declare in
+`depends_on`?
+"""
+
+[[checks]]
+type = "terms"
+all = ["L002", "depends_on", "missing"]
+none = []

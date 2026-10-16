@@ -1,0 +1,21 @@
+id = "t8-fix-broken"
+system = "editor"
+kind = "code"
+
+document = """
+[server
+port = 8080
+"""
+
+user = """
+This document fails to parse. Fix it so it checks clean, changing
+as little as possible.
+"""
+
+[[checks]]
+type = "check_exit0"
+
+[[checks]]
+type = "eval_eq"
+path = "server.port"
+value = 8080

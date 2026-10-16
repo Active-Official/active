@@ -1,0 +1,26 @@
+id = "t1-gen-basic"
+system = "generator"
+kind = "code"
+
+user = """
+Write SOLID for a web service: application name "api" with debug
+off, served on port 8080.
+"""
+
+[[checks]]
+type = "parse"
+
+[[checks]]
+type = "eval_eq"
+path = "server.port"
+value = 8080
+
+[[checks]]
+type = "eval_eq"
+path = "app.name"
+value = "api"
+
+[[checks]]
+type = "eval_eq"
+path = "app.debug"
+value = false

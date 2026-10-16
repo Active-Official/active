@@ -1,0 +1,36 @@
+{
+  "pack": "1.0.0",
+  "stamp": "rerun",
+  "backends": [
+    "direct"
+  ],
+  "results": [
+    {
+      "id": "t5-edit-patch",
+      "backend": "direct",
+      "pass": true,
+      "error": "",
+      "ms": 18587,
+      "checks": [
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "contains '@patch('",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "eval_eq server.port",
+          "pass": true,
+          "detail": "got 9090"
+        }
+      ],
+      "extraction": "solid-fence",
+      "response": "Chose patch-only form to set the port to 9090.\n```solid\n@patch(\"server.port\", 9090)\n```"
+    }
+  ],
+  "direct_rate": 1.0
+}

@@ -480,7 +480,10 @@ impl Lexer {
                 }
 
                 // Full-line or trailing comment: retained as trivia with its
-                // span so the formatter can re-emit it (§7-§8).
+                // span so the formatter can re-emit it (§7-§8). A
+                // trailing carriage return (CRLF documents) is not
+                // content: keeping it would poison annotation payloads
+                // (`true\r` is not `true`) and formatter output.
                 '#' => {
                     let (l, col) = (self.line, self.col);
                     let mut text = String::new();
@@ -491,13 +494,23 @@ impl Lexer {
                         text.push(ch);
                         self.bump();
                     }
+                    // Span end tracks the text: a stripped terminator
+                    // is one character column, ASCII by definition.
+                    let stripped = text.ends_with('\r');
+                    if stripped {
+                        text.pop();
+                    }
                     comments.push((
                         text,
                         Span {
                             line: l,
                             column: col,
                             end_line: self.line,
-                            end_column: self.col,
+                            end_column: if stripped {
+                                self.col.saturating_sub(1)
+                            } else {
+                                self.col
+                            },
                         },
                     ));
                 }

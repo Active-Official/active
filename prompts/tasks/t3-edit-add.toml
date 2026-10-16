@@ -1,0 +1,32 @@
+id = "t3-edit-add"
+system = "editor"
+kind = "code"
+
+document = """
+[server]
+host = "0.0.0.0"
+port = 8080
+"""
+
+user = """
+Add a 30 second read timeout to the server table. Output the whole
+document with your change.
+"""
+
+[[checks]]
+type = "parse"
+
+[[checks]]
+type = "eval_eq"
+path = "server.read_timeout"
+value = { ms = 30000 }
+
+[[checks]]
+type = "eval_eq"
+path = "server.host"
+value = "0.0.0.0"
+
+[[checks]]
+type = "eval_eq"
+path = "server.port"
+value = 8080

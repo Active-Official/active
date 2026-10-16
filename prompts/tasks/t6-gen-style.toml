@@ -1,0 +1,24 @@
+id = "t6-gen-style"
+system = "generator"
+kind = "code"
+
+document = """
+[server]
+host = "0.0.0.0"
+port = 8080
+"""
+
+user = """
+Rewrite this document in pure indentation style (no braces, no
+`[headers]`): the same tree, only the layout changes.
+"""
+
+[[checks]]
+type = "parse"
+
+[[checks]]
+type = "match"
+pattern = "(?m)^server:"
+
+[[checks]]
+type = "same_eval"

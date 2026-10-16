@@ -1,0 +1,26 @@
+id = "t5-edit-patch"
+system = "editor"
+kind = "code"
+append_to_base = true
+
+document = """
+[server]
+port = 8080
+"""
+
+user = """
+Output ONLY the @patch directive that sets the server port to
+9090. No full document, no prose inside the fence.
+"""
+
+[[checks]]
+type = "parse"
+
+[[checks]]
+type = "contains"
+text = "@patch("
+
+[[checks]]
+type = "eval_eq"
+path = "server.port"
+value = 9090

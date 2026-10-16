@@ -1,0 +1,398 @@
+{
+  "pack": "1.0.0",
+  "stamp": "round1",
+  "backends": [
+    "copilot",
+    "direct"
+  ],
+  "results": [
+    {
+      "id": "t1-gen-basic",
+      "backend": "copilot",
+      "pass": true,
+      "error": "",
+      "ms": 8942,
+      "checks": [
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "eval_eq server.port",
+          "pass": true,
+          "detail": "got 8080"
+        },
+        {
+          "check": "eval_eq app.name",
+          "pass": true,
+          "detail": "got 'api'"
+        },
+        {
+          "check": "eval_eq app.debug",
+          "pass": true,
+          "detail": "got False"
+        }
+      ],
+      "extraction": "solid-fence",
+      "response": "```solid\n[app]\nname = \"api\"\ndebug = false\n\n[server]\nport = 8080\n```\nProduced minimal api service config.\n\n"
+    },
+    {
+      "id": "t1-gen-basic",
+      "backend": "direct",
+      "pass": true,
+      "error": "",
+      "ms": 13153,
+      "checks": [
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "eval_eq server.port",
+          "pass": true,
+          "detail": "got 8080"
+        },
+        {
+          "check": "eval_eq app.name",
+          "pass": true,
+          "detail": "got 'api'"
+        },
+        {
+          "check": "eval_eq app.debug",
+          "pass": true,
+          "detail": "got False"
+        }
+      ],
+      "extraction": "solid-fence",
+      "response": "```solid\n[app]\nname = \"api\"\ndebug = false\n\n[server]\nport = 8080\n```\nProduced SOLID config for the api web service."
+    },
+    {
+      "id": "t2-gen-secret",
+      "backend": "copilot",
+      "pass": true,
+      "error": "",
+      "ms": 8603,
+      "checks": [
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "contains 'secret('",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "not_contains 'password = \"'",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "eval_eq database.port",
+          "pass": true,
+          "detail": "got 5432"
+        }
+      ],
+      "extraction": "solid-fence",
+      "response": "```solid\nlet db_password = secret(\"prod/db/password\")\n\n[database]\nhost = \"db.internal\"\nport = 5432\nname = \"app\"\nuser = \"app\"\npassword = db_password\n```\nProduced Postgres config with vaulted password.\n\n"
+    },
+    {
+      "id": "t2-gen-secret",
+      "backend": "direct",
+      "pass": true,
+      "error": "",
+      "ms": 16966,
+      "checks": [
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "contains 'secret('",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "not_contains 'password = \"'",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "eval_eq database.port",
+          "pass": true,
+          "detail": "got 5432"
+        }
+      ],
+      "extraction": "solid-fence",
+      "response": "Here's your Postgres database configuration.\n```solid\nlet db_password = secret(\"prod/db/password\")\n\n[database]\nhost = \"db.internal\"\nport = 5432\nname = \"app\"\nuser = \"app\"\npassword = db_password\n```"
+    },
+    {
+      "id": "t3-edit-add",
+      "backend": "copilot",
+      "pass": true,
+      "error": "",
+      "ms": 7260,
+      "checks": [
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "eval_eq server.read_timeout",
+          "pass": true,
+          "detail": "got {'ms': 30000}"
+        },
+        {
+          "check": "eval_eq server.host",
+          "pass": true,
+          "detail": "got '0.0.0.0'"
+        }
+      ],
+      "extraction": "solid-fence",
+      "response": "Added `read_timeout` to server.\n```solid\n[server]\nhost = \"0.0.0.0\"\nport = 8080\nread_timeout = 30s\n```\n\n"
+    },
+    {
+      "id": "t3-edit-add",
+      "backend": "direct",
+      "pass": true,
+      "error": "",
+      "ms": 10901,
+      "checks": [
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "eval_eq server.read_timeout",
+          "pass": true,
+          "detail": "got {'ms': 30000}"
+        },
+        {
+          "check": "eval_eq server.host",
+          "pass": true,
+          "detail": "got '0.0.0.0'"
+        }
+      ],
+      "extraction": "solid-fence",
+      "response": "Added read_timeout to server, emitting whole document.\n```solid\n[server]\nhost = \"0.0.0.0\"\nport = 8080\nread_timeout = 30s\n```"
+    },
+    {
+      "id": "t4-edit-immutable",
+      "backend": "copilot",
+      "pass": false,
+      "error": "",
+      "ms": 8442,
+      "checks": [
+        {
+          "check": "parse",
+          "pass": false,
+          "detail": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\tmphngj76i0\\t4-edit-immutable.solid:1:1: [Error] E021: invalid @ai_immutable annotation: expected 'true' or 'false'\nparse failed\n"
+        },
+        {
+          "check": "eval_eq port",
+          "pass": false,
+          "detail": "evaluation failed"
+        }
+      ],
+      "extraction": "solid-fence",
+      "response": "```solid\n# @ai_immutable: true\nport = 8080\n```\nLeft `port` alone: it is marked `@ai_immutable`.\n\n\n"
+    },
+    {
+      "id": "t4-edit-immutable",
+      "backend": "direct",
+      "pass": false,
+      "error": "",
+      "ms": 7782,
+      "checks": [
+        {
+          "check": "parse",
+          "pass": false,
+          "detail": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\tmp31z5cnsv\\t4-edit-immutable.solid:1:1: [Error] E021: invalid @ai_immutable annotation: expected 'true' or 'false'\nparse failed\n"
+        },
+        {
+          "check": "eval_eq port",
+          "pass": false,
+          "detail": "evaluation failed"
+        }
+      ],
+      "extraction": "solid-fence",
+      "response": "```solid\n# @ai_immutable: true\nport = 8080\n```\nLeft `port` alone: it is marked `@ai_immutable`."
+    },
+    {
+      "id": "t5-edit-patch",
+      "backend": "copilot",
+      "pass": true,
+      "error": "",
+      "ms": 9743,
+      "checks": [
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "contains '@patch('",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "eval_eq server.port",
+          "pass": true,
+          "detail": "got 9090"
+        }
+      ],
+      "extraction": "solid-fence",
+      "response": "Chose patch-only form as requested.\n```solid\n@patch(\"server.port\", 9090)\n```\n\n"
+    },
+    {
+      "id": "t5-edit-patch",
+      "backend": "direct",
+      "pass": true,
+      "error": "",
+      "ms": 27184,
+      "checks": [
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "contains '@patch('",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "eval_eq server.port",
+          "pass": true,
+          "detail": "got 9090"
+        }
+      ],
+      "extraction": "solid-fence",
+      "response": "```solid\n@patch(\"server.port\", 9090)\n```\nChose patch-only form"
+    },
+    {
+      "id": "t6-gen-style",
+      "backend": "copilot",
+      "pass": true,
+      "error": "",
+      "ms": 43770,
+      "checks": [
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "not_contains '['",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "same_eval",
+          "pass": true,
+          "detail": ""
+        }
+      ],
+      "extraction": "solid-fence",
+      "response": "Pure indentation rewrite \u2014 checking the spec for exact layout.\n\nConfirmed the canonical indented form \u2014 producing the rewrite now.\n\nRewrote the server table in pure indentation style.\n```solid\nserver:\n  host = \"0.0.0.0\"\n  port = 8080\n```\n\n"
+    },
+    {
+      "id": "t6-gen-style",
+      "backend": "direct",
+      "pass": true,
+      "error": "",
+      "ms": 21002,
+      "checks": [
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "not_contains '['",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "same_eval",
+          "pass": true,
+          "detail": ""
+        }
+      ],
+      "extraction": "solid-fence",
+      "response": "Rewrote the server config in indentation style.\n```solid\nserver:\n  host = \"0.0.0.0\"\n  port = 8080\n```"
+    },
+    {
+      "id": "t7-explain-depends",
+      "backend": "copilot",
+      "pass": true,
+      "error": "",
+      "ms": 9732,
+      "checks": [
+        {
+          "check": "terms",
+          "pass": true,
+          "detail": "missing=[] banned=[]"
+        }
+      ],
+      "extraction": "prose",
+      "response": "The linter warns L002 naming the missing entry, for example missing depends_on entry for 'db'. Add the path to the table's depends_on array; the declaration documents the edge and never exports as data.\n\n"
+    },
+    {
+      "id": "t7-explain-depends",
+      "backend": "direct",
+      "pass": true,
+      "error": "",
+      "ms": 7531,
+      "checks": [
+        {
+          "check": "terms",
+          "pass": true,
+          "detail": "missing=[] banned=[]"
+        }
+      ],
+      "extraction": "prose",
+      "response": "The linter warns L002 naming the missing entry, for example `missing depends_on entry for 'db'`. Add the path to the table's `depends_on` array; the declaration documents the edge and never exports as data."
+    },
+    {
+      "id": "t8-fix-broken",
+      "backend": "copilot",
+      "pass": true,
+      "error": "",
+      "ms": 37044,
+      "checks": [
+        {
+          "check": "check_exit0",
+          "pass": true,
+          "detail": "OK\n"
+        }
+      ],
+      "extraction": "solid-fence",
+      "response": "Fixing the missing bracket \u2014 verifying the minimal clean parse.\n\nFixed the missing `]` on the table header.\n```solid\n[server]\nport = 8080\n```\n\n"
+    },
+    {
+      "id": "t8-fix-broken",
+      "backend": "direct",
+      "pass": true,
+      "error": "",
+      "ms": 14777,
+      "checks": [
+        {
+          "check": "check_exit0",
+          "pass": true,
+          "detail": "OK\n"
+        }
+      ],
+      "extraction": "solid-fence",
+      "response": "```solid\n[server]\nport = 8080\n```\nFixed header by emitting whole document."
+    }
+  ],
+  "copilot_rate": 0.875,
+  "direct_rate": 0.875
+}

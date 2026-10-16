@@ -10,6 +10,13 @@ description = "Language Server Protocol implementation for SOLID"
 name = "solid-ls"
 path = "src/main.rs"
 
+[lib]
+name = "solid_ls"
+path = "src/lib.rs"
+
 [dependencies]
 anyhow = { workspace = true }
+lsp-server = "0.7"
+lsp-types = "0.94"
 serde_json = { workspace = true }
+solid-core = { path = "../solid-core" }

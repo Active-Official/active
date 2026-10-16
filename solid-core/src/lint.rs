@@ -110,34 +110,6 @@ fn warning(
     }
 }
 
-/// Dotted paths for value nodes walked from the document root
-/// (`server.port`), plus binding names for `let` values. Unmapped
-/// nodes (schema internals, constraint expressions, orphans) are
-/// absent: rules skip what they cannot name rather than guessing.
-fn node_paths(module: &Module) -> HashMap<NodeId, String> {
-    let mut paths = HashMap::new();
-    for (name, id) in &module.bindings {
-        paths.insert(*id, name.clone());
-    }
-    if let Some(root) = module.root {
-        let mut stack = vec![(root, String::new())];
-        while let Some((id, path)) = stack.pop() {
-            if let Some(Node::Table { fields }) = module.get(id) {
-                for (key, child) in fields {
-                    let child_path = if path.is_empty() {
-                        key.clone()
-                    } else {
-                        format!("{path}.{key}")
-                    };
-                    paths.entry(*child).or_insert_with(|| child_path.clone());
-                    stack.push((*child, child_path));
-                }
-            }
-        }
-    }
-    paths
-}
-
 /// Every `Ref` target reachable from `id`, including through nested
 /// tables and arrays. Iterative: reference chains cannot recurse the
 /// stack.
@@ -221,7 +193,7 @@ fn unused_lets(module: &Module) -> Vec<Diagnostic> {
 
 /// L002: incomplete, dangling, or self-scoped `depends_on` sets.
 fn depends_on(module: &Module) -> Vec<Diagnostic> {
-    let paths = node_paths(module);
+    let paths = module.value_paths();
     // Scope path per depends_on table, by table node id.
     let mut scopes: HashMap<NodeId, String> = HashMap::new();
     if let Some(root) = module.root {

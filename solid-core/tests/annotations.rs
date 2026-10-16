@@ -252,6 +252,23 @@ fn schemas_never_take_annotations() {
 }
 
 #[test]
+fn file_parses_attach_root_annotations() {
+    // Regression: root-file comments stamped None never matched the
+    // file-identified block scan, so parse_file dropped main-file
+    // annotations while includes kept theirs.
+    let module =
+        parse_file(&fixture("main_own.solid"), ParseOptions::default()).expect("must parse");
+    let root = module.root.expect("root");
+    let port = match module.get(root).expect("table") {
+        Node::Table { fields } => fields["port"],
+        _ => panic!("table expected"),
+    };
+    let anns = annotations_of(&module, port);
+    assert_eq!(anns.len(), 1, "{anns:?}");
+    assert!(matches!(&anns[0].kind, AnnotationKind::Intent(s) if s == "Main file contract"));
+}
+
+#[test]
 fn annotations_survive_formatting_in_both_styles() {
     let src = "# @intent: \"Public port\"\n# @constraint: value >= 1\nport = 8080\n";
     for style in [Style::Brace, Style::Indent] {

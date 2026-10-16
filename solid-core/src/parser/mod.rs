@@ -22,7 +22,7 @@
 mod lexer;
 
 use lexer::ESCAPED_DOLLAR;
-pub use lexer::{Lexer, Token, TokenKind};
+pub use lexer::{Lexed, Lexer, Token, TokenKind};
 
 /// Extract the span of a token.
 fn span_of(tok: &Token) -> Span {
@@ -171,6 +171,45 @@ pub fn parse_with(
     }
 }
 
+/// Parse buffer text as if it were the file at `path`: `include`
+/// statements resolve against the file's directory (spec §2.7), and
+/// diagnostics carry the file's identity. The language server's
+/// dirty-buffer path (C-043): unsaved edits analyze with the saved
+/// file's include context. Includes are enabled regardless of the
+/// passed options' `enable_includes` flag; every other option is
+/// honored as given.
+pub fn parse_text_with_file(
+    source: &str,
+    name: &str,
+    options: ParseOptions,
+    path: &std::path::Path,
+) -> Result<Module, Vec<Diagnostic>> {
+    let mut options = options;
+    options.enable_includes = true;
+    let (module, errors) = parse_recovering_impl(source, name, options, Some(path));
+    if errors.is_empty() {
+        Ok(module)
+    } else {
+        Err(errors)
+    }
+}
+
+/// Parse buffer text as above but always return the module, even
+/// when diagnostics were recorded. Tooling (editor diagnostics on
+/// broken files) needs the partial tree; crucially, the file context
+/// is preserved so `include` statements never fall back to resolving
+/// from the process working directory.
+pub fn parse_text_recovering_with_file(
+    source: &str,
+    name: &str,
+    options: ParseOptions,
+    path: &std::path::Path,
+) -> (Module, Vec<Diagnostic>) {
+    let mut options = options;
+    options.enable_includes = true;
+    parse_recovering_impl(source, name, options, Some(path))
+}
+
 /// Parse a file from the filesystem, resolving `include` statements
 /// against the file's directory (spec §2.7). Includes are enabled
 /// regardless of the passed options' `enable_includes` flag; every other
@@ -224,6 +263,10 @@ fn parse_recovering_impl(
     let mut lexer = Lexer::new(source);
     let mut lexed = lexer.tokenize();
     let n_comments = lexed.comments.len();
+    // Root comments stamp with the session file (None for string
+    // input): annotation block scans match on (line, file), so the
+    // stamp must equal `current_file_name()` during the root parse.
+    let root_stamp = root_file.map(|p| p.to_string_lossy().into_owned());
     let mut parser = Parser {
         tokens: lexed.tokens,
         pos: 0,
@@ -235,7 +278,7 @@ fn parse_recovering_impl(
         block_depth: 0,
         schema_depth: 0,
         comments: lexed.comments,
-        comment_files: vec![None; n_comments],
+        comment_files: vec![root_stamp; n_comments],
         statements: Vec::new(),
         blocks: Vec::new(),
         current_path: Vec::new(),
@@ -1931,7 +1974,9 @@ impl Parser {
         self.splice_includes(&mut fields, pending, false);
         let idents = self.ident_scopes.pop().unwrap_or_default();
         let _ = self.resolve_sibling_refs(idents, &fields);
-        let table_id = self.module.add_node(Node::Table { fields });
+        // Tables carry their name-token span (and file stamp) like
+        // every value node: tooling scopes extents off them (C-043).
+        let table_id = self.add_spanned(Node::Table { fields }, &key_tok);
         self.statements[stmt_idx].end_line = self.last_end_line();
         self.current_path.pop();
         self.extract_annotations(&key, table_id, key_tok.line);
@@ -1987,7 +2032,8 @@ impl Parser {
         self.splice_includes(&mut fields, pending, false);
         let idents = self.ident_scopes.pop().unwrap_or_default();
         let _ = self.resolve_sibling_refs(idents, &fields);
-        let table_id = self.module.add_node(Node::Table { fields });
+        // Name-token span and file stamp, as above (C-043 scopes).
+        let table_id = self.add_spanned(Node::Table { fields }, &key_tok);
         self.statements[stmt_idx].end_line = self.last_end_line();
         self.current_path.pop();
         self.extract_annotations(&key, table_id, key_tok.line);
@@ -2371,10 +2417,11 @@ impl Parser {
         // Source columns are 1-based; indentation levels are 0-based.
         let header_level = open.col.saturating_sub(1) as usize;
         self.bump(); // [
-        let name = match self.expect(TokenKind::Ident) {
-            Some(t) => t.text,
+        let name_tok = match self.expect(TokenKind::Ident) {
+            Some(t) => t,
             None => return,
         };
+        let name = name_tok.text.clone();
         // TODO(solid C-021): dotted table paths [a.b.c] (nested tables)
         if self.expect(TokenKind::RBracket).is_none() {
             return;
@@ -2403,7 +2450,8 @@ impl Parser {
         self.splice_includes(&mut fields, pending, false);
         let idents = self.ident_scopes.pop().unwrap_or_default();
         let _ = self.resolve_sibling_refs(idents, &fields);
-        let table_id = self.module.add_node(Node::Table { fields });
+        // Name-token span and file stamp, as above (C-043 scopes).
+        let table_id = self.add_spanned(Node::Table { fields }, &name_tok);
         self.statements[stmt_idx].end_line = self.last_end_line();
         self.current_path.pop();
         self.extract_annotations(&name, table_id, open.line);

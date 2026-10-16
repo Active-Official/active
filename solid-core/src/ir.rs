@@ -240,6 +240,36 @@ impl Module {
         self.node_files.insert(id, file);
     }
 
+    /// Dotted paths for value nodes walked from the document root
+    /// (`server.port`), plus binding names for `let` values. Unmapped
+    /// nodes (schema internals, constraint expressions, orphans) are
+    /// absent: callers skip what they cannot name rather than
+    /// guessing. Shared by the linter and the language server (C-043
+    /// hover/definition).
+    pub fn value_paths(&self) -> HashMap<NodeId, String> {
+        let mut paths = HashMap::new();
+        for (name, id) in &self.bindings {
+            paths.insert(*id, name.clone());
+        }
+        if let Some(root) = self.root {
+            let mut stack = vec![(root, String::new())];
+            while let Some((id, path)) = stack.pop() {
+                if let Some(Node::Table { fields }) = self.get(id) {
+                    for (key, child) in fields {
+                        let child_path = if path.is_empty() {
+                            key.clone()
+                        } else {
+                            format!("{path}.{key}")
+                        };
+                        paths.entry(*child).or_insert_with(|| child_path.clone());
+                        stack.push((*child, child_path));
+                    }
+                }
+            }
+        }
+        paths
+    }
+
     /// Resolve a dotted path from the document root to a value-table
     /// node (C-042): each segment indexes a `Node::Table`'s fields.
     /// A single segment additionally resolves `let` bindings (table

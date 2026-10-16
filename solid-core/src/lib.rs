@@ -17,11 +17,14 @@ pub mod validate;
 pub use diag::{Diagnostic, Repair, RepairKind, Severity};
 pub use eval::{Budget, BudgetKind, Engine, EvalError};
 pub use ir::{
-    Annotation, AnnotationKind, Attachment, BinOp, DependsOn, IncludeStmt, Module, Node, NodeId,
-    PatchOp, SchemaField, SemanticTag, Style, TriviaComment, UnOp, Value,
+    Annotation, AnnotationKind, Attachment, BinOp, DependsOn, IncludeStmt, InterpPart, Module,
+    Node, NodeId, PatchOp, SchemaField, SemanticTag, Style, TriviaComment, UnOp, Value,
 };
-pub use lint::LintOptions;
-pub use parser::{parse, parse_file, parse_recovering, parse_with, ParseOptions};
+pub use lint::{lint, lint_with, LintOptions};
+pub use parser::{
+    parse, parse_file, parse_recovering, parse_text_recovering_with_file, parse_text_with_file,
+    parse_with, Lexed, ParseOptions,
+};
 pub use types::{Constraint, Unit};
 
 /// Library version

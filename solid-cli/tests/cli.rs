@@ -18,6 +18,176 @@ fn fixture(name: &str, contents: &str) -> PathBuf {
     path
 }
 
+// ------------------------------------------------------------------
+// `solid fmt` contract (C-040/C-041, spec/formatter.md).
+// ------------------------------------------------------------------
+
+#[test]
+fn fmt_prints_canonical_form_to_stdout() {
+    let f = fixture("fmt_stdout.solid", "port=8080\n");
+    let out = solid()
+        .args(["fmt", "--style", "brace"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "port = 8080\n");
+}
+
+#[test]
+fn fmt_write_then_check_is_clean() {
+    let f = fixture("fmt_write.solid", "[app]\nname=\"svc\"\n");
+    let write = solid()
+        .args(["fmt", "--write"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(
+        write.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&write.stderr)
+    );
+    let check = solid()
+        .args(["fmt", "--check"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(
+        check.status.success(),
+        "written file must check clean; stderr: {}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+    // A second write is a no-op: canonical files are left untouched.
+    let again = std::fs::read_to_string(&f).expect("read back");
+    assert!(again.contains("name = \"svc\""), "{again}");
+}
+
+#[test]
+fn fmt_check_flags_unformatted_files() {
+    let f = fixture("fmt_dirty.solid", "port=8080\n");
+    let out = solid()
+        .args(["fmt", "--check"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(!out.status.success(), "--check must exit non-zero");
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("would reformat:"),
+        "must name the file: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+#[test]
+fn fmt_check_passes_canonical_files() {
+    let f = fixture("fmt_clean.solid", "port = 8080\n");
+    let out = solid()
+        .args(["fmt", "--check"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn fmt_rejects_contradictory_and_ambiguous_invocations() {
+    let f = fixture("fmt_flags.solid", "port = 8080\n");
+    for args in [
+        vec!["fmt", "--write", "--check"],
+        vec!["fmt", "--style", "sideways"],
+    ] {
+        let out = solid().args(&args).arg(&f).output().expect("run solid");
+        assert!(!out.status.success(), "{args:?} must fail");
+    }
+    // Multiple files need --write or --check.
+    let g = fixture("fmt_flags2.solid", "port = 8080\n");
+    let out = solid()
+        .arg("fmt")
+        .arg(&f)
+        .arg(&g)
+        .output()
+        .expect("run solid");
+    assert!(!out.status.success(), "multi-file stdout must fail");
+}
+
+#[test]
+fn fmt_write_never_touches_unparseable_files() {
+    let before = "port = [1,\n";
+    let f = fixture("fmt_broken.solid", before);
+    let out = solid()
+        .args(["fmt", "--write"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(!out.status.success(), "unparseable must fail");
+    assert_eq!(std::fs::read_to_string(&f).expect("read back"), before);
+}
+
+#[test]
+fn fmt_indent_style_emits_headers() {
+    let f = fixture("fmt_indent.solid", "[app]\nname = \"svc\"\n");
+    let out = solid()
+        .args(["fmt", "--style", "indent"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("app:"), "indent header expected:\n{text}");
+}
+
+#[test]
+fn fmt_requires_at_least_one_file() {
+    for args in [vec!["fmt", "--check"], vec!["fmt", "--write"]] {
+        let out = solid().args(&args).output().expect("run solid");
+        assert!(!out.status.success(), "{args:?} without files must fail");
+    }
+}
+
+#[test]
+fn fmt_write_stops_at_first_failure_leaving_later_files_untouched() {
+    // file1 is valid-but-dirty (gets rewritten), file2 is unparseable
+    // (aborts the run, unchanged), file3 is dirty (never reached).
+    let f1 = fixture("fmt_multi1.solid", "a=1\n");
+    let f2 = fixture("fmt_multi2.solid", "port = [1,\n");
+    let f3 = fixture("fmt_multi3.solid", "b=2\n");
+    let out = solid()
+        .args(["fmt", "--write"])
+        .arg(&f1)
+        .arg(&f2)
+        .arg(&f3)
+        .output()
+        .expect("run solid");
+    assert!(!out.status.success(), "run must fail on the broken file");
+    assert_eq!(
+        std::fs::read_to_string(&f1).expect("read back"),
+        "a = 1\n",
+        "earlier writes stay done"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&f2).expect("read back"),
+        "port = [1,\n",
+        "failing file unchanged"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&f3).expect("read back"),
+        "b=2\n",
+        "later files untouched"
+    );
+}
+
 #[test]
 fn safe_repairs_do_not_fail_strict_mode() {
     // Trailing comma and unclosed string are safe (≥ 0.95) repairs.

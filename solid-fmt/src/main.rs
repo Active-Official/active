@@ -17,24 +17,26 @@ struct Cli {
     /// Emit the fully bracketed (brace) style
     #[arg(long, conflicts_with = "indented")]
     bracketed: bool,
-    /// Emit the indentation style
+    /// Emit the indentation style (the default per P-040)
     #[arg(long, conflicts_with = "bracketed")]
     indented: bool,
     /// Write the result back to the file
     #[arg(short, long)]
     write: bool,
+    /// CI mode: report whether the file needs formatting, write nothing
+    #[arg(long, conflicts_with = "write")]
+    check: bool,
 }
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let name = cli.file.to_string_lossy().to_string();
 
-    let style = if cli.bracketed {
-        Style::Brace
-    } else if cli.indented {
-        Style::Indent
-    } else {
-        Style::Preserve
+    let style = match (cli.bracketed, cli.indented) {
+        (true, _) => Style::Brace,
+        // Indentation is the default style (P-040 human-indented
+        // default); --indented selects it explicitly.
+        _ => Style::Indent,
     };
 
     // Formatting preserves include statements alongside local keys: the
@@ -58,6 +60,14 @@ fn main() -> anyhow::Result<()> {
     })?;
 
     let out = format(&module, style);
+    if cli.check {
+        let current = fs::read_to_string(&cli.file)?;
+        if current != out {
+            println!("would reformat: {}", name);
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     if cli.write {
         fs::write(&cli.file, &out)?;
         println!("formatted {}", cli.file.display());

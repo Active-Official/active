@@ -1,7 +1,7 @@
 use clap::{Args, Parser, Subcommand};
 use solid_core::convert::{value_to_pretty_json, value_to_simple_toml};
 use solid_core::diag::{Diagnostic, Severity};
-use solid_core::{parse_file, Budget, Engine, EvalError, ParseOptions};
+use solid_core::{parse_file, Budget, Engine, EvalError, ParseOptions, Style};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -121,6 +121,21 @@ enum Commands {
         profile: Option<String>,
         #[command(flatten)]
         budget: BudgetArgs,
+    },
+    /// Format files in a canonical style (spec/formatter.md)
+    Fmt {
+        /// Input .solid files (at least one)
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+        /// Output style: brace, indent (default), or preserve
+        #[arg(long, default_value = "indent")]
+        style: String,
+        /// Rewrite files in place
+        #[arg(long)]
+        write: bool,
+        /// CI mode: report files needing formatting, write nothing
+        #[arg(long)]
+        check: bool,
     },
 }
 
@@ -322,6 +337,63 @@ fn main() -> anyhow::Result<()> {
                 other => anyhow::bail!("unsupported target: {}", other),
             }
             if had_failure(&diags, resilient) {
+                std::process::exit(1);
+            }
+        }
+        Commands::Fmt {
+            files,
+            style,
+            write,
+            check,
+        } => {
+            let style = match style.as_str() {
+                "brace" | "bracketed" => Style::Brace,
+                "indent" | "indented" => Style::Indent,
+                "preserve" => Style::Preserve,
+                other => anyhow::bail!("unsupported style: {other} (brace|indent|preserve)"),
+            };
+            if write && check {
+                anyhow::bail!("--write and --check are contradictory");
+            }
+            if files.len() != 1 && !write && !check {
+                anyhow::bail!("multiple files require --write or --check");
+            }
+            // Formatting parses strictly with includes unresolved: the
+            // composition structure survives and files needing repair
+            // fail instead of being rewritten.
+            let options = ParseOptions {
+                resolve_includes: false,
+                ..ParseOptions::default()
+            };
+            let mut dirty = false;
+            for file in &files {
+                let name = file.to_string_lossy().to_string();
+                let module = parse_file(file, options).map_err(|diags| {
+                    for d in &diags {
+                        report(d, &name);
+                    }
+                    anyhow::anyhow!("cannot format a file with parse errors: {name}")
+                })?;
+                let out = solid_core::fmt::format(&module, style);
+                if check {
+                    let current = std::fs::read_to_string(file)?;
+                    if current != out {
+                        println!("would reformat: {name}");
+                        dirty = true;
+                    }
+                    continue;
+                }
+                if write {
+                    let current = std::fs::read_to_string(file)?;
+                    if current != out {
+                        std::fs::write(file, &out)?;
+                        println!("formatted {name}");
+                    }
+                    continue;
+                }
+                print!("{out}");
+            }
+            if dirty {
                 std::process::exit(1);
             }
         }

@@ -179,6 +179,11 @@ pub struct TriviaComment {
     pub text: String,
     pub span: Span,
     pub attachment: Attachment,
+    /// Source file (includes parse as their own documents, C-025):
+    /// line numbers repeat across files, so attachment scans match
+    /// (line, file) — without this, comments in an included file
+    /// attach to same-numbered lines of the including document.
+    pub file: Option<String>,
 }
 
 impl Module {

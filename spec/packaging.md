@@ -40,7 +40,8 @@ Six artifacts: Linux/macOS/Windows × x86_64/ARM64, each bundling
 per target before archiving). Every artifact ships:
 
 - `solid-<target>.tar.gz` / `.zip` (Windows) with `solid`,
-  `solid-fmt`, `solid-ls`, `README.md`, `LICENSE-*`.
+  `solid-fmt`, `solid-ls`, `README.md`, `LICENSE-*`, and `schemas/`
+  (the standard library, vendored for offline use).
 - `SHA256SUMS` over all archives.
 - GitHub build-provenance attestations (keyless OIDC,
   `actions/attest-build-provenance`) — the primary authenticity

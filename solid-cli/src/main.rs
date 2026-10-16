@@ -212,6 +212,12 @@ enum Commands {
         /// Document title (defaults to the file stem)
         #[arg(long)]
         title: Option<String>,
+        /// Enable medium-confidence healing repairs (resilient mode)
+        #[arg(long)]
+        resilient: bool,
+        /// Allow includes to use absolute paths or escape the directory
+        #[arg(long)]
+        allow_parent_escapes: bool,
         /// Require sibling signatures on includes (C-052)
         #[arg(long)]
         trust_keys: Option<PathBuf>,
@@ -664,6 +670,8 @@ fn main() -> anyhow::Result<()> {
             from,
             to,
             title,
+            resilient,
+            allow_parent_escapes,
             trust_keys,
         } => {
             let filename = from.to_string_lossy().to_string();
@@ -673,8 +681,10 @@ fn main() -> anyhow::Result<()> {
                     .unwrap_or_else(|| "Configuration".to_string())
             });
             let trust = load_trust(&trust_keys)?;
-            let module = parse_input(&from, false, false, &trust)?;
-            let (value, diags) = Engine::new()
+            let module = parse_input(&from, resilient, allow_parent_escapes, &trust)?;
+            let mut engine = Engine::new();
+            engine.resilient = resilient;
+            let (value, diags) = engine
                 .evaluate(&module)
                 .map_err(|e| anyhow::anyhow!("evaluation failed: {e}"))?;
             for d in &diags {

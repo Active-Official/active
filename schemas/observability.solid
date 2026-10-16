@@ -1,0 +1,12 @@
+# Standard observability schema (SOLID schema library).
+schema {
+  closed = true
+  # Minimum logged severity (no default: be explicit).
+  level = Enum("debug", "info", "warn", "error")
+  # Emit Prometheus-style metrics.
+  metrics = Bool(default = true)
+  # Trace sample rate, 0.0 to 1.0.
+  sample_rate = Float(min = 0.0, max = 1.0, default = 1.0)
+  # OTLP endpoint (empty disables export).
+  endpoint = String(default = "")
+}

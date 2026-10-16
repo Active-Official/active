@@ -160,7 +160,10 @@ levels. One diagnostic per offending line.
 Comments and annotations are **trivia**: they never affect the value tree, and
 parse equivalence is defined modulo trivia. But they must be re-emittable, so
 attachment is normative and total — **every comment receives exactly one
-attachment**.
+attachment**. All matching below is **(line, file)**: includes parse as their
+own documents, line numbers repeat across files, and a comment never
+attaches to a same-numbered line of another file (each comment and
+candidate carries its source file).
 
 ### 7.1 Determining a comment's block
 
@@ -182,7 +185,8 @@ one attachment:
    statement** (`Trailing(statement)`).
 2. Otherwise, if a statement **follows the comment within the same block**, the
    comment is a **leading comment of that next statement** (consecutive
-   comments attach in order).
+   comments attach in order). Schema entries count as statements here,
+   so per-field documentation comments attach to their field.
 3. Otherwise, if the comment's block is **not** the document, it is a
    **trailing comment of that block**.
 4. Otherwise the comment is a **trailing comment of the document**.
@@ -204,7 +208,7 @@ semantically to their statement (C-033).
 The parser records trivia alongside the IR so the formatter can re-emit it:
 
 ```
-Trivia = Comment { span, text, attachment }
+Trivia = Comment { span, text, attachment, file }
        | BlankLines { count, before_span }
 Attachment = Leading(statement)        // own-line comment(s) before a statement
            | Trailing(statement)       // after code on the same line

@@ -675,6 +675,45 @@ fn doc_rejects_bad_targets_and_broken_files() {
     assert!(!out.status.success(), "broken input must fail");
 }
 
+#[test]
+fn doc_parent_escapes_need_the_flag() {
+    // `solid doc` honors the same include policy as every command:
+    // parent escapes fail by default (E015) and render with
+    // --allow-parent-escapes.
+    let dir = std::env::temp_dir().join("solid-cli-tests");
+    let sub = dir.join("doc_escape");
+    std::fs::create_dir_all(&sub).expect("temp dir");
+    std::fs::write(
+        dir.join("doc_lib.solid"),
+        "# @intent: \"Lib port\"\nport = 1\n",
+    )
+    .expect("write lib");
+    let main = sub.join("main.solid");
+    std::fs::write(&main, "include \"../doc_lib.solid\"\n").expect("write main");
+    let denied = solid()
+        .args(["doc", "--from"])
+        .arg(&main)
+        .output()
+        .expect("run solid");
+    assert!(!denied.status.success(), "escape must fail by default");
+    let allowed = solid()
+        .args(["doc", "--from"])
+        .arg(&main)
+        .args(["--allow-parent-escapes"])
+        .output()
+        .expect("run solid");
+    assert!(
+        allowed.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&allowed.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&allowed.stdout).contains("Lib port"),
+        "rendered: {}",
+        String::from_utf8_lossy(&allowed.stdout)
+    );
+}
+
 // ------------------------------------------------------------------
 // Graph CLI contract (C-049, spec/graph.md §3).
 // ------------------------------------------------------------------

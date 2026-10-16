@@ -72,6 +72,7 @@ jobs:
             cp "target/${{ matrix.target }}/release/$tool$EXT" "$STAGE/"
           done
           cp README.md LICENSE-MIT LICENSE-APACHE "$STAGE/"
+          cp -r schemas "$STAGE/schemas"
           if [[ "${{ matrix.archive }}" == "zip" ]]; then
             7z a "$STAGE.zip" "$STAGE"
           else

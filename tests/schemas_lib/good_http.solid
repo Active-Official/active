@@ -1,0 +1,7 @@
+include "../../schemas/http-server.solid"
+
+host = "example.com"
+port = 9000
+tls = true
+timeout = 10s
+max_requests = 500

@@ -37,6 +37,11 @@ pub fn collect_items(module: &Module, value: &Value) -> Vec<DocItem> {
         by_path.insert(path, id);
     }
     let mut comments: HashMap<String, Vec<String>> = HashMap::new();
+    // Keyed by path only (no file): intended — an included schema's
+    // contract comments and the document's own notes on the same key
+    // render together. Attachment itself already matched (line, file)
+    // at parse time, so same-path entries from different files are
+    // genuinely about the same key.
     for trivia in &module.trivia {
         let key = match &trivia.attachment {
             Attachment::Leading(key) | Attachment::Trailing(key) => key.clone(),

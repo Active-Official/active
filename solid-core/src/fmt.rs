@@ -81,6 +81,10 @@ fn build_names(module: &Module) -> HashMap<NodeId, String> {
 }
 
 impl<'a> Formatter<'a> {
+    // Indexes key by path only (no file): the formatter parses
+    // single-file documents (resolve_includes=false), so paths are
+    // unique by construction. Multi-file merging would need
+    // file-qualified keys — see the parser's (line, file) matching.
     fn index_trivia(&mut self) {
         for c in &self.module.trivia {
             match &c.attachment {

@@ -364,34 +364,42 @@ fn parse_recovering_impl(
 impl Parser {
     fn attach_trivia(&mut self) {
         let comments = std::mem::take(&mut self.comments);
-        // Kept aligned with `comments` (taken together); files only
-        // matter during parsing (annotation block scans).
-        let _comment_files = std::mem::take(&mut self.comment_files);
+        // Kept aligned with `comments` (taken together): files stamp
+        // every comment so attachment matches (line, file).
+        let comment_files = std::mem::take(&mut self.comment_files);
         let statements = std::mem::take(&mut self.statements);
         let blocks = std::mem::take(&mut self.blocks);
 
         let mut trivia = Vec::with_capacity(comments.len());
-        for (text, span) in comments {
-            let attachment = self.attach_one(&span, &statements, &blocks);
+        for ((text, span), file) in comments.into_iter().zip(comment_files) {
+            let attachment = self.attach_one(&span, &file, &statements, &blocks);
             trivia.push(TriviaComment {
                 text,
                 span,
                 attachment,
+                file,
             });
         }
         self.module.trivia = trivia;
     }
 
-    fn attach_one(&self, span: &Span, stmts: &[StmtInfo], blocks: &[BlockInfo]) -> Attachment {
+    fn attach_one(
+        &self,
+        span: &Span,
+        file: &Option<String>,
+        stmts: &[StmtInfo],
+        blocks: &[BlockInfo],
+    ) -> Attachment {
         let line = span.line;
         let level = span.column.saturating_sub(1) as usize;
 
         // Rule 1: after code on the same line as any statement — either the
         // line the statement begins on (a table header, `[app] # note`) or
-        // the line it ends on (a multi-line value).
+        // the line it ends on (a multi-line value). Same file only:
+        // line numbers repeat across includes.
         if let Some(stmt) = stmts
             .iter()
-            .filter(|s| s.start_line == line || s.end_line == line)
+            .filter(|s| &s.file == file && (s.start_line == line || s.end_line == line))
             .max_by_key(|s| s.start_line)
         {
             return Attachment::Trailing(qualified(&stmt.path, &stmt.key));
@@ -400,13 +408,13 @@ impl Parser {
         // Determine the comment's block (spec §7.1): the innermost block
         // that still owns the comment's line, preferring one whose body is
         // at exactly the comment's own indentation level.
-        let owner = self.owning_block(line, level, stmts, blocks);
+        let owner = self.owning_block(line, level, file, stmts, blocks);
         if let Some(b) = &owner {
             // Rule 2: any statement (including a nested table header)
             // follows within the same block.
             if let Some(stmt) = stmts
                 .iter()
-                .filter(|s| s.start_line > line && s.path == b.path)
+                .filter(|s| &s.file == file && s.start_line > line && s.path == b.path)
                 .min_by_key(|s| s.start_line)
             {
                 return Attachment::Leading(qualified(&stmt.path, &stmt.key));
@@ -418,7 +426,7 @@ impl Parser {
         // Rule 2 at document level, then rule 4.
         if let Some(stmt) = stmts
             .iter()
-            .filter(|s| s.start_line > line && s.path.is_empty())
+            .filter(|s| &s.file == file && s.start_line > line && s.path.is_empty())
             .min_by_key(|s| s.start_line)
         {
             return Attachment::Leading(qualified(&stmt.path, &stmt.key));
@@ -431,6 +439,7 @@ impl Parser {
         &self,
         line: u32,
         level: usize,
+        file: &Option<String>,
         stmts: &[StmtInfo],
         blocks: &[BlockInfo],
     ) -> Option<BlockInfo> {
@@ -441,14 +450,14 @@ impl Parser {
         }
         let mut best: Option<&BlockInfo> = None;
         for b in blocks {
-            if b.start_line > line {
+            if &b.file != file || b.start_line > line {
                 continue;
             }
             // The block owns lines up to the next statement at or above its
             // own level *after this comment*.
             let next_sibling = stmts
                 .iter()
-                .filter(|s| s.start_line > line && s.level <= b.level)
+                .filter(|s| &s.file == file && s.start_line > line && s.level <= b.level)
                 .min_by_key(|s| s.start_line)
                 .map(|s| s.start_line)
                 .unwrap_or(u32::MAX);
@@ -646,6 +655,8 @@ struct BlockInfo {
     path: String,
     level: usize,
     start_line: u32,
+    /// Source file, like statements: block matching is (line, file).
+    file: Option<String>,
 }
 
 /// An `include` statement recorded while parsing a body, resolved and
@@ -2031,6 +2042,7 @@ impl Parser {
             path: self.path_str(),
             level,
             start_line: key_tok.line,
+            file: self.current_file_name(),
         });
         self.ident_scopes.push(Vec::new());
         let mut fields = indexmap::IndexMap::new();
@@ -2089,6 +2101,7 @@ impl Parser {
             path: self.path_str(),
             level: key_tok.col.saturating_sub(1) as usize,
             start_line: key_tok.line,
+            file: self.current_file_name(),
         });
         self.ident_scopes.push(Vec::new());
         let mut fields = indexmap::IndexMap::new();
@@ -2578,6 +2591,7 @@ impl Parser {
             path: self.path_str(),
             level: header_level,
             start_line: open.line,
+            file: self.current_file_name(),
         });
 
         self.ident_scopes.push(Vec::new());
@@ -3870,6 +3884,22 @@ impl Parser {
                     let id = self.parse_schema_type(&name_tok);
                     // Tag arg idents with the entry name for sibling
                     // resolution parity with value parsing.
+                    // Schema entries are statements for comment
+                    // attachment (spec/dual-syntax.md §7): per-field
+                    // documentation comments attach like value
+                    // bindings, so the C-048 docgen renders them.
+                    // Top-level tables only (schema_depth == 0):
+                    // nested inline element fields would record
+                    // document-level statements under bare names the
+                    // docgen never renders, shadowing real ones.
+                    if self.schema_depth == 0 {
+                        self.record_stmt(
+                            &name,
+                            name_tok.line,
+                            self.last_end_line(),
+                            name_tok.col.saturating_sub(1) as usize,
+                        );
+                    }
                     fields.insert(name, id);
                     self.skip_newlines();
                     if matches!(self.peek_kind(), TokenKind::Comma) {

@@ -188,6 +188,89 @@ fn fmt_write_stops_at_first_failure_leaving_later_files_untouched() {
     );
 }
 
+// ------------------------------------------------------------------
+// `solid lint` contract (C-042, spec/linter.md).
+// ------------------------------------------------------------------
+
+#[test]
+fn lint_clean_file_exits_zero() {
+    let f = fixture("lint_clean.solid", "port = 8080\n");
+    let out = solid().args(["lint"]).arg(&f).output().expect("run solid");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn lint_findings_exit_nonzero_with_codes() {
+    let f = fixture("lint_dirty.solid", "let idle = 1\nport = 8080\n");
+    let out = solid().args(["lint"]).arg(&f).output().expect("run solid");
+    assert!(!out.status.success(), "findings must fail");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("L001"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn lint_disable_flag_silences_one_rule() {
+    let f = fixture("lint_disable.solid", "let idle = 1\nport = 8080\n");
+    let out = solid()
+        .args(["lint", "--disable-lint", "unused-lets"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Unknown rules are an error listing the valid ones.
+    let out = solid()
+        .args(["lint", "--disable-lint", "nope"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("unused-lets"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn lint_needs_a_file_and_refuses_broken_ones() {
+    let out = solid().arg("lint").output().expect("run solid");
+    assert!(!out.status.success(), "empty file list must fail");
+    let f = fixture("lint_broken.solid", "port = [1,\n");
+    let out = solid().args(["lint"]).arg(&f).output().expect("run solid");
+    assert!(!out.status.success(), "unparseable must fail");
+}
+
+#[test]
+fn lint_processes_every_file_despite_failures() {
+    // Broken first file reports and continues: the dirty file after
+    // it is still linted, and the exit stays non-zero.
+    let broken = fixture("lint_multi_broken.solid", "port = [1,\n");
+    let dirty = fixture("lint_multi_dirty.solid", "let idle = 1\nport = 8080\n");
+    let out = solid()
+        .args(["lint"])
+        .arg(&broken)
+        .arg(&dirty)
+        .output()
+        .expect("run solid");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("L001"),
+        "later file must be linted: {stderr}"
+    );
+}
+
 #[test]
 fn safe_repairs_do_not_fail_strict_mode() {
     // Trailing comma and unclosed string are safe (≥ 0.95) repairs.

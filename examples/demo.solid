@@ -14,7 +14,7 @@ port = 8080
 read_timeout = timeout
 
 [services]
-auth_url = "https://api.example.com/auth"
+auth_url = "https://${region}.example.com/auth"
 users_url = "https://api.example.com/users"
 
 feature_flags = [

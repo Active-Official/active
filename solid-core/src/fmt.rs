@@ -187,6 +187,9 @@ impl<'a> Formatter<'a> {
             if has_entries && !self.out.ends_with("\n\n") {
                 self.out.push('\n');
             }
+            // Root dependency metadata leads the body (spec/linter.md
+            // §2), like the root schema block above.
+            self.emit_depends_on(root, 0);
             self.emit_table_body(root, 0, "", true);
         }
         for text in self.trailing_document.clone() {
@@ -227,6 +230,9 @@ impl<'a> Formatter<'a> {
             if let Some(schema) = self.schema_for_path(path) {
                 self.emit_schema_table(schema, depth);
             }
+            // Dependency metadata follows the schema (spec/linter.md
+            // §2), ahead of the keys it constrains.
+            self.emit_depends_on(id, depth);
         }
         let is_table_node =
             |f: &Formatter, n: &NodeId| matches!(f.module.get(*n), Some(Node::Table { .. }));
@@ -288,6 +294,27 @@ impl<'a> Formatter<'a> {
                 self.out.push('\n');
             }
         }
+    }
+
+    /// Emit a `depends_on` metadata line for a table scope
+    /// (spec/linter.md §2). Detached at parse like schemas, so it
+    /// re-emits here from the side table; a no-op for scopes without
+    /// declarations.
+    fn emit_depends_on(&mut self, id: NodeId, depth: usize) {
+        let Some(dep) = self.module.depends_on.get(&id).cloned() else {
+            return;
+        };
+        let quoted: Vec<std::string::String> = dep
+            .paths
+            .iter()
+            .map(|p| format!("\"{}\"", escape(p)))
+            .collect();
+        self.out.push_str(&format!(
+            "{}depends_on = [{}]",
+            INDENT.repeat(depth),
+            quoted.join(", ")
+        ));
+        self.out.push('\n');
     }
 
     /// Look up this table's schema node by dotted path, descending from
@@ -390,12 +417,19 @@ impl<'a> Formatter<'a> {
     /// Absent arguments are omitted (never `None` placeholders).
     fn render_schema_field(&self, field: &crate::ir::SchemaField) -> String {
         use crate::types::SolidType::*;
+        // `deprecated` renders inside the parens for every leaf type
+        // (spec/linter.md §3), including Enum's positional list.
+        let deprecated = match &field.deprecated {
+            None => std::string::String::new(),
+            Some(reason) if reason.is_empty() => ", deprecated = true".to_string(),
+            Some(reason) => format!(", deprecated = \"{}\"", escape(reason)),
+        };
         if let Enum(values) = &field.typ {
             let quoted: Vec<std::string::String> = values
                 .iter()
                 .map(|v| format!("\"{}\"", escape(v)))
                 .collect();
-            return format!("Enum({})", quoted.join(", "));
+            return format!("Enum({}{})", quoted.join(", "), deprecated);
         }
         let mut args: Vec<std::string::String> = Vec::new();
         for (name, slot) in [
@@ -409,6 +443,11 @@ impl<'a> Formatter<'a> {
             if let Some(arg) = slot {
                 args.push(format!("{name} = {}", self.render_expr(arg)));
             }
+        }
+        match &field.deprecated {
+            None => {}
+            Some(reason) if reason.is_empty() => args.push("deprecated = true".to_string()),
+            Some(reason) => args.push(format!("deprecated = \"{}\"", escape(reason))),
         }
         let base = match &field.typ {
             Table { closed: true } => "Table(closed)".to_string(),

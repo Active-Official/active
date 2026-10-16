@@ -264,6 +264,8 @@ fn parse_recovering_impl(
     // fields for the schema tree (spec §2.10), so neither sibling
     // resolution nor evaluation ever sees them as data.
     parser.extract_schemas();
+    // Dependency metadata leaves value fields the same way (spec §2.11).
+    parser.extract_depends_on();
     parser.attach_trivia();
     parser.module.source_style = if parser.indent_tables > parser.brace_tables {
         Style::Indent
@@ -948,7 +950,9 @@ impl Parser {
                     let end = self.last_end_line();
                     self.record_stmt(&k, start.line, end, level);
                     self.extract_annotations(&k, id, start.line);
-                    fields.insert(k, id);
+                    if self.check_depends_on_statement(&k, id) {
+                        fields.insert(k, id);
+                    }
                 }
             }
             TokenKind::Colon => {
@@ -958,7 +962,9 @@ impl Parser {
                     let end = self.last_end_line();
                     self.record_stmt(&k, start.line, end, level);
                     self.extract_annotations(&k, id, start.line);
-                    fields.insert(k, id);
+                    if self.check_depends_on_statement(&k, id) {
+                        fields.insert(k, id);
+                    }
                 }
             }
             TokenKind::LBrace => self.parse_table_block(fields),
@@ -2096,6 +2102,87 @@ impl Parser {
         schema_id
     }
 
+    /// Extract `depends_on` arrays from value fields into the metadata
+    /// side table (spec §2.11, C-042). Runs once per document alongside
+    /// schema extraction, before the dependency graph builds. A
+    /// `depends_on` key holding an array of string literals detaches
+    /// into `Module.depends_on` (never data, never exported); any
+    /// other value stays ordinary data. Non-string elements are E022.
+    /// Nested tables recurse; included files contribute through the
+    /// shared fields.
+    fn extract_depends_on(&mut self) {
+        if self.in_include {
+            return;
+        }
+        let Some(root) = self.module.root else {
+            return;
+        };
+        self.extract_table_depends_on(root);
+    }
+
+    /// Extract `depends_on` from one value table node and recurse.
+    fn extract_table_depends_on(&mut self, table_id: NodeId) {
+        let fields = match self.module.get(table_id) {
+            Some(Node::Table { fields }) => fields.clone(),
+            _ => return,
+        };
+        if let Some(&id) = fields.get("depends_on") {
+            if let Some(Node::Array { elements }) = self.module.get(id).cloned() {
+                let mut paths = Vec::new();
+                let mut bad = false;
+                for element in &elements {
+                    match self.module.get(*element) {
+                        Some(Node::Literal(Value::String(path))) => paths.push(path.clone()),
+                        _ => {
+                            bad = true;
+                            if let Some(span) = self.module.node_spans.get(element).cloned() {
+                                self.error_at_span(
+                                    "E022",
+                                    "depends_on entries must be string literals",
+                                    &span,
+                                );
+                            }
+                        }
+                    }
+                }
+                if !bad {
+                    if let Some(Node::Table { fields }) = self.module.get_mut(table_id) {
+                        fields.shift_remove("depends_on");
+                    }
+                    let span =
+                        self.module
+                            .node_spans
+                            .get(&id)
+                            .cloned()
+                            .unwrap_or(crate::diag::Span {
+                                line: 1,
+                                column: 1,
+                                end_line: 1,
+                                end_column: 1,
+                            });
+                    self.module
+                        .depends_on
+                        .insert(table_id, DependsOn { paths, span });
+                }
+            }
+        }
+        // Recurse into remaining value-table children (inline tables
+        // included — inline `depends_on` arrays already errored at
+        // parse, so only statement-level blocks arrive here).
+        let fields = match self.module.get(table_id) {
+            Some(Node::Table { fields }) => fields.clone(),
+            _ => return,
+        };
+        for (k, v) in &fields {
+            if *k == "depends_on" {
+                continue;
+            }
+            if matches!(self.module.get(*v), Some(Node::Table { .. })) {
+                self.extract_table_depends_on(*v);
+            }
+        }
+    }
+
     /// Display name of the file currently being parsed, for diagnostics.
     fn current_file_name(&self) -> Option<String> {
         self.current_file
@@ -2327,8 +2414,39 @@ impl Parser {
     // key = expr
     // ------------------------------------------------------------------
 
+    /// Statement-level `depends_on` gate (spec/linter.md §2): array
+    /// values are dependency metadata (extracted post-parse, never
+    /// exported); anything else stays ordinary data. Inside profiles
+    /// the metadata form is E022 and dropped. Returns false when the
+    /// entry must not enter the value fields.
+    fn check_depends_on_statement(&mut self, key: &str, id: NodeId) -> bool {
+        if key != "depends_on" || !matches!(self.module.get(id), Some(Node::Array { .. })) {
+            return true;
+        }
+        if self.in_profile {
+            if let Some(span) = self.module.node_spans.get(&id).cloned() {
+                self.error_at_span("E022", "depends_on is not allowed inside profiles", &span);
+            }
+            return false;
+        }
+        true
+    }
+
     fn parse_key_value(&mut self) -> Option<(String, NodeId)> {
-        self.parse_key_value_sep(TokenKind::Assign)
+        let (key, id) = self.parse_key_value_sep(TokenKind::Assign)?;
+        // Dependency blocks belong to named scopes only: an inline or
+        // array-element `depends_on` array is E022 (spec/linter.md §2).
+        // Non-array values stay ordinary data wherever they appear.
+        if key == "depends_on" && matches!(self.module.get(id), Some(Node::Array { .. })) {
+            if let Some(span) = self.module.node_spans.get(&id).cloned() {
+                self.error_at_span(
+                    "E022",
+                    "depends_on is only allowed as a direct table member",
+                    &span,
+                );
+            }
+        }
+        Some((key, id))
     }
 
     /// `key = expr` or `key: expr` (spec/dual-syntax.md §2).
@@ -3609,6 +3727,7 @@ impl Parser {
                 return self.fallback_schema_field(&tok);
             }
             let mut values = Vec::new();
+            let mut deprecated: Option<String> = None;
             loop {
                 self.skip_newlines();
                 match self.peek_kind() {
@@ -3620,6 +3739,33 @@ impl Parser {
                     TokenKind::String(_) | TokenKind::SingleString => {
                         let v = self.bump();
                         values.push(v.text.clone());
+                    }
+                    TokenKind::Ident if self.peek().text == "deprecated" => {
+                        // Trailing `deprecated = true | "msg"` inside
+                        // Enum parens (spec/linter.md §3): every leaf
+                        // type accepts it, including Enum.
+                        self.bump();
+                        if self.expect(TokenKind::Assign).is_none() {
+                            continue;
+                        }
+                        deprecated = match self.peek_kind() {
+                            TokenKind::True => {
+                                self.bump();
+                                Some(String::new())
+                            }
+                            TokenKind::String(_) | TokenKind::SingleString => {
+                                Some(self.bump().text.clone())
+                            }
+                            _ => {
+                                let bad = self.peek().clone();
+                                self.error_at(
+                                    "E020",
+                                    "deprecated takes `true` or a string message",
+                                    &bad,
+                                );
+                                None
+                            }
+                        };
                     }
                     _ => {
                         let bad = self.peek().clone();
@@ -3644,6 +3790,7 @@ impl Parser {
                 max_len: None,
                 pattern: None,
                 default: None,
+                deprecated,
                 span: Some(span_of(&tok)),
             };
             return self.add_spanned(Node::SchemaField { field }, &tok);
@@ -3715,6 +3862,31 @@ impl Parser {
                     let arg_tok = self.bump();
                     let arg = arg_tok.text.clone();
                     if self.expect(TokenKind::Assign).is_none() {
+                        continue;
+                    }
+                    // `deprecated` is static text on every leaf type
+                    // (spec/linter.md §3, C-042): `true` or a string
+                    // literal migration message — never an expression.
+                    if arg == "deprecated" {
+                        let value = self.parse_expression();
+                        // First wins, like every other argument.
+                        if field.deprecated.is_none() {
+                            match self.module.get(value) {
+                                Some(Node::Literal(Value::Bool(true))) => {
+                                    field.deprecated = Some(String::new());
+                                }
+                                Some(Node::Literal(Value::String(msg))) => {
+                                    field.deprecated = Some(msg.clone());
+                                }
+                                _ => {
+                                    self.error_at(
+                                        "E020",
+                                        "deprecated takes `true` or a string message",
+                                        &arg_tok,
+                                    );
+                                }
+                            }
+                        }
                         continue;
                     }
                     let value = self.parse_expression();
@@ -4325,6 +4497,23 @@ impl Parser {
 
     fn build_graph(&mut self) {
         let bindings = self.module.bindings.clone();
+        // Declared dependencies become edges (spec/linter.md §2):
+        // unresolvable paths are skipped here and reported as L002 by
+        // the linter; declared cycles surface as S001 like all cycles.
+        // Cloned up front: resolution borrows the module.
+        let declared: Vec<(NodeId, Vec<String>)> = self
+            .module
+            .depends_on
+            .iter()
+            .map(|(id, dep)| (*id, dep.paths.clone()))
+            .collect();
+        for (scope, paths) in &declared {
+            for path in paths {
+                if let Some(target) = self.module.resolve_value_path(path) {
+                    self.module.add_edge(target, *scope);
+                }
+            }
+        }
 
         for i in 0..self.module.arena.len() {
             let id = NodeId(i as u32);

@@ -48,6 +48,7 @@ parses leave it unset and tools fall back to the input filename.
 | E019 | `patch statements may only appear at document root` / `expected ( after @patch/@remove/@rename` / `patch paths must be string literals` / `interpolation in patch paths is a hard error` / `rename target already exists` / `patch target '<path>' overlaps ai_immutable '<apath>'` | token | Malformed patch statements (C-028); patch edits overlapping `@ai_immutable` paths fail here too (C-034) |
 | E020 | `schema tables need valid type expressions` / `unknown schema type` / `unknown argument for <Type>` / `Enum needs at least one value` | token | Malformed schema blocks (C-030): non-type entries, unknown types or arguments |
 | E021 | `invalid @<kind> annotation: <detail>` | annotation comment span | Malformed annotations (C-033): bad `@intent` string, non-boolean `@ai_immutable`, empty or trailing `@constraint` payload. Truncated predicates keep their precise expression codes with rebased spans |
+| E022 | ``depends_on` entries must be string literals` / ``depends_on` is only allowed as a direct table member` | token | Malformed dependency blocks (C-042): non-string array elements, or inline-table occurrences |
 
 ### S0xx — Semantic (evaluation, severity Error)
 
@@ -69,8 +70,17 @@ parses leave it unset and tools fall back to the input filename.
 | T005 | `schema violation at '<path>': unexpected key '<key>' in closed table` | value expression span when resolvable (the token that produced the value), else the schema table span | A value key has no schema field inside a `closed = true` table (C-032). Key names are author-written identifiers, safe to quote |
 | T006 | `constraint violation at '<path>': <source> does not hold (actual: <rendered>)` / `constraint violation at '<path>': <source> must evaluate to a boolean, got <kind>` | value span when resolvable, else the annotation comment span | A `@constraint` predicate fails (C-034). `<source>` is the author-written payload, truncated at 120 chars and rendered generic when it contains `secret(…)`; `<rendered>` is the actual value rendered safely (secrets as `secret`, truncation at 120 chars) |
 
-### W0xx — Warnings
+### L0xx — Lint (linter, severity Warning, C-042)
 
+| Code | Message | Span | Emitted when |
+|---|---|---|---|
+| L001 | `unused let binding '<name>'` | binding expression | A `let` is never referenced by any `Ref` |
+| L002 | `missing depends_on entry for '<path>'` / `dangling depends_on path '<path>'` / `unnecessary depends_on entry '<path>'` | scope table or annotation site | A declared `depends_on` set is incomplete, unresolvable, self-scoped, or empty amid references |
+| L003 | `expression complexity <n> exceeds limit <m>` | value expression | One key/let value holds more than 100 operator nodes |
+| L004 | `possible hard-coded secret in key '<path>' (use secret() or secret.env())` | value expression | A pure string literal under a credential-named key (minus placeholders), or a high-entropy long literal anywhere. The value is never quoted |
+| L005 | `deprecated field '<path>' is still used` / `deprecated field '<path>' is still used: <message>` | value expression | A value exists for a schema-deprecated field; migration message quoted when the schema provides one |
+
+### W0xx — Warnings
 | Code | Message | Span | Emitted when |
 |---|---|---|---|
 | W001 | `unresolved identifier '<name>'` | node | An identifier matches no sibling key and no `let` binding; the value becomes `null` |

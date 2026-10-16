@@ -56,6 +56,11 @@ pub struct Module {
     /// immutability flags for validators, the language server, and AI
     /// tooling. Comments themselves stay in `trivia` for the formatter.
     pub annotations: HashMap<NodeId, Vec<Annotation>>,
+    /// Dependency declarations by scope table (spec/linter.md §2,
+    /// C-042): `depends_on` keys holding string arrays are extracted
+    /// from value fields at parse (never exported) and recorded here
+    /// against their scope's table node.
+    pub depends_on: HashMap<NodeId, DependsOn>,
 }
 
 /// A parsed `# @…` annotation attached to a node (spec/annotations.md).
@@ -83,7 +88,15 @@ pub enum AnnotationKind {
     AiImmutable(bool),
 }
 
-/// An `include "path" [as alias] [private]` statement (spec §2.7).
+/// A parsed `depends_on` block for one table scope
+/// (spec/linter.md §2).
+#[derive(Debug, Clone)]
+pub struct DependsOn {
+    /// Declared dependency paths, dotted from the document root.
+    pub paths: Vec<String>,
+    /// The `depends_on` key's span (diagnostics).
+    pub span: Span,
+}
 #[derive(Debug, Clone)]
 pub struct IncludeStmt {
     /// Literal path as written.
@@ -102,6 +115,9 @@ pub struct IncludeStmt {
 /// C-030). Constraint values are expression nodes so bounds may use
 /// literals, env refs, and arithmetic; C-031 evaluates them during
 /// validation. `default` is parsed and stored; C-032 applies it.
+/// `deprecated` is static text (C-042): `None` is live, `Some("")` is
+/// a bare `deprecated = true`, `Some(msg)` carries the migration
+/// message.
 #[derive(Debug, Clone)]
 pub struct SchemaField {
     pub typ: SolidType,
@@ -111,6 +127,7 @@ pub struct SchemaField {
     pub max_len: Option<NodeId>,
     pub pattern: Option<NodeId>,
     pub default: Option<NodeId>,
+    pub deprecated: Option<String>,
     pub span: Option<crate::diag::Span>,
 }
 
@@ -125,6 +142,7 @@ impl SchemaField {
             max_len: None,
             pattern: None,
             default: None,
+            deprecated: None,
             span,
         }
     }
@@ -184,6 +202,7 @@ impl Module {
             patches: Vec::new(),
             schema: None,
             annotations: HashMap::new(),
+            depends_on: HashMap::new(),
         }
     }
 
@@ -219,6 +238,42 @@ impl Module {
     /// Record the source file of a node (includes, C-025).
     pub fn record_file(&mut self, id: NodeId, file: String) {
         self.node_files.insert(id, file);
+    }
+
+    /// Resolve a dotted path from the document root to a value-table
+    /// node (C-042): each segment indexes a `Node::Table`'s fields.
+    /// A single segment additionally resolves `let` bindings (table
+    /// fields win ties). Returns None for missing keys, non-table
+    /// hops, and a missing root. Shared by graph construction
+    /// (`depends_on` edges) and the linter (dangling-path detection),
+    /// so both agree on what resolves.
+    pub fn resolve_value_path(&self, path: &str) -> Option<NodeId> {
+        if let Some(root) = self.root {
+            let mut id = root;
+            let mut found = true;
+            for segment in path.split('.') {
+                match self.get(id) {
+                    Some(Node::Table { fields }) => match fields.get(segment) {
+                        Some(child) => id = *child,
+                        None => {
+                            found = false;
+                            break;
+                        }
+                    },
+                    _ => {
+                        found = false;
+                        break;
+                    }
+                }
+            }
+            if found {
+                return Some(id);
+            }
+        }
+        if !path.contains('.') {
+            return self.bindings.get(path).copied();
+        }
+        None
     }
 }
 

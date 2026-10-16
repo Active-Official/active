@@ -349,15 +349,17 @@ schema-arg    = identifier "=" expression
   `Bool`/`Null`/`Secret`/`Any` take `default` only; `Enum` takes
   positional strings only (empty is E020); `Array` takes only `<T>`;
   `Table` takes only `{...}` with an optional reserved `closed = true`
-  entry. Argument values are full expressions (literals, env refs,
-  arithmetic), evaluated with the document.
+  entry. Every leaf type additionally accepts `deprecated` (C-042):
+  `true` or a string-literal migration message (anything else is
+  E020). Argument values are full expressions (literals, env refs,
+  arithmetic), evaluated with the document — except `deprecated`,
+  which is static text by design.
 - Schemas may appear at root (validating the document) or nested (validating
   that table). Validation itself is C-031; C-030 delivers parsing and IR only.
 - External schemas ride the include mechanism: an included file's schema
   merges like any other key. No new syntax is required. Two schemas merged
   under one key union their fields (local-wins on conflicts, cascade
-  among includes); the `closed` flag follows the same rule.
-- Schemas are banned inside profiles (E020), including schemas that would
+  among includes); the `closed` flag follows the same rule.- Schemas are banned inside profiles (E020), including schemas that would
   arrive through an include spliced into a profile scope: an included
   schema there is E020 at its own span, never profile data.
 - Schema blocks are table-scope metadata: they may not appear inside
@@ -369,6 +371,22 @@ schema-arg    = identifier "=" expression
   bounded at 64 levels (E004 beyond); a brace-form schema without its
   closing `}` is E001. A call-form `Table(…)` is E020 — nested schemas
   use `Table { … }` only. The canonical empty schema is `schema = {}`.
+
+### 2.11 Dependency declarations (C-042)
+
+```
+depends-on    = "depends_on" "=" string-array
+string-array  = "[" [ string { "," string } ] "]"
+```
+
+- `depends_on` is contextual: a `depends_on` key with an array of
+  string literals parses as dependency metadata for its table scope
+  (spec/linter.md §2); any other value stays ordinary data. An
+  array containing a non-string is E022, as is an inline-table
+  occurrence (dependency blocks belong to named scopes only).
+- Listed paths resolve dotted from the document root; each
+  resolvable path adds a dependency edge (undeclared cycles surface
+  as S001). The linter checks completeness (L002).
 
 ### 2.3 Expressions (precedence, loosest to tightest)
 

@@ -137,6 +137,16 @@ enum Commands {
         #[arg(long)]
         check: bool,
     },
+    /// Lint files with independent rules (spec/linter.md)
+    Lint {
+        /// Input .solid files (at least one)
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+        /// Disable a rule (repeatable): unused-lets, depends-on,
+        /// complexity, hardcoded-secrets, deprecated
+        #[arg(long = "disable-lint")]
+        disable: Vec<String>,
+    },
 }
 
 fn options(resilient: bool, allow_parent_escapes: bool) -> ParseOptions {
@@ -392,6 +402,36 @@ fn main() -> anyhow::Result<()> {
                     continue;
                 }
                 print!("{out}");
+            }
+            if dirty {
+                std::process::exit(1);
+            }
+        }
+        Commands::Lint { files, disable } => {
+            use solid_core::lint;
+            let options = lint::LintOptions::with_disabled(&disable).map_err(|e| {
+                eprintln!("[Error] {e}");
+                anyhow::anyhow!("bad --disable-lint flag")
+            })?;
+            // Read-only across files: every file always runs, even
+            // when an earlier file fails to parse.
+            let mut dirty = false;
+            for file in &files {
+                let name = file.to_string_lossy().to_string();
+                let module = match parse_file(file, ParseOptions::default()) {
+                    Ok(module) => module,
+                    Err(diags) => {
+                        for d in &diags {
+                            report(d, &name);
+                        }
+                        dirty = true;
+                        continue;
+                    }
+                };
+                for d in lint::lint_with(&module, &options) {
+                    report(&d, &name);
+                    dirty = true;
+                }
             }
             if dirty {
                 std::process::exit(1);

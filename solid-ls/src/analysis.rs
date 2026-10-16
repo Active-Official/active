@@ -12,12 +12,12 @@
 use std::collections::HashMap;
 
 use lsp_types::{
-    Hover, HoverContents, Location, MarkupContent, MarkupKind, Position, Range, TextEdit, Url,
-    WorkspaceEdit,
+    CompletionItem, CompletionItemKind, Hover, HoverContents, InlayHint, InlayHintKind, Location,
+    MarkupContent, MarkupKind, Position, Range, TextEdit, Url, WorkspaceEdit,
 };
 use solid_core::{
     lint, parse_recovering, parse_text_recovering_with_file, AnnotationKind, Diagnostic, Engine,
-    Module, Node, NodeId, ParseOptions, Value,
+    Module, Node, NodeId, ParseOptions, Severity, Value,
 };
 
 /// One open document: parsed module plus resilient evaluation.
@@ -61,7 +61,26 @@ pub fn open_doc(uri: Url, text: String, version: i32) -> Doc {
     };
     let (value, eval_diags) = match Engine::new().evaluate(&module) {
         Ok((v, d)) => (Some(v), d),
-        Err(_) => (None, Vec::new()),
+        // Hard evaluation failures (cycles, budgets, validation in
+        // strict mode) still publish: the error becomes one
+        // diagnostic alongside the module's own records, so
+        // open/change handlers surface everything (C-044).
+        // Messages are secret-safe by the C-036 audit.
+        Err(e) => {
+            let mut diags = vec![Diagnostic {
+                severity: Severity::Error,
+                code: e.code().to_string(),
+                message: e.to_string(),
+                path: None,
+                span: e.span().cloned(),
+                repair: None,
+                confidence: 1.0,
+                file: e.file().map(str::to_string),
+            }];
+            diags.extend(module.diagnostics.iter().cloned());
+            diags.extend(module.healing.iter().cloned());
+            (None, diags)
+        }
     };
     let lint_diags = lint(&module);
     Doc {
@@ -296,6 +315,10 @@ pub enum Target {
     Key { path: String, node: NodeId },
 }
 
+/// A brace token mark: (start, end, is_open) in 1-based character
+/// coordinates for lexical scope-boundary detection.
+type BraceMark = ((u32, u32), (u32, u32), bool);
+
 /// A table scope derived from node spans: header start through the
 /// deepest descendant end, at (line, column) precision. Mirrors
 /// evaluator name resolution (siblings, then outer scopes, then
@@ -415,6 +438,118 @@ fn scopes(doc: &Doc) -> Vec<Scope> {
             end_line,
             end_col,
         });
+    }
+    // Lexical extension: a scope runs to its table's lexical
+    // boundary, so fresh lines inside an open table — including
+    // empty tables — still resolve and complete in that table.
+    // Brace tables (`server { … }`) end at the matching close brace
+    // (depth-counted over the lexer stream from the table's own
+    // `{`); header tables (`[server]`, `server:`) run until the next
+    // scope at their own depth or shallower begins, or the document
+    // end. The root spans the whole document; deeper scopes never
+    // bound their parents. (Overreach note: a dedented trailing key
+    // after an indent-style block still falls inside the extended
+    // scope — name resolution falls through to the outer scope
+    // correctly, so only the completion source may differ. Documented
+    // in spec/lsp.md §4.)
+    let mut starts: Vec<((u32, u32), usize)> = out
+        .iter()
+        .map(|s| ((s.start_line, s.start_col), s.depth))
+        .collect();
+    starts.sort();
+    let mut braces: Vec<BraceMark> = Vec::new();
+    {
+        use solid_core::parser::TokenKind as K;
+        let mut lexer = solid_core::parser::Lexer::new(&doc.text);
+        for tok in lexer.tokenize().tokens {
+            match tok.kind {
+                K::LBrace => braces.push(((tok.line, tok.col), (tok.end_line, tok.end_col), true)),
+                K::RBrace => {
+                    braces.push(((tok.line, tok.col), (tok.end_line, tok.end_col), false));
+                }
+                _ => {}
+            }
+        }
+    }
+    for scope in &mut out {
+        if scope.depth == 0 {
+            scope.end_line = u32::MAX;
+            scope.end_col = u32::MAX;
+            continue;
+        }
+        let start = (scope.start_line, scope.start_col);
+        let bound = starts
+            .iter()
+            .find(|(s, d)| *s > start && *d <= scope.depth && *d > 0)
+            .map(|(s, _)| *s);
+        // The table's own `{`, if brace-style. Inline tables span
+        // their opening brace, so a brace exactly AT the scope start
+        // is the table's own; statement tables take the brace on the
+        // name's own line past the name end (the grammar requires it
+        // there). Anything later opens a nested block, not this
+        // table — header tables (`[server]`, `server:`) match
+        // nothing here.
+        let name_len = scope
+            .path
+            .rsplit('.')
+            .next()
+            .map(|s| s.chars().count())
+            .unwrap_or(0) as u32;
+        let name_end = (scope.start_line, scope.start_col + name_len);
+        let own_open = braces.iter().find(|(pos, _, is_open)| {
+            *is_open && (*pos == start || (*pos >= name_end && pos.0 == scope.start_line))
+        });
+        let mut end = (scope.end_line, scope.end_col);
+        // Header-style fallback extent: the line before the next
+        // scope, or the document end. Brace tables with no matching
+        // close (broken input) degrade to this rather than losing
+        // their trailing lines.
+        let header_ext = match bound {
+            Some(limit) => {
+                if limit.1 > 1 {
+                    (limit.0, limit.1 - 1)
+                } else if limit.0 > 1 {
+                    (limit.0 - 1, u32::MAX)
+                } else {
+                    start
+                }
+            }
+            None => (u32::MAX, u32::MAX),
+        };
+        match own_open {
+            // Brace-style, with its `{` before any following scope:
+            // close at the depth-matched `}` (never crossing into
+            // the next scope's braces on broken input).
+            Some((open_pos, _, _)) if bound.is_none_or(|limit| *open_pos < limit) => {
+                let mut brace_depth = 0u32;
+                let mut closed = false;
+                for (pos, epos, is_open) in &braces {
+                    if *pos < *open_pos {
+                        continue;
+                    }
+                    if bound.is_some_and(|limit| *pos >= limit) {
+                        break;
+                    }
+                    if *is_open {
+                        brace_depth += 1;
+                    } else if brace_depth > 0 {
+                        brace_depth -= 1;
+                        if brace_depth == 0 {
+                            end = end.max(*epos);
+                            closed = true;
+                            break;
+                        }
+                    }
+                }
+                if !closed {
+                    end = end.max(header_ext);
+                }
+            }
+            _ => {
+                end = end.max(header_ext);
+            }
+        }
+        (scope.end_line, scope.end_col) = end;
     }
     out
 }
@@ -620,15 +755,49 @@ fn def_range(doc: &Doc, target: &Target) -> Option<Range> {
 /// Text lookup by file path: open buffers first, then disk (saved
 /// state). Unreadable files yield None and their references degrade
 /// gracefully (node-span ranges still work — spans are file-local).
+/// Buffer matching is exact first, then case-insensitive: include
+/// stamps carry canonical paths (Windows case/short-names) that may
+/// differ textually from the client's URI for the same file, and a
+/// live buffer always beats stale disk.
 pub fn lookup_text(open: &HashMap<String, Doc>, path: &str) -> Option<String> {
+    let mut insensitive = None;
     for doc in open.values() {
         if let Ok(p) = doc.uri.to_file_path() {
-            if p.to_string_lossy() == path {
+            let candidate = p.to_string_lossy();
+            if candidate == path {
                 return Some(doc.text.clone());
+            }
+            if candidate.eq_ignore_ascii_case(path) {
+                insensitive = Some(doc.text.clone());
             }
         }
     }
-    std::fs::read_to_string(path).ok()
+    insensitive.or_else(|| std::fs::read_to_string(path).ok())
+}
+
+/// Version of the open buffer behind a URI: exact URI match first,
+/// then the same canonical-tolerant file matching as `lookup_text`.
+/// Unknown files yield None (the publisher omits the version rather
+/// than stamping another file's).
+pub fn open_version(open: &HashMap<String, Doc>, uri: &Url) -> Option<i32> {
+    if let Some(doc) = open.get(&uri.to_string()) {
+        return Some(doc.version);
+    }
+    let target = uri.to_file_path().ok()?;
+    let target_str = target.to_string_lossy();
+    let mut insensitive = None;
+    for doc in open.values() {
+        if let Ok(p) = doc.uri.to_file_path() {
+            let candidate = p.to_string_lossy();
+            if candidate == target_str {
+                return Some(doc.version);
+            }
+            if candidate.eq_ignore_ascii_case(&target_str) {
+                insensitive = Some(doc.version);
+            }
+        }
+    }
+    insensitive
 }
 
 /// File URI for a node, falling back to the owning document.
@@ -1554,4 +1723,388 @@ pub fn encode_semantic_tokens(absolute: &[(u32, u32, u32, u32)]) -> Vec<lsp_type
         prev_start = *start;
     }
     data
+}
+
+// ------------------------------------------------------------------
+// Completions, diagnostics, inlay hints (C-044, spec/lsp.md §4).
+// ------------------------------------------------------------------
+
+/// Identifier prefix immediately before a 0-based cursor: ASCII word
+/// characters on the cursor's line. Empty when the cursor sits past
+/// the line end or directly after a non-identifier character.
+fn completion_prefix(text: &str, line: u32, character: u32) -> String {
+    let Some(line_text) = text.split('\n').nth(line as usize) else {
+        return String::new();
+    };
+    let chars: Vec<char> = line_text.chars().collect();
+    let mut end = utf16_to_char(line_text, character).min(chars.len());
+    end = end.min(chars.len());
+    let mut start = end;
+    while start > 0 && is_completion_char(chars[start - 1]) {
+        start -= 1;
+    }
+    chars[start..end].iter().collect()
+}
+
+/// Completion identifier characters: word characters plus `.` so
+/// dotted paths keep their qualifier (only the leaf filters).
+fn is_completion_char(c: char) -> bool {
+    is_word_char(c) || c == '.'
+}
+
+/// Schema field names valid at a dotted scope path: walk the active
+/// schema tree by segment; a `SchemaTable` yields its field names
+/// with type details, anything else yields nothing.
+fn schema_names_at(module: &Module, scope_path: &str) -> Vec<(String, String)> {
+    let Some(mut id) = module.schema else {
+        return Vec::new();
+    };
+    if !scope_path.is_empty() {
+        for segment in scope_path.split('.') {
+            match module.get(id) {
+                Some(Node::SchemaTable { fields, .. }) => {
+                    id = match fields.get(segment) {
+                        Some(next) => *next,
+                        None => return Vec::new(),
+                    };
+                }
+                _ => return Vec::new(),
+            }
+        }
+    }
+    match module.get(id) {
+        Some(Node::SchemaTable { fields, .. }) => fields
+            .iter()
+            .map(|(name, field)| {
+                let detail = match module.get(*field) {
+                    Some(Node::SchemaField { field }) => field.typ.name(),
+                    Some(Node::SchemaArray { element }) => {
+                        format!("Array<{}>", schema_type_name(module, *element))
+                    }
+                    Some(Node::SchemaTable { .. }) => "Table".to_string(),
+                    _ => "Any".to_string(),
+                };
+                (name.clone(), detail)
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Type name of a schema node for completion detail lines.
+fn schema_type_name(module: &Module, id: NodeId) -> String {
+    match module.get(id) {
+        Some(Node::SchemaField { field }) => field.typ.name(),
+        Some(Node::SchemaArray { element }) => {
+            format!("Array<{}>", schema_type_name(module, *element))
+        }
+        Some(Node::SchemaTable { .. }) => "Table".to_string(),
+        _ => "Any".to_string(),
+    }
+}
+
+/// Completion items at a 0-based cursor: schema fields for the
+/// innermost containing scope, in-scope `let` bindings, and the
+/// keywords `true`/`false`/`null` — prefix-filtered, alphabetical,
+/// deterministic (spec/lsp.md §4).
+pub fn completion_at(doc: &Doc, line: u32, character: u32) -> Vec<CompletionItem> {
+    let raw_prefix = completion_prefix(&doc.text, line, character);
+    // Only the leaf filters: `server.ho` completes `host`.
+    let prefix = raw_prefix.rsplit('.').next().unwrap_or("").to_string();
+    let cursor_line = line + 1;
+    let cursor_col = doc
+        .text
+        .split('\n')
+        .nth(line as usize)
+        .map(|l| utf16_to_char(l, character) as u32 + 1)
+        .unwrap_or(1);
+    // Innermost containing scope's dotted path (file-local scopes):
+    // same ordering as symbol resolution, first match wins.
+    let mut containing: Vec<&Scope> = Vec::new();
+    let all = scopes(doc);
+    for scope in &all {
+        if (scope.start_line, scope.start_col) <= (cursor_line, cursor_col)
+            && (cursor_line, cursor_col) <= (scope.end_line, scope.end_col)
+        {
+            containing.push(scope);
+        }
+    }
+    containing.sort_by(|a, b| b.depth.cmp(&a.depth).then_with(|| a.path.cmp(&b.path)));
+    let scope_path = containing
+        .first()
+        .map(|scope| scope.path.clone())
+        .unwrap_or_default();
+    let mut items: Vec<CompletionItem> = Vec::new();
+    for (name, detail) in schema_names_at(&doc.module, &scope_path) {
+        if name.starts_with(&prefix) {
+            items.push(CompletionItem {
+                label: name,
+                kind: Some(CompletionItemKind::FIELD),
+                detail: Some(detail),
+                ..Default::default()
+            });
+        }
+    }
+    let mut lets: Vec<&String> = doc.module.bindings.keys().collect();
+    lets.sort();
+    for name in lets {
+        if name.starts_with(&prefix) {
+            items.push(CompletionItem {
+                label: name.clone(),
+                kind: Some(CompletionItemKind::VARIABLE),
+                ..Default::default()
+            });
+        }
+    }
+    for keyword in ["true", "false", "null"] {
+        if keyword.starts_with(&prefix) {
+            items.push(CompletionItem {
+                label: keyword.to_string(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                ..Default::default()
+            });
+        }
+    }
+    items.sort_by(|a, b| a.label.cmp(&b.label));
+    items
+}
+
+/// One core diagnostic as an LSP diagnostic: stable code, severity
+/// mapping per spec §4, span ranges, `"solid"` source. Span-less
+/// diagnostics publish as zero-length ranges at (0,0) rather than
+/// vanishing.
+fn to_lsp_diagnostic(text: &str, diag: &Diagnostic) -> lsp_types::Diagnostic {
+    let range = diag
+        .span
+        .as_ref()
+        .map(|span| range_of_span(text, span))
+        .unwrap_or(Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 0,
+            },
+        });
+    let severity = match diag.severity {
+        Severity::Error => Some(lsp_types::DiagnosticSeverity::ERROR),
+        Severity::Warning => Some(lsp_types::DiagnosticSeverity::WARNING),
+        Severity::Info => Some(lsp_types::DiagnosticSeverity::INFORMATION),
+        Severity::Hint => Some(lsp_types::DiagnosticSeverity::HINT),
+    };
+    lsp_types::Diagnostic {
+        range,
+        severity,
+        code: Some(lsp_types::NumberOrString::String(diag.code.clone())),
+        source: Some("solid".to_string()),
+        message: diag.message.clone(),
+        ..Default::default()
+    }
+}
+
+/// Everything the client should show for the open document: parse
+/// errors, evaluation diagnostics (hard failures converted at
+/// open), lint findings, and healing notices (already merged into
+/// the evaluation records — never appended twice). Sorted by
+/// position then code for determinism (spec/lsp.md §4). Included
+/// files publish under their own URIs via `diagnostics_by_file`.
+pub fn diagnostics_for(doc: &Doc) -> Vec<lsp_types::Diagnostic> {
+    diagnostics_by_file(doc, &|_: &str| None)
+        .into_iter()
+        .find(|(uri, _)| *uri == doc.uri)
+        .map(|(_, diags)| diags)
+        .unwrap_or_default()
+}
+
+/// Whether a diagnostic belongs to the open document: unstamped
+/// records do; stamped ones must match the document's own file.
+fn diag_in_doc(doc: &Doc, diag: &Diagnostic) -> bool {
+    match (&doc.uri.to_file_path().ok(), &diag.file) {
+        (_, None) => true,
+        (Some(main), Some(stamped)) => stamped == &main.to_string_lossy().into_owned(),
+        (None, Some(_)) => false,
+    }
+}
+
+/// Zero-length range at the document start for unlocatable
+/// diagnostics (span-less records, or foreign files whose text
+/// cannot be read): published rather than vanished (spec §4).
+fn zero_range() -> Range {
+    Range {
+        start: Position {
+            line: 0,
+            character: 0,
+        },
+        end: Position {
+            line: 0,
+            character: 0,
+        },
+    }
+}
+
+/// Diagnostics grouped by owning file URI: the open document plus
+/// one entry per included file with diagnostics. Included spans
+/// resolve against the included file's text (lookup from open
+/// buffers, then disk); unreadable files fall back to zero ranges
+/// on their own URI — never mis-ranged against the parent
+/// (spec/lsp.md §4). Files sort by URI for determinism.
+pub fn diagnostics_by_file(
+    doc: &Doc,
+    lookup: &impl Fn(&str) -> Option<String>,
+) -> Vec<(Url, Vec<lsp_types::Diagnostic>)> {
+    use std::collections::BTreeMap;
+    let mut groups: BTreeMap<String, (Url, Vec<lsp_types::Diagnostic>)> = BTreeMap::new();
+    // The open document always publishes (possibly empty): clients
+    // clear stale markers on every open/change.
+    groups.insert(doc.uri.to_string(), (doc.uri.clone(), Vec::new()));
+    for diag in doc
+        .parse_diags
+        .iter()
+        .chain(doc.eval_diags.iter())
+        .chain(doc.lint_diags.iter())
+    {
+        if diag_in_doc(doc, diag) {
+            groups
+                .entry(doc.uri.to_string())
+                .or_insert_with(|| (doc.uri.clone(), Vec::new()))
+                .1
+                .push(to_lsp_diagnostic(&doc.text, diag));
+        } else if let Some(stamped) = diag.file.as_deref() {
+            let uri = Url::from_file_path(stamped).unwrap_or_else(|_| doc.uri.clone());
+            let converted = match lookup(stamped) {
+                Some(text) => to_lsp_diagnostic(&text, diag),
+                None => {
+                    let mut fallback = to_lsp_diagnostic("", diag);
+                    fallback.range = zero_range();
+                    fallback
+                }
+            };
+            groups
+                .entry(uri.to_string())
+                .or_insert_with(|| (uri, Vec::new()))
+                .1
+                .push(converted);
+        }
+    }
+    groups
+        .into_values()
+        .map(|(uri, mut diags)| {
+            diags.sort_by(|a, b| {
+                (a.range.start.line, a.range.start.character)
+                    .cmp(&(b.range.start.line, b.range.start.character))
+                    .then_with(|| code_key(a).cmp(&code_key(b)))
+            });
+            (uri, diags)
+        })
+        .collect()
+}
+
+/// Sort key for a published diagnostic's stable code.
+fn code_key(d: &lsp_types::Diagnostic) -> String {
+    match d.code.as_ref() {
+        Some(lsp_types::NumberOrString::String(s)) => s.clone(),
+        Some(lsp_types::NumberOrString::Number(n)) => n.to_string(),
+        None => String::new(),
+    }
+}
+
+/// Static kind name of a binding expression for `let` inlay hints:
+/// literals, arrays, tables, and strings. Anything dynamic (refs,
+/// env, interpolation, arithmetic) yields nothing.
+fn static_node_kind(module: &Module, id: NodeId) -> Option<&'static str> {
+    match module.get(id) {
+        Some(Node::Literal(value)) => Some(value_kind(value)),
+        Some(Node::Array { .. }) => Some("Array"),
+        Some(Node::Table { .. }) => Some("Table"),
+        Some(Node::Interpolate { .. }) => Some("String"),
+        _ => None,
+    }
+}
+
+/// Inlay hints for a document: after each data key's value and each
+/// `let` binding, its type (`: Int`); durations and quantities
+/// append the normalized form (`: Duration = 5000 ms`). Schema
+/// types win over value kinds; secrets hint `: Secret` only.
+/// Hints outside `range` (when given) are withheld (spec/lsp.md §4).
+pub fn inlay_hints(doc: &Doc, range: Option<Range>) -> Vec<InlayHint> {
+    let mut out = Vec::new();
+    let mut push = |position: Position, label: String| {
+        if let Some(filter) = range {
+            if position < filter.start || position > filter.end {
+                return;
+            }
+        }
+        out.push(InlayHint {
+            position,
+            label: lsp_types::InlayHintLabel::String(label),
+            kind: Some(InlayHintKind::TYPE),
+            text_edits: None,
+            tooltip: None,
+            padding_left: Some(true),
+            padding_right: None,
+            data: None,
+        });
+    };
+    // Data keys: schema type, else evaluated value kind.
+    for (id, path) in doc.module.value_paths() {
+        if !node_in_doc(doc, id) {
+            continue;
+        }
+        let Some(span) = doc.module.node_spans.get(&id) else {
+            continue;
+        };
+        let position = range_of_span(&doc.text, span).end;
+        let mut label = match schema_type_at(&doc.module, &path) {
+            Some(typ) => format!(": {typ}"),
+            None => match doc
+                .value
+                .as_ref()
+                .and_then(|root| value_at_path(root, &path))
+            {
+                Some(value) => format!(": {}", value_kind(value)),
+                None => continue,
+            },
+        };
+        // Normalized form for durations and quantities (redacted
+        // values never appear: secrets take the kind-only branch).
+        // Byte quantities evaluate to plain integers, so the source
+        // unit comes from the Quantity node when the value no longer
+        // carries it.
+        if let Some(root) = doc.value.as_ref() {
+            match value_at_path(root, &path) {
+                Some(Value::DurationMs(ms)) => label.push_str(&format!(" = {ms} ms")),
+                Some(Value::Quantity(n, unit)) => {
+                    label.push_str(&format!(" = {n} {}", unit.suffix()));
+                }
+                Some(Value::Int(n)) => {
+                    if let Some(Node::Quantity { unit, .. }) = doc.module.get(id) {
+                        label.push_str(&format!(" = {n} {}", unit.suffix()));
+                    }
+                }
+                _ => {}
+            }
+        }
+        push(position, label);
+    }
+    // `let` bindings: static kinds only.
+    let mut bindings: Vec<(&String, &NodeId)> = doc.module.bindings.iter().collect();
+    bindings.sort_by(|a, b| a.0.cmp(b.0));
+    for (_name, id) in bindings {
+        if !node_in_doc(doc, *id) {
+            continue;
+        }
+        let (Some(kind), Some(span)) = (
+            static_node_kind(&doc.module, *id),
+            doc.module.node_spans.get(id),
+        ) else {
+            continue;
+        };
+        push(range_of_span(&doc.text, span).end, format!(": {kind}"));
+    }
+    out.sort_by(|a, b| {
+        (a.position.line, a.position.character).cmp(&(b.position.line, b.position.character))
+    });
+    out
 }

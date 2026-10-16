@@ -530,6 +530,357 @@ fn definition_jumps_across_includes() {
 }
 
 // ------------------------------------------------------------------
+// C-044: completions, diagnostics, inlay hints.
+// ------------------------------------------------------------------
+
+fn completion_labels(doc: &analysis::Doc, line: u32, character: u32) -> Vec<(String, String)> {
+    analysis::completion_at(doc, line, character)
+        .into_iter()
+        .map(|item| (item.label, item.detail.unwrap_or_default()))
+        .collect()
+}
+
+#[test]
+fn completion_suggests_lets_keywords_and_schema_fields() {
+    // Prefix-filtered lets.
+    let doc = open_untitled("cmp", "let limit = 5\nport = li\n");
+    let labels = completion_labels(&doc, 1, 9);
+    assert!(
+        labels.iter().any(|(label, _)| label == "limit"),
+        "{labels:?}"
+    );
+    assert!(
+        labels.iter().all(|(label, _)| label.starts_with("li")),
+        "{labels:?}"
+    );
+    // Empty prefix completes everything, sorted.
+    let labels = completion_labels(&doc, 1, 0);
+    for keyword in ["true", "false", "null"] {
+        assert!(
+            labels.iter().any(|(label, _)| label == keyword),
+            "{labels:?}"
+        );
+    }
+    let names: Vec<&str> = labels.iter().map(|(label, _)| label.as_str()).collect();
+    let mut sorted = names.clone();
+    sorted.sort();
+    assert_eq!(names, sorted, "completion must be alphabetical");
+    // Schema fields carry their type as detail.
+    let doc = open_untitled("cmpschema", "schema = { port = Int(min = 1) }\nport = 1\n");
+    let labels = completion_labels(&doc, 1, 0);
+    assert!(
+        labels
+            .iter()
+            .any(|(label, detail)| label == "port" && detail == "Int"),
+        "{labels:?}"
+    );
+    // Lets complete inside table scopes.
+    let doc = open_untitled("cmpscope", "let limit = 5\n[server]\nurl = lim\n");
+    let labels = completion_labels(&doc, 2, 9);
+    assert!(
+        labels.iter().any(|(label, _)| label == "limit"),
+        "{labels:?}"
+    );
+}
+
+#[test]
+fn completion_stays_in_open_and_empty_tables() {
+    // Empty table: the cursor past the header still completes the
+    // table's schema fields, not the root's.
+    let doc = open_untitled(
+        "cmpempty",
+        "schema = { server = Table { host = String, port = Int } }\n[server]\n",
+    );
+    let labels = completion_labels(&doc, 2, 0);
+    assert!(
+        labels.iter().any(|(label, _)| label == "host"),
+        "{labels:?}"
+    );
+    assert!(
+        labels.iter().any(|(label, _)| label == "port"),
+        "{labels:?}"
+    );
+    // Fresh line after the last field: same table.
+    let doc = open_untitled(
+        "cmpafter",
+        "schema = { server = Table { host = String, port = Int } }\n[server]\nhost = \"a\"\npo\n",
+    );
+    let labels = completion_labels(&doc, 3, 2);
+    assert!(
+        labels.iter().any(|(label, _)| label == "port"),
+        "{labels:?}"
+    );
+    // Past a brace block's close: back at the root (the root schema
+    // offers `server`; the table schema's `host` must not appear).
+    let doc = open_untitled(
+        "cmpclosed",
+        "schema = { server = Table { host = String } }\nserver {\n  host = \"a\"\n}\n",
+    );
+    let labels = completion_labels(&doc, 4, 0);
+    assert!(
+        labels.iter().any(|(label, _)| label == "server"),
+        "{labels:?}"
+    );
+    assert!(
+        !labels.iter().any(|(label, _)| label == "host"),
+        "{labels:?}"
+    );
+}
+
+#[test]
+fn inline_table_scopes_end_at_their_close() {
+    // `cfg` is an inline table on line 0: its scope must not extend
+    // to end-of-file, or the `port` use below would resolve to the
+    // inline key instead of the root sibling.
+    let doc = open_untitled("inlinescope", "cfg = { port = 1 }\nport = 2\nurl = port\n");
+    let locations = analysis::definition_at(&doc, &no_lookup(), 2, 7);
+    assert_eq!(locations.len(), 1, "{locations:?}");
+    assert_eq!(locations[0].range.start.line, 1, "{locations:?}");
+    assert_eq!(locations[0].range.start.character, 0, "{locations:?}");
+}
+
+#[test]
+fn unclosed_brace_tables_keep_their_trailing_lines() {
+    // No matching `}`: the header-style fallback keeps fresh lines
+    // in the table instead of dropping to the root.
+    let doc = open_untitled(
+        "unclosed",
+        "schema = { server = Table { host = String } }\nserver {\n  host = \"a\"\n\n",
+    );
+    let labels = completion_labels(&doc, 3, 0);
+    assert!(
+        labels.iter().any(|(label, _)| label == "host"),
+        "{labels:?}"
+    );
+}
+
+fn hint_labels(doc: &analysis::Doc) -> Vec<(u32, u32, String)> {
+    analysis::inlay_hints(doc, None)
+        .into_iter()
+        .map(|hint| {
+            let label = match hint.label {
+                lsp_types::InlayHintLabel::String(s) => s,
+                lsp_types::InlayHintLabel::LabelParts(parts) => {
+                    parts.into_iter().map(|part| part.value).collect()
+                }
+            };
+            (hint.position.line, hint.position.character, label)
+        })
+        .collect()
+}
+
+#[test]
+fn inlay_hints_show_types_and_normalized_values() {
+    let doc = open_untitled("hints", "port = 8080\nwait = 5s\nlet limit = 5\n");
+    let hints = hint_labels(&doc);
+    assert!(
+        hints
+            .iter()
+            .any(|(line, _, label)| *line == 0 && label == ": Int"),
+        "{hints:?}"
+    );
+    assert!(
+        hints
+            .iter()
+            .any(|(line, _, label)| *line == 1 && label == ": Duration = 5000 ms"),
+        "{hints:?}"
+    );
+    assert!(
+        hints
+            .iter()
+            .any(|(line, _, label)| *line == 2 && label == ": Int"),
+        "{hints:?}"
+    );
+    // Byte quantities evaluate to integers: the hint recovers the
+    // source unit for the normalized form.
+    let doc = open_untitled("hintbytes", "size = 5MiB\n");
+    let hints = hint_labels(&doc);
+    assert!(
+        hints
+            .iter()
+            .any(|(_, _, label)| label == ": Int = 5242880 MiB"),
+        "{hints:?}"
+    );
+    // Range filtering withholds outside hints.
+    let range = lsp_types::Range {
+        start: lsp_types::Position {
+            line: 0,
+            character: 0,
+        },
+        end: lsp_types::Position {
+            line: 0,
+            character: 20,
+        },
+    };
+    let hints = analysis::inlay_hints(&doc, Some(range));
+    assert!(!hints.is_empty());
+    assert!(hints.iter().all(|hint| hint.position.line == 0));
+}
+
+#[test]
+fn inlay_hints_redact_secrets() {
+    let doc = open_untitled("hintsecret", "token = secret(\"s3cr3t-hint\")\n");
+    let hints = hint_labels(&doc);
+    assert!(
+        hints.iter().any(|(_, _, label)| label == ": Secret"),
+        "{hints:?}"
+    );
+    assert!(
+        hints
+            .iter()
+            .all(|(_, _, label)| !label.contains("s3cr3t-hint")),
+        "{hints:?}"
+    );
+}
+
+#[test]
+fn diagnostics_cover_parse_eval_and_lint_with_stable_codes() {
+    // Parse errors surface with E-codes.
+    let doc = open_untitled("diagparse", "[server\nport = 1\n");
+    let diags = analysis::diagnostics_for(&doc);
+    assert!(!diags.is_empty(), "parse errors must publish");
+    assert!(diags.iter().any(|d| match &d.code {
+        Some(lsp_types::NumberOrString::String(code)) => code.starts_with('E'),
+        _ => false,
+    }));
+    // Hard evaluation failures (cycles) convert to S-diagnostics.
+    let doc = open_untitled("diagcycle", "[a]\nx = y\ny = x\n");
+    let diags = analysis::diagnostics_for(&doc);
+    let codes: Vec<String> = diags
+        .iter()
+        .filter_map(|d| match &d.code {
+            Some(lsp_types::NumberOrString::String(code)) => Some(code.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(codes.iter().any(|c| c == "S001"), "{codes:?}");
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.severity == Some(lsp_types::DiagnosticSeverity::ERROR)),
+        "{diags:?}"
+    );
+    // Lint findings ride along.
+    let doc = open_untitled("diaglint", "let unused = 1\nport = 2\n");
+    let diags = analysis::diagnostics_for(&doc);
+    assert!(
+        diags.iter().any(|d| match &d.code {
+            Some(lsp_types::NumberOrString::String(code)) => code.starts_with('L'),
+            _ => false,
+        }),
+        "{diags:?}"
+    );
+    // Deterministic order: sorted by position.
+    let positions: Vec<(u32, u32)> = diags
+        .iter()
+        .map(|d| (d.range.start.line, d.range.start.character))
+        .collect();
+    let mut sorted = positions.clone();
+    sorted.sort();
+    assert_eq!(positions, sorted);
+    // Every diagnostic carries the source tag.
+    assert!(diags.iter().all(|d| d.source.as_deref() == Some("solid")));
+}
+
+#[test]
+fn diagnostics_never_contain_secrets() {
+    let doc = open_untitled(
+        "diagsecret",
+        "token = secret(\"s3cr3t-diag\")\nurl = \"${token}\"\n",
+    );
+    let diags = analysis::diagnostics_for(&doc);
+    assert!(!diags.is_empty(), "secret misuse must surface: {diags:?}");
+    for diag in &diags {
+        assert!(!diag.message.contains("s3cr3t-diag"), "{diag:?}");
+    }
+}
+
+#[test]
+fn healing_notices_publish_exactly_once() {
+    // An unclosed string heals (auto-apply tier) and records one
+    // H-notice: evaluation merges the healing records, so the
+    // publisher must not append them again.
+    let doc = open_untitled("diagheal", "port = \"abc\n");
+    let diags = analysis::diagnostics_for(&doc);
+    let healing: Vec<_> = diags
+        .iter()
+        .filter(|d| match &d.code {
+            Some(lsp_types::NumberOrString::String(code)) => code.starts_with('H'),
+            _ => false,
+        })
+        .collect();
+    assert_eq!(healing.len(), 1, "{diags:?}");
+}
+
+#[test]
+fn include_diagnostics_publish_under_their_own_file() {
+    // The library has a syntax error on its own line 0: it must
+    // publish under the library URI with library coordinates, never
+    // mis-ranged against the main document.
+    let (_lib_uri, _lib_path) = temp_fixture("lspdiaglib.solid", "[broken\n");
+    let (main_uri, _main_path) = temp_fixture(
+        "lspdiagmain.solid",
+        "include \"lspdiaglib.solid\"\nport = 1\n",
+    );
+    let text =
+        std::fs::read_to_string(main_uri.to_file_path().expect("file uri")).expect("read back");
+    let doc = analysis::open_doc(main_uri.clone(), text, 1);
+    let lookup = |path: &str| std::fs::read_to_string(path).ok();
+    let groups = analysis::diagnostics_by_file(&doc, &lookup);
+    assert!(groups.len() >= 2, "{groups:?}");
+    let lib_group = groups
+        .iter()
+        .find(|(uri, _)| uri.path().ends_with("lspdiaglib.solid"))
+        .expect("library group: {groups:?}");
+    assert!(
+        lib_group.1.iter().any(|d| match &d.code {
+            Some(lsp_types::NumberOrString::String(code)) => code.starts_with('E'),
+            _ => false,
+        }),
+        "{lib_group:?}"
+    );
+    assert!(
+        lib_group.1.iter().all(|d| d.range.start.line == 0),
+        "library coordinates: {lib_group:?}"
+    );
+    // The main document's own group survives alongside.
+    assert!(
+        groups
+            .iter()
+            .any(|(uri, _)| uri.path().ends_with("lspdiagmain.solid")),
+        "{groups:?}"
+    );
+}
+
+#[test]
+fn buffer_matching_tolerates_uri_case_differences() {
+    use std::collections::HashMap;
+    let (uri, path) = temp_fixture("lspcase.solid", "port = 1\n");
+    let doc = analysis::open_doc(uri.clone(), "port = 1\n".to_string(), 7);
+    let mut open = HashMap::new();
+    open.insert(uri.to_string(), doc);
+    assert_eq!(
+        analysis::lookup_text(&open, &path),
+        Some("port = 1\n".to_string())
+    );
+    // Canonical stamps (Windows case/short-names) may differ
+    // textually from the client's URI: the live buffer still wins
+    // over disk, for both text and version.
+    let shifted = path.to_uppercase();
+    if shifted != path {
+        assert_eq!(
+            analysis::lookup_text(&open, &shifted),
+            Some("port = 1\n".to_string())
+        );
+        let uri_shifted = lsp_types::Url::from_file_path(&shifted).expect("uri");
+        assert_eq!(analysis::open_version(&open, &uri_shifted), Some(7));
+    }
+    // Unknown files have no version (never another file's).
+    let unknown = lsp_types::Url::parse("untitled:nowhere").expect("uri");
+    assert_eq!(analysis::open_version(&open, &unknown), None);
+}
+
+// ------------------------------------------------------------------
 // End-to-end: real binary over stdio.
 // ------------------------------------------------------------------
 
@@ -622,6 +973,17 @@ impl Framed {
         self.notify("exit", serde_json::json!(null));
         let _ = self.child.wait();
     }
+
+    /// Next server-initiated notification with the given method,
+    /// dropping anything else (responses are read by `request`).
+    fn recv_notification(&mut self, method: &str) -> serde_json::Value {
+        loop {
+            let message = self.recv();
+            if message.get("method") == Some(&serde_json::json!(method)) {
+                return message;
+            }
+        }
+    }
 }
 
 #[test]
@@ -701,5 +1063,396 @@ fn stdio_unknown_method_returns_method_not_found() {
     // Unknown requests are refused, never hung.
     let reply = server.request("workspace/unknownMethod", serde_json::json!({}));
     assert_eq!(reply["error"]["code"], -32601, "{reply}");
+    server.shutdown();
+}
+
+#[test]
+fn stdio_publish_completion_hints_and_close() {
+    let (_uri, path) = temp_fixture("lspdiag.solid", "let limit = 5\n[a]\nx = y\ny = x\n");
+    let file_uri = lsp_types::Url::from_file_path(&path).expect("file uri");
+    let uri = file_uri.to_string();
+    let text = "let limit = 5\n[a]\nx = y\ny = x\n";
+
+    let mut server = Framed::spawn();
+    let init = server.request(
+        "initialize",
+        serde_json::json!({
+            "processId": null,
+            "capabilities": {},
+        }),
+    );
+    assert!(init.get("result").is_some(), "{init}");
+    let capabilities = &init["result"]["capabilities"];
+    assert!(capabilities.get("completionProvider").is_some(), "{init}");
+    assert!(capabilities.get("inlayHintProvider").is_some(), "{init}");
+    server.notify("initialized", serde_json::json!({}));
+    server.notify(
+        "textDocument/didOpen",
+        serde_json::json!({
+            "textDocument": {
+                "uri": uri,
+                "languageId": "solid",
+                "version": 1,
+                "text": text,
+            }
+        }),
+    );
+    // The cycle publishes as S001 before any request runs.
+    let published = server.recv_notification("textDocument/publishDiagnostics");
+    let diags = published["params"]["diagnostics"]
+        .as_array()
+        .expect("diagnostics array");
+    assert!(diags.iter().any(|d| d["code"] == "S001"), "{published}");
+    // Completion over the wire: `lim` completes the let.
+    let completion = server.request(
+        "textDocument/completion",
+        serde_json::json!({
+            "textDocument": {"uri": uri},
+            "position": {"line": 0, "character": 11},
+        }),
+    );
+    let items = completion["result"].as_array().expect("items");
+    assert!(
+        items.iter().any(|item| item["label"] == "limit"),
+        "{completion}"
+    );
+    // Inlay hints over the wire: types with normalized durations.
+    let hints = server.request(
+        "textDocument/inlayHint",
+        serde_json::json!({
+            "textDocument": {"uri": uri},
+            "range": {
+                "start": {"line": 0, "character": 0},
+                "end": {"line": 4, "character": 0},
+            },
+        }),
+    );
+    let hints = hints["result"].as_array().expect("hints");
+    assert!(!hints.is_empty(), "hints expected");
+    // didChange re-publishes: the fixed document carries a version
+    // and no longer reports the cycle.
+    server.notify(
+        "textDocument/didChange",
+        serde_json::json!({
+            "textDocument": {"uri": uri, "version": 2},
+            "contentChanges": [{"text": "let limit = 5\nport = limit\n"}],
+        }),
+    );
+    let changed = server.recv_notification("textDocument/publishDiagnostics");
+    assert_eq!(changed["params"]["version"], 2, "{changed}");
+    assert!(
+        !changed["params"]["diagnostics"]
+            .as_array()
+            .expect("array")
+            .iter()
+            .any(|d| d["code"] == "S001"),
+        "{changed}"
+    );
+    // didClose clears with an empty publish and no version (stale
+    // clears with version 0 may be discarded by clients).
+    server.notify(
+        "textDocument/didClose",
+        serde_json::json!({"textDocument": {"uri": uri}}),
+    );
+    let cleared = server.recv_notification("textDocument/publishDiagnostics");
+    assert_eq!(
+        cleared["params"]["diagnostics"],
+        serde_json::json!([]),
+        "{cleared}"
+    );
+    assert!(
+        cleared["params"].get("version").is_none_or(|v| v.is_null()),
+        "close clear must be versionless: {cleared}"
+    );
+    server.shutdown();
+}
+
+#[test]
+fn stdio_shared_include_markers_survive_single_close() {
+    let (_lib_uri, lib_path) = temp_fixture("lspmultilib.solid", "[broken\n");
+    let (_a_uri, a_path) = temp_fixture(
+        "lspmultia.solid",
+        "include \"lspmultilib.solid\"\nport = 1\n",
+    );
+    let (_b_uri, b_path) = temp_fixture(
+        "lspmultib.solid",
+        "include \"lspmultilib.solid\"\nport = 2\n",
+    );
+    let lib_uri = lsp_types::Url::from_file_path(&lib_path)
+        .expect("file uri")
+        .to_string();
+    let a_uri = lsp_types::Url::from_file_path(&a_path)
+        .expect("file uri")
+        .to_string();
+    let b_uri = lsp_types::Url::from_file_path(&b_path)
+        .expect("file uri")
+        .to_string();
+
+    let mut server = Framed::spawn();
+    server.request(
+        "initialize",
+        serde_json::json!({"processId": null, "capabilities": {}}),
+    );
+    server.notify("initialized", serde_json::json!({}));
+    let open = |server: &mut Framed, uri: &str, version: i32, text: &str| {
+        server.notify(
+            "textDocument/didOpen",
+            serde_json::json!({
+                "textDocument": {"uri": uri, "languageId": "solid", "version": version, "text": text},
+            }),
+        );
+    };
+    let collect = |server: &mut Framed, n: usize| -> Vec<serde_json::Value> {
+        (0..n)
+            .map(|_| server.recv_notification("textDocument/publishDiagnostics"))
+            .collect()
+    };
+    let for_uri = |messages: &[serde_json::Value], uri: &str| {
+        messages
+            .iter()
+            .find(|m| m["params"]["uri"] == uri)
+            .unwrap_or_else(|| panic!("no publish for {uri}: {messages:?}"))
+            .clone()
+    };
+    let has_error = |message: &serde_json::Value| {
+        message["params"]["diagnostics"]
+            .as_array()
+            .expect("array")
+            .iter()
+            .any(|d| d["code"] == "E001")
+    };
+
+    open(&mut server, &lib_uri, 5, "[broken\n");
+    let lib_open = server.recv_notification("textDocument/publishDiagnostics");
+    assert!(has_error(&lib_open), "{lib_open}");
+    open(
+        &mut server,
+        &a_uri,
+        1,
+        "include \"lspmultilib.solid\"\nport = 1\n",
+    );
+    open(
+        &mut server,
+        &b_uri,
+        1,
+        "include \"lspmultilib.solid\"\nport = 2\n",
+    );
+    // Four publishes: A+lib, B+lib.
+    let mut first = collect(&mut server, 4);
+    assert!(has_error(&for_uri(&first, &lib_uri)), "{first:?}");
+    // Closing A clears A but republishes the still-owned library
+    // markers (never an empty clear while B owns them).
+    server.notify(
+        "textDocument/didClose",
+        serde_json::json!({"textDocument": {"uri": a_uri}}),
+    );
+    first = collect(&mut server, 2);
+    let cleared_a = for_uri(&first, &a_uri);
+    assert_eq!(
+        cleared_a["params"]["diagnostics"],
+        serde_json::json!([]),
+        "{first:?}"
+    );
+    let kept = for_uri(&first, &lib_uri);
+    assert!(
+        has_error(&kept),
+        "library markers must survive A's close: {first:?}"
+    );
+    // Closing B keeps them too: the library itself is still open and
+    // republishes its own state.
+    server.notify(
+        "textDocument/didClose",
+        serde_json::json!({"textDocument": {"uri": b_uri}}),
+    );
+    first = collect(&mut server, 2);
+    let kept = for_uri(&first, &lib_uri);
+    assert!(
+        has_error(&kept),
+        "library markers must survive B's close: {first:?}"
+    );
+    // Closing the library finally clears it, versionless.
+    server.notify(
+        "textDocument/didClose",
+        serde_json::json!({"textDocument": {"uri": lib_uri}}),
+    );
+    let cleared = server.recv_notification("textDocument/publishDiagnostics");
+    assert_eq!(cleared["params"]["uri"], lib_uri, "{cleared}");
+    assert_eq!(
+        cleared["params"]["diagnostics"],
+        serde_json::json!([]),
+        "{cleared}"
+    );
+    server.shutdown();
+}
+
+#[test]
+fn stdio_stale_include_groups_withdrawn() {
+    let (_lib_uri, lib_path) = temp_fixture("lspstalelib.solid", "[broken\n");
+    let (_main_uri, main_path) = temp_fixture(
+        "lspstalemain.solid",
+        "include \"lspstalelib.solid\"\nport = 1\n",
+    );
+    let lib_uri = lsp_types::Url::from_file_path(&lib_path)
+        .expect("file uri")
+        .to_string();
+    let main_uri = lsp_types::Url::from_file_path(&main_path)
+        .expect("file uri")
+        .to_string();
+
+    let mut server = Framed::spawn();
+    let init = server.request(
+        "initialize",
+        serde_json::json!({
+            "processId": null,
+            "capabilities": {},
+        }),
+    );
+    assert!(init.get("result").is_some(), "{init}");
+    server.notify("initialized", serde_json::json!({}));
+    // Open the library itself: its group carries the library's own
+    // version, and proves the E-code is real before main opens.
+    server.notify(
+        "textDocument/didOpen",
+        serde_json::json!({
+            "textDocument": {
+                "uri": lib_uri,
+                "languageId": "solid",
+                "version": 5,
+                "text": "[broken\n",
+            }
+        }),
+    );
+    let lib_open = server.recv_notification("textDocument/publishDiagnostics");
+    assert_eq!(lib_open["params"]["uri"], lib_uri, "{lib_open}");
+    assert_eq!(lib_open["params"]["version"], 5, "{lib_open}");
+    // Open main: two groups — main at version 1, the library still
+    // at its own version 5 (never the parent's).
+    server.notify(
+        "textDocument/didOpen",
+        serde_json::json!({
+            "textDocument": {
+                "uri": main_uri,
+                "languageId": "solid",
+                "version": 1,
+                "text": "include \"lspstalelib.solid\"\nport = 1\n",
+            }
+        }),
+    );
+    let first = server.recv_notification("textDocument/publishDiagnostics");
+    let second = server.recv_notification("textDocument/publishDiagnostics");
+    let by_uri =
+        |message: &serde_json::Value| message["params"]["uri"].as_str().unwrap().to_string();
+    assert!(
+        [by_uri(&first), by_uri(&second)].contains(&lib_uri)
+            && [by_uri(&first), by_uri(&second)].contains(&main_uri),
+        "{first} {second}"
+    );
+    let lib_group = if by_uri(&first) == lib_uri {
+        &first
+    } else {
+        &second
+    };
+    assert_eq!(lib_group["params"]["version"], 5, "{lib_group}");
+    // Remove the include: the library is still open itself, so its
+    // markers are preserved (republished from the remaining owner),
+    // never withdrawn while an owner remains.
+    server.notify(
+        "textDocument/didChange",
+        serde_json::json!({
+            "textDocument": {"uri": main_uri, "version": 2},
+            "contentChanges": [{"text": "port = 1\n"}],
+        }),
+    );
+    let mut saw_withdraw = false;
+    for _ in 0..2 {
+        let message = server.recv_notification("textDocument/publishDiagnostics");
+        if message["params"]["uri"] == lib_uri {
+            // The library is still open itself: its markers are
+            // preserved (republished from the remaining owner),
+            // never withdrawn while an owner remains.
+            assert!(
+                !message["params"]["diagnostics"]
+                    .as_array()
+                    .expect("array")
+                    .is_empty(),
+                "open library markers must survive: {message}"
+            );
+            saw_withdraw = true;
+        }
+    }
+    assert!(saw_withdraw, "library group must be preserved");
+    // Closing the library withdraws its group: no open document owns
+    // it anymore, so it clears (versionless).
+    server.notify(
+        "textDocument/didClose",
+        serde_json::json!({"textDocument": {"uri": lib_uri}}),
+    );
+    let withdrawn = server.recv_notification("textDocument/publishDiagnostics");
+    assert_eq!(withdrawn["params"]["uri"], lib_uri, "{withdrawn}");
+    assert_eq!(
+        withdrawn["params"]["diagnostics"],
+        serde_json::json!([]),
+        "{withdrawn}"
+    );
+    // Re-add the include while the library is closed: its group
+    // republishes from disk, versionless (no open buffer owns it).
+    // Removing it again clears the group the same way.
+    server.notify(
+        "textDocument/didChange",
+        serde_json::json!({
+            "textDocument": {"uri": main_uri, "version": 3},
+            "contentChanges": [{"text": "include \"lspstalelib.solid\"\nport = 1\n"}],
+        }),
+    );
+    let mut saw_disk = false;
+    for _ in 0..2 {
+        let message = server.recv_notification("textDocument/publishDiagnostics");
+        if message["params"]["uri"] == lib_uri {
+            assert!(
+                !message["params"]["diagnostics"]
+                    .as_array()
+                    .expect("array")
+                    .is_empty(),
+                "{message}"
+            );
+            assert!(
+                message["params"].get("version").is_none_or(|v| v.is_null()),
+                "disk-derived group must be versionless: {message}"
+            );
+            saw_disk = true;
+        }
+    }
+    assert!(saw_disk, "library group must republish from disk");
+    server.notify(
+        "textDocument/didChange",
+        serde_json::json!({
+            "textDocument": {"uri": main_uri, "version": 4},
+            "contentChanges": [{"text": "port = 1\n"}],
+        }),
+    );
+    let mut saw_clear = false;
+    for _ in 0..2 {
+        let message = server.recv_notification("textDocument/publishDiagnostics");
+        if message["params"]["uri"] == lib_uri {
+            assert_eq!(
+                message["params"]["diagnostics"],
+                serde_json::json!([]),
+                "{message}"
+            );
+            saw_clear = true;
+        }
+    }
+    assert!(saw_clear, "unowned library group must clear");
+    server.notify(
+        "textDocument/didClose",
+        serde_json::json!({"textDocument": {"uri": main_uri}}),
+    );
+    let cleared = server.recv_notification("textDocument/publishDiagnostics");
+    assert_eq!(cleared["params"]["uri"], main_uri, "{cleared}");
+    assert_eq!(
+        cleared["params"]["diagnostics"],
+        serde_json::json!([]),
+        "{cleared}"
+    );
     server.shutdown();
 }

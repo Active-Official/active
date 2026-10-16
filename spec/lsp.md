@@ -49,8 +49,10 @@ from comments or string contents.
   scope extents derived from node spans (innermost containing table
   outward, then `let` bindings); extents carry (line, column)
   precision so same-line sibling blocks never capture each other's
-  cursors, and scopes from other files never capture the cursor
-  (included spans share the line space). Definition ranges anchor
+  cursors, extend lexically to the next sibling-or-shallower scope
+  so open tables hold their trailing lines, and scopes from other
+  files never capture the cursor (included spans share the line
+  space). Definition ranges anchor
   on the value span's start so same-line duplicates (inline tables)
   point at the right declaration. Profile bodies resolve as
   document scope (approximation). Unresolvable names return `null`.
@@ -83,21 +85,68 @@ from comments or string contents.
 
 ## 4. Completions, diagnostics, inlay hints (C-044)
 
-- **Completions**: schema field names valid at the cursor's table
-  (from the active schema tree), in-scope `let` bindings, and the
-  keywords `true`/`false`/`null`. Prefix-filtered, sorted,
-  deterministic. No snippet or auto-import machinery.
-- **Diagnostics (push)**: on open and every change — parse errors
-  (E-codes), lint findings (L-codes, all enabled rules), healing
-  notices (H-codes as hints), and full evaluation + validation +
-  constraint diagnostics (resilient mode; S/T/W codes). Ranges from
-  spans; severity maps Error→Error, Warning→Warning, Info/Hint→Hint.
+- **Completions**: computed for the cursor's innermost table scope
+  (file-local scopes from §3, lexically extended to the next
+  sibling-or-shallower scope so fresh lines in open and empty
+  tables still complete in their table; profile bodies complete at
+  document scope). Sources, in order: (1) schema field names valid
+  at the scope's dotted path — walked from the active schema tree
+  (`SchemaTable` fields by segment; a `SchemaField` or anything
+  else yields no schema names); each item carries its type name as
+  detail; (2) all in-scope `let` bindings (lets are document-scoped;
+  kind Variable); (3) the keywords `true`/`false`/`null` (kind
+  Keyword). The prefix is the identifier characters immediately
+  before the cursor on its line (empty prefix completes
+  everything); matching is case-sensitive prefix match. Results
+  sort alphabetically by label for determinism. No snippet or
+  auto-import machinery, no trigger characters (clients request
+  explicitly).
+- **Diagnostics (push)**: on open and every change, one
+  notification per file with findings — the open document (always
+  published, even when clean, so stale markers clear) plus
+  included files with diagnostics (included spans resolve against
+  the included file's text; unreadable files publish zero ranges
+  on their own URI, never mis-ranged against the parent). Groups
+  that vanish (a removed include) are withdrawn with empty
+  publishes; closing a document clears everything it ever
+  published. Versions are per-URI: the open document's version for
+  its own URI, an open included buffer's version for its URI, and
+  no version otherwise (a parent's version is meaningless for
+  another file). Buffer matching is canonical-tolerant (exact file
+  path, then case-insensitive): include stamps carry canonical
+  paths that may differ textually from the client's URI, and a live
+  buffer always beats stale disk. Groups that vanish (a removed
+  include) are withdrawn with empty publishes; closing a document
+  clears everything it ever published — unless another open
+  document still publishes the URI (a shared include, or the
+  included file itself when still open), which republishes from
+  the remaining owner's current state instead. Sources:
+  parse errors (E-codes), evaluation diagnostics including
+  converted hard errors (cycles S001, budgets X0xx, validation
+  T0xx — resilient mode otherwise keeps them as ordinary
+  diagnostics alongside the tree), lint findings (L-codes, all
+  enabled rules), and healing notices (H-codes, merged once via
+  the evaluation records). One entry per diagnostic, sorted by
+  (line, character, code) for determinism. Severity maps
+  Error→Error, Warning→Warning, Info→Information, Hint→Hint.
+  Ranges come from spans; span-less diagnostics publish as
+  zero-length ranges at (0,0) rather than vanishing. The `source`
+  field is always `"solid"` and `code` carries the stable code.
   Unparseable files still publish what the recovering parser
-  salvaged.
-- **Inlay hints**: after each key/let value, its type (`: Int`)
-  and — for duration/byte quantities — the normalized form
-  (`5s` ⇒ `5000 ms`). Kind `Type`, padding on the left. Values
-  redact like hover.
+  salvaged; closing a document publishes an empty list with no
+  version (stale-versioned clears may be discarded).
+- **Inlay hints**: after each data key's value and each `let`
+  binding's expression, its type (`: Int`); durations and
+  quantities append the normalized form (`: Duration = 5000 ms`,
+  `: Int = 5242880 MiB` — byte quantities evaluate to integers,
+  so the unit reads from the source Quantity node). Positions come
+  from value/expression span ends (same-document nodes only).
+  Types prefer the schema type at the path, else the evaluated
+  value kind; `let` hints use the binding expression's static kind
+  (literals, arrays, tables, strings) and are absent when nothing
+  static is known. Secret values hint `: Secret` — never the
+  value. Kind `Type`, padding on the left. Hints outside a
+  requested range are withheld.
 
 ## 5. Code actions (C-045)
 

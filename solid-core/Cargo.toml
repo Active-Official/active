@@ -23,3 +23,9 @@ getrandom = "0.2"
 anyhow = { workspace = true }
 proptest = "1"
 indexmap = { workspace = true }
+criterion = "0.5"
+codspeed-criterion-compat = "2"
+
+[[bench]]
+name = "eval"
+harness = false

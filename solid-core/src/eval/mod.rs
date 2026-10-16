@@ -91,7 +91,7 @@ impl std::fmt::Display for BudgetKind {
 /// Runtime resource limits enforced by the evaluator accountant
 /// (spec/budgets.md §2, C-037). Every field `0` means unlimited —
 /// the embedder accepts the risk explicitly.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Budget {
     /// Maximum IR nodes visited (arena-length pre-check).
     pub max_nodes: u64,
@@ -578,6 +578,263 @@ fn check_dp_bounds(
     Ok((total, size))
 }
 
+/// Memo store for incremental evaluation (C-055, spec/performance.md
+/// §2): fingerprint → evaluated value plus the diagnostics produced
+/// while evaluating it. Reused across `evaluate_incremental` calls.
+/// Telemetry (`last_*`) refreshes every call. The store is bounded
+/// (see the cap in `evaluate_incremental`): clearing it only loses
+/// hits, never correctness.
+///
+/// Deliberately NOT `derive(Debug)`: the store holds evaluated
+/// values (including plaintext intermediates), and a derived dump
+/// would print document content into any log that formats the
+/// memo. The manual impl below reports shape only — entry count
+/// and telemetry. Secret-kind values additionally carry `Value`'s
+/// own redacting `Debug` wherever else they are formatted.
+pub struct IncrementalMemo {
+    map: HashMap<u64, (Value, Vec<Diagnostic>)>,
+    config: Option<(bool, Option<String>, Budget)>,
+    salt: u64,
+    pub last_eval_count: u64,
+    pub last_memo_hits: u64,
+}
+
+impl std::fmt::Debug for IncrementalMemo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IncrementalMemo")
+            .field("entries", &self.map.len())
+            .field("last_eval_count", &self.last_eval_count)
+            .field("last_memo_hits", &self.last_memo_hits)
+            .finish()
+    }
+}
+
+impl Default for IncrementalMemo {
+    fn default() -> Self {
+        Self {
+            map: HashMap::new(),
+            config: None,
+            salt: memo_salt(),
+            last_eval_count: 0,
+            last_memo_hits: 0,
+        }
+    }
+}
+
+/// One salt per memo (C-055 review): keeps fingerprint keys local to
+/// the memo that minted them. `getrandom` failure falls back to a
+/// fixed constant — uniqueness lost, correctness kept (a constant
+/// salt is exactly the old unsalted behavior).
+fn memo_salt() -> u64 {
+    let mut buf = [0u8; 8];
+    if getrandom::getrandom(&mut buf).is_ok() {
+        u64::from_le_bytes(buf)
+    } else {
+        0x9E37_79B9_7F4A_7C15
+    }
+}
+
+/// FNV-1a 64-bit mixer for fingerprints (C-055 §2). Chosen over
+/// SipHash (`DefaultHasher`) deliberately: per-node hasher
+/// construction dominates a 10k walk, and FNV-1a folds bytes ~10×
+/// cheaper with no allocation and no per-hasher setup. Implements
+/// `std::hash::Hasher` so every structural piece hashes through one
+/// path (`Hash` impls, discriminant bytes, float bit patterns) with
+/// zero formatting. The 64-bit width is load-bearing — a collision
+/// would serve a stale value — so fingerprints must never narrow.
+/// `usize` lengths hash platform-wide; harmless because memos never
+/// cross processes (fingerprints are in-memory keys, never
+/// persisted), but they must never be persisted without review.
+struct FpHasher(u64);
+
+impl FpHasher {
+    fn new(salt: u64) -> Self {
+        // Per-memo salt: keys stay unique to the memo that minted
+        // them, so a logged or leaked key is not a stable
+        // cross-process oracle for short secret-derived values, and
+        // any collision search starts over per memo. Output
+        // determinism is unaffected — the salt only names keys.
+        Self(14_695_981_039_346_656_037 ^ salt)
+    }
+}
+
+impl std::hash::Hasher for FpHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.0 ^= u64::from(byte);
+            self.0 = self.0.wrapping_mul(1_099_511_628_211);
+        }
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+/// Structural hash of a literal value (no formatting: discriminants,
+/// integer/float bit patterns, and raw string bytes feed the mixer
+/// directly). Floats hash by bit pattern — `-0.0` vs `0.0` or
+/// differing NaN payloads fingerprint apart and simply miss the
+/// memo, which is the safe direction. Table order is the binding
+/// order, which evaluation preserves deterministically.
+fn fp_value(hasher: &mut FpHasher, value: &Value) {
+    use std::hash::Hash;
+    match value {
+        Value::Null => 0u8.hash(hasher),
+        Value::Bool(flag) => {
+            1u8.hash(hasher);
+            flag.hash(hasher);
+        }
+        Value::Int(num) => {
+            2u8.hash(hasher);
+            num.hash(hasher);
+        }
+        Value::Float(num) => {
+            3u8.hash(hasher);
+            num.to_bits().hash(hasher);
+        }
+        Value::String(text) => {
+            4u8.hash(hasher);
+            text.hash(hasher);
+        }
+        Value::DurationMs(millis) => {
+            5u8.hash(hasher);
+            millis.hash(hasher);
+        }
+        Value::Quantity(amount, unit) => {
+            6u8.hash(hasher);
+            amount.to_bits().hash(hasher);
+            unit.hash(hasher);
+        }
+        Value::Array(items) => {
+            7u8.hash(hasher);
+            items.len().hash(hasher);
+            for item in items {
+                fp_value(hasher, item);
+            }
+        }
+        Value::Table(fields) => {
+            8u8.hash(hasher);
+            fields.len().hash(hasher);
+            for (key, item) in fields {
+                key.hash(hasher);
+                fp_value(hasher, item);
+            }
+        }
+        // Same-process memo key only: secrecy rests on the redacting
+        // `Debug` impl and export refusal, never on hiding this hash.
+        Value::Secret(text) => {
+            9u8.hash(hasher);
+            text.hash(hasher);
+        }
+    }
+}
+
+/// Structural fingerprint of one node for incremental memoization:
+/// expression shape, literal data, environment values read, and the
+/// already-computed fingerprints of structural children. `cache` is
+/// arena-indexed (`NodeId.0` is a dense arena index): the caller
+/// walks in topological order, so every dependency's fingerprint is
+/// already stored — no recursion, no stack risk on deep chains, no
+/// hash-map lookup per edge. Returns None for shapes with no stable
+/// form (schema/patch/profile nodes evaluate to Null or outside the
+/// walk anyway); unhashable nodes simply re-evaluate every call.
+/// Same fingerprint ⇒ same value: every input the evaluator can
+/// observe (literals, env snapshot, dependency values) feeds the
+/// hash.
+fn fingerprint_one(
+    engine: &Engine,
+    module: &Module,
+    id: NodeId,
+    cache: &[Option<u64>],
+    salt: u64,
+) -> Option<u64> {
+    use std::hash::{Hash, Hasher};
+    let child = |dep: &NodeId| cache.get(dep.0 as usize).copied().flatten();
+    let mut hasher = FpHasher::new(salt);
+    match module.get(id)? {
+        Node::Literal(v) => {
+            0u8.hash(&mut hasher);
+            fp_value(&mut hasher, v);
+        }
+        Node::Env { name, default } => {
+            1u8.hash(&mut hasher);
+            name.hash(&mut hasher);
+            engine.env.get(name).hash(&mut hasher);
+            match default {
+                Some(d) => child(d)?.hash(&mut hasher),
+                None => 0u8.hash(&mut hasher),
+            }
+        }
+        Node::Secret { locator } => {
+            2u8.hash(&mut hasher);
+            child(locator)?.hash(&mut hasher);
+        }
+        Node::Ref(target) => {
+            3u8.hash(&mut hasher);
+            child(target)?.hash(&mut hasher);
+        }
+        Node::Ident(name) => {
+            4u8.hash(&mut hasher);
+            name.hash(&mut hasher);
+        }
+        Node::Interpolate { parts } => {
+            5u8.hash(&mut hasher);
+            parts.len().hash(&mut hasher);
+            for part in parts {
+                match part {
+                    crate::ir::InterpPart::Literal(s) => {
+                        0u8.hash(&mut hasher);
+                        s.hash(&mut hasher);
+                    }
+                    crate::ir::InterpPart::Expr(e) => {
+                        1u8.hash(&mut hasher);
+                        child(e)?.hash(&mut hasher);
+                    }
+                }
+            }
+        }
+        Node::Binary { op, lhs, rhs } => {
+            6u8.hash(&mut hasher);
+            op.hash(&mut hasher);
+            child(lhs)?.hash(&mut hasher);
+            child(rhs)?.hash(&mut hasher);
+        }
+        Node::Unary { op, expr } => {
+            7u8.hash(&mut hasher);
+            op.hash(&mut hasher);
+            child(expr)?.hash(&mut hasher);
+        }
+        Node::Array { elements } => {
+            8u8.hash(&mut hasher);
+            elements.len().hash(&mut hasher);
+            for element in elements {
+                child(element)?.hash(&mut hasher);
+            }
+        }
+        Node::Table { fields } => {
+            9u8.hash(&mut hasher);
+            fields.len().hash(&mut hasher);
+            for (key, child_id) in fields {
+                key.hash(&mut hasher);
+                child(child_id)?.hash(&mut hasher);
+            }
+        }
+        Node::Quantity { value, unit } => {
+            10u8.hash(&mut hasher);
+            unit.hash(&mut hasher);
+            child(value)?.hash(&mut hasher);
+        }
+        Node::Semantic { tag, inner } => {
+            11u8.hash(&mut hasher);
+            tag.as_str().hash(&mut hasher);
+            child(inner)?.hash(&mut hasher);
+        }
+        _ => return None,
+    }
+    Some(hasher.finish())
+}
+
 impl Engine {
     pub fn new() -> Self {
         Self {
@@ -603,6 +860,53 @@ impl Engine {
     }
 
     pub fn evaluate(&self, module: &Module) -> Result<(Value, Vec<Diagnostic>), EvalError> {
+        self.evaluate_inner(module, None)
+    }
+
+    /// Incremental evaluation over a reused memo store (C-055,
+    /// spec/performance.md §2): nodes whose structural fingerprint
+    /// (expression shape, literal data, env values read, and
+    /// dependency fingerprints) matches a previous call serve the
+    /// memoized value and diagnostics; only the affected sub-DAG
+    /// re-evaluates. Configuration changes (resilient flag, profile
+    /// override, budgets) clear the store first. Post-walk
+    /// transforms (profiles, patches, validation) re-run every
+    /// call — they compose the final tree and stay cheap relative
+    /// to the walk they follow.
+    pub fn evaluate_incremental(
+        &self,
+        module: &Module,
+        memo: &mut IncrementalMemo,
+    ) -> Result<(Value, Vec<Diagnostic>), EvalError> {
+        // `Budget` compares by value (all fields are `u64`): any
+        // configuration change clears the store before the walk.
+        let token = (self.resilient, self.profile_override.clone(), self.budget);
+        if memo.config.as_ref() != Some(&token) {
+            memo.map.clear();
+            memo.config = Some(token);
+        }
+        memo.last_eval_count = 0;
+        memo.last_memo_hits = 0;
+        let outcome = self.evaluate_inner(module, Some(memo));
+        // Bound the store: every document version inserts novel
+        // fingerprints, so without eviction a long-lived memo (the
+        // language server reuses one per document) grows with edit
+        // history. Clearing only loses hits — correctness is
+        // unaffected — and the bound is a pure function of counts,
+        // so behavior stays deterministic: same edit history, same
+        // clears, same outputs.
+        let cap = module.arena.len().saturating_mul(4).max(1024);
+        if memo.map.len() > cap {
+            memo.map.clear();
+        }
+        outcome
+    }
+
+    fn evaluate_inner(
+        &self,
+        module: &Module,
+        mut memo: Option<&mut IncrementalMemo>,
+    ) -> Result<(Value, Vec<Diagnostic>), EvalError> {
         // The deadline covers everything from here on (spec/budgets.md
         // §2): static scans, cycle check, sort, walk, transforms, and
         // validation share one clock.
@@ -639,6 +943,18 @@ impl Engine {
         // `deadline` was computed at entry and shared with validation.
         let mut visited = 0u64;
 
+        // Fingerprints for this call (arena-indexed cache, sized
+        // once): computed inline during the walk below, which runs
+        // in topological order — every dependency's fingerprint is
+        // already stored when its dependents hash. No recursion, no
+        // stack risk on deep chains, no second pass over the graph.
+        // Allocated only for incremental calls; plain `evaluate`
+        // pays nothing.
+        let mut fp_cache: Vec<Option<u64>> = if memo.is_some() {
+            vec![None; module.arena.len()]
+        } else {
+            Vec::new()
+        };
         for node_idx in order {
             visited += 1;
             if visited % 1024 == 0 {
@@ -656,7 +972,49 @@ impl Engine {
             }
             let node_id = module.graph[node_idx];
             let node = module.get(node_id).ok_or(EvalError::MissingNode(node_id))?;
+            // Incremental fast path: the fingerprint is computed
+            // inline (dependencies already walked, so their prints
+            // are cached) and an identical print serves the memoized
+            // value and its diagnostics verbatim — except positions.
+            // Served diagnostics are re-anchored to the CURRENT
+            // module's span/file for this node: the memo may hold
+            // diagnostics from an earlier parse where the node sat
+            // on different lines (the W001 stale-span bug). This is
+            // exact, not a guess: every diagnostic the walk emits
+            // is node-local, and post-walk transforms (profiles,
+            // patches, validation) re-run every call rather than
+            // serving memoized diagnostics.
+            let mut memo_fp = None;
+            if let Some(memo) = memo.as_mut() {
+                let salt = memo.salt;
+                if let Some(fp) = fingerprint_one(self, module, node_id, &fp_cache, salt) {
+                    if let Ok(index) = usize::try_from(node_id.0) {
+                        if let Some(slot) = fp_cache.get_mut(index) {
+                            *slot = Some(fp);
+                        }
+                    }
+                    memo_fp = Some(fp);
+                    if let Some((value, diags)) = memo.map.get(&fp) {
+                        values.insert(node_id, value.clone());
+                        let span = module.node_spans.get(&node_id).cloned();
+                        let file = module.node_files.get(&node_id).cloned();
+                        diagnostics.extend(diags.iter().map(|d| {
+                            let mut fresh = d.clone();
+                            // Unconditional: a missing current
+                            // position means "unknown", and serving
+                            // a stale position as fact is worse
+                            // than serving none.
+                            fresh.span = span.clone();
+                            fresh.file = file.clone();
+                            fresh
+                        }));
+                        memo.last_memo_hits += 1;
+                        continue;
+                    }
+                }
+            }
 
+            let diag_mark = diagnostics.len();
             let value = match node {
                 Node::Literal(v) => v.clone(),
 
@@ -814,6 +1172,15 @@ impl Engine {
 
                 _ => Value::Null,
             };
+            // Memoize the fresh result under its fingerprint for
+            // later calls (misses only — hits continued above).
+            if let Some(memo) = memo.as_mut() {
+                memo.last_eval_count += 1;
+                if let Some(fp) = memo_fp {
+                    let fresh = diagnostics[diag_mark..].to_vec();
+                    memo.map.insert(fp, (value.clone(), fresh));
+                }
+            }
 
             values.insert(node_id, value);
         }

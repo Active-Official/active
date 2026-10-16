@@ -1,0 +1,29 @@
+name: CodSpeed
+
+# Continuous benchmarking for the C-055 performance contract
+# (spec/performance.md): every push/PR runs the criterion suite
+# through the CodSpeed runner, which fails on significant
+# regression vs the base branch. Local runs use plain
+# `cargo bench -p solid-core --bench eval`.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmarks:
+    name: Benchmarks (CodSpeed)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run benchmarks
+        uses: CodSpeedHQ/action@v3
+        with:
+          run: cargo bench -p solid-core --bench eval --locked

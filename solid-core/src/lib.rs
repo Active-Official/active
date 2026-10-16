@@ -18,7 +18,7 @@ pub mod types;
 pub mod validate;
 
 pub use diag::{Diagnostic, Repair, RepairKind, Severity};
-pub use eval::{Budget, BudgetKind, Engine, EvalError};
+pub use eval::{Budget, BudgetKind, Engine, EvalError, IncrementalMemo};
 pub use ir::{
     Annotation, AnnotationKind, Attachment, BinOp, DependsOn, IncludeStmt, InterpPart, Module,
     Node, NodeId, PatchOp, SchemaField, SemanticTag, Style, TriviaComment, UnOp, Value,

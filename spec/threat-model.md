@@ -62,6 +62,21 @@ Mitigations:
   around the protection — the toolchain cannot distinguish
   sensitive plain data. Mitigation is social: lint rule L004
   flags probable literals, and this model says so plainly.
+- Incremental memo entries (C-055): the memo is same-process
+  memory holding evaluated values, including plaintext
+  intermediates — same exposure as the evaluator's own value
+  map, and never a cross-process artifact. Three properties
+  bound the risk, all pinned by test or construction: (1)
+  fingerprint keys are salted per memo, so a key is not a
+  stable cross-process oracle for short secret-derived values;
+  (2) `IncrementalMemo`'s `Debug` reports shape only (entry
+  count, telemetry), never document content; (3) the 64-bit
+  FNV-1a width is load-bearing — a collision would serve a
+  stale value. Forging one against a salted, same-process memo
+  (e.g. via a crafted document in a shared language-server
+  engine) requires per-memo 2^64-scale work and yields only
+  that process's values: documented here, not defended
+  further — verify-on-hit would cost the memo its purpose.
 
 ### 3.3 Resource exhaustion
 

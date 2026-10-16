@@ -1,0 +1,5 @@
+schema = {
+  sneaky = Bool,
+}
+
+port = 1

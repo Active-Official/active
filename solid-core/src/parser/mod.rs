@@ -44,9 +44,15 @@ const MAX_EXPR_DEPTH: usize = 64;
 /// on pathological input; exceeding it is E011 (see C-037).
 const MAX_BLOCK_DEPTH: usize = 64;
 
+/// Maximum schema-type nesting depth (`Array<Array<…>>`,
+/// `Table { … Table { … } … }`). Bounds parser recursion on pathological
+/// input; exceeding it is E004 (see C-037).
+const MAX_SCHEMA_DEPTH: usize = 64;
+
 use crate::diag::{thresholds, Diagnostic, Repair, RepairKind, Severity, Span};
-use crate::ir::{NodeId, SemanticTag, *};
-use crate::types::Unit;
+use crate::ir::{NodeId, SchemaField, SemanticTag, *};
+use crate::types::{SolidType, Unit};
+use indexmap::IndexMap;
 
 /// Options controlling parsing and healing behavior.
 #[derive(Debug, Clone, Copy)]
@@ -179,6 +185,7 @@ fn parse_recovering_impl(
         depth: 0,
         options,
         block_depth: 0,
+        schema_depth: 0,
         comments: lexed.comments,
         statements: Vec::new(),
         blocks: Vec::new(),
@@ -188,6 +195,8 @@ fn parse_recovering_impl(
         current_file: root_file.map(|p| p.to_path_buf()),
         include_stack: Vec::new(),
         in_include: false,
+        in_profile: false,
+        array_depth: 0,
         binding_spliced: std::collections::HashSet::new(),
         pending_profiles: Vec::new(),
     };
@@ -202,6 +211,10 @@ fn parse_recovering_impl(
     parser.module.healing.extend(lexed.repairs);
     parser.errors.extend(lexed.errors);
     parser.parse_document();
+    // Schema extraction before graph build: `schema` tables leave value
+    // fields for the schema tree (spec §2.10), so neither sibling
+    // resolution nor evaluation ever sees them as data.
+    parser.extract_schemas();
     parser.attach_trivia();
     parser.module.source_style = if parser.indent_tables > parser.brace_tables {
         Style::Indent
@@ -400,6 +413,10 @@ struct Parser {
     options: ParseOptions,
     /// Current block nesting depth, guarded by MAX_BLOCK_DEPTH.
     block_depth: usize,
+    /// Current schema-type nesting depth (`Array<…>` / `Table {…}`),
+    /// guarded by MAX_SCHEMA_DEPTH. Schema recursion bypasses both the
+    /// expression and block guards, so it needs its own counter.
+    schema_depth: usize,
     /// Comments from the lexer, awaiting attachment computation.
     comments: Vec<(String, Span)>,
     /// Statement records used for comment attachment (spec §7).
@@ -419,6 +436,14 @@ struct Parser {
     /// True while parsing an included file: `let` bindings use
     /// first-wins (local) semantics instead of overwriting.
     in_include: bool,
+    /// True while parsing a profile body: `schema` tables are E020
+    /// there (profiles merge values; the root schema validates).
+    in_profile: bool,
+    /// Array nesting depth: `schema` blocks are E020 inside array
+    /// elements (spec §2.10) — element types use `Array<T>`, so inline
+    /// metadata blocks would only evade schema extraction and leak
+    /// `"schema": null` into exports.
+    array_depth: usize,
     /// Binding names contributed by includes (module-global). A local
     /// `let` clears its mark, so later includes skip it (local-wins)
     /// while earlier-only names cascade.
@@ -485,6 +510,15 @@ struct PendingInclude {
     /// included patches splice in at this position so application order
     /// matches textual source order across files (spec §2.9).
     patch_mark: usize,
+}
+
+/// What terminates a schema entry list (spec §2.10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SchemaEnd {
+    /// `}` closes an inline or brace-form schema table.
+    Brace,
+    /// A Dedent (or EOF) closes an indentation-form schema body.
+    Indent,
 }
 
 /// A profile scope stashed for the final resolution pass: ident nodes
@@ -966,13 +1000,16 @@ impl Parser {
         self.ident_scopes.push(Vec::new());
         let mut fields = indexmap::IndexMap::new();
         let mut pending = Vec::new();
+        let saved_in_profile = self.in_profile;
+        self.in_profile = true;
         match body {
             ProfileBody::Brace => self.parse_body(&mut fields, BodyEnd::Brace, &mut pending),
             ProfileBody::Block(level) => {
                 self.parse_body(&mut fields, BodyEnd::Block(level), &mut pending)
             }
         }
-        self.splice_includes(&mut fields, pending);
+        self.in_profile = saved_in_profile;
+        self.splice_includes(&mut fields, pending, true);
         let idents = self.ident_scopes.pop().unwrap_or_default();
         // Sibling resolution against the profile's own fields happens in
         // the final pass (together with the root fallback) so forward
@@ -1171,9 +1208,13 @@ impl Parser {
         let saved_brace = self.brace_tables;
         let saved_indent = self.indent_tables;
         let saved_in_include = self.in_include;
+        let saved_in_profile = self.in_profile;
         self.current_file = Some(canonical.clone());
         self.include_stack.push(canonical);
         self.in_include = true;
+        // An included file is a fresh document: profiles allowed at its
+        // root, with resolution deferred to the outer document end.
+        self.in_profile = false;
         // Included files lex fresh (their own Indent/Dedent stacks).
         let mut lexer = Lexer::new(&src);
         let lexed = lexer.tokenize();
@@ -1206,6 +1247,7 @@ impl Parser {
         self.brace_tables = saved_brace;
         self.indent_tables = saved_indent;
         self.in_include = saved_in_include;
+        self.in_profile = saved_in_profile;
         self.ident_scopes = saved_scopes;
         sub_root
     }
@@ -1217,10 +1259,13 @@ impl Parser {
     /// level (see merge_tables_at). An included file's `let` bindings
     /// merge into the shared bindings without overwriting local ones;
     /// private includes contribute only bindings, never fields.
+    /// `profile_scope` is true when the target scope is a profile body:
+    /// schemas arriving through those includes are E020 (spec §2.10).
     fn splice_includes(
         &mut self,
         fields: &mut indexmap::IndexMap<String, NodeId>,
         mut pending: Vec<PendingInclude>,
+        profile_scope: bool,
     ) {
         if pending.is_empty() {
             return;
@@ -1318,6 +1363,78 @@ impl Parser {
                 }
             }
         }
+        if profile_scope {
+            self.reject_profile_schemas(fields);
+        }
+    }
+
+    /// Reject schemas that entered a profile through an include (spec
+    /// §2.10, E020). Direct schema blocks are already banned inside
+    /// profiles (`in_profile`), but included files parse fresh with
+    /// `in_profile = false`, so without this check an included schema
+    /// would survive as a SchemaTable value, evaluate to Null, and leak
+    /// `"schema": null` into profile exports. Every offending schema is
+    /// reported at its own span (with its file) and detached so profile
+    /// values stay clean; the rest of the included data merges normally.
+    /// Ancestor data tables are preserved: only the schema keys leave.
+    fn reject_profile_schemas(&mut self, fields: &mut IndexMap<String, NodeId>) {
+        let keys: Vec<(String, NodeId)> = fields.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        for (key, id) in keys {
+            if matches!(self.module.get(id), Some(Node::SchemaTable { .. })) {
+                self.report_profile_schema(id);
+                fields.shift_remove(&key);
+                continue;
+            }
+            let mut hits = Vec::new();
+            self.strip_schema_tables(id, &mut hits);
+            for hit in hits {
+                self.report_profile_schema(hit);
+            }
+        }
+    }
+
+    /// Report one include-smuggled profile schema at its own span.
+    fn report_profile_schema(&mut self, schema_id: NodeId) {
+        let span = self.module.node_spans.get(&schema_id).cloned();
+        let file = self.module.node_files.get(&schema_id).cloned();
+        self.errors.push(Diagnostic {
+            severity: Severity::Error,
+            code: "E020".into(),
+            message: "schemas may not appear inside profiles, including through includes; move the schema to the document root".into(),
+            path: None,
+            span,
+            repair: None,
+            confidence: 1.0,
+            file,
+        });
+    }
+
+    /// Remove SchemaTable nodes under the value table `id`, recursing
+    /// into nested tables (an aliased include can nest a schema under
+    /// data). Direct schema children leave by key; deeper hits are
+    /// removed in place so ancestor data tables survive. Collects every
+    /// removed schema node for diagnostics.
+    fn strip_schema_tables(&mut self, id: NodeId, out: &mut Vec<NodeId>) {
+        let children: Vec<(String, NodeId)> = match self.module.get(id) {
+            Some(Node::Table { fields }) => fields.clone().into_iter().collect(),
+            // A schema node here means strip was called on one directly;
+            // the caller drops its key, so just record it.
+            Some(Node::SchemaTable { .. }) => {
+                out.push(id);
+                return;
+            }
+            _ => return,
+        };
+        for (k, v) in &children {
+            if matches!(self.module.get(*v), Some(Node::SchemaTable { .. })) {
+                if let Some(Node::Table { fields }) = self.module.get_mut(id) {
+                    fields.shift_remove(k);
+                }
+                out.push(*v);
+            } else {
+                self.strip_schema_tables(*v, out);
+            }
+        }
     }
 
     /// Merge one included value under `key` (spec §2.7 defaults rule):
@@ -1359,6 +1476,22 @@ impl Parser {
         spliced: &mut std::collections::HashSet<String>,
         overwrite: bool,
     ) {
+        // SchemaTable × SchemaTable unions field-wise like value tables
+        // (spec §2.10): an included schema merges with a local one
+        // instead of clobbering it. Schema-vs-data conflicts fall
+        // through to the scalar rules below.
+        if matches!(self.module.get(inc_id), Some(Node::SchemaTable { .. })) {
+            if let Some(&local_id) = fields.get(key) {
+                if local_id != inc_id
+                    && matches!(self.module.get(local_id), Some(Node::SchemaTable { .. }))
+                {
+                    if self.merge_schemas_inner(local_id, inc_id, key, spliced, overwrite) {
+                        spliced.insert(key.to_string());
+                    }
+                    return;
+                }
+            }
+        }
         let Some(Node::Table { fields: inc_fields }) = self.module.get(inc_id) else {
             // Scalar-vs-table conflict: replace only when cascading over a
             // fully include-provided table. A table with any local
@@ -1407,8 +1540,24 @@ impl Parser {
                     if sub_local == *v {
                         continue;
                     }
+                    let local_kind = self.module.get(sub_local).cloned();
+                    let inc_kind = self.module.get(*v).cloned();
+                    // Nested schemas union like their parents (spec §2.10).
+                    if matches!(
+                        (&local_kind, &inc_kind),
+                        (
+                            Some(Node::SchemaTable { .. }),
+                            Some(Node::SchemaTable { .. })
+                        )
+                    ) {
+                        let sub_overwrite = overwrite && spliced.contains(&child);
+                        if self.merge_schemas_inner(sub_local, *v, &child, spliced, sub_overwrite) {
+                            changed = true;
+                        }
+                        continue;
+                    }
                     let both_tables = matches!(
-                        (self.module.get(sub_local), self.module.get(*v)),
+                        (&local_kind, &inc_kind),
                         (Some(Node::Table { .. }), Some(Node::Table { .. }))
                     );
                     if !both_tables {
@@ -1470,8 +1619,24 @@ impl Parser {
                     if sub_local == *v {
                         continue;
                     }
+                    let local_kind = self.module.get(sub_local).cloned();
+                    let inc_kind = self.module.get(*v).cloned();
+                    // Nested schemas union like their parents (spec §2.10).
+                    if matches!(
+                        (&local_kind, &inc_kind),
+                        (
+                            Some(Node::SchemaTable { .. }),
+                            Some(Node::SchemaTable { .. })
+                        )
+                    ) {
+                        let sub_overwrite = overwrite && spliced.contains(&child);
+                        if self.merge_schemas_inner(sub_local, *v, &child, spliced, sub_overwrite) {
+                            changed = true;
+                        }
+                        continue;
+                    }
                     let both_tables = matches!(
-                        (self.module.get(sub_local), self.module.get(*v)),
+                        (&local_kind, &inc_kind),
                         (Some(Node::Table { .. }), Some(Node::Table { .. }))
                     );
                     if !both_tables {
@@ -1492,6 +1657,82 @@ impl Parser {
         if changed {
             if let Some(Node::Table { fields: slot }) = self.module.get_mut(local_id) {
                 *slot = merged;
+            }
+        }
+        changed
+    }
+
+    /// Union an included schema table into a local one in place (spec
+    /// §2.10): missing fields are taken, conflicting leaf fields follow
+    /// local-wins (or cascade when `overwrite` over an included path),
+    /// nested schema tables recurse, and `closed` follows the winner.
+    /// Merging in place keeps edges valid; returns true on mutation.
+    fn merge_schemas_inner(
+        &mut self,
+        local_id: NodeId,
+        inc_id: NodeId,
+        path: &str,
+        spliced: &mut std::collections::HashSet<String>,
+        overwrite: bool,
+    ) -> bool {
+        let (local_fields, local_closed) = match self.module.get(local_id) {
+            Some(Node::SchemaTable { fields, closed }) => (fields.clone(), *closed),
+            _ => return false,
+        };
+        let (inc_fields, inc_closed) = match self.module.get(inc_id) {
+            Some(Node::SchemaTable { fields, closed }) => (fields.clone(), *closed),
+            _ => return false,
+        };
+        let mut merged = local_fields;
+        let mut merged_closed = local_closed;
+        let mut changed = false;
+        if overwrite && merged_closed != inc_closed {
+            merged_closed = inc_closed;
+            changed = true;
+        }
+        for (k, v) in &inc_fields {
+            let child = format!("{path}.{k}");
+            match merged.get(k) {
+                None => {
+                    merged.insert(k.clone(), *v);
+                    self.module.add_edge(*v, local_id);
+                    self.mark_subtree(&child, *v, spliced);
+                    changed = true;
+                }
+                Some(&sub_local) => {
+                    if sub_local == *v {
+                        continue;
+                    }
+                    let both_schema = matches!(
+                        (self.module.get(sub_local), self.module.get(*v)),
+                        (
+                            Some(Node::SchemaTable { .. }),
+                            Some(Node::SchemaTable { .. })
+                        )
+                    );
+                    if both_schema {
+                        let sub_overwrite = overwrite && spliced.contains(&child);
+                        if self.merge_schemas_inner(sub_local, *v, &child, spliced, sub_overwrite) {
+                            changed = true;
+                        }
+                        continue;
+                    }
+                    if overwrite && spliced.contains(&child) {
+                        merged.insert(k.clone(), *v);
+                        self.module.add_edge(*v, local_id);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if changed {
+            if let Some(Node::SchemaTable {
+                fields: slot,
+                closed,
+            }) = self.module.get_mut(local_id)
+            {
+                *slot = merged;
+                *closed = merged_closed;
             }
         }
         changed
@@ -1522,7 +1763,9 @@ impl Parser {
     }
 
     /// Mark a key path and every table path below it as include-provided,
-    /// so nested cascade decisions see the full provenance.
+    /// so nested cascade decisions see the full provenance. Schema
+    /// tables descend like value tables: without this, a later include
+    /// could never cascade over an earlier include's schema fields.
     fn mark_subtree(
         &self,
         path: &str,
@@ -1530,12 +1773,15 @@ impl Parser {
         spliced: &mut std::collections::HashSet<String>,
     ) {
         spliced.insert(path.to_string());
-        if let Some(Node::Table { fields }) = self.module.get(id) {
-            let fields = fields.clone();
-            for (k, v) in &fields {
-                let child = format!("{path}.{k}");
-                self.mark_subtree(&child, *v, spliced);
+        let children: Vec<(String, NodeId)> = match self.module.get(id) {
+            Some(Node::Table { fields }) | Some(Node::SchemaTable { fields, .. }) => {
+                fields.clone().into_iter().collect()
             }
+            _ => return,
+        };
+        for (k, v) in &children {
+            let child = format!("{path}.{k}");
+            self.mark_subtree(&child, *v, spliced);
         }
     }
 
@@ -1561,6 +1807,24 @@ impl Parser {
             );
             return;
         };
+        // A `schema:` header parses its indented body as a schema
+        // (spec §2.10).
+        if key == "schema" {
+            if self.in_profile {
+                self.error_at("E020", "schemas may not appear inside profiles", &key_tok);
+                return;
+            }
+            self.indent_tables += 1;
+            self.record_stmt(
+                &key,
+                key_tok.line,
+                self.last_end_line(),
+                key_tok.col.saturating_sub(1) as usize,
+            );
+            let node = self.parse_schema_indent(&key_tok, level);
+            parent.insert(key, node);
+            return;
+        }
         self.indent_tables += 1;
         let stmt_idx = self.statements.len();
         self.statements.push(StmtInfo {
@@ -1580,7 +1844,7 @@ impl Parser {
         let mut fields = indexmap::IndexMap::new();
         let mut pending = Vec::new();
         self.parse_body(&mut fields, BodyEnd::Block(level), &mut pending);
-        self.splice_includes(&mut fields, pending);
+        self.splice_includes(&mut fields, pending, false);
         let idents = self.ident_scopes.pop().unwrap_or_default();
         let _ = self.resolve_sibling_refs(idents, &fields);
         let table_id = self.module.add_node(Node::Table { fields });
@@ -1596,6 +1860,24 @@ impl Parser {
             .expect(TokenKind::Ident)
             .map(|t| t.text)
             .unwrap_or_default();
+        // A `schema` table block parses as a schema (spec §2.10).
+        // The `{` is still next: parse_schema_brace consumes it.
+        if key == "schema" {
+            if self.in_profile {
+                self.error_at("E020", "schemas may not appear inside profiles", &key_tok);
+                return;
+            }
+            self.brace_tables += 1;
+            self.record_stmt(
+                &key,
+                key_tok.line,
+                self.last_end_line(),
+                key_tok.col.saturating_sub(1) as usize,
+            );
+            let node = self.parse_schema_brace(&key_tok);
+            parent.insert(key, node);
+            return;
+        }
         self.expect(TokenKind::LBrace);
         self.brace_tables += 1;
         let stmt_idx = self.statements.len();
@@ -1616,7 +1898,7 @@ impl Parser {
         let mut fields = indexmap::IndexMap::new();
         let mut pending = Vec::new();
         self.parse_body(&mut fields, BodyEnd::Brace, &mut pending);
-        self.splice_includes(&mut fields, pending);
+        self.splice_includes(&mut fields, pending, false);
         let idents = self.ident_scopes.pop().unwrap_or_default();
         let _ = self.resolve_sibling_refs(idents, &fields);
         let table_id = self.module.add_node(Node::Table { fields });
@@ -1637,6 +1919,85 @@ impl Parser {
             confidence: 1.0,
             file: self.current_file_name(),
         });
+    }
+
+    /// Extract `schema` tables from value fields into the schema tree
+    /// (spec §2.10, C-030). Runs once per document after the body parses
+    /// and includes splice, before the dependency graph builds. A `schema`
+    /// key holding a SchemaTable node becomes schema (never data); any
+    /// other `schema`-keyed value stays ordinary data. Nested schemas
+    /// attach under their parent's schema node, creating open parents
+    /// as needed. Runs only at the top-level document; included files
+    /// contribute through the shared fields.
+    fn extract_schemas(&mut self) {
+        if self.in_include {
+            return;
+        }
+        let Some(root) = self.module.root else {
+            return;
+        };
+        if let Some(schema_id) = self.extract_table_schema(root) {
+            self.module.schema = Some(schema_id);
+        }
+    }
+
+    /// Extract schemas from one value table node. Returns the schema
+    /// node for this table when it has a direct `schema` child or any
+    /// nested schemas, creating an open parent as needed.
+    fn extract_table_schema(&mut self, table_id: NodeId) -> Option<NodeId> {
+        // Snapshot the fields: extraction mutates the table in place.
+        let fields = match self.module.get(table_id) {
+            Some(Node::Table { fields }) => fields.clone(),
+            _ => return None,
+        };
+        // Direct `schema` child?
+        let mut schema_id = match fields.get("schema") {
+            Some(&id) => match self.module.get(id) {
+                Some(Node::SchemaTable { .. }) => {
+                    // Detach from value fields so it never exports.
+                    if let Some(Node::Table { fields }) = self.module.get_mut(table_id) {
+                        fields.shift_remove("schema");
+                    }
+                    Some(id)
+                }
+                _ => None,
+            },
+            None => None,
+        };
+        // Recurse into value-table children for nested schemas.
+        let mut nested: IndexMap<String, NodeId> = IndexMap::new();
+        for (k, v) in &fields {
+            if *k == "schema" {
+                continue;
+            }
+            if matches!(self.module.get(*v), Some(Node::Table { .. })) {
+                if let Some(sub) = self.extract_table_schema(*v) {
+                    nested.insert(k.clone(), sub);
+                }
+            }
+        }
+        if nested.is_empty() {
+            return schema_id;
+        }
+        // Nested schemas need a parent: reuse the direct one or create
+        // an open table.
+        let parent = match schema_id {
+            Some(id) => id,
+            None => {
+                let id = self.module.add_node(Node::SchemaTable {
+                    fields: IndexMap::new(),
+                    closed: false,
+                });
+                schema_id = Some(id);
+                id
+            }
+        };
+        if let Some(Node::SchemaTable { fields, .. }) = self.module.get_mut(parent) {
+            for (k, v) in nested {
+                fields.insert(k, v);
+            }
+        }
+        schema_id
     }
 
     /// Display name of the file currently being parsed, for diagnostics.
@@ -1751,7 +2112,7 @@ impl Parser {
 
         let mut pending = Vec::new();
         self.parse_body(&mut root_fields, BodyEnd::Document, &mut pending);
-        self.splice_includes(&mut root_fields, pending);
+        self.splice_includes(&mut root_fields, pending, false);
 
         let root_idents = self.ident_scopes.pop().unwrap_or_default();
         let _ = self.resolve_sibling_refs(root_idents, &root_fields);
@@ -1854,7 +2215,7 @@ impl Parser {
         let mut fields = indexmap::IndexMap::new();
         let mut pending = Vec::new();
         self.parse_body(&mut fields, BodyEnd::HeaderBody(header_level), &mut pending);
-        self.splice_includes(&mut fields, pending);
+        self.splice_includes(&mut fields, pending, false);
         let idents = self.ident_scopes.pop().unwrap_or_default();
         let _ = self.resolve_sibling_refs(idents, &fields);
         let table_id = self.module.add_node(Node::Table { fields });
@@ -1873,8 +2234,33 @@ impl Parser {
 
     /// `key = expr` or `key: expr` (spec/dual-syntax.md §2).
     fn parse_key_value_sep(&mut self, sep: TokenKind) -> Option<(String, NodeId)> {
-        let key = self.expect(TokenKind::Ident)?.text;
+        let key_tok = self.expect(TokenKind::Ident)?;
+        let key = key_tok.text.clone();
         self.expect(sep)?;
+        // A `schema` key with a table value parses as a schema block
+        // (spec §2.10); anything else stays ordinary data.
+        if key == "schema" && matches!(self.peek_kind(), TokenKind::LBrace) {
+            if self.array_depth > 0 {
+                self.error_at(
+                    "E020",
+                    "schemas may not appear inside arrays; describe element types with Array<T>",
+                    &key_tok,
+                );
+                return None;
+            }
+            if self.in_profile {
+                self.error_at("E020", "schemas may not appear inside profiles", &key_tok);
+                return None;
+            }
+            let node = self.parse_schema_inline(&key_tok);
+            self.record_stmt(
+                &key,
+                key_tok.line,
+                self.last_end_line(),
+                key_tok.col.saturating_sub(1) as usize,
+            );
+            return Some((key, node));
+        }
         // Tag Ident nodes created directly in this key's value expression
         // with the owning key so sibling resolution can skip self-references.
         let scope_start = self.ident_scopes.last().map_or(0, |s| s.len());
@@ -2653,10 +3039,342 @@ impl Parser {
         self.module.patches.push(id);
     }
 
-    /// Convert a raw string that may contain `${…}` into either a plain
-    /// Literal or a full Interpolate node with Expr parts. `linemap` maps
-    /// stripped-text lines back to source positions (multi-line strings);
-    /// `None` keeps the single-line offset rebase.
+    // ------------------------------------------------------------------
+    // Schema blocks (spec §2.10, C-030)
+    // ------------------------------------------------------------------
+
+    /// Parse an inline schema table after `schema =` (the `{` is next).
+    /// Returns a SchemaTable node for later extraction.
+    fn parse_schema_inline(&mut self, key_tok: &Token) -> NodeId {
+        let open = self
+            .expect(TokenKind::LBrace)
+            .unwrap_or_else(|| key_tok.clone());
+        let (fields, closed) = self.parse_schema_entries(SchemaEnd::Brace);
+        self.add_spanned(Node::SchemaTable { fields, closed }, &open)
+    }
+
+    /// Parse a `schema { … }` brace block (the `{` is next).
+    fn parse_schema_brace(&mut self, key_tok: &Token) -> NodeId {
+        let open = self
+            .expect(TokenKind::LBrace)
+            .unwrap_or_else(|| key_tok.clone());
+        self.brace_tables += 1;
+        let (fields, closed) = self.parse_schema_entries(SchemaEnd::Brace);
+        self.add_spanned(Node::SchemaTable { fields, closed }, &open)
+    }
+
+    /// Parse a `schema:` indented body (the Indent is next).
+    fn parse_schema_indent(&mut self, key_tok: &Token, _level: usize) -> NodeId {
+        let (fields, closed) = self.parse_schema_entries(SchemaEnd::Indent);
+        self.add_spanned(Node::SchemaTable { fields, closed }, key_tok)
+    }
+
+    /// Parse `name = type` entries (plus the reserved `closed` flag)
+    /// until the terminator. Returns the fields and the closed flag.
+    fn parse_schema_entries(&mut self, end: SchemaEnd) -> (IndexMap<String, NodeId>, bool) {
+        let mut fields = IndexMap::new();
+        let mut closed = false;
+        loop {
+            self.skip_newlines();
+            match self.peek_kind() {
+                TokenKind::Eof => {
+                    // An indentation-form schema ends naturally at EOF
+                    // (like any indent block), but a brace form without
+                    // its closer is a syntax error (E001), never silent.
+                    if matches!(end, SchemaEnd::Brace) {
+                        self.error(
+                            "E001",
+                            "unclosed schema block: expected `}` before end of file",
+                        );
+                    }
+                    break;
+                }
+                TokenKind::RBrace if matches!(end, SchemaEnd::Brace) => {
+                    self.bump();
+                    break;
+                }
+                TokenKind::Dedent if matches!(end, SchemaEnd::Indent) => {
+                    self.bump();
+                    break;
+                }
+                TokenKind::RBrace | TokenKind::Dedent => {
+                    // Wrong closer for this form: stop and let the caller
+                    // diagnose (keeps progress either way).
+                    break;
+                }
+                TokenKind::Comma => {
+                    self.bump();
+                    continue;
+                }
+                TokenKind::Ident => {
+                    let name_tok = self.bump();
+                    let name = name_tok.text.clone();
+                    if self.expect(TokenKind::Assign).is_none() {
+                        continue;
+                    }
+                    if name == "closed" {
+                        match self.peek_kind() {
+                            TokenKind::True => {
+                                self.bump();
+                                closed = true;
+                            }
+                            TokenKind::False => {
+                                self.bump();
+                                closed = false;
+                            }
+                            _ => {
+                                let tok = self.peek().clone();
+                                self.error_at("E020", "closed must be true or false", &tok);
+                            }
+                        }
+                        self.skip_newlines();
+                        if matches!(self.peek_kind(), TokenKind::Comma) {
+                            self.bump();
+                        }
+                        continue;
+                    }
+                    let id = self.parse_schema_type(&name_tok);
+                    // Tag arg idents with the entry name for sibling
+                    // resolution parity with value parsing.
+                    fields.insert(name, id);
+                    self.skip_newlines();
+                    if matches!(self.peek_kind(), TokenKind::Comma) {
+                        self.bump();
+                    }
+                }
+                _ => {
+                    let tok = self.peek().clone();
+                    self.error_at("E020", "expected a schema entry (`name = Type`)", &tok);
+                    self.bump();
+                }
+            }
+        }
+        (fields, closed)
+    }
+
+    /// Guard one level of schema-type recursion (`Array<…>` nesting,
+    /// nested `Table {…}`) against stack exhaustion. Returns true when
+    /// the limit is exceeded: the counter is already restored and E004
+    /// recorded, so the caller bails out with a fallback field. Every
+    /// `true`…`false` pair brackets exactly one recursive call, so a
+    /// matching `exit_schema_depth` must follow the non-bail path.
+    fn enter_schema_depth(&mut self, tok: &Token) -> bool {
+        self.schema_depth += 1;
+        if self.schema_depth > MAX_SCHEMA_DEPTH {
+            self.schema_depth -= 1;
+            self.error_at(
+                "E004",
+                format!("maximum schema nesting depth ({MAX_SCHEMA_DEPTH}) exceeded"),
+                tok,
+            );
+            return true;
+        }
+        false
+    }
+
+    fn exit_schema_depth(&mut self) {
+        self.schema_depth = self.schema_depth.saturating_sub(1);
+    }
+
+    /// Parse one schema type expression into a SchemaField,
+    /// SchemaTable, or SchemaArray node (spec §2.10). `name_tok`
+    /// positions the entry for diagnostics.
+    fn parse_schema_type(&mut self, _name_tok: &Token) -> NodeId {
+        let tok = self.peek().clone();
+        let TokenKind::Ident = &tok.kind else {
+            self.error_at("E020", "expected a schema type", &tok);
+            self.bump();
+            return self.fallback_schema_field(&tok);
+        };
+        let type_name = tok.text.clone();
+        // Array<T>: element type in angle brackets (nestable).
+        if type_name == "Array" {
+            self.bump();
+            if self.expect(TokenKind::Lt).is_none() {
+                self.error_at("E020", "Array needs an element type: Array<T>", &tok);
+                return self.fallback_schema_field(&tok);
+            }
+            let elem_tok = self.peek().clone();
+            if self.enter_schema_depth(&tok) {
+                return self.fallback_schema_field(&tok);
+            }
+            let element = self.parse_schema_type(&elem_tok);
+            self.exit_schema_depth();
+            if self.expect(TokenKind::Gt).is_none() {
+                return self.fallback_schema_field(&tok);
+            }
+            return self.add_spanned(Node::SchemaArray { element }, &tok);
+        }
+        // Enum("a", "b"): positional strings, at least one.
+        if type_name == "Enum" {
+            self.bump();
+            if self.expect(TokenKind::LParen).is_none() {
+                self.error_at("E020", "Enum needs a value list: Enum(\"a\", ...)", &tok);
+                return self.fallback_schema_field(&tok);
+            }
+            let mut values = Vec::new();
+            loop {
+                self.skip_newlines();
+                match self.peek_kind() {
+                    TokenKind::RParen | TokenKind::Eof => break,
+                    TokenKind::Comma => {
+                        self.bump();
+                        continue;
+                    }
+                    TokenKind::String(_) | TokenKind::SingleString => {
+                        let v = self.bump();
+                        values.push(v.text.clone());
+                    }
+                    _ => {
+                        let bad = self.peek().clone();
+                        self.error_at("E020", "Enum values must be string literals", &bad);
+                        self.bump();
+                    }
+                }
+                self.skip_newlines();
+                if matches!(self.peek_kind(), TokenKind::Comma) {
+                    self.bump();
+                }
+            }
+            self.expect(TokenKind::RParen);
+            if values.is_empty() {
+                self.error_at("E020", "Enum needs at least one value", &tok);
+            }
+            let field = SchemaField {
+                typ: SolidType::Enum(values),
+                min: None,
+                max: None,
+                min_len: None,
+                max_len: None,
+                pattern: None,
+                default: None,
+                span: Some(span_of(&tok)),
+            };
+            return self.add_spanned(Node::SchemaField { field }, &tok);
+        }
+        // Table { ... }: nested schema table (closed flag included).
+        if type_name == "Table" && matches!(self.peek_kind_at(1), TokenKind::LBrace) {
+            self.bump();
+            let open = self
+                .expect(TokenKind::LBrace)
+                .unwrap_or_else(|| tok.clone());
+            if self.enter_schema_depth(&tok) {
+                return self.fallback_schema_field(&tok);
+            }
+            let (fields, closed) = self.parse_schema_entries(SchemaEnd::Brace);
+            self.exit_schema_depth();
+            return self.add_spanned(Node::SchemaTable { fields, closed }, &open);
+        }
+        // Bare or call-form type.
+        let Some(typ) = SolidType::bare(&type_name) else {
+            self.error_at("E020", format!("unknown schema type `{type_name}`"), &tok);
+            self.bump();
+            return self.fallback_schema_field(&tok);
+        };
+        self.bump();
+        if !matches!(self.peek_kind(), TokenKind::LParen) {
+            let field = SchemaField::bare(typ, Some(span_of(&tok)));
+            return self.add_spanned(Node::SchemaField { field }, &tok);
+        }
+        // `Table` takes no call arguments (spec §2.10): nested schemas
+        // use `Table { … }`, handled above. Anything parenthesized here
+        // is E020; the balanced list is skipped so recovery stays clean.
+        if matches!(typ, SolidType::Table { .. }) {
+            self.error_at(
+                "E020",
+                "Table takes no call arguments; write Table { ... } for a nested schema",
+                &tok,
+            );
+            self.bump(); // consume `(`
+            let mut paren_depth = 1usize;
+            while paren_depth > 0 {
+                match self.peek_kind() {
+                    TokenKind::LParen => {
+                        self.bump();
+                        paren_depth += 1;
+                    }
+                    TokenKind::RParen => {
+                        self.bump();
+                        paren_depth -= 1;
+                    }
+                    TokenKind::Eof => break,
+                    _ => {
+                        self.bump();
+                    }
+                }
+            }
+            return self.fallback_schema_field(&tok);
+        }
+        self.bump(); // consume `(`
+        let mut field = SchemaField::bare(typ.clone(), Some(span_of(&tok)));
+        loop {
+            self.skip_newlines();
+            match self.peek_kind() {
+                TokenKind::RParen | TokenKind::Eof => break,
+                TokenKind::Comma => {
+                    self.bump();
+                    continue;
+                }
+                TokenKind::Ident => {
+                    let arg_tok = self.bump();
+                    let arg = arg_tok.text.clone();
+                    if self.expect(TokenKind::Assign).is_none() {
+                        continue;
+                    }
+                    let value = self.parse_expression();
+                    if !Self::store_schema_arg(&mut field, &typ, &arg, value) {
+                        self.error_at(
+                            "E020",
+                            format!("unknown argument `{arg}` for {}", typ.name()),
+                            &arg_tok,
+                        );
+                    }
+                }
+                _ => {
+                    let bad = self.peek().clone();
+                    self.error_at("E020", "expected a named argument (`name = value`)", &bad);
+                    self.bump();
+                }
+            }
+            self.skip_newlines();
+            if matches!(self.peek_kind(), TokenKind::Comma) {
+                self.bump();
+            }
+        }
+        self.expect(TokenKind::RParen);
+        self.add_spanned(Node::SchemaField { field }, &tok)
+    }
+
+    /// Placeholder field used for error recovery (E020 already recorded).
+    fn fallback_schema_field(&mut self, tok: &Token) -> NodeId {
+        let field = SchemaField::bare(SolidType::Any, Some(span_of(tok)));
+        self.add_spanned(Node::SchemaField { field }, tok)
+    }
+
+    /// Store one named constraint argument if the type allows it.
+    /// Returns false for unknown arguments (E020 by the caller).
+    /// A repeated argument keeps the first value.
+    fn store_schema_arg(
+        field: &mut SchemaField,
+        typ: &SolidType,
+        arg: &str,
+        value: NodeId,
+    ) -> bool {
+        use SolidType::*;
+        let slot = match (typ, arg) {
+            (Int | Float | Duration | Bytes, "min") => &mut field.min,
+            (Int | Float | Duration | Bytes, "max") => &mut field.max,
+            (String, "min_len") => &mut field.min_len,
+            (String, "max_len") => &mut field.max_len,
+            (String, "pattern") => &mut field.pattern,
+            (_, "default") => &mut field.default,
+            _ => return false,
+        };
+        if slot.is_none() {
+            *slot = Some(value);
+        }
+        true
+    }
     fn parse_string_literal(
         &mut self,
         raw: &str,
@@ -2891,6 +3609,7 @@ impl Parser {
             depth: self.depth,
             options: self.options,
             block_depth: 0,
+            schema_depth: self.schema_depth,
             comments: Vec::new(),
             statements: Vec::new(),
             blocks: Vec::new(),
@@ -2900,6 +3619,8 @@ impl Parser {
             current_file: self.current_file.clone(),
             include_stack: Vec::new(),
             in_include: self.in_include,
+            in_profile: self.in_profile,
+            array_depth: self.array_depth,
             binding_spliced: self.binding_spliced.clone(),
             pending_profiles: Vec::new(),
         };
@@ -3029,6 +3750,9 @@ impl Parser {
     fn parse_array(&mut self) -> NodeId {
         let open = self.peek().clone();
         self.bump(); // [
+                     // Schema blocks are banned inside array elements (spec §2.10):
+                     // the counter covers inline tables at any depth within.
+        self.array_depth += 1;
         let mut elements = Vec::new();
         loop {
             self.skip_newlines();
@@ -3107,6 +3831,7 @@ impl Parser {
             }
         }
         self.expect_closing_healing(TokenKind::RBracket, "H004");
+        self.array_depth = self.array_depth.saturating_sub(1);
         self.add_spanned(Node::Array { elements }, &open)
     }
 
@@ -3241,6 +3966,31 @@ impl Parser {
                 }
                 Some(Node::Semantic { inner, .. }) => {
                     self.module.add_edge(inner, id);
+                }
+                Some(Node::SchemaField { field }) => {
+                    // Constraint arguments evaluate with the document;
+                    // C-031 reads their values during validation.
+                    for arg in [
+                        field.min,
+                        field.max,
+                        field.min_len,
+                        field.max_len,
+                        field.pattern,
+                        field.default,
+                    ]
+                    .into_iter()
+                    .flatten()
+                    {
+                        self.module.add_edge(arg, id);
+                    }
+                }
+                Some(Node::SchemaTable { fields, .. }) => {
+                    for child in fields.values() {
+                        self.module.add_edge(*child, id);
+                    }
+                }
+                Some(Node::SchemaArray { element }) => {
+                    self.module.add_edge(element, id);
                 }
                 Some(Node::Array { elements }) => {
                     for e in &elements {

@@ -1,0 +1,5 @@
+schema = {
+  mode = Int(min = 1),
+}
+
+mode = 1

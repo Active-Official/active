@@ -323,6 +323,53 @@ identifier    = ASCII letter or "_" followed by ASCII alphanumerics or "_"
   merge), before schema validation. Patch statements never appear in
   the exported tree.
 
+### 2.10 Schema blocks (C-030)
+
+```
+schema-block  = "schema" ( "=" inline-table | "{" { statement } "}"
+                | ":" newline indent )
+schema-table  = "{" [ schema-entry { "," schema-entry } ] "}"
+schema-entry  = identifier "=" schema-type
+schema-type   = bare-type [ "(" [ schema-arg { "," schema-arg } ] ")" ]
+              | "Array" "<" schema-type ">"
+              | "Table" [ "{" [ schema-entry { "," schema-entry } ] "}" ]
+              | "Enum" "(" string { "," string } ")"
+bare-type     = "Int" | "Float" | "String" | "Bool" | "Null"
+              | "Duration" | "Bytes" | "Secret" | "Any" | "Table" | "Array"
+schema-arg    = identifier "=" expression
+```
+
+- `schema` is contextual: a `schema` key with a **table value** parses
+  as a schema block; a `schema` key with any other value stays ordinary
+  data. A schema table whose entries are not valid type expressions is
+  E020 (a mistyped schema must never silently become data).
+- Named arguments per type (anything else is E020): `Int`/`Float` take
+  `min`, `max`, `default`; `Duration`/`Bytes` take `min`, `max`,
+  `default`; `String` takes `min_len`, `max_len`, `pattern`, `default`;
+  `Bool`/`Null`/`Secret`/`Any` take `default` only; `Enum` takes
+  positional strings only (empty is E020); `Array` takes only `<T>`;
+  `Table` takes only `{...}` with an optional reserved `closed = true`
+  entry. Argument values are full expressions (literals, env refs,
+  arithmetic), evaluated with the document.
+- Schemas may appear at root (validating the document) or nested (validating
+  that table). Validation itself is C-031; C-030 delivers parsing and IR only.
+- External schemas ride the include mechanism: an included file's schema
+  merges like any other key. No new syntax is required. Two schemas merged
+  under one key union their fields (local-wins on conflicts, cascade
+  among includes); the `closed` flag follows the same rule.
+- Schemas are banned inside profiles (E020), including schemas that would
+  arrive through an include spliced into a profile scope: an included
+  schema there is E020 at its own span, never profile data.
+- Schema blocks are table-scope metadata: they may not appear inside
+  array elements (E020) — not even inside inline tables nested in
+  arrays. Element types are described with `Array<T>` (validated in
+  C-031), so no expressiveness is lost and extraction stays total:
+  every surviving SchemaTable is reachable by table descent.
+- Schema type nesting (`Array<Array<…>>`, `Table { … Table { … } … }`) is
+  bounded at 64 levels (E004 beyond); a brace-form schema without its
+  closing `}` is E001. A call-form `Table(…)` is E020 — nested schemas
+  use `Table { … }` only. The canonical empty schema is `schema = {}`.
+
 ### 2.3 Expressions (precedence, loosest to tightest)
 
 ```

@@ -1,0 +1,7 @@
+include "lib_cas_b.solid"
+
+schema = {
+  mode = Bool,
+}
+
+mode = true

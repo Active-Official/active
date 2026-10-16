@@ -1,0 +1,6 @@
+schema = {
+  host = String(min_len = 1),
+  retries = Int(default = 3),
+}
+
+host = "example.com"

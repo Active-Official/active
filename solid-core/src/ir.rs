@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::diag::{Diagnostic, Span};
-use crate::types::{Constraint, Unit};
+use crate::types::{Constraint, SolidType, Unit};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeId(pub u32);
@@ -46,6 +46,11 @@ pub struct Module {
     /// Structural patch directives in source order (spec §2.9, C-028).
     /// Applied to the evaluated value tree after profile merge.
     pub patches: Vec<NodeId>,
+    /// The document schema tree (spec §2.10, C-030): the root `schema`
+    /// table and every nested one, extracted from value fields at parse.
+    /// None when the document declares no schema. C-031 validates
+    /// against it.
+    pub schema: Option<NodeId>,
 }
 
 /// An `include "path" [as alias] [private]` statement (spec §2.7).
@@ -61,6 +66,38 @@ pub struct IncludeStmt {
     pub scope_path: Vec<String>,
     /// Source line of the statement, for stable formatter emission.
     pub line: u32,
+}
+
+/// One field's schema: a type plus its constraint arguments (spec §2.10,
+/// C-030). Constraint values are expression nodes so bounds may use
+/// literals, env refs, and arithmetic; C-031 evaluates them during
+/// validation. `default` is parsed and stored; C-032 applies it.
+#[derive(Debug, Clone)]
+pub struct SchemaField {
+    pub typ: SolidType,
+    pub min: Option<NodeId>,
+    pub max: Option<NodeId>,
+    pub min_len: Option<NodeId>,
+    pub max_len: Option<NodeId>,
+    pub pattern: Option<NodeId>,
+    pub default: Option<NodeId>,
+    pub span: Option<crate::diag::Span>,
+}
+
+impl SchemaField {
+    /// A field with no constraint arguments.
+    pub fn bare(typ: SolidType, span: Option<crate::diag::Span>) -> Self {
+        Self {
+            typ,
+            min: None,
+            max: None,
+            min_len: None,
+            max_len: None,
+            pattern: None,
+            default: None,
+            span,
+        }
+    }
 }
 
 /// Layout style for output (spec/dual-syntax.md §8).
@@ -115,6 +152,7 @@ impl Module {
             includes: Vec::new(),
             profiles: IndexMap::new(),
             patches: Vec::new(),
+            schema: None,
         }
     }
 
@@ -197,6 +235,24 @@ pub enum Node {
     /// are ordinary graph nodes, so patches are dependency-aware.
     PatchDirective {
         op: PatchOp,
+    },
+    /// One field's schema (spec §2.10, C-030). The constraint arguments
+    /// are expression nodes evaluated with the document; C-031 reads
+    /// their values during validation. Edges run argument → field.
+    SchemaField {
+        field: SchemaField,
+    },
+    /// A table of named schemas (spec §2.10). Fields hold SchemaField
+    /// or nested SchemaTable nodes. Extracted from value fields at
+    /// parse, so schema tables never export as data.
+    SchemaTable {
+        fields: IndexMap<String, NodeId>,
+        closed: bool,
+    },
+    /// An array element schema (spec §2.10): `element` is a SchemaField
+    /// node carrying the full element constraints.
+    SchemaArray {
+        element: NodeId,
     },
     /// A multi-line string carrying a semantic tag (`@prompt`, `@policy`,
     /// `@template`). The tag is tool treatment only — evaluation is

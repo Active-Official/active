@@ -167,6 +167,14 @@ impl Engine {
 
                 // Semantic tags are tool treatment only: transparent to the value.
                 Node::Semantic { inner, .. } => values.get(inner).cloned().unwrap_or(Value::Null),
+
+                // Schema nodes carry types, not values: they evaluate to
+                // Null and never export (extracted from value fields at
+                // parse). Their constraint arguments evaluate normally;
+                // C-031 reads those values during validation.
+                Node::SchemaField { .. } | Node::SchemaTable { .. } | Node::SchemaArray { .. } => {
+                    Value::Null
+                }
                 Node::Ident(name) => {
                     diagnostics.push(Diagnostic {
                         severity: Severity::Warning,

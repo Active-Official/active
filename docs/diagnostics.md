@@ -46,6 +46,7 @@ parses leave it unset and tools fall back to the input filename.
 | E017 | `cannot read include file ...` | token | A missing or unreadable include target (C-025) |
 | E018 | `profile blocks may only appear at document root` / `duplicate profile "name"` / `profile blocks need a string name` | token | Malformed profile blocks (C-027) |
 | E019 | `patch statements may only appear at document root` / `expected ( after @patch/@remove/@rename` / `patch paths must be string literals` / `interpolation in patch paths is a hard error` / `rename target already exists` | token | Malformed patch statements (C-028) |
+| E020 | `schema tables need valid type expressions` / `unknown schema type` / `unknown argument for <Type>` / `Enum needs at least one value` | token | Malformed schema blocks (C-030): non-type entries, unknown types or arguments |
 
 ### S0xx — Semantic (evaluation, severity Error)
 

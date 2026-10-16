@@ -150,9 +150,54 @@ pub enum SolidType {
     String,
     Duration,
     Bytes,
-    Array(Box<SolidType>),
-    Table,
+    Table { closed: bool },
     Enum(Vec<String>),
     Secret,
     Any,
+}
+
+impl SolidType {
+    /// Bare type names valid without arguments (spec §2.10).
+    /// `Array` needs `<T>`, `Enum` needs `(…)` — both are E020 bare.
+    /// `Table` bare means any open table.
+    pub fn bare(name: &str) -> Option<SolidType> {
+        match name {
+            "Null" => Some(SolidType::Null),
+            "Bool" => Some(SolidType::Bool),
+            "Int" => Some(SolidType::Int),
+            "Float" => Some(SolidType::Float),
+            "String" => Some(SolidType::String),
+            "Duration" => Some(SolidType::Duration),
+            "Bytes" => Some(SolidType::Bytes),
+            "Table" => Some(SolidType::Table { closed: false }),
+            "Secret" => Some(SolidType::Secret),
+            "Any" => Some(SolidType::Any),
+            _ => None,
+        }
+    }
+}
+
+impl SolidType {
+    /// Human-readable name for diagnostics and documentation.
+    pub fn name(&self) -> String {
+        match self {
+            SolidType::Null => "Null".into(),
+            SolidType::Bool => "Bool".into(),
+            SolidType::Int => "Int".into(),
+            SolidType::Float => "Float".into(),
+            SolidType::String => "String".into(),
+            SolidType::Duration => "Duration".into(),
+            SolidType::Bytes => "Bytes".into(),
+            SolidType::Table { closed } => {
+                if *closed {
+                    "Table(closed)".into()
+                } else {
+                    "Table".into()
+                }
+            }
+            SolidType::Enum(values) => format!("Enum({})", values.join(", ")),
+            SolidType::Secret => "Secret".into(),
+            SolidType::Any => "Any".into(),
+        }
+    }
 }

@@ -126,6 +126,13 @@ impl<'a> Formatter<'a> {
             self.out.push('\n');
         }
 
+        // The root schema block, when the document declares one
+        // (spec §2.10). Schemas are metadata: position is canonical.
+        if let Some(schema) = self.module.schema {
+            self.emit_leading("schema");
+            self.emit_schema_table(schema, 0);
+        }
+
         // Profile blocks, in source order (spec §2.8). They merge at
         // evaluation and never export, but formatting preserves them.
         let profiles: Vec<(String, NodeId)> = self
@@ -190,6 +197,8 @@ impl<'a> Formatter<'a> {
 
     /// Emit a table's entries. `path` is the dotted path of the table
     /// (empty for the document root); `is_root` marks the document level.
+    /// `schema` is this table's schema node for parallel emission:
+    /// a `schema = { … }` block leads the body (spec §2.10).
     fn emit_table_body(&mut self, id: NodeId, depth: usize, path: &str, is_root: bool) {
         let fields = match self.module.get(id) {
             Some(Node::Table { fields }) => fields.clone(),
@@ -210,6 +219,13 @@ impl<'a> Formatter<'a> {
             includes.sort_by_key(|inc| inc.line);
             for inc in includes {
                 self.emit_include(inc, depth);
+            }
+            // A nested `schema` block leads its table's body (spec
+            // §2.10). It was detached from value fields at parse, so
+            // re-emit it here from the schema tree. The root schema
+            // emits once from emit_module instead.
+            if let Some(schema) = self.schema_for_path(path) {
+                self.emit_schema_table(schema, depth);
             }
         }
         let is_table_node =
@@ -271,6 +287,137 @@ impl<'a> Formatter<'a> {
                 self.out.push_str(&text);
                 self.out.push('\n');
             }
+        }
+    }
+
+    /// Look up this table's schema node by dotted path, descending from
+    /// the root schema through SchemaTable fields (spec §2.10). Returns
+    /// None when no schema covers this table.
+    fn schema_for_path(&self, path: &str) -> Option<NodeId> {
+        let mut id = self.module.schema?;
+        if path.is_empty() {
+            return Some(id);
+        }
+        for segment in path.split('.') {
+            match self.module.get(id) {
+                Some(Node::SchemaTable { fields, .. }) => {
+                    id = *fields.get(segment)?;
+                }
+                _ => return None,
+            }
+        }
+        Some(id)
+    }
+
+    /// Emit a `schema` block at the given depth (spec §2.10). Indentation
+    /// style uses `schema:` with an indented body; brace style uses
+    /// `schema { … }`. A closed table leads with `closed = true`.
+    /// Entries keep source order: the schema tree preserves it. An empty
+    /// schema emits inline (`schema = {}`) in every style: indentation
+    /// style cannot express a bodyless block.
+    fn emit_schema_table(&mut self, id: NodeId, depth: usize) {
+        let (fields, closed) = match self.module.get(id) {
+            Some(Node::SchemaTable { fields, closed }) => (fields.clone(), *closed),
+            _ => return,
+        };
+        if fields.is_empty() && !closed {
+            let indent = INDENT.repeat(depth);
+            self.out.push_str(&format!("{indent}schema = {{}}"));
+            self.emit_trailing("schema");
+            self.out.push('\n');
+            return;
+        }
+        let indent = INDENT.repeat(depth);
+        match self.style {
+            Style::Indent => {
+                self.out.push_str(&format!("{indent}schema:"));
+                self.emit_trailing("schema");
+                self.out.push('\n');
+                let inner = INDENT.repeat(depth + 1);
+                if closed {
+                    self.out.push_str(&format!("{inner}closed = true\n"));
+                }
+                for (name, entry) in &fields {
+                    let typ = self.render_schema_type(*entry);
+                    self.out.push_str(&format!("{inner}{name} = {typ}\n"));
+                }
+            }
+            _ => {
+                self.out.push_str(&format!("{indent}schema {{"));
+                self.emit_trailing("schema");
+                self.out.push('\n');
+                let inner = INDENT.repeat(depth + 1);
+                if closed {
+                    self.out.push_str(&format!("{inner}closed = true\n"));
+                }
+                for (name, entry) in &fields {
+                    let typ = self.render_schema_type(*entry);
+                    self.out.push_str(&format!("{inner}{name} = {typ}\n"));
+                }
+                self.out.push_str(&format!("{indent}}}\n"));
+            }
+        }
+    }
+
+    /// Render one schema type expression: a field (`Int(min = …)`),
+    /// a nested table (`Table { … }`), or an element schema
+    /// (`Array<…>`), recursing as needed.
+    fn render_schema_type(&self, id: NodeId) -> String {
+        match self.module.get(id).cloned() {
+            Some(Node::SchemaField { field }) => self.render_schema_field(&field),
+            Some(Node::SchemaArray { element }) => {
+                format!("Array<{}>", self.render_schema_type(element))
+            }
+            Some(Node::SchemaTable { fields, closed }) => {
+                let mut parts: Vec<std::string::String> = Vec::new();
+                if closed {
+                    parts.push("closed = true".to_string());
+                }
+                for (name, entry) in fields {
+                    parts.push(format!("{name} = {}", self.render_schema_type(entry)));
+                }
+                if parts.is_empty() {
+                    "Table {}".to_string()
+                } else {
+                    format!("Table {{ {} }}", parts.join(", "))
+                }
+            }
+            _ => "Any".to_string(),
+        }
+    }
+
+    /// Render a leaf field type with its present constraint arguments.
+    /// Absent arguments are omitted (never `None` placeholders).
+    fn render_schema_field(&self, field: &crate::ir::SchemaField) -> String {
+        use crate::types::SolidType::*;
+        if let Enum(values) = &field.typ {
+            let quoted: Vec<std::string::String> = values
+                .iter()
+                .map(|v| format!("\"{}\"", escape(v)))
+                .collect();
+            return format!("Enum({})", quoted.join(", "));
+        }
+        let mut args: Vec<std::string::String> = Vec::new();
+        for (name, slot) in [
+            ("min", field.min),
+            ("max", field.max),
+            ("min_len", field.min_len),
+            ("max_len", field.max_len),
+            ("pattern", field.pattern),
+            ("default", field.default),
+        ] {
+            if let Some(arg) = slot {
+                args.push(format!("{name} = {}", self.render_expr(arg)));
+            }
+        }
+        let base = match &field.typ {
+            Table { closed: true } => "Table(closed)".to_string(),
+            other => other.name(),
+        };
+        if args.is_empty() {
+            base
+        } else {
+            format!("{base}({})", args.join(", "))
         }
     }
 

@@ -396,3 +396,165 @@ fn secrets_never_reach_stdout_or_stderr() {
         );
     }
 }
+
+// ------------------------------------------------------------------
+// Converter CLI contract (C-046, spec/converters.md §5).
+// ------------------------------------------------------------------
+
+#[test]
+fn export_serves_all_three_formats_with_redaction() {
+    let f = fixture(
+        "conv_export.solid",
+        "port = 8080\nwait = 5s\ntoken = secret(\"TOPSECRETEXPORT\")\n[server]\nhost = \"h\"\n",
+    );
+    for (format, probes) in [
+        (
+            "json",
+            vec!["\"port\": 8080", "\"ms\": 5000", "***SECRET***"],
+        ),
+        ("yaml", vec!["port: 8080", "ms: 5000", "***SECRET***"]),
+        (
+            "toml",
+            vec!["port = 8080", "\"5000ms\"", "[server]", "***SECRET***"],
+        ),
+    ] {
+        let out = solid()
+            .args(["eval", "--format", format])
+            .arg(&f)
+            .output()
+            .expect("run solid");
+        assert!(
+            out.status.success(),
+            "{format}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        for probe in probes {
+            assert!(stdout.contains(probe), "{format} missing {probe}: {stdout}");
+        }
+        assert!(
+            !stdout.contains("TOPSECRETEXPORT"),
+            "{format} leaked: {stdout}"
+        );
+    }
+}
+
+#[test]
+fn export_rejects_unknown_formats() {
+    let f = fixture("conv_format.solid", "port = 1\n");
+    let out = solid()
+        .args(["eval", "--format", "xml"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(!out.status.success(), "unknown format must fail");
+}
+
+#[test]
+fn convert_subcommand_serves_yaml_and_toml() {
+    let f = fixture("conv_sub.solid", "[server]\nport = 8080\n");
+    let out = solid()
+        .args(["convert", "--to", "yaml"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("port: 8080"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let out = solid()
+        .args(["convert", "--to", "toml"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("[server]"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let out = solid()
+        .args(["convert", "--to", "xml"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(!out.status.success(), "unknown target must fail");
+}
+
+#[test]
+fn import_round_trips_json_through_solid() {
+    let f = fixture(
+        "conv_import.json",
+        "{\"server\": {\"port\": 8080}, \"debug\": true}",
+    );
+    let out = solid()
+        .args(["import", "--from", "json"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let source = String::from_utf8_lossy(&out.stdout);
+    assert!(source.contains("server {"), "{source}");
+    assert!(source.contains("port = 8080"), "{source}");
+    // The emitted source evaluates back to the same tree.
+    let f2 = fixture("conv_reimport.solid", &source);
+    let out = solid().args(["eval"]).arg(&f2).output().expect("run solid");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let json = String::from_utf8_lossy(&out.stdout);
+    assert!(json.contains("\"port\": 8080"), "{json}");
+}
+
+#[test]
+fn import_reports_lossy_corners_and_rejects_garbage() {
+    // YAML non-string keys: diagnosed, exit 0.
+    let f = fixture("conv_yaml_keys.yaml", "123: a\n");
+    let out = solid()
+        .args(["import", "--from", "yaml"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("W007"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Garbage in: hard failure.
+    let f = fixture("conv_garbage.json", "{bad");
+    let out = solid()
+        .args(["import", "--from", "json"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(!out.status.success(), "garbage must fail");
+    // Unknown source format: hard failure.
+    let f = fixture("conv_unknown.json", "{}");
+    let out = solid()
+        .args(["import", "--from", "xml"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(!out.status.success(), "unknown source must fail");
+}

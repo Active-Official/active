@@ -88,6 +88,11 @@ parses leave it unset and tools fall back to the input filename.
 | W003 | `profile '<name>' overrides '<path>' with a different type` | node | A profile value wins over a base value of a different type (C-027) |
 | W004 | `remove target '<path>' does not exist` / `rename source '<path>' does not exist` / `array index <i> out of bounds at '<path>'` | node | A patch target is missing; the operation succeeds idempotently (C-028) |
 | W005 | `filled missing key '<path>' from schema default` | schema field span | Resilient mode inserted an evaluated schema default for a missing key (C-032); the filled value is then validated like any written value |
+| W006 | `null has no TOML representation; omitted '<path>'` | none (export-time) | TOML export skips null-valued keys (C-046); announced per key, never silent |
+| W007 | `imported key '<key>' sanitized to '<clean>'` / `duplicate key '<clean>' after sanitization; last wins` / `YAML non-string key stringified to '<key>'` / `YAML null key stringified to 'null'` | none (import-time) | Reverse converters (C-046) adapt foreign keys to SOLID identifiers; duplicates keep the last value like JSON itself |
+| W008 | `TOML datetime at '<path>' imported as string` | none (import-time) | TOML datetimes have no SOLID equivalent; the RFC 3339 text survives (C-046) |
+| W009 | `top-level <kind> wrapped as 'value'` | none (import-time) | A scalar/array document root becomes `value = …`, which is valid SOLID (C-046) |
+| W010 | `integer <n> exceeds i64 range; emitted as float` / `non-finite <format> number at '<path>' converted to null` | none (import-time) | Unrepresentable numbers on import (C-046): u64 past i64::MAX loses precision as f64; NaN/inf (YAML `.nan`/`.inf`, TOML `nan`/`inf`) cannot survive the JSON model and become null — announced, never silent |
 
 ### H0xx — Healing (implemented in C-016)
 

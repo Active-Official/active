@@ -13,6 +13,8 @@ indexmap = { workspace = true }
 thiserror = { workspace = true }
 petgraph = { workspace = true }
 regex = { workspace = true }
+serde_yaml = "0.9"
+toml = "0.8"
 
 [dev-dependencies]
 anyhow = { workspace = true }

@@ -3,6 +3,12 @@
 use crate::ir::Value;
 use serde_json::{json, Value as JsonValue};
 
+pub mod export;
+pub mod import;
+
+pub use export::{value_to_toml_string, value_to_yaml_string};
+pub use import::{json_text_to_solid, json_value_to_solid, toml_text_to_solid, yaml_text_to_solid};
+
 pub fn value_to_json(v: &Value) -> JsonValue {
     match v {
         Value::Null => JsonValue::Null,
@@ -28,9 +34,11 @@ pub fn value_to_pretty_json(v: &Value) -> String {
     serde_json::to_string_pretty(&value_to_json(v)).unwrap_or_else(|_| "{}".into())
 }
 
-/// Extremely simple TOML-ish dump (not a full TOML serializer)
-/// TODO(solid C-046): replace with a full bidirectional TOML/YAML/JSON
-/// converter with uniform secret redaction.
+/// SOLID brace-style emission (`key = value` lines plus `[table]`
+/// headers): doubles as the unit round-trip path (every suffix from
+/// `Unit::suffix()` re-parses — see `tests/unit_roundtrip.rs`), so it
+/// stays exactly as is. Real TOML interchange lives in
+/// `export::value_to_toml_string`.
 pub fn value_to_simple_toml(v: &Value, prefix: &str) -> String {
     let mut out = String::new();
     if let Value::Table(map) = v {

@@ -1,5 +1,8 @@
 use clap::{Args, Parser, Subcommand};
-use solid_core::convert::{value_to_pretty_json, value_to_simple_toml};
+use solid_core::convert::{
+    json_text_to_solid, toml_text_to_solid, value_to_pretty_json, value_to_toml_string,
+    value_to_yaml_string, yaml_text_to_solid,
+};
 use solid_core::diag::{Diagnostic, Severity};
 use solid_core::{parse_file, Budget, Engine, EvalError, ParseOptions, Style};
 use std::path::PathBuf;
@@ -105,7 +108,7 @@ enum Commands {
         #[arg(long)]
         profile: Option<String>,
     },
-    /// Convert evaluated result to JSON or simple TOML
+    /// Convert evaluated result to JSON, YAML, or TOML
     Convert {
         file: PathBuf,
         #[arg(short, long, default_value = "json")]
@@ -121,6 +124,14 @@ enum Commands {
         profile: Option<String>,
         #[command(flatten)]
         budget: BudgetArgs,
+    },
+    /// Import JSON, YAML, or TOML as SOLID source (best-effort)
+    Import {
+        /// Input file
+        file: PathBuf,
+        /// Source format
+        #[arg(short, long, default_value = "json")]
+        from: String,
     },
     /// Format files in a canonical style (spec/formatter.md)
     Fmt {
@@ -241,7 +252,19 @@ fn main() -> anyhow::Result<()> {
 
             match format.as_str() {
                 "json" => println!("{}", value_to_pretty_json(&value)),
-                "toml" => println!("{}", value_to_simple_toml(&value, "")),
+                "yaml" => match value_to_yaml_string(&value) {
+                    Ok(yaml) => println!("{yaml}"),
+                    Err(e) => anyhow::bail!("yaml export failed: {e}"),
+                },
+                "toml" => match value_to_toml_string(&value) {
+                    Ok((toml, export_diags)) => {
+                        for d in &export_diags {
+                            report(d, &name);
+                        }
+                        println!("{toml}");
+                    }
+                    Err(e) => anyhow::bail!("toml export failed: {e}"),
+                },
                 other => anyhow::bail!("unsupported format: {}", other),
             }
             if had_failure(&diags, resilient) {
@@ -343,12 +366,41 @@ fn main() -> anyhow::Result<()> {
             }
             match to.as_str() {
                 "json" => println!("{}", value_to_pretty_json(&value)),
-                "toml" => println!("{}", value_to_simple_toml(&value, "")),
+                "yaml" => match value_to_yaml_string(&value) {
+                    Ok(yaml) => println!("{yaml}"),
+                    Err(e) => anyhow::bail!("yaml export failed: {e}"),
+                },
+                "toml" => match value_to_toml_string(&value) {
+                    Ok((toml, export_diags)) => {
+                        for d in &export_diags {
+                            report(d, &name);
+                        }
+                        println!("{toml}");
+                    }
+                    Err(e) => anyhow::bail!("toml export failed: {e}"),
+                },
                 other => anyhow::bail!("unsupported target: {}", other),
             }
             if had_failure(&diags, resilient) {
                 std::process::exit(1);
             }
+        }
+        Commands::Import { file, from } => {
+            let name = file.to_string_lossy().to_string();
+            let text = std::fs::read_to_string(&file)
+                .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", name))?;
+            // Hard syntax failures exit non-zero; lossy corners are
+            // diagnosed to stderr, best-effort, exit 0 (spec §5).
+            let (source, notes) = match from.as_str() {
+                "json" => json_text_to_solid(&text).map_err(|e| anyhow::anyhow!("{e}"))?,
+                "yaml" | "yml" => yaml_text_to_solid(&text).map_err(|e| anyhow::anyhow!("{e}"))?,
+                "toml" => toml_text_to_solid(&text).map_err(|e| anyhow::anyhow!("{e}"))?,
+                other => anyhow::bail!("unsupported source: {}", other),
+            };
+            for d in &notes {
+                report(d, &name);
+            }
+            print!("{source}");
         }
         Commands::Fmt {
             files,

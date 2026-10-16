@@ -3,8 +3,10 @@
 Validation walks the fully evaluated value tree against the active schema
 tree and reports every violation as a structured diagnostic. It runs
 **after evaluation, after profile merge, and after patch application**
-(spec §2.9 ordering), **before export and conversion**. Validation never
-mutates the tree: default filling (C-032) is a separate later step.
+(spec §2.9 ordering), **before export and conversion**. Validation
+never drops or rewrites user data: the single exception is resilient
+default filling (§9), which only adds schema-declared values for
+missing keys.
 
 ## 1. When validation runs
 
@@ -27,8 +29,8 @@ Validation pairs each schema node with its value by key, recursively:
   schema with path `<path>[<i>]`. Length is unconstrained (the grammar
   gives `Array` no length arguments).
 - A schema field whose value key is absent is a **missing key** (§5).
-  A value key with no schema field is **ignored** (open-world);
-  closed-table rejection is C-032.
+  A value key with no schema field is **ignored** in open tables
+  (open-world); closed tables reject it (§10).
 - Constraint argument values (`min`, `max`, …) are read from the
   evaluated node map: they are ordinary expression nodes evaluated with
   the document (C-030). An argument that somehow has no evaluated value
@@ -99,9 +101,14 @@ invariant, §7).
 A schema field with no corresponding value key is T004 (`missing
 required key`) unless:
 
-- the field declares a `default` — filling it is C-032's job; C-031
-  stays silent so the two phases never contradict each other; or
-- the field's type is `Null` — absence is equivalent to null.
+- the field declares a `default` — strict mode still reports T004
+  (explicitness), while resilient mode fills the default and records
+  W005 instead (§9). A default that cannot be applied (defensive;
+  unreachable on well-formed evaluations) reports T004 noting the
+  failure rather than going silent; or
+- the field's type is `Null` **and it declares no default** — absence
+  is equivalent to null. `Null` with a `default` follows the default
+  rule above in both modes.
 
 The span is the schema field's own span (there is no value to point
 at).
@@ -115,9 +122,9 @@ at).
   diagnostic and exits 1.
 - **Resilient** (`Engine.resilient == true`, CLI `--resilient`): the
   same diagnostics are collected and returned alongside the value
-  tree, unchanged and unfilled. Export proceeds; the CLI exit code
-  follows the standard policy (any Error diagnostic exits 1, but the
-  output is still produced).
+  tree, with schema defaults filled (§9). Export proceeds; the CLI
+  exit code follows the standard policy (any Error diagnostic exits
+  1, but the output is still produced).
 
 `Engine::new()` defaults to resilient, preserving the alpha behavior
 that evaluation succeeds; the CLI passes its `--resilient` flag into
@@ -148,3 +155,37 @@ nested arrays attribute to their own level. When no value span
 resolves, the **schema field span** is used; missing-key diagnostics
 always use the schema span. Every span carries its file in multi-file
 documents.
+
+## 9. Schema-driven defaults (C-032)
+
+A schema field with a missing value and a declared `default` behaves
+by mode:
+
+- **Strict**: T004 (`missing required key`, with a message noting that
+  strict mode requires explicit values despite the default). Strict
+  means explicit: every value in the tree is written by someone.
+- **Resilient**: the evaluated default is inserted into the result
+  tree at the missing key and a W005 warning is recorded (`filled
+  missing key '<path>' from schema default`, at the schema field
+  span). The filled value is then validated exactly like a written
+  value, so a mistyped default surfaces as T002/T003 rather than
+  corrupting the tree silently.
+
+Only leaf fields fill: a missing table (even one whose schema has
+entries) is T004 in both modes, and array positions are never
+synthesized. Defaults are ordinary evaluated expressions, so they can
+use literals, env refs, and arithmetic — and the usual secret rules
+apply (a filled secret redacts on export; W005 never names values).
+
+## 10. Closed tables (C-032)
+
+A schema table with `closed = true` rejects value keys with no
+corresponding schema field: T005 (`unexpected key '<key>' in closed
+table`) at the value expression's span (the parser records spans on
+value nodes, so this is the token that produced the value — same line
+as the key in practice), falling back to the schema table span when
+unresolvable. Closed enforcement is validation, not mutation: the
+extra keys stay in the resilient tree, and strict mode fails with all
+violations collected, exactly like any other T-diagnostic. Open
+tables (the default) keep ignoring extra keys. Nesting composes:
+each table enforces its own flag.

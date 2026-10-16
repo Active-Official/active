@@ -4,3 +4,4 @@ schema = {
 }
 
 host = "example.com"
+retries = 3

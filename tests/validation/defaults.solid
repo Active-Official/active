@@ -1,0 +1,11 @@
+schema = {
+  port = Int(min = 1, default = 8080),
+  host = String(default = "localhost"),
+  level = Int(default = 1 + 2),
+  bad = Int(default = "oops"),
+  server = Table {
+    retries = Int(default = 3),
+  },
+}
+
+server = {}

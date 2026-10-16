@@ -25,6 +25,7 @@ delay = 30s
 quota = 512MiB
 mode = "prod"
 tags = ["a", "b"]
+level = 3
 token = secret("deploy-key")
 anything = { nested = [1, 2] }
 server = { host = "db", port = 5432 }

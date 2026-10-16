@@ -300,8 +300,10 @@ impl Engine {
         let mut result = result;
         self.apply_patches(module, &values, &mut result, &mut diagnostics)?;
         // Schema validation runs last: post-evaluation, post-profile,
-        // post-patch, pre-export (spec/validation.md §1).
-        self.validate_schema(module, &values, &result, &mut diagnostics)?;
+        // post-patch, pre-export (spec/validation.md §1). Resilient
+        // mode may insert schema defaults (C-032), so the tree is
+        // mutable here.
+        self.validate_schema(module, &values, &mut result, &mut diagnostics)?;
         Ok((result, diagnostics))
     }
 

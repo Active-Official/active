@@ -1,0 +1,12 @@
+schema = {
+  closed = true,
+  port = Int,
+  server = Table {
+    closed = true,
+    host = String,
+  },
+}
+
+port = 1
+extra = "drift"
+server = { host = "h", debug = true }

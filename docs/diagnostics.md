@@ -64,7 +64,8 @@ parses leave it unset and tools fall back to the input filename.
 | T001 | `type error: unsupported binary op <op> on <lhs> and <rhs>` / `unsupported unary op <op> on <v>` / `quantity requires numeric value, got <v>` | node | An operator is applied to unsupported operands; dimension mismatches land here (e.g. `5s + 512MiB`) |
 | T002 | `schema violation at '<path>': expected <type>, got <kind>` | value node when resolvable through the arena, else the schema field span, else none | A value's kind does not match its schema type (spec/validation.md §3). `Int` is accepted where `Float` is expected (widening); every other mismatch fails, including `Float` where `Int` is expected |
 | T003 | `schema violation at '<path>': <detail>` | same as T002 | A constraint fails: `<detail>` is one of `below minimum`, `above maximum`, `too short`, `too long`, `does not match pattern`, `not a member of Enum(<members>)`, `invalid pattern in schema`, `incomparable <bound> bound for <type> fields`. Enum members are schema literals, safe to quote; evaluated values and bounds are never echoed (secret invariant) |
-| T004 | `schema violation at '<path>': missing required key (no default)` | schema field span | A schema field has no value and declares no `default` (C-032 fills defaults; C-031 only reports). Absent `Null`-typed keys are allowed and never reported |
+| T004 | `schema violation at '<path>': missing required key (no default)` / `missing required key (strict mode requires explicit values despite a schema default)` / `missing required key (schema default could not be applied)` | schema field span | A schema field has no value. Without a `default` this fires in both modes; with a `default`, strict mode fires (explicitness) while resilient mode fills the default and records W005 instead (C-032); the third variant is a defensive safety net for unappliable defaults. Absent `Null`-typed keys without a declared default are allowed and never reported |
+| T005 | `schema violation at '<path>': unexpected key '<key>' in closed table` | value expression span when resolvable (the token that produced the value), else the schema table span | A value key has no schema field inside a `closed = true` table (C-032). Key names are author-written identifiers, safe to quote |
 
 ### W0xx — Warnings
 
@@ -74,6 +75,7 @@ parses leave it unset and tools fall back to the input filename.
 | W002 | `unknown profile '<name>'` / `active_profile must be a string` | node | `active_profile` names no defined profile, or is not a string; no profile merges (C-027) |
 | W003 | `profile '<name>' overrides '<path>' with a different type` | node | A profile value wins over a base value of a different type (C-027) |
 | W004 | `remove target '<path>' does not exist` / `rename source '<path>' does not exist` / `array index <i> out of bounds at '<path>'` | node | A patch target is missing; the operation succeeds idempotently (C-028) |
+| W005 | `filled missing key '<path>' from schema default` | schema field span | Resilient mode inserted an evaluated schema default for a missing key (C-032); the filled value is then validated like any written value |
 
 ### H0xx — Healing (implemented in C-016)
 

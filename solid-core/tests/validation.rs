@@ -66,7 +66,7 @@ fn strict_collects_every_violation_then_fails() {
     let codes: Vec<&str> = diags.iter().map(|d| d.code.as_str()).collect();
     assert_eq!(
         codes,
-        ["T003", "T002", "T003", "T002", "T002", "T002", "T004"],
+        ["T003", "T002", "T003", "T002", "T002", "T002", "T004", "T004"],
         "schema order, all collected: {diags:?}"
     );
     assert!(diags
@@ -85,14 +85,19 @@ fn strict_collects_every_violation_then_fails() {
             "ratio",
             "delay",
             "tags[1]",
-            "missing_no_default"
+            "missing_no_default",
+            "with_default"
         ],
         "{diags:?}"
     );
     // Direct data lines up with the arena: every violation has a span.
     assert!(diags.iter().all(|d| d.span.is_some()), "{diags:?}");
-    // The defaulted key stays silent; messages quote the enum contract.
-    assert!(diags.iter().all(|d| !d.message.contains("with_default")));
+    // The strict message names the default tension explicitly.
+    assert!(
+        diags[7].message.contains("despite a schema default"),
+        "{:?}",
+        diags[7]
+    );
     let mode = &diags[2];
     assert!(mode.message.contains("\"dev\""), "{mode:?}");
     assert!(!mode.message.contains("staging"), "{mode:?}");
@@ -108,10 +113,17 @@ fn strict_error_carries_first_code_and_span() {
 }
 
 #[test]
-fn resilient_collects_but_exports_unchanged() {
+fn resilient_collects_and_fills_defaults() {
     let (v, diags) = evaluate_resilient("invalid_mixed.solid");
-    assert_eq!(diags.len(), 7, "{diags:?}");
-    // No filling, no dropping: the tree passes through as evaluated.
+    assert_eq!(diags.len(), 8, "{diags:?}");
+    // The defaulted key fills with a W005; nothing else is touched.
+    assert_eq!(v["with_default"], 7);
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == "W005" && d.path.as_deref() == Some("with_default")),
+        "{diags:?}"
+    );
     assert_eq!(v["port"], 999);
     assert_eq!(v["tags"][1], "two");
     assert!(v.get("missing_no_default").is_none());
@@ -274,4 +286,130 @@ fn length_changed_arrays_fall_back_to_schema_spans() {
     assert_eq!(diags[0].path.as_deref(), Some("xs[0]"));
     let span = diags[0].span.as_ref().expect("span");
     assert_eq!(span.line, 1, "{span:?}");
+}
+
+#[test]
+fn defaults_fill_inside_array_elements() {
+    let src = "schema = { nodes = Array<Table { retries = Int(default = 3) }> }\n\
+         nodes = [{ name = \"a\" }, { name = \"b\", retries = 1 }]\n";
+    let module = parse(src, "inline").unwrap_or_else(|d| panic!("parse failed: {d:?}"));
+    let (value, diags) = Engine::new()
+        .evaluate(&module)
+        .unwrap_or_else(|e| panic!("resilient must succeed: {e:?}"));
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert_eq!(diags[0].code, "W005");
+    assert_eq!(diags[0].path.as_deref(), Some("nodes[0].retries"));
+    let json = solid_core::convert::value_to_pretty_json(&value);
+    let v: serde_json::Value = serde_json::from_str(&json).expect("valid json");
+    assert_eq!(v["nodes"][0]["retries"], 3);
+    assert_eq!(v["nodes"][1]["retries"], 1);
+    // Strict demands the explicit value at the element path.
+    let module = parse(src, "inline").expect("must parse");
+    let mut strict = Engine::new();
+    strict.resilient = false;
+    match strict.evaluate(&module) {
+        Err(EvalError::ValidationFailed { diagnostics }) => {
+            assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+            assert_eq!(diagnostics[0].code, "T004");
+            assert_eq!(diagnostics[0].path.as_deref(), Some("nodes[0].retries"));
+        }
+        other => panic!("must fail strict: {other:?}"),
+    }
+}
+
+#[test]
+fn null_defaults_fill_like_any_other_default() {
+    let src = "schema = { x = Null(default = null) }\n";
+    let module = parse(src, "inline").expect("must parse");
+    let (value, diags) = Engine::new()
+        .evaluate(&module)
+        .unwrap_or_else(|e| panic!("resilient must succeed: {e:?}"));
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert_eq!(diags[0].code, "W005");
+    let json = solid_core::convert::value_to_pretty_json(&value);
+    let v: serde_json::Value = serde_json::from_str(&json).expect("valid json");
+    assert!(v["x"].is_null(), "{v}");
+}
+
+#[test]
+fn filled_value_violations_point_at_the_default() {
+    // The bad default lives on schema line 1; the filled T002 must
+    // attribute there, not to the (missing) value.
+    let src = "schema = { bad = Int(default = \"oops\") }\n";
+    let diags = eval_inline_strict(src).expect_err("strict still fails");
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert_eq!(diags[0].code, "T004");
+    let module = parse(src, "inline").expect("must parse");
+    let (_, diags) = Engine::new()
+        .evaluate(&module)
+        .expect("resilient must succeed");
+    assert_eq!(diags.len(), 2, "{diags:?}");
+    assert_eq!(diags[0].code, "W005");
+    assert_eq!(diags[1].code, "T002");
+    let span = diags[1].span.as_ref().expect("span");
+    assert_eq!(span.line, 1, "{span:?}");
+}
+
+#[test]
+fn resilient_fills_defaults_nested_and_validates_them() {
+    let (v, diags) = evaluate_resilient("defaults.solid");
+    // Five fills (port, host, level, bad, server.retries) + the mistyped
+    // default surfacing as T002.
+    assert_eq!(diags.len(), 6, "{diags:?}");
+    assert_eq!(
+        diags.iter().filter(|d| d.code == "W005").count(),
+        5,
+        "{diags:?}"
+    );
+    assert_eq!(v["port"], 8080);
+    assert_eq!(v["host"], "localhost");
+    assert_eq!(v["level"], 3);
+    assert_eq!(v["server"]["retries"], 3);
+    let bad: Vec<_> = diags.iter().filter(|d| d.code == "T002").collect();
+    assert_eq!(bad.len(), 1, "{diags:?}");
+    assert_eq!(bad[0].path.as_deref(), Some("bad"));
+    // W005 is a warning: resilient exit policy stays green on fills alone.
+    assert!(diags
+        .iter()
+        .filter(|d| d.code == "W005")
+        .all(|d| d.severity == solid_core::Severity::Warning));
+}
+
+#[test]
+fn strict_demands_explicit_values_despite_defaults() {
+    let diags = evaluate_strict("defaults.solid").expect_err("strict fills nothing");
+    assert_eq!(diags.len(), 5, "{diags:?}");
+    assert!(diags.iter().all(|d| d.code == "T004"), "{diags:?}");
+    let paths: Vec<&str> = diags
+        .iter()
+        .map(|d| d.path.as_deref().unwrap_or(""))
+        .collect();
+    assert_eq!(
+        paths,
+        ["port", "host", "level", "bad", "server.retries"],
+        "{diags:?}"
+    );
+}
+
+#[test]
+fn closed_tables_reject_extra_keys() {
+    let diags = evaluate_strict("closed.solid").expect_err("closed must fail strict");
+    assert_eq!(diags.len(), 2, "{diags:?}");
+    assert!(diags.iter().all(|d| d.code == "T005"), "{diags:?}");
+    // Depth-first schema order: the nested table's extra precedes the
+    // root's extra.
+    assert_eq!(diags[0].path.as_deref(), Some("server.debug"));
+    assert_eq!(diags[1].path.as_deref(), Some("extra"));
+    assert!(diags[1].message.contains("'extra'"), "{:?}", diags[1]);
+    // Resilient collects but keeps the extras (validation never drops).
+    let (v, diags) = evaluate_resilient("closed.solid");
+    assert_eq!(diags.len(), 2, "{diags:?}");
+    assert_eq!(v["extra"], "drift");
+    assert_eq!(v["server"]["debug"], true);
+}
+
+#[test]
+fn closed_tables_accept_exact_keys() {
+    eval_inline_strict("schema = { closed = true, port = Int }\nport = 1\n")
+        .expect("exact keys pass");
 }

@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use crate::diag::{Diagnostic, Severity, Span};
 use crate::eval::{value_kind_name, Engine, EvalError};
 use crate::ir::{Module, Node, NodeId, SchemaField, Value};
+use crate::parser::PathSeg;
 use crate::types::SolidType;
 
 impl Engine {
@@ -21,7 +22,7 @@ impl Engine {
         &self,
         module: &Module,
         values: &HashMap<NodeId, Value>,
-        result: &Value,
+        result: &mut Value,
         diagnostics: &mut Vec<Diagnostic>,
     ) -> Result<(), EvalError> {
         let Some(schema_id) = module.schema else {
@@ -33,8 +34,13 @@ impl Engine {
             diagnostics: Vec::new(),
             regexes: HashMap::new(),
             schema_bugs: std::collections::HashSet::new(),
+            resilient: self.resilient,
+            fills: Vec::new(),
         };
-        validator.validate_node(schema_id, module.root, result, "");
+        validator.validate_node(schema_id, module.root, result, &mut Vec::new());
+        if self.resilient {
+            validator.apply_fills(result);
+        }
         if !validator.diagnostics.is_empty() && !self.resilient {
             return Err(EvalError::ValidationFailed {
                 diagnostics: validator.diagnostics,
@@ -43,6 +49,18 @@ impl Engine {
         diagnostics.extend(validator.diagnostics);
         Ok(())
     }
+}
+
+/// One resilient default insertion: the structured path of the missing
+/// key (table keys and array indices — array elements can hold
+/// defaulted fields too), the field that declares it, and the
+/// evaluated default expression plus its span for W005.
+struct FillRequest {
+    segments: Vec<PathSeg>,
+    field_id: NodeId,
+    default_id: NodeId,
+    span: Option<Span>,
+    file: Option<String>,
 }
 
 struct Validator<'a> {
@@ -57,29 +75,35 @@ struct Validator<'a> {
     /// argument): incomparable bounds report once per field even when
     /// array elements re-trigger them (spec/validation.md §4).
     schema_bugs: std::collections::HashSet<(NodeId, String)>,
+    resilient: bool,
+    /// Resilient default insertions collected during the walk, applied
+    /// after it (spec/validation.md §9).
+    fills: Vec<FillRequest>,
 }
 
 impl<'a> Validator<'a> {
     /// Validate one value against one schema node. `value_id` is the
     /// arena node for the value when the result tree still lines up
     /// with it (always true except under profile merges and patches);
-    /// it feeds span attribution only, never semantics.
+    /// it feeds span attribution only, never semantics. `segments` is
+    /// the structured path (table keys and array indices) used for
+    /// messages, diagnostic paths, and default fill locations.
     fn validate_node(
         &mut self,
         schema_id: NodeId,
         value_id: Option<NodeId>,
         value: &Value,
-        path: &str,
+        segments: &mut Vec<PathSeg>,
     ) {
         match self.module.get(schema_id).cloned() {
             Some(Node::SchemaField { field }) => {
-                self.validate_field(schema_id, &field, value_id, value, path);
+                self.validate_field(schema_id, &field, value_id, value, segments);
             }
-            Some(Node::SchemaTable { fields, .. }) => {
-                self.validate_table(schema_id, &fields, value_id, value, path);
+            Some(Node::SchemaTable { fields, closed }) => {
+                self.validate_table(schema_id, &fields, closed, value_id, value, segments);
             }
             Some(Node::SchemaArray { element }) => {
-                self.validate_array(schema_id, element, value_id, value, path);
+                self.validate_array(schema_id, element, value_id, value, segments);
             }
             // A non-schema node is not a contract: nothing to check.
             _ => {}
@@ -90,19 +114,21 @@ impl<'a> Validator<'a> {
         &mut self,
         schema_id: NodeId,
         fields: &indexmap::IndexMap<String, NodeId>,
+        closed: bool,
         value_id: Option<NodeId>,
         value: &Value,
-        path: &str,
+        segments: &mut Vec<PathSeg>,
     ) {
         let Value::Table(map) = value else {
+            let path = render_path(segments);
             self.push(
                 "T002",
                 format!(
                     "schema violation at '{}': expected Table, got {}",
-                    display_path(path),
+                    display_path(&path),
                     value_kind_name(value)
                 ),
-                path,
+                &path,
                 self.spans(value_id, schema_id),
             );
             return;
@@ -115,23 +141,43 @@ impl<'a> Validator<'a> {
             _ => None,
         };
         for (name, field_id) in fields {
-            let child_path = if path.is_empty() {
-                name.clone()
-            } else {
-                format!("{path}.{name}")
-            };
+            segments.push(PathSeg::Key(name.clone()));
             match map.get(name) {
-                None => self.check_missing(*field_id, &child_path),
+                None => self.check_missing(*field_id, segments),
                 Some(v) => {
                     let child_id = arena_children
                         .as_ref()
                         .and_then(|children| children.get(name).copied());
-                    self.validate_node(*field_id, child_id, v, &child_path);
+                    self.validate_node(*field_id, child_id, v, segments);
                 }
             }
+            segments.pop();
         }
-        // Extra value keys are ignored here: closed-table rejection is
-        // C-032 (spec/validation.md §2).
+        // Extra value keys are ignored in open tables; closed tables
+        // reject them (spec/validation.md §10). Iteration follows value
+        // order, so diagnostics stay deterministic.
+        if closed {
+            for (key, _) in map {
+                if fields.contains_key(key) {
+                    continue;
+                }
+                segments.push(PathSeg::Key(key.clone()));
+                let key_path = render_path(segments);
+                let key_id = arena_children
+                    .as_ref()
+                    .and_then(|children| children.get(key).copied());
+                self.push(
+                    "T005",
+                    format!(
+                        "schema violation at '{}': unexpected key '{key}' in closed table",
+                        display_path(&key_path)
+                    ),
+                    &key_path,
+                    self.spans(key_id, schema_id),
+                );
+                segments.pop();
+            }
+        }
     }
 
     fn validate_array(
@@ -140,17 +186,18 @@ impl<'a> Validator<'a> {
         element: NodeId,
         value_id: Option<NodeId>,
         value: &Value,
-        path: &str,
+        segments: &mut Vec<PathSeg>,
     ) {
         let Value::Array(elements) = value else {
+            let path = render_path(segments);
             self.push(
                 "T002",
                 format!(
                     "schema violation at '{}': expected Array, got {}",
-                    display_path(path),
+                    display_path(&path),
                     value_kind_name(value)
                 ),
-                path,
+                &path,
                 self.spans(value_id, schema_id),
             );
             return;
@@ -172,7 +219,9 @@ impl<'a> Validator<'a> {
             // lengths line up; patched length changes fall back to
             // schema spans (spec/validation.md §8).
             let elem_id = arena_elements.as_ref().and_then(|els| els.get(i).copied());
-            self.validate_node(element, elem_id, v, &format!("{path}[{i}]"));
+            segments.push(PathSeg::Index(i));
+            self.validate_node(element, elem_id, v, segments);
+            segments.pop();
         }
     }
 
@@ -182,52 +231,141 @@ impl<'a> Validator<'a> {
         field: &SchemaField,
         value_id: Option<NodeId>,
         value: &Value,
-        path: &str,
+        segments: &mut [PathSeg],
     ) {
+        let path = render_path(segments);
         if !type_accepts(&field.typ, value) {
             self.push(
                 "T002",
                 format!(
                     "schema violation at '{}': expected {}, got {}",
-                    display_path(path),
+                    display_path(&path),
                     field.typ.name(),
                     value_kind_name(value)
                 ),
-                path,
+                &path,
                 self.spans(value_id, schema_id),
             );
             return;
         }
-        self.check_constraints(schema_id, field, value, path, value_id);
+        self.check_constraints(schema_id, field, value, &path, value_id);
     }
-    /// A schema field with no value: T004 unless a default will fill it
-    /// (C-032) or the field is Null-typed (absence is null).
-    fn check_missing(&mut self, field_id: NodeId, path: &str) {
-        let (has_default, is_null, field_span) = match self.module.get(field_id) {
+    /// A schema field with no value (spec/validation.md §5 and §9).
+    /// A declared default fills under resilient mode (recorded for
+    /// later insertion) but is T004 under strict mode (explicitness) —
+    /// the default takes precedence over the Null-absence rule so
+    /// `Null(default = …)` behaves like every other defaulted field.
+    /// Anything else is T004, except Null-typed absence (quiet).
+    fn check_missing(&mut self, field_id: NodeId, segments: &[PathSeg]) {
+        let (default_arg, is_null, field_span) = match self.module.get(field_id) {
             Some(Node::SchemaField { field }) => (
-                field.default.is_some(),
+                field.default,
                 matches!(field.typ, SolidType::Null),
                 field.span.clone(),
             ),
-            _ => (false, false, None),
+            _ => (None, false, None),
         };
-        if has_default || is_null {
-            return;
-        }
+        let path = render_path(segments);
         let (span, file) =
             match field_span.or_else(|| self.module.node_spans.get(&field_id).cloned()) {
                 Some(s) => (Some(s), self.module.node_files.get(&field_id).cloned()),
                 None => (None, None),
             };
+        if let Some(default_id) = default_arg {
+            if self.resilient {
+                self.fills.push(FillRequest {
+                    segments: segments.to_vec(),
+                    field_id,
+                    default_id,
+                    span,
+                    file,
+                });
+                return;
+            }
+            self.push(
+                "T004",
+                format!(
+                    "schema violation at '{}': missing required key (strict mode requires explicit values despite a schema default)",
+                    display_path(&path)
+                ),
+                &path,
+                (span, file),
+            );
+            return;
+        }
+        if is_null {
+            return;
+        }
         self.push(
             "T004",
             format!(
                 "schema violation at '{}': missing required key (no default)",
-                display_path(path)
+                display_path(&path)
             ),
-            path,
+            &path,
             (span, file),
         );
+    }
+
+    /// Apply resilient default insertions collected during the walk
+    /// (spec/validation.md §9): insert the evaluated default, record
+    /// W005, then validate the filled value like a written one so a
+    /// mistyped default surfaces as T002/T003 instead of corrupting
+    /// the tree silently. Requests run in schema (walk) order. The
+    /// filled value attributes to the default expression's span, which
+    /// is more actionable than the schema field span.
+    fn apply_fills(&mut self, result: &mut Value) {
+        let fills = std::mem::take(&mut self.fills);
+        for mut fill in fills {
+            // Both skips are defensive (the walk verified the parents
+            // and evaluation fills the node map), but a missing key
+            // must never go silent: report T004 when the default
+            // cannot be applied.
+            let Some(default_value) = self.values.get(&fill.default_id).cloned() else {
+                self.push(
+                    "T004",
+                    format!(
+                        "schema violation at '{}': missing required key (schema default could not be applied)",
+                        display_path(&render_path(&fill.segments))
+                    ),
+                    &render_path(&fill.segments),
+                    (fill.span.clone(), fill.file.clone()),
+                );
+                continue;
+            };
+            if !insert_at(result, &fill.segments, default_value.clone()) {
+                self.push(
+                    "T004",
+                    format!(
+                        "schema violation at '{}': missing required key (schema default could not be applied)",
+                        display_path(&render_path(&fill.segments))
+                    ),
+                    &render_path(&fill.segments),
+                    (fill.span.clone(), fill.file.clone()),
+                );
+                continue;
+            };
+            let path = render_path(&fill.segments);
+            self.diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                code: "W005".into(),
+                message: format!(
+                    "filled missing key '{}' from schema default",
+                    display_path(&path)
+                ),
+                path: Some(path),
+                span: fill.span,
+                repair: None,
+                confidence: 1.0,
+                file: fill.file,
+            });
+            self.validate_node(
+                fill.field_id,
+                Some(fill.default_id),
+                &default_value,
+                &mut fill.segments,
+            );
+        }
     }
 
     fn check_constraints(
@@ -540,6 +678,55 @@ fn display_path(path: &str) -> &str {
         "<root>"
     } else {
         path
+    }
+}
+
+/// Render structured walk segments in patch-path format (`a.b[0].c`),
+/// the same shape everywhere: messages, diagnostic paths, and fills.
+fn render_path(segments: &[PathSeg]) -> String {
+    let mut out = String::new();
+    for segment in segments {
+        match segment {
+            PathSeg::Key(key) => {
+                if !out.is_empty() {
+                    out.push('.');
+                }
+                out.push_str(key);
+            }
+            PathSeg::Index(i) => {
+                out.push_str(&format!("[{i}]"));
+            }
+        }
+    }
+    out
+}
+
+/// Insert a filled default at a structured path, descending tables by
+/// key and arrays by index. Only existing containers are traversed:
+/// the walk verified every parent, so a miss is defensive (patches
+/// share no guarantees). The final segment is always a table key —
+/// array slots are positional, never "missing" — anything else fails.
+fn insert_at(result: &mut Value, segments: &[PathSeg], value: Value) -> bool {
+    let Some((first, rest)) = segments.split_first() else {
+        return false;
+    };
+    if rest.is_empty() {
+        if let (PathSeg::Key(key), Value::Table(map)) = (first, result) {
+            map.insert(key.clone(), value);
+            return true;
+        }
+        return false;
+    }
+    match (first, result) {
+        (PathSeg::Key(key), Value::Table(map)) => match map.get_mut(key) {
+            Some(next) => insert_at(next, rest, value),
+            None => false,
+        },
+        (PathSeg::Index(i), Value::Array(elements)) => match elements.get_mut(*i) {
+            Some(next) => insert_at(next, rest, value),
+            None => false,
+        },
+        _ => false,
     }
 }
 

@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::diag::{Diagnostic, Severity};
+use crate::diag::{Diagnostic, Repair, RepairKind, Severity};
 use crate::ir::{Module, Node, NodeId, Value};
 
 /// Rule IDs, shared by CLI flags, options, and tests.
@@ -239,13 +239,7 @@ fn depends_on(module: &Module) -> Vec<Diagnostic> {
                 let mut missing: Vec<&String> = referenced.iter().collect();
                 missing.sort();
                 for name in missing {
-                    out.push(warning(
-                        module,
-                        "L002",
-                        format!("missing depends_on entry for '{name}'"),
-                        Some(scope_path.clone()),
-                        span_node,
-                    ));
+                    out.push(missing_entry(module, &scope_path, span_node, name));
                 }
             }
             continue;
@@ -277,16 +271,35 @@ fn depends_on(module: &Module) -> Vec<Diagnostic> {
             .collect();
         missing.sort();
         for name in missing {
-            out.push(warning(
-                module,
-                "L002",
-                format!("missing depends_on entry for '{name}'"),
-                Some(scope_path.clone()),
-                span_node,
-            ));
+            out.push(missing_entry(module, &scope_path, span_node, name));
         }
     }
     out
+}
+
+/// An L002 missing-entry diagnostic: human prose plus a machine
+/// repair carrying the missing path (empty original = insertion),
+/// so tooling never parses the message.
+fn missing_entry(
+    module: &Module,
+    scope_path: &str,
+    span_node: Option<NodeId>,
+    name: &str,
+) -> Diagnostic {
+    let mut diag = warning(
+        module,
+        "L002",
+        format!("missing depends_on entry for '{name}'"),
+        Some(scope_path.to_string()),
+        span_node,
+    );
+    diag.repair = Some(Repair {
+        original: String::new(),
+        suggested: name.to_string(),
+        kind: RepairKind::Other("add_depends_on".to_string()),
+        safe: true,
+    });
+    diag
 }
 
 /// Count operator nodes in a value subtree (spec/linter.md §1).

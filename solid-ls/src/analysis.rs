@@ -12,12 +12,13 @@
 use std::collections::HashMap;
 
 use lsp_types::{
-    CompletionItem, CompletionItemKind, Hover, HoverContents, InlayHint, InlayHintKind, Location,
-    MarkupContent, MarkupKind, Position, Range, TextEdit, Url, WorkspaceEdit,
+    CodeAction, CodeActionKind, CompletionItem, CompletionItemKind, Hover, HoverContents,
+    InlayHint, InlayHintKind, Location, MarkupContent, MarkupKind, Position, Range, TextEdit, Url,
+    WorkspaceEdit,
 };
 use solid_core::{
     lint, parse_recovering, parse_text_recovering_with_file, AnnotationKind, Diagnostic, Engine,
-    Module, Node, NodeId, ParseOptions, Severity, Value,
+    Module, Node, NodeId, ParseOptions, RepairKind, Severity, Value,
 };
 
 /// One open document: parsed module plus resilient evaluation.
@@ -112,6 +113,13 @@ pub struct DocVersion(pub i32);
 /// UTF-16 code units in a string (LSP character units).
 fn utf16_len(s: &str) -> u32 {
     s.encode_utf16().count() as u32
+}
+
+/// LSP content width of a `\n`-split line: LSP line positions
+/// exclude the terminator, so a trailing carriage return (CRLF
+/// documents) never counts toward columns or edit ranges.
+fn line_content_width(line: &str) -> u32 {
+    utf16_len(line.strip_suffix('\r').unwrap_or(line))
 }
 
 /// 0-based character index → UTF-16 column within one line.
@@ -1201,11 +1209,9 @@ fn patch_reference_ranges(
     module: &Module,
 ) -> Vec<Range> {
     let mut out = Vec::new();
-    let base = offset_of(
-        text,
-        span.line.saturating_sub(1),
-        span.column.saturating_sub(1),
-    );
+    // Directive spans are 1-based character coordinates
+    // (core_offset, never offset_of's UTF-16 frame).
+    let base = core_offset(text, span.line, span.column);
     let rest = match text.get(base..) {
         Some(rest) => rest,
         None => return out,
@@ -1340,12 +1346,9 @@ fn depends_on_segment_range(
 ) -> Option<Range> {
     let uri = uri_for_node(doc, _table);
     let text = text_for_uri(doc, lookup, &uri)?;
-    // Array span starts at `[`: scan string literals in order.
-    let start = offset_of(
-        &text,
-        span.line.saturating_sub(1),
-        span.column.saturating_sub(1),
-    );
+    // Array span starts at `[` (character coordinates, as above):
+    // scan string literals in order.
+    let start = core_offset(&text, span.line, span.column);
     let rest = text.get(start..)?;
     let mut found = 0usize;
     let mut chars = rest.char_indices().peekable();
@@ -2134,5 +2137,506 @@ pub fn inlay_hints(doc: &Doc, range: Option<Range>) -> Vec<InlayHint> {
     out.sort_by(|a, b| {
         (a.position.line, a.position.character).cmp(&(b.position.line, b.position.character))
     });
+    out
+}
+
+// ------------------------------------------------------------------
+// Code actions (C-045, spec/lsp.md §5).
+// ------------------------------------------------------------------
+
+/// Auto-apply confidence tier for healing actions (spec/healing.md,
+/// C-016): repairs at or above this apply without asking.
+const HEAL_APPLY_CONFIDENCE: f64 = 0.95;
+
+/// Whether two LSP ranges touch (point selections inclusive): a
+/// cursor parked at a diagnostic's edge counts as "at" it, so
+/// touching edges qualify alongside overlaps.
+fn ranges_touch(a: Range, b: Range) -> bool {
+    let (a_start, a_end) = (
+        (a.start.line, a.start.character),
+        (a.end.line, a.end.character),
+    );
+    let (b_start, b_end) = (
+        (b.start.line, b.start.character),
+        (b.end.line, b.end.character),
+    );
+    a_start <= b_end && b_start <= a_end
+}
+
+/// All publishable diagnostics for action matching: parse, eval
+/// (hard failures converted), lint. Healing rides inside the
+/// evaluation records (merged once — see `diagnostics_for`).
+fn action_diags(doc: &Doc) -> impl Iterator<Item = &Diagnostic> {
+    doc.parse_diags
+        .iter()
+        .chain(doc.eval_diags.iter())
+        .chain(doc.lint_diags.iter())
+}
+
+/// Quickfix actions at a request range: healing repairs, extract
+/// let, style conversions, missing depends_on entries — sorted by
+/// title for determinism (spec/lsp.md §5).
+pub fn code_actions(doc: &Doc, range: Range) -> Vec<CodeAction> {
+    let mut out = Vec::new();
+    out.extend(heal_actions(doc, range));
+    out.extend(extract_action(doc, range));
+    out.extend(convert_actions(doc));
+    out.extend(depends_on_actions(doc, range));
+    out.sort_by(|a, b| a.title.cmp(&b.title));
+    out
+}
+
+/// One edit to one file, as a workspace edit.
+fn single_file_edit(uri: Url, edit: TextEdit) -> WorkspaceEdit {
+    let mut changes = HashMap::new();
+    changes.insert(uri, vec![edit]);
+    WorkspaceEdit {
+        changes: Some(changes),
+        document_changes: None,
+        change_annotations: None,
+    }
+}
+
+/// Apply-healing actions for H-diagnostics touching the range whose
+/// repair confidence reaches the auto-apply tier. Application honors
+/// repair shape: empty `original` inserts at a point, otherwise the
+/// span is replaced — except `InsertQuote`, whose diagnostic span
+/// points at the string's opening delimiter while the repair belongs
+/// at the string token's end (the coordinates the lexer healed
+/// from); without that token no action is offered.
+fn heal_actions(doc: &Doc, range: Range) -> Vec<CodeAction> {
+    let mut out = Vec::new();
+    for diag in action_diags(doc) {
+        if !diag.code.starts_with('H') || diag.confidence < HEAL_APPLY_CONFIDENCE {
+            continue;
+        }
+        let Some(repair) = diag.repair.as_ref() else {
+            continue;
+        };
+        // Confidence alone is not enough: an explicitly unsafe
+        // repair (H005 similarity without a passing safety check)
+        // must never present as apply-ready, however it scored.
+        if !repair.safe {
+            continue;
+        }
+        let diag_range = diag
+            .span
+            .as_ref()
+            .map(|span| range_of_span(&doc.text, span))
+            .unwrap_or(zero_range());
+        if !ranges_touch(diag_range, range) {
+            continue;
+        }
+        let edit_range = match repair.kind {
+            RepairKind::InsertQuote => {
+                let Some(insert_at) = string_token_end(&doc.text, diag.span.as_ref()) else {
+                    continue;
+                };
+                Range {
+                    start: insert_at,
+                    end: insert_at,
+                }
+            }
+            _ if repair.original.is_empty() => Range {
+                start: diag_range.start,
+                end: diag_range.start,
+            },
+            _ => diag_range,
+        };
+        out.push(CodeAction {
+            title: format!("Apply healing ({})", diag.code),
+            kind: Some(CodeActionKind::QUICKFIX),
+            diagnostics: Some(vec![to_lsp_diagnostic(&doc.text, diag)]),
+            edit: Some(single_file_edit(
+                doc.uri.clone(),
+                TextEdit {
+                    range: edit_range,
+                    new_text: repair.suggested.clone(),
+                },
+            )),
+            ..Default::default()
+        });
+    }
+    out
+}
+
+/// End position of the string token starting at a span (1-based core
+/// coordinates): locates the unterminated-string repair's true
+/// insertion point. String tokens never span... they can span lines
+/// (multi-line); the token end is authoritative either way.
+fn string_token_end(text: &str, span: Option<&solid_core::diag::Span>) -> Option<Position> {
+    use solid_core::parser::TokenKind as K;
+    let span = span?;
+    let mut lexer = solid_core::parser::Lexer::new(text);
+    for tok in lexer.tokenize().tokens {
+        match tok.kind {
+            K::String(_) | K::SingleString | K::MlString(_) | K::MlSingleString
+                if tok.line == span.line && tok.col == span.column =>
+            {
+                return Some(core_to_lsp(text, tok.end_line, tok.end_col));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Byte range of a core span, for containment checks against
+/// selection offsets. Core positions are 1-based character
+/// coordinates — never passed as UTF-16 columns (non-BMP characters
+/// occupy two UTF-16 units but one character column).
+fn span_byte_range(text: &str, span: &solid_core::diag::Span) -> Option<(usize, usize)> {
+    let start = core_offset(text, span.line, span.column);
+    let end = core_offset(text, span.end_line, span.end_column);
+    (start <= end).then_some((start, end))
+}
+
+/// Byte offset of a 1-based core (line, character-column) position:
+/// the character-aware counterpart to `offset_of` (which takes
+/// 0-based UTF-16). Out-of-range positions clamp to the document,
+/// like every other mapping in this backend.
+fn core_offset(text: &str, line_1: u32, col_1: u32) -> usize {
+    let mut offset = 0usize;
+    for (i, l) in text.split('\n').enumerate() {
+        if i as u32 == line_1.saturating_sub(1) {
+            let char_idx = (col_1.saturating_sub(1) as usize).min(l.chars().count());
+            let mut byte = 0usize;
+            for (j, c) in l.chars().enumerate() {
+                if j >= char_idx {
+                    break;
+                }
+                byte += c.len_utf8();
+            }
+            return offset + byte;
+        }
+        offset += l.len() + 1;
+    }
+    text.len()
+}
+
+/// Whether a byte range is extractable as a `let` value: some single
+/// non-table value node's span must match it EXACTLY (partial-token
+/// selections would emit invalid lets or corrupt the original), and
+/// every reference inside must resolve to a `let` binding or a root
+/// key — moving a scope-relative reference to document scope would
+/// rebind it. Tables (inline or block) are excluded, as are schema
+/// and patch nodes. Anything else is withheld rather than emitted
+/// as an invalid let.
+fn is_value_expression(doc: &Doc, start: usize, end: usize) -> bool {
+    let mut matched = false;
+    for (id, node) in doc.module.arena.iter().enumerate() {
+        match node {
+            Node::Table { .. }
+            | Node::SchemaTable { .. }
+            | Node::SchemaField { .. }
+            | Node::SchemaArray { .. }
+            | Node::PatchDirective { .. } => continue,
+            _ => {}
+        }
+        let id = NodeId(id as u32);
+        if !node_in_doc(doc, id) {
+            continue;
+        }
+        if let Some(span) = doc.module.node_spans.get(&id) {
+            if span_byte_range(&doc.text, span) == Some((start, end)) {
+                matched = true;
+                break;
+            }
+        }
+    }
+    if !matched {
+        return false;
+    }
+    // Scope safety for references inside the selection.
+    let mut paths: HashMap<NodeId, String> = HashMap::new();
+    for (id, path) in doc.module.value_paths() {
+        paths.insert(id, path);
+    }
+    for (i, node) in doc.module.arena.iter().enumerate() {
+        let Node::Ref(target) = node else {
+            continue;
+        };
+        let Some(span) = doc.module.node_spans.get(&NodeId(i as u32)) else {
+            continue;
+        };
+        let Some((ref_start, ref_end)) = span_byte_range(&doc.text, span) else {
+            continue;
+        };
+        if ref_start < start || ref_end > end {
+            continue;
+        }
+        if doc.module.bindings.values().any(|id| id == target) {
+            continue;
+        }
+        match paths.get(target) {
+            // Root keys resolve at document scope like bindings.
+            Some(path) if !path.contains('.') => {}
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// Extract-let action for a non-empty selection: insert the binding
+/// after the last top-level `let` (or at the top of file) and
+/// replace the selection with the fresh name.
+fn extract_action(doc: &Doc, range: Range) -> Vec<CodeAction> {
+    if range.start == range.end {
+        return Vec::new();
+    }
+    let start = offset_of(&doc.text, range.start.line, range.start.character);
+    let end = offset_of(&doc.text, range.end.line, range.end.character);
+    if start >= end || !is_value_expression(doc, start, end) {
+        return Vec::new();
+    }
+    let Some(selected) = doc.text.get(start..end).map(str::to_string) else {
+        return Vec::new();
+    };
+    if selected.trim().is_empty() {
+        return Vec::new();
+    }
+    // Fresh name past existing bindings and root keys.
+    let mut name = "extracted".to_string();
+    let mut counter = 2u32;
+    let root_taken = |candidate: &str| {
+        doc.module.bindings.contains_key(candidate)
+            || doc
+                .module
+                .root
+                .and_then(|root| doc.module.get(root))
+                .and_then(|node| match node {
+                    Node::Table { fields } => Some(fields.contains_key(candidate)),
+                    _ => None,
+                })
+                .unwrap_or(false)
+    };
+    while root_taken(&name) {
+        name = format!("extracted{counter}");
+        counter += 1;
+    }
+    // Insertion after the last top-level `let` (or at the top of
+    // file). Top-level means column 1: nested lets inside brace
+    // blocks are indented by the canonical layout (a column-1 let
+    // inside braces is pathological formatting the formatter would
+    // fix — and inserting beside it stays valid regardless).
+    let mut lexer = solid_core::parser::Lexer::new(&doc.text);
+    let last_let = lexer
+        .tokenize()
+        .tokens
+        .iter()
+        .filter(|tok| matches!(tok.kind, solid_core::parser::TokenKind::Let) && tok.col == 1)
+        .map(|tok| tok.line)
+        .max();
+    let (insert_at, insert_text) = match last_let {
+        Some(line_1) => {
+            let line_0 = line_1.saturating_sub(1);
+            let width = doc
+                .text
+                .split('\n')
+                .nth(line_0 as usize)
+                .map(line_content_width)
+                .unwrap_or(0);
+            (
+                Position {
+                    line: line_0,
+                    character: width,
+                },
+                format!("\nlet {name} = {selected}"),
+            )
+        }
+        None => (
+            Position {
+                line: 0,
+                character: 0,
+            },
+            format!("let {name} = {selected}\n"),
+        ),
+    };
+    let mut changes = HashMap::new();
+    changes.insert(
+        doc.uri.clone(),
+        vec![
+            TextEdit {
+                range: Range {
+                    start: insert_at,
+                    end: insert_at,
+                },
+                new_text: insert_text,
+            },
+            TextEdit {
+                range,
+                new_text: name.clone(),
+            },
+        ],
+    );
+    vec![CodeAction {
+        title: format!("Extract to let `{name}`"),
+        kind: Some(CodeActionKind::QUICKFIX),
+        edit: Some(WorkspaceEdit {
+            changes: Some(changes),
+            document_changes: None,
+            change_annotations: None,
+        }),
+        ..Default::default()
+    }]
+}
+
+/// Style-conversion actions: each direction offered only when it
+/// would change the text, through the exact formatter.
+fn convert_actions(doc: &Doc) -> Vec<CodeAction> {
+    let mut out = Vec::new();
+    let lines: Vec<&str> = doc.text.split('\n').collect();
+    let full = Range {
+        start: Position {
+            line: 0,
+            character: 0,
+        },
+        end: Position {
+            line: lines.len().saturating_sub(1) as u32,
+            character: lines.last().map(|l| line_content_width(l)).unwrap_or(0),
+        },
+    };
+    for (label, style) in [
+        ("brace", solid_core::Style::Brace),
+        ("indent", solid_core::Style::Indent),
+    ] {
+        let converted = solid_core::fmt::format(&doc.module, style);
+        if converted == doc.text {
+            continue;
+        }
+        out.push(CodeAction {
+            title: format!("Convert to {label} style"),
+            kind: Some(CodeActionKind::QUICKFIX),
+            edit: Some(single_file_edit(
+                doc.uri.clone(),
+                TextEdit {
+                    range: full,
+                    new_text: converted,
+                },
+            )),
+            ..Default::default()
+        });
+    }
+    out
+}
+
+/// Missing-depends_on actions for L002 diagnostics touching the
+/// range: append into the existing array, or create the line at the
+/// scope's depth. The missing name parses from the diagnostic's
+/// quoted message; the scope resolves from its path field.
+fn depends_on_actions(doc: &Doc, range: Range) -> Vec<CodeAction> {
+    let mut out = Vec::new();
+    for diag in doc.lint_diags.iter() {
+        if diag.code != "L002" {
+            continue;
+        }
+        // Machine repair metadata identifies the diagnostic even if
+        // the prose ever changes; the message prefix is the fallback
+        // for records predating the metadata.
+        let has_repair = matches!(&diag.repair, Some(repair)
+            if matches!(&repair.kind, RepairKind::Other(kind) if kind == "add_depends_on"));
+        if !(has_repair || diag.message.starts_with("missing depends_on entry for '")) {
+            continue;
+        }
+        let diag_range = diag
+            .span
+            .as_ref()
+            .map(|span| range_of_span(&doc.text, span))
+            .unwrap_or(zero_range());
+        if !ranges_touch(diag_range, range) {
+            continue;
+        }
+        // The missing path rides the repair record when present
+        // (machine-readable); prose parsing is the fallback for
+        // diagnostics predating the repair metadata.
+        let name = match &diag.repair {
+            Some(repair) if repair.original.is_empty() && !repair.suggested.is_empty() => {
+                repair.suggested.clone()
+            }
+            _ => {
+                let Some(parsed) = diag
+                    .message
+                    .strip_prefix("missing depends_on entry for '")
+                    .and_then(|rest| rest.strip_suffix('\''))
+                else {
+                    continue;
+                };
+                parsed.to_string()
+            }
+        };
+        let scope_path = diag.path.as_deref().unwrap_or("");
+        let table = if scope_path.is_empty() {
+            doc.module.root
+        } else {
+            doc.module.resolve_value_path(scope_path)
+        };
+        let Some(table) = table else {
+            continue;
+        };
+        let edit = match doc.module.depends_on.get(&table) {
+            // Append after the `[`: `"name", ` (or `"name"` into an
+            // empty array, avoiding a trailing comma).
+            Some(dep) => {
+                let at = offset_of(
+                    &doc.text,
+                    dep.span.line.saturating_sub(1),
+                    dep.span.column.saturating_sub(1),
+                );
+                let insert_text = if dep.paths.is_empty() {
+                    format!("\"{name}\"")
+                } else {
+                    format!("\"{name}\", ")
+                };
+                // The span starts at the array's `[` by construction
+                // (spec/linter.md §2); anything else is unsafe.
+                if doc.text.get(at..at + 1) != Some("[") {
+                    continue;
+                }
+                let position = position_of(&doc.text, at + 1);
+                TextEdit {
+                    range: Range {
+                        start: position,
+                        end: position,
+                    },
+                    new_text: insert_text,
+                }
+            }
+            // Create the line at the scope's depth (formatter
+            // canonicalizes placement on the next run).
+            None => {
+                let depth = scopes(doc)
+                    .iter()
+                    .find(|scope| scope.path == scope_path)
+                    .map(|scope| scope.depth)
+                    .unwrap_or(0);
+                let (line_1, own_span) = match doc.module.node_spans.get(&table) {
+                    Some(span) => (span.line, true),
+                    None => (1, false),
+                };
+                let at = if scope_path.is_empty() || !own_span {
+                    Position {
+                        line: 0,
+                        character: 0,
+                    }
+                } else {
+                    Position {
+                        line: line_1,
+                        character: 0,
+                    }
+                };
+                TextEdit {
+                    range: Range { start: at, end: at },
+                    new_text: format!("{}depends_on = [\"{name}\"]\n", "  ".repeat(depth)),
+                }
+            }
+        };
+        out.push(CodeAction {
+            title: format!("Add depends_on entry for '{name}'"),
+            kind: Some(CodeActionKind::QUICKFIX),
+            diagnostics: Some(vec![to_lsp_diagnostic(&doc.text, diag)]),
+            edit: Some(single_file_edit(doc.uri.clone(), edit)),
+            ..Default::default()
+        });
+    }
     out
 }

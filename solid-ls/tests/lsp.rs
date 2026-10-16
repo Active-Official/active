@@ -881,6 +881,543 @@ fn buffer_matching_tolerates_uri_case_differences() {
 }
 
 // ------------------------------------------------------------------
+// C-045: code actions.
+// ------------------------------------------------------------------
+
+/// Apply text edits (range → replacement) back-to-front so offsets
+/// stay valid, for round-trip assertions on action edits.
+fn apply_edits(text: &str, edits: &[(lsp_types::Range, String)]) -> String {
+    let mut ordered: Vec<(usize, usize, &str)> = edits
+        .iter()
+        .map(|(range, new_text)| {
+            (
+                analysis::offset_of(text, range.start.line, range.start.character),
+                analysis::offset_of(text, range.end.line, range.end.character),
+                new_text.as_str(),
+            )
+        })
+        .collect();
+    ordered.sort_by_key(|a| std::cmp::Reverse(a.0));
+    let mut out = text.to_string();
+    for (start, end, new_text) in ordered {
+        out.replace_range(start..end, new_text);
+    }
+    out
+}
+
+#[test]
+fn healing_action_applies_the_suggested_repair() {
+    let doc = open_untitled("healact", "port = \"abc\n");
+    let everything = lsp_types::Range {
+        start: lsp_types::Position {
+            line: 0,
+            character: 0,
+        },
+        end: lsp_types::Position {
+            line: 2,
+            character: 0,
+        },
+    };
+    let actions = analysis::code_actions(&doc, everything);
+    let action = actions
+        .iter()
+        .find(|action| action.title.starts_with("Apply healing (H"))
+        .expect("healing action: {actions:?}");
+    let edits: Vec<(lsp_types::Range, String)> = action
+        .edit
+        .as_ref()
+        .expect("edit")
+        .changes
+        .as_ref()
+        .expect("changes")
+        .values()
+        .flatten()
+        .map(|edit| (edit.range, edit.new_text.clone()))
+        .collect();
+    assert_eq!(edits.len(), 1);
+    // Round trip: the repaired document heals clean.
+    let fixed = apply_edits(&doc.text, &edits);
+    let reopened = open_untitled("healact2", &fixed);
+    let diags = analysis::diagnostics_for(&reopened);
+    assert!(
+        diags.iter().all(|d| match &d.code {
+            Some(lsp_types::NumberOrString::String(code)) => !code.starts_with('H'),
+            _ => true,
+        }),
+        "{diags:?}"
+    );
+}
+
+#[test]
+fn extract_action_inserts_binding_and_rewrites_use() {
+    let doc = open_untitled("extract", "port = 8080\n");
+    let select = lsp_types::Range {
+        start: lsp_types::Position {
+            line: 0,
+            character: 7,
+        },
+        end: lsp_types::Position {
+            line: 0,
+            character: 11,
+        },
+    };
+    let actions = analysis::code_actions(&doc, select);
+    let action = actions
+        .iter()
+        .find(|action| action.title == "Extract to let `extracted`")
+        .expect("extract action: {actions:?}");
+    let edits: Vec<(lsp_types::Range, String)> = action
+        .edit
+        .as_ref()
+        .expect("edit")
+        .changes
+        .as_ref()
+        .expect("changes")
+        .values()
+        .flatten()
+        .map(|edit| (edit.range, edit.new_text.clone()))
+        .collect();
+    assert_eq!(edits.len(), 2);
+    let rewritten = apply_edits(&doc.text, &edits);
+    assert_eq!(
+        rewritten, "let extracted = 8080\nport = extracted\n",
+        "{rewritten:?}"
+    );
+    // The rewritten document evaluates to the same value.
+    let reopened = open_untitled("extract2", &rewritten);
+    let hover = analysis::hover_at(&reopened, 1, 1).expect("hover");
+    let lsp_types::HoverContents::Markup(content) = hover.contents else {
+        panic!("markup expected");
+    };
+    assert!(content.value.contains("8080"), "{}", content.value);
+}
+
+#[test]
+fn convert_actions_offer_only_changing_directions() {
+    let doc = open_untitled("conv", "[server]\nport = 1\n");
+    let everything = lsp_types::Range {
+        start: lsp_types::Position {
+            line: 0,
+            character: 0,
+        },
+        end: lsp_types::Position {
+            line: 3,
+            character: 0,
+        },
+    };
+    let actions = analysis::code_actions(&doc, everything);
+    let titles: Vec<&str> = actions.iter().map(|action| action.title.as_str()).collect();
+    assert!(titles.contains(&"Convert to indent style"), "{titles:?}");
+    assert!(
+        !titles.iter().any(|title| title.contains("brace")),
+        "{titles:?}"
+    );
+    let action = actions
+        .iter()
+        .find(|action| action.title == "Convert to indent style")
+        .expect("convert action");
+    let edit = action
+        .edit
+        .as_ref()
+        .expect("edit")
+        .changes
+        .as_ref()
+        .expect("changes")
+        .values()
+        .flatten()
+        .next()
+        .expect("one edit");
+    assert!(edit.new_text.contains("server:"), "{}", edit.new_text);
+}
+
+#[test]
+fn depends_on_action_inserts_the_missing_path() {
+    // Empty declared array: the missing path fills it (missing-entry
+    // diagnostics fire for declared arrays — empty included).
+    let doc = open_untitled(
+        "depact",
+        "[server]\ndepends_on = []\nport = max\nlet max = 4\n",
+    );
+    let diags = analysis::diagnostics_for(&doc);
+    let missing = diags
+        .iter()
+        .find(|d| match &d.code {
+            Some(lsp_types::NumberOrString::String(code)) => {
+                code == "L002" && d.message.contains("missing")
+            }
+            _ => false,
+        })
+        .expect("L002 missing: {diags:?}");
+    let actions = analysis::code_actions(&doc, missing.range);
+    let action = actions
+        .iter()
+        .find(|action| action.title == "Add depends_on entry for 'max'")
+        .expect("depends_on action: {actions:?}");
+    let edits: Vec<(lsp_types::Range, String)> = action
+        .edit
+        .as_ref()
+        .expect("edit")
+        .changes
+        .as_ref()
+        .expect("changes")
+        .values()
+        .flatten()
+        .map(|edit| (edit.range, edit.new_text.clone()))
+        .collect();
+    assert_eq!(edits.len(), 1);
+    let fixed = apply_edits(&doc.text, &edits);
+    assert!(fixed.contains("depends_on = [\"max\"]"), "{fixed:?}");
+    let reopened = open_untitled("depact2", &fixed);
+    let diags = analysis::diagnostics_for(&reopened);
+    assert!(
+        diags
+            .iter()
+            .all(|d| !d.message.contains("missing depends_on")),
+        "{diags:?}"
+    );
+}
+
+#[test]
+fn depends_on_action_creates_a_missing_array() {
+    // The creation branch is defensive (missing-entry diagnostics
+    // fire for declared arrays), exercised with a synthetic
+    // diagnostic on a scope without one.
+    let mut doc = open_untitled("depcreate", "[server]\nport = 1\n");
+    let table = doc.module.resolve_value_path("server").expect("server");
+    let span = doc.module.node_spans.get(&table).cloned().expect("span");
+    doc.lint_diags.push(solid_core::Diagnostic {
+        severity: solid_core::Severity::Warning,
+        code: "L002".to_string(),
+        message: "missing depends_on entry for 'db'".to_string(),
+        path: Some("server".to_string()),
+        span: Some(span),
+        repair: None,
+        confidence: 1.0,
+        file: None,
+    });
+    let diags = analysis::diagnostics_for(&doc);
+    let missing = diags
+        .iter()
+        .find(|d| d.message.contains("missing depends_on"))
+        .expect("synthetic L002: {diags:?}");
+    let actions = analysis::code_actions(&doc, missing.range);
+    let action = actions
+        .iter()
+        .find(|action| action.title == "Add depends_on entry for 'db'")
+        .expect("creation action: {actions:?}");
+    let edits: Vec<(lsp_types::Range, String)> = action
+        .edit
+        .as_ref()
+        .expect("edit")
+        .changes
+        .as_ref()
+        .expect("changes")
+        .values()
+        .flatten()
+        .map(|edit| (edit.range, edit.new_text.clone()))
+        .collect();
+    assert_eq!(edits.len(), 1);
+    let fixed = apply_edits(&doc.text, &edits);
+    assert!(fixed.contains("depends_on = [\"db\"]"), "{fixed:?}");
+}
+
+#[test]
+fn depends_on_action_prefers_repair_metadata_over_prose() {
+    // The machine repair identifies the diagnostic even when the
+    // human message changes beyond recognition.
+    let mut doc = open_untitled("deprepair", "[server]\ndepends_on = []\nport = 1\n");
+    let table = doc.module.resolve_value_path("server").expect("server");
+    let span = doc.module.node_spans.get(&table).cloned().expect("span");
+    doc.lint_diags.push(solid_core::Diagnostic {
+        severity: solid_core::Severity::Warning,
+        code: "L002".to_string(),
+        message: "something entirely different".to_string(),
+        path: Some("server".to_string()),
+        span: Some(span),
+        repair: Some(solid_core::Repair {
+            original: String::new(),
+            suggested: "db".to_string(),
+            kind: solid_core::RepairKind::Other("add_depends_on".to_string()),
+            safe: true,
+        }),
+        confidence: 1.0,
+        file: None,
+    });
+    let everything = lsp_types::Range {
+        start: lsp_types::Position {
+            line: 0,
+            character: 0,
+        },
+        end: lsp_types::Position {
+            line: 3,
+            character: 0,
+        },
+    };
+    let actions = analysis::code_actions(&doc, everything);
+    assert!(
+        actions
+            .iter()
+            .any(|action| action.title == "Add depends_on entry for 'db'"),
+        "{actions:?}"
+    );
+}
+
+#[test]
+fn quiet_positions_offer_no_targeted_actions() {
+    let doc = open_untitled("quiet", "port = 1\n");
+    let point = lsp_types::Range {
+        start: lsp_types::Position {
+            line: 0,
+            character: 0,
+        },
+        end: lsp_types::Position {
+            line: 0,
+            character: 0,
+        },
+    };
+    let actions = analysis::code_actions(&doc, point);
+    assert!(
+        actions.iter().all(|action| {
+            !action.title.starts_with("Apply healing")
+                && !action.title.starts_with("Extract")
+                && !action.title.starts_with("Add depends_on")
+        }),
+        "{actions:?}"
+    );
+}
+
+#[test]
+fn unsafe_high_confidence_repairs_are_withheld() {
+    // Confidence alone never presents: an explicitly unsafe repair
+    // must not offer, however it scored.
+    let mut doc = open_untitled("unsafeheal", "port = 1\n");
+    doc.eval_diags.push(solid_core::Diagnostic {
+        severity: solid_core::Severity::Warning,
+        code: "H005".to_string(),
+        message: "unknown key 'prt', did you mean 'port'?".to_string(),
+        path: None,
+        span: None,
+        repair: Some(solid_core::Repair {
+            original: "prt".to_string(),
+            suggested: "port".to_string(),
+            kind: solid_core::RepairKind::KeyTypo,
+            safe: false,
+        }),
+        confidence: 0.97,
+        file: None,
+    });
+    let everything = lsp_types::Range {
+        start: lsp_types::Position {
+            line: 0,
+            character: 0,
+        },
+        end: lsp_types::Position {
+            line: 2,
+            character: 0,
+        },
+    };
+    let actions = analysis::code_actions(&doc, everything);
+    assert!(
+        actions
+            .iter()
+            .all(|action| !action.title.starts_with("Apply healing")),
+        "{actions:?}"
+    );
+    // Control: the same repair marked safe is offered.
+    doc.eval_diags[0].repair.as_mut().expect("repair").safe = true;
+    let actions = analysis::code_actions(&doc, everything);
+    assert!(
+        actions
+            .iter()
+            .any(|action| action.title == "Apply healing (H005)"),
+        "{actions:?}"
+    );
+}
+
+#[test]
+fn extract_withholds_non_expression_selections() {
+    let doc = open_untitled("extractbad", "port = 8080\nurl = \"x\"\n");
+    // A multi-statement selection has no single value container.
+    let multi = lsp_types::Range {
+        start: lsp_types::Position {
+            line: 0,
+            character: 0,
+        },
+        end: lsp_types::Position {
+            line: 1,
+            character: 4,
+        },
+    };
+    let actions = analysis::code_actions(&doc, multi);
+    assert!(
+        actions
+            .iter()
+            .all(|action| !action.title.starts_with("Extract")),
+        "{actions:?}"
+    );
+    // A partial token (middle of `8080`) matches nothing exactly.
+    let partial = lsp_types::Range {
+        start: lsp_types::Position {
+            line: 0,
+            character: 8,
+        },
+        end: lsp_types::Position {
+            line: 0,
+            character: 10,
+        },
+    };
+    let actions = analysis::code_actions(&doc, partial);
+    assert!(
+        actions
+            .iter()
+            .all(|action| !action.title.starts_with("Extract")),
+        "{actions:?}"
+    );
+}
+
+#[test]
+fn extract_withholds_scope_relative_references() {
+    // `host` resolves inside [server]: hoisting it to a top-level
+    // let would rebind the reference.
+    let doc = open_untitled("extractscope", "[server]\nhost = \"a\"\nurl = host\n");
+    let select = lsp_types::Range {
+        start: lsp_types::Position {
+            line: 2,
+            character: 6,
+        },
+        end: lsp_types::Position {
+            line: 2,
+            character: 10,
+        },
+    };
+    let actions = analysis::code_actions(&doc, select);
+    assert!(
+        actions
+            .iter()
+            .all(|action| !action.title.starts_with("Extract")),
+        "{actions:?}"
+    );
+    // Control: a root-key reference is document-safe.
+    let doc = open_untitled("extractroot", "port = 8080\nurl = port\n");
+    let select = lsp_types::Range {
+        start: lsp_types::Position {
+            line: 1,
+            character: 6,
+        },
+        end: lsp_types::Position {
+            line: 1,
+            character: 10,
+        },
+    };
+    let actions = analysis::code_actions(&doc, select);
+    assert!(
+        actions
+            .iter()
+            .any(|action| action.title.starts_with("Extract to let")),
+        "{actions:?}"
+    );
+}
+
+#[test]
+fn extract_handles_non_bmp_characters() {
+    // 🌍 is one character but two UTF-16 units and four bytes:
+    // character-aware span mapping must still match the whole
+    // string exactly.
+    let text = "greeting = \"héllo 🌍\"\n";
+    let doc = open_untitled("extractemoji", text);
+    let line = text.lines().next().expect("line");
+    let start_byte = line.find('"').expect("open quote");
+    let end_byte = line.rfind('"').expect("close quote") + 1;
+    let start = analysis::position_of(text, start_byte);
+    let end = analysis::position_of(text, end_byte);
+    let select = lsp_types::Range { start, end };
+    let actions = analysis::code_actions(&doc, select);
+    assert!(
+        actions
+            .iter()
+            .any(|action| action.title.starts_with("Extract to let")),
+        "{actions:?}"
+    );
+}
+
+#[test]
+fn extract_inserts_after_top_level_lets_only() {
+    // The nested `let` sits past the top-level one: insertion still
+    // anchors after the column-1 binding.
+    let doc = open_untitled(
+        "extractnested",
+        "let a = 1\nserver {\n  let b = 2\n}\nport = a\n",
+    );
+    let select = lsp_types::Range {
+        start: lsp_types::Position {
+            line: 4,
+            character: 7,
+        },
+        end: lsp_types::Position {
+            line: 4,
+            character: 8,
+        },
+    };
+    let actions = analysis::code_actions(&doc, select);
+    let action = actions
+        .iter()
+        .find(|action| action.title.starts_with("Extract to let"))
+        .expect("extract action: {actions:?}");
+    let insert = action
+        .edit
+        .as_ref()
+        .expect("edit")
+        .changes
+        .as_ref()
+        .expect("changes")
+        .values()
+        .flatten()
+        .find(|edit| edit.range.start == edit.range.end)
+        .expect("insert edit");
+    // Insert lands at the end of line 0 (after `let a = 1`), not
+    // after the nested binding on line 2.
+    assert_eq!(insert.range.start.line, 0, "{insert:?}");
+}
+
+#[test]
+fn convert_range_excludes_crlf_terminators() {
+    // No trailing newline: the full-file range must end at the
+    // content width, not past a carriage return.
+    let doc = open_untitled("crlf", "[server]\r\nport = 1\r");
+    let everything = lsp_types::Range {
+        start: lsp_types::Position {
+            line: 0,
+            character: 0,
+        },
+        end: lsp_types::Position {
+            line: 2,
+            character: 0,
+        },
+    };
+    let actions = analysis::code_actions(&doc, everything);
+    let action = actions
+        .iter()
+        .find(|action| action.title == "Convert to indent style")
+        .expect("convert action: {actions:?}");
+    let edit = action
+        .edit
+        .as_ref()
+        .expect("edit")
+        .changes
+        .as_ref()
+        .expect("changes")
+        .values()
+        .flatten()
+        .next()
+        .expect("one edit");
+    assert_eq!(
+        (edit.range.end.line, edit.range.end.character),
+        (1, 8),
+        "{edit:?}"
+    );
+}
+
+// ------------------------------------------------------------------
 // End-to-end: real binary over stdio.
 // ------------------------------------------------------------------
 
@@ -1288,6 +1825,52 @@ fn stdio_shared_include_markers_survive_single_close() {
         cleared["params"]["diagnostics"],
         serde_json::json!([]),
         "{cleared}"
+    );
+    server.shutdown();
+}
+
+#[test]
+fn stdio_code_action_over_wire() {
+    let (_uri, path) = temp_fixture("lspaction.solid", "port = \"abc\n");
+    let file_uri = lsp_types::Url::from_file_path(&path).expect("file uri");
+    let uri = file_uri.to_string();
+
+    let mut server = Framed::spawn();
+    server.request(
+        "initialize",
+        serde_json::json!({"processId": null, "capabilities": {}}),
+    );
+    server.notify("initialized", serde_json::json!({}));
+    server.notify(
+        "textDocument/didOpen",
+        serde_json::json!({
+            "textDocument": {
+                "uri": uri,
+                "languageId": "solid",
+                "version": 1,
+                "text": "port = \"abc\n",
+            }
+        }),
+    );
+    // Drain the open publish before requesting.
+    let _ = server.recv_notification("textDocument/publishDiagnostics");
+    let actions = server.request(
+        "textDocument/codeAction",
+        serde_json::json!({
+            "textDocument": {"uri": uri},
+            "range": {
+                "start": {"line": 0, "character": 0},
+                "end": {"line": 1, "character": 0},
+            },
+            "context": {"diagnostics": []},
+        }),
+    );
+    let actions = actions["result"].as_array().expect("actions");
+    assert!(
+        actions.iter().any(|action| action["title"]
+            .as_str()
+            .is_some_and(|title| title.starts_with("Apply healing (H"))),
+        "{actions:?}"
     );
     server.shutdown();
 }

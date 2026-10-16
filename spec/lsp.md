@@ -109,18 +109,16 @@ from comments or string contents.
   on their own URI, never mis-ranged against the parent). Groups
   that vanish (a removed include) are withdrawn with empty
   publishes; closing a document clears everything it ever
-  published. Versions are per-URI: the open document's version for
+  published — unless another open document still publishes the URI
+  (a shared include, or the included file itself when still open),
+  which republishes from the remaining owner's current state
+  instead. Versions are per-URI: the open document's version for
   its own URI, an open included buffer's version for its URI, and
   no version otherwise (a parent's version is meaningless for
-  another file). Buffer matching is canonical-tolerant (exact file
-  path, then case-insensitive): include stamps carry canonical
-  paths that may differ textually from the client's URI, and a live
-  buffer always beats stale disk. Groups that vanish (a removed
-  include) are withdrawn with empty publishes; closing a document
-  clears everything it ever published — unless another open
-  document still publishes the URI (a shared include, or the
-  included file itself when still open), which republishes from
-  the remaining owner's current state instead. Sources:
+  another file). Buffer matching is by file identity (exact path,
+  then case-insensitive, then canonicalized): include stamps carry
+  canonical paths that may differ textually from the client's URI,
+  and a live buffer always beats stale disk. Sources:
   parse errors (E-codes), evaluation diagnostics including
   converted hard errors (cycles S001, budgets X0xx, validation
   T0xx — resilient mode otherwise keeps them as ordinary
@@ -151,23 +149,52 @@ from comments or string contents.
 ## 5. Code actions (C-045)
 
 All `quickfix`-kind, scoped to the document, applied as workspace
-edits:
+edits. Diagnostics are recomputed from the document (never trusted
+from the client's context, which may be stale); an action fires
+when the request range touches a qualifying diagnostic's range
+(cursor point or selection overlap). Actions sort by title for
+determinism.
 
-1. **Apply healing** — for H-diagnostics at/around the cursor whose
-   repair confidence is ≥ 0.95 (auto-apply tier): replace the repair
-   span with the suggested text.
-2. **Extract let** — on a selected value expression: insert
-   `let <name> = <expression>` after the last top-level `let`
-   (or at the top of file) and replace the selection with the name.
-   `<name>` defaults to `extracted`; the client renames after.
+1. **Apply healing** — for H-diagnostics at the range whose repair
+   confidence is ≥ 0.95 (auto-apply tier) *and* whose repair is
+   marked safe: replace/insert per the repair shape (empty
+   `original` inserts at the span start — except `InsertQuote`,
+   whose span points at the string's opening delimiter while the
+   closer belongs at the string token's end, located from the
+   lexer stream; otherwise the span is replaced with the suggested
+   text). Title names the code (`Apply healing (H001)`); the
+   triggering diagnostic rides along.
+2. **Extract let** — on a non-empty selection that exactly matches
+   a single non-table value node's span (partial-token selections
+   are withheld rather than emitted as invalid lets) and whose
+   inner references resolve to `let` bindings or root keys only
+   (moving a scope-relative reference to document scope would
+   rebind it): insert `let <name> = <expression>` after the last
+   top-level `let` (column-1 lets only, or at the top of file) and
+   replace the selection with the name. `<name>` defaults to
+   `extracted`, suffixed (`extracted2`, …) past existing bindings
+   and root keys; the client renames after. All span/offset
+   mappings are character-aware (never UTF-16 columns for core
+   spans — non-BMP characters differ); line widths exclude CRLF
+   carriage returns, like every other position.
 3. **Convert file style** — to brace or to indent: the whole file
-   through the exact formatter (guarantees hold). File-level rather
+   through the exact formatter (guarantees hold). Each direction
+   is offered only when it would change the text; the replacement
+   range excludes a trailing carriage return. File-level rather
    than block-level by design: block splicing risks comment
    corruption, while file conversion is exact. (Logged deviation
    from "convert a block".)
-4. **Add missing depends_on** — on an L002 missing-entry diagnostic:
-   insert the path into the scope's `depends_on` array (creating
-   the array when absent).
+4. **Add missing depends_on** — on an L002 missing-entry diagnostic
+   at the range: insert the missing path into the scope's
+   `depends_on` array (appending `"path", ` after the `[`, plain
+   `"path"` into an empty array, or creating
+   `depends_on = ["path"]` on its own line at the scope's depth
+   when absent). The missing path rides the diagnostic's repair
+   record when present (prose parsing is the fallback); the scope
+   resolves from the diagnostic's path field. (Missing-entry
+   diagnostics fire for declared arrays, empty included — so the
+   creation branch is defensive, kept total against linter
+   evolution.)
 
 ## 6. Semantic tokens (C-043)
 

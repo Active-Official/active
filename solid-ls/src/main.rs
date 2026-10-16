@@ -8,9 +8,9 @@ use std::error::Error;
 
 use lsp_server::{Connection, ErrorCode, Message, Request, Response};
 use lsp_types::{
-    CompletionOptions, HoverProviderCapability, OneOf, RenameOptions, SemanticTokensFullOptions,
-    SemanticTokensOptions, SemanticTokensServerCapabilities, ServerCapabilities,
-    TextDocumentSyncCapability, TextDocumentSyncKind, WorkDoneProgressOptions,
+    CodeActionProviderCapability, CompletionOptions, HoverProviderCapability, OneOf, RenameOptions,
+    SemanticTokensFullOptions, SemanticTokensOptions, SemanticTokensServerCapabilities,
+    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, WorkDoneProgressOptions,
 };
 use solid_ls::analysis::{self, Doc};
 
@@ -28,6 +28,7 @@ fn capabilities() -> ServerCapabilities {
             trigger_characters: None,
             ..Default::default()
         }),
+        code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
         inlay_hint_provider: Some(OneOf::Left(true)),
         semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
             SemanticTokensOptions {
@@ -218,6 +219,16 @@ fn handle_request(open: &mut HashMap<String, Doc>, req: Request) -> Option<Respo
                 };
             let result = doc_at(open, &params.text_document.uri)
                 .map(|doc| analysis::inlay_hints(doc, Some(params.range)));
+            Some(Response::new_ok(req.id, result))
+        }
+        "textDocument/codeAction" => {
+            let params: lsp_types::CodeActionParams =
+                match parse_request::<lsp_types::request::CodeActionRequest>(&req) {
+                    Ok(params) => params,
+                    Err(response) => return Some(response),
+                };
+            let result = doc_at(open, &params.text_document.uri)
+                .map(|doc| analysis::code_actions(doc, params.range));
             Some(Response::new_ok(req.id, result))
         }
         _ => Some(Response::new_err(

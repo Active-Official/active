@@ -1,6 +1,7 @@
 use clap::{Args, Parser, Subcommand};
 use solid_core::convert::{
-    json_text_to_solid, toml_text_to_solid, value_to_pretty_json, value_to_toml_string,
+    json_text_to_solid, schema_to_go, schema_to_json_schema, schema_to_openapi, schema_to_rust,
+    schema_to_typescript, toml_text_to_solid, value_to_pretty_json, value_to_toml_string,
     value_to_yaml_string, yaml_text_to_solid,
 };
 use solid_core::diag::{Diagnostic, Severity};
@@ -132,6 +133,18 @@ enum Commands {
         /// Source format
         #[arg(short, long, default_value = "json")]
         from: String,
+    },
+    /// Generate typed bindings from a SOLID schema
+    Generate {
+        /// Input .solid file (must contain a schema block)
+        #[arg(short, long)]
+        from: PathBuf,
+        /// Output target
+        #[arg(short, long)]
+        to: String,
+        /// Root type name
+        #[arg(long, default_value = "Config")]
+        name: String,
     },
     /// Format files in a canonical style (spec/formatter.md)
     Fmt {
@@ -401,6 +414,28 @@ fn main() -> anyhow::Result<()> {
                 report(d, &name);
             }
             print!("{source}");
+        }
+        Commands::Generate { from, to, name } => {
+            let filename = from.to_string_lossy().to_string();
+            let module = parse_file(&from, ParseOptions::default()).map_err(|diags| {
+                for d in &diags {
+                    report(d, &filename);
+                }
+                anyhow::anyhow!("parse failed")
+            })?;
+            // Documents without a schema block exit non-zero (spec §5).
+            let output = match to.as_str() {
+                "jsonschema" => schema_to_json_schema(&module)
+                    .map(|schema| serde_json::to_string_pretty(&schema).unwrap_or_default()),
+                "openapi" => schema_to_openapi(&module, &name)
+                    .map(|schema| serde_json::to_string_pretty(&schema).unwrap_or_default()),
+                "typescript" | "ts" => schema_to_typescript(&module, &name),
+                "go" => schema_to_go(&module, &name),
+                "rust" | "serde" => schema_to_rust(&module, &name),
+                other => anyhow::bail!("unsupported target: {}", other),
+            }
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            println!("{output}");
         }
         Commands::Fmt {
             files,

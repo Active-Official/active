@@ -107,6 +107,9 @@ markers, and non-string YAML keys (all diagnosed).
 - `solid import --from json|yaml|toml <file>` prints SOLID source
   to stdout; import diagnostics go to stderr; lossy corners exit 0
   (diagnosed, best-effort), hard parse failures exit non-zero.
+- `solid generate --from <file.solid> --to
+  jsonschema|openapi|typescript|go|rust [--name <Root>]` prints the
+  binding to stdout; documents without a schema exit non-zero.
 
 ## 6. Testing contract
 
@@ -117,4 +120,47 @@ markers, and non-string YAML keys (all diagnosed).
   match); YAML validity: re-parse.
 - Reverse fixtures per format incl. each lossy corner with its
   diagnostic code; round-trip fixed-point test.
-- CLI tests for export/import incl. exit codes.
+- CLI tests for export/import/generate incl. exit codes.
+- Generated code compiles (the Rust output passes a rustfmt
+  syntax gate; TS/Go by golden snapshots).
+
+## 7. Schema generators (C-047)
+
+Typed bindings from the module's schema tree (`module.schema`;
+error when absent). Constraint arguments are expression nodes, so
+only static literals render (`minimum`, `minLength`, `pattern`,
+`default`, enum members); dynamic bounds are skipped without
+diagnostics (validation still enforces them at runtime).
+
+Type mapping (SS = SOLID schema type):
+
+| SS | JSON Schema | TypeScript | Go | Rust serde |
+|---|---|---|---|---|
+| Int | `integer` (+minimum/maximum) | `number` | `int64` | `i64` |
+| Float | `number` (+minimum/maximum) | `number` | `float64` | `f64` |
+| String | `string` (+minLength/maxLength/pattern) | `string` | `string` | `String` |
+| Bool | `boolean` | `boolean` | `bool` | `bool` |
+| Null | `null` | `null` | `interface{}` | `()` |
+| Duration | `object{ms: integer}` (matches §1 export) | `number` (ms) | `int64` (ms) | `u64` (ms) |
+| Bytes | `integer` (normalizes to Int) | `number` | `int64` | `u64` |
+| Table | `object` + properties | `interface` | `struct` | `struct` |
+| Enum(m) | `enum: [...]` | `"a" \| "b"` | `string` | real `enum` |
+| Secret | `string` (+redaction note) | `string` | `string` | `String` |
+| Any | `true` | `unknown` | `interface{}` | `serde_json::Value` |
+| Array\<T\> | `array` + items | `T[]` | `[]T` | `Vec<T>` |
+
+- `required`: fields without a static-literal default, except
+  Null-typed fields (absent Null keys validate clean — C-032).
+  Dynamic defaults count as required (not statically known).
+- Closed tables → `additionalProperties: false`; open tables omit
+  it. Static literal defaults render as JSON Schema `default`.
+- Deprecated fields: JSON Schema `"deprecated": true`, TS
+  `/** @deprecated msg */`, Go `// Deprecated: msg`,
+  Rust `#[deprecated]`.
+- Names: nested types are PascalCase path joins (`server.database`
+  → `ServerDatabase`); fields keep SOLID names with `json`
+  (Go) / `serde` (Rust) tags preserving them; Go fields export by
+  capitalizing; collisions after normalization gain `_`.
+- OpenAPI output is the JSON Schema inside a 3.1
+  `components.schemas.<Name>` fragment (`--name`, default
+  `Config`).

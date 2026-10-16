@@ -4,9 +4,13 @@ use crate::ir::Value;
 use serde_json::{json, Value as JsonValue};
 
 pub mod export;
+pub mod gen;
 pub mod import;
 
 pub use export::{value_to_toml_string, value_to_yaml_string};
+pub use gen::{
+    schema_to_go, schema_to_json_schema, schema_to_openapi, schema_to_rust, schema_to_typescript,
+};
 pub use import::{json_text_to_solid, json_value_to_solid, toml_text_to_solid, yaml_text_to_solid};
 
 pub fn value_to_json(v: &Value) -> JsonValue {

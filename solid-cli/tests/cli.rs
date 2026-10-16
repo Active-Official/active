@@ -558,3 +558,66 @@ fn import_reports_lossy_corners_and_rejects_garbage() {
         .expect("run solid");
     assert!(!out.status.success(), "unknown source must fail");
 }
+
+// ------------------------------------------------------------------
+// `solid generate` contract (C-047, spec/converters.md §5/§7).
+// ------------------------------------------------------------------
+
+#[test]
+fn generate_serves_all_five_targets() {
+    let f = fixture(
+        "gen_schema.solid",
+        "schema = { port = Int(min = 1), host = String }\nport = 8080\n",
+    );
+    for (to, probes) in [
+        ("jsonschema", vec!["\"type\": \"object\"", "\"minimum\": 1"]),
+        ("openapi", vec!["\"openapi\": \"3.1.0\"", "\"minimum\": 1"]),
+        (
+            "typescript",
+            vec!["export interface Config", "port: number"],
+        ),
+        ("go", vec!["type Config struct", "`json:\"port\"`"]),
+        ("rust", vec!["pub struct Config", "pub port: i64"]),
+    ] {
+        let out = solid()
+            .args(["generate", "--from"])
+            .arg(&f)
+            .args(["--to", to])
+            .output()
+            .expect("run solid");
+        assert!(
+            out.status.success(),
+            "{to}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        for probe in probes {
+            assert!(stdout.contains(probe), "{to} missing {probe}: {stdout}");
+        }
+    }
+}
+
+#[test]
+fn generate_refuses_schemaless_documents_and_bad_targets() {
+    let f = fixture("gen_noschema.solid", "port = 1\n");
+    let out = solid()
+        .args(["generate", "--from"])
+        .arg(&f)
+        .args(["--to", "rust"])
+        .output()
+        .expect("run solid");
+    assert!(!out.status.success(), "schemaless must fail");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("no schema"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let f = fixture("gen_schema2.solid", "schema = { port = Int }\nport = 1\n");
+    let out = solid()
+        .args(["generate", "--from"])
+        .arg(&f)
+        .args(["--to", "cobol"])
+        .output()
+        .expect("run solid");
+    assert!(!out.status.success(), "unknown target must fail");
+}

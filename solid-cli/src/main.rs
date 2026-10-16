@@ -1,8 +1,9 @@
 use clap::{Args, Parser, Subcommand};
 use solid_core::convert::{
-    json_text_to_solid, schema_to_go, schema_to_json_schema, schema_to_openapi, schema_to_rust,
-    schema_to_typescript, toml_text_to_solid, value_to_pretty_json, value_to_toml_string,
-    value_to_yaml_string, yaml_text_to_solid,
+    collect_items, doc_to_html, doc_to_man, doc_to_markdown, json_text_to_solid, schema_to_go,
+    schema_to_json_schema, schema_to_openapi, schema_to_rust, schema_to_typescript,
+    toml_text_to_solid, value_to_pretty_json, value_to_toml_string, value_to_yaml_string,
+    yaml_text_to_solid,
 };
 use solid_core::diag::{Diagnostic, Severity};
 use solid_core::{parse_file, Budget, Engine, EvalError, ParseOptions, Style};
@@ -145,6 +146,18 @@ enum Commands {
         /// Root type name
         #[arg(long, default_value = "Config")]
         name: String,
+    },
+    /// Render schema, intent, and comments as documentation
+    Doc {
+        /// Input .solid file
+        #[arg(short, long)]
+        from: PathBuf,
+        /// Output format
+        #[arg(short, long, default_value = "markdown")]
+        to: String,
+        /// Document title (defaults to the file stem)
+        #[arg(long)]
+        title: Option<String>,
     },
     /// Format files in a canonical style (spec/formatter.md)
     Fmt {
@@ -436,6 +449,33 @@ fn main() -> anyhow::Result<()> {
             }
             .map_err(|e| anyhow::anyhow!("{e}"))?;
             println!("{output}");
+        }
+        Commands::Doc { from, to, title } => {
+            let filename = from.to_string_lossy().to_string();
+            let title = title.unwrap_or_else(|| {
+                from.file_stem()
+                    .map(|stem| stem.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "Configuration".to_string())
+            });
+            let module = parse_file(&from, ParseOptions::default()).map_err(|diags| {
+                for d in &diags {
+                    report(d, &filename);
+                }
+                anyhow::anyhow!("parse failed")
+            })?;
+            let (value, diags) = Engine::new()
+                .evaluate(&module)
+                .map_err(|e| anyhow::anyhow!("evaluation failed: {e}"))?;
+            for d in &diags {
+                report(d, &filename);
+            }
+            let items = collect_items(&module, &value);
+            match to.as_str() {
+                "markdown" | "md" => println!("{}", doc_to_markdown(&title, &items)),
+                "html" => println!("{}", doc_to_html(&title, &items)),
+                "man" => println!("{}", doc_to_man(&title, &items)),
+                other => anyhow::bail!("unsupported target: {}", other),
+            }
         }
         Commands::Fmt {
             files,

@@ -621,3 +621,56 @@ fn generate_refuses_schemaless_documents_and_bad_targets() {
         .expect("run solid");
     assert!(!out.status.success(), "unknown target must fail");
 }
+
+// ------------------------------------------------------------------
+// `solid doc` contract (C-048, spec/docgen.md).
+// ------------------------------------------------------------------
+
+#[test]
+fn doc_serves_all_three_formats() {
+    let f = fixture(
+        "doc_src.solid",
+        "# @intent: \"Service port\"\nport = 8080\ntoken = secret(\"TOPSECRETDOC\")\n",
+    );
+    for (to, probes) in [
+        ("markdown", vec!["# doc_src", "Service port", "8080"]),
+        ("html", vec!["id=\"q\"", "Service port"]),
+        ("man", vec![".TH", ".SH FIELDS"]),
+    ] {
+        let out = solid()
+            .args(["doc", "--from"])
+            .arg(&f)
+            .args(["--to", to])
+            .output()
+            .expect("run solid");
+        assert!(
+            out.status.success(),
+            "{to}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        for probe in probes {
+            assert!(stdout.contains(probe), "{to} missing {probe}: {stdout}");
+        }
+        assert!(!stdout.contains("TOPSECRETDOC"), "{to} leaked: {stdout}");
+    }
+}
+
+#[test]
+fn doc_rejects_bad_targets_and_broken_files() {
+    let f = fixture("doc_src2.solid", "port = 1\n");
+    let out = solid()
+        .args(["doc", "--from"])
+        .arg(&f)
+        .args(["--to", "pdf"])
+        .output()
+        .expect("run solid");
+    assert!(!out.status.success(), "unknown target must fail");
+    let f = fixture("doc_broken.solid", "port = [1,\n");
+    let out = solid()
+        .args(["doc", "--from"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(!out.status.success(), "broken input must fail");
+}

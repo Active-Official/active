@@ -3,9 +3,12 @@
 use crate::ir::Value;
 use serde_json::{json, Value as JsonValue};
 
+pub mod doc;
 pub mod export;
 pub mod gen;
 pub mod import;
+
+pub use doc::{collect_items, doc_to_html, doc_to_man, doc_to_markdown, DocItem};
 
 pub use export::{value_to_toml_string, value_to_yaml_string};
 pub use gen::{

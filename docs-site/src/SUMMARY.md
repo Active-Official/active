@@ -30,6 +30,7 @@
 - [CLI](reference/cli.md)
 - [Diagnostics index](reference/diagnostics.md)
 - [Schema library](reference/schema-library.md)
+- [Conformance](reference/conformance.md)
 
 ---
 

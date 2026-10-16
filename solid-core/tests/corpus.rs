@@ -1,15 +1,18 @@
-//! Corpus runner (C-010).
+//! Corpus runner (C-010; spec corpus promoted to the official
+//! conformance suite in C-063, spec/conformance.md).
 //!
 //! - tests/positive/*.solid — must parse and evaluate with zero diagnostics.
 //! - tests/negative/*.solid — must fail at parse or evaluation.
 //! - tests/spec/<name>.solid with sidecar <name>.expected.json — the
-//!   evaluated value tree must match the expected tree exactly (these
-//!   become the conformance suite in C-063).
+//!   evaluated value tree must match the expected tree exactly (the
+//!   official conformance suite; see also tests/conformance.rs for
+//!   suite-metadata pins).
 //!
 //! Env vars are only read with defaults in the positive corpus, so results
 //! are environment-independent.
 
 use solid_core::{parse, Engine};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 fn corpus_files(dir: &str) -> Vec<PathBuf> {
@@ -82,7 +85,9 @@ fn spec_corpus_matches_expected_values() {
         !files.is_empty(),
         "expected at least one spec corpus file with a sidecar expected.json"
     );
-    let engine = Engine::new();
+    // Hermetic by construction: an empty env snapshot, so ambient
+    // variables cannot leak into conformance results on any machine.
+    let engine = Engine::new().with_env(HashMap::new());
     for f in &files {
         let name = f.file_name().unwrap().to_string_lossy();
         let src = read(f);

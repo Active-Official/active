@@ -76,16 +76,16 @@ fn serve(connection: Connection) -> Result<(), Box<dyn Error + Sync + Send>> {
     Ok(())
 }
 
-fn parse_request<R>(req: &Request) -> Result<R::Params, Response>
+fn parse_request<R>(req: &Request) -> Result<R::Params, Box<Response>>
 where
     R: lsp_types::request::Request,
 {
     serde_json::from_value::<R::Params>(req.params.clone()).map_err(|e| {
-        Response::new_err(
+        Box::new(Response::new_err(
             req.id.clone(),
             ErrorCode::InvalidParams as i32,
             e.to_string(),
-        )
+        ))
     })
 }
 
@@ -96,7 +96,7 @@ fn handle_request(open: &mut HashMap<String, Doc>, req: Request) -> Option<Respo
             let params: lsp_types::HoverParams =
                 match parse_request::<lsp_types::request::HoverRequest>(&req) {
                     Ok(params) => params,
-                    Err(response) => return Some(response),
+                    Err(response) => return Some(*response),
                 };
             let result = doc_at(
                 open,
@@ -115,7 +115,7 @@ fn handle_request(open: &mut HashMap<String, Doc>, req: Request) -> Option<Respo
             let params: lsp_types::GotoDefinitionParams =
                 match parse_request::<lsp_types::request::GotoDefinition>(&req) {
                     Ok(params) => params,
-                    Err(response) => return Some(response),
+                    Err(response) => return Some(*response),
                 };
             let result = doc_at(
                 open,
@@ -135,7 +135,7 @@ fn handle_request(open: &mut HashMap<String, Doc>, req: Request) -> Option<Respo
             let params: lsp_types::ReferenceParams =
                 match parse_request::<lsp_types::request::References>(&req) {
                     Ok(params) => params,
-                    Err(response) => return Some(response),
+                    Err(response) => return Some(*response),
                 };
             let result =
                 doc_at(open, &params.text_document_position.text_document.uri).map(|doc| {
@@ -153,7 +153,7 @@ fn handle_request(open: &mut HashMap<String, Doc>, req: Request) -> Option<Respo
             let params: lsp_types::RenameParams =
                 match parse_request::<lsp_types::request::Rename>(&req) {
                     Ok(params) => params,
-                    Err(response) => return Some(response),
+                    Err(response) => return Some(*response),
                 };
             let doc = match doc_at(open, &params.text_document_position.text_document.uri) {
                 Some(doc) => doc,
@@ -184,7 +184,7 @@ fn handle_request(open: &mut HashMap<String, Doc>, req: Request) -> Option<Respo
             let params: lsp_types::SemanticTokensParams =
                 match parse_request::<lsp_types::request::SemanticTokensFullRequest>(&req) {
                     Ok(params) => params,
-                    Err(response) => return Some(response),
+                    Err(response) => return Some(*response),
                 };
             let result = doc_at(open, &params.text_document.uri).map(|doc| {
                 let absolute = analysis::semantic_tokens_absolute(&doc.text);
@@ -199,7 +199,7 @@ fn handle_request(open: &mut HashMap<String, Doc>, req: Request) -> Option<Respo
             let params: lsp_types::CompletionParams =
                 match parse_request::<lsp_types::request::Completion>(&req) {
                     Ok(params) => params,
-                    Err(response) => return Some(response),
+                    Err(response) => return Some(*response),
                 };
             let result =
                 doc_at(open, &params.text_document_position.text_document.uri).map(|doc| {
@@ -215,7 +215,7 @@ fn handle_request(open: &mut HashMap<String, Doc>, req: Request) -> Option<Respo
             let params: lsp_types::InlayHintParams =
                 match parse_request::<lsp_types::request::InlayHintRequest>(&req) {
                     Ok(params) => params,
-                    Err(response) => return Some(response),
+                    Err(response) => return Some(*response),
                 };
             let result = doc_at(open, &params.text_document.uri)
                 .map(|doc| analysis::inlay_hints(doc, Some(params.range)));
@@ -225,7 +225,7 @@ fn handle_request(open: &mut HashMap<String, Doc>, req: Request) -> Option<Respo
             let params: lsp_types::CodeActionParams =
                 match parse_request::<lsp_types::request::CodeActionRequest>(&req) {
                     Ok(params) => params,
-                    Err(response) => return Some(response),
+                    Err(response) => return Some(*response),
                 };
             let result = doc_at(open, &params.text_document.uri)
                 .map(|doc| analysis::code_actions(doc, params.range));

@@ -1,6 +1,6 @@
 {
   "app": {
-    "missing": null,
-    "region": "us-east-1"
+    "region": "us-east-1",
+    "missing": null
   }
 }

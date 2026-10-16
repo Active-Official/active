@@ -103,7 +103,10 @@ String interpolation: any `"…${ident}…"` becomes an `Interpolate` node.
 
 ## Status
 
-Alpha. The lexer, parser, IR, graph, evaluator, units and interpolation are implemented and usable. Dual-syntax indentation mode, profiles, `@patch`, full schema engine and the production healer are the next milestones.
+Near-1.0. The Rust implementation in this repository is the
+**reference implementation for the 1.0 conformance suite**
+(`tests/spec/`, contract: `spec/conformance.md`); final 1.0
+declaration follows the C-090 readiness review.
 
 ## License
 

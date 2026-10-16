@@ -103,10 +103,16 @@ the schema-driven wiring lands with C-030. Phase-3 coercions
 `coerce_string_to`) are implemented as pure functions, likewise wired to
 schemas in C-030.
 
-### X0xx — Execution budget (reserved for C-037)
+### X0xx — Execution budget (evaluator, severity Error, always fatal)
 
-Reserved for evaluator-side budget violations: node count, wall-clock, array
-length, total keys. The parser-side nesting limit already uses E004.
+| Code | Message | Span | Emitted when |
+|---|---|---|---|
+| X001 | `evaluation budget exceeded: node budget (limit N)` | none (global condition) | The arena holds more nodes than `Budget::max_nodes` (C-037) |
+| X002 | `evaluation budget exceeded: time budget (limit N)` | current node when attributable | Wall-clock sampling trips `Budget::max_wall_ms` in milliseconds — intentionally excluded from the determinism contract (spec/budgets.md §3) |
+| X003 | `evaluation budget exceeded: depth budget (limit N)` | offending node (arena DP) or none (patch-composed tree) | Reference-aware value nesting passes `Budget::max_depth`, or a patch composes a deeper final tree (C-037) |
+| X004 | `evaluation budget exceeded: array budget (limit N)` | offending array | An array holds more elements than `Budget::max_array_len` (C-037) |
+| X005 | `evaluation budget exceeded: key budget (limit N)` | none (global condition) | Value-table keys (schema tables excluded) pass `Budget::max_keys` (C-037) |
+| X006 | `evaluation budget exceeded: value size budget (limit N)` | offending node | Materialized value size (reference expansion counted) passes `Budget::max_value_size`, or the cumulative total passes `Budget::max_total_value_size` — the billion-laughs killer (C-037) |
 
 ## Repair policy and confidence
 

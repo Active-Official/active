@@ -8,7 +8,10 @@
 use std::collections::HashMap;
 
 use crate::diag::{Diagnostic, Severity, Span};
-use crate::eval::{eval_binary, eval_unary, value_kind_name, Engine, EvalError};
+use crate::eval::{
+    eval_binary, eval_unary, measure_value, value_kind_name, Accountant, BudgetCx, BudgetKind,
+    Engine, EvalError,
+};
 use crate::ir::{AnnotationKind, Module, Node, NodeId, SchemaField, Value};
 use crate::parser::PathSeg;
 use crate::types::SolidType;
@@ -24,6 +27,7 @@ impl Engine {
         values: &HashMap<NodeId, Value>,
         result: &mut Value,
         diagnostics: &mut Vec<Diagnostic>,
+        cx: BudgetCx<'_>,
     ) -> Result<(), EvalError> {
         let Some(schema_id) = module.schema else {
             return Ok(());
@@ -36,12 +40,29 @@ impl Engine {
             schema_bugs: std::collections::HashSet::new(),
             resilient: self.resilient,
             fills: Vec::new(),
+            deadline: cx.deadline,
+            wall_limit: cx.wall_limit,
+            ticks: 0,
+            account: cx.account,
         };
-        validator.validate_node(schema_id, module.root, result, &mut Vec::new());
+        validator.validate_node(schema_id, module.root, result, &mut Vec::new())?;
         if self.resilient {
-            validator.apply_fills(result);
+            validator.apply_fills(result)?;
         }
         if !validator.diagnostics.is_empty() && !self.resilient {
+            // An expired deadline takes precedence over collected
+            // violations: the budget error must not be masked by
+            // validation output produced past the limit.
+            if let Some(end) = cx.deadline {
+                if std::time::Instant::now() >= end {
+                    return Err(EvalError::budget_exceeded(
+                        BudgetKind::WallClock,
+                        cx.wall_limit,
+                        module,
+                        None,
+                    ));
+                }
+            }
             return Err(EvalError::ValidationFailed {
                 diagnostics: validator.diagnostics,
             });
@@ -66,6 +87,8 @@ impl Engine {
         values: &HashMap<NodeId, Value>,
         result: &Value,
         diagnostics: &mut Vec<Diagnostic>,
+        deadline: Option<std::time::Instant>,
+        wall_limit: u64,
     ) -> Result<(), EvalError> {
         let mut items: Vec<(NodeId, &crate::ir::Annotation)> = module
             .annotations
@@ -88,6 +111,17 @@ impl Engine {
         }
         let mut local: Vec<Diagnostic> = Vec::new();
         for (node_id, ann) in items {
+            // Wall-clock sampling for long annotation lists.
+            if let Some(end) = deadline {
+                if std::time::Instant::now() >= end {
+                    return Err(EvalError::budget_exceeded(
+                        BudgetKind::WallClock,
+                        wall_limit,
+                        module,
+                        Some(node_id),
+                    ));
+                }
+            }
             let AnnotationKind::Constraint { source, expr } = &ann.kind else {
                 continue;
             };
@@ -144,6 +178,16 @@ impl Engine {
             }
         }
         if !local.is_empty() && !self.resilient {
+            if let Some(end) = deadline {
+                if std::time::Instant::now() >= end {
+                    return Err(EvalError::budget_exceeded(
+                        BudgetKind::WallClock,
+                        wall_limit,
+                        module,
+                        None,
+                    ));
+                }
+            }
             return Err(EvalError::ValidationFailed { diagnostics: local });
         }
         diagnostics.extend(local);
@@ -179,6 +223,16 @@ struct Validator<'a> {
     /// Resilient default insertions collected during the walk, applied
     /// after it (spec/validation.md §9).
     fills: Vec<FillRequest>,
+    /// Evaluation deadline for the wall-clock backstop (spec/budgets.md
+    /// §2); sampled every 64 validated nodes. `wall_limit` is the
+    /// configured milliseconds, carried for the error message.
+    deadline: Option<std::time::Instant>,
+    wall_limit: u64,
+    ticks: u64,
+    /// Cumulative materialization account: each default fill charges
+    /// its measured size before insertion (many filled defaults of one
+    /// large value trip like many aliases do).
+    account: &'a mut Accountant,
 }
 
 impl<'a> Validator<'a> {
@@ -194,20 +248,42 @@ impl<'a> Validator<'a> {
         value_id: Option<NodeId>,
         value: &Value,
         segments: &mut Vec<PathSeg>,
-    ) {
+    ) -> Result<(), EvalError> {
+        self.tick(schema_id)?;
         match self.module.get(schema_id).cloned() {
             Some(Node::SchemaField { field }) => {
                 self.validate_field(schema_id, &field, value_id, value, segments);
             }
             Some(Node::SchemaTable { fields, closed }) => {
-                self.validate_table(schema_id, &fields, closed, value_id, value, segments);
+                self.validate_table(schema_id, &fields, closed, value_id, value, segments)?;
             }
             Some(Node::SchemaArray { element }) => {
-                self.validate_array(schema_id, element, value_id, value, segments);
+                self.validate_array(schema_id, element, value_id, value, segments)?;
             }
             // A non-schema node is not a contract: nothing to check.
             _ => {}
         }
+        Ok(())
+    }
+
+    /// Wall-clock sampling hook (spec/budgets.md §2): every 64th
+    /// validated node compares against the evaluation deadline.
+    fn tick(&mut self, node: NodeId) -> Result<(), EvalError> {
+        self.ticks += 1;
+        if self.ticks % 64 != 0 {
+            return Ok(());
+        }
+        if let Some(end) = self.deadline {
+            if std::time::Instant::now() >= end {
+                return Err(EvalError::budget_exceeded(
+                    BudgetKind::WallClock,
+                    self.wall_limit,
+                    self.module,
+                    Some(node),
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn validate_table(
@@ -218,7 +294,7 @@ impl<'a> Validator<'a> {
         value_id: Option<NodeId>,
         value: &Value,
         segments: &mut Vec<PathSeg>,
-    ) {
+    ) -> Result<(), EvalError> {
         let Value::Table(map) = value else {
             let path = render_path(segments);
             self.push(
@@ -231,7 +307,7 @@ impl<'a> Validator<'a> {
                 &path,
                 self.spans(value_id, schema_id),
             );
-            return;
+            return Ok(());
         };
         // The arena child ids behind this value table, for spans. Any
         // key the arena does not know (patched or merged in) validates
@@ -248,7 +324,7 @@ impl<'a> Validator<'a> {
                     let child_id = arena_children
                         .as_ref()
                         .and_then(|children| children.get(name).copied());
-                    self.validate_node(*field_id, child_id, v, segments);
+                    self.validate_node(*field_id, child_id, v, segments)?;
                 }
             }
             segments.pop();
@@ -278,6 +354,7 @@ impl<'a> Validator<'a> {
                 segments.pop();
             }
         }
+        Ok(())
     }
 
     fn validate_array(
@@ -287,7 +364,7 @@ impl<'a> Validator<'a> {
         value_id: Option<NodeId>,
         value: &Value,
         segments: &mut Vec<PathSeg>,
-    ) {
+    ) -> Result<(), EvalError> {
         let Value::Array(elements) = value else {
             let path = render_path(segments);
             self.push(
@@ -300,7 +377,7 @@ impl<'a> Validator<'a> {
                 &path,
                 self.spans(value_id, schema_id),
             );
-            return;
+            return Ok(());
         };
         let arena_elements: Option<Vec<NodeId>> = match value_id.and_then(|id| self.module.get(id))
         {
@@ -320,9 +397,10 @@ impl<'a> Validator<'a> {
             // schema spans (spec/validation.md §8).
             let elem_id = arena_elements.as_ref().and_then(|els| els.get(i).copied());
             segments.push(PathSeg::Index(i));
-            self.validate_node(element, elem_id, v, segments);
+            self.validate_node(element, elem_id, v, segments)?;
             segments.pop();
         }
+        Ok(())
     }
 
     fn validate_field(
@@ -414,7 +492,7 @@ impl<'a> Validator<'a> {
     /// the tree silently. Requests run in schema (walk) order. The
     /// filled value attributes to the default expression's span, which
     /// is more actionable than the schema field span.
-    fn apply_fills(&mut self, result: &mut Value) {
+    fn apply_fills(&mut self, result: &mut Value) -> Result<(), EvalError> {
         let fills = std::mem::take(&mut self.fills);
         for mut fill in fills {
             // Both skips are defensive (the walk verified the parents
@@ -433,6 +511,10 @@ impl<'a> Validator<'a> {
                 );
                 continue;
             };
+            // Charge the clone before inserting: many fills of one
+            // large default must trip like many aliases do.
+            let fill_size = measure_value(&default_value);
+            self.account.charge(self.module, None, fill_size)?;
             if !insert_at(result, &fill.segments, default_value.clone()) {
                 self.push(
                     "T004",
@@ -464,8 +546,9 @@ impl<'a> Validator<'a> {
                 Some(fill.default_id),
                 &default_value,
                 &mut fill.segments,
-            );
+            )?;
         }
+        Ok(())
     }
 
     fn check_constraints(

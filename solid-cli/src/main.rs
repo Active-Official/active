@@ -1,7 +1,7 @@
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use solid_core::convert::{value_to_pretty_json, value_to_simple_toml};
 use solid_core::diag::{Diagnostic, Severity};
-use solid_core::{parse_file, Engine, EvalError, ParseOptions};
+use solid_core::{parse_file, Budget, Engine, EvalError, ParseOptions};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -13,6 +13,47 @@ use std::path::PathBuf;
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+}
+
+/// Evaluator resource limits (spec/budgets.md, C-037). Each defaults
+/// to the shipped profile; `0` disables that limit.
+#[derive(Args, Clone)]
+struct BudgetArgs {
+    /// Maximum IR nodes visited during evaluation
+    #[arg(long, default_value_t = Budget::default().max_nodes)]
+    max_nodes: u64,
+    /// Maximum value nesting depth
+    #[arg(long, default_value_t = Budget::default().max_depth)]
+    max_depth: u64,
+    /// Longest single array
+    #[arg(long, default_value_t = Budget::default().max_array_len)]
+    max_array_len: u64,
+    /// Total table keys across the document
+    #[arg(long, default_value_t = Budget::default().max_keys)]
+    max_keys: u64,
+    /// Wall-clock milliseconds for the whole evaluation
+    #[arg(long, default_value_t = Budget::default().max_wall_ms)]
+    max_wall_ms: u64,
+    /// Maximum materialized value size (reference expansion counted)
+    #[arg(long, default_value_t = Budget::default().max_value_size)]
+    max_value_size: u64,
+    /// Maximum cumulative materialized size across evaluation
+    #[arg(long, default_value_t = Budget::default().max_total_value_size)]
+    max_total_value_size: u64,
+}
+
+impl BudgetArgs {
+    fn budget(&self) -> Budget {
+        Budget {
+            max_nodes: self.max_nodes,
+            max_depth: self.max_depth,
+            max_array_len: self.max_array_len,
+            max_keys: self.max_keys,
+            max_wall_ms: self.max_wall_ms,
+            max_value_size: self.max_value_size,
+            max_total_value_size: self.max_total_value_size,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -33,6 +74,8 @@ enum Commands {
         /// Select a profile by name, overriding the active_profile key
         #[arg(long)]
         profile: Option<String>,
+        #[command(flatten)]
+        budget: BudgetArgs,
     },
     /// Check a file for errors / cycles / unresolved names
     Check {
@@ -46,6 +89,8 @@ enum Commands {
         /// Select a profile by name, overriding the active_profile key
         #[arg(long)]
         profile: Option<String>,
+        #[command(flatten)]
+        budget: BudgetArgs,
     },
     /// Show dependency graph in simple text form
     Graph {
@@ -74,6 +119,8 @@ enum Commands {
         /// Select a profile by name, overriding the active_profile key
         #[arg(long)]
         profile: Option<String>,
+        #[command(flatten)]
+        budget: BudgetArgs,
     },
 }
 
@@ -85,12 +132,13 @@ fn options(resilient: bool, allow_parent_escapes: bool) -> ParseOptions {
     }
 }
 
-fn engine(resilient: bool, profile: &Option<String>) -> Engine {
+fn engine(resilient: bool, profile: &Option<String>, budget: Budget) -> Engine {
     let mut engine = Engine::new();
     // The CLI is strict by default: only --resilient tolerates
     // violations. Engine::new stays resilient for library use.
     engine.resilient = resilient;
     engine.profile_override = profile.clone();
+    engine.budget = budget;
     engine
 }
 
@@ -147,6 +195,7 @@ fn main() -> anyhow::Result<()> {
             resilient,
             allow_parent_escapes,
             profile,
+            budget,
         } => {
             let name = file.to_string_lossy().to_string();
             let module =
@@ -157,7 +206,7 @@ fn main() -> anyhow::Result<()> {
                     anyhow::anyhow!("parse failed")
                 })?;
 
-            let engine = engine(resilient, &profile);
+            let engine = engine(resilient, &profile, budget.budget());
             let (value, diags) = engine
                 .evaluate(&module)
                 .inspect_err(|e| report_eval_error(e, &name))?;
@@ -179,11 +228,12 @@ fn main() -> anyhow::Result<()> {
             resilient,
             allow_parent_escapes,
             profile,
+            budget,
         } => {
             let name = file.to_string_lossy().to_string();
             match parse_file(&file, options(resilient, allow_parent_escapes)) {
                 Ok(module) => {
-                    let engine = engine(resilient, &profile);
+                    let engine = engine(resilient, &profile, budget.budget());
                     match engine.evaluate(&module) {
                         Ok((_, diags)) => {
                             if diags.is_empty() {
@@ -249,6 +299,7 @@ fn main() -> anyhow::Result<()> {
             resilient,
             allow_parent_escapes,
             profile,
+            budget,
         } => {
             let name = file.to_string_lossy().to_string();
             let module =
@@ -258,7 +309,7 @@ fn main() -> anyhow::Result<()> {
                     }
                     anyhow::anyhow!("parse failed")
                 })?;
-            let engine = engine(resilient, &profile);
+            let engine = engine(resilient, &profile, budget.budget());
             let (value, diags) = engine
                 .evaluate(&module)
                 .inspect_err(|e| report_eval_error(e, &name))?;

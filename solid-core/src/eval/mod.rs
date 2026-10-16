@@ -9,6 +9,7 @@
 
 use petgraph::algo::{is_cyclic_directed, toposort};
 use std::collections::HashMap;
+use std::time::Instant;
 use thiserror::Error;
 
 use crate::diag::Span;
@@ -49,6 +50,100 @@ pub enum EvalError {
     /// keeps them as ordinary diagnostics alongside the tree.
     #[error("validation failed")]
     ValidationFailed { diagnostics: Vec<Diagnostic> },
+    /// Execution budget violations (C-037, spec/budgets.md): always
+    /// fatal, in strict and resilient modes alike — budgets protect
+    /// the process, not the document.
+    #[error("evaluation budget exceeded: {kind} (limit {limit})")]
+    BudgetExceeded {
+        kind: BudgetKind,
+        limit: u64,
+        span: Option<Span>,
+        file: Option<String>,
+    },
+}
+
+/// Which budget tripped (C-037). Display strings name the budget;
+/// the error message adds the configured limit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BudgetKind {
+    Nodes,
+    WallClock,
+    Depth,
+    ArrayLength,
+    Keys,
+    /// Materialized value size (reference expansion included).
+    ValueSize,
+}
+
+impl std::fmt::Display for BudgetKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BudgetKind::Nodes => write!(f, "node budget"),
+            BudgetKind::WallClock => write!(f, "time budget"),
+            BudgetKind::Depth => write!(f, "depth budget"),
+            BudgetKind::ArrayLength => write!(f, "array budget"),
+            BudgetKind::Keys => write!(f, "key budget"),
+            BudgetKind::ValueSize => write!(f, "value size budget"),
+        }
+    }
+}
+
+/// Runtime resource limits enforced by the evaluator accountant
+/// (spec/budgets.md §2, C-037). Every field `0` means unlimited —
+/// the embedder accepts the risk explicitly.
+#[derive(Debug, Clone, Copy)]
+pub struct Budget {
+    /// Maximum IR nodes visited (arena-length pre-check).
+    pub max_nodes: u64,
+    /// Maximum value nesting depth (reference-aware).
+    pub max_depth: u64,
+    /// Longest single array.
+    pub max_array_len: u64,
+    /// Total value-table keys across the arena (schema tables
+    /// excluded: they are metadata, validated separately).
+    pub max_keys: u64,
+    /// Wall-clock milliseconds for the whole evaluation.
+    pub max_wall_ms: u64,
+    /// Maximum materialized value size in data units (scalars and
+    /// string bytes), counting reference expansion: each `Ref` clone
+    /// costs its target's bound. Kills exponential blowup
+    /// (billion-laughs class) before anything materializes.
+    pub max_value_size: u64,
+    /// Maximum cumulative materialized size across the whole
+    /// evaluation (same units). Per-node bounds cap each clone;
+    /// this caps their sum — many aliases of one large value trip
+    /// here even when every node is individually fine.
+    pub max_total_value_size: u64,
+}
+
+impl Default for Budget {
+    /// Shipped profile: tight enough for CI and serverless loops,
+    /// with headroom over the C-055 10k-node performance target.
+    fn default() -> Self {
+        Self {
+            max_nodes: 100_000,
+            max_depth: 256,
+            max_array_len: 100_000,
+            max_keys: 100_000,
+            max_wall_ms: 100,
+            max_value_size: 10_000_000,
+            max_total_value_size: 100_000_000,
+        }
+    }
+}
+
+impl Budget {
+    /// Absolute evaluation deadline, or None when the wall-clock
+    /// budget is disabled (`max_wall_ms == 0`). Saturating: absurd
+    /// configured durations degrade to no deadline instead of
+    /// panicking on `Instant` overflow.
+    pub fn wall_deadline(&self) -> Option<Instant> {
+        if self.max_wall_ms == 0 {
+            None
+        } else {
+            Instant::now().checked_add(std::time::Duration::from_millis(self.max_wall_ms))
+        }
+    }
 }
 
 impl EvalError {
@@ -61,6 +156,14 @@ impl EvalError {
             EvalError::TypeError { .. } => "T001",
             EvalError::PatchError { .. } => "E019",
             EvalError::SecretLeak { .. } => "S004",
+            EvalError::BudgetExceeded { kind, .. } => match kind {
+                BudgetKind::Nodes => "X001",
+                BudgetKind::WallClock => "X002",
+                BudgetKind::Depth => "X003",
+                BudgetKind::ArrayLength => "X004",
+                BudgetKind::Keys => "X005",
+                BudgetKind::ValueSize => "X006",
+            },
             EvalError::ValidationFailed { diagnostics } => {
                 match diagnostics.first().map(|d| d.code.as_str()) {
                     Some("T003") => "T003",
@@ -75,6 +178,7 @@ impl EvalError {
     pub fn span(&self) -> Option<&Span> {
         match self {
             EvalError::TypeError { span, .. } | EvalError::PatchError { span, .. } => span.as_ref(),
+            EvalError::BudgetExceeded { span, .. } => span.as_ref(),
             EvalError::ValidationFailed { diagnostics } => {
                 diagnostics.first().and_then(|d| d.span.as_ref())
             }
@@ -90,6 +194,7 @@ impl EvalError {
                 file.as_deref()
             }
             EvalError::SecretLeak { file } => file.as_deref(),
+            EvalError::BudgetExceeded { file, .. } => file.as_deref(),
             EvalError::ValidationFailed { diagnostics } => {
                 diagnostics.first().and_then(|d| d.file.as_deref())
             }
@@ -107,6 +212,22 @@ impl EvalError {
         }
     }
 
+    /// Attach a source position to a budget error (the offending node
+    /// when attribution is possible; global conditions carry none).
+    /// The configured limit travels with the error for the message.
+    pub(crate) fn budget_exceeded(
+        kind: BudgetKind,
+        limit: u64,
+        module: &Module,
+        node: Option<NodeId>,
+    ) -> Self {
+        EvalError::BudgetExceeded {
+            kind,
+            limit,
+            span: node.and_then(|n| module.node_spans.get(&n).cloned()),
+            file: node.and_then(|n| module.node_files.get(&n).cloned()),
+        }
+    }
     /// Attach a source position to a patch error (rename conflicts and
     /// invalid paths discovered at apply time).
     fn patch_error(message: impl Into<String>, module: &Module, node: NodeId) -> Self {
@@ -130,6 +251,9 @@ pub struct Engine {
     /// CLI `--profile` override: when set, selects this profile instead
     /// of the document's `active_profile` key (spec §3.5).
     pub profile_override: Option<String>,
+    /// Runtime resource limits (spec/budgets.md, C-037). Violations
+    /// are always fatal, in both modes.
+    pub budget: Budget,
 }
 
 impl Default for Engine {
@@ -138,26 +262,378 @@ impl Default for Engine {
     }
 }
 
+/// Iterative result-depth check for patch-composed trees
+/// (spec/budgets.md §2, C-037). Explicit stack (never recursion):
+/// patch paths are input-proportioned, but the composed depth is not
+/// statically bounded. Runs only when patches ran (profiles merge
+/// key-wise and cannot deepen).
+fn check_result_depth(result: &Value, max_depth: u64) -> Result<(), EvalError> {
+    let mut stack: Vec<(&Value, u64)> = vec![(result, 0)];
+    while let Some((value, depth)) = stack.pop() {
+        if depth > max_depth {
+            return Err(EvalError::BudgetExceeded {
+                kind: BudgetKind::Depth,
+                limit: max_depth,
+                span: None,
+                file: None,
+            });
+        }
+        match value {
+            Value::Table(map) => {
+                for v in map.values() {
+                    stack.push((v, depth + 1));
+                }
+            }
+            Value::Array(elements) => {
+                for v in elements {
+                    stack.push((v, depth + 1));
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Cumulative materialization account threaded through post-walk
+/// transforms (patch sets, profile merges, default fills). The DP
+/// pass seeds it with the arena total; each transform charges what
+/// it clones. Trips X006 past the total limit.
+pub(crate) struct Accountant {
+    spent: u64,
+    limit: u64,
+}
+
+impl Accountant {
+    pub(crate) fn charge(
+        &mut self,
+        module: &Module,
+        node: Option<NodeId>,
+        amount: u64,
+    ) -> Result<(), EvalError> {
+        self.spent = self.spent.saturating_add(amount);
+        // `>= limit + 1` (not `> limit`): identical ordinarily, and
+        // still correct at `u64::MAX`, where the saturating cap below
+        // would otherwise go blind.
+        if self.limit != 0 && self.spent >= self.limit.saturating_add(1) {
+            return Err(EvalError::budget_exceeded(
+                BudgetKind::ValueSize,
+                self.limit,
+                module,
+                node,
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Budget context threaded through validation (spec/budgets.md §2):
+/// the shared evaluation deadline, its configured limit for messages,
+/// and the cumulative materialization account. Bundled so validation
+/// entry points stay under the argument-count lint.
+pub(crate) struct BudgetCx<'a> {
+    pub deadline: Option<Instant>,
+    pub wall_limit: u64,
+    pub account: &'a mut Accountant,
+}
+
+/// Iterative value-size measure in DP units (scalars 1, strings and
+/// secrets plus their bytes, composites 1 plus children). Matches
+/// `check_dp_bounds` semantics for transform-site accounting.
+pub(crate) fn measure_value(value: &Value) -> u64 {
+    let mut total = 0u64;
+    let mut stack = vec![value];
+    while let Some(v) = stack.pop() {
+        total = total.saturating_add(1);
+        match v {
+            Value::String(s) | Value::Secret(s) => {
+                total = total.saturating_add(s.len() as u64);
+            }
+            Value::Array(items) => stack.extend(items.iter()),
+            Value::Table(map) => stack.extend(map.values()),
+            _ => {}
+        }
+    }
+    total
+}
+
+/// Static budget pre-checks (spec/budgets.md §2, C-037): arena-wide
+/// sums, span-attributed where a single node offends. Over-counting
+/// unreachable nodes is fail-safe. Runs before the walk: monsters
+/// fail fast. Depth and materialized size need reference-aware
+/// longest-path bounds — those run as `check_dp_bounds` over the
+/// topological order instead (a plain roots walk would both miss
+/// reference expansion and report nondeterministic spans).
+fn check_static_budgets(module: &Module, budget: &Budget) -> Result<(), EvalError> {
+    let over = |limit: u64, used: u64| limit != 0 && used > limit;
+    if over(budget.max_nodes, module.arena.len() as u64) {
+        return Err(EvalError::BudgetExceeded {
+            kind: BudgetKind::Nodes,
+            limit: budget.max_nodes,
+            span: None,
+            file: None,
+        });
+    }
+    if budget.max_array_len != 0 || budget.max_keys != 0 {
+        let mut keys = 0u64;
+        for (i, node) in module.arena.iter().enumerate() {
+            let id = NodeId(i as u32);
+            match node {
+                // Value tables only: schema tables are metadata with
+                // their own (parser-side) limits.
+                Node::Table { fields } => {
+                    keys += fields.len() as u64;
+                    if over(budget.max_keys, keys) {
+                        return Err(EvalError::BudgetExceeded {
+                            kind: BudgetKind::Keys,
+                            limit: budget.max_keys,
+                            span: None,
+                            file: None,
+                        });
+                    }
+                }
+                Node::Array { elements } if over(budget.max_array_len, elements.len() as u64) => {
+                    return Err(EvalError::budget_exceeded(
+                        BudgetKind::ArrayLength,
+                        budget.max_array_len,
+                        module,
+                        Some(id),
+                    ));
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Reference-aware materialization bounds (spec/budgets.md §2,
+/// C-037): one linear dynamic-programming pass over the topological
+/// order (dependencies first, so every bound is final when read).
+/// `size` bounds materialized data units (scalars plus string bytes;
+/// each `Ref` clone costs its target's bound — this is what kills
+/// exponential reference expansion before anything materializes).
+/// `depth` bounds value nesting through references. Both saturate at
+/// `limit + 1` so the numbers stay tiny; tripping either aborts with
+/// the offending node's span. Memoized per node, so shared subtrees
+/// cost O(1) — the pass itself is linear. Returns the cumulative
+/// bound total plus the per-node bounds table (drives delta
+/// accounting for dynamic values during the walk).
+fn check_dp_bounds(
+    module: &Module,
+    order: &[petgraph::graph::NodeIndex],
+    budget: &Budget,
+) -> Result<(u64, Vec<u64>), EvalError> {
+    if budget.max_value_size == 0 && budget.max_depth == 0 && budget.max_total_value_size == 0 {
+        return Ok((0, vec![1u64; module.arena.len()]));
+    }
+    // Separate saturation caps: comparing against `limit + 1` keeps
+    // numbers tiny, and `>= cap` (instead of `> limit`) stays correct
+    // even at `u64::MAX`, where `limit + 1` saturates. A disabled
+    // limit (0) caps at `u64::MAX` so accounting stays exact while
+    // its trip check is skipped.
+    let size_cap = if budget.max_value_size == 0 {
+        u64::MAX
+    } else {
+        budget.max_value_size.saturating_add(1)
+    };
+    let depth_cap = if budget.max_depth == 0 {
+        u64::MAX
+    } else {
+        budget.max_depth.saturating_add(1)
+    };
+    let mut size = vec![1u64; module.arena.len()];
+    let mut depth = vec![0u64; module.arena.len()];
+    let sat_size = |a: u64, b: u64| a.saturating_add(b).min(size_cap);
+    // Cumulative materialization across the whole pass: per-node
+    // bounds cap each clone, this caps their sum (many aliases of one
+    // large value trip here). Over-approximates (unreachable nodes
+    // count) in the fail-safe direction.
+    let mut total = 0u64;
+    for node_idx in order {
+        let id = module.graph[*node_idx];
+        let i = id.0 as usize;
+        if i >= size.len() {
+            continue;
+        }
+        // Child bounds: table/array fields and elements, reference
+        // targets (the clone!), interpolation parts, and composite
+        // operands. Expression-only children are parser-capped, but
+        // counting them is harmless over-approximation in the safe
+        // direction.
+        let mut child_size = 0u64;
+        let mut child_depth = 0u64;
+        match module.get(id) {
+            Some(Node::Table { fields }) => {
+                for child in fields.values() {
+                    let c = child.0 as usize;
+                    if c < size.len() {
+                        child_size = sat_size(child_size, size[c]);
+                        child_depth = child_depth.max(depth[c]);
+                    }
+                }
+                size[i] = sat_size(1, child_size);
+                depth[i] = child_depth.saturating_add(1).min(depth_cap);
+            }
+            Some(Node::Array { elements }) => {
+                for child in elements {
+                    let c = child.0 as usize;
+                    if c < size.len() {
+                        child_size = sat_size(child_size, size[c]);
+                        child_depth = child_depth.max(depth[c]);
+                    }
+                }
+                size[i] = sat_size(1, child_size);
+                depth[i] = child_depth.saturating_add(1).min(depth_cap);
+            }
+            Some(Node::Ref(target)) => {
+                let c = target.0 as usize;
+                if c < size.len() {
+                    size[i] = size[c];
+                    depth[i] = depth[c];
+                }
+            }
+            Some(Node::Literal(Value::String(s))) => {
+                size[i] = sat_size(1, s.len() as u64);
+            }
+            Some(Node::Interpolate { parts }) => {
+                for part in parts {
+                    match part {
+                        InterpPart::Expr(e) => {
+                            let c = e.0 as usize;
+                            if c < size.len() {
+                                child_size = sat_size(child_size, size[c]);
+                                child_depth = child_depth.max(depth[c]);
+                            }
+                        }
+                        InterpPart::Literal(s) => {
+                            child_size = sat_size(child_size, s.len() as u64);
+                        }
+                    }
+                }
+                size[i] = sat_size(1, child_size);
+            }
+            Some(Node::Binary { lhs, rhs, .. }) => {
+                for child in [*lhs, *rhs] {
+                    let c = child.0 as usize;
+                    if c < size.len() {
+                        child_size = sat_size(child_size, size[c]);
+                    }
+                }
+                size[i] = sat_size(1, child_size);
+            }
+            Some(Node::Unary { expr, .. }) => {
+                let c = expr.0 as usize;
+                if c < size.len() {
+                    size[i] = sat_size(1, size[c]);
+                }
+            }
+            // Transparent wrapper: the tag is tool treatment only, so
+            // the bound is the inner value's bound exactly.
+            Some(Node::Semantic { inner, .. }) => {
+                let c = inner.0 as usize;
+                if c < size.len() {
+                    size[i] = size[c];
+                    depth[i] = depth[c];
+                }
+            }
+            _ => {}
+        }
+        // `>= cap` (not `> limit`): identical for ordinary limits,
+        // and still correct at `u64::MAX`, where `limit + 1`
+        // saturates and only a truly astronomical bound trips.
+        if budget.max_value_size != 0 && size[i] >= size_cap {
+            return Err(EvalError::budget_exceeded(
+                BudgetKind::ValueSize,
+                budget.max_value_size,
+                module,
+                Some(id),
+            ));
+        }
+        if budget.max_depth != 0 && depth[i] >= depth_cap {
+            return Err(EvalError::budget_exceeded(
+                BudgetKind::Depth,
+                budget.max_depth,
+                module,
+                Some(id),
+            ));
+        }
+        total = total.saturating_add(size[i]);
+        if budget.max_total_value_size != 0
+            && total >= budget.max_total_value_size.saturating_add(1)
+        {
+            return Err(EvalError::budget_exceeded(
+                BudgetKind::ValueSize,
+                budget.max_total_value_size,
+                module,
+                Some(id),
+            ));
+        }
+    }
+    Ok((total, size))
+}
+
 impl Engine {
     pub fn new() -> Self {
         Self {
             resilient: true,
             profile_override: None,
+            budget: Budget::default(),
         }
     }
 
     pub fn evaluate(&self, module: &Module) -> Result<(Value, Vec<Diagnostic>), EvalError> {
+        // The deadline covers everything from here on (spec/budgets.md
+        // §2): static scans, cycle check, sort, walk, transforms, and
+        // validation share one clock.
+        let deadline = self.budget.wall_deadline();
+        // Budgets first: fail fast on monsters before any real work.
+        check_static_budgets(module, &self.budget)?;
         if is_cyclic_directed(&module.graph) {
             return Err(EvalError::CycleDetected);
         }
 
         let order = toposort(&module.graph, None).map_err(|_| EvalError::CycleDetected)?;
-
+        // Reference-aware materialization bounds (size and depth): the
+        // billion-laughs killer. Runs on the topological order so every
+        // bound is final when read; saturating arithmetic keeps it
+        // linear even for exponential shapes. Returns the cumulative
+        // bound, seeding the transform accountant below.
+        let (dp_total, dp_bounds) = check_dp_bounds(module, &order, &self.budget)?;
+        let mut account = Accountant {
+            spent: dp_total,
+            limit: self.budget.max_total_value_size,
+        };
+        // Actual materialized sizes for dynamic values (env- and
+        // secret-backed strings): the DP counts 1 per node, so each
+        // clone charges the delta between actual and bound. Static
+        // targets need no entry — DP soundness guarantees actuals stay
+        // within bounds, hence zero delta without measuring.
+        let mut actuals: HashMap<NodeId, u64> = HashMap::new();
         let mut values: HashMap<NodeId, Value> = HashMap::new();
         let mut diagnostics = module.diagnostics.clone();
         diagnostics.extend(module.healing.iter().cloned());
+        // Wall-clock backstop (spec/budgets.md §2): sampled every 1024
+        // nodes so the overhead is unmeasurable. Counts already passed
+        // their static and DP checks; only time needs watching mid-walk.
+        // `deadline` was computed at entry and shared with validation.
+        let mut visited = 0u64;
 
         for node_idx in order {
+            visited += 1;
+            if visited % 1024 == 0 {
+                if let Some(end) = deadline {
+                    if Instant::now() >= end {
+                        let node_id = module.graph[node_idx];
+                        return Err(EvalError::budget_exceeded(
+                            BudgetKind::WallClock,
+                            self.budget.max_wall_ms,
+                            module,
+                            Some(node_id),
+                        ));
+                    }
+                }
+            }
             let node_id = module.graph[node_idx];
             let node = module.get(node_id).ok_or(EvalError::MissingNode(node_id))?;
 
@@ -165,7 +641,14 @@ impl Engine {
                 Node::Literal(v) => v.clone(),
 
                 Node::Env { name, default } => match std::env::var(name) {
-                    Ok(s) => Value::String(s),
+                    Ok(s) => {
+                        // Operator-controlled dynamic content (like
+                        // secrets below): charge the bytes as delta and
+                        // record the actual for reference deltas.
+                        actuals.insert(node_id, 1u64.saturating_add(s.len() as u64));
+                        account.charge(module, Some(node_id), s.len() as u64)?;
+                        Value::String(s)
+                    }
                     Err(_) => {
                         if let Some(def) = default {
                             values.get(def).cloned().unwrap_or(Value::Null)
@@ -177,13 +660,33 @@ impl Engine {
 
                 Node::Secret { locator } => {
                     let loc = values.get(locator).cloned().unwrap_or(Value::Null);
-                    match loc {
+                    let secret = match loc {
                         Value::String(s) => Value::Secret(s),
                         _ => Value::Secret(String::new()),
+                    };
+                    // Dynamic content: the DP counted 1, so charge the
+                    // string bytes as delta and record the actual for
+                    // reference deltas below.
+                    if let Value::Secret(s) = &secret {
+                        let actual = 1u64.saturating_add(s.len() as u64);
+                        actuals.insert(node_id, actual);
+                        account.charge(module, Some(node_id), s.len() as u64)?;
                     }
+                    secret
                 }
 
-                Node::Ref(id) => values.get(id).cloned().unwrap_or(Value::Null),
+                Node::Ref(id) => {
+                    let v = values.get(id).cloned().unwrap_or(Value::Null);
+                    // Dynamic targets (env/secret actuals recorded at
+                    // production) charge actual-minus-bound per clone;
+                    // static targets stay within DP bounds (delta zero,
+                    // no measuring needed).
+                    if let Some(actual) = actuals.get(id) {
+                        let bound = dp_bounds.get(id.0 as usize).copied().unwrap_or(1);
+                        account.charge(module, Some(node_id), actual.saturating_sub(bound))?;
+                    }
+                    v
+                }
 
                 // Semantic tags are tool treatment only: transparent to the value.
                 Node::Semantic { inner, .. } => values.get(inner).cloned().unwrap_or(Value::Null),
@@ -297,16 +800,55 @@ impl Engine {
 
         let root = module.root.ok_or(EvalError::MissingRoot)?;
         let result = values.get(&root).cloned().unwrap_or(Value::Null);
-        let result = self.apply_profile(module, &values, result, &mut diagnostics);
+        let result = self.apply_profile(module, &values, result, &mut diagnostics, &mut account)?;
         let mut result = result;
-        self.apply_patches(module, &values, &mut result, &mut diagnostics)?;
+        self.apply_patches(module, &values, &mut result, &mut diagnostics, &mut account)?;
+        // Patch edits compose arena values at paths and can deepen the
+        // tree past every statically-checked root (profile merges only
+        // replace key-wise and cannot deepen). Re-check result depth
+        // iteratively when patches ran; the tree is alias-free (every
+        // Ref clone materializes), so a plain walk stays linear.
+        if !module.patches.is_empty() && self.budget.max_depth != 0 {
+            check_result_depth(&result, self.budget.max_depth)?;
+        }
         // Schema validation runs last: post-evaluation, post-profile,
         // post-patch, pre-export (spec/validation.md §1). Resilient
         // mode may insert schema defaults (C-032), so the tree is
         // mutable here. Constraint predicates run after schema
-        // validation (spec/annotations.md §3).
-        self.validate_schema(module, &values, &mut result, &mut diagnostics)?;
-        self.validate_annotations(module, &values, &result, &mut diagnostics)?;
+        // validation (spec/annotations.md §3). Both share the
+        // evaluation deadline computed before the walk
+        // (spec/budgets.md §2).
+        self.validate_schema(
+            module,
+            &values,
+            &mut result,
+            &mut diagnostics,
+            BudgetCx {
+                deadline,
+                wall_limit: self.budget.max_wall_ms,
+                account: &mut account,
+            },
+        )?;
+        self.validate_annotations(
+            module,
+            &values,
+            &result,
+            &mut diagnostics,
+            deadline,
+            self.budget.max_wall_ms,
+        )?;
+        // Closing wall-clock sample: small documents take zero walk
+        // samples, so the deadline is checked once more at the end.
+        if let Some(end) = deadline {
+            if Instant::now() >= end {
+                return Err(EvalError::budget_exceeded(
+                    BudgetKind::WallClock,
+                    self.budget.max_wall_ms,
+                    module,
+                    None,
+                ));
+            }
+        }
         Ok((result, diagnostics))
     }
 
@@ -370,6 +912,7 @@ impl Engine {
         values: &HashMap<NodeId, Value>,
         result: &mut Value,
         diagnostics: &mut Vec<Diagnostic>,
+        account: &mut Accountant,
     ) -> Result<(), EvalError> {
         use crate::ir::PatchOp;
 
@@ -405,6 +948,15 @@ impl Engine {
                         )
                     })?;
                     let v = values.get(&value).cloned().unwrap_or(Value::Null);
+                    // Cloned values cost against the cumulative budget:
+                    // many patches sharing one large value must trip
+                    // like many aliases do. Path intermediates cost one
+                    // unit per segment (input-proportioned tables).
+                    account.charge(
+                        module,
+                        Some(patch_id),
+                        measure_value(&v).saturating_add(segs.len() as u64),
+                    )?;
                     // Failed sets roll back: navigation may have
                     // materialized intermediate tables before hitting a
                     // blocked hop, and a failed patch must leave no trace.
@@ -470,7 +1022,8 @@ impl Engine {
         values: &HashMap<NodeId, Value>,
         result: Value,
         diagnostics: &mut Vec<Diagnostic>,
-    ) -> Value {
+        account: &mut Accountant,
+    ) -> Result<Value, EvalError> {
         if module.profiles.is_empty() {
             // No profiles defined: the effective selector (override first,
             // then the key) still validates, then base stands.
@@ -498,7 +1051,7 @@ impl Engine {
                                     active_key_file(module, &result)
                                 },
                             });
-                            return result;
+                            return Ok(result);
                         }
                         None => None,
                     },
@@ -526,16 +1079,16 @@ impl Engine {
                     },
                 });
             }
-            return result;
+            return Ok(result);
         }
         let base_table = match &result {
             Value::Table(map) => map.clone(),
-            _ => return result,
+            _ => return Ok(result),
         };
         let selected: Option<String> = match &self.profile_override {
             Some(name) => Some(name.clone()),
             None => match base_table.get("active_profile") {
-                None => return result,
+                None => return Ok(result),
                 Some(Value::String(s)) => Some(s.clone()),
                 Some(other) => {
                     diagnostics.push(Diagnostic {
@@ -559,13 +1112,13 @@ impl Engine {
                             active_key_file(module, &result)
                         },
                     });
-                    return result;
+                    return Ok(result);
                 }
             },
         };
         let name = match selected {
             Some(n) => n,
-            None => return result,
+            None => return Ok(result),
         };
         let Some(&profile_id) = module.profiles.get(&name) else {
             diagnostics.push(Diagnostic {
@@ -586,9 +1139,13 @@ impl Engine {
                     active_key_file(module, &result)
                 },
             });
-            return result;
+            return Ok(result);
         };
         let profile_value = values.get(&profile_id).cloned().unwrap_or(Value::Null);
+        // Merging copies the profile subtree into the result: charge
+        // its measured size (over-approximates replacement as
+        // addition — fail-safe direction).
+        account.charge(module, Some(profile_id), measure_value(&profile_value))?;
         let mut merged = base_table;
         merge_profile_value(
             &mut merged,
@@ -599,7 +1156,7 @@ impl Engine {
             module.node_files.get(&profile_id).cloned(),
             diagnostics,
         );
-        Value::Table(merged)
+        Ok(Value::Table(merged))
     }
 }
 

@@ -75,3 +75,23 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build on declared MSRV
         run: cargo build --workspace --locked
+
+  package:
+    name: Packaging gate (C-056)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Full `cargo package` proves solid-lang-core is publish-ready.
+      # Dependents need solid-lang-core on crates.io first (cargo
+      # rewrites path deps to registry deps), so they get --list
+      # (file inclusion + manifest parse) until the first publish;
+      # spec/packaging.md §4 tracks the progression.
+      - name: Package solid-lang-core
+        run: cargo package --locked -p solid-lang-core
+      - name: List dependent packages
+        run: |
+          cargo package --list --locked -p solid-fmt
+          cargo package --list --locked -p solid-ls
+          cargo package --list --locked -p solid-cli

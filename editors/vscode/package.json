@@ -1,0 +1,68 @@
+{
+  "name": "solid-lang",
+  "displayName": "SOLID",
+  "description": "SOLID configuration language: Symmetric, Overlay-ready, Loop-proof, Intent-driven, Deterministic",
+  "version": "0.1.0-alpha.1",
+  "publisher": "ratioartificiosa",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RatioArtificiosa/solid-lang.git"
+  },
+  "homepage": "https://github.com/RatioArtificiosa/solid-lang",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Formatters"
+  ],
+  "keywords": [
+    "solid",
+    "config",
+    "configuration",
+    "toml",
+    "yaml",
+    "lsp"
+  ],
+  "activationEvents": [
+    "onLanguage:solid"
+  ],
+  "main": "./client/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "solid",
+        "aliases": [
+          "SOLID",
+          "solid"
+        ],
+        "extensions": [
+          ".solid"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "solid",
+        "scopeName": "source.solid",
+        "path": "./syntaxes/solid.tmGrammar.json"
+      }
+    ],
+    "configuration": {
+      "title": "SOLID",
+      "properties": {
+        "solid.languageServer.path": {
+          "type": "string",
+          "default": "solid-ls",
+          "description": "Path to the solid-ls language server binary (PATH lookup by default; cargo install solid-ls)."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}

@@ -37,6 +37,7 @@ node_modules/
 target/
 dist/
 build/
+*.vsix
 out/
 .venv/
 venv/

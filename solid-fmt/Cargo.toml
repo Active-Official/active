@@ -4,7 +4,14 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
 description = "Formatter for SOLID (dual-syntax aware)"
+readme = "../README.md"
+keywords = ["config", "formatter", "language", "pretty-printing"]
+categories = ["development-tools", "config"]
 
 [[bin]]
 name = "solid-fmt"
@@ -13,4 +20,4 @@ path = "src/main.rs"
 [dependencies]
 clap = { workspace = true }
 anyhow = { workspace = true }
-solid-core = { path = "../solid-core" }
+solid-lang-core = { workspace = true }

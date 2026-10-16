@@ -4,14 +4,21 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
 description = "Command-line interface for the SOLID configuration language"
+readme = "../README.md"
+keywords = ["config", "configuration", "cli", "language", "linter"]
+categories = ["command-line-utilities", "config"]
 
 [[bin]]
 name = "solid"
 path = "src/main.rs"
 
 [dependencies]
-solid-core = { path = "../solid-core" }
+solid-lang-core = { workspace = true }
 clap = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }

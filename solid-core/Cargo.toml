@@ -1,10 +1,24 @@
 [package]
-name = "solid-core"
+# crates.io name is scoped: plain `solid-core` belongs to an
+# unrelated 2020 crate. The Rust library name stays `solid_core`
+# (spec/packaging.md §2), so no code changes with the rename.
+name = "solid-lang-core"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
 description = "Core parser, IR, evaluator and type system for the SOLID configuration language"
+readme = "../README.md"
+keywords = ["config", "configuration", "language", "parser", "validation"]
+categories = ["parser-implementations", "config"]
+
+[lib]
+name = "solid_core"
+path = "src/lib.rs"
 
 [dependencies]
 serde = { workspace = true }

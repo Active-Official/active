@@ -1,0 +1,177 @@
+name: Release
+
+# Official binaries + crates.io + editor artifacts (C-056/C-057,
+# spec/packaging.md). Tags `v*` cut a release; manual dispatch
+# validates the full matrix without publishing anything.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Tags publish irreversibly (crates.io versions cannot be
+  # overwritten): never auto-cancel a tag run. Manual dispatches
+  # still cancel superseded runs.
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-24.04
+            archive: tar.gz
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-11
+            archive: zip
+          - target: aarch64-pc-windows-msvc
+            os: windows-11-arm
+            archive: zip
+          - target: aarch64-apple-darwin
+            os: macos-15
+            archive: tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-15
+            archive: tar.gz
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+      - name: Build release binaries
+        shell: bash
+        run: cargo build --release --locked -p solid-cli -p solid-fmt -p solid-ls --target ${{ matrix.target }}
+      - name: Verify examples evaluate (except cross-compiled macOS leg)
+        if: ${{ matrix.target != 'x86_64-apple-darwin' }}
+        shell: bash
+        run: |
+          BIN="target/${{ matrix.target }}/release/solid"
+          if [[ "${{ matrix.target }}" == *"windows"* ]]; then BIN="$BIN.exe"; fi
+          "$BIN" check examples/demo.solid
+          "$BIN" check examples/complete.solid
+      - name: Stage archive
+        shell: bash
+        run: |
+          STAGE="solid-${{ matrix.target }}"
+          mkdir -p "$STAGE"
+          EXT=""
+          if [[ "${{ matrix.target }}" == *"windows"* ]]; then EXT=".exe"; fi
+          for tool in solid solid-fmt solid-ls; do
+            cp "target/${{ matrix.target }}/release/$tool$EXT" "$STAGE/"
+          done
+          cp README.md LICENSE-MIT LICENSE-APACHE "$STAGE/"
+          if [[ "${{ matrix.archive }}" == "zip" ]]; then
+            7z a "$STAGE.zip" "$STAGE"
+          else
+            tar czf "$STAGE.tar.gz" "$STAGE"
+          fi
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: solid-${{ matrix.target }}
+          path: solid-${{ matrix.target }}.*
+
+  vsix:
+    name: Package VS Code extension
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - name: Install dependencies
+        working-directory: editors/vscode
+        run: npm ci
+      - name: Install vsce and package
+        working-directory: editors/vscode
+        run: |
+          npm install -g @vscode/vsce
+          vsce package
+      - name: Upload vsix
+        uses: actions/upload-artifact@v4
+        with:
+          name: solid-vsix
+          path: editors/vscode/*.vsix
+
+  release:
+    name: Publish release
+    needs: [build, vsix]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build signer binary
+        run: cargo build --locked -p solid-cli
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        shell: bash
+        run: |
+          cd dist
+          sha256sum solid-*.tar.gz solid-*.zip solid-lang-*.vsix > SHA256SUMS
+          cat SHA256SUMS
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/solid-*.tar.gz
+            dist/solid-*.zip
+            dist/solid-lang-*.vsix
+      - name: Optional solid-sign sidecars
+        # RELEASE_SIGNING_KEY holds the `.secret` file text from
+        # `solid keygen` (written to a file: --key takes a path, not
+        # hex). Sidecars record kid "solid-release"; verify against a
+        # trust file with id "solid-release" + the release public key.
+        if: ${{ secrets.RELEASE_SIGNING_KEY != '' }}
+        shell: bash
+        run: |
+          echo "${{ secrets.RELEASE_SIGNING_KEY }}" > "$RUNNER_TEMP/release.key"
+          cd dist
+          for f in solid-*.tar.gz solid-*.zip solid-lang-*.vsix; do
+            "$GITHUB_WORKSPACE/target/debug/solid" sign --key "$RUNNER_TEMP/release.key" --kid solid-release "$f"
+          done
+          rm -f "$RUNNER_TEMP/release.key"
+          ls *.sig
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          body: |
+            SOLID ${{ github.ref_name }} — see spec/packaging.md §6 for install
+            and verification (SHA256SUMS, build attestations, `.sig` sidecars
+            when the release key is set).
+      - name: Publish crates (needs CARGO_REGISTRY_TOKEN or trusted publishing)
+        if: ${{ secrets.CARGO_REGISTRY_TOKEN != '' }}
+        shell: bash
+        run: |
+          cargo login "${{ secrets.CARGO_REGISTRY_TOKEN }}"
+          # Registry index lag breaks dependents published back to
+          # back: lock files, publish in dependency order, pause
+          # between crates.
+          for p in solid-lang-core solid-fmt solid-ls solid-cli; do
+            cargo publish --locked -p "$p"
+            sleep 60
+          done

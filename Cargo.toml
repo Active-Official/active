@@ -14,6 +14,8 @@ rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 authors = ["SOLID Language Team"]
 repository = "https://github.com/RatioArtificiosa/solid-lang"
+homepage = "https://github.com/RatioArtificiosa/solid-lang"
+documentation = "https://github.com/RatioArtificiosa/solid-lang"
 description = "SOLID - Symmetric, Overlay-ready, Loop-proof, Intent-driven, Deterministic configuration language"
 
 [workspace.dependencies]
@@ -25,3 +27,6 @@ regex = "1.11"
 anyhow = "1.0"
 petgraph = "0.6"
 clap = { version = "4.5", features = ["derive"] }
+# Version is duplicated from [workspace.package] (cargo forbids
+# version.workspace here): keep in sync — the packaging test pins it.
+solid-lang-core = { version = "0.1.0-alpha.1", path = "solid-core" }

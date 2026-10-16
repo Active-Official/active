@@ -8,7 +8,7 @@ edition = "2021"
 cargo-fuzz = true
 
 [dependencies]
-solid-core = { path = "../solid-core" }
+solid-lang-core = { path = "../solid-core" }
 libfuzzer-sys = "0.4"
 
 # Standalone workspace: not a member of the root workspace.

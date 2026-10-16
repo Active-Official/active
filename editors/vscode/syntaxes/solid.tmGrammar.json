@@ -1,0 +1,127 @@
+{
+  "name": "SOLID",
+  "scopeName": "source.solid",
+  "fileTypes": ["solid"],
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#triple-string" },
+    { "include": "#string" },
+    { "include": "#table-header" },
+    { "include": "#annotation" },
+    { "include": "#keyword" },
+    { "include": "#number" },
+    { "include": "#boolean" }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.number-sign.solid",
+      "match": "#.*$"
+    },
+    "annotation": {
+      "name": "keyword.other.annotation.solid",
+      "match": "@(intent|constraint|ai_immutable|patch|remove|rename)\\b"
+    },
+    "escape": {
+      "name": "constant.character.escape.solid",
+      "match": "\\\\(n|t|r|\\\\|\"|'|0|\\$|u\\{[0-9a-fA-F]+\\})"
+    },
+    "interpolation": {
+      "name": "meta.embedded.expression.solid",
+      "begin": "\\$\\{",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.template-expression.begin.solid" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.template-expression.end.solid" }
+      },
+      "patterns": [
+        { "include": "#interpolation" },
+        { "include": "#triple-string" },
+        { "include": "#string" },
+        { "include": "#keyword" },
+        { "include": "#number" },
+        { "include": "#boolean" }
+      ]
+    },
+    "triple-string": {
+      "patterns": [
+        {
+          "name": "string.quoted.triple.double.solid",
+          "begin": "\"\"\"",
+          "end": "\"\"\"",
+          "patterns": [
+            { "include": "#escape" },
+            { "include": "#interpolation" }
+          ]
+        },
+        {
+          "name": "string.quoted.triple.single.solid",
+          "begin": "'''",
+          "end": "'''",
+          "patterns": [{ "include": "#escape" }]
+        }
+      ]
+    },
+    "string": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.solid",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            { "include": "#escape" },
+            { "include": "#interpolation" }
+          ]
+        },
+        {
+          "name": "string.quoted.single.solid",
+          "begin": "'",
+          "end": "'",
+          "patterns": [{ "include": "#escape" }]
+        }
+      ]
+    },
+    "table-header": {
+      "name": "meta.table.header.solid",
+      "begin": "\\[",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.table.begin.solid" }
+      },
+      "end": "\\]",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.table.end.solid" }
+      },
+      "patterns": [
+        {
+          "name": "entity.name.section.solid",
+          "match": "[A-Za-z_][A-Za-z0-9_]*"
+        },
+        {
+          "name": "punctuation.separator.dot.solid",
+          "match": "\\."
+        }
+      ]
+    },
+    "keyword": {
+      "patterns": [
+        {
+          "name": "keyword.control.solid",
+          "match": "\\b(let|profile|include|schema|active_profile|depends_on|as|private|closed)\\b"
+        },
+        {
+          "name": "support.function.solid",
+          "match": "\\b(env|secret)\\b(?=\\s*[.(])"
+        }
+      ]
+    },
+    "number": {
+      "name": "constant.numeric.solid",
+      "match": "\\b-?(\\d+\\.\\d+|\\d+)(ns|us|µs|ms|s|m|h|d|B|KiB|MiB|GiB|TiB|KB|MB|GB|TB|/s|/m|/h|req/s|req/m|req/h)?\\b"
+    },
+    "boolean": {
+      "name": "constant.language.solid",
+      "match": "\\b(true|false|null)\\b"
+    }
+  }
+}

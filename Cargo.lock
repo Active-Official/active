@@ -1172,12 +1172,21 @@ dependencies = [
  "anyhow",
  "clap",
  "serde_json",
- "solid-core",
+ "solid-lang-core",
  "toml",
 ]
 
 [[package]]
-name = "solid-core"
+name = "solid-fmt"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "anyhow",
+ "clap",
+ "solid-lang-core",
+]
+
+[[package]]
+name = "solid-lang-core"
 version = "0.1.0-alpha.1"
 dependencies = [
  "anyhow",
@@ -1198,15 +1207,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solid-fmt"
-version = "0.1.0-alpha.1"
-dependencies = [
- "anyhow",
- "clap",
- "solid-core",
-]
-
-[[package]]
 name = "solid-ls"
 version = "0.1.0-alpha.1"
 dependencies = [
@@ -1214,7 +1214,7 @@ dependencies = [
  "lsp-server",
  "lsp-types",
  "serde_json",
- "solid-core",
+ "solid-lang-core",
 ]
 
 [[package]]

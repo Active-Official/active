@@ -4,7 +4,10 @@
 
 SOLID is a modern configuration and data language designed to be safer than YAML, more expressive than TOML, more human-friendly than JSON, and excellent for both humans and AI agents.
 
-This repository contains the **alpha production foundation** with a working parser, IR, dependency graph, evaluator, units, string interpolation, and CLI.
+This repository contains the **production implementation**: parser, IR,
+dependency graph, evaluator, units, string interpolation, schema
+validation, CLI, formatter, converters, documentation generator, and
+language server.
 
 ## Features in this alpha
 
@@ -18,9 +21,23 @@ This repository contains the **alpha production foundation** with a working pars
 - Dependency graph + topological evaluation + cycle detection
 - JSON and simple TOML conversion
 - Structured diagnostics
-- CLI: `eval`, `check`, `graph`, `convert`
-- Dual-syntax formatter stub
-- Language server stub
+- CLI: `eval`, `check`, `graph`, `convert`, `fmt`, `lint`
+- Dual-syntax formatter (`solid fmt`: indent, bracketed, preserving)
+- Language server (`solid-ls`: hover, go-to-definition, completions,
+  diagnostics, inlay hints, code actions)
+
+## Install
+
+```bash
+cargo install solid-cli solid-fmt solid-ls   # needs Rust 1.85+
+```
+
+Release archives (Linux/macOS/Windows × x86_64/ARM64, with SHA256SUMS
+and build attestations) are attached to
+[GitHub releases](https://github.com/RatioArtificiosa/solid-lang/releases).
+Editors: `editors/vscode` (VS Code / Cursor / VSCodium vsix) and
+`editors/neovim` (runtimepath plugin + `solid-ls`). Details and the
+crates.io procedure: `spec/packaging.md`.
 
 ## Quick start
 

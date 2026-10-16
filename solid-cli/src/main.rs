@@ -728,7 +728,7 @@ fn main() -> anyhow::Result<()> {
             .map_err(|e| anyhow::anyhow!("{e}"))?;
             let manifest = solid_core::provenance::LockManifest::new(
                 format!(
-                    "solid-cli {} / solid-core {}",
+                    "solid-cli {} / solid-lang-core {}",
                     env!("CARGO_PKG_VERSION"),
                     solid_core::VERSION
                 ),

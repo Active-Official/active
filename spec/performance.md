@@ -15,6 +15,13 @@ criterion benches and the CodSpeed CI plugin.
 - `eval_small`: a 2-key document (`a = 1`, `b = a`; baseline
   noise floor).
 
+Benches run with the production wall-clock backstop off
+(`bench_engine` sets `max_wall_ms = 0`): benches measure time
+themselves, and instrumentation slowdown (valgrind simulation
+runs an order of magnitude slower) must never abort a
+measurement. Count/depth/size budgets keep shipped defaults —
+deterministic counts, unaffected by slowdown.
+
 Run with `cargo bench`; tracked continuously by the CodSpeed
 GitHub workflow (`.github/workflows/codspeed.yml`: `cargo codspeed
 build`, then the action with `mode: simulation` and

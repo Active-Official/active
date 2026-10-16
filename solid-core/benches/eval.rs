@@ -20,6 +20,17 @@ fn doc_10k() -> String {
     out
 }
 
+/// Benches measure time themselves (criterion, CodSpeed
+/// simulation); the production wall-clock backstop stays off so
+/// instrumentation slowdown (valgrind runs 10–50× slower) can never
+/// abort a measurement. Count/depth/size budgets keep their shipped
+/// defaults — they are deterministic counts, unaffected by slowdown.
+fn bench_engine() -> Engine {
+    let mut engine = Engine::new();
+    engine.budget.max_wall_ms = 0;
+    engine
+}
+
 fn criterion_benchmark(c: &mut Criterion) {
     let src = doc_10k();
 
@@ -29,7 +40,7 @@ fn criterion_benchmark(c: &mut Criterion) {
 
     let module = parse(&src, "bench").expect("must parse");
     c.bench_function("eval_10k", |b| {
-        let engine = Engine::new();
+        let engine = bench_engine();
         b.iter(|| engine.evaluate(&module).expect("must evaluate"));
     });
 
@@ -47,7 +58,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("incremental_leaf_edit", |b| {
         b.iter_batched(
             || {
-                let engine = Engine::new();
+                let engine = bench_engine();
                 let mut memo = IncrementalMemo::default();
                 engine
                     .evaluate_incremental(&module, &mut memo)
@@ -65,7 +76,7 @@ fn criterion_benchmark(c: &mut Criterion) {
 
     c.bench_function("eval_small", |b| {
         let module = parse("a = 1\nb = a\n", "bench").expect("must parse");
-        let engine = Engine::new();
+        let engine = bench_engine();
         b.iter(|| engine.evaluate(&module).expect("must evaluate"));
     });
 }

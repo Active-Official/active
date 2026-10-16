@@ -1,0 +1,6 @@
+include "lib_base.solid" as base
+include "lib_secret.solid" private
+
+[app]
+port = base_port
+pw = db_password

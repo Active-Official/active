@@ -17,7 +17,7 @@ pub use eval::Engine;
 pub use ir::{
     Attachment, BinOp, Module, Node, NodeId, SemanticTag, Style, TriviaComment, UnOp, Value,
 };
-pub use parser::{parse, parse_recovering, parse_with, ParseOptions};
+pub use parser::{parse, parse_file, parse_recovering, parse_with, ParseOptions};
 pub use types::{Constraint, Unit};
 
 /// Library version

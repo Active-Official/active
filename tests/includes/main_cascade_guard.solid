@@ -1,0 +1,8 @@
+include "guard_a.solid"
+include "guard_b.solid"
+
+parent {
+  sub {
+    x = 1
+  }
+}

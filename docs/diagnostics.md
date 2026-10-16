@@ -18,7 +18,9 @@ Spans are 1-based line/column, pointing at the offending token or node position.
 Parse-time diagnostics carry spans by construction; evaluation-time diagnostics
 carry spans via `Module::node_spans` (recorded by the parser for every node it
 creates). A diagnostic without an attainable position omits the
-`file:line:col:` prefix.
+`file:line:col:` prefix. In multi-file documents (includes, C-025), every
+diagnostic carries the `file` it came from (`Diagnostic.file`); single-file
+parses leave it unset and tools fall back to the input filename.
 
 ## Codes
 
@@ -38,6 +40,10 @@ creates). A diagnostic without an attainable position omits the
 | E007 | `inconsistent dedentation` | line start | No enclosing indentation level matches; pops to the nearest level below |
 | E008 | `block header has no indented body` | the colon | A `key:` header requires a deeper following line; no table is created |
 | E010 | `unexpected indentation` | line start | An Indent where no block header opened one; the line joins the enclosing block, and the matching Dedent is discarded by level comparison (spec/dual-syntax.md §6) |
+| E014 | `expected a semantic tag ...` / `unknown semantic tag ...` / `a semantic tag must be followed by a multi-line string` | token | Malformed `@tag` blocks (C-024) |
+| E015 | `include paths must be string literals` / `interpolation in include paths is a hard error` / `include paths must not escape the including directory` / `include statements require file-based parsing` | token | Malformed include statements (C-025): non-literal paths, interpolated paths, absolute paths and `..` escapes (unless `allow_parent_escapes`), or includes under string-based parsing |
+| E016 | `circular include detected: ...` / `maximum include depth (32) exceeded` | token | An include cycle through the file graph, or nesting deeper than 32 files (C-025) |
+| E017 | `cannot read include file ...` | token | A missing or unreadable include target (C-025) |
 
 ### S0xx — Semantic (evaluation, severity Error)
 

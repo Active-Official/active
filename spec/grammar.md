@@ -223,6 +223,45 @@ the parser emits E001 and returns. After a table header, key-values belong to
 that table until EOF, the next `[`-header, or a `let` (a `let` inside a table
 body ends the table).
 
+### 2.7 Include statements (C-025)
+
+```
+include-stmt  = "include" string-literal [ "as" identifier ] [ "private" ]
+string-literal = String | SingleString | MlString | MlSingleString
+```
+
+- `include` is a **contextual keyword**: `include` followed by `=`, `:`,
+  or `{` stays an ordinary key, table header, or table block (existing
+  documents using `include` as a name keep working in all three forms);
+  `include` followed by anything else starts an include statement. A bare
+  `include` with no path is E015.
+- The path must be a **string literal**. A non-string path (`include foo`,
+  `include 5`) is E015. **Interpolation in the path is a hard error
+  (E015)**, even when the referenced name exists — include paths are
+  always static so the dependency graph stays computable without
+  evaluation.
+- `as alias` nests the included file's top-level keys under `alias`.
+  `private` keeps the included keys out of the exported value tree while
+  leaving them referenceable (C-026).
+- Paths resolve against the including file's directory. Absolute paths and
+  paths escaping the directory via `..` are E015 by default (opt out with
+  `allow_parent_escapes`, e.g. the CLI `--allow-parent-escapes` flag).
+- A missing or unreadable file is E017. Including a file already on the
+  include stack (a cycle), or nesting deeper than 32 files, is E016.
+- Merge semantics (normative): **included files provide defaults**.
+  Explicit local keys always win, regardless of position; when several
+  included files define the same key, the LAST include wins (cascade).
+  Tables merge recursively — local scalars win at every level, and a
+  later include only overwrites paths a previous include provided, never
+  explicit local content (so a later `key = scalar` can never discard a
+  local table holding local keys). Deep structural composition beyond
+  defaults is the domain of profiles (C-027) and patches (C-028/029). An
+  included file's `let` bindings are visible to the including module but
+  never exported.
+- `include` statements are allowed anywhere a statement is allowed
+  (document root, table bodies, brace blocks, indented blocks) and merge
+  into the enclosing scope.
+
 ### 2.3 Expressions (precedence, loosest to tightest)
 
 ```

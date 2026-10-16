@@ -150,6 +150,29 @@ Anything still `Ident` at evaluation time is unresolved → W001 + `null`.
 Resolution runs after a scope is fully parsed, so **forward references within
 a scope resolve**.
 
+### 2.5 Include lowering (C-025)
+
+`include "path" [as alias] [private]` splices another file's module into the
+including module, sharing one arena, one binding table, and one dependency
+graph:
+
+- The included file is parsed with a fresh scope stack but the **shared**
+  bindings, so its references resolve against the combined namespace and
+  the includer's `let`s are visible inside it (parameterized includes).
+- Its `let` bindings always merge into the shared bindings (last file wins
+  on collision goes to the *local* file: an included binding never
+  overwrites an existing one).
+- Its root-table keys merge by mode: **public** (default) inserts them into
+  the enclosing scope's fields as defaults — an explicit local key always
+  wins, and among several included files the LAST include wins (cascade).
+  Tables merge recursively with local-wins at every level; a scalar from
+  a later include replaces only include-provided paths, never a table
+  that still holds explicit local keys. `as alias` nests the whole root
+  table under `alias` instead. **Private** puts the keys (or the alias)
+  into the shared bindings: referenceable, never exported.
+- Include cycles (a file already on the include stack) and depth beyond 32
+  are E016; the composed graph's value cycles are still S001 as usual.
+
 ---
 
 ## Chapter 3 — Evaluation model
@@ -160,8 +183,9 @@ a scope resolve**.
    HashMap iteration order, time, randomness, or environment value other than
    the declared `env` reads may influence the result.
 2. **Hermetic** — the only external inputs are environment variables read
-   through `env.NAME` nodes. No filesystem, network, shell, or process access.
-   (Includes arrive in Phase 1, C-025, through the same controlled channel.)
+   through `env.NAME` nodes and files pulled in through `include`
+   statements (C-025): literal paths only, confined to the including
+   file's directory tree, no network. No shell or process access, ever.
 3. **Bounded** — the parser enforces the 64-level expression nesting limit;
    evaluator-side budgets (node count, depth, array length, total keys,
    wall-clock) arrive with C-037.

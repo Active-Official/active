@@ -24,6 +24,8 @@ pub struct Module {
     /// Source spans for nodes, recorded by the parser so evaluation-time
     /// diagnostics can point at real positions.
     pub node_spans: HashMap<NodeId, Span>,
+    /// Source file per node, parallel to `node_spans` (C-025 includes).
+    pub node_files: HashMap<NodeId, String>,
     /// Healing diagnostics (H0xx): repairs the parser applied or declined,
     /// with confidence scores. Separate from `diagnostics` so callers can
     /// apply mode-dependent gating.
@@ -33,6 +35,25 @@ pub struct Module {
     pub trivia: Vec<TriviaComment>,
     /// The layout style the source predominantly used (for Preserve mode).
     pub source_style: Style,
+    /// Include statements in source order (spec §2.7). The formatter
+    /// re-emits them; evaluation merges them per the defaults rule, so
+    /// the composed tree does not need them.
+    pub includes: Vec<IncludeStmt>,
+}
+
+/// An `include "path" [as alias] [private]` statement (spec §2.7).
+#[derive(Debug, Clone)]
+pub struct IncludeStmt {
+    /// Literal path as written.
+    pub path: String,
+    /// Optional `as alias` namespace.
+    pub alias: Option<String>,
+    /// Whether the included keys stay out of the exported tree.
+    pub private: bool,
+    /// Scope path where the statement appeared (empty = document root).
+    pub scope_path: Vec<String>,
+    /// Source line of the statement, for stable formatter emission.
+    pub line: u32,
 }
 
 /// Layout style for output (spec/dual-syntax.md §8).
@@ -80,9 +101,11 @@ impl Module {
             diagnostics: Vec::new(),
             source_name: source_name.into(),
             node_spans: HashMap::new(),
+            node_files: HashMap::new(),
             healing: Vec::new(),
             trivia: Vec::new(),
             source_style: Style::Brace,
+            includes: Vec::new(),
         }
     }
 
@@ -113,6 +136,11 @@ impl Module {
     /// Record the source span of a node for evaluation-time diagnostics.
     pub fn record_span(&mut self, id: NodeId, span: Span) {
         self.node_spans.insert(id, span);
+    }
+
+    /// Record the source file of a node (includes, C-025).
+    pub fn record_file(&mut self, id: NodeId, file: String) {
+        self.node_files.insert(id, file);
     }
 }
 

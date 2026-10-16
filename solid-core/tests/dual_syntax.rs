@@ -26,7 +26,7 @@ fn codes(src: &str) -> Vec<String> {
 
 /// The recovered tree for input containing errors (tooling path).
 fn recovered(src: &str) -> (String, Vec<String>) {
-    let (module, errors) = parse_recovering(src, "dual", ParseOptions { resilient: false });
+    let (module, errors) = parse_recovering(src, "dual", ParseOptions::strict());
     let engine = Engine::new();
     let json = match engine.evaluate(&module) {
         Ok((value, _)) => solid_core::convert::value_to_pretty_json(&value),

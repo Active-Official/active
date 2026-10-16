@@ -25,9 +25,13 @@ pub enum EvalError {
     #[error("node {0:?} not found")]
     MissingNode(NodeId),
     #[error("type error: {message}")]
-    TypeError { message: String, span: Option<Span> },
+    TypeError {
+        message: String,
+        span: Option<Span>,
+        file: Option<String>,
+    },
     #[error("secret used in unsafe context")]
-    SecretLeak,
+    SecretLeak { file: Option<String> },
 }
 
 impl EvalError {
@@ -38,7 +42,7 @@ impl EvalError {
             EvalError::MissingRoot => "S002",
             EvalError::MissingNode(_) => "S003",
             EvalError::TypeError { .. } => "T001",
-            EvalError::SecretLeak => "S004",
+            EvalError::SecretLeak { .. } => "S004",
         }
     }
 
@@ -50,12 +54,30 @@ impl EvalError {
         }
     }
 
-    /// Attach a source span to a type error (used by the evaluation loop,
-    /// which knows the failing node's id).
-    fn type_error(message: impl Into<String>, span: Option<Span>) -> Self {
+    /// Source file when the error can be attributed to a node position
+    /// (multi-file documents via includes, C-025).
+    pub fn file(&self) -> Option<&str> {
+        match self {
+            EvalError::TypeError { file, .. } => file.as_deref(),
+            EvalError::SecretLeak { file } => file.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Attach a source position to a type error (used by the evaluation
+    /// loop, which knows the failing node's id).
+    fn type_error(message: impl Into<String>, module: &Module, node: NodeId) -> Self {
         EvalError::TypeError {
             message: message.into(),
-            span,
+            span: module.node_spans.get(&node).cloned(),
+            file: module.node_files.get(&node).cloned(),
+        }
+    }
+
+    /// Attach a source file to a secret-leak error.
+    fn secret_leak(module: &Module, node: NodeId) -> Self {
+        EvalError::SecretLeak {
+            file: module.node_files.get(&node).cloned(),
         }
     }
 }
@@ -125,6 +147,7 @@ impl Engine {
                         span: module.node_spans.get(&node_id).cloned(),
                         repair: None,
                         confidence: 1.0,
+                        file: module.node_files.get(&node_id).cloned(),
                     });
                     Value::Null
                 }
@@ -146,7 +169,7 @@ impl Engine {
                                             out.push_str(&format!("{}{}", n, unit.suffix()))
                                         }
                                         Value::Secret(_) => {
-                                            return Err(EvalError::SecretLeak);
+                                            return Err(EvalError::secret_leak(module, node_id));
                                         }
                                         Value::Null => out.push_str("null"),
                                         // Structured values have no string
@@ -161,7 +184,8 @@ impl Engine {
                                                         _ => "table",
                                                     }
                                                 ),
-                                                module.node_spans.get(id).cloned(),
+                                                module,
+                                                node_id,
                                             ));
                                         }
                                     }
@@ -177,16 +201,13 @@ impl Engine {
                 Node::Binary { op, lhs, rhs } => {
                     let l = values.get(lhs).cloned().unwrap_or(Value::Null);
                     let r = values.get(rhs).cloned().unwrap_or(Value::Null);
-                    eval_binary(*op, &l, &r).map_err(|m| {
-                        EvalError::type_error(m, module.node_spans.get(&node_id).cloned())
-                    })?
+                    eval_binary(*op, &l, &r)
+                        .map_err(|m| EvalError::type_error(m, module, node_id))?
                 }
 
                 Node::Unary { op, expr } => {
                     let v = values.get(expr).cloned().unwrap_or(Value::Null);
-                    eval_unary(*op, &v).map_err(|m| {
-                        EvalError::type_error(m, module.node_spans.get(&node_id).cloned())
-                    })?
+                    eval_unary(*op, &v).map_err(|m| EvalError::type_error(m, module, node_id))?
                 }
 
                 Node::Array { elements } => {
@@ -207,9 +228,8 @@ impl Engine {
 
                 Node::Quantity { value, unit } => {
                     let v = values.get(value).cloned().unwrap_or(Value::Null);
-                    normalize_quantity(&v, unit).map_err(|m| {
-                        EvalError::type_error(m, module.node_spans.get(&node_id).cloned())
-                    })?
+                    normalize_quantity(&v, unit)
+                        .map_err(|m| EvalError::type_error(m, module, node_id))?
                 }
 
                 _ => Value::Null,

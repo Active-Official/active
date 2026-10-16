@@ -1,0 +1,3 @@
+[server]
+host = "a.local"
+port = 100

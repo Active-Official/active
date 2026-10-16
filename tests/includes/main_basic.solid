@@ -1,0 +1,4 @@
+include "lib_base.solid"
+
+[server]
+port = 9000

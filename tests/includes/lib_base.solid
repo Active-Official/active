@@ -1,0 +1,7 @@
+let base_port = 8000
+let base_host = "base.local"
+
+[server]
+host = base_host
+port = base_port
+debug = false

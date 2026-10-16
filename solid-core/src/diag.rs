@@ -12,6 +12,11 @@ pub struct Diagnostic {
     pub repair: Option<Repair>,
     /// 0.0 – 1.0
     pub confidence: f64,
+    /// Source file the diagnostic came from. Set for multi-file documents
+    /// (includes, C-025); unset for single-file parses, where tools fall
+    /// back to the input filename.
+    #[serde(default)]
+    pub file: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

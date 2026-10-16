@@ -143,6 +143,27 @@ impl<'a> Formatter<'a> {
             Some(Node::Table { fields }) => fields.clone(),
             _ => return,
         };
+        // Include statements recorded for this scope come first, in
+        // source order: under the defaults rule (spec §2.7) their
+        // position relative to keys never changes semantics.
+        let mut includes: Vec<&IncludeStmt> = self
+            .module
+            .includes
+            .iter()
+            .filter(|inc| inc.scope_path.join(".") == path)
+            .collect();
+        includes.sort_by_key(|inc| inc.line);
+        for inc in includes {
+            self.out.push_str(&INDENT.repeat(depth));
+            self.out.push_str(&format!("include {:?}", inc.path));
+            if let Some(alias) = &inc.alias {
+                self.out.push_str(&format!(" as {alias}"));
+            }
+            if inc.private {
+                self.out.push_str(" private");
+            }
+            self.out.push('\n');
+        }
         let is_table_node =
             |f: &Formatter, n: &NodeId| matches!(f.module.get(*n), Some(Node::Table { .. }));
         // At the document root, scalars must be hoisted above tables: a

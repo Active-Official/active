@@ -1,8 +1,7 @@
 use clap::{Parser, Subcommand};
 use solid_core::convert::{value_to_pretty_json, value_to_simple_toml};
 use solid_core::diag::{Diagnostic, Severity};
-use solid_core::{parse_with, Engine, ParseOptions};
-use std::fs;
+use solid_core::{parse_file, Engine, ParseOptions};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -28,6 +27,9 @@ enum Commands {
         /// Enable medium-confidence healing repairs (resilient mode)
         #[arg(long)]
         resilient: bool,
+        /// Allow includes to use absolute paths or escape the directory
+        #[arg(long)]
+        allow_parent_escapes: bool,
     },
     /// Check a file for errors / cycles / unresolved names
     Check {
@@ -35,6 +37,9 @@ enum Commands {
         /// Enable medium-confidence healing repairs (resilient mode)
         #[arg(long)]
         resilient: bool,
+        /// Allow includes to use absolute paths or escape the directory
+        #[arg(long)]
+        allow_parent_escapes: bool,
     },
     /// Show dependency graph in simple text form
     Graph {
@@ -42,6 +47,9 @@ enum Commands {
         /// Enable medium-confidence healing repairs (resilient mode)
         #[arg(long)]
         resilient: bool,
+        /// Allow includes to use absolute paths or escape the directory
+        #[arg(long)]
+        allow_parent_escapes: bool,
     },
     /// Convert evaluated result to JSON or simple TOML
     Convert {
@@ -51,7 +59,18 @@ enum Commands {
         /// Enable medium-confidence healing repairs (resilient mode)
         #[arg(long)]
         resilient: bool,
+        /// Allow includes to use absolute paths or escape the directory
+        #[arg(long)]
+        allow_parent_escapes: bool,
     },
+}
+
+fn options(resilient: bool, allow_parent_escapes: bool) -> ParseOptions {
+    ParseOptions {
+        resilient,
+        allow_parent_escapes,
+        ..ParseOptions::default()
+    }
 }
 
 /// True when the exit code must be non-zero: strict mode fails on any
@@ -62,8 +81,10 @@ fn had_failure(diags: &[Diagnostic], resilient: bool) -> bool {
         .any(|d| d.severity == Severity::Error || (!resilient && d.severity == Severity::Warning))
 }
 
-/// Print a diagnostic with its span (path:line:col) when available.
-fn report(d: &Diagnostic, file: &str) {
+/// Print a diagnostic with its file and span when available. Multi-file
+/// documents (includes) attribute each diagnostic to its own file.
+fn report(d: &Diagnostic, fallback_file: &str) {
+    let file = d.file.as_deref().unwrap_or(fallback_file);
     match &d.span {
         Some(s) => eprintln!(
             "{}:{}:{}: [{:?}] {}: {}",
@@ -81,23 +102,24 @@ fn main() -> anyhow::Result<()> {
             file,
             format,
             resilient,
+            allow_parent_escapes,
         } => {
-            let src = fs::read_to_string(&file)?;
             let name = file.to_string_lossy().to_string();
-            let options = ParseOptions { resilient };
-            let module = parse_with(&src, &name, options).map_err(|diags| {
-                for d in &diags {
-                    report(d, &name);
-                }
-                anyhow::anyhow!("parse failed")
-            })?;
+            let module =
+                parse_file(&file, options(resilient, allow_parent_escapes)).map_err(|diags| {
+                    for d in &diags {
+                        report(d, &name);
+                    }
+                    anyhow::anyhow!("parse failed")
+                })?;
 
             let engine = Engine::new();
             let (value, diags) = engine.evaluate(&module).map_err(|e| {
+                let file = e.file().unwrap_or(&name);
                 match e.span() {
                     Some(s) => eprintln!(
                         "{}:{}:{}: [Error] {}: {}",
-                        name,
+                        file,
                         s.line,
                         s.column,
                         e.code(),
@@ -120,11 +142,13 @@ fn main() -> anyhow::Result<()> {
                 std::process::exit(1);
             }
         }
-        Commands::Check { file, resilient } => {
-            let src = fs::read_to_string(&file)?;
+        Commands::Check {
+            file,
+            resilient,
+            allow_parent_escapes,
+        } => {
             let name = file.to_string_lossy().to_string();
-            let options = ParseOptions { resilient };
-            match parse_with(&src, &name, options) {
+            match parse_file(&file, options(resilient, allow_parent_escapes)) {
                 Ok(module) => {
                     let engine = Engine::new();
                     match engine.evaluate(&module) {
@@ -141,10 +165,11 @@ fn main() -> anyhow::Result<()> {
                             }
                         }
                         Err(e) => {
+                            let file = e.file().unwrap_or(&name);
                             match e.span() {
                                 Some(s) => eprintln!(
                                     "{}:{}:{}: [Error] {}: {}",
-                                    name,
+                                    file,
                                     s.line,
                                     s.column,
                                     e.code(),
@@ -164,15 +189,19 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Commands::Graph { file, resilient } => {
-            let src = fs::read_to_string(&file)?;
+        Commands::Graph {
+            file,
+            resilient,
+            allow_parent_escapes,
+        } => {
             let name = file.to_string_lossy().to_string();
-            let module = parse_with(&src, &name, ParseOptions { resilient }).map_err(|diags| {
-                for d in &diags {
-                    report(d, &name);
-                }
-                anyhow::anyhow!("parse failed")
-            })?;
+            let module =
+                parse_file(&file, options(resilient, allow_parent_escapes)).map_err(|diags| {
+                    for d in &diags {
+                        report(d, &name);
+                    }
+                    anyhow::anyhow!("parse failed")
+                })?;
             for d in &module.healing {
                 report(d, &name);
             }
@@ -195,18 +224,30 @@ fn main() -> anyhow::Result<()> {
             file,
             to,
             resilient,
+            allow_parent_escapes,
         } => {
-            let src = fs::read_to_string(&file)?;
             let name = file.to_string_lossy().to_string();
-            let module = parse_with(&src, &name, ParseOptions { resilient }).map_err(|diags| {
-                for d in &diags {
-                    report(d, &name);
-                }
-                anyhow::anyhow!("parse failed")
-            })?;
+            let module =
+                parse_file(&file, options(resilient, allow_parent_escapes)).map_err(|diags| {
+                    for d in &diags {
+                        report(d, &name);
+                    }
+                    anyhow::anyhow!("parse failed")
+                })?;
             let engine = Engine::new();
             let (value, diags) = engine.evaluate(&module).map_err(|e| {
-                eprintln!("[Error] {}: {}", e.code(), e);
+                let file = e.file().unwrap_or(&name);
+                match e.span() {
+                    Some(s) => eprintln!(
+                        "{}:{}:{}: [Error] {}: {}",
+                        file,
+                        s.line,
+                        s.column,
+                        e.code(),
+                        e
+                    ),
+                    None => eprintln!("[Error] {}: {}", e.code(), e),
+                }
                 e
             })?;
             for d in &diags {

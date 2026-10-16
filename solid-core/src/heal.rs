@@ -225,6 +225,9 @@ pub fn make_key_typo_diagnostic(
             safe,
         }),
         confidence,
+        // The caller stamps the file (same file as the typo); library
+        // default is unset for single-file use.
+        file: None,
     }
 }
 

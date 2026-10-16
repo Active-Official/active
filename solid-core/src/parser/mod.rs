@@ -49,12 +49,56 @@ use crate::ir::{NodeId, SemanticTag, *};
 use crate::types::Unit;
 
 /// Options controlling parsing and healing behavior.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct ParseOptions {
     /// When true, medium-confidence repairs (0.70–0.94) are applied and
     /// reported as warnings. When false (strict, the default), they are
     /// declined and the underlying syntax diagnostic stands.
     pub resilient: bool,
+    /// When true, `include` statements are loaded from the filesystem
+    /// (spec §2.7). False by default: string-based parsing stays hermetic
+    /// (the fuzz harness depends on this). `parse_file` enables it.
+    pub enable_includes: bool,
+    /// When true (default), recorded includes are resolved and merged.
+    /// `solid-fmt` disables it so formatting preserves include statements
+    /// alongside local keys instead of a composed tree.
+    pub resolve_includes: bool,
+    /// When true, include paths may be absolute or escape the including
+    /// directory via `..`. False by default (E015 otherwise).
+    pub allow_parent_escapes: bool,
+}
+
+impl Default for ParseOptions {
+    fn default() -> Self {
+        Self {
+            resilient: false,
+            enable_includes: false,
+            resolve_includes: true,
+            allow_parent_escapes: false,
+        }
+    }
+}
+
+impl ParseOptions {
+    /// Strict defaults (const-compatible for test constants).
+    pub const fn strict() -> Self {
+        Self {
+            resilient: false,
+            enable_includes: false,
+            resolve_includes: true,
+            allow_parent_escapes: false,
+        }
+    }
+
+    /// Resilient-mode defaults (const-compatible for test constants).
+    pub const fn resilient_mode() -> Self {
+        Self {
+            resilient: true,
+            enable_includes: false,
+            resolve_includes: true,
+            allow_parent_escapes: false,
+        }
+    }
 }
 
 pub fn parse(source: &str, name: &str) -> Result<Module, Vec<Diagnostic>> {
@@ -74,6 +118,37 @@ pub fn parse_with(
     }
 }
 
+/// Parse a file from the filesystem, resolving `include` statements
+/// against the file's directory (spec §2.7). Includes are enabled
+/// regardless of the passed options' `enable_includes` flag; every other
+/// option is honored as given.
+pub fn parse_file(
+    path: &std::path::Path,
+    options: ParseOptions,
+) -> Result<Module, Vec<Diagnostic>> {
+    let src = std::fs::read_to_string(path).map_err(|e| {
+        vec![Diagnostic {
+            severity: Severity::Error,
+            code: "E017".into(),
+            message: format!("cannot read file {}: {e}", path.display()),
+            path: None,
+            span: None,
+            repair: None,
+            confidence: 1.0,
+            file: Some(path.to_string_lossy().into_owned()),
+        }]
+    })?;
+    let mut options = options;
+    options.enable_includes = true;
+    let (module, errors) =
+        parse_recovering_impl(&src, &path.to_string_lossy(), options, Some(path));
+    if errors.is_empty() {
+        Ok(module)
+    } else {
+        Err(errors)
+    }
+}
+
 /// Parse and return the module even when diagnostics were recorded.
 ///
 /// Tooling (editor diagnostics on broken files) and recovery tests need the
@@ -84,8 +159,17 @@ pub fn parse_recovering(
     name: &str,
     options: ParseOptions,
 ) -> (Module, Vec<Diagnostic>) {
+    parse_recovering_impl(source, name, options, None)
+}
+
+fn parse_recovering_impl(
+    source: &str,
+    name: &str,
+    options: ParseOptions,
+    root_file: Option<&std::path::Path>,
+) -> (Module, Vec<Diagnostic>) {
     let mut lexer = Lexer::new(source);
-    let lexed = lexer.tokenize();
+    let mut lexed = lexer.tokenize();
     let mut parser = Parser {
         tokens: lexed.tokens,
         pos: 0,
@@ -101,7 +185,19 @@ pub fn parse_recovering(
         current_path: Vec::new(),
         brace_tables: 0,
         indent_tables: 0,
+        current_file: root_file.map(|p| p.to_path_buf()),
+        include_stack: Vec::new(),
+        in_include: false,
+        binding_spliced: std::collections::HashSet::new(),
     };
+    // Lexer diagnostics carry no file; stamp the session file (includes
+    // attribute their own file when their sub-parse runs).
+    let lex_file = parser.current_file_name();
+    for d in lexed.errors.iter_mut().chain(lexed.repairs.iter_mut()) {
+        if d.file.is_none() {
+            d.file = lex_file.clone();
+        }
+    }
     parser.module.healing.extend(lexed.repairs);
     parser.errors.extend(lexed.errors);
     parser.parse_document();
@@ -257,6 +353,18 @@ struct Parser {
     /// Counts of brace-style and indentation-style table declarations.
     brace_tables: usize,
     indent_tables: usize,
+    /// File currently being parsed (None for string input). Diagnostics
+    /// record it; include paths resolve against its directory.
+    current_file: Option<std::path::PathBuf>,
+    /// Canonicalized files on the include stack (cycle detection, C-025).
+    include_stack: Vec<std::path::PathBuf>,
+    /// True while parsing an included file: `let` bindings use
+    /// first-wins (local) semantics instead of overwriting.
+    in_include: bool,
+    /// Binding names contributed by includes (module-global). A local
+    /// `let` clears its mark, so later includes skip it (local-wins)
+    /// while earlier-only names cascade.
+    binding_spliced: std::collections::HashSet<String>,
 }
 
 impl Parser {
@@ -301,6 +409,16 @@ struct BlockInfo {
     path: String,
     level: usize,
     start_line: u32,
+}
+
+/// An `include` statement recorded while parsing a body, resolved and
+/// merged when the enclosing scope closes (spec §2.7).
+#[derive(Debug, Clone)]
+struct PendingInclude {
+    path: String,
+    alias: Option<String>,
+    private: bool,
+    tok: Token,
 }
 
 /// What terminates a statement body (spec/dual-syntax.md §5.1).
@@ -379,6 +497,7 @@ impl Parser {
             }),
             repair: None,
             confidence: 1.0,
+            file: self.current_file_name(),
         });
     }
 
@@ -400,7 +519,14 @@ impl Parser {
     /// Parse statements into `fields` until the body terminator
     /// (spec/dual-syntax.md §2, §5). Structural nesting is bounded by
     /// MAX_BLOCK_DEPTH so pathological input cannot exhaust the stack.
-    fn parse_body(&mut self, fields: &mut indexmap::IndexMap<String, NodeId>, end: BodyEnd) {
+    /// `pending` collects `include` statements for this scope; the caller
+    /// splices them when the scope closes (spec §2.7).
+    fn parse_body(
+        &mut self,
+        fields: &mut indexmap::IndexMap<String, NodeId>,
+        end: BodyEnd,
+        pending: &mut Vec<PendingInclude>,
+    ) {
         self.block_depth += 1;
         if self.block_depth > MAX_BLOCK_DEPTH {
             self.error(
@@ -411,7 +537,7 @@ impl Parser {
             self.recover_block(end);
             return;
         }
-        self.parse_body_inner(fields, end);
+        self.parse_body_inner(fields, end, pending);
         self.block_depth -= 1;
     }
 
@@ -464,7 +590,12 @@ impl Parser {
         }
     }
 
-    fn parse_body_inner(&mut self, fields: &mut indexmap::IndexMap<String, NodeId>, end: BodyEnd) {
+    fn parse_body_inner(
+        &mut self,
+        fields: &mut indexmap::IndexMap<String, NodeId>,
+        end: BodyEnd,
+        pending: &mut Vec<PendingInclude>,
+    ) {
         loop {
             self.skip_newlines();
             match self.peek_kind() {
@@ -533,7 +664,7 @@ impl Parser {
                 }
                 TokenKind::Let => self.parse_let(),
                 TokenKind::LBracket => self.parse_table_header(fields),
-                TokenKind::Ident => self.parse_ident_statement(fields),
+                TokenKind::Ident => self.parse_ident_statement(fields, pending),
                 TokenKind::At => {
                     // Bare `@tag """…"""` statement: binds under the tag
                     // name itself (spec §1.4.1), so AI prompt files read
@@ -562,10 +693,25 @@ impl Parser {
     }
 
     /// Dispatch a statement that begins with an identifier: `key = value`,
-    /// `key: value`, `key:` block header, or `key { … }` table block.
-    fn parse_ident_statement(&mut self, fields: &mut indexmap::IndexMap<String, NodeId>) {
+    /// `key: value`, `key:` block header, `key { … }` table block, or an
+    /// `include` statement (`include` is contextual: followed by `=`, `:`,
+    /// or `{` it stays an ordinary key).
+    fn parse_ident_statement(
+        &mut self,
+        fields: &mut indexmap::IndexMap<String, NodeId>,
+        pending: &mut Vec<PendingInclude>,
+    ) {
         let start = self.peek().clone();
         let level = start.col.saturating_sub(1) as usize;
+        if start.text == "include"
+            && !matches!(
+                self.peek_kind_at(1),
+                TokenKind::Assign | TokenKind::Colon | TokenKind::LBrace
+            )
+        {
+            self.parse_include(pending);
+            return;
+        }
         match self.peek_kind_at(1) {
             TokenKind::Assign => {
                 if let Some((k, id)) = self.parse_key_value_sep(TokenKind::Assign) {
@@ -589,6 +735,534 @@ impl Parser {
                 let tok = self.peek().clone();
                 self.error_at("E002", "unexpected token after identifier", &tok);
                 self.bump();
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // include "path" [as alias] [private]  (spec §2.7)
+    // ------------------------------------------------------------------
+
+    /// Maximum include nesting depth (files within files).
+    const MAX_INCLUDE_DEPTH: usize = 32;
+
+    /// Parse an `include` statement. The path must be a string literal;
+    /// anything else is E015. The statement is recorded for resolution
+    /// when the enclosing scope closes (includes are file-level defaults
+    /// merged after all local keys are known).
+    fn parse_include(&mut self, pending: &mut Vec<PendingInclude>) {
+        let kw = self.bump(); // consume `include`
+        let path_tok = self.peek().clone();
+        let path = match &path_tok.kind {
+            TokenKind::String(_)
+            | TokenKind::SingleString
+            | TokenKind::MlString(_)
+            | TokenKind::MlSingleString => {
+                self.bump();
+                path_tok.text.clone()
+            }
+            _ => {
+                self.error_at("E015", "include paths must be string literals", &path_tok);
+                self.bump(); // guarantee progress
+                return;
+            }
+        };
+        if path.contains("${") || path.contains(ESCAPED_DOLLAR) {
+            self.error_at(
+                "E015",
+                "interpolation in include paths is a hard error; paths must be static string literals",
+                &path_tok,
+            );
+            return;
+        }
+        // Optional `as alias` and `private`, in either order.
+        let mut alias: Option<String> = None;
+        let mut private = false;
+        loop {
+            let t = self.peek().clone();
+            match &t.kind {
+                TokenKind::Ident if t.text == "as" && alias.is_none() => {
+                    self.bump();
+                    match self.expect(TokenKind::Ident) {
+                        Some(name) => alias = Some(name.text),
+                        None => return,
+                    }
+                }
+                TokenKind::Ident if t.text == "private" && !private => {
+                    self.bump();
+                    private = true;
+                }
+                _ => break,
+            }
+        }
+        let key = alias.clone().unwrap_or_else(|| path.clone());
+        self.record_stmt(
+            &key,
+            kw.line,
+            self.last_end_line(),
+            kw.col.saturating_sub(1) as usize,
+        );
+        self.module.includes.push(IncludeStmt {
+            path: path.clone(),
+            alias: alias.clone(),
+            private,
+            scope_path: self.current_path.clone(),
+            line: kw.line,
+        });
+        pending.push(PendingInclude {
+            path,
+            alias,
+            private,
+            tok: path_tok,
+        });
+    }
+
+    /// Load and sub-parse one include, returning its root table node.
+    /// Returns None after recording E015/E016/E017. The sub-parse shares
+    /// the arena, bindings, graph, and diagnostics; scope stacks, file
+    /// identity, style counters, and the module root are saved and
+    /// restored so the included file parses as its own document.
+    fn load_include(&mut self, inc: &PendingInclude) -> Option<NodeId> {
+        use std::path::{Component, PathBuf};
+        let fail = |me: &mut Parser, code: &str, msg: String| {
+            me.error_at(code, msg, &inc.tok);
+            None
+        };
+        // Policy: literal relative paths stay inside the tree by default.
+        let raw = std::path::Path::new(&inc.path);
+        if !self.options.allow_parent_escapes {
+            if raw.is_absolute() {
+                return fail(
+                    self,
+                    "E015",
+                    format!(
+                        "include paths must be relative (got `{}`); pass --allow-parent-escapes to override",
+                        inc.path
+                    ),
+                );
+            }
+            if raw.components().any(|c| matches!(c, Component::ParentDir)) {
+                return fail(
+                    self,
+                    "E015",
+                    format!(
+                        "include paths must not escape the including directory via `..` (got `{}`); pass --allow-parent-escapes to override",
+                        inc.path
+                    ),
+                );
+            }
+        }
+        let base_dir: PathBuf = self
+            .current_file
+            .as_ref()
+            .and_then(|f| f.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| PathBuf::from("."));
+        let joined = base_dir.join(raw);
+        let canonical = match joined.canonicalize() {
+            Ok(p) => p,
+            Err(e) => {
+                return fail(
+                    self,
+                    "E017",
+                    format!("cannot read include file `{}`: {e}", joined.display()),
+                );
+            }
+        };
+        if !self.options.allow_parent_escapes {
+            if let Ok(base_canon) = base_dir.canonicalize() {
+                if !canonical.starts_with(&base_canon) {
+                    return fail(
+                        self,
+                        "E015",
+                        format!(
+                            "include target `{}` escapes the including directory; pass --allow-parent-escapes to override",
+                            canonical.display()
+                        ),
+                    );
+                }
+            }
+        }
+        if self.include_stack.contains(&canonical) {
+            return fail(
+                self,
+                "E016",
+                format!(
+                    "circular include detected: `{}` is already being parsed ({})",
+                    canonical.display(),
+                    self.include_stack
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(" -> ")
+                ),
+            );
+        }
+        if self.include_stack.len() >= Self::MAX_INCLUDE_DEPTH {
+            return fail(
+                self,
+                "E016",
+                format!(
+                    "maximum include depth ({}) exceeded",
+                    Self::MAX_INCLUDE_DEPTH
+                ),
+            );
+        }
+        let src = match std::fs::read_to_string(&canonical) {
+            Ok(s) => s,
+            Err(e) => {
+                return fail(
+                    self,
+                    "E017",
+                    format!("cannot read include file `{}`: {e}", canonical.display()),
+                );
+            }
+        };
+        // Save per-file session state; the arena, bindings, graph,
+        // diagnostics, and options are intentionally shared.
+        let saved_file = self.current_file.clone();
+        let saved_root = self.module.root;
+        let saved_scopes = std::mem::take(&mut self.ident_scopes);
+        let saved_path = self.current_path.clone();
+        let saved_brace = self.brace_tables;
+        let saved_indent = self.indent_tables;
+        let saved_in_include = self.in_include;
+        self.current_file = Some(canonical.clone());
+        self.include_stack.push(canonical);
+        self.in_include = true;
+        // Included files lex fresh (their own Indent/Dedent stacks).
+        let mut lexer = Lexer::new(&src);
+        let lexed = lexer.tokenize();
+        let lex_file = self.current_file_name();
+        let mut sub_errors = lexed.errors;
+        let mut sub_repairs = lexed.repairs;
+        for d in sub_errors.iter_mut().chain(sub_repairs.iter_mut()) {
+            if d.file.is_none() {
+                d.file = lex_file.clone();
+            }
+        }
+        self.errors.extend(sub_errors);
+        self.module.healing.extend(sub_repairs);
+        // The outer token stream is NOT exhausted (table bodies end
+        // mid-stream), so save and restore it around the sub-parse.
+        let saved_tokens = std::mem::take(&mut self.tokens);
+        let saved_pos = self.pos;
+        self.tokens = lexed.tokens;
+        self.pos = 0;
+        self.parse_document();
+        self.tokens = saved_tokens;
+        self.pos = saved_pos;
+        // Restore the outer session; keep the shared arena, bindings,
+        // graph, diagnostics, includes list, and trivia.
+        let sub_root = self.module.root;
+        self.module.root = saved_root;
+        self.current_file = saved_file;
+        self.include_stack.pop();
+        self.current_path = saved_path;
+        self.brace_tables = saved_brace;
+        self.indent_tables = saved_indent;
+        self.in_include = saved_in_include;
+        self.ident_scopes = saved_scopes;
+        sub_root
+    }
+
+    /// Resolve and merge a scope's recorded includes (spec §2.7).
+    /// Included files provide defaults: explicit local keys always win
+    /// regardless of position; among several included files the LAST one
+    /// wins (cascade). Tables merge recursively with local-wins at every
+    /// level (see merge_tables_at). An included file's `let` bindings
+    /// merge into the shared bindings without overwriting local ones;
+    /// private includes contribute only bindings, never fields.
+    fn splice_includes(
+        &mut self,
+        fields: &mut indexmap::IndexMap<String, NodeId>,
+        pending: Vec<PendingInclude>,
+    ) {
+        if pending.is_empty() {
+            return;
+        }
+        if !self.options.enable_includes {
+            for inc in &pending {
+                self.error_at(
+                    "E015",
+                    "include statements require file-based parsing (parse_file); string input stays hermetic",
+                    &inc.tok,
+                );
+            }
+            return;
+        }
+        if !self.options.resolve_includes {
+            // Formatting mode: keep the statements, skip the merge.
+            return;
+        }
+        // Dotted paths of keys contributed by includes in this scope
+        // (spec §2.7). A marked path cascades (later includes win); an
+        // unmarked path is local content that never loses. Subtree paths
+        // are marked on insert so nested levels decide correctly.
+        let mut spliced: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for inc in pending {
+            let Some(sub_root) = self.load_include(&inc) else {
+                continue;
+            };
+            let sub_fields = match self.module.get(sub_root) {
+                Some(Node::Table { fields }) => fields.clone(),
+                _ => continue,
+            };
+            if inc.private {
+                match inc.alias {
+                    Some(name) => {
+                        // The alias itself becomes a referenceable binding;
+                        // a local `let` of the same name always wins, and
+                        // parse_let clears the mark so later includes skip.
+                        if !self.module.bindings.contains_key(&name)
+                            || self.binding_spliced.contains(&name)
+                        {
+                            self.module.bindings.insert(name.clone(), sub_root);
+                            self.binding_spliced.insert(name);
+                        }
+                    }
+                    None => {
+                        for (k, v) in sub_fields {
+                            if !self.module.bindings.contains_key(&k)
+                                || self.binding_spliced.contains(&k)
+                            {
+                                self.module.bindings.insert(k.clone(), v);
+                                self.binding_spliced.insert(k);
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+            match inc.alias {
+                Some(name) => {
+                    // Aliased public includes nest under the alias with
+                    // the same defaults rule as bare keys.
+                    self.merge_key(fields, name, sub_root, &mut spliced);
+                }
+                None => {
+                    for (k, v) in sub_fields {
+                        self.merge_key(fields, k, v, &mut spliced);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Merge one included value under `key` (spec §2.7 defaults rule):
+    /// fresh keys are taken (whole subtree marked); conflicts on marked
+    /// paths cascade (later file wins, tables recurse); conflicts on
+    /// unmarked paths fill gaps only (tables recurse with local-wins,
+    /// scalars untouched).
+    fn merge_key(
+        &mut self,
+        fields: &mut indexmap::IndexMap<String, NodeId>,
+        key: String,
+        inc_id: NodeId,
+        spliced: &mut std::collections::HashSet<String>,
+    ) {
+        match fields.get(&key) {
+            None => {
+                fields.insert(key.clone(), inc_id);
+                self.mark_subtree(&key, inc_id, spliced);
+            }
+            Some(_) if spliced.contains(&key) => {
+                self.merge_tables_at(fields, &key, inc_id, spliced, true);
+            }
+            Some(_) => {
+                self.merge_tables_at(fields, &key, inc_id, spliced, false);
+            }
+        }
+    }
+
+    /// Merge table `inc_id` into the table under `key` in place when both
+    /// sides are tables; on a scalar conflict overwrite only in cascade
+    /// mode. Anything else is a no-op (the defaults rule already
+    /// decided). Merging in place keeps edges and references valid;
+    /// merged-in fields gain dependency edges to their new parent.
+    fn merge_tables_at(
+        &mut self,
+        fields: &mut indexmap::IndexMap<String, NodeId>,
+        key: &str,
+        inc_id: NodeId,
+        spliced: &mut std::collections::HashSet<String>,
+        overwrite: bool,
+    ) {
+        let Some(Node::Table { fields: inc_fields }) = self.module.get(inc_id) else {
+            // Scalar-vs-table conflict: replace only when cascading over a
+            // fully include-provided table. A table with any local
+            // (unmarked) content keeps local-wins and ignores the scalar.
+            if overwrite {
+                if let Some(&local_id) = fields.get(key) {
+                    if !self.has_unmarked(local_id, key, spliced) {
+                        fields.insert(key.to_string(), inc_id);
+                        self.mark_subtree(key, inc_id, spliced);
+                    }
+                }
+            }
+            return;
+        };
+        let inc_fields = inc_fields.clone();
+        let Some(&local_id) = fields.get(key) else {
+            return;
+        };
+        if local_id == inc_id {
+            return;
+        }
+        let Some(Node::Table { .. }) = self.module.get(local_id) else {
+            // Table-vs-scalar conflict: a marked (previously included)
+            // scalar cascades, a local scalar always wins.
+            if overwrite && spliced.contains(key) {
+                fields.insert(key.to_string(), inc_id);
+                self.mark_subtree(key, inc_id, spliced);
+            }
+            return;
+        };
+        let mut merged = match self.module.get(local_id) {
+            Some(Node::Table { fields: lf }) => lf.clone(),
+            _ => return,
+        };
+        let mut changed = false;
+        for (k, v) in &inc_fields {
+            let child = format!("{key}.{k}");
+            match merged.get(k) {
+                None => {
+                    merged.insert(k.clone(), *v);
+                    self.module.add_edge(*v, local_id);
+                    self.mark_subtree(&child, *v, spliced);
+                    changed = true;
+                }
+                Some(&sub_local) => {
+                    if sub_local == *v {
+                        continue;
+                    }
+                    let both_tables = matches!(
+                        (self.module.get(sub_local), self.module.get(*v)),
+                        (Some(Node::Table { .. }), Some(Node::Table { .. }))
+                    );
+                    if !both_tables {
+                        if overwrite && spliced.contains(&child) {
+                            merged.insert(k.clone(), *v);
+                            self.module.add_edge(*v, local_id);
+                            changed = true;
+                        }
+                        continue;
+                    }
+                    // Recurse: cascade only through included paths, so a
+                    // purely local nested table keeps local-wins even
+                    // inside a composition.
+                    let sub_overwrite = overwrite && spliced.contains(&child);
+                    if self.merge_tables_inner(sub_local, *v, &child, spliced, sub_overwrite) {
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if changed {
+            if let Some(Node::Table { fields: slot }) = self.module.get_mut(local_id) {
+                *slot = merged;
+            }
+            spliced.insert(key.to_string());
+        }
+    }
+
+    /// Merge table `inc_id`'s fields into table `local_id` in place.
+    /// Shared worker for nested recursion. Returns true when the tree
+    /// was actually mutated, so callers mark provenance precisely.
+    fn merge_tables_inner(
+        &mut self,
+        local_id: NodeId,
+        inc_id: NodeId,
+        path: &str,
+        spliced: &mut std::collections::HashSet<String>,
+        overwrite: bool,
+    ) -> bool {
+        let Some(Node::Table { fields: inc_fields }) = self.module.get(inc_id) else {
+            return false;
+        };
+        let inc_fields = inc_fields.clone();
+        let mut merged = match self.module.get(local_id) {
+            Some(Node::Table { fields: lf }) => lf.clone(),
+            _ => return false,
+        };
+        let mut changed = false;
+        for (k, v) in &inc_fields {
+            let child = format!("{path}.{k}");
+            match merged.get(k) {
+                None => {
+                    merged.insert(k.clone(), *v);
+                    self.module.add_edge(*v, local_id);
+                    self.mark_subtree(&child, *v, spliced);
+                    changed = true;
+                }
+                Some(&sub_local) => {
+                    if sub_local == *v {
+                        continue;
+                    }
+                    let both_tables = matches!(
+                        (self.module.get(sub_local), self.module.get(*v)),
+                        (Some(Node::Table { .. }), Some(Node::Table { .. }))
+                    );
+                    if !both_tables {
+                        if overwrite && spliced.contains(&child) {
+                            merged.insert(k.clone(), *v);
+                            self.module.add_edge(*v, local_id);
+                            changed = true;
+                        }
+                        continue;
+                    }
+                    let sub_overwrite = overwrite && spliced.contains(&child);
+                    if self.merge_tables_inner(sub_local, *v, &child, spliced, sub_overwrite) {
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if changed {
+            if let Some(Node::Table { fields: slot }) = self.module.get_mut(local_id) {
+                *slot = merged;
+            }
+        }
+        changed
+    }
+
+    /// True when a table subtree contains any local (unmarked) content.
+    /// Guards whole-table replacement: a later include's scalar never
+    /// discards a table that still holds explicit local keys.
+    fn has_unmarked(
+        &self,
+        id: NodeId,
+        path: &str,
+        spliced: &std::collections::HashSet<String>,
+    ) -> bool {
+        if !spliced.contains(path) {
+            return true;
+        }
+        match self.module.get(id) {
+            Some(Node::Table { fields }) => {
+                let fields = fields.clone();
+                fields.iter().any(|(k, v)| {
+                    let child = format!("{path}.{k}");
+                    self.has_unmarked(*v, &child, spliced)
+                })
+            }
+            _ => false,
+        }
+    }
+
+    /// Mark a key path and every table path below it as include-provided,
+    /// so nested cascade decisions see the full provenance.
+    fn mark_subtree(
+        &self,
+        path: &str,
+        id: NodeId,
+        spliced: &mut std::collections::HashSet<String>,
+    ) {
+        spliced.insert(path.to_string());
+        if let Some(Node::Table { fields }) = self.module.get(id) {
+            let fields = fields.clone();
+            for (k, v) in &fields {
+                let child = format!("{path}.{k}");
+                self.mark_subtree(&child, *v, spliced);
             }
         }
     }
@@ -632,7 +1306,9 @@ impl Parser {
         });
         self.ident_scopes.push(Vec::new());
         let mut fields = indexmap::IndexMap::new();
-        self.parse_body(&mut fields, BodyEnd::Block(level));
+        let mut pending = Vec::new();
+        self.parse_body(&mut fields, BodyEnd::Block(level), &mut pending);
+        self.splice_includes(&mut fields, pending);
         let idents = self.ident_scopes.pop().unwrap_or_default();
         self.resolve_sibling_refs(idents, &fields);
         let table_id = self.module.add_node(Node::Table { fields });
@@ -666,7 +1342,9 @@ impl Parser {
         });
         self.ident_scopes.push(Vec::new());
         let mut fields = indexmap::IndexMap::new();
-        self.parse_body(&mut fields, BodyEnd::Brace);
+        let mut pending = Vec::new();
+        self.parse_body(&mut fields, BodyEnd::Brace, &mut pending);
+        self.splice_includes(&mut fields, pending);
         let idents = self.ident_scopes.pop().unwrap_or_default();
         self.resolve_sibling_refs(idents, &fields);
         let table_id = self.module.add_node(Node::Table { fields });
@@ -685,7 +1363,15 @@ impl Parser {
             span: Some(span_of(tok)),
             repair: None,
             confidence: 1.0,
+            file: self.current_file_name(),
         });
+    }
+
+    /// Display name of the file currently being parsed, for diagnostics.
+    fn current_file_name(&self) -> Option<String> {
+        self.current_file
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned())
     }
 
     /// Add a node and record the span of the token that produced it, so
@@ -693,6 +1379,9 @@ impl Parser {
     fn add_spanned(&mut self, node: Node, tok: &Token) -> NodeId {
         let id = self.module.add_node(node);
         self.module.record_span(id, span_of(tok));
+        if let Some(file) = self.current_file_name() {
+            self.module.record_file(id, file);
+        }
         id
     }
 
@@ -732,6 +1421,7 @@ impl Parser {
             span: Some(span_of(tok)),
             repair: Some(repair),
             confidence,
+            file: self.current_file_name(),
         });
         true
     }
@@ -787,7 +1477,9 @@ impl Parser {
         let mut root_fields = indexmap::IndexMap::new();
         self.ident_scopes.push(Vec::new());
 
-        self.parse_body(&mut root_fields, BodyEnd::Document);
+        let mut pending = Vec::new();
+        self.parse_body(&mut root_fields, BodyEnd::Document, &mut pending);
+        self.splice_includes(&mut root_fields, pending);
 
         let root_idents = self.ident_scopes.pop().unwrap_or_default();
         self.resolve_sibling_refs(root_idents, &root_fields);
@@ -819,7 +1511,15 @@ impl Parser {
             self.last_end_line(),
             let_tok.col.saturating_sub(1) as usize,
         );
-        self.module.bindings.insert(name_tok.text, expr);
+        if self.in_include {
+            // Included files provide defaults: a local `let` of the same
+            // name always wins (spec §2.7).
+            self.module.bindings.entry(name_tok.text).or_insert(expr);
+        } else {
+            self.module.bindings.insert(name_tok.text.clone(), expr);
+            // A local `let` reclaims its name: later includes must skip it.
+            self.binding_spliced.remove(&name_tok.text);
+        }
     }
 
     // ------------------------------------------------------------------
@@ -857,7 +1557,9 @@ impl Parser {
 
         self.ident_scopes.push(Vec::new());
         let mut fields = indexmap::IndexMap::new();
-        self.parse_body(&mut fields, BodyEnd::HeaderBody(header_level));
+        let mut pending = Vec::new();
+        self.parse_body(&mut fields, BodyEnd::HeaderBody(header_level), &mut pending);
+        self.splice_includes(&mut fields, pending);
         let idents = self.ident_scopes.pop().unwrap_or_default();
         self.resolve_sibling_refs(idents, &fields);
         let table_id = self.module.add_node(Node::Table { fields });
@@ -1746,6 +2448,10 @@ impl Parser {
             current_path: self.current_path.clone(),
             brace_tables: 0,
             indent_tables: 0,
+            current_file: self.current_file.clone(),
+            include_stack: Vec::new(),
+            in_include: self.in_include,
+            binding_spliced: self.binding_spliced.clone(),
         };
         // Arena ids below this base predate the embedded expression (the
         // sub-parser shares the outer arena); only spans at or above it
@@ -1854,6 +2560,14 @@ impl Parser {
             .chain(sub_repairs.iter_mut())
         {
             rebase(d);
+        }
+        // Sub-lexer diagnostics belong to the same file as the enclosing
+        // string (current_file already tracks include nesting).
+        let sub_file = self.current_file_name();
+        for d in sub_lex_errors.iter_mut().chain(sub_lex_repairs.iter_mut()) {
+            if d.file.is_none() {
+                d.file = sub_file.clone();
+            }
         }
         self.errors.extend(sub_lex_errors);
         self.errors.extend(sub_errors);

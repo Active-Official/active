@@ -60,6 +60,8 @@ fn unclosed_string_repair(line: u32, col: u32, delimiter: &str) -> Diagnostic {
             safe: true,
         }),
         confidence: thresholds::AUTO_APPLY + 0.03,
+        // The parser stamps the session file (includes get their own).
+        file: None,
     }
 }
 
@@ -380,6 +382,8 @@ impl Lexer {
                 }),
                 repair: None,
                 confidence: 0.0,
+                // The parser stamps the session file (includes get theirs).
+                file: None,
             });
         }
 
@@ -425,6 +429,8 @@ impl Lexer {
                     }),
                     repair: None,
                     confidence: 0.0,
+                    // The parser stamps the session file.
+                    file: None,
                 });
             }
         }
@@ -897,6 +903,8 @@ impl Lexer {
                         }),
                         repair: None,
                         confidence: 0.0,
+                        // The parser stamps the session file.
+                        file: None,
                     });
                 }
             }

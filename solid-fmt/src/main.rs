@@ -6,7 +6,7 @@
 
 use clap::Parser;
 use solid_core::fmt::format;
-use solid_core::{parse, Style};
+use solid_core::{parse_file, ParseOptions, Style};
 use std::fs;
 use std::path::PathBuf;
 
@@ -27,7 +27,6 @@ struct Cli {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let src = fs::read_to_string(&cli.file)?;
     let name = cli.file.to_string_lossy().to_string();
 
     let style = if cli.bracketed {
@@ -38,7 +37,14 @@ fn main() -> anyhow::Result<()> {
         Style::Preserve
     };
 
-    let module = parse(&src, &name).map_err(|diags| {
+    // Formatting preserves include statements alongside local keys: the
+    // merge is skipped (resolve_includes = false) so the output keeps
+    // the same composition structure as the input.
+    let options = ParseOptions {
+        resolve_includes: false,
+        ..ParseOptions::default()
+    };
+    let module = parse_file(&cli.file, options).map_err(|diags| {
         for d in &diags {
             match &d.span {
                 Some(s) => eprintln!(

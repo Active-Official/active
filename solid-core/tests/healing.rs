@@ -14,8 +14,8 @@ use solid_core::heal::{
 use solid_core::types::SolidType;
 use solid_core::{parse_with, ParseOptions};
 
-const STRICT: ParseOptions = ParseOptions { resilient: false };
-const RESILIENT: ParseOptions = ParseOptions { resilient: true };
+const STRICT: ParseOptions = ParseOptions::strict();
+const RESILIENT: ParseOptions = ParseOptions::resilient_mode();
 
 fn codes(src: &str, options: ParseOptions) -> Vec<String> {
     let module = parse_with(src, "healing", options).expect("must parse");

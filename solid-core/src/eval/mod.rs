@@ -254,6 +254,11 @@ pub struct Engine {
     /// Runtime resource limits (spec/budgets.md, C-037). Violations
     /// are always fatal, in both modes.
     pub budget: Budget,
+    /// The closed environment snapshot: the ONLY external input
+    /// evaluation may read (spec/reproducibility.md §1, C-050).
+    /// `new()` snapshots the process environment (CLI-compatible);
+    /// `with_env` injects a fixed map (tests, agents, replays).
+    pub env: std::collections::HashMap<String, String>,
 }
 
 impl Default for Engine {
@@ -579,7 +584,22 @@ impl Engine {
             resilient: true,
             profile_override: None,
             budget: Budget::default(),
+            // Undecodable entries cannot enter the snapshot (keys
+            // and values must be Unicode to be referenceable);
+            // skipping them is deterministic per machine, unlike a
+            // `vars()` panic on exotic ambients.
+            env: std::env::vars_os()
+                .filter_map(|(key, value)| {
+                    Some((key.into_string().ok()?, value.into_string().ok()?))
+                })
+                .collect(),
         }
+    }
+
+    /// Fixed environment snapshot instead of the process ambient.
+    pub fn with_env(mut self, env: std::collections::HashMap<String, String>) -> Self {
+        self.env = env;
+        self
     }
 
     pub fn evaluate(&self, module: &Module) -> Result<(Value, Vec<Diagnostic>), EvalError> {
@@ -640,16 +660,16 @@ impl Engine {
             let value = match node {
                 Node::Literal(v) => v.clone(),
 
-                Node::Env { name, default } => match std::env::var(name) {
-                    Ok(s) => {
+                Node::Env { name, default } => match self.env.get(name) {
+                    Some(s) => {
                         // Operator-controlled dynamic content (like
                         // secrets below): charge the bytes as delta and
                         // record the actual for reference deltas.
                         actuals.insert(node_id, 1u64.saturating_add(s.len() as u64));
                         account.charge(module, Some(node_id), s.len() as u64)?;
-                        Value::String(s)
+                        Value::String(s.clone())
                     }
-                    Err(_) => {
+                    None => {
                         if let Some(def) = default {
                             values.get(def).cloned().unwrap_or(Value::Null)
                         } else {

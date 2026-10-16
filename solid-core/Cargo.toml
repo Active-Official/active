@@ -15,6 +15,7 @@ petgraph = { workspace = true }
 regex = { workspace = true }
 serde_yaml = "0.9"
 toml = "0.8"
+sha2 = "0.10"
 
 [dev-dependencies]
 anyhow = { workspace = true }

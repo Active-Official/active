@@ -192,6 +192,25 @@ enum Commands {
         #[arg(long)]
         title: Option<String>,
     },
+    /// Emit a reproducible lockfile (content hash + provenance)
+    Lock {
+        /// Input .solid file
+        file: PathBuf,
+        /// Write lockfile here instead of stdout
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Enable medium-confidence healing repairs (resilient mode)
+        #[arg(long)]
+        resilient: bool,
+        /// Allow includes to use absolute paths or escape the directory
+        #[arg(long)]
+        allow_parent_escapes: bool,
+        /// Select a profile by name, overriding the active_profile key
+        #[arg(long)]
+        profile: Option<String>,
+        #[command(flatten)]
+        budget: BudgetArgs,
+    },
     /// Format files in a canonical style (spec/formatter.md)
     Fmt {
         /// Input .solid files (at least one)
@@ -587,6 +606,67 @@ fn main() -> anyhow::Result<()> {
                 "html" => println!("{}", doc_to_html(&title, &items)),
                 "man" => println!("{}", doc_to_man(&title, &items)),
                 other => anyhow::bail!("unsupported target: {}", other),
+            }
+        }
+        Commands::Lock {
+            file,
+            output,
+            resilient,
+            allow_parent_escapes,
+            profile,
+            budget,
+        } => {
+            let name = file.to_string_lossy().to_string();
+            let module =
+                parse_file(&file, options(resilient, allow_parent_escapes)).map_err(|diags| {
+                    for d in &diags {
+                        report(d, &name);
+                    }
+                    anyhow::anyhow!("parse failed")
+                })?;
+            let engine = engine(resilient, &profile, budget.budget());
+            let (value, diags) = engine
+                .evaluate(&module)
+                .inspect_err(|e| report_eval_error(e, &name))?;
+            for d in &diags {
+                report(d, &name);
+            }
+            // The effective profile, when one is active: selection
+            // changes values, so it joins the provenance (override
+            // wins, else the document's own valid selector).
+            let effective = profile.clone().or_else(|| match &value {
+                solid_core::Value::Table(map) => match map.get("active_profile") {
+                    Some(solid_core::Value::String(name)) if module.profiles.contains_key(name) => {
+                        Some(name.clone())
+                    }
+                    _ => None,
+                },
+                _ => None,
+            });
+            let provenance = solid_core::provenance::collect_provenance(
+                &module,
+                &engine.env,
+                Some(file.as_path()),
+                effective.as_deref(),
+            )
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let manifest = solid_core::provenance::LockManifest::new(
+                format!(
+                    "solid-cli {} / solid-core {}",
+                    env!("CARGO_PKG_VERSION"),
+                    solid_core::VERSION
+                ),
+                &value,
+                provenance,
+            );
+            let rendered = manifest.render();
+            match output {
+                Some(path) => std::fs::write(&path, &rendered)
+                    .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", path.display()))?,
+                None => print!("{rendered}"),
+            }
+            if had_failure(&diags, resilient) {
+                std::process::exit(1);
             }
         }
         Commands::Fmt {

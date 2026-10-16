@@ -12,6 +12,7 @@ pub mod heal;
 pub mod ir;
 pub mod lint;
 pub mod parser;
+pub mod provenance;
 pub mod types;
 pub mod validate;
 

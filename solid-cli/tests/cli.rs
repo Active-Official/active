@@ -780,3 +780,69 @@ fn impact_and_why_answer_with_paths_and_json() {
     );
     assert!(combined.contains("nowhere"), "{combined}");
 }
+
+// ------------------------------------------------------------------
+// `solid lock` contract (C-050/C-051, spec/reproducibility.md §4).
+// ------------------------------------------------------------------
+
+#[test]
+fn lock_emits_versioned_hash_and_provenance() {
+    let dir = std::env::temp_dir().join("solid-cli-tests");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    std::fs::write(dir.join("locklib.solid"), "host = \"db\"\n").expect("write lib");
+    let f = fixture(
+        "lock_main.solid",
+        "include \"locklib.solid\"\nport = 8080\nregion = env.SOLID_CLI_LOCK_REGION ?: \"r\"\n",
+    );
+    let out = solid().args(["lock"]).arg(&f).output().expect("run solid");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for probe in [
+        "version = 1",
+        "content_hash = \"sha256:",
+        "toolchain = ",
+        "locklib.solid",
+        "SOLID_CLI_LOCK_REGION",
+    ] {
+        assert!(stdout.contains(probe), "missing {probe}:\n{stdout}");
+    }
+    // Re-parses as TOML with the required top-level keys.
+    let parsed: toml::Value = toml::from_str(&stdout).expect("valid lockfile");
+    assert_eq!(parsed["version"], toml::Value::Integer(1));
+    // Deterministic: a second run reproduces the document byte-for-byte.
+    let again = solid().args(["lock"]).arg(&f).output().expect("run solid");
+    assert_eq!(
+        String::from_utf8_lossy(&again.stdout),
+        stdout,
+        "lockfiles must be byte-stable"
+    );
+}
+
+#[test]
+fn lock_writes_output_files_and_fails_cleanly() {
+    let f = fixture("lock_out.solid", "port = 1\n");
+    let dir = std::env::temp_dir().join("solid-cli-tests");
+    let target = dir.join("lock_out.solid.lock");
+    let _ = std::fs::remove_file(&target);
+    let out = solid()
+        .args(["lock", "--output"])
+        .arg(&target)
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let written = std::fs::read_to_string(&target).expect("lockfile written");
+    assert!(written.contains("content_hash"), "{written}");
+    // Broken input fails without writing.
+    let f = fixture("lock_broken.solid", "port = [1,\n");
+    let out = solid().args(["lock"]).arg(&f).output().expect("run solid");
+    assert!(!out.status.success(), "broken input must fail");
+}

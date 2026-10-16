@@ -34,6 +34,53 @@ fn span_of(tok: &Token) -> Span {
     }
 }
 
+/// Parse an `@intent` payload as one string literal, mirroring the
+/// language's escape rules (double-quoted: `\n \t \r \\ \" \0 \$`;
+/// single-quoted: `\\ \'`; anything else kept verbatim). Unlike lexer
+/// strings there is no healing inside comments: an unterminated
+/// literal or trailing text is an error for E021.
+fn parse_annotation_string(payload: &str) -> Result<String, String> {
+    let mut chars = payload.chars().peekable();
+    let quote = chars.next().ok_or("expected a string literal")?;
+    if quote != '"' && quote != '\'' {
+        return Err("expected a string literal".to_string());
+    }
+    let mut out = String::new();
+    let mut escaped = false;
+    for c in chars.by_ref() {
+        if escaped {
+            match (quote, c) {
+                ('"', 'n') => out.push('\n'),
+                ('"', 't') => out.push('\t'),
+                ('"', 'r') => out.push('\r'),
+                ('"', '0') => out.push('\0'),
+                ('"', '$') => out.push('$'),
+                (_, '\\') => out.push('\\'),
+                ('"', '"') => out.push('"'),
+                ('\'', '\'') => out.push('\''),
+                _ => {
+                    out.push('\\');
+                    out.push(c);
+                }
+            }
+            escaped = false;
+        } else if c == '\\' {
+            escaped = true;
+        } else if c == quote {
+            // Closing quote: only trailing whitespace may follow.
+            for rest in chars.by_ref() {
+                if !rest.is_whitespace() {
+                    return Err("unexpected text after the string literal".to_string());
+                }
+            }
+            return Ok(out);
+        } else {
+            out.push(c);
+        }
+    }
+    Err("unterminated string literal".to_string())
+}
+
 /// Maximum expression nesting depth (parenthesized expressions, unary
 /// operator chains, nested arrays, nested inline tables). A hard limit
 /// that prevents stack exhaustion from pathological input — the
@@ -176,6 +223,7 @@ fn parse_recovering_impl(
 ) -> (Module, Vec<Diagnostic>) {
     let mut lexer = Lexer::new(source);
     let mut lexed = lexer.tokenize();
+    let n_comments = lexed.comments.len();
     let mut parser = Parser {
         tokens: lexed.tokens,
         pos: 0,
@@ -187,6 +235,7 @@ fn parse_recovering_impl(
         block_depth: 0,
         schema_depth: 0,
         comments: lexed.comments,
+        comment_files: vec![None; n_comments],
         statements: Vec::new(),
         blocks: Vec::new(),
         current_path: Vec::new(),
@@ -230,6 +279,9 @@ fn parse_recovering_impl(
 impl Parser {
     fn attach_trivia(&mut self) {
         let comments = std::mem::take(&mut self.comments);
+        // Kept aligned with `comments` (taken together); files only
+        // matter during parsing (annotation block scans).
+        let _comment_files = std::mem::take(&mut self.comment_files);
         let statements = std::mem::take(&mut self.statements);
         let blocks = std::mem::take(&mut self.blocks);
 
@@ -419,6 +471,11 @@ struct Parser {
     schema_depth: usize,
     /// Comments from the lexer, awaiting attachment computation.
     comments: Vec<(String, Span)>,
+    /// Source file per comment, parallel to `comments`: `None` for the
+    /// root document, `Some` for included files (C-033). Lines repeat
+    /// across files, so annotation block scans must match on
+    /// (line, file) — never bare lines.
+    comment_files: Vec<Option<String>>,
     /// Statement records used for comment attachment (spec §7).
     statements: Vec<StmtInfo>,
     /// Block (table) records used for comment attachment (spec §7).
@@ -476,6 +533,7 @@ impl Parser {
             start_line,
             end_line,
             level,
+            file: self.current_file_name(),
         });
     }
 }
@@ -488,6 +546,9 @@ struct StmtInfo {
     start_line: u32,
     end_line: u32,
     level: usize,
+    /// Source file (includes parse as their own documents, C-025):
+    /// line numbers repeat across files, so scans match (line, file).
+    file: Option<String>,
 }
 
 /// A table/block's source extent, for comment attachment.
@@ -886,6 +947,7 @@ impl Parser {
                 if let Some((k, id)) = self.parse_key_value_sep(TokenKind::Assign) {
                     let end = self.last_end_line();
                     self.record_stmt(&k, start.line, end, level);
+                    self.extract_annotations(&k, id, start.line);
                     fields.insert(k, id);
                 }
             }
@@ -895,6 +957,7 @@ impl Parser {
                 } else if let Some((k, id)) = self.parse_key_value_sep(TokenKind::Colon) {
                     let end = self.last_end_line();
                     self.record_stmt(&k, start.line, end, level);
+                    self.extract_annotations(&k, id, start.line);
                     fields.insert(k, id);
                 }
             }
@@ -996,6 +1059,7 @@ impl Parser {
             self.last_end_line(),
             kw.col.saturating_sub(1) as usize,
         );
+        let profile_stmt = self.statements.len() - 1;
         self.current_path.push(name.clone());
         self.ident_scopes.push(Vec::new());
         let mut fields = indexmap::IndexMap::new();
@@ -1016,6 +1080,7 @@ impl Parser {
         // references work uniformly.
         self.pending_profiles.push((idents, fields.clone()));
         let table_id = self.module.add_node(Node::Table { fields });
+        self.statements[profile_stmt].end_line = self.last_end_line();
         self.current_path.pop();
         self.module.profiles.insert(name, table_id);
     }
@@ -1219,6 +1284,18 @@ impl Parser {
         let mut lexer = Lexer::new(&src);
         let lexed = lexer.tokenize();
         let lex_file = self.current_file_name();
+        // Included comments join the shared stream with their file
+        // stamped, so annotation extraction sees included bindings'
+        // contracts (C-033) without cross-file line collisions.
+        let n_lex_comments = lexed.comments.len();
+        self.comments.extend(lexed.comments);
+        self.comment_files
+            .extend(std::iter::repeat_with(|| lex_file.clone()).take(n_lex_comments));
+        // Aliased includes nest under the alias: scope the sub-parse
+        // path so annotation paths match the merged tree (C-033).
+        if let Some(alias) = inc.alias.clone() {
+            self.current_path.push(alias);
+        }
         let mut sub_errors = lexed.errors;
         let mut sub_repairs = lexed.repairs;
         for d in sub_errors.iter_mut().chain(sub_repairs.iter_mut()) {
@@ -1833,6 +1910,7 @@ impl Parser {
             start_line: key_tok.line,
             end_line: key_tok.line,
             level: key_tok.col.saturating_sub(1) as usize,
+            file: self.current_file_name(),
         });
         self.current_path.push(key.clone());
         self.blocks.push(BlockInfo {
@@ -1850,6 +1928,7 @@ impl Parser {
         let table_id = self.module.add_node(Node::Table { fields });
         self.statements[stmt_idx].end_line = self.last_end_line();
         self.current_path.pop();
+        self.extract_annotations(&key, table_id, key_tok.line);
         parent.insert(key, table_id);
     }
 
@@ -1887,6 +1966,7 @@ impl Parser {
             start_line: key_tok.line,
             end_line: key_tok.line,
             level: key_tok.col.saturating_sub(1) as usize,
+            file: self.current_file_name(),
         });
         self.current_path.push(key.clone());
         self.blocks.push(BlockInfo {
@@ -1904,6 +1984,7 @@ impl Parser {
         let table_id = self.module.add_node(Node::Table { fields });
         self.statements[stmt_idx].end_line = self.last_end_line();
         self.current_path.pop();
+        self.extract_annotations(&key, table_id, key_tok.line);
         parent.insert(key, table_id);
     }
 
@@ -1915,6 +1996,21 @@ impl Parser {
             message: message.into(),
             path: None,
             span: Some(span_of(tok)),
+            repair: None,
+            confidence: 1.0,
+            file: self.current_file_name(),
+        });
+    }
+
+    /// Diagnostic at an explicit span (for comment-anchored diagnostics
+    /// such as malformed annotations, which have no token).
+    fn error_at_span(&mut self, code: &str, message: impl Into<String>, span: &Span) {
+        self.errors.push(Diagnostic {
+            severity: Severity::Error,
+            code: code.into(),
+            message: message.into(),
+            path: None,
+            span: Some(span.clone()),
             repair: None,
             confidence: 1.0,
             file: self.current_file_name(),
@@ -2167,6 +2263,7 @@ impl Parser {
             self.last_end_line(),
             let_tok.col.saturating_sub(1) as usize,
         );
+        self.extract_annotations(&name_tok.text, expr, let_tok.line);
         if self.in_include {
             // Included files provide defaults: a local `let` of the same
             // name always wins (spec §2.7).
@@ -2203,6 +2300,7 @@ impl Parser {
             start_line: open.line,
             end_line: open.line,
             level: header_level,
+            file: self.current_file_name(),
         });
         self.current_path.push(name.clone());
         self.blocks.push(BlockInfo {
@@ -2221,6 +2319,7 @@ impl Parser {
         let table_id = self.module.add_node(Node::Table { fields });
         self.statements[stmt_idx].end_line = self.last_end_line();
         self.current_path.pop();
+        self.extract_annotations(&name, table_id, open.line);
         parent.insert(name, table_id);
     }
 
@@ -2305,6 +2404,303 @@ impl Parser {
             }
         }
         leftover
+    }
+
+    // ------------------------------------------------------------------
+    // # @intent / @constraint / @ai_immutable  (spec/annotations.md, C-033)
+    // ------------------------------------------------------------------
+
+    /// Extract annotations for a just-parsed statement (spec §1). The
+    /// contiguous comment block directly above `stmt_line` is scanned;
+    /// known `@…` lines attach to `node` (schemas never do), everything
+    /// else stays an ordinary comment for the formatter. `node`'s scope
+    /// path plus `key` becomes the enforcement path. Call sites are
+    /// statement-level only — inline-table values never attach (their
+    /// comments cannot precede a binding line).
+    fn extract_annotations(&mut self, key: &str, node: NodeId, stmt_line: u32) {
+        if matches!(self.module.get(node), Some(Node::SchemaTable { .. })) {
+            return;
+        }
+        // Profile bodies take no annotations (spec §1): their paths
+        // are variant-qualified and enforcement works on document
+        // paths. Profiles keep their comments as plain trivia.
+        if self.in_profile {
+            return;
+        }
+        let scope = self.path_str();
+        let full_path = if scope.is_empty() {
+            key.to_string()
+        } else {
+            format!("{scope}.{key}")
+        };
+        // Walk upward through consecutive comment lines. A comment
+        // sharing its line with a statement end is trailing on that
+        // line — it belongs there, never to the block above. Matching
+        // is by (line, file): line numbers repeat across includes.
+        let here = self.current_file_name();
+        let mut line = stmt_line.saturating_sub(1);
+        let mut block: Vec<(String, Span)> = Vec::new();
+        while line >= 1 {
+            let comment = self
+                .comments
+                .iter()
+                .zip(self.comment_files.iter())
+                .find(|((_, s), f)| s.line == line && *f == &here)
+                .map(|((text, span), _)| (text.clone(), span.clone()));
+            let Some((text, span)) = comment else {
+                break;
+            };
+            if self
+                .statements
+                .iter()
+                .any(|st| st.end_line == line && st.file == here)
+            {
+                break;
+            }
+            block.push((text, span));
+            if line == 1 {
+                break;
+            }
+            line -= 1;
+        }
+        // Source order, so multi-annotation nodes read deterministically.
+        for (text, span) in block.into_iter().rev() {
+            if let Some(kind) = self.parse_annotation_line(&text, &span, node) {
+                self.module
+                    .annotations
+                    .entry(node)
+                    .or_default()
+                    .push(Annotation {
+                        kind,
+                        path: full_path.clone(),
+                        span,
+                    });
+            }
+        }
+    }
+
+    /// Parse one comment line as an annotation. Ordinary comments —
+    /// including unknown `@…` kinds — return None silently. Malformed
+    /// known annotations are E021 at the comment's span.
+    fn parse_annotation_line(
+        &mut self,
+        text: &str,
+        span: &Span,
+        target: NodeId,
+    ) -> Option<AnnotationKind> {
+        let body = text.strip_prefix('#').unwrap_or(text).trim_start();
+        let rest = body.strip_prefix('@')?;
+        let kind_len = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .count();
+        let (kind, after) = rest.split_at(kind_len);
+        match kind {
+            "intent" | "constraint" | "ai_immutable" => {}
+            _ => return None,
+        }
+        // Bare `# @ai_immutable` (no payload at all) is the flag form
+        // of `true` — older documents used it as a plain comment, and
+        // annotations must never turn previously-valid documents into
+        // errors.
+        if kind == "ai_immutable" && after.trim_start().is_empty() {
+            return Some(AnnotationKind::AiImmutable(true));
+        }
+        let payload = match after.trim_start().strip_prefix(':') {
+            Some(p) => p.trim_start(),
+            None => {
+                self.error_at_span(
+                    "E021",
+                    format!("invalid @{kind} annotation: expected ':' after the kind"),
+                    span,
+                );
+                return None;
+            }
+        };
+        match kind {
+            // String literals are preferred, but bare prose is also an
+            // intent: documentation must never punish informality, and
+            // older documents already used free-text `@intent` comments.
+            // A payload that opens a quote is held to literal rules.
+            "intent" => {
+                let wants_literal = payload.starts_with('"') || payload.starts_with('\'');
+                match parse_annotation_string(payload) {
+                    Ok(documented) => Some(AnnotationKind::Intent(documented)),
+                    Err(_) if !wants_literal && !payload.is_empty() => {
+                        Some(AnnotationKind::Intent(payload.to_string()))
+                    }
+                    Err(detail) => {
+                        self.error_at_span(
+                            "E021",
+                            format!("invalid @intent annotation: {detail}"),
+                            span,
+                        );
+                        None
+                    }
+                }
+            }
+            "ai_immutable" => match payload {
+                "true" => Some(AnnotationKind::AiImmutable(true)),
+                "false" => Some(AnnotationKind::AiImmutable(false)),
+                _ => {
+                    self.error_at_span(
+                        "E021",
+                        "invalid @ai_immutable annotation: expected 'true' or 'false'",
+                        span,
+                    );
+                    None
+                }
+            },
+            "constraint" => {
+                if payload.is_empty() {
+                    self.error_at_span(
+                        "E021",
+                        "invalid @constraint annotation: empty predicate",
+                        span,
+                    );
+                    return None;
+                }
+                // 1-based column where the payload starts: the comment's
+                // column plus the characters before the payload.
+                let payload_col =
+                    span.column + (text.chars().count() - payload.chars().count()) as u32;
+                self.parse_constraint(payload, span, payload_col, target)
+                    .map(|expr| AnnotationKind::Constraint {
+                        source: payload.to_string(),
+                        expr,
+                    })
+            }
+            _ => None,
+        }
+    }
+
+    /// Parse a `@constraint` payload as a boolean expression, splicing
+    /// nodes into the shared arena (single-line sibling of
+    /// parse_embedded_expression: same arena swap, ident transfer, and
+    /// span rebase, but anchored on the comment position). `value`
+    /// references rewrite to `target` before ident transfer so the name
+    /// can never resolve as a sibling or binding. Returns None after
+    /// recording E021.
+    fn parse_constraint(
+        &mut self,
+        payload: &str,
+        comment: &Span,
+        payload_col: u32,
+        target: NodeId,
+    ) -> Option<NodeId> {
+        let mut lexer = Lexer::new(payload);
+        let lexed = lexer.tokenize();
+        let module = std::mem::replace(&mut self.module, Module::new(""));
+        let inherited_len = self.ident_scopes.last().map_or(0, |s| s.len());
+        let mut sub = Parser {
+            tokens: lexed.tokens,
+            pos: 0,
+            module,
+            errors: Vec::new(),
+            ident_scopes: self.ident_scopes.clone(),
+            depth: self.depth,
+            options: self.options,
+            block_depth: 0,
+            schema_depth: self.schema_depth,
+            array_depth: self.array_depth,
+            comments: Vec::new(),
+            comment_files: Vec::new(),
+            statements: Vec::new(),
+            blocks: Vec::new(),
+            current_path: self.current_path.clone(),
+            brace_tables: 0,
+            indent_tables: 0,
+            current_file: self.current_file.clone(),
+            include_stack: Vec::new(),
+            in_include: self.in_include,
+            in_profile: self.in_profile,
+            binding_spliced: self.binding_spliced.clone(),
+            pending_profiles: Vec::new(),
+        };
+        let node_base = sub.module.arena.len() as u32;
+        let id = sub.parse_expression();
+        while matches!(sub.peek_kind(), TokenKind::Newline) {
+            sub.bump();
+        }
+        if !matches!(sub.peek_kind(), TokenKind::Eof) {
+            let leftover = sub.peek().clone();
+            sub.error_at(
+                "E021",
+                format!(
+                    "invalid @constraint annotation: unexpected {:?} after the predicate",
+                    leftover.kind
+                ),
+                &leftover,
+            );
+        }
+        // `value` ≡ the annotated node (spec §3): rewrite direct
+        // references so they never enter sibling/binding resolution.
+        let mut rewritten = std::collections::HashSet::new();
+        for i in node_base..sub.module.arena.len() as u32 {
+            let nid = NodeId(i);
+            if matches!(sub.module.get(nid), Some(Node::Ident(name)) if name == "value") {
+                if let Some(slot) = sub.module.get_mut(nid) {
+                    *slot = Node::Ref(target);
+                }
+                sub.module.add_edge(target, nid);
+                rewritten.insert(nid);
+            }
+        }
+        let new_idents: Vec<(String, NodeId)> = sub
+            .ident_scopes
+            .last()
+            .map(|s| {
+                s[inherited_len.min(s.len())..]
+                    .iter()
+                    .filter(|(_, nid)| !rewritten.contains(nid))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        // Payload-local spans (line 1) land on the comment line with
+        // columns shifted by the payload start. Payloads are single
+        // line by construction (comment text never holds `\n`).
+        let lift = |line_1: u32, col_1: u32| -> (u32, u32) {
+            let line = comment.line + line_1.saturating_sub(1);
+            let col = if line_1 <= 1 {
+                payload_col + col_1.saturating_sub(1)
+            } else {
+                col_1
+            };
+            (line, col)
+        };
+        for (node, span) in sub.module.node_spans.iter_mut() {
+            if node.0 >= node_base {
+                let (line, col) = lift(span.line, span.column);
+                span.line = line;
+                span.column = col;
+                let (line, col) = lift(span.end_line, span.end_column);
+                span.end_line = line;
+                span.end_column = col;
+            }
+        }
+        let mut sub_errors = std::mem::take(&mut sub.errors);
+        let mut sub_lex_errors = lexed.errors;
+        for d in sub_errors.iter_mut().chain(sub_lex_errors.iter_mut()) {
+            if let Some(s) = &mut d.span {
+                let (line, col) = lift(s.line, s.column);
+                s.line = line;
+                s.column = col;
+                let (line, col) = lift(s.end_line, s.end_column);
+                s.end_line = line;
+                s.end_column = col;
+            }
+            if d.file.is_none() {
+                d.file = self.current_file_name();
+            }
+        }
+        self.errors.extend(sub_lex_errors);
+        self.errors.extend(sub_errors);
+        self.module = std::mem::replace(&mut sub.module, Module::new(""));
+        if let Some(scope) = self.ident_scopes.last_mut() {
+            scope.extend(new_idents);
+        }
+        Some(id)
     }
 
     // ------------------------------------------------------------------
@@ -3611,6 +4007,7 @@ impl Parser {
             block_depth: 0,
             schema_depth: self.schema_depth,
             comments: Vec::new(),
+            comment_files: Vec::new(),
             statements: Vec::new(),
             blocks: Vec::new(),
             current_path: self.current_path.clone(),

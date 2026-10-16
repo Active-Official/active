@@ -51,6 +51,36 @@ pub struct Module {
     /// None when the document declares no schema. C-031 validates
     /// against it.
     pub schema: Option<NodeId>,
+    /// Parsed `# @…` annotations by annotated node (spec/annotations.md,
+    /// C-033): intent documentation, constraint predicates, and
+    /// immutability flags for validators, the language server, and AI
+    /// tooling. Comments themselves stay in `trivia` for the formatter.
+    pub annotations: HashMap<NodeId, Vec<Annotation>>,
+}
+
+/// A parsed `# @…` annotation attached to a node (spec/annotations.md).
+#[derive(Debug, Clone)]
+pub struct Annotation {
+    pub kind: AnnotationKind,
+    /// Dotted path of the annotated key (scope path + key; bare key at
+    /// root; binding name for `let`s) — the path-based enforcement
+    /// passes (patches, constraints) work on paths.
+    pub path: String,
+    /// The annotation comment's span (diagnostics and LSP).
+    pub span: Span,
+}
+
+/// Annotation payloads (spec/annotations.md §2–§4).
+#[derive(Debug, Clone)]
+pub enum AnnotationKind {
+    /// Documentation only, never enforced.
+    Intent(String),
+    /// Boolean predicate with `value` bound to the annotated value.
+    /// `source` is the raw payload (quoted in T006); `expr` is the
+    /// parsed tree with `value` rewritten to the annotated node.
+    Constraint { source: String, expr: NodeId },
+    /// Agent-immutable flag; `false` behaves as no annotation.
+    AiImmutable(bool),
 }
 
 /// An `include "path" [as alias] [private]` statement (spec §2.7).
@@ -153,6 +183,7 @@ impl Module {
             profiles: IndexMap::new(),
             patches: Vec::new(),
             schema: None,
+            annotations: HashMap::new(),
         }
     }
 

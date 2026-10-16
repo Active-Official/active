@@ -45,8 +45,9 @@ parses leave it unset and tools fall back to the input filename.
 | E016 | `circular include detected: ...` / `maximum include depth (32) exceeded` | token | An include cycle through the file graph, or nesting deeper than 32 files (C-025) |
 | E017 | `cannot read include file ...` | token | A missing or unreadable include target (C-025) |
 | E018 | `profile blocks may only appear at document root` / `duplicate profile "name"` / `profile blocks need a string name` | token | Malformed profile blocks (C-027) |
-| E019 | `patch statements may only appear at document root` / `expected ( after @patch/@remove/@rename` / `patch paths must be string literals` / `interpolation in patch paths is a hard error` / `rename target already exists` | token | Malformed patch statements (C-028) |
+| E019 | `patch statements may only appear at document root` / `expected ( after @patch/@remove/@rename` / `patch paths must be string literals` / `interpolation in patch paths is a hard error` / `rename target already exists` / `patch target '<path>' overlaps ai_immutable '<apath>'` | token | Malformed patch statements (C-028); patch edits overlapping `@ai_immutable` paths fail here too (C-034) |
 | E020 | `schema tables need valid type expressions` / `unknown schema type` / `unknown argument for <Type>` / `Enum needs at least one value` | token | Malformed schema blocks (C-030): non-type entries, unknown types or arguments |
+| E021 | `invalid @<kind> annotation: <detail>` | annotation comment span | Malformed annotations (C-033): bad `@intent` string, non-boolean `@ai_immutable`, empty or trailing `@constraint` payload. Truncated predicates keep their precise expression codes with rebased spans |
 
 ### S0xx — Semantic (evaluation, severity Error)
 
@@ -66,6 +67,7 @@ parses leave it unset and tools fall back to the input filename.
 | T003 | `schema violation at '<path>': <detail>` | same as T002 | A constraint fails: `<detail>` is one of `below minimum`, `above maximum`, `too short`, `too long`, `does not match pattern`, `not a member of Enum(<members>)`, `invalid pattern in schema`, `incomparable <bound> bound for <type> fields`. Enum members are schema literals, safe to quote; evaluated values and bounds are never echoed (secret invariant) |
 | T004 | `schema violation at '<path>': missing required key (no default)` / `missing required key (strict mode requires explicit values despite a schema default)` / `missing required key (schema default could not be applied)` | schema field span | A schema field has no value. Without a `default` this fires in both modes; with a `default`, strict mode fires (explicitness) while resilient mode fills the default and records W005 instead (C-032); the third variant is a defensive safety net for unappliable defaults. Absent `Null`-typed keys without a declared default are allowed and never reported |
 | T005 | `schema violation at '<path>': unexpected key '<key>' in closed table` | value expression span when resolvable (the token that produced the value), else the schema table span | A value key has no schema field inside a `closed = true` table (C-032). Key names are author-written identifiers, safe to quote |
+| T006 | `constraint violation at '<path>': <source> does not hold (actual: <rendered>)` / `constraint violation at '<path>': <source> must evaluate to a boolean, got <kind>` | value span when resolvable, else the annotation comment span | A `@constraint` predicate fails (C-034). `<source>` is the author-written payload, truncated at 120 chars and rendered generic when it contains `secret(…)`; `<rendered>` is the actual value rendered safely (secrets as `secret`, truncation at 120 chars) |
 
 ### W0xx — Warnings
 

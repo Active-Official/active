@@ -1,0 +1,4 @@
+# @intent: "Library port contract"
+# @constraint: value >= 1 && value <= 1024
+# @ai_immutable: true
+port = 80

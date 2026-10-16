@@ -42,11 +42,12 @@ pub enum EvalError {
     },
     #[error("secret used in unsafe context")]
     SecretLeak { file: Option<String> },
-    /// Schema validation failures (C-031, spec/validation.md): every
-    /// violation diagnostic, collected in deterministic schema order.
-    /// Strict mode returns these instead of a value tree; resilient mode
+    /// Schema validation failures (C-031, spec/validation.md) and
+    /// constraint failures (C-034, spec/annotations.md): every
+    /// violation diagnostic, collected in deterministic order. Strict
+    /// mode returns these instead of a value tree; resilient mode
     /// keeps them as ordinary diagnostics alongside the tree.
-    #[error("schema validation failed")]
+    #[error("validation failed")]
     ValidationFailed { diagnostics: Vec<Diagnostic> },
 }
 
@@ -302,11 +303,62 @@ impl Engine {
         // Schema validation runs last: post-evaluation, post-profile,
         // post-patch, pre-export (spec/validation.md §1). Resilient
         // mode may insert schema defaults (C-032), so the tree is
-        // mutable here.
+        // mutable here. Constraint predicates run after schema
+        // validation (spec/annotations.md §3).
         self.validate_schema(module, &values, &mut result, &mut diagnostics)?;
+        self.validate_annotations(module, &values, &result, &mut diagnostics)?;
         Ok((result, diagnostics))
     }
 
+    /// Reject a patch whose targets overlap an `@ai_immutable` path
+    /// (spec/annotations.md §4, C-034). Every target is checked; the first
+    /// overlap fails the whole patch application with E019 at the
+    /// directive's span. Profiles and default fills are not patch edits
+    /// and are unaffected.
+    fn check_immutable(
+        module: &Module,
+        patch_id: NodeId,
+        targets: &[&str],
+    ) -> Result<(), EvalError> {
+        for target in targets {
+            if let Some(immutable) = Self::immutable_overlap(module, target) {
+                return Err(EvalError::patch_error(
+                    format!("patch target `{target}` overlaps ai_immutable `{immutable}`"),
+                    module,
+                    patch_id,
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// First `@ai_immutable: true` annotation path overlapping `target` —
+    /// in either direction, compared segment-wise so ancestor and
+    /// descendant edits are both caught — or None. Annotation paths sort
+    /// first so multi-overlap reports are deterministic. Unparseable
+    /// paths on either side cannot overlap (patch paths were validated at
+    /// parse; annotation paths are scope joins).
+    fn immutable_overlap(module: &Module, target: &str) -> Option<String> {
+        let target_segs = validate_patch_path(target).ok()?;
+        let mut paths: Vec<&String> = module
+            .annotations
+            .values()
+            .flatten()
+            .filter(|a| matches!(&a.kind, crate::ir::AnnotationKind::AiImmutable(true)))
+            .map(|a| &a.path)
+            .collect();
+        paths.sort();
+        for apath in paths {
+            let Ok(asegs) = validate_patch_path(apath) else {
+                continue;
+            };
+            let shared = target_segs.len().min(asegs.len());
+            if shared > 0 && target_segs[..shared] == asegs[..shared] {
+                return Some(apath.clone());
+            }
+        }
+        None
+    }
     /// Apply structural patch directives in source order (spec §2.9):
     /// after evaluation (and profile merge), before schema validation.
     /// Values were computed with the base tree intact, so a patch may
@@ -344,6 +396,7 @@ impl Engine {
             };
             match op {
                 PatchOp::Set { path, value } => {
+                    Self::check_immutable(module, patch_id, &[&path])?;
                     let segs = validate_patch_path(&path).map_err(|why| {
                         EvalError::patch_error(
                             format!("invalid patch path `{path}`: {why}"),
@@ -365,6 +418,7 @@ impl Engine {
                     }
                 }
                 PatchOp::Remove { path } => {
+                    Self::check_immutable(module, patch_id, &[&path])?;
                     let segs = validate_patch_path(&path).map_err(|why| {
                         EvalError::patch_error(
                             format!("invalid patch path `{path}`: {why}"),
@@ -377,6 +431,7 @@ impl Engine {
                     }
                 }
                 PatchOp::Rename { from, to } => {
+                    Self::check_immutable(module, patch_id, &[&from, &to])?;
                     let segs = validate_patch_path(&from).map_err(|why| {
                         EvalError::patch_error(
                             format!("invalid patch path `{from}`: {why}"),
@@ -829,7 +884,7 @@ fn normalize_quantity(v: &Value, unit: &Unit) -> Result<Value, String> {
     Ok(Value::Quantity(num, unit.clone()))
 }
 
-fn eval_binary(op: BinOp, lhs: &Value, rhs: &Value) -> Result<Value, String> {
+pub(crate) fn eval_binary(op: BinOp, lhs: &Value, rhs: &Value) -> Result<Value, String> {
     use BinOp::*;
     match (op, lhs, rhs) {
         (Add, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a + b)),
@@ -905,7 +960,7 @@ fn scale_dur(ms: u64, factor: f64) -> u64 {
     (ms as f64 * factor).round().max(0.0) as u64
 }
 
-fn eval_unary(op: UnOp, v: &Value) -> Result<Value, String> {
+pub(crate) fn eval_unary(op: UnOp, v: &Value) -> Result<Value, String> {
     match (op, v) {
         (UnOp::Neg, Value::Int(n)) => Ok(Value::Int(-n)),
         (UnOp::Neg, Value::Float(f)) => Ok(Value::Float(-f)),

@@ -8,8 +8,8 @@
 use std::collections::HashMap;
 
 use crate::diag::{Diagnostic, Severity, Span};
-use crate::eval::{value_kind_name, Engine, EvalError};
-use crate::ir::{Module, Node, NodeId, SchemaField, Value};
+use crate::eval::{eval_binary, eval_unary, value_kind_name, Engine, EvalError};
+use crate::ir::{AnnotationKind, Module, Node, NodeId, SchemaField, Value};
 use crate::parser::PathSeg;
 use crate::types::SolidType;
 
@@ -47,6 +47,106 @@ impl Engine {
             });
         }
         diagnostics.extend(validator.diagnostics);
+        Ok(())
+    }
+
+    /// Enforce `@constraint` annotations after schema validation
+    /// (spec/annotations.md §3, C-034). Each predicate is checked
+    /// against the final tree value at its path — `let` bindings fall
+    /// back to their evaluated node value (they never export) — in
+    /// path order with node-id tie-breaks (HashMap iteration is
+    /// random, so ordering is made explicit for determinism). The
+    /// predicate itself is re-evaluated against post-transform values
+    /// (spec §3): graph results predate patches, profiles, and fills.
+    /// Strict fails with everything collected; resilient collects
+    /// alongside the tree.
+    pub(crate) fn validate_annotations(
+        &self,
+        module: &Module,
+        values: &HashMap<NodeId, Value>,
+        result: &Value,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) -> Result<(), EvalError> {
+        let mut items: Vec<(NodeId, &crate::ir::Annotation)> = module
+            .annotations
+            .iter()
+            .flat_map(|(id, anns)| anns.iter().map(|a| (*id, a)))
+            .collect();
+        items.sort_by(|a, b| a.1.path.cmp(&b.1.path).then_with(|| a.0 .0.cmp(&b.0 .0)));
+        // `let` bindings never export: only their node values can feed
+        // constraints. Key constraints with no final-tree value are
+        // skipped (removed keys must not fail on stale values).
+        let bindings: std::collections::HashSet<NodeId> =
+            module.bindings.values().copied().collect();
+        // Post-transform overlay: base values overwritten by walking
+        // the final tree alongside the arena (Table by key, Array by
+        // index while lengths line up). Predicates evaluate against
+        // this, never against pre-patch graph results.
+        let mut overlay = values.clone();
+        if let Some(root) = module.root {
+            overlay_values(module, root, result, &mut overlay);
+        }
+        let mut local: Vec<Diagnostic> = Vec::new();
+        for (node_id, ann) in items {
+            let AnnotationKind::Constraint { source, expr } = &ann.kind else {
+                continue;
+            };
+            let value = lookup_result_path(result, &ann.path).or_else(|| {
+                bindings
+                    .contains(&node_id)
+                    .then(|| values.get(&node_id))
+                    .flatten()
+            });
+            let Some(value) = value else {
+                continue;
+            };
+            let span = module
+                .node_spans
+                .get(&node_id)
+                .cloned()
+                .or(Some(ann.span.clone()));
+            let file = module.node_files.get(&node_id).cloned();
+            let shown_source = render_source(module, source, *expr);
+            match predicate_value(module, &overlay, values, *expr) {
+                Some(Value::Bool(true)) => {}
+                Some(Value::Bool(false)) => local.push(Diagnostic {
+                    severity: Severity::Error,
+                    code: "T006".into(),
+                    message: format!(
+                        "constraint violation at '{}': {shown_source} does not hold (actual: {})",
+                        display_path(&ann.path),
+                        render_constrained(value),
+                    ),
+                    path: Some(ann.path.clone()),
+                    span,
+                    repair: None,
+                    confidence: 1.0,
+                    file,
+                }),
+                Some(other) => local.push(Diagnostic {
+                    severity: Severity::Error,
+                    code: "T006".into(),
+                    message: format!(
+                        "constraint violation at '{}': {shown_source} must evaluate to a boolean, got {}",
+                        display_path(&ann.path),
+                        value_kind_name(&other),
+                    ),
+                    path: Some(ann.path.clone()),
+                    span,
+                    repair: None,
+                    confidence: 1.0,
+                    file,
+                }),
+                // Defensive: exotic predicate roots fall back to the
+                // graph result; a missing one cannot happen on
+                // cycle-checked graphs.
+                None => {}
+            }
+        }
+        if !local.is_empty() && !self.resilient {
+            return Err(EvalError::ValidationFailed { diagnostics: local });
+        }
+        diagnostics.extend(local);
         Ok(())
     }
 }
@@ -678,6 +778,204 @@ fn display_path(path: &str) -> &str {
         "<root>"
     } else {
         path
+    }
+}
+
+/// Look up a dotted annotation path in the final tree. Keys are
+/// identifiers by construction, so splitting is exact. Returns None
+/// for removed keys, `let` bindings, and profile-scoped paths (the
+/// caller falls back to the annotated node's value).
+fn lookup_result_path<'v>(result: &'v Value, path: &str) -> Option<&'v Value> {
+    let mut cursor = result;
+    for segment in path.split('.') {
+        match cursor {
+            Value::Table(map) => cursor = map.get(segment)?,
+            _ => return None,
+        }
+    }
+    Some(cursor)
+}
+
+/// Overwrite `overlay` with final-tree values by walking the arena
+/// alongside the result (Table by key, Array by index while lengths
+/// line up). Keys absent from the final tree (patched away) lose
+/// their whole subtree so predicates cannot read stale descendants;
+/// length-changed arrays lose theirs for the same reason (positions
+/// no longer correspond). `let` bindings keep their evaluated values
+/// (they never transform).
+fn overlay_values(
+    module: &Module,
+    node_id: NodeId,
+    value: &Value,
+    overlay: &mut HashMap<NodeId, Value>,
+) {
+    overlay.insert(node_id, value.clone());
+    match (module.get(node_id), value) {
+        (Some(Node::Table { fields }), Value::Table(map)) => {
+            for (key, child_id) in fields {
+                match map.get(key) {
+                    Some(child_value) => overlay_values(module, *child_id, child_value, overlay),
+                    None => {
+                        remove_subtree(module, *child_id, overlay);
+                    }
+                }
+            }
+        }
+        (Some(Node::Array { elements }), Value::Array(values))
+            if elements.len() == values.len() =>
+        {
+            for (child_id, child_value) in elements.iter().zip(values.iter()) {
+                overlay_values(module, *child_id, child_value, overlay);
+            }
+        }
+        (Some(Node::Array { .. }), Value::Array(_)) => {
+            remove_subtree(module, node_id, overlay);
+            overlay.insert(node_id, value.clone());
+        }
+        _ => {}
+    }
+}
+
+/// Remove a node and every composite descendant from the overlay, so
+/// no predicate can observe pre-transform values through a removed
+/// (or reshaped) subtree. Expression nodes hold no independent state
+/// beyond their children, so Table/Array descent suffices.
+fn remove_subtree(module: &Module, node_id: NodeId, overlay: &mut HashMap<NodeId, Value>) {
+    overlay.remove(&node_id);
+    match module.get(node_id) {
+        Some(Node::Table { fields }) => {
+            for child_id in fields.values() {
+                remove_subtree(module, *child_id, overlay);
+            }
+        }
+        Some(Node::Array { elements }) => {
+            for child_id in elements {
+                remove_subtree(module, *child_id, overlay);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Evaluate a constraint predicate against the post-transform overlay
+/// (spec/annotations.md §3). Literals evaluate directly; references
+/// read the overlay (final values); operators reuse the main
+/// evaluator's pure functions. Anything exotic (interpolation,
+/// tables, secrets-as-values) falls back to its graph result via the
+/// overlay entry, which the walk above already finalized.
+fn predicate_value(
+    module: &Module,
+    overlay: &HashMap<NodeId, Value>,
+    base: &HashMap<NodeId, Value>,
+    expr: NodeId,
+) -> Option<Value> {
+    match module.get(expr) {
+        Some(Node::Literal(v)) => Some(v.clone()),
+        Some(Node::Ref(target)) => overlay.get(target).cloned(),
+        Some(Node::Ident(name)) => module
+            .bindings
+            .get(name)
+            .and_then(|target| overlay.get(target))
+            .cloned(),
+        Some(Node::Binary { op, lhs, rhs }) => {
+            let l = predicate_value(module, overlay, base, *lhs)?;
+            let r = predicate_value(module, overlay, base, *rhs)?;
+            eval_binary(*op, &l, &r).ok()
+        }
+        Some(Node::Unary { op, expr }) => {
+            let v = predicate_value(module, overlay, base, *expr)?;
+            eval_unary(*op, &v).ok()
+        }
+        // Composite or opaque nodes: their overlay entry already holds
+        // the finalized value (walked above for reachable nodes).
+        _ => overlay
+            .get(&expr)
+            .cloned()
+            .or_else(|| base.get(&expr).cloned()),
+    }
+}
+
+/// Render a constraint source for T006: secret-bearing predicates
+/// render generic so no locator or literal can leak; every source
+/// truncates to 120 characters total. A predicate counts as
+/// secret-bearing when a `Secret` node is reachable — following
+/// references and `let` bindings, so indirection cannot smuggle
+/// secret material into a message either.
+fn render_source(module: &Module, source: &str, expr: NodeId) -> String {
+    if subtree_has_secret(module, expr) {
+        return "constraint".to_string();
+    }
+    truncate_120(source)
+}
+
+/// True when a `Secret` node is reachable from `expr`, following
+/// references and `let` bindings as well as composite children
+/// (cycle-free DAG walk with a visited set for determinism).
+fn subtree_has_secret(module: &Module, expr: NodeId) -> bool {
+    let mut stack = vec![expr];
+    let mut seen = std::collections::HashSet::new();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        match module.get(id) {
+            None => {}
+            Some(Node::Secret { .. }) => return true,
+            Some(Node::Ref(target)) => stack.push(*target),
+            Some(Node::Ident(name)) => {
+                if let Some(target) = module.bindings.get(name) {
+                    stack.push(*target);
+                }
+            }
+            Some(Node::Binary { lhs, rhs, .. }) => stack.extend([*lhs, *rhs]),
+            Some(Node::Unary { expr, .. }) => stack.push(*expr),
+            Some(Node::Array { elements }) => stack.extend(elements.iter().copied()),
+            Some(Node::Table { fields }) => stack.extend(fields.values().copied()),
+            Some(Node::Interpolate { parts }) => {
+                for part in parts {
+                    if let crate::ir::InterpPart::Expr(e) = part {
+                        stack.push(*e);
+                    }
+                }
+            }
+            Some(Node::Semantic { inner, .. }) => stack.push(*inner),
+            Some(Node::Env {
+                default: Some(def), ..
+            }) => stack.push(*def),
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Render an actual value for T006 (spec/annotations.md §6): secrets
+/// as `secret`, strings debug-quoted, scalars plain, containers by
+/// kind — truncated to 120 characters. Secret material can never
+/// reach a message through here.
+fn render_constrained(value: &Value) -> String {
+    let text = match value {
+        Value::Secret(_) => "secret".to_string(),
+        Value::String(s) => format!("{s:?}"),
+        Value::Int(i) => i.to_string(),
+        Value::Float(f) => f.to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Null => "null".to_string(),
+        Value::DurationMs(ms) => format!("{ms}ms"),
+        Value::Quantity(n, unit) => format!("{n}{}", unit.suffix()),
+        Value::Array(_) => "array".to_string(),
+        Value::Table(_) => "table".to_string(),
+    };
+    truncate_120(&text)
+}
+
+/// Truncate rendered diagnostic text to 120 characters total
+/// (119 content characters plus the ellipsis marker).
+fn truncate_120(text: &str) -> String {
+    const LIMIT: usize = 120;
+    if text.chars().count() > LIMIT {
+        format!("{}…", text.chars().take(LIMIT - 1).collect::<String>())
+    } else {
+        text.to_string()
     }
 }
 

@@ -16,8 +16,8 @@ pub mod validate;
 pub use diag::{Diagnostic, Repair, RepairKind, Severity};
 pub use eval::{Engine, EvalError};
 pub use ir::{
-    Attachment, BinOp, IncludeStmt, Module, Node, NodeId, PatchOp, SchemaField, SemanticTag, Style,
-    TriviaComment, UnOp, Value,
+    Annotation, AnnotationKind, Attachment, BinOp, IncludeStmt, Module, Node, NodeId, PatchOp,
+    SchemaField, SemanticTag, Style, TriviaComment, UnOp, Value,
 };
 pub use parser::{parse, parse_file, parse_recovering, parse_with, ParseOptions};
 pub use types::{Constraint, Unit};

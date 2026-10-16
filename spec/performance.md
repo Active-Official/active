@@ -16,8 +16,13 @@ criterion benches and the CodSpeed CI plugin.
   noise floor).
 
 Run with `cargo bench`; tracked continuously by the CodSpeed
-GitHub workflow (`.github/workflows/codspeed.yml`), which fails
-on significant regression vs the base branch.
+GitHub workflow (`.github/workflows/codspeed.yml`: `cargo codspeed
+build`, then the action with `mode: simulation` and
+`run: cargo codspeed run`), which fails on significant regression
+vs the base branch. Plain `cargo bench` under the action does not
+work — the compat crate requires the runner environment and panics
+without it — so the workflow shape follows the CodSpeed Rust docs
+exactly; local runs fall back to stock criterion.
 
 ## 2. Incremental evaluation (`Engine::evaluate_incremental`)
 

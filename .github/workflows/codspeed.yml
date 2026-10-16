@@ -2,9 +2,17 @@ name: CodSpeed
 
 # Continuous benchmarking for the C-055 performance contract
 # (spec/performance.md): every push/PR runs the criterion suite
-# through the CodSpeed runner, which fails on significant
-# regression vs the base branch. Local runs use plain
-# `cargo bench -p solid-core --bench eval`.
+# through the CodSpeed runner in simulation mode, which fails on
+# significant regression vs the base branch. Local runs use plain
+# `cargo bench -p solid-core --bench eval` (the compat crate falls
+# back to stock criterion outside the runner).
+#
+# Shape follows the CodSpeed Rust docs exactly: `cargo codspeed
+# build`, then the action with `mode: simulation` and
+# `run: cargo codspeed run`. Plain `cargo bench` under the action
+# does NOT work (the compat crate panics without the runner env).
+# OIDC (`id-token: write`) authenticates public repos — no token
+# secret needed.
 on:
   push:
     branches: [main]
@@ -19,11 +27,21 @@ jobs:
   benchmarks:
     name: Benchmarks (CodSpeed)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Run benchmarks
-        uses: CodSpeedHQ/action@v3
+      - name: Setup rust toolchain, cache and cargo-codspeed binary
+        uses: moonrepo/setup-rust@v0
         with:
-          run: cargo bench -p solid-core --bench eval --locked
+          channel: stable
+          cache-target: release
+          bins: cargo-codspeed
+      - name: Build the benchmark target(s)
+        run: cargo codspeed build
+      - name: Run benchmarks
+        uses: CodSpeedHQ/action@v5
+        with:
+          mode: simulation
+          run: cargo codspeed run

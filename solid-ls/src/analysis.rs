@@ -16,6 +16,7 @@ use lsp_types::{
     InlayHint, InlayHintKind, Location, MarkupContent, MarkupKind, Position, Range, TextEdit, Url,
     WorkspaceEdit,
 };
+use serde_json::Value as JsonValue;
 use solid_core::{
     lint, parse_recovering, parse_text_recovering_with_file, AnnotationKind, Diagnostic, Engine,
     Module, Node, NodeId, ParseOptions, RepairKind, Severity, Value,
@@ -2639,4 +2640,41 @@ fn depends_on_actions(doc: &Doc, range: Range) -> Vec<CodeAction> {
         });
     }
     out
+}
+
+// ------------------------------------------------------------------
+// Dependency-graph queries (C-049, spec/graph.md §5).
+// ------------------------------------------------------------------
+
+/// Whole-document graph snapshot: Mermaid, DOT, and the JSON model.
+pub fn graph_snapshot(doc: &Doc) -> (String, String, JsonValue) {
+    (
+        solid_core::graph::to_mermaid(&doc.module),
+        solid_core::graph::to_dot(&doc.module),
+        solid_core::graph::to_graph_json(&doc.module),
+    )
+}
+
+/// Impact query at a 0-based cursor: the symbol's path plus the
+/// sorted paths of everything that transitively depends on it.
+/// Identifiers and interpolation references initiate (like
+/// references); anything else yields None.
+pub fn impact_at(doc: &Doc, line: u32, character: u32) -> Option<(String, Vec<String>)> {
+    let (_, target) = symbol_at(doc, line, character)?;
+    let (node, path) = match &target {
+        Target::Let { name, node } => (*node, name.clone()),
+        Target::Key { path, node } => (*node, path.clone()),
+    };
+    Some((path, solid_core::graph::impact_paths(&doc.module, node)))
+}
+
+/// Why query at a 0-based cursor: the symbol's path plus the sorted
+/// paths it transitively depends on. Same initiation as impact.
+pub fn why_at(doc: &Doc, line: u32, character: u32) -> Option<(String, Vec<String>)> {
+    let (_, target) = symbol_at(doc, line, character)?;
+    let (node, path) = match &target {
+        Target::Let { name, node } => (*node, name.clone()),
+        Target::Key { path, node } => (*node, path.clone()),
+    };
+    Some((path, solid_core::graph::why_paths(&doc.module, node)))
 }

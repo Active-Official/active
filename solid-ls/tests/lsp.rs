@@ -1418,6 +1418,43 @@ fn convert_range_excludes_crlf_terminators() {
 }
 
 // ------------------------------------------------------------------
+// C-049: dependency-graph queries.
+// ------------------------------------------------------------------
+
+const GRAPH_DOC: &str = "let base = 1\n[a]\nx = base\ny = x\n";
+
+#[test]
+fn impact_and_why_handlers_answer_from_the_cursor() {
+    let doc = open_untitled("graph", GRAPH_DOC);
+    // `base` use on line 2: impact lists its consumers.
+    let (key, paths) = analysis::impact_at(&doc, 2, 6).expect("impact");
+    assert_eq!(key, "base");
+    assert!(paths.contains(&"a.x".to_string()), "{paths:?}");
+    assert!(paths.contains(&"a.y".to_string()), "{paths:?}");
+    // `y` definition on line 3: why lists its ingredients.
+    let (key, paths) = analysis::why_at(&doc, 3, 0).expect("why");
+    assert_eq!(key, "a.y");
+    assert!(paths.contains(&"a.x".to_string()), "{paths:?}");
+    assert!(paths.contains(&"base".to_string()), "{paths:?}");
+    // Comments initiate nothing.
+    let doc = open_untitled("graphquiet", "# base\nport = 1\n");
+    assert!(analysis::impact_at(&doc, 0, 3).is_none());
+    assert!(analysis::why_at(&doc, 0, 3).is_none());
+}
+
+#[test]
+fn graph_snapshot_covers_all_formats() {
+    let doc = open_untitled("graphshot", GRAPH_DOC);
+    let (mermaid, dot, json) = analysis::graph_snapshot(&doc);
+    assert!(mermaid.starts_with("flowchart TD"), "{mermaid}");
+    assert!(dot.starts_with("digraph solid {"), "{dot}");
+    assert!(
+        json.get("nodes").is_some() && json.get("edges").is_some(),
+        "{json}"
+    );
+}
+
+// ------------------------------------------------------------------
 // End-to-end: real binary over stdio.
 // ------------------------------------------------------------------
 
@@ -1872,6 +1909,77 @@ fn stdio_code_action_over_wire() {
             .is_some_and(|title| title.starts_with("Apply healing (H"))),
         "{actions:?}"
     );
+    server.shutdown();
+}
+
+#[test]
+fn stdio_graph_methods_over_wire() {
+    let (_uri, path) = temp_fixture("lspgraph.solid", GRAPH_DOC);
+    let file_uri = lsp_types::Url::from_file_path(&path).expect("file uri");
+    let uri = file_uri.to_string();
+
+    let mut server = Framed::spawn();
+    server.request(
+        "initialize",
+        serde_json::json!({"processId": null, "capabilities": {}}),
+    );
+    server.notify("initialized", serde_json::json!({}));
+    server.notify(
+        "textDocument/didOpen",
+        serde_json::json!({
+            "textDocument": {
+                "uri": uri,
+                "languageId": "solid",
+                "version": 1,
+                "text": GRAPH_DOC,
+            }
+        }),
+    );
+    let _ = server.recv_notification("textDocument/publishDiagnostics");
+    let graph = server.request(
+        "solid/graph",
+        serde_json::json!({"textDocument": {"uri": uri}}),
+    );
+    assert!(
+        graph["result"]["mermaid"]
+            .as_str()
+            .is_some_and(|m| m.starts_with("flowchart TD")),
+        "{graph}"
+    );
+    assert!(
+        graph["result"]["dot"]
+            .as_str()
+            .is_some_and(|d| d.starts_with("digraph solid {")),
+        "{graph}"
+    );
+    assert!(graph["result"]["json"]["nodes"].is_array(), "{graph}");
+    let impact = server.request(
+        "solid/impact",
+        serde_json::json!({
+            "textDocument": {"uri": uri},
+            "position": {"line": 2, "character": 6},
+        }),
+    );
+    assert_eq!(impact["result"]["key"], "base", "{impact}");
+    assert!(
+        impact["result"]["paths"]
+            .as_array()
+            .expect("paths")
+            .iter()
+            .any(|p| p == "a.y"),
+        "{impact}"
+    );
+    let why = server.request(
+        "solid/why",
+        serde_json::json!({
+            "textDocument": {"uri": uri},
+            "position": {"line": 3, "character": 0},
+        }),
+    );
+    assert_eq!(why["result"]["key"], "a.y", "{why}");
+    // Malformed params are InvalidParams, not hangs.
+    let bad = server.request("solid/impact", serde_json::json!({}));
+    assert_eq!(bad["error"]["code"], -32602, "{bad}");
     server.shutdown();
 }
 

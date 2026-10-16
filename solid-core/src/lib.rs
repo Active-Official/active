@@ -7,6 +7,7 @@ pub mod convert;
 pub mod diag;
 pub mod eval;
 pub mod fmt;
+pub mod graph;
 pub mod heal;
 pub mod ir;
 pub mod lint;

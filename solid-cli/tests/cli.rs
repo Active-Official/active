@@ -674,3 +674,109 @@ fn doc_rejects_bad_targets_and_broken_files() {
         .expect("run solid");
     assert!(!out.status.success(), "broken input must fail");
 }
+
+// ------------------------------------------------------------------
+// Graph CLI contract (C-049, spec/graph.md §3).
+// ------------------------------------------------------------------
+
+const GRAPH_DOC: &str = "let base = 1\n[a]\nx = base\ny = x\n";
+
+#[test]
+fn graph_serves_all_four_formats() {
+    let f = fixture("graph_doc.solid", GRAPH_DOC);
+    let out = solid().args(["graph"]).arg(&f).output().expect("run solid");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("Bindings:"), "{text}");
+    assert!(text.contains("→"), "{text}");
+    let out = solid()
+        .args(["graph", "--format", "mermaid"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    let mermaid = String::from_utf8_lossy(&out.stdout);
+    assert!(mermaid.starts_with("flowchart TD"), "{mermaid}");
+    let out = solid()
+        .args(["graph", "--format", "dot"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(
+        String::from_utf8_lossy(&out.stdout).starts_with("digraph solid {"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let out = solid()
+        .args(["graph", "--format", "json"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).expect("valid json");
+    assert!(
+        json.get("nodes").is_some() && json.get("edges").is_some(),
+        "{json}"
+    );
+    let out = solid()
+        .args(["graph", "--format", "xml"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(!out.status.success(), "unknown format must fail");
+}
+
+#[test]
+fn impact_and_why_answer_with_paths_and_json() {
+    let f = fixture("graph_impact.solid", GRAPH_DOC);
+    let out = solid()
+        .args(["impact", "base"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("a.x"), "{text}");
+    assert!(text.contains("a.y"), "{text}");
+    let out = solid()
+        .args(["impact", "base", "--format", "json"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).expect("valid json");
+    assert_eq!(json["key"], "base");
+    assert!(json["paths"].as_array().expect("paths").len() >= 2);
+    let out = solid()
+        .args(["why", "a.y"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("a.x"), "{text}");
+    assert!(text.contains("base"), "{text}");
+    let out = solid()
+        .args(["impact", "nowhere"])
+        .arg(&f)
+        .output()
+        .expect("run solid");
+    assert!(!out.status.success(), "unknown keys must fail");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(combined.contains("nowhere"), "{combined}");
+}

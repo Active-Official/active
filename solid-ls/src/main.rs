@@ -231,6 +231,50 @@ fn handle_request(open: &mut HashMap<String, Doc>, req: Request) -> Option<Respo
                 .map(|doc| analysis::code_actions(doc, params.range));
             Some(Response::new_ok(req.id, result))
         }
+        // Dependency-graph queries for agents and dashboards
+        // (spec/graph.md §5): custom methods, no capability needed.
+        "solid/graph" => {
+            let Some(uri) = text_doc_uri(&req.params) else {
+                return Some(Response::new_err(
+                    req.id,
+                    ErrorCode::InvalidParams as i32,
+                    "solid/graph needs {textDocument: {uri}}".to_string(),
+                ));
+            };
+            let result = doc_at(open, &uri).map(|doc| {
+                let (mermaid, dot, json) = analysis::graph_snapshot(doc);
+                serde_json::json!({"mermaid": mermaid, "dot": dot, "json": json})
+            });
+            Some(Response::new_ok(req.id, result))
+        }
+        "solid/impact" => {
+            let Some((uri, line, character)) = text_doc_position(&req.params) else {
+                return Some(Response::new_err(
+                    req.id,
+                    ErrorCode::InvalidParams as i32,
+                    "solid/impact needs {textDocument, position}".to_string(),
+                ));
+            };
+            let result = doc_at(open, &uri).and_then(|doc| {
+                analysis::impact_at(doc, line, character)
+                    .map(|(key, paths)| serde_json::json!({"key": key, "paths": paths}))
+            });
+            Some(Response::new_ok(req.id, result))
+        }
+        "solid/why" => {
+            let Some((uri, line, character)) = text_doc_position(&req.params) else {
+                return Some(Response::new_err(
+                    req.id,
+                    ErrorCode::InvalidParams as i32,
+                    "solid/why needs {textDocument, position}".to_string(),
+                ));
+            };
+            let result = doc_at(open, &uri).and_then(|doc| {
+                analysis::why_at(doc, line, character)
+                    .map(|(key, paths)| serde_json::json!({"key": key, "paths": paths}))
+            });
+            Some(Response::new_ok(req.id, result))
+        }
         _ => Some(Response::new_err(
             // Requests always get a response: an unknown method is
             // MethodNotFound, never silence (a hanging client is
@@ -245,6 +289,24 @@ fn handle_request(open: &mut HashMap<String, Doc>, req: Request) -> Option<Respo
 
 fn doc_at<'a>(open: &'a HashMap<String, Doc>, uri: &lsp_types::Url) -> Option<&'a Doc> {
     open.get(&uri.to_string())
+}
+
+/// Client URI from custom-method params (`{textDocument: {uri}}`).
+fn text_doc_uri(params: &serde_json::Value) -> Option<lsp_types::Url> {
+    params
+        .get("textDocument")?
+        .get("uri")?
+        .as_str()
+        .and_then(|uri| uri.parse().ok())
+}
+
+/// Client URI plus 0-based position from custom-method params.
+fn text_doc_position(params: &serde_json::Value) -> Option<(lsp_types::Url, u32, u32)> {
+    let uri = text_doc_uri(params)?;
+    let position = params.get("position")?;
+    let line = position.get("line")?.as_u64()? as u32;
+    let character = position.get("character")?.as_u64()? as u32;
+    Some((uri, line, character))
 }
 
 /// Publish notification for a document's current diagnostics.

@@ -97,9 +97,12 @@ enum Commands {
         #[command(flatten)]
         budget: BudgetArgs,
     },
-    /// Show dependency graph in simple text form
+    /// Show dependency graph (text, Mermaid, DOT, or JSON)
     Graph {
         file: PathBuf,
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
         /// Enable medium-confidence healing repairs (resilient mode)
         #[arg(long)]
         resilient: bool,
@@ -109,6 +112,36 @@ enum Commands {
         /// Select a profile by name, overriding the active_profile key
         #[arg(long)]
         profile: Option<String>,
+    },
+    /// List what breaks if a key's value changes (transitive dependents)
+    Impact {
+        /// Dotted key path (or `let` name)
+        key: String,
+        file: PathBuf,
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
+        /// Enable medium-confidence healing repairs (resilient mode)
+        #[arg(long)]
+        resilient: bool,
+        /// Allow includes to use absolute paths or escape the directory
+        #[arg(long)]
+        allow_parent_escapes: bool,
+    },
+    /// List what a key's value is built from (transitive dependencies)
+    Why {
+        /// Dotted key path (or `let` name)
+        key: String,
+        file: PathBuf,
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
+        /// Enable medium-confidence healing repairs (resilient mode)
+        #[arg(long)]
+        resilient: bool,
+        /// Allow includes to use absolute paths or escape the directory
+        #[arg(long)]
+        allow_parent_escapes: bool,
     },
     /// Convert evaluated result to JSON, YAML, or TOML
     Convert {
@@ -202,6 +235,23 @@ fn engine(resilient: bool, profile: &Option<String>, budget: Budget) -> Engine {
     engine.profile_override = profile.clone();
     engine.budget = budget;
     engine
+}
+
+/// Parse a file for graph queries (no evaluation needed — the
+/// dependency structure is fully present after parsing).
+fn parse_graph_input(
+    file: &std::path::Path,
+    resilient: bool,
+    allow_parent_escapes: bool,
+) -> anyhow::Result<(solid_core::Module, String)> {
+    let name = file.to_string_lossy().to_string();
+    let module = parse_file(file, options(resilient, allow_parent_escapes)).map_err(|diags| {
+        for d in &diags {
+            report(d, &name);
+        }
+        anyhow::anyhow!("parse failed")
+    })?;
+    Ok((module, name))
 }
 
 /// True when the exit code must be non-zero: strict mode fails on any
@@ -337,6 +387,7 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Graph {
             file,
+            format,
             resilient,
             allow_parent_escapes,
             profile: _,
@@ -353,18 +404,79 @@ fn main() -> anyhow::Result<()> {
                 report(d, &name);
             }
 
-            println!("Bindings:");
-            for (name, id) in &module.bindings {
-                println!("  let {} = NodeId({})", name, id.0);
-            }
-            println!("\nGraph edges (dependency → dependent):");
-            for edge in module.graph.raw_edges() {
-                let from = module.graph[edge.source()];
-                let to = module.graph[edge.target()];
-                println!("  NodeId({}) → NodeId({})", from.0, to.0);
+            match format.as_str() {
+                "text" => {
+                    println!("Bindings:");
+                    let mut bindings: Vec<(&String, &solid_core::NodeId)> =
+                        module.bindings.iter().collect();
+                    bindings.sort_by(|a, b| a.0.cmp(b.0));
+                    for (name, id) in bindings {
+                        println!("  let {} = NodeId({})", name, id.0);
+                    }
+                    println!("\nGraph edges (dependency → dependent):");
+                    for edge in module.graph.raw_edges() {
+                        let from = module.graph[edge.source()];
+                        let to = module.graph[edge.target()];
+                        println!(
+                            "  {} → {}",
+                            solid_core::graph::node_label(&module, from),
+                            solid_core::graph::node_label(&module, to)
+                        );
+                    }
+                }
+                "mermaid" => println!("{}", solid_core::graph::to_mermaid(&module)),
+                "dot" => println!("{}", solid_core::graph::to_dot(&module)),
+                "json" => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&solid_core::graph::to_graph_json(&module))
+                        .unwrap_or_default()
+                ),
+                other => anyhow::bail!("unsupported format: {}", other),
             }
             if had_failure(&module.healing, resilient) {
                 std::process::exit(1);
+            }
+        }
+        Commands::Impact {
+            key,
+            file,
+            format,
+            resilient,
+            allow_parent_escapes,
+        } => {
+            let (module, filename) = parse_graph_input(&file, resilient, allow_parent_escapes)?;
+            let id = solid_core::graph::resolve_key(&module, &key)
+                .ok_or_else(|| anyhow::anyhow!("unknown key '{key}' in {filename}"))?;
+            let paths = solid_core::graph::impact_paths(&module, id);
+            match format.as_str() {
+                "text" => {
+                    for path in paths {
+                        println!("{path}");
+                    }
+                }
+                "json" => println!("{}", serde_json::json!({"key": key, "paths": paths})),
+                other => anyhow::bail!("unsupported format: {}", other),
+            }
+        }
+        Commands::Why {
+            key,
+            file,
+            format,
+            resilient,
+            allow_parent_escapes,
+        } => {
+            let (module, filename) = parse_graph_input(&file, resilient, allow_parent_escapes)?;
+            let id = solid_core::graph::resolve_key(&module, &key)
+                .ok_or_else(|| anyhow::anyhow!("unknown key '{key}' in {filename}"))?;
+            let paths = solid_core::graph::why_paths(&module, id);
+            match format.as_str() {
+                "text" => {
+                    for path in paths {
+                        println!("{path}");
+                    }
+                }
+                "json" => println!("{}", serde_json::json!({"key": key, "paths": paths})),
+                other => anyhow::bail!("unsupported format: {}", other),
             }
         }
         Commands::Convert {

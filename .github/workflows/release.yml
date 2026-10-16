@@ -145,10 +145,17 @@ jobs:
         # `solid keygen` (written to a file: --key takes a path, not
         # hex). Sidecars record kid "solid-release"; verify against a
         # trust file with id "solid-release" + the release public key.
-        if: ${{ secrets.RELEASE_SIGNING_KEY != '' }}
+        # Gated in-shell (not `if: secrets...`, which the dispatcher
+        # rejects): absent key skips quietly, branch stays green.
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
         shell: bash
         run: |
-          echo "${{ secrets.RELEASE_SIGNING_KEY }}" > "$RUNNER_TEMP/release.key"
+          if [ -z "$RELEASE_SIGNING_KEY" ]; then
+            echo "no release key configured; skipping signatures"
+            exit 0
+          fi
+          echo "$RELEASE_SIGNING_KEY" > "$RUNNER_TEMP/release.key"
           cd dist
           for f in solid-*.tar.gz solid-*.zip solid-lang-*.vsix; do
             "$GITHUB_WORKSPACE/target/debug/solid" sign --key "$RUNNER_TEMP/release.key" --kid solid-release "$f"
@@ -164,10 +171,15 @@ jobs:
             and verification (SHA256SUMS, build attestations, `.sig` sidecars
             when the release key is set).
       - name: Publish crates (needs CARGO_REGISTRY_TOKEN or trusted publishing)
-        if: ${{ secrets.CARGO_REGISTRY_TOKEN != '' }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         shell: bash
         run: |
-          cargo login "${{ secrets.CARGO_REGISTRY_TOKEN }}"
+          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "no registry token and no trusted-publishing link; skipping crates.io publish"
+            exit 0
+          fi
+          cargo login "$CARGO_REGISTRY_TOKEN"
           # Registry index lag breaks dependents published back to
           # back: lock files, publish in dependency order, pause
           # between crates.

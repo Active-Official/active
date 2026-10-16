@@ -189,6 +189,7 @@ fn parse_recovering_impl(
         include_stack: Vec::new(),
         in_include: false,
         binding_spliced: std::collections::HashSet::new(),
+        pending_profiles: Vec::new(),
     };
     // Lexer diagnostics carry no file; stamp the session file (includes
     // attribute their own file when their sub-parse runs).
@@ -365,6 +366,10 @@ struct Parser {
     /// `let` clears its mark, so later includes skip it (local-wins)
     /// while earlier-only names cascade.
     binding_spliced: std::collections::HashSet<String>,
+    /// Profile scopes awaiting the final resolution pass: their ident
+    /// nodes plus a copy of their fields. Resolved after the document
+    /// root completes so profiles see root keys (forward-safe).
+    pending_profiles: Vec<ProfileScope>,
 }
 
 impl Parser {
@@ -420,6 +425,10 @@ struct PendingInclude {
     private: bool,
     tok: Token,
 }
+
+/// A profile scope stashed for the final resolution pass: ident nodes
+/// (with owning keys) plus a copy of the profile's fields.
+type ProfileScope = (Vec<(String, NodeId)>, indexmap::IndexMap<String, NodeId>);
 
 /// What terminates a statement body (spec/dual-syntax.md §5.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -650,9 +659,29 @@ impl Parser {
                     }
                 },
                 // A header body ends (without consuming) when the next
-                // statement belongs to the enclosing scope.
+                // statement belongs to the enclosing scope: a new header,
+                // a `let`, or a document-level `profile`/`include`
+                // statement (spec §2.7, §2.8). Only column-0 (header-level)
+                // statements terminate: indented content stays nested, so
+                // a nested `profile` still earns E018 and a nested
+                // `include` merges into its true scope.
                 TokenKind::LBracket | TokenKind::Let if matches!(end, BodyEnd::HeaderBody(_)) => {
                     return
+                }
+                TokenKind::Ident => {
+                    let t = self.peek().clone();
+                    if let BodyEnd::HeaderBody(level) = end {
+                        if (t.text == "profile" || t.text == "include")
+                            && t.col.saturating_sub(1) as usize <= level
+                            && !matches!(
+                                self.peek_kind_at(1),
+                                TokenKind::Assign | TokenKind::Colon | TokenKind::LBrace
+                            )
+                        {
+                            return;
+                        }
+                    }
+                    self.parse_ident_statement(fields, pending);
                 }
                 TokenKind::Indent => {
                     // E010 unexpected indentation (§6): consume the Indent,
@@ -664,7 +693,6 @@ impl Parser {
                 }
                 TokenKind::Let => self.parse_let(),
                 TokenKind::LBracket => self.parse_table_header(fields),
-                TokenKind::Ident => self.parse_ident_statement(fields, pending),
                 TokenKind::At => {
                     // Bare `@tag """…"""` statement: binds under the tag
                     // name itself (spec §1.4.1), so AI prompt files read
@@ -693,9 +721,9 @@ impl Parser {
     }
 
     /// Dispatch a statement that begins with an identifier: `key = value`,
-    /// `key: value`, `key:` block header, `key { … }` table block, or an
-    /// `include` statement (`include` is contextual: followed by `=`, `:`,
-    /// or `{` it stays an ordinary key).
+    /// `key: value`, `key:` block header, `key { … }` table block, an
+    /// `include` statement, or a `profile` block (`include`/`profile` are
+    /// contextual: followed by `=`, `:`, or `{` they stay ordinary keys).
     fn parse_ident_statement(
         &mut self,
         fields: &mut indexmap::IndexMap<String, NodeId>,
@@ -710,6 +738,15 @@ impl Parser {
             )
         {
             self.parse_include(pending);
+            return;
+        }
+        if start.text == "profile"
+            && !matches!(
+                self.peek_kind_at(1),
+                TokenKind::Assign | TokenKind::Colon | TokenKind::LBrace
+            )
+        {
+            self.parse_profile();
             return;
         }
         match self.peek_kind_at(1) {
@@ -737,6 +774,115 @@ impl Parser {
                 self.bump();
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // profile "name" { … }  (spec §2.8, C-027)
+    // ------------------------------------------------------------------
+
+    /// Parse a profile block. Profiles live at document root only and
+    /// merge into the root value at evaluation; they never enter the
+    /// enclosing fields. References to document-root keys resolve in a
+    /// final pass after the root completes (forward-safe).
+    fn parse_profile(&mut self) {
+        let kw = self.bump(); // consume `profile`
+        if !self.current_path.is_empty() {
+            self.error_at(
+                "E018",
+                "profile blocks may only appear at document root",
+                &kw,
+            );
+            return;
+        }
+        let name_tok = self.peek().clone();
+        let name = match &name_tok.kind {
+            TokenKind::String(_)
+            | TokenKind::SingleString
+            | TokenKind::MlString(_)
+            | TokenKind::MlSingleString => {
+                self.bump();
+                // A profile name is a static label; interpolation in it is
+                // meaningless, so require a plain name.
+                if name_tok.text.contains("${") {
+                    self.error_at(
+                        "E018",
+                        "profile names must be plain string literals",
+                        &name_tok,
+                    );
+                    return;
+                }
+                name_tok.text.clone()
+            }
+            _ => {
+                self.error_at("E018", "profile blocks need a string name", &name_tok);
+                return;
+            }
+        };
+        // Normalize the name before anything else: it is a static label,
+        // never interpolated, so an escaped dollar is a plain dollar here.
+        // Normalizing first keeps duplicate detection sound (`"$"` vs
+        // `"\$"` collide instead of silently replacing).
+        let name = name.replace(ESCAPED_DOLLAR, "$");
+        if self.module.profiles.contains_key(&name) {
+            self.error_at("E018", format!("duplicate profile \"{name}\""), &name_tok);
+            return;
+        }
+        // Brace form (`profile "n" { … }`) or indentation form
+        // (`profile "n":` + indented body, spec §2.8).
+        enum ProfileBody {
+            Brace,
+            Block(usize),
+        }
+        let body = match self.peek_kind() {
+            TokenKind::LBrace => {
+                self.bump();
+                ProfileBody::Brace
+            }
+            TokenKind::Colon => {
+                let colon = self.bump();
+                self.skip_newlines();
+                match self.peek_kind() {
+                    TokenKind::Indent => {
+                        let indent = self.bump();
+                        ProfileBody::Block(indent_level(&indent))
+                    }
+                    _ => {
+                        self.error_at("E018", "profile block has no indented body", &colon);
+                        return;
+                    }
+                }
+            }
+            _ => {
+                let tok = self.peek().clone();
+                self.error_at("E018", "expected `{` or `:` after the profile name", &tok);
+                return;
+            }
+        };
+        self.record_stmt(
+            &name,
+            kw.line,
+            self.last_end_line(),
+            kw.col.saturating_sub(1) as usize,
+        );
+        self.current_path.push(name.clone());
+        self.ident_scopes.push(Vec::new());
+        let mut fields = indexmap::IndexMap::new();
+        let mut pending = Vec::new();
+        match body {
+            ProfileBody::Brace => self.parse_body(&mut fields, BodyEnd::Brace, &mut pending),
+            ProfileBody::Block(level) => {
+                self.parse_body(&mut fields, BodyEnd::Block(level), &mut pending)
+            }
+        }
+        self.splice_includes(&mut fields, pending);
+        let idents = self.ident_scopes.pop().unwrap_or_default();
+        // Sibling resolution against the profile's own fields happens in
+        // the final pass (together with the root fallback) so forward
+        // references work uniformly.
+        self.pending_profiles.push((idents, fields.clone()));
+        let table_id = self.module.add_node(Node::Table { fields });
+        self.current_path.pop();
+        self.module.profiles.insert(name, table_id);
     }
 
     // ------------------------------------------------------------------
@@ -1310,7 +1456,7 @@ impl Parser {
         self.parse_body(&mut fields, BodyEnd::Block(level), &mut pending);
         self.splice_includes(&mut fields, pending);
         let idents = self.ident_scopes.pop().unwrap_or_default();
-        self.resolve_sibling_refs(idents, &fields);
+        let _ = self.resolve_sibling_refs(idents, &fields);
         let table_id = self.module.add_node(Node::Table { fields });
         self.statements[stmt_idx].end_line = self.last_end_line();
         self.current_path.pop();
@@ -1346,7 +1492,7 @@ impl Parser {
         self.parse_body(&mut fields, BodyEnd::Brace, &mut pending);
         self.splice_includes(&mut fields, pending);
         let idents = self.ident_scopes.pop().unwrap_or_default();
-        self.resolve_sibling_refs(idents, &fields);
+        let _ = self.resolve_sibling_refs(idents, &fields);
         let table_id = self.module.add_node(Node::Table { fields });
         self.statements[stmt_idx].end_line = self.last_end_line();
         self.current_path.pop();
@@ -1482,7 +1628,30 @@ impl Parser {
         self.splice_includes(&mut root_fields, pending);
 
         let root_idents = self.ident_scopes.pop().unwrap_or_default();
-        self.resolve_sibling_refs(root_idents, &root_fields);
+        let _ = self.resolve_sibling_refs(root_idents, &root_fields);
+
+        // Final profile pass (spec §2.6): each profile scope resolves
+        // against its own fields, then the leftovers fall back to the
+        // completed root fields, so profiles reference base keys forward
+        // and backward. Anything still unresolved falls through to `let`
+        // bindings in build_graph, then W001. Runs only at the top-level
+        // document: included files stash theirs for the outer pass so
+        // every profile sees the composed root.
+        if !self.in_include {
+            let profiles = std::mem::take(&mut self.pending_profiles);
+            for (idents, prof_fields) in profiles {
+                let leftover = self.resolve_sibling_refs(idents, &prof_fields);
+                // Root fallback: a profile key may shadow a base key of
+                // the same name (`port = port`), so the self-reference
+                // exclusion is lifted here — the nodes differ, no cycle
+                // is possible (base keys never reference profiles).
+                let unowned: Vec<(String, NodeId)> = leftover
+                    .into_iter()
+                    .map(|(_, id)| (String::new(), id))
+                    .collect();
+                let _ = self.resolve_sibling_refs(unowned, &root_fields);
+            }
+        }
 
         let root_id = self.module.add_node(Node::Table {
             fields: root_fields,
@@ -1561,7 +1730,7 @@ impl Parser {
         self.parse_body(&mut fields, BodyEnd::HeaderBody(header_level), &mut pending);
         self.splice_includes(&mut fields, pending);
         let idents = self.ident_scopes.pop().unwrap_or_default();
-        self.resolve_sibling_refs(idents, &fields);
+        let _ = self.resolve_sibling_refs(idents, &fields);
         let table_id = self.module.add_node(Node::Table { fields });
         self.statements[stmt_idx].end_line = self.last_end_line();
         self.current_path.pop();
@@ -1595,12 +1764,14 @@ impl Parser {
     /// Rewrite Ident nodes collected in `idents` that match a sibling key of
     /// the just-parsed scope into Ref nodes with dependency edges. Runs after
     /// the whole scope is parsed, so forward references within the scope
-    /// resolve too.
+    /// resolve too. Returns the idents that matched nothing, for fallback
+    /// passes (profile root-fallback, spec §2.6).
     fn resolve_sibling_refs(
         &mut self,
         idents: Vec<(String, NodeId)>,
         fields: &indexmap::IndexMap<String, NodeId>,
-    ) {
+    ) -> Vec<(String, NodeId)> {
+        let mut leftover = Vec::new();
         for (owner_key, id) in idents {
             let name = match self.module.get(id) {
                 Some(Node::Ident(n)) => n.clone(),
@@ -1609,6 +1780,7 @@ impl Parser {
             // A key's own value expression must not resolve to its own
             // binding; it falls through to let-binding resolution instead.
             if name == owner_key {
+                leftover.push((owner_key, id));
                 continue;
             }
             if let Some(&target) = fields.get(&name) {
@@ -1616,8 +1788,11 @@ impl Parser {
                     *slot = Node::Ref(target);
                 }
                 self.module.add_edge(target, id);
+            } else {
+                leftover.push((owner_key, id));
             }
         }
+        leftover
     }
 
     // ------------------------------------------------------------------
@@ -2452,6 +2627,7 @@ impl Parser {
             include_stack: Vec::new(),
             in_include: self.in_include,
             binding_spliced: self.binding_spliced.clone(),
+            pending_profiles: Vec::new(),
         };
         // Arena ids below this base predate the embedded expression (the
         // sub-parser shares the outer arena); only spans at or above it
@@ -2743,7 +2919,7 @@ impl Parser {
         }
         self.expect_closing_healing(TokenKind::RBrace, "H004");
         let idents = self.ident_scopes.pop().unwrap_or_default();
-        self.resolve_sibling_refs(idents, &fields);
+        let _ = self.resolve_sibling_refs(idents, &fields);
         self.add_spanned(Node::Table { fields }, &open)
     }
 

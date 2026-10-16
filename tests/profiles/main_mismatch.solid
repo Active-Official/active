@@ -1,0 +1,10 @@
+active_profile = "production"
+
+[server]
+port = 8080
+
+profile "production" {
+  server {
+    port = "fast"
+  }
+}

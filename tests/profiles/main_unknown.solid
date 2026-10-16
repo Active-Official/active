@@ -1,0 +1,10 @@
+active_profile = "staging"
+
+[server]
+port = 8080
+
+profile "production" {
+  server {
+    port = 443
+  }
+}

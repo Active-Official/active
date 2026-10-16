@@ -1,0 +1,26 @@
+active_profile = "development"
+
+[server]
+host = "localhost"
+port = 8080
+debug = true
+
+[limits]
+max = 100
+
+profile "development" {
+  server {
+    debug = true
+  }
+}
+
+profile "production" {
+  server {
+    host = "prod.example.com"
+    port = 443
+    debug = false
+  }
+  limits {
+    max = 1000
+  }
+}

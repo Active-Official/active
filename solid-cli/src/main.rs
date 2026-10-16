@@ -30,6 +30,9 @@ enum Commands {
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
+        /// Select a profile by name, overriding the active_profile key
+        #[arg(long)]
+        profile: Option<String>,
     },
     /// Check a file for errors / cycles / unresolved names
     Check {
@@ -40,6 +43,9 @@ enum Commands {
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
+        /// Select a profile by name, overriding the active_profile key
+        #[arg(long)]
+        profile: Option<String>,
     },
     /// Show dependency graph in simple text form
     Graph {
@@ -50,6 +56,9 @@ enum Commands {
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
+        /// Select a profile by name, overriding the active_profile key
+        #[arg(long)]
+        profile: Option<String>,
     },
     /// Convert evaluated result to JSON or simple TOML
     Convert {
@@ -62,6 +71,9 @@ enum Commands {
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
+        /// Select a profile by name, overriding the active_profile key
+        #[arg(long)]
+        profile: Option<String>,
     },
 }
 
@@ -71,6 +83,12 @@ fn options(resilient: bool, allow_parent_escapes: bool) -> ParseOptions {
         allow_parent_escapes,
         ..ParseOptions::default()
     }
+}
+
+fn engine(profile: &Option<String>) -> Engine {
+    let mut engine = Engine::new();
+    engine.profile_override = profile.clone();
+    engine
 }
 
 /// True when the exit code must be non-zero: strict mode fails on any
@@ -103,6 +121,7 @@ fn main() -> anyhow::Result<()> {
             format,
             resilient,
             allow_parent_escapes,
+            profile,
         } => {
             let name = file.to_string_lossy().to_string();
             let module =
@@ -113,7 +132,7 @@ fn main() -> anyhow::Result<()> {
                     anyhow::anyhow!("parse failed")
                 })?;
 
-            let engine = Engine::new();
+            let engine = engine(&profile);
             let (value, diags) = engine.evaluate(&module).map_err(|e| {
                 let file = e.file().unwrap_or(&name);
                 match e.span() {
@@ -146,11 +165,12 @@ fn main() -> anyhow::Result<()> {
             file,
             resilient,
             allow_parent_escapes,
+            profile,
         } => {
             let name = file.to_string_lossy().to_string();
             match parse_file(&file, options(resilient, allow_parent_escapes)) {
                 Ok(module) => {
-                    let engine = Engine::new();
+                    let engine = engine(&profile);
                     match engine.evaluate(&module) {
                         Ok((_, diags)) => {
                             if diags.is_empty() {
@@ -193,6 +213,7 @@ fn main() -> anyhow::Result<()> {
             file,
             resilient,
             allow_parent_escapes,
+            profile: _,
         } => {
             let name = file.to_string_lossy().to_string();
             let module =
@@ -225,6 +246,7 @@ fn main() -> anyhow::Result<()> {
             to,
             resilient,
             allow_parent_escapes,
+            profile,
         } => {
             let name = file.to_string_lossy().to_string();
             let module =
@@ -234,7 +256,7 @@ fn main() -> anyhow::Result<()> {
                     }
                     anyhow::anyhow!("parse failed")
                 })?;
-            let engine = Engine::new();
+            let engine = engine(&profile);
             let (value, diags) = engine.evaluate(&module).map_err(|e| {
                 let file = e.file().unwrap_or(&name);
                 match e.span() {

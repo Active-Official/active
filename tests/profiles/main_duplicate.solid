@@ -1,0 +1,9 @@
+active_profile = "dup"
+
+profile "dup" {
+  a = 1
+}
+
+profile "dup" {
+  b = 2
+}

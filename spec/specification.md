@@ -173,6 +173,18 @@ graph:
 - Include cycles (a file already on the include stack) and depth beyond 32
   are E016; the composed graph's value cycles are still S001 as usual.
 
+### 2.6 Profile lowering (C-027)
+
+`profile "name" { ... }` parses its body exactly like a table body
+(statements, sibling resolution within the profile, includes) into a
+table node stored in `module.profiles` under `name` — never in the root
+fields, so profiles never export directly. References from a profile to
+document-root keys resolve after the root completes (root fallback),
+then to `let` bindings; references the other way (base to profile
+content) do not exist. Profile table nodes and their edges join the
+dependency graph like any other table, so profiles participate in cycle
+detection and evaluation like ordinary values.
+
 ---
 
 ## Chapter 3 — Evaluation model
@@ -240,6 +252,23 @@ Cycles are detected **before** any node is evaluated: `evaluate` returns
 `Err(EvalError::CycleDetected)` and the caller never sees a partial value
 tree. This invariant is property-tested
 (`solid-core/tests/proptest_invariants.rs::cycle_is_detected_before_any_value`).
+
+### 3.5 Profile selection and merge (C-027)
+
+After the root table evaluates, selection reads the root value's
+`active_profile` field (or a CLI `--profile` override, which wins):
+
+- Missing → no profile merges; the base tree is the result.
+- A string naming a defined profile → that profile's evaluated table
+  merges into the root value: tables recurse, scalars last-wins
+  (profile wins). A profile value whose type differs from the base
+  value still wins, with a W003 warning naming the path.
+- A string naming nothing → W002, no merge. A non-string → W002, no merge.
+
+Every profile evaluates whether selected or not: an unselected profile's
+errors fail the run (strictness catches rot in inactive environments).
+Selection reads the BASE `active_profile` only; a profile that sets
+`active_profile` itself does not reselect.
 
 ---
 

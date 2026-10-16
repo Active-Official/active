@@ -44,6 +44,7 @@ parses leave it unset and tools fall back to the input filename.
 | E015 | `include paths must be string literals` / `interpolation in include paths is a hard error` / `include paths must not escape the including directory` / `include statements require file-based parsing` | token | Malformed include statements (C-025): non-literal paths, interpolated paths, absolute paths and `..` escapes (unless `allow_parent_escapes`), or includes under string-based parsing |
 | E016 | `circular include detected: ...` / `maximum include depth (32) exceeded` | token | An include cycle through the file graph, or nesting deeper than 32 files (C-025) |
 | E017 | `cannot read include file ...` | token | A missing or unreadable include target (C-025) |
+| E018 | `profile blocks may only appear at document root` / `duplicate profile "name"` / `profile blocks need a string name` | token | Malformed profile blocks (C-027) |
 
 ### S0xx — Semantic (evaluation, severity Error)
 
@@ -65,6 +66,8 @@ parses leave it unset and tools fall back to the input filename.
 | Code | Message | Span | Emitted when |
 |---|---|---|---|
 | W001 | `unresolved identifier '<name>'` | node | An identifier matches no sibling key and no `let` binding; the value becomes `null` |
+| W002 | `unknown profile '<name>'` / `active_profile must be a string` | node | `active_profile` names no defined profile, or is not a string; no profile merges (C-027) |
+| W003 | `profile '<name>' overrides '<path>' with a different type` | node | A profile value wins over a base value of a different type (C-027) |
 
 ### H0xx — Healing (implemented in C-016)
 

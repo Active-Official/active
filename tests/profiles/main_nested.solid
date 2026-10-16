@@ -1,0 +1,5 @@
+app {
+  profile "nested" {
+    x = 1
+  }
+}

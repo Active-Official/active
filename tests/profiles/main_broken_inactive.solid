@@ -1,0 +1,14 @@
+active_profile = "development"
+
+[server]
+port = 8080
+
+profile "development" {
+  server {
+    port = 8080
+  }
+}
+
+profile "broken" {
+  bad = !5
+}

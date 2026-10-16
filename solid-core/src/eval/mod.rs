@@ -84,6 +84,9 @@ impl EvalError {
 
 pub struct Engine {
     pub resilient: bool,
+    /// CLI `--profile` override: when set, selects this profile instead
+    /// of the document's `active_profile` key (spec §3.5).
+    pub profile_override: Option<String>,
 }
 
 impl Default for Engine {
@@ -94,7 +97,10 @@ impl Default for Engine {
 
 impl Engine {
     pub fn new() -> Self {
-        Self { resilient: true }
+        Self {
+            resilient: true,
+            profile_override: None,
+        }
     }
 
     pub fn evaluate(&self, module: &Module) -> Result<(Value, Vec<Diagnostic>), EvalError> {
@@ -240,7 +246,258 @@ impl Engine {
 
         let root = module.root.ok_or(EvalError::MissingRoot)?;
         let result = values.get(&root).cloned().unwrap_or(Value::Null);
+        let result = self.apply_profile(module, &values, result, &mut diagnostics);
         Ok((result, diagnostics))
+    }
+
+    /// Select and merge the active profile (spec §3.5). The `--profile`
+    /// override wins; otherwise the root value's `active_profile` field
+    /// decides. Missing key → base only. Unknown name or non-string →
+    /// W002. Type changes on override → W003. Every profile evaluates
+    /// whether selected or not (strictness catches rot in inactive
+    /// environments); selection reads the BASE key only.
+    fn apply_profile(
+        &self,
+        module: &Module,
+        values: &HashMap<NodeId, Value>,
+        result: Value,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) -> Value {
+        if module.profiles.is_empty() {
+            // No profiles defined: the effective selector (override first,
+            // then the key) still validates, then base stands.
+            let selected: Option<String> = match &self.profile_override {
+                Some(name) => Some(name.clone()),
+                None => match &result {
+                    Value::Table(map) => match map.get("active_profile") {
+                        Some(Value::String(s)) => Some(s.clone()),
+                        Some(_) => {
+                            diagnostics.push(Diagnostic {
+                                severity: Severity::Warning,
+                                code: "W002".into(),
+                                message: "active_profile must be a string".into(),
+                                path: Some("active_profile".into()),
+                                span: if self.profile_override.is_some() {
+                                    None
+                                } else {
+                                    active_key_span(module, &result)
+                                },
+                                repair: None,
+                                confidence: 1.0,
+                                file: if self.profile_override.is_some() {
+                                    None
+                                } else {
+                                    active_key_file(module, &result)
+                                },
+                            });
+                            return result;
+                        }
+                        None => None,
+                    },
+                    _ => None,
+                },
+            };
+            if let Some(name) = selected {
+                // With no profiles defined, any effective selector is unknown.
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    code: "W002".into(),
+                    message: format!("unknown profile '{name}'"),
+                    path: Some("active_profile".into()),
+                    span: if self.profile_override.is_some() {
+                        None
+                    } else {
+                        active_key_span(module, &result)
+                    },
+                    repair: None,
+                    confidence: 1.0,
+                    file: if self.profile_override.is_some() {
+                        None
+                    } else {
+                        active_key_file(module, &result)
+                    },
+                });
+            }
+            return result;
+        }
+        let base_table = match &result {
+            Value::Table(map) => map.clone(),
+            _ => return result,
+        };
+        let selected: Option<String> = match &self.profile_override {
+            Some(name) => Some(name.clone()),
+            None => match base_table.get("active_profile") {
+                None => return result,
+                Some(Value::String(s)) => Some(s.clone()),
+                Some(other) => {
+                    diagnostics.push(Diagnostic {
+                        severity: Severity::Warning,
+                        code: "W002".into(),
+                        message: format!(
+                            "active_profile must be a string, got {}",
+                            value_kind_name(other)
+                        ),
+                        path: Some("active_profile".into()),
+                        span: if self.profile_override.is_some() {
+                            None
+                        } else {
+                            active_key_span(module, &result)
+                        },
+                        repair: None,
+                        confidence: 1.0,
+                        file: if self.profile_override.is_some() {
+                            None
+                        } else {
+                            active_key_file(module, &result)
+                        },
+                    });
+                    return result;
+                }
+            },
+        };
+        let name = match selected {
+            Some(n) => n,
+            None => return result,
+        };
+        let Some(&profile_id) = module.profiles.get(&name) else {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                code: "W002".into(),
+                message: format!("unknown profile '{name}'"),
+                path: Some("active_profile".into()),
+                span: if self.profile_override.is_some() {
+                    None
+                } else {
+                    active_key_span(module, &result)
+                },
+                repair: None,
+                confidence: 1.0,
+                file: if self.profile_override.is_some() {
+                    None
+                } else {
+                    active_key_file(module, &result)
+                },
+            });
+            return result;
+        };
+        let profile_value = values.get(&profile_id).cloned().unwrap_or(Value::Null);
+        let mut merged = base_table;
+        merge_profile_value(
+            &mut merged,
+            profile_value,
+            &name,
+            String::new(),
+            module.node_spans.get(&profile_id).cloned(),
+            module.node_files.get(&profile_id).cloned(),
+            diagnostics,
+        );
+        Value::Table(merged)
+    }
+}
+
+/// Span of the root `active_profile` key's node, when it exists.
+fn active_key_span(module: &Module, result: &Value) -> Option<crate::diag::Span> {
+    let Value::Table(_) = result else {
+        return None;
+    };
+    let root = module.root?;
+    let Node::Table { fields } = module.get(root)? else {
+        return None;
+    };
+    let id = fields.get("active_profile")?;
+    module.node_spans.get(id).cloned()
+}
+
+/// File of the root `active_profile` key's node, when recorded.
+fn active_key_file(module: &Module, result: &Value) -> Option<String> {
+    let Value::Table(_) = result else {
+        return None;
+    };
+    let root = module.root?;
+    let Node::Table { fields } = module.get(root)? else {
+        return None;
+    };
+    let id = fields.get("active_profile")?;
+    module.node_files.get(id).cloned()
+}
+
+/// Short kind name for diagnostics (never includes values, so secrets
+/// cannot leak through it). Numbers share a kind; quantities carry
+/// their unit so different dimensions compare unequal.
+fn value_kind_name(v: &Value) -> String {
+    match v {
+        Value::Null => "null".into(),
+        Value::Bool(_) => "boolean".into(),
+        Value::Int(_) | Value::Float(_) => "number".into(),
+        Value::String(_) => "string".into(),
+        Value::DurationMs(_) => "duration".into(),
+        Value::Quantity(_, unit) => format!("quantity:{}", unit.suffix()),
+        Value::Array(_) => "array".into(),
+        Value::Table(_) => "table".into(),
+        Value::Secret(_) => "secret".into(),
+    }
+}
+
+/// Merge a profile table into the base table in place (spec §3.5):
+/// tables recurse, scalars last-wins (profile wins). Additions are
+/// silent; a profile value that overrides a base value of a different
+/// kind wins with a W003 warning naming the dotted path. `span`/`file`
+/// locate the profile block for the warning.
+fn merge_profile_value(
+    base: &mut indexmap::IndexMap<String, Value>,
+    overlay: Value,
+    profile: &str,
+    path: String,
+    span: Option<crate::diag::Span>,
+    file: Option<String>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let Value::Table(fields) = overlay else {
+        return;
+    };
+    for (k, v) in fields {
+        let child = if path.is_empty() {
+            k.clone()
+        } else {
+            format!("{path}.{k}")
+        };
+        match base.get(&k) {
+            None => {
+                base.insert(k, v);
+            }
+            Some(existing) => match (existing, &v) {
+                (Value::Table(_), Value::Table(_)) => {
+                    if let Some(Value::Table(base_sub)) = base.get_mut(&k) {
+                        merge_profile_value(
+                            base_sub,
+                            v,
+                            profile,
+                            child,
+                            span.clone(),
+                            file.clone(),
+                            diagnostics,
+                        );
+                    }
+                }
+                _ => {
+                    if value_kind_name(existing) != value_kind_name(&v) {
+                        diagnostics.push(Diagnostic {
+                            severity: Severity::Warning,
+                            code: "W003".into(),
+                            message: format!(
+                                "profile '{profile}' overrides '{child}' with a different type"
+                            ),
+                            path: Some(child),
+                            span: span.clone(),
+                            repair: None,
+                            confidence: 1.0,
+                            file: file.clone(),
+                        });
+                    }
+                    base.insert(k, v);
+                }
+            },
+        }
     }
 }
 

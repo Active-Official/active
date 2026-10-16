@@ -39,6 +39,10 @@ pub struct Module {
     /// re-emits them; evaluation merges them per the defaults rule, so
     /// the composed tree does not need them.
     pub includes: Vec<IncludeStmt>,
+    /// Named profiles in source order (spec §2.8, C-027). Never exported
+    /// directly; the selected one merges into the root value at
+    /// evaluation.
+    pub profiles: IndexMap<String, NodeId>,
 }
 
 /// An `include "path" [as alias] [private]` statement (spec §2.7).
@@ -106,6 +110,7 @@ impl Module {
             trivia: Vec::new(),
             source_style: Style::Brace,
             includes: Vec::new(),
+            profiles: IndexMap::new(),
         }
     }
 

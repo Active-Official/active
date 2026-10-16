@@ -262,6 +262,31 @@ string-literal = String | SingleString | MlString | MlSingleString
   (document root, table bodies, brace blocks, indented blocks) and merge
   into the enclosing scope.
 
+### 2.8 Profile blocks (C-027)
+
+```
+profile-block = "profile" string-literal "{" [ newline { statement } ] "}"
+```
+
+- `profile` is a **contextual keyword** like `include`: `profile` followed
+  by `=`, `:`, or `{` stays an ordinary key, header, or table block;
+  `profile` followed by a string literal opens a profile block. A
+  `profile` block with no string name is E018.
+- Profile blocks may appear **only at document root**; anywhere else is
+  E018. A duplicate profile name is E018.
+- Selection is by the root key `active_profile` (any expression, usually
+  `env.SOLID_PROFILE ?: "development"`): if it evaluates to a string
+  naming a defined profile, that profile merges; if it is missing, no
+  profile merges (base configuration only); if it names no defined
+  profile, or is not a string, a W002 warning is emitted and no profile
+  merges.
+- Merge (normative): the selected profile's fields merge into the
+  document root — scalars last-wins (profile wins), tables deep-merge
+  with the same local-wins semantics as includes (the profile counts as
+  the "later" layer over base). A profile value whose type differs from
+  the base value still wins, with a W003 warning. Profile blocks never
+  appear in the exported tree; `active_profile` itself stays visible.
+
 ### 2.3 Expressions (precedence, loosest to tightest)
 
 ```

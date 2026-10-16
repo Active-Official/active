@@ -1,0 +1,10 @@
+active_profile = "production"
+
+[server]
+port = null
+
+profile "production" {
+  server {
+    port = 443
+  }
+}

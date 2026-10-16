@@ -56,7 +56,8 @@ struct Formatter<'a> {
     out: String,
 }
 
-/// Map every named node back to its name (let bindings and table keys).
+/// Map every named node back to its name (let bindings and table keys,
+/// including profile trees so profile-internal references render).
 fn build_names(module: &Module) -> HashMap<NodeId, String> {
     fn walk(module: &Module, id: NodeId, names: &mut HashMap<NodeId, String>) {
         if let Some(Node::Table { fields }) = module.get(id) {
@@ -72,6 +73,9 @@ fn build_names(module: &Module) -> HashMap<NodeId, String> {
     }
     if let Some(root) = module.root {
         walk(module, root, &mut names);
+    }
+    for id in module.profiles.values() {
+        walk(module, *id, &mut names);
     }
     names
 }
@@ -120,6 +124,19 @@ impl<'a> Formatter<'a> {
             self.out.push_str(&format!("let {name} = {value}"));
             self.emit_trailing(name);
             self.out.push('\n');
+        }
+
+        // Profile blocks, in source order (spec §2.8). They merge at
+        // evaluation and never export, but formatting preserves them.
+        let profiles: Vec<(String, NodeId)> = self
+            .module
+            .profiles
+            .iter()
+            .map(|(k, v)| (k.clone(), *v))
+            .collect();
+        for (name, id) in &profiles {
+            self.emit_leading(name);
+            self.emit_profile(*id, name, 0);
         }
 
         if let Some(root) = self.module.root {
@@ -270,6 +287,44 @@ impl<'a> Formatter<'a> {
                     self.emit_trailing(path);
                     self.out.push('\n');
                     self.emit_table_body(id, depth + 1, path, false);
+                    self.out.push_str(&format!("{}}}\n", INDENT.repeat(depth)));
+                }
+            }
+        }
+    }
+
+    /// Emit a `profile "name"` block (spec §2.8). Brace style uses
+    /// `profile "name" { … }`; indentation style uses `profile "name":`
+    /// with an indented body. The body's comment paths are the profile
+    /// name (parse_profile pushes it), so trivia survives. Names escape
+    /// like interpolation-safe literals so quotes, dollars, and newlines
+    /// round-trip.
+    fn emit_profile(&mut self, id: NodeId, name: &str, depth: usize) {
+        let qname = escape_interp_literal(name);
+        let empty = matches!(
+            self.module.get(id),
+            Some(Node::Table { fields }) if fields.is_empty()
+        );
+        match self.style {
+            Style::Indent if !empty => {
+                self.out
+                    .push_str(&format!("{}profile \"{qname}\":", INDENT.repeat(depth)));
+                self.emit_trailing(name);
+                self.out.push('\n');
+                self.emit_table_body(id, depth + 1, name, false);
+            }
+            _ => {
+                if empty {
+                    self.out
+                        .push_str(&format!("{}profile \"{qname}\" {{}}", INDENT.repeat(depth)));
+                    self.emit_trailing(name);
+                    self.out.push('\n');
+                } else {
+                    self.out
+                        .push_str(&format!("{}profile \"{qname}\" {{", INDENT.repeat(depth)));
+                    self.emit_trailing(name);
+                    self.out.push('\n');
+                    self.emit_table_body(id, depth + 1, name, false);
                     self.out.push_str(&format!("{}}}\n", INDENT.repeat(depth)));
                 }
             }

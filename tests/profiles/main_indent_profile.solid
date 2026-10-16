@@ -1,0 +1,8 @@
+active_profile = "production"
+
+[server]
+port = 100
+
+profile "production":
+  server:
+    port = 200

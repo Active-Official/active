@@ -17,6 +17,8 @@
 - [Multi-region setup](cookbook/multi-region.md)
 - [AI agent prompts](cookbook/ai-prompts.md)
 - [12-factor application](cookbook/twelve-factor.md)
+- [Terraform variables](cookbook/terraform-vars.md)
+- [CI pipelines](cookbook/ci-pipeline.md)
 
 # Migration
 

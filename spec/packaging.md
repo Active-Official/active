@@ -6,8 +6,8 @@ signing, crates.io publication, and editor distribution.
 ## 1. Version policy
 
 - One workspace version (`[workspace.package] version`): currently
-  `0.1.0-alpha.1`. All crates release together; no independent
-  crate versioning before 1.0.
+  `1.0.0`. All crates release together; no independent
+  crate versioning.
 - SemVer: `0.x` alphas may break the surface (documented in
   CHANGELOG entries); `1.0.0` ships with C-090 and freezes the
   surface (grammar + IR + diagnostics codes + CLI flags).
@@ -28,8 +28,7 @@ Rust library name is unchanged — only manifests move.
 | `solid-fmt` | bin `solid-fmt` | `cargo install solid-fmt` |
 | `solid-ls` | bin `solid-ls` (+ lib `solid_ls`) | editor servers |
 
-Dependents write `solid-lang-core = "0.1"` (tracking the current
-0.1 line; `= "1"` at 1.0) and `use solid_core::…`.
+Dependents write `solid-lang-core = "1"` and `use solid_core::…`.
 Binary names (`solid`, `solid-fmt`, `solid-ls`) are install-local
 and never collide on crates.io.
 

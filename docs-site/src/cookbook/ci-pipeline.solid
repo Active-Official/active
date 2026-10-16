@@ -1,0 +1,14 @@
+# CI pipeline: stages as tables, matrix as an array of tables,
+# shared values via lets (no YAML anchor aliasing without provenance).
+let image = "rust:1.85"
+
+matrix = [{ os = "ubuntu-latest", toolchain = "stable" }, { os = "windows-latest", toolchain = "stable" }]
+
+build:
+  runs_on = "ubuntu-latest"
+  image = image
+  steps = 4
+
+test:
+  runs_on = "ubuntu-latest"
+  needs_build = true

@@ -4,7 +4,20 @@ All notable changes to the SOLID language, toolchain, and
 specification. Versions follow SemVer with a unified workspace
 version (spec/packaging.md §1).
 
-## [Unreleased]
+## [1.0.0] — 2026-10-16
+
+First stable release. The C-090 readiness review
+(spec/readiness-1.0.md) passes all ten success criteria; the
+checklist (C-010 through C-090 plus C-070) is complete; the
+conformance suite is green and this repository is the declared
+reference implementation.
+
+Since 0.1.0-alpha.1: JSON keys serialize in source binding order
+(`preserve_order`; conformance sidecars re-emitted), comment
+attachment is file-aware across includes, schema entries take
+per-field documentation comments, `solid doc` accepts
+`--resilient`/`--allow-parent-escapes`, and the docs site gained
+Terraform/CI cookbook entries.
 
 ## [0.1.0-alpha.1] — 2026-10-16
 

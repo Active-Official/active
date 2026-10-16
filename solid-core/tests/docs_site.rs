@@ -193,3 +193,18 @@ fn migration_samples() {
         assert_eq!(v["server"]["port"], 8080, "{name}");
     }
 }
+
+#[test]
+fn terraform_vars_sample() {
+    let v = eval_file(&site_root().join("cookbook").join("terraform-vars.solid"));
+    assert_eq!(v["region"], "eu-west-1");
+    assert_eq!(v["instance_count"], 3);
+    assert_eq!(v["instance_type"], "t3.small");
+}
+
+#[test]
+fn ci_pipeline_sample() {
+    let v = eval_file(&site_root().join("cookbook").join("ci-pipeline.solid"));
+    assert_eq!(v["build"]["steps"], 4);
+    assert_eq!(v["matrix"][1]["os"], "windows-latest");
+}

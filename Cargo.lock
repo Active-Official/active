@@ -1175,7 +1175,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "solid-cli"
-version = "0.1.0-alpha.1"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1186,7 +1186,7 @@ dependencies = [
 
 [[package]]
 name = "solid-fmt"
-version = "0.1.0-alpha.1"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1195,7 +1195,7 @@ dependencies = [
 
 [[package]]
 name = "solid-lang-core"
-version = "0.1.0-alpha.1"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "codspeed-criterion-compat",
@@ -1216,7 +1216,7 @@ dependencies = [
 
 [[package]]
 name = "solid-ls"
-version = "0.1.0-alpha.1"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "lsp-server",

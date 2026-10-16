@@ -26,7 +26,10 @@ Run with `cargo bench`; tracked continuously by the CodSpeed
 GitHub workflow (`.github/workflows/codspeed.yml`: `cargo codspeed
 build`, then the action with `mode: simulation` and
 `run: cargo codspeed run`), which fails on significant regression
-vs the base branch. Plain `cargo bench` under the action does not
+vs the base branch once the repo is connected on codspeed.io
+(one-time owner step; until then the upload step is
+`continue-on-error` so the branch stays green while benches still
+execute every push). Plain `cargo bench` under the action does not
 work — the compat crate requires the runner environment and panics
 without it — so the workflow shape follows the CodSpeed Rust docs
 exactly; local runs fall back to stock criterion.

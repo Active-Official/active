@@ -495,7 +495,7 @@ fn temp_fixture(name: &str, contents: &str) -> (lsp_types::Url, String) {
 
 #[test]
 fn definition_jumps_across_includes() {
-    let (lib_uri, _lib_path) = temp_fixture("lsplib2.solid", "host = \"db\"\n");
+    let (_lib_uri, _lib_path) = temp_fixture("lsplib2.solid", "host = \"db\"\n");
     let (main_uri, _main_path) =
         temp_fixture("lspmain2.solid", "include \"lsplib2.solid\"\nurl = host\n");
     let text =
@@ -508,17 +508,25 @@ fn definition_jumps_across_includes() {
         .iter()
         .any(|(id, path)| path == "host" && doc.module.node_files.contains_key(id));
     assert!(found, "included key must be indexed");
-    // And definition from the use lands in the included file.
+    // And definition from the use lands in the included file. URIs
+    // compare by file name: include resolution canonicalizes paths
+    // (case/short-name sensitive on Windows), so exact-URI equality
+    // is environment-dependent.
     let lookup = |path: &str| std::fs::read_to_string(path).ok();
     let locations = analysis::definition_at(&doc, &lookup, 1, 7);
     assert_eq!(locations.len(), 1, "{locations:?}");
-    assert_eq!(locations[0].uri, lib_uri, "{locations:?}");
+    assert!(
+        locations[0].uri.path().ends_with("lsplib2.solid"),
+        "{locations:?}"
+    );
     assert_eq!(locations[0].range.start.line, 0, "{locations:?}");
     // References with declaration: the lib definition plus the main use.
     let refs = analysis::references_at(&doc, &lookup, 1, 7, true);
     assert_eq!(refs.len(), 2, "{refs:?}");
-    assert!(refs.iter().any(|l| l.uri == lib_uri));
-    assert!(refs.iter().any(|l| l.uri == main_uri));
+    assert!(refs.iter().any(|l| l.uri.path().ends_with("lsplib2.solid")));
+    assert!(refs
+        .iter()
+        .any(|l| l.uri.path().ends_with("lspmain2.solid")));
 }
 
 // ------------------------------------------------------------------

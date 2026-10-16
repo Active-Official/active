@@ -1207,11 +1207,15 @@ fn stdio_shared_include_markers_survive_single_close() {
             .map(|_| server.recv_notification("textDocument/publishDiagnostics"))
             .collect()
     };
-    let for_uri = |messages: &[serde_json::Value], uri: &str| {
+    let for_uri = |messages: &[serde_json::Value], name: &str| {
         messages
             .iter()
-            .find(|m| m["params"]["uri"] == uri)
-            .unwrap_or_else(|| panic!("no publish for {uri}: {messages:?}"))
+            .find(|m| {
+                m["params"]["uri"]
+                    .as_str()
+                    .is_some_and(|uri| uri.ends_with(name))
+            })
+            .unwrap_or_else(|| panic!("no publish for {name}: {messages:?}"))
             .clone()
     };
     let has_error = |message: &serde_json::Value| {
@@ -1239,7 +1243,10 @@ fn stdio_shared_include_markers_survive_single_close() {
     );
     // Four publishes: A+lib, B+lib.
     let mut first = collect(&mut server, 4);
-    assert!(has_error(&for_uri(&first, &lib_uri)), "{first:?}");
+    assert!(
+        has_error(&for_uri(&first, "lspmultilib.solid")),
+        "{first:?}"
+    );
     // Closing A clears A but republishes the still-owned library
     // markers (never an empty clear while B owns them).
     server.notify(
@@ -1247,13 +1254,13 @@ fn stdio_shared_include_markers_survive_single_close() {
         serde_json::json!({"textDocument": {"uri": a_uri}}),
     );
     first = collect(&mut server, 2);
-    let cleared_a = for_uri(&first, &a_uri);
+    let cleared_a = for_uri(&first, "lspmultia.solid");
     assert_eq!(
         cleared_a["params"]["diagnostics"],
         serde_json::json!([]),
         "{first:?}"
     );
-    let kept = for_uri(&first, &lib_uri);
+    let kept = for_uri(&first, "lspmultilib.solid");
     assert!(
         has_error(&kept),
         "library markers must survive A's close: {first:?}"
@@ -1265,7 +1272,7 @@ fn stdio_shared_include_markers_survive_single_close() {
         serde_json::json!({"textDocument": {"uri": b_uri}}),
     );
     first = collect(&mut server, 2);
-    let kept = for_uri(&first, &lib_uri);
+    let kept = for_uri(&first, "lspmultilib.solid");
     assert!(
         has_error(&kept),
         "library markers must survive B's close: {first:?}"
@@ -1340,18 +1347,22 @@ fn stdio_stale_include_groups_withdrawn() {
     );
     let first = server.recv_notification("textDocument/publishDiagnostics");
     let second = server.recv_notification("textDocument/publishDiagnostics");
-    let by_uri =
-        |message: &serde_json::Value| message["params"]["uri"].as_str().unwrap().to_string();
+    // Canonical URIs again: match groups by file name.
+    let is_lib = |message: &serde_json::Value| {
+        message["params"]["uri"]
+            .as_str()
+            .is_some_and(|uri| uri.ends_with("lspstalelib.solid"))
+    };
+    let is_main = |message: &serde_json::Value| {
+        message["params"]["uri"]
+            .as_str()
+            .is_some_and(|uri| uri.ends_with("lspstalemain.solid"))
+    };
     assert!(
-        [by_uri(&first), by_uri(&second)].contains(&lib_uri)
-            && [by_uri(&first), by_uri(&second)].contains(&main_uri),
+        (is_lib(&first) && is_main(&second)) || (is_main(&first) && is_lib(&second)),
         "{first} {second}"
     );
-    let lib_group = if by_uri(&first) == lib_uri {
-        &first
-    } else {
-        &second
-    };
+    let lib_group = if is_lib(&first) { &first } else { &second };
     assert_eq!(lib_group["params"]["version"], 5, "{lib_group}");
     // Remove the include: the library is still open itself, so its
     // markers are preserved (republished from the remaining owner),
@@ -1366,7 +1377,12 @@ fn stdio_stale_include_groups_withdrawn() {
     let mut saw_withdraw = false;
     for _ in 0..2 {
         let message = server.recv_notification("textDocument/publishDiagnostics");
-        if message["params"]["uri"] == lib_uri {
+        // Server include URIs are canonical (8.3 short-names on
+        // Windows CI); match by file name like `for_uri` above.
+        let is_lib = message["params"]["uri"]
+            .as_str()
+            .is_some_and(|uri| uri.ends_with("lspstalelib.solid"));
+        if is_lib {
             // The library is still open itself: its markers are
             // preserved (republished from the remaining owner),
             // never withdrawn while an owner remains.
@@ -1407,7 +1423,12 @@ fn stdio_stale_include_groups_withdrawn() {
     let mut saw_disk = false;
     for _ in 0..2 {
         let message = server.recv_notification("textDocument/publishDiagnostics");
-        if message["params"]["uri"] == lib_uri {
+        // Server include URIs are canonical (8.3 short-names on
+        // Windows CI); match by file name like `for_uri` above.
+        let is_lib = message["params"]["uri"]
+            .as_str()
+            .is_some_and(|uri| uri.ends_with("lspstalelib.solid"));
+        if is_lib {
             assert!(
                 !message["params"]["diagnostics"]
                     .as_array()
@@ -1433,7 +1454,12 @@ fn stdio_stale_include_groups_withdrawn() {
     let mut saw_clear = false;
     for _ in 0..2 {
         let message = server.recv_notification("textDocument/publishDiagnostics");
-        if message["params"]["uri"] == lib_uri {
+        // Server include URIs are canonical (8.3 short-names on
+        // Windows CI); match by file name like `for_uri` above.
+        let is_lib = message["params"]["uri"]
+            .as_str()
+            .is_some_and(|uri| uri.ends_with("lspstalelib.solid"));
+        if is_lib {
             assert_eq!(
                 message["params"]["diagnostics"],
                 serde_json::json!([]),

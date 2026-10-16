@@ -1,0 +1,15 @@
+# cargo-audit configuration (C-064: the `audit` CI job enforces this).
+#
+# Ignored advisories are accepted risks with an owner and an exit
+# condition — never silence by default. Re-evaluate every ignore on
+# each MSRV bump and each major dependency upgrade.
+
+[advisories]
+ignore = [
+    # RUSTSEC-2024-0421 (idna Punycode confusion via url 2.5.2):
+    # needs attacker-controlled DNS host parsing. Our url use is
+    # lsp-types file:// workspace URIs (no DNS, no Punycode
+    # surface). url ≥ 2.5.3 pulls icu/zerovec past rustc 1.85, so
+    # the fix waits on the MSRV bump (spec/packaging.md §1).
+    "RUSTSEC-2024-0421",
+]

@@ -95,3 +95,15 @@ jobs:
           cargo package --list --locked -p solid-fmt
           cargo package --list --locked -p solid-ls
           cargo package --list --locked -p solid-cli
+
+  audit:
+    name: Security audit (cargo-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Audit lockfile
+        run: cargo audit

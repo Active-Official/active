@@ -1,4 +1,4 @@
-# SOLID Schema Validation (C-031)
+# ACTIVE Schema Validation (C-031)
 
 Validation walks the fully evaluated value tree against the active schema
 tree and reports every violation as a structured diagnostic. It runs

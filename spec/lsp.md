@@ -1,9 +1,9 @@
-# SOLID Language Server (C-043/C-044/C-045)
+# ACTIVE Language Server (C-043/C-044/C-045)
 
-`solid-ls` speaks LSP 3.17 over stdio (JSON-RPC, `Content-Length`
+`active-lsp` speaks LSP 3.17 over stdio (JSON-RPC, `Content-Length`
 framing) using `lsp-server` (sync main loop — no async runtime) and
 `lsp-types`. One in-memory document store; analysis reuses
-solid-core directly (parse recovering, evaluate, lint, format).
+ACTIVE-core directly (parse recovering, evaluate, lint, format).
 
 ## 1. Transport and lifecycle
 
@@ -13,7 +13,7 @@ solid-core directly (parse recovering, evaluate, lint, format).
   tokens (full only), diagnostic publishing (push, not pull).
   `initialized` → ready. `shutdown`/`exit` handled; unknown
   methods get `MethodNotFound`, never a crash.
-- `textDocument/didOpen` (full text, `languageId: solid`),
+- `textDocument/didOpen` (full text, `languageId: ACTIVE`),
   `didChange` (full sync), `didClose` (drop state, clear
   diagnostics). `file://` URIs map to paths; includes resolve from
   disk relative to the workspace file (unsaved include buffers are
@@ -129,7 +129,7 @@ from comments or string contents.
   Error→Error, Warning→Warning, Info→Information, Hint→Hint.
   Ranges come from spans; span-less diagnostics publish as
   zero-length ranges at (0,0) rather than vanishing. The `source`
-  field is always `"solid"` and `code` carries the stable code.
+  field is always `"active"` and `code` carries the stable code.
   Unparseable files still publish what the recovering parser
   salvaged; closing a document publishes an empty list with no
   version (stale-versioned clears may be discarded).

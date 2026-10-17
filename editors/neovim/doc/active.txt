@@ -1,0 +1,43 @@
+*active.txt*  Active language support for Neovim
+
+Filetype detection, buffer defaults, syntax highlighting, and
+`active-lsp` configuration for the Active configuration language.
+
+1. Install                                          |active-install|
+2. Language server                                  |active-lspp|
+
+==============================================================================
+1. INSTALL                                              *active-install*
+
+As a runtimepath plugin (no registry, no build). With vim-plug: >
+
+  Plug 'RatioArtificiosa/solid-lang', {'rtp': 'editors/neovim'}
+
+Manual: >
+
+  set rtp+=~/src/solid-lang/editors/neovim
+
+then `:helptags` the doc dir to read this file offline.
+
+==============================================================================
+2. LANGUAGE SERVER                                       *active-lspp*
+
+Install the server once (`cargo install active-lsp`), then with
+nvim-lspconfig: >
+
+  require('lspconfig').active_ls.setup({
+    cmd = { 'active-lsp' },
+    filetypes = { 'active' },
+    root_markers = { '.git' },
+  })
+
+With Neovim 0.11+ built-in LSP (`vim.lsp.config`): >
+
+  vim.lsp.config('active_ls', {
+    cmd = { 'active-lsp' },
+    filetypes = { 'active' },
+    root_markers = { '.git' },
+  })
+  vim.lsp.enable('active_ls')
+
+vim:tw=78:ts=8:ft=help:norl:

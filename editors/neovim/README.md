@@ -1,8 +1,8 @@
-# SOLID for Neovim (C-057)
+# Active for Neovim (C-057)
 
-Runtimepath plugin: filetype detection (`*.solid`), buffer defaults,
-syntax highlighting, and `:help solid` docs. The language server is
-`solid-ls` over stdio (hover, go-to-definition, completions,
+Runtimepath plugin: filetype detection (`*.active`), buffer defaults,
+syntax highlighting, and `:help active` docs. The language server is
+`active-lsp` over stdio (hover, go-to-definition, completions,
 diagnostics, inlay hints, code actions).
 
 ## Install
@@ -18,13 +18,13 @@ for the local help page.
 
 ## Language server
 
-Install once: `cargo install solid-ls` (or a release archive).
+Install once: `cargo install active-lsp` (or a release archive).
 nvim-lspconfig: >
 
 ```lua
-require('lspconfig').solid_ls.setup({
-  cmd = { 'solid-ls' },
-  filetypes = { 'solid' },
+require('lspconfig').active_ls.setup({
+  cmd = { 'active-lsp' },
+  filetypes = { 'active' },
   root_markers = { '.git' },
 })
 ```
@@ -33,10 +33,10 @@ Neovim 0.11+ built-in client (`root_markers`, plural, needs 0.11;
 on older Neovim use nvim-lspconfig with `root_dir` instead): >
 
 ```lua
-vim.lsp.config('solid_ls', {
-  cmd = { 'solid-ls' },
-  filetypes = { 'solid' },
+vim.lsp.config('active_ls, {
+  cmd = { 'active-lsp' },
+  filetypes = { 'active' },
   root_markers = { '.git' },
 })
-vim.lsp.enable('solid_ls')
+vim.lsp.enable('active_ls')
 ```

@@ -1,8 +1,20 @@
 # Changelog
 
-All notable changes to the SOLID language, toolchain, and
-specification. Versions follow SemVer with a unified workspace
-version (spec/packaging.md §1).
+All notable changes to the Active language, toolchain, and
+specification. (Entries below the rename keep their original
+SOLID-era names: that history is accurate as written.) Versions
+follow SemVer with a unified workspace version (spec/packaging.md §1).
+
+## [Unreleased] — SOLID → Active rename
+
+The language is renamed SOLID → Active across code, packages, docs,
+and fixtures: crates `active`, `active-core`, `active-cli`,
+`active-fmt`, `active-lsp` (+ `active-fuzz` harness); binaries
+`active`, `active-fmt`, `active-lsp`; library `active_core`
+(`ActiveType`, …) with the `active` facade crate; file extension
+`.solid` → `.active`; editors, workflows, and release artifacts
+follow. GitHub URLs and prior release notes keep their original
+names (redirects/history).
 
 ## [1.0.0] — 2026-10-16
 

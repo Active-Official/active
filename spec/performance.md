@@ -105,9 +105,9 @@ criterion means, 100 samples each):
   aliases a sibling chain (0→1) re-evaluates a single node
   (the root table) with byte-identical output
   (`edit_aliasing_an_existing_value_serves_shared_memo`)
-- end-to-end `solid eval` (release CLI, pretty JSON to file):
+- end-to-end `ACTIVE eval` (release CLI, pretty JSON to file):
   ~120 ms ≈ 36 ms startup/parse-input + 47 ms parse +
-  25 ms eval + ~10 ms serialize; `solid check` (no serialize):
+  25 ms eval + ~10 ms serialize; `ACTIVE check` (no serialize):
   ~111 ms. The in-process criterion numbers above are the
   C-055 acceptance basis; CLI startup is one-time process cost.
 - memory: linear by construction (at most one memo entry per

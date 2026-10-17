@@ -6,14 +6,14 @@ the repository (and in every release archive); consumed with a
 literal include — no registry, no download step, paths below are
 relative to the including file:
 
-```solid
-include "schemas/http-server.solid"
+```active
+include "schemas/http-server.active"
 ```
 
 ## 1. Layout and versioning
 
 - One file per domain: `http-server`, `postgres`, `observability`,
-  `feature-flags`, `ai-agent` (each `<name>.solid`).
+  `feature-flags`, `ai-agent` (each `<name>.active`).
 - The library versions WITH the language (same workspace version):
   schemas may use any shipped schema feature, and the library test
   suite (`tests/schema_library.rs`) pins every file against good

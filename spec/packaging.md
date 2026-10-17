@@ -1,6 +1,6 @@
 # Packaging, Distribution & Versioning (C-056/C-057, P-054)
 
-How SOLID ships: crate names, version policy, release binaries,
+How ACTIVE ships: crate names, version policy, release binaries,
 signing, crates.io publication, and editor distribution.
 
 ## 1. Version policy
@@ -17,39 +17,43 @@ signing, crates.io publication, and editor distribution.
 
 ## 2. Crate names (package vs binary vs library)
 
-crates.io namespaces are first-come: `solid-core` belongs to an
-unrelated 2020 crate, so the core ships under a scoped name. The
-Rust library name is unchanged — only manifests move.
+crates.io namespaces are first-come: the `active` family
+(`active`, `active-core`, `active-cli`, `active-fmt`, `active-lsp`)
+is owned by RatioArtificiosa, with `active-ls` and `active-fuzz`
+reserved defensively (see RENAME-STATUS in the Active workspace).
+The Rust library names track the packages — only manifests move.
 
 | Package (crates.io) | Library / binary | Installs |
 |---|---|---|
-| `solid-lang-core` | lib `solid_core` | `use solid_core::…` |
-| `solid-cli` | bin `solid` | `cargo install solid-cli` |
-| `solid-fmt` | bin `solid-fmt` | `cargo install solid-fmt` |
-| `solid-ls` | bin `solid-ls` (+ lib `solid_ls`) | editor servers |
+| `active` | lib `active` (facade over `active_core`) | `use active::…` |
+| `active-core` | lib `active_core` | `use active_core::…` |
+| `active-cli` | bin `active` | `cargo install active-cli` |
+| `active-fmt` | bin `active-fmt` (+ lib `active_fmt`) | `cargo install active-fmt` |
+| `active-lsp` | bin `active-lsp` (+ lib `active_ls`) | editor servers |
 
-Dependents write `solid-lang-core = "1"` and `use solid_core::…`.
-Binary names (`solid`, `solid-fmt`, `solid-ls`) are install-local
+Dependents write `active-core = "1"` and `use active_core::…`
+(or `active = "1"` with `use active::…` for the facade).
+Binary names (`active`, `active-fmt`, `active-lsp`) are install-local
 and never collide on crates.io.
 
 ## 3. Release binaries (release.yml, on `v*` tags)
 
 Six artifacts: Linux/macOS/Windows × x86_64/ARM64, each bundling
-`samples` evaluation parity (`solid check` on both examples runs
+`samples` evaluation parity (`ACTIVE check` on both examples runs
 per target before archiving). Every artifact ships:
 
-- `solid-<target>.tar.gz` / `.zip` (Windows) with `solid`,
-  `solid-fmt`, `solid-ls`, `README.md`, `LICENSE-*`, and `schemas/`
+- `ACTIVE-<target>.tar.gz` / `.zip` (Windows) with `ACTIVE`,
+  `active-fmt`, `active-lsp`, `README.md`, `LICENSE-*`, and `schemas/`
   (the standard library, vendored for offline use).
 - `SHA256SUMS` over all archives.
 - GitHub build-provenance attestations (keyless OIDC,
   `actions/attest-build-provenance`) — the primary authenticity
   story, verifiable with `gh attestation verify`.
-- Optional `solid-sign` Ed25519 sidecars (`.sig`): the workflow
-  signs with `solid sign` (C-052 dogfood) when the
+- Optional `ACTIVE-sign` Ed25519 sidecars (`.sig`): the workflow
+  signs with `ACTIVE sign` (C-052 dogfood) when the
   `RELEASE_SIGNING_KEY` secret is present — its content is the
-  `.secret` file text from `solid keygen`, sidecars record kid
-  `solid-release`. Verifiers check against a trust file holding
+  `.secret` file text from `ACTIVE keygen`, sidecars record kid
+  `ACTIVE-release`. Verifiers check against a trust file holding
   that id and the release public key (published in `docs/`
   alongside). Without the secret the step is skipped and
   attestations + checksums carry verification.
@@ -66,13 +70,13 @@ authoritative; documented here when a leg needs a fallback):
 
 ## 4. crates.io publication
 
-Order matters (path deps rewrite to version deps): `solid-lang-core`
-first, then `solid-fmt`, `solid-ls`, `solid-cli`. Continuous gate
+Order matters (path deps rewrite to version deps): `active-core`
+first, then `active-fmt`, `active-lsp`, `active-cli`. Continuous gate
 (`package` job in ci.yml): full `cargo package` for
-`solid-lang-core` (proves publish-readiness end to end) plus
+`active-core` (proves publish-readiness end to end) plus
 `cargo package --list` for the dependents (file inclusion +
 manifest parse). Full packaging of the dependents becomes possible
-— and the CI job extends to it — the moment `solid-lang-core` is
+— and the CI job extends to it — the moment `active-core` is
 published, since cargo verifies path deps against the registry.
 
 Two supported paths for the real publish (both need a one-time
@@ -80,8 +84,8 @@ human step — publication is authenticated, automation cannot mint
 it):
 
 1. **Trusted Publishing (preferred, no tokens):** link the repo on
-   crates.io (`solid-lang-core`, `solid-cli`, `solid-fmt`,
-   `solid-ls` → GitHub OIDC for `RatioArtificiosa/solid-lang`);
+   crates.io (`active-core`, `active-cli`, `active-fmt`,
+   `active-lsp` → GitHub OIDC for `RatioArtificiosa/solid-lang`);
    release.yml then publishes passwordlessly on tags.
 2. **Token:** `cargo login` with `CARGO_REGISTRY_TOKEN`; release.yml
    publishes when the secret exists, else skips with a notice.
@@ -89,8 +93,8 @@ it):
 Verify locally any time (no network writes):
 
 ```bash
-cargo package --list -p solid-lang-core   # file list
-cargo publish --dry-run -p solid-lang-core
+cargo package --list -p active-core   # file list
+cargo publish --dry-run -p active-core
 ```
 
 ## 5. Editor distribution (C-057)
@@ -98,20 +102,20 @@ cargo publish --dry-run -p solid-lang-core
 - **VS Code / Cursor / VSCodium** (one vsix serves all three —
   Cursor and VSCodium consume the VS Code marketplace format):
   `editors/vscode/` (`package.json` + TextMate grammar +
-  dependency-free JS client spawning `solid-ls`). `vsce package`
-  builds `solid-lang-<version>.vsix` (attached to GitHub releases
+  dependency-free JS client spawning `active-lsp`). `vsce package`
+  builds `active-lang-<version>.vsix` (attached to GitHub releases
   by release.yml; never committed). Publishing (`vsce publish`)
   needs a marketplace token — human step, procedure in
   `editors/vscode/README.md`.
 - **Neovim**: `editors/neovim/` is a runtimepath plugin
-  (`ftdetect/`, `ftplugin/`, `syntax/solid.vim`, `doc/solid.txt`)
+  (`ftdetect/`, `ftplugin/`, `syntax/ACTIVE.vim`, `doc/ACTIVE.txt`)
   installable via any plugin manager (`lazy.nvim`, `packer`,
   `vim-plug` one-liners in its README) plus an `lspconfig`
-  snippet pointing at `solid-ls`. No registry, no token.
+  snippet pointing at `active-lsp`. No registry, no token.
 
 ## 6. Install surface (user-facing summary)
 
-- `cargo install solid-cli solid-fmt` + `solid-ls` via the vsix or
-  `cargo install solid-ls`; library via `solid-lang-core = "1"`.
+- `cargo install active-cli active-fmt` + `active-lsp` via the vsix or
+  `cargo install active-lsp`; library via `active-core = "1"`.
 - Release archives for users without Rust; checksums +
   attestations (+ `.sig` sidecars when the release key is set).

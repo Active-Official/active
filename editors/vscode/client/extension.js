@@ -1,5 +1,5 @@
-// SOLID language client (C-057): dependency-free Node entry point
-// (vscode-languageclient ships in node_modules). Spawns `solid-ls`
+// Active language client (C-057): dependency-free Node entry point
+// (vscode-languageclient ships in node_modules). Spawns `active-lsp`
 // over stdio; the server path comes from settings so users without
 // PATH installs keep working.
 const vscode = require("vscode");
@@ -9,8 +9,8 @@ let client = null;
 
 function serverOptions(context) {
 	const configured = vscode.workspace
-		.getConfiguration("solid")
-		.get("languageServer.path", "solid-ls");
+		.getConfiguration("active")
+		.get("languageServer.path", "active-lsp");
 	return {
 		command: configured,
 		args: [],
@@ -21,7 +21,7 @@ function serverOptions(context) {
 
 function clientOptions() {
 	return {
-		documentSelector: [{ scheme: "file", language: "solid" }],
+		documentSelector: [{ scheme: "file", language: "active" }],
 	};
 }
 
@@ -30,17 +30,17 @@ function activate(context) {
 	// ServerOptions must return a Promise, and a sync Executable
 	// breaks server spawn (vscode-languageclient 9.0.1 typings).
 	client = new LanguageClient(
-		"solid",
-		"SOLID",
+		"active",
+		"active",
 		serverOptions(context),
 		clientOptions(),
 	);
 	client.start();
 	context.subscriptions.push(
 		vscode.workspace.onDidChangeConfiguration((event) => {
-			if (event.affectsConfiguration("solid.languageServer")) {
+			if (event.affectsConfiguration("active.languageServer")) {
 				vscode.window.showInformationMessage(
-					"SOLID server path changed — reload the window to restart solid-ls.",
+					"Active server path changed — reload the window to restart active-lsp.",
 				);
 			}
 		}),

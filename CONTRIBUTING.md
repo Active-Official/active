@@ -1,4 +1,4 @@
-# Contributing to SOLID (C-064)
+# Contributing to ACTIVE (C-064)
 
 ## Ground rules (non-negotiable)
 
@@ -10,7 +10,7 @@ These mirror the project's standing engineering rules:
    verbatim):
    `cargo build --workspace --locked`, `cargo clippy --workspace
    --all-targets --locked -- -D warnings`, `cargo fmt --all --check`,
-   `cargo test --workspace --locked`, `solid check` on both examples.
+   `cargo test --workspace --locked`, `ACTIVE check` on both examples.
    Zero warnings, fmt-clean, all green — or the change is not done.
 3. **Independent review** before merge (Copilot CLI review or
    maintainer review — a norm enforced at merge, not a hook);
@@ -36,7 +36,7 @@ behavior do not.
 Every change ships positive **and** negative tests on the real
 shipped path (parse → evaluate → export), diagnostics with stable
 codes and spans where applicable, and updated specs/docs. New
-`.solid` samples go through the corpus, docs-site, or schema-library
+`.active` samples go through the corpus, docs-site, or schema-library
 harnesses as appropriate — book samples that fail teach lies.
 
 ## Pull requests

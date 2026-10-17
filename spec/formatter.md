@@ -1,4 +1,4 @@
-# SOLID Production Formatter (C-040/C-041)
+# ACTIVE Production Formatter (C-040/C-041)
 
 The formatter is deterministic source-to-source normalization: parse
 (without includes resolution, without evaluation) then re-emit in a
@@ -22,10 +22,10 @@ Guarantees (tested, spec/dual-syntax.md §8): idempotence
 documents, comment/annotation/semantic-block survival in every mode,
 and cross-style tree equality (both styles parse to the same IR).
 
-## 2. `solid fmt` contract
+## 2. `ACTIVE fmt` contract
 
 ```
-solid fmt [--style brace|indent|preserve] [--write] [--check] <file>...
+ACTIVE fmt [--style brace|indent|preserve] [--write] [--check] <file>...
 ```
 
 At least one file is required; an empty file list is an error
@@ -43,7 +43,7 @@ At least one file is required; an empty file list is an error
 - `--write` and `--check` together are an error (contradictory).
 - Exit codes: `0` = clean / written; `1` = differences found
   (`--check`), parse errors, I/O errors, or flag misuse. Parse
-  errors report diagnostics like `solid check` and abort before any
+  errors report diagnostics like `ACTIVE check` and abort before any
   write — a file that does not parse is never reformatted, and when
   several files are given, files before the failure keep their
   results (writes already done stay done).
@@ -53,15 +53,15 @@ At least one file is required; an empty file list is an error
   where they are). Healing repairs do not run — fmt uses strict
   parse options, so a file needing repair fails instead.
 
-## 3. `solid-fmt` binary parity
+## 3. `active-fmt` binary parity
 
-The standalone `solid-fmt` binary keeps its single-file behavior
+The standalone `active-fmt` binary keeps its single-file behavior
 and gains `--check` with identical semantics (no writes, names
 differing files, exit 1 on differences). `--write` keeps working.
 
 ## 4. LSP readiness (C-043 consumes this)
 
-`solid_core::fmt::format(&Module, Style)` plus `Style::Preserve`
+`active_core::fmt::format(&Module, Style)` plus `Style::Preserve`
 detection is the whole API the language server needs for format-on-
 save and range-formatting-later: parse (recovering, so broken files
 still produce a tree), format, apply as a full-document edit. No

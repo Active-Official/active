@@ -11,7 +11,7 @@ One paragraph: what changes, for whom, why now.
 
 ## Motivation
 
-The problem, with a real `.solid` example that is painful today.
+The problem, with a real `.active` example that is painful today.
 
 ## Design
 

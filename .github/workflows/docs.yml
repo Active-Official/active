@@ -2,7 +2,7 @@ name: Docs
 
 # Documentation site (C-060/C-061): mdBook builds every push and PR.
 # The build validates SUMMARY links and {{#include}} sample paths;
-# the .solid samples themselves are executed by the docs_site test
+# the .active samples themselves are executed by the docs_site test
 # target, so the book cannot rot. Hosting is a one-time human step
 # (repo Settings → Pages → deploy from gh-pages branch, then add an
 # upload + peaceiris/actions-gh-pages deploy job here); until then

@@ -1,4 +1,4 @@
-# SOLID Dual-Syntax Specification (C-020, revision 3 — reviewed, ready)
+# ACTIVE Dual-Syntax Specification (C-020, revision 3 — reviewed, ready)
 
 **Status:** normative design, C-020. Written before any parser change and
 reviewed adversarially first (two review rounds, nine findings in round one
@@ -12,7 +12,7 @@ explicit statement of what is not preserved, and the E006 column rule.
 
 ## 1. The principle
 
-A SOLID document may be written in two equivalent layouts:
+A ACTIVE document may be written in two equivalent layouts:
 
 - **Brace style** — explicit delimiters: `[name]` headers, `name { … }` blocks,
   and inline `{ … }` tables.
@@ -231,8 +231,8 @@ Attachment = Leading(statement)        // own-line comment(s) before a statement
   inside a block in canonical mode). Preservation is a guarantee about
   *canonical* documents and about comments/blank-line structure, not about
   arbitrary whitespace.
-- **CLI flag names:** `solid-fmt --bracketed` emits brace style and
-  `solid-fmt --indented` emits indentation style (`--write` edits in place).
+- **CLI flag names:** `active-fmt --bracketed` emits brace style and
+  `active-fmt --indented` emits indentation style (`--write` edits in place).
   "Bracketed" and "brace style" are the same layout; "indented" and
   "indentation style" are the same layout.
 

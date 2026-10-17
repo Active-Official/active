@@ -1,5 +1,5 @@
-" SOLID buffer defaults (C-057): two-space indent (both syntax styles),
-" # comments, solid-ls as the language server hook point.
+" Active buffer defaults (C-057): two-space indent (both syntax styles),
+" # comments, active-lsp as the language server hook point.
 if exists("b:did_ftplugin")
   finish
 endif

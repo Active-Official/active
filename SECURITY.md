@@ -2,7 +2,7 @@
 
 ## What this covers
 
-The SOLID reference implementation in this repository (parser,
+The ACTIVE reference implementation in this repository (parser,
 evaluator, CLI, formatter, language server, converters), the
 standard schema library (`schemas/`), and the release artifacts
 (binaries, checksums, attestations, signatures).
@@ -10,10 +10,10 @@ standard schema library (`schemas/`), and the release artifacts
 ## Reporting a vulnerability
 
 **Do not open a public issue.** Report privately through a
-[GitHub private security advisory](https://github.com/RatioArtificiosa/solid-lang/security/advisories/new)
-against `RatioArtificiosa/solid-lang`.
+[GitHub private security advisory](https://github.com/RatioArtificiosa/ACTIVE-lang/security/advisories/new)
+against `RatioArtificiosa/ACTIVE-lang`.
 
-Include: affected versions / commits, a minimal `.solid` reproducer
+Include: affected versions / commits, a minimal `.active` reproducer
 (or the attack scenario for supply-chain issues), and the impact
 you see (secret exfiltration, evaluation escape, signature bypass,
 redaction failure, non-determinism).

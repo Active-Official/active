@@ -7,6 +7,6 @@ labels: rfc-draft
 
 ## Summary (one paragraph)
 
-## Motivation (real `.solid` example that is painful today)
+## Motivation (real `.active` example that is painful today)
 
 ## Non-goals check (C-070 untouched?)

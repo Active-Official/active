@@ -1,8 +1,8 @@
-# SOLID
+# ACTIVE
 
 **Symmetric · Overlay-ready · Loop-proof · Intent-driven · Deterministic**
 
-SOLID is a modern configuration and data language designed to be safer than YAML, more expressive than TOML, more human-friendly than JSON, and excellent for both humans and AI agents.
+ACTIVE is a modern configuration and data language designed to be safer than YAML, more expressive than TOML, more human-friendly than JSON, and excellent for both humans and AI agents.
 
 This repository contains the **production implementation**: parser, IR,
 dependency graph, evaluator, units, string interpolation, schema
@@ -22,50 +22,50 @@ language server.
 - JSON and simple TOML conversion
 - Structured diagnostics
 - CLI: `eval`, `check`, `graph`, `convert`, `fmt`, `lint`
-- Dual-syntax formatter (`solid fmt`: indent, bracketed, preserving)
-- Language server (`solid-ls`: hover, go-to-definition, completions,
+- Dual-syntax formatter (`active fmt`: indent, bracketed, preserving)
+- Language server (`active-lsp`: hover, go-to-definition, completions,
   diagnostics, inlay hints, code actions)
 
 ## Install
 
 ```bash
-cargo install solid-cli solid-fmt solid-ls   # needs Rust 1.85+
+cargo install active-cli active-fmt active-lsp   # needs Rust 1.85+
 ```
 
 Release archives (Linux/macOS/Windows × x86_64/ARM64, with SHA256SUMS
 and build attestations) are attached to
 [GitHub releases](https://github.com/RatioArtificiosa/solid-lang/releases).
 Editors: `editors/vscode` (VS Code / Cursor / VSCodium vsix) and
-`editors/neovim` (runtimepath plugin + `solid-ls`). Details and the
+`editors/neovim` (runtimepath plugin + `active-lsp`). Details and the
 crates.io procedure: `spec/packaging.md`.
 
 ## Quick start
 
 ```bash
-cargo build -p solid-cli --release   # needs recent stable Rust (1.85+)
+cargo build -p active-cli --release   # needs recent stable Rust (1.85+)
 
 # simple demo
-./target/release/solid eval examples/demo.solid
+./target/release/active eval examples/demo.active
 
 # comprehensive example (units + interpolation + secrets + arrays)
-./target/release/solid eval examples/complete.solid
+./target/release/active eval examples/complete.active
 
-./target/release/solid check examples/complete.solid
-./target/release/solid graph examples/complete.solid
-./target/release/solid convert examples/complete.solid --to json
+./target/release/active check examples/complete.active
+./target/release/active graph examples/complete.active
+./target/release/active convert examples/complete.active --to json
 ```
 
 ## Project layout
 
 ```
-solid/
+ACTIVE/
 ├── Cargo.toml
 ├── README.md
 ├── docs/DESIGN.md
 ├── examples/
-│   ├── demo.solid
-│   └── complete.solid          ← richer example
-├── solid-core/                 # parser, IR, evaluator, types, diagnostics
+│   ├── demo.active
+│   └── complete.active          ← richer example
+├── active-core/                 # parser, IR, evaluator, types, diagnostics
 │   └── src/
 │       ├── parser/
 │       │   ├── lexer.rs        # full lexer with units & operators
@@ -76,9 +76,9 @@ solid/
 │       ├── diag.rs
 │       ├── heal.rs
 │       └── convert/mod.rs
-├── solid-cli/
-├── solid-fmt/
-└── solid-ls/
+├── active-cli/
+├── active-fmt/
+└── active-lsp/
 ```
 
 ## Parser surface (current)

@@ -1,4 +1,4 @@
-# SOLID Secrets & Taint Tracking (C-035/C-036)
+# ACTIVE Secrets & Taint Tracking (C-035/C-036)
 
 Secrets are first-class values with a transitive taint model, refusal
 points, and audited redaction (P-032). The invariant is absolute:
@@ -39,13 +39,13 @@ error message, or an export** — only redaction markers do.
   `"***SECRET***"` — the marker, never the data. "Refuse to emit
   tainted data" (P-032) is satisfied by redaction: secret bytes never
   leave the process through an export path.
-- `solid graph` prints node ids and edges only — no values at all.
+- `ACTIVE graph` prints node ids and edges only — no values at all.
 - `Value`'s `Debug` and `serde::Serialize` impls redact by
   construction (`Secret(***)` / `"***SECRET***"` at every depth), so
   generic logging, assertion output, and direct serialization can
   never emit secret material. Deserialization stays derived: the
   input direction cannot leak.
-- `solid fmt` re-emits `secret(…)` source calls (source-derived
+- `ACTIVE fmt` re-emits `secret(…)` source calls (source-derived
   locators, never evaluated values).
 - Debug/error rendering uses the recursive redactor with the
   `Secret(***)` marker (T001 messages, quantity errors).

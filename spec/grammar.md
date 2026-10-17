@@ -1,7 +1,7 @@
-# SOLID Language Grammar (v0.9 — alpha surface)
+# ACTIVE Language Grammar (v0.9 — alpha surface)
 
 **Status:** normative for the alpha surface (C-013). This grammar describes the
-language as implemented in `solid-core`. A second implementer following this
+language as implemented in `ACTIVE-core`. A second implementer following this
 document should accept exactly the same inputs. Deviations are marked
 **[impl note]**.
 
@@ -280,7 +280,7 @@ profile-block = "profile" string-literal "{" [ newline { statement } ] "}"
 - Profile blocks may appear **only at document root**; anywhere else is
   E018. A duplicate profile name is E018.
 - Selection is by the root key `active_profile` (any expression, usually
-  `env.SOLID_PROFILE ?: "development"`): if it evaluates to a string
+  `env.ACTIVE_PROFILE ?: "development"`): if it evaluates to a string
   naming a defined profile, that profile merges; if it is missing, no
   profile merges (base configuration only); if it names no defined
   profile, or is not a string, a W002 warning is emitted and no profile
@@ -533,7 +533,7 @@ alpha exactly.
 - Top-level keys after a table header belong to that table (TOML-consistent).
 - A `let` inside a table body terminates the table.
 - A key whose value references its own name falls through to `let`
-  resolution (never a self-cycle) — see `solid-core/tests/regressions.rs`.
+  resolution (never a self-cycle) — see `active-core/tests/regressions.rs`.
 
 ### 4.2 Resilience and healing (C-016)
 

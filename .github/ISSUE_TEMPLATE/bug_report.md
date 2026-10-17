@@ -7,11 +7,11 @@ labels: bug
 
 ## What happened
 
-## Minimal `.solid` reproducer
+## Minimal `.active` reproducer
 
-```solid
+```active
 ```
 
 ## Expected (spec section, if any)
 
-## Version (`solid --version`) and platform
+## Version (`ACTIVE --version`) and platform

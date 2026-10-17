@@ -1,12 +1,12 @@
 # Converter Suite (C-046/C-047, P-043)
 
-Bidirectional conversion between SOLID value trees and the JSON /
+Bidirectional conversion between ACTIVE value trees and the JSON /
 YAML / TOML ecosystem, plus typed-code generation from schemas.
 Secret redaction is uniform on every export path: the literal
 `***SECRET***` replaces any secret value, and redacted exports are
 one-way by design (no import reconstructs a secret).
 
-## 1. Canonical value mapping (SOLID → JSON)
+## 1. Canonical value mapping (ACTIVE → JSON)
 
 `value_to_json` is the canonical mapping; YAML and TOML derive
 from the value tree with the same shapes:
@@ -53,10 +53,10 @@ so JSON and YAML exports always agree. Secrets redact identically.
 Failures (unrepresentable shapes beyond Null) are hard errors, not
 silent drops.
 
-## 4. Reverse direction (JSON / YAML / TOML → SOLID)
+## 4. Reverse direction (JSON / YAML / TOML → ACTIVE)
 
-`json_to_solid`, `yaml_to_solid`, `toml_to_solid` return
-`(String, Vec<Diagnostic>)`: best-effort SOLID source plus
+`json_to_active`, `yaml_to_active`, `toml_to_active` return
+`(String, Vec<Diagnostic>)`: best-effort ACTIVE source plus
 diagnostics for lossy corners. Emission style is brace blocks
 (`server { … }`) — never dotted headers (canonical emission is
 nested blocks; the parser accepts dotted headers and they lower
@@ -68,13 +68,13 @@ to the same IR).
   `nan`/`inf`) become null with a W010 note — silent flips would
   corrupt data.
 - Top-level scalars/arrays wrap as `value = …` with a W009
-  diagnostic (a document of only `value` is valid SOLID).
+  diagnostic (a document of only `value` is valid ACTIVE).
 - YAML non-string keys (ints, bools) stringify with one W007
   diagnostic each; YAML timestamps arrive as strings (no
   diagnostic — they already are strings in the YAML model).
 - TOML datetimes stringify with one W008 diagnostic each
-  (TOML-only type, no SOLID equivalent).
-- Keys sanitize to SOLID identifiers (W007 per change):
+  (TOML-only type, no ACTIVE equivalent).
+- Keys sanitize to ACTIVE identifiers (W007 per change):
   non-identifier characters become `_`, leading digits and empty
   names are repaired, and hard keyword spellings
   (`let`/`env`/`secret`/`true`/`false`/`null` — never parseable as
@@ -98,18 +98,18 @@ to the same IR).
   diagnostics or logs (security invariant, tested).
 - W006–W010 are registered in `docs/diagnostics.md`.
 
-Round-trip contract (tested): JSON → SOLID → evaluate → JSON is
+Round-trip contract (tested): JSON → ACTIVE → evaluate → JSON is
 fixed-point for the canonical mapping, except datetimes, secret
 markers, and non-string YAML keys (all diagnosed).
 
 ## 5. CLI
 
-- `solid export --format json|yaml|toml` (evaluated tree; secrets
+- `ACTIVE export --format json|yaml|toml` (evaluated tree; secrets
   redact; TOML Null warnings surface; hard errors exit non-zero).
-- `solid import --from json|yaml|toml <file>` prints SOLID source
+- `ACTIVE import --from json|yaml|toml <file>` prints ACTIVE source
   to stdout; import diagnostics go to stderr; lossy corners exit 0
   (diagnosed, best-effort), hard parse failures exit non-zero.
-- `solid generate --from <file.solid> --to
+- `ACTIVE generate --from <file.active> --to
   jsonschema|openapi|typescript|go|rust [--name <Root>]` prints the
   binding to stdout; documents without a schema exit non-zero.
 
@@ -134,7 +134,7 @@ only static literals render (`minimum`, `minLength`, `pattern`,
 `default`, enum members); dynamic bounds are skipped without
 diagnostics (validation still enforces them at runtime).
 
-Type mapping (SS = SOLID schema type):
+Type mapping (SS = ACTIVE schema type):
 
 | SS | JSON Schema | TypeScript | Go | Rust serde |
 |---|---|---|---|---|
@@ -160,7 +160,7 @@ Type mapping (SS = SOLID schema type):
   `/** @deprecated msg */`, Go `// Deprecated: msg`,
   Rust `#[deprecated]`.
 - Names: nested types are PascalCase path joins (`server.database`
-  → `ServerDatabase`); fields keep SOLID names with `json`
+  → `ServerDatabase`); fields keep ACTIVE names with `json`
   (Go) / `serde` (Rust) tags preserving them; Go fields export by
   capitalizing; collisions after normalization gain `_`.
 - OpenAPI output is the JSON Schema inside a 3.1

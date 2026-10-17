@@ -9,8 +9,8 @@ evidence pointer (test target, command, or artifact).
 Single files (plus includes) cover Kubernetes services, Terraform
 variables, 12-factor apps, CI pipelines, feature flags, and AI
 prompts — each as an executed cookbook sample
-(`docs-site/src/cookbook/*.solid`, all evaluated by
-`solid-core/tests/docs_site.rs` with value assertions), plus
+(`docs-site/src/cookbook/*.active`, all evaluated by
+`active-core/tests/docs_site.rs` with value assertions), plus
 multi-region overlays and migration guides. **PASS.**
 
 ## 2. Hermeticity
@@ -49,15 +49,15 @@ escape clause is vacuously satisfied — stronger than required.
 
 ## 6. Toolchain
 
-Ships and works: parser, evaluator, formatter (`solid fmt`,
-3 styles + `--check`), linter (`solid lint`, independent rules),
+Ships and works: parser, evaluator, formatter (`ACTIVE fmt`,
+3 styles + `--check`), linter (`ACTIVE lint`, independent rules),
 converters both directions + schema codegen (5 targets:
 `jsonschema`, `openapi`, `typescript`, `go`, `rust`),
 documentation generator (Markdown/HTML/man), language server
 (stdio LSP 3.17 — boots and answers `initialize`, pinned by the
-stdio initialize e2e in `solid-ls/tests/lsp.rs`), CI checker
-(`solid check`). Each proven by its test target and the CLI gate
-(`cargo test --workspace` green + `solid check` on both examples
+stdio initialize e2e in `active-lsp/tests/lsp.rs`), CI checker
+(`ACTIVE check`). Each proven by its test target and the CLI gate
+(`cargo test --workspace` green + `ACTIVE check` on both examples
 in CI). **PASS.**
 
 ## 7. Schemas, profiles, patches, units, graphs
@@ -85,7 +85,7 @@ manual artifacts, re-runnable with one command. **PASS.**
 10,000-node eval mean ~25 ms release (p99 under the 50 ms
 internal target; the proposal asks well under 100 ms),
 leaf edits re-evaluate 1.3% of nodes, tracked continuously by
-criterion benches + CodSpeed (`solid-core/benches/eval.rs`,
+criterion benches + CodSpeed (`active-core/benches/eval.rs`,
 `.github/workflows/codspeed.yml`; numbers in
 spec/performance.md §3). **PASS.**
 
@@ -129,4 +129,4 @@ No new risks discovered this cycle. Next review: the 1.x cycle per C-080.
 All ten criteria pass. Checklist C-010 through C-090 (plus C-070)
 carry `Status: done`. Workspace version bumped to **1.0.0**;
 reference implementation declared (spec/conformance.md);
-conformance suite green. **SOLID 1.0 is declared.**
+conformance suite green. **ACTIVE 1.0 is declared.**

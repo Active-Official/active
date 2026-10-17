@@ -1,4 +1,4 @@
-# SOLID Annotations: @intent, @constraint, @ai_immutable (C-033/C-034)
+# ACTIVE Annotations: @intent, @constraint, @ai_immutable (C-033/C-034)
 
 Annotations are `#` comments on the lines immediately preceding a
 binding, table, or `let`, parsed into IR and enforced. They are the
@@ -7,7 +7,7 @@ machine-readable contract layer for humans, agents, and tooling
 
 ## 1. Surface syntax
 
-```solid
+```active
 # @intent: "Public HTTP port; must stay below 1024 in prod"
 # @constraint: value >= 1 && value <= 65535
 # @ai_immutable: true

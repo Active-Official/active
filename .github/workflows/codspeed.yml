@@ -4,7 +4,7 @@ name: CodSpeed
 # (spec/performance.md): every push/PR runs the criterion suite
 # through the CodSpeed runner in simulation mode, which fails on
 # significant regression vs the base branch. Local runs use plain
-# `cargo bench -p solid-lang-core --bench eval` (the compat crate falls
+# `cargo bench -p active-core --bench eval` (the compat crate falls
 # back to stock criterion outside the runner).
 #
 # Shape follows the CodSpeed Rust docs exactly: `cargo codspeed

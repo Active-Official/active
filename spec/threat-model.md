@@ -1,6 +1,6 @@
 # Threat Model (C-052, P-051)
 
-What SOLID protects, from whom, and where the boundaries are.
+What ACTIVE protects, from whom, and where the boundaries are.
 Read with spec/reproducibility.md (provenance, lockfiles).
 
 ## 1. Assets
@@ -88,7 +88,7 @@ value size) fail closed (X001–X006) in both modes. Fuzzing
 
 - Lockfiles bind content hash + provenance + toolchain version;
   drift changes the hash.
-- `solid generate` output is data-derived; schema authors cannot
+- `ACTIVE generate` output is data-derived; schema authors cannot
   inject values (defaults render; dynamic bounds skipped).
 - Crates.io provenance and signed release binaries are C-056.
 
@@ -114,7 +114,7 @@ value size) fail closed (X001–X006) in both modes. Fuzzing
 - **Keys**: TOML trusted-keys file —
   `[[keys]] id = "release-2026" public = "<64-hex>"`.
   Secret keys live in `<name>.secret` files (64 hex chars =
-  32-byte seed); `solid keygen --out <prefix>` creates
+  32-byte seed); `ACTIVE keygen --out <prefix>` creates
   `<prefix>.secret` + `<prefix>.public` (the latter paste-ready
   for the TOML).
 - **Sidecar**: `<file>.sig` with `kid = "<id>"` and
@@ -132,12 +132,12 @@ value size) fail closed (X001–X006) in both modes. Fuzzing
   `--trust-keys <file>` on
   eval/check/convert/lock/graph/doc/generate plus impact/why
   (all commands that resolve includes);
-  `solid sign <file> --key <secret> --kid <id>` writes the
+  `ACTIVE sign <file> --key <secret> --kid <id>` writes the
   sidecar (invalid kids refused before any file is touched);
-  `solid verify <file> --trust-keys <toml>` is point-in-time
+  `ACTIVE verify <file> --trust-keys <toml>` is point-in-time
   attestation (exit 0/1).
 - **Carve-outs (documented, not gaps)**: formatting never loads
-  includes (`resolve_includes: false`), so `solid fmt` needs no
+  includes (`resolve_includes: false`), so `ACTIVE fmt` needs no
   flag; lint loads but never evaluates (read-only analysis).
   The language server evaluates dirty buffers for hover values
   without trust plumbing — hermetic and budgeted, but unsealed:
@@ -148,7 +148,7 @@ value size) fail closed (X001–X006) in both modes. Fuzzing
 1. Generate per-purpose keys (release, team, automation);
    never reuse a personal signing key for releases.
 2. Store secret keys in a vault or `0600` files outside the repo
-   (`solid keygen` sets `0600` on Unix; on Windows use an
+   (`ACTIVE keygen` sets `0600` on Unix; on Windows use an
    ACL-restricted directory);
    public halves live in-repo beside the documents they guard.
 3. Rotate by adding the new public key, re-signing, then

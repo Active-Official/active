@@ -2,7 +2,7 @@
 
 ## Pledge
 
-We pledge to make participation in the SOLID project a
+We pledge to make participation in the ACTIVE project a
 harassment-free experience for everyone, regardless of age, body
 size, visible or invisible disability, ethnicity, sex
 characteristics, gender identity and expression, level of
@@ -31,7 +31,7 @@ limits, or a permanent ban, decided by the repository owner (see
 `.github/CODEOWNERS`).
 
 Report through a
-[private security advisory](https://github.com/RatioArtificiosa/solid-lang/security/advisories/new)
+[private security advisory](https://github.com/RatioArtificiosa/ACTIVE-lang/security/advisories/new)
 with a `[CoC]` title prefix — never by public issue. Advisory
 reports are visible only to people with repository security access
 (the owner, plus anyone explicitly granted it); they are
@@ -40,4 +40,4 @@ cannot use GitHub, ask someone who can to file on your behalf.
 
 This document is adapted from the Contributor Covenant, version
 2.1 (https://www.contributor-covenant.org/version/2/1/code_of_conduct/),
-with SOLID-specific reporting and scope.
+with ACTIVE-specific reporting and scope.

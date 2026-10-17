@@ -1,7 +1,7 @@
 # How the Execution Budget Works (C-037)
 
 This is the definitive answer to "how does the execution budget
-work". SOLID stays loop-proof and CI-safe through **two
+work". ACTIVE stays loop-proof and CI-safe through **two
 complementary halves**: static parser caps that reject pathological
 *shape*, and a runtime accountant that aborts pathological
 *execution*. Both halves are deterministic except wall-clock (noted

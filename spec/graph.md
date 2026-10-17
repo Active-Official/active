@@ -1,8 +1,8 @@
 # Dependency-Graph Tooling (C-049, P-045)
 
 The IR already carries a `petgraph` DAG (`Module.graph`, edges
-dependency → dependent). This item exposes it: `solid graph`,
-`solid impact <key>`, `solid why <key>`, a library API, and three
+dependency → dependent). This item exposes it: `ACTIVE graph`,
+`ACTIVE impact <key>`, `ACTIVE why <key>`, a library API, and three
 language-server methods for agents and dashboards.
 
 ## 1. Semantics
@@ -36,7 +36,7 @@ language-server methods for agents and dashboards.
   per line.
 - **mermaid**: `flowchart TD` with `id["label"]` nodes and
   `A --> B` edges. Node ids are `n<arena-index>`.
-- **dot**: `digraph solid {` with `"label" -> "label";` edges
+- **dot**: `digraph ACTIVE {` with `"label" -> "label";` edges
   (labels quoted; quotes/backslashes escaped).
 - **json**: `{"nodes": [{"id": "n3", "label": "a.b"}], "edges":
   [{"from": "n1", "to": "n3"}]}` (impact/why:
@@ -47,14 +47,14 @@ same bytes.
 
 ## 3. CLI
 
-- `solid graph [--format text|mermaid|dot|json] <file>` (default
+- `ACTIVE graph [--format text|mermaid|dot|json] <file>` (default
   text, the pre-C-049 shape preserved).
-- `solid impact <key> [--format text|json] <file>`.
-- `solid why <key> [--format text|json] <file>`.
+- `ACTIVE impact <key> [--format text|json] <file>`.
+- `ACTIVE why <key> [--format text|json] <file>`.
 - Unknown keys and unparseable files exit non-zero; queries need
   only the parsed module (no evaluation).
 
-## 4. Library API (`solid_core::graph`)
+## 4. Library API (`active_core::graph`)
 
 `resolve_key`, `transitive_dependents`,
 `transitive_dependencies`, `node_label`, `to_mermaid`, `to_dot`,
@@ -65,11 +65,11 @@ same bytes.
 
 Three custom methods (no capability advertisement needed):
 
-- `solid/graph` (`{textDocument}`) →
+- `ACTIVE/graph` (`{textDocument}`) →
   `{"mermaid": …, "dot": …, "json": …}`.
-- `solid/impact` (`{textDocument, position}`) →
+- `ACTIVE/impact` (`{textDocument, position}`) →
   `{"key": …, "paths": […]}` or `null` off-symbol.
-- `solid/why` (same shape as impact).
+- `ACTIVE/why` (same shape as impact).
 
 Position-based like references: identifiers and interpolation
 references initiate; anything else returns `null`. Served from the

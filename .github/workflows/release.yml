@@ -52,23 +52,23 @@ jobs:
           key: release-${{ matrix.target }}
       - name: Build release binaries
         shell: bash
-        run: cargo build --release --locked -p solid-cli -p solid-fmt -p solid-ls --target ${{ matrix.target }}
+        run: cargo build --release --locked -p active-cli -p active-fmt -p active-lsp --target ${{ matrix.target }}
       - name: Verify examples evaluate (except cross-compiled macOS leg)
         if: ${{ matrix.target != 'x86_64-apple-darwin' }}
         shell: bash
         run: |
-          BIN="target/${{ matrix.target }}/release/solid"
+          BIN="target/${{ matrix.target }}/release/active"
           if [[ "${{ matrix.target }}" == *"windows"* ]]; then BIN="$BIN.exe"; fi
-          "$BIN" check examples/demo.solid
-          "$BIN" check examples/complete.solid
+          "$BIN" check examples/demo.active
+          "$BIN" check examples/complete.active
       - name: Stage archive
         shell: bash
         run: |
-          STAGE="solid-${{ matrix.target }}"
+          STAGE="active-${{ matrix.target }}"
           mkdir -p "$STAGE"
           EXT=""
           if [[ "${{ matrix.target }}" == *"windows"* ]]; then EXT=".exe"; fi
-          for tool in solid solid-fmt solid-ls; do
+          for tool in active active-fmt active-lsp; do
             cp "target/${{ matrix.target }}/release/$tool$EXT" "$STAGE/"
           done
           cp README.md LICENSE-MIT LICENSE-APACHE "$STAGE/"
@@ -81,8 +81,8 @@ jobs:
       - name: Upload archive
         uses: actions/upload-artifact@v4
         with:
-          name: solid-${{ matrix.target }}
-          path: solid-${{ matrix.target }}.*
+          name: active-${{ matrix.target }}
+          path: active-${{ matrix.target }}.*
 
   vsix:
     name: Package VS Code extension
@@ -105,7 +105,7 @@ jobs:
       - name: Upload vsix
         uses: actions/upload-artifact@v4
         with:
-          name: solid-vsix
+          name: active-vsix
           path: editors/vscode/*.vsix
 
   release:
@@ -122,7 +122,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build signer binary
-        run: cargo build --locked -p solid-cli
+        run: cargo build --locked -p active-cli
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -132,20 +132,20 @@ jobs:
         shell: bash
         run: |
           cd dist
-          sha256sum solid-*.tar.gz solid-*.zip solid-lang-*.vsix > SHA256SUMS
+          sha256sum active-*.tar.gz active-*.zip active-lang-*.vsix > SHA256SUMS
           cat SHA256SUMS
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
-            dist/solid-*.tar.gz
-            dist/solid-*.zip
-            dist/solid-lang-*.vsix
-      - name: Optional solid-sign sidecars
+            dist/active-*.tar.gz
+            dist/active-*.zip
+            dist/active-lang-*.vsix
+      - name: Optional active-sign sidecars
         # RELEASE_SIGNING_KEY holds the `.secret` file text from
-        # `solid keygen` (written to a file: --key takes a path, not
-        # hex). Sidecars record kid "solid-release"; verify against a
-        # trust file with id "solid-release" + the release public key.
+        # `active keygen` (written to a file: --key takes a path, not
+        # hex). Sidecars record kid "active-release"; verify against a
+        # trust file with id "active-release" + the release public key.
         # Gated in-shell (not `if: secrets...`, which the dispatcher
         # rejects): absent key skips quietly, branch stays green.
         env:
@@ -158,8 +158,8 @@ jobs:
           fi
           echo "$RELEASE_SIGNING_KEY" > "$RUNNER_TEMP/release.key"
           cd dist
-          for f in solid-*.tar.gz solid-*.zip solid-lang-*.vsix; do
-            "$GITHUB_WORKSPACE/target/debug/solid" sign --key "$RUNNER_TEMP/release.key" --kid solid-release "$f"
+          for f in active-*.tar.gz active-*.zip active-lang-*.vsix; do
+            "$GITHUB_WORKSPACE/target/debug/active" sign --key "$RUNNER_TEMP/release.key" --kid active-release "$f"
           done
           rm -f "$RUNNER_TEMP/release.key"
           ls *.sig
@@ -168,7 +168,7 @@ jobs:
         with:
           files: dist/*
           body: |
-            SOLID ${{ github.ref_name }} — see spec/packaging.md §6 for install
+            Active ${{ github.ref_name }} — see spec/packaging.md §6 for install
             and verification (SHA256SUMS, build attestations, `.sig` sidecars
             when the release key is set).
       - name: Publish crates (needs CARGO_REGISTRY_TOKEN or trusted publishing)
@@ -184,7 +184,7 @@ jobs:
           # Registry index lag breaks dependents published back to
           # back: lock files, publish in dependency order, pause
           # between crates.
-          for p in solid-lang-core solid-fmt solid-ls solid-cli; do
+          for p in active-core active-fmt active-lsp active-cli; do
             cargo publish --locked -p "$p"
             sleep 60
           done

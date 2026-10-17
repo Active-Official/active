@@ -1,18 +1,18 @@
-# SOLID — repository instructions for Copilot
+# Active — repository instructions for Copilot
 
-This repository contains **SOLID**, a configuration and data language (TOML/YAML/
+This repository contains **Active**, a configuration and data language (TOML/YAML/
 JSON class) implemented in Rust as a Cargo workspace. The language is designed
 to be safe for both humans and AI agents: deterministic, hermetic, bounded,
 observable, dual-syntax, secure-by-default.
 
 ## Workspace layout
 
-- `solid-core/` — parser (lexer + recursive descent), IR, dependency graph,
+- `active-core/` — parser (lexer + recursive descent), IR, dependency graph,
   evaluator, types/units, diagnostics, healer, converters.
-- `solid-cli/` — the `solid` binary: `eval`, `check`, `graph`, `convert`.
-- `solid-fmt/` — dual-syntax formatter (in development).
-- `solid-ls/` — Language Server Protocol implementation (in development).
-- `examples/` — `.solid` example files; both MUST keep evaluating cleanly.
+- `active-cli/` — the `active` binary: `eval`, `check`, `graph`, `convert`.
+- `active-fmt/` — dual-syntax formatter (in development).
+- `active-lsp/` — Language Server Protocol implementation (in development).
+- `examples/` — `.active` example files; both MUST keep evaluating cleanly.
 - `docs/` — design and roadmap documents (`proposal.md`, `checklist.md`,
   `DESIGN.md`) are the authority for language design decisions.
 - `tests/`, `spec/`, `benchmarks/`, `tools/` — test corpus, spec files,
@@ -22,7 +22,7 @@ observable, dual-syntax, secure-by-default.
 
 1. **Determinism and hermeticity.** Evaluation performs no arbitrary I/O, no
    shell, no network. The only external inputs are declared env vars and the
-   controlled include graph. Never introduce side effects in `solid-core`.
+   controlled include graph. Never introduce side effects in `active-core`.
 2. **Bounded evaluation.** Hard limits on node count, depth, array length,
    wall-clock time. Never add constructs that can loop or recurse unboundedly.
 3. **Secrets.** `secret(...)` values are redacted on every export path
@@ -42,13 +42,13 @@ Any deliberately unfinished code is marked with a searchable tag naming the
 checklist item that will complete it:
 
 ```rust
-// TODO(solid C-040): production dual-style formatter
+// TODO(Active C-040): production dual-style formatter
 ```
 
 Find all pending items with:
 
 ```
-rg "TODO\(solid"
+rg "TODO\(ACTIVE"
 ```
 
 Never leave an unmarked stub or a vague `// TODO:` without a checklist id.

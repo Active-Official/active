@@ -45,7 +45,7 @@ bindings are not documented (implementation, not configuration).
 
 ## 3. CLI
 
-`solid doc --from <file.solid> --to markdown|html|man [--title
+`ACTIVE doc --from <file.active> --to markdown|html|man [--title
 <Title>]` (title defaults to the file stem): parses, evaluates
 (resilient library default), prints to stdout. Evaluation failure
 exits non-zero.

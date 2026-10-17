@@ -1,9 +1,9 @@
-# SOLID Linter (C-042)
+# ACTIVE Linter (C-042)
 
 Static checks beyond validation: style, hygiene, and probable
 mistakes. Every rule is independently disableable, emits stable
 `L0xx` diagnostics (Warning severity) that the language server
-surfaces as-is (C-043), and never fails evaluation — `solid lint`
+surfaces as-is (C-043), and never fails evaluation — `ACTIVE lint`
 is a separate check tool that exits 1 when any enabled rule fires.
 
 ## 1. Rules
@@ -18,7 +18,7 @@ is a separate check tool that exits 1 when any enabled rule fires.
 
 ## 2. `depends_on` syntax and semantics
 
-```solid
+```active
 [server]
 depends_on = ["database", "cache"]
 port = 8080
@@ -64,16 +64,16 @@ port = 8080
 
 ## 4. Disablement
 
-- CLI: `solid lint [--disable-lint <rule>]... <file>...`
+- CLI: `ACTIVE lint [--disable-lint <rule>]... <file>...`
   (repeatable; unknown rule names are an error listing the five).
 - Library: `LintOptions { disabled: HashSet<String> }` (rule IDs as
-  above); `solid_core::lint::lint(&module, &options)`.
+  above); `active_core::lint::lint(&module, &options)`.
 - No file-level suppression comments in this phase (noted future).
 
-## 5. `solid lint` contract
+## 5. `ACTIVE lint` contract
 
 ```
-solid lint [--disable-lint <rule>]... <file>...
+ACTIVE lint [--disable-lint <rule>]... <file>...
 ```
 
 - Each file lints independently (default parse options, includes

@@ -1,7 +1,7 @@
 {
-  "name": "solid-lang",
-  "displayName": "SOLID",
-  "description": "SOLID configuration language: Symmetric, Overlay-ready, Loop-proof, Intent-driven, Deterministic",
+  "name": "active-lang",
+  "displayName": "Active",
+  "description": "Active configuration language: safer than YAML, more expressive than TOML, more human-friendly than JSON",
   "version": "1.0.0",
   "publisher": "ratioartificiosa",
   "license": "MIT OR Apache-2.0",
@@ -19,7 +19,7 @@
     "Formatters"
   ],
   "keywords": [
-    "solid",
+    "active",
     "config",
     "configuration",
     "toml",
@@ -27,37 +27,37 @@
     "lsp"
   ],
   "activationEvents": [
-    "onLanguage:solid"
+    "onLanguage:active"
   ],
   "main": "./client/extension.js",
   "contributes": {
     "languages": [
       {
-        "id": "solid",
+        "id": "active",
         "aliases": [
-          "SOLID",
-          "solid"
+          "active",
+          "active"
         ],
         "extensions": [
-          ".solid"
+          ".active"
         ],
         "configuration": "./language-configuration.json"
       }
     ],
     "grammars": [
       {
-        "language": "solid",
-        "scopeName": "source.solid",
-        "path": "./syntaxes/solid.tmGrammar.json"
+        "language": "active",
+        "scopeName": "source.active",
+        "path": "./syntaxes/active.tmGrammar.json"
       }
     ],
     "configuration": {
-      "title": "SOLID",
+      "title": "active",
       "properties": {
-        "solid.languageServer.path": {
+        "active.languageServer.path": {
           "type": "string",
-          "default": "solid-ls",
-          "description": "Path to the solid-ls language server binary (PATH lookup by default; cargo install solid-ls)."
+          "default": "active-lsp",
+          "description": "Path to the active-lsp language server binary (PATH lookup by default; cargo install active-lsp)."
         }
       }
     }

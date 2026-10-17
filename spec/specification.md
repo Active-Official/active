@@ -1,4 +1,4 @@
-# SOLID Language Specification (v0.9 — alpha surface)
+# ACTIVE Language Specification (v0.9 — alpha surface)
 
 **Status:** normative companion to `spec/grammar.md` (C-014). This document
 defines the abstract syntax, the lowering from concrete syntax to the
@@ -12,7 +12,7 @@ bug — file it, fix the implementation or the spec, never let them drift.
 
 ### 1.1 The module
 
-A parsed SOLID source file is a **module**:
+A parsed ACTIVE source file is a **module**:
 
 ```
 Module {
@@ -251,7 +251,7 @@ evaluate(module):
 Cycles are detected **before** any node is evaluated: `evaluate` returns
 `Err(EvalError::CycleDetected)` and the caller never sees a partial value
 tree. This invariant is property-tested
-(`solid-core/tests/proptest_invariants.rs::cycle_is_detected_before_any_value`).
+(`active-core/tests/proptest_invariants.rs::cycle_is_detected_before_any_value`).
 
 ### 3.5 Profile selection and merge (C-027)
 
@@ -299,7 +299,7 @@ are dimension-bearing values, not scalars.
 - `Quantity` → JSON `{"<suffix>": N}` (e.g. `{"req/s": 100.0}`); TOML-ish
   `N<suffix>` (e.g. `100req/s`); interpolation `N<suffix>`.
 - `Unit::suffix()` is the canonical spelling and is always re-parseable
-  (round-trip property-tested in `solid-core/tests/unit_roundtrip.rs`).
+  (round-trip property-tested in `active-core/tests/unit_roundtrip.rs`).
 
 ### 4.3 Dimensional safety
 

@@ -12,7 +12,7 @@ recorded for the RFC process (C-064).
 ## 2. The suite
 
 `tests/spec/` holds the official conformance suite: 13 pairs of
-`<name>.solid` + `<name>.expected.json` — operator precedence (01),
+`<name>.active` + `<name>.expected.json` — operator precedence (01),
 unit normalization (02), interpolation (03, 12), env defaults
 (04), secret redaction (05), sibling resolution (06), arrays of
 tables (07), duration arithmetic (08), parser resilience (09 —
@@ -24,10 +24,10 @@ value tree, byte for byte.
 ### 2.1 Harness contract (what "passing" means)
 
 The reference runner is `spec_corpus_matches_expected_values`
-(`solid-core/tests/corpus.rs`); an alternative implementation
+(`active-core/tests/corpus.rs`); an alternative implementation
 passes by reproducing it exactly:
 
-1. Parse `<name>.solid` (default options, filename as source name).
+1. Parse `<name>.active` (default options, filename as source name).
 2. Evaluate with a default engine on an empty env snapshot
    (resilient mode, empty profile override, shipped budgets):
    hermetic by construction, so ambient values cannot leak into
@@ -68,10 +68,10 @@ sidecar) decides, and the case is rewritten or dropped.
 ## 3. Running it
 
 ```bash
-cargo test -p solid-lang-core --test corpus spec_corpus
-cargo test -p solid-lang-core --test conformance   # suite metadata + determinism pins
+cargo test -p active-core --test corpus spec_corpus
+cargo test -p active-core --test conformance   # suite metadata + determinism pins
 ```
-`solid-core/tests/conformance.rs` additionally pins: every `.solid` has a
+`active-core/tests/conformance.rs` additionally pins: every `.active` has a
 parseable `.expected.json` sidecar (no orphans either direction),
 the declaration in §1 is present in this file, and every case
 evaluates byte-identically twice in a row (determinism is part of

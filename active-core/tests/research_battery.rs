@@ -15591,3 +15591,238 @@ fn rb_748_syn48_mid_escape_is_tab() {
     // Positive control: the escape-free neighbour evaluates identically clean.
     assert_eq!(eval_json("case_0048_09 = \"ab\"\n")["case_0048_09"], "ab");
 }
+/// RB-749 — Derived variant 49-01: NUL mid-line is E005 (SYN-0049-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0049 (toml-test ideographic-space).
+/// Byte fixture: `v = 1\0w = 2`. E005 Error at (1:6) — a NUL glued between
+/// the value tail and the next token is outside any string-or-comment even
+/// with trailing content on the line; the offset lands exactly on the byte.
+/// (Opens SYN-0049 ideographic-space lineage.)
+#[test]
+fn rb_749_syn49_nul_mid_line_e005() {
+    let diags = parse_file(
+        &research_fixture("syn_0049_01_nul_mid_line.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 6), "{span:?}");
+    // Positive control: the NUL-free line parses.
+    assert_eq!(eval_json("v = 1\nw = 2\n")["w"], 2);
+}
+
+/// RB-750 — Derived variant 49-02: invalid bytes inside headers are E017 (SYN-0049-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0049 (toml-test ideographic-space).
+/// Byte fixture: overlong C0 AF inside `[s...]`. E017 Error — extends the
+/// header-position coverage (NUL-in-header E005, truncation-in-header E017)
+/// to invalid bytes: decode-before-lex holds in headers for every breakage
+/// shape.
+#[test]
+fn rb_750_syn49_utf8_in_header_e017() {
+    let diags = parse_file(
+        &research_fixture("syn_0049_02_utf8_in_header.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E017");
+    let e = diags.iter().find(|d| d.code == "E017").expect("E017");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E017 must be Error, got {:?}",
+        e.severity
+    );
+    // Positive control: the well-formed header parses.
+    let v = eval_json("[s]\nk = 1\n");
+    assert_eq!(v["s"]["k"], 1);
+}
+
+/// RB-751 — Derived variant 49-03: BOM inside numbers is E005 (SYN-0049-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0049 (toml-test ideographic-space).
+/// Byte fixture: `v = 12<BOM>3`. E005 Error at (1:7) — mirrors the
+/// NUL-in-number twin (RB-704) at the same column: numeric tokens give no
+/// shelter to either marker; the offset lands exactly on the byte.
+#[test]
+fn rb_751_syn49_bom_in_number_e005() {
+    let diags = parse_file(
+        &research_fixture("syn_0049_03_bom_in_number.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 7), "{span:?}");
+    // Positive control: the BOM-free number parses.
+    assert_eq!(eval_json("v = 123\n")["v"], 123);
+}
+
+/// RB-752 — Derived variant 49-04: sixteenth `\u` verbatim agrees (SYN-0049-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0049 (toml-test ideographic-space).
+/// `case_0049_04 = "\u0001"` is the 6-char verbatim literal with zero
+/// diagnostics — converges with RB-500, RB-509, RB-518, RB-527, RB-536,
+/// RB-545, RB-554, RB-563, RB-572, RB-581, RB-707, RB-716, RB-725, RB-734
+/// and RB-743: no `\u` decoding anywhere, now across sixteen byte lineages.
+#[test]
+fn rb_752_syn49_unicode_escape_verbatim() {
+    let v = eval_json("case_0049_04 = \"\\u0001\"\n");
+    assert_eq!(
+        v["case_0049_04"], "\\u0001",
+        "escape must stay verbatim, got {v}"
+    );
+    assert_eq!(v["case_0049_04"].as_str().expect("string").len(), 6);
+    let codes = codes_of("case_0049_04 = \"\\u0001\"\n");
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: documented escapes still decode.
+    let v = eval_json("case_0049_04 = \"a\\tb\"\n");
+    assert_eq!(v["case_0049_04"], "a\tb");
+}
+
+/// RB-753 — Derived variant 49-05: sixteenth TAB-in-string agrees (SYN-0049-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0049 (toml-test ideographic-space).
+/// Byte fixture: literal 0x09 in string content evaluates to "a\tb" with
+/// zero diagnostics — converges across sixteen byte lineages: TABs are
+/// content everywhere, indentation nowhere.
+#[test]
+fn rb_753_syn49_tab_in_string_ok() {
+    let module = parse_file(
+        &research_fixture("syn_0049_05_tab_in_string.active"),
+        ParseOptions::default(),
+    )
+    .unwrap_or_else(|d| panic!("tab-in-string must parse: {d:?}"));
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(v["case_0049_05"], "a\tb", "{v}");
+    assert!(diags.is_empty(), "{diags:?}");
+    // Control: TAB as structural indentation still fails E006.
+    let diags = parse_file(
+        &research_fixture("syn_0021_04_tab_line1.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("tab indent must fail E006");
+    assert!(diags.iter().any(|d| d.code == "E006"), "{diags:?}");
+}
+
+/// RB-754 — Derived variant 49-06: sixteenth café agrees (SYN-0049-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0049 (toml-test ideographic-space).
+/// `case_0049_06 = "café"` is exactly "café" with zero diagnostics, and the
+/// JSON export carries é — converges across sixteen byte lineages.
+#[test]
+fn rb_754_syn49_cafe_roundtrip_exact() {
+    let src = "case_0049_06 = \"café\"\n";
+    assert_eq!(eval_json(src)["case_0049_06"], "café");
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    assert!(diags.is_empty(), "{diags:?}");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(json.contains("café"), "{json}");
+    // Positive control: ASCII neighbours evaluate alongside cleanly.
+    assert_eq!(
+        eval_json("case_0049_06 = \"cafe\"\n")["case_0049_06"],
+        "cafe"
+    );
+}
+
+/// RB-755 — Derived variant 49-07: sixteenth clef agrees (SYN-0049-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0049 (toml-test ideographic-space).
+/// `case_0049_07 = "𝄞"` (U+1D11E) is exactly one scalar with zero diagnostics —
+/// converges across sixteen byte lineages: no lineage splits surrogates.
+#[test]
+fn rb_755_syn49_supplementary_scalar_single() {
+    let src = "case_0049_07 = \"𝄞\"\n";
+    let v = eval_json(src)["case_0049_07"].clone();
+    assert_eq!(v, "𝄞", "{v}");
+    assert_eq!(v.as_str().expect("string").chars().count(), 1, "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: BMP multi-byte text evaluates alongside cleanly.
+    assert_eq!(
+        eval_json("case_0049_07 = \"café\"\n")["case_0049_07"],
+        "café"
+    );
+}
+
+/// RB-756 — Derived variant 49-08: truncated pair inside keys is E017 (SYN-0049-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0049 (toml-test ideographic-space).
+/// Byte fixture: E2 82 (2 of 3 bytes) inside key bytes at EOF. E017 Error —
+/// extends the key-position coverage (invalid RB-499, truncation E2 RB-585)
+/// to a second truncation width: decode-before-lex holds in keys at every
+/// width.
+#[test]
+fn rb_756_syn49_trunc_pair_key_e017() {
+    let diags = parse_file(
+        &research_fixture("syn_0049_08_trunc_e282_key.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E017");
+    let e = diags.iter().find(|d| d.code == "E017").expect("E017");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E017 must be Error, got {:?}",
+        e.severity
+    );
+    // Convergence: key-position E2 truncation fails the same class (RB-585).
+    let diags = parse_file(
+        &research_fixture("syn_0030_08_trunc_in_key.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("twin must fail E017");
+    assert!(diags.iter().any(|d| d.code == "E017"), "{diags:?}");
+    // Positive control: the valid-spelling key parses.
+    assert_eq!(eval_json("cse = 1\n")["cse"], 1);
+}
+
+/// RB-757 — Derived variant 49-09: sixteenth mid-escape agrees (SYN-0049-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0049 (toml-test ideographic-space).
+/// `case_0049_09 = "a\tb"` is byte-exact 3 chars with one 0x09, zero
+/// diagnostics — converges across sixteen byte lineages. (Completes
+/// SYN-0049-01…09 coverage.)
+#[test]
+fn rb_757_syn49_mid_escape_is_tab() {
+    let src = "case_0049_09 = \"a\\tb\"\n";
+    let v = eval_json(src)["case_0049_09"].clone();
+    assert_eq!(v, "a\tb", "{v}");
+    let s = v.as_str().expect("string");
+    assert_eq!(s.chars().count(), 3, "{v}");
+    assert_eq!(s.as_bytes(), b"a\tb", "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the escape-free neighbour evaluates identically clean.
+    assert_eq!(eval_json("case_0049_09 = \"ab\"\n")["case_0049_09"], "ab");
+}
+
+/// RB-758 — Derived variant 50-01: UTF-16 input is E017, never mojibake (SYN-0050-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0050 (toml-test utf16-bom).
+/// Byte fixture: FF FE BOM plus UTF-16LE-encoded `v = 1`. E017 Error — bytes
+/// that are not UTF-8 are rejected at the stream level, so a UTF-16 document
+/// can never decode into mojibake keys or values; UTF-8 is the only wire
+/// encoding, loudly enforced. (Opens SYN-0050 utf16-bom lineage.)
+#[test]
+fn rb_758_syn50_utf16_rejected_e017() {
+    let diags = parse_file(
+        &research_fixture("syn_0050_01_utf16le.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E017");
+    let e = diags.iter().find(|d| d.code == "E017").expect("E017");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E017 must be Error, got {:?}",
+        e.severity
+    );
+    // Positive control: the UTF-8 twin document evaluates.
+    assert_eq!(eval_json("v = 1\n")["v"], 1);
+}

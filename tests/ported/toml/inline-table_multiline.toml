@@ -1,0 +1,6 @@
+# Ported from toml-test tests/valid/inline-table/multiline.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+tbl_multiline = { a = 1, b = """
+multiline
+""", c = """and yet
+another line""", d = 4 }

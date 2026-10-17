@@ -1,0 +1,7 @@
+# Ported from toml-test tests/valid/inline-table/key-dotted-01.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+a = {   a.b  =  1   }
+b = {   "a"."b"  =  1   }
+c = {   a   .   b  =  1   }
+d = {   'a'   .   "b"  =  1   }
+e = {a.b=1}

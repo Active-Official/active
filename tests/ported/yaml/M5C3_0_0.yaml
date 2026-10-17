@@ -1,0 +1,8 @@
+# Ported from yaml-test-suite src/M5C3.yaml case 0/0 (Spec Example 8.21. Block Scalar Nodes)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+literal: |2
+  value
+folded:
+   !foo
+  >1
+ value

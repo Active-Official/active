@@ -1,0 +1,1 @@
+IMPORT_HARD_ERROR: invalid YAML: found unknown escape character at line 4 column 17, while parsing a quoted scalar at line 4 column 9 (source excerpt withheld)

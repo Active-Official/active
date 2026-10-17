@@ -1,0 +1,6 @@
+# Ported from yaml-test-suite src/4JVG.yaml case 0/0 (Scalar value with two anchors)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+top1: &node1
+  &k1 key1: val1
+top2: &node2
+  &v2 val2

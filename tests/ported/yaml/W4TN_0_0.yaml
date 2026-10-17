@@ -1,0 +1,10 @@
+# Ported from yaml-test-suite src/W4TN.yaml case 0/0 (Spec Example 9.5. Directives Documents)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+%YAML 1.2
+--- |
+%!PS-Adobe-2.0
+...
+%YAML 1.2
+---
+# Empty
+...

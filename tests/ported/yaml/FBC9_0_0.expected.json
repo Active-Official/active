@@ -1,0 +1,6 @@
+{
+  "safe": "a!\"#$%&'()*+,-./09:;<=>?@AZ[\\]^_`az{|}~ !\"#$%&'()*+,-./09:;<=>?@AZ[\\]^_`az{|}~",
+  "safe_colon": ":foo",
+  "safe_dash": "-foo",
+  "safe_question_mark": "?foo"
+}

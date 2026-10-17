@@ -1,0 +1,6 @@
+# Ported from yaml-test-suite src/A2M4.yaml case 0/0 (Spec Example 6.2. Indentation Indicators)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+? a
+: -»b
+  -  -—»c
+     - d

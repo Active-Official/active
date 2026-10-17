@@ -1,0 +1,5 @@
+# Ported from yaml-test-suite src/3MYT.yaml case 0/0 (Plain Scalar looking like key, comment, anchor and tag)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+---
+k:#foo
+ &a !t s

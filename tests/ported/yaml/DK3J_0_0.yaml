@@ -1,0 +1,6 @@
+# Ported from yaml-test-suite src/DK3J.yaml case 0/0 (Zero indented block scalar with line that looks like a comment)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+--- >
+line1
+# no comment
+line3

@@ -1,0 +1,4 @@
+# Ported from toml-test tests/valid/string/with-pound.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+pound = "We see no # comments here."
+poundcomment = "But there are # some comments here." # Did I # mess you up?

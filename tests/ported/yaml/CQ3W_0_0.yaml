@@ -1,0 +1,4 @@
+# Ported from yaml-test-suite src/CQ3W.yaml case 0/0 (Double quoted string without closing quote)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+---
+key: "missing closing quote

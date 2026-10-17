@@ -1,0 +1,7 @@
+# Ported from yaml-test-suite src/36F6.yaml case 0/0 (Multiline plain scalar with empty line)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+---
+plain: a
+ b
+
+ c

@@ -1,0 +1,4 @@
+# Ported from yaml-test-suite src/AB8U.yaml case 0/0 (Sequence entry that looks like two with wrong indentation)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+- single multiline
+ - sequence entry

@@ -1,0 +1,9 @@
+# Ported from yaml-test-suite src/S9E8.yaml case 0/0 (Spec Example 5.3. Block Structure Indicators)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+sequence:
+- one
+- two
+mapping:
+  ? sky
+  : blue
+  sea : green

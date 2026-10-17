@@ -1,0 +1,8 @@
+# Ported from yaml-test-suite src/735Y.yaml case 0/0 (Spec Example 8.20. Block Node Types)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+-
+  "flow in block"
+- >
+ Block scalar
+- !!map # Block collection
+  foo : bar

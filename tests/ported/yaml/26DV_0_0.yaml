@@ -1,0 +1,14 @@
+# Ported from yaml-test-suite src/26DV.yaml case 0/0 (Whitespace around colon in mappings)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+"top1" :␣
+  "key1" : &alias1 scalar1
+'top2' :␣
+  'key2' : &alias2 scalar2
+top3: &node3␣
+  *alias1 : scalar3
+top4:␣
+  *alias2 : scalar4
+top5   :␣␣␣␣
+  scalar5
+top6:␣
+  &anchor6 'key6' : scalar6

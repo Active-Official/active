@@ -1,0 +1,7 @@
+# Ported from yaml-test-suite src/ZF4X.yaml case 0/0 (Spec Example 2.6. Mapping of Mappings)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+Mark McGwire: {hr: 65, avg: 0.278}
+Sammy Sosa: {
+    hr: 63,
+    avg: 0.288
+  }

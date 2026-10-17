@@ -1,0 +1,11 @@
+# Ported from toml-test tests/valid/table/sub.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+[a]
+key = 1
+
+# a.extend is a key inside the "a" table.
+[a.extend]
+key = 2
+
+[a.extend.more]
+key = 3

@@ -1,0 +1,4 @@
+# Ported from toml-test tests/valid/comment/at-eof.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+# This is a full-line comment
+key = "value" # This is a comment at the end of a line

@@ -1,0 +1,4 @@
+# Ported from yaml-test-suite src/5T43.yaml case 0/0 (Colon at the beginning of adjacent flow scalar)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+- { "key":value }
+- { "key"::value }

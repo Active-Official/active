@@ -1,0 +1,4 @@
+# Ported from yaml-test-suite src/7FWL.yaml case 0/0 (Spec Example 6.24. Verbatim Tags)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+!<tag:yaml.org,2002:str> foo :
+  !<!bar> baz

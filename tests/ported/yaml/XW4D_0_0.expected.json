@@ -1,0 +1,14 @@
+{
+  "a": "double quotes",
+  "b": "plain value",
+  "block": "abcde\n",
+  "c": "d",
+  "e": [
+    {
+      "x": "y"
+    }
+  ],
+  "key": [
+    "seq2"
+  ]
+}

@@ -1,0 +1,7 @@
+# Ported from toml-test tests/valid/implicit-and-explicit-before.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+[a]
+better = 43
+
+[a.b.c]
+answer = 42

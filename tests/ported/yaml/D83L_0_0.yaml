@@ -1,0 +1,6 @@
+# Ported from yaml-test-suite src/D83L.yaml case 0/0 (Block scalar indicator order)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+- |2-
+  explicit indent and chomp
+- |-2
+  chomp and explicit indent

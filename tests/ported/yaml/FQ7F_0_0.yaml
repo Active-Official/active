@@ -1,0 +1,5 @@
+# Ported from yaml-test-suite src/FQ7F.yaml case 0/0 (Spec Example 2.1. Sequence of Scalars)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+- Mark McGwire
+- Sammy Sosa
+- Ken Griffey

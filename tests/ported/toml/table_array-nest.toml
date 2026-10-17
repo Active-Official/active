@@ -1,0 +1,19 @@
+# Ported from toml-test tests/valid/table/array-nest.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+[[albums]]
+name = "Born to Run"
+
+  [[albums.songs]]
+  name = "Jungleland"
+
+  [[albums.songs]]
+  name = "Meeting Across the River"
+
+[[albums]]
+name = "Born in the USA"
+  
+  [[albums.songs]]
+  name = "Glory Days"
+
+  [[albums.songs]]
+  name = "Dancing in the Dark"

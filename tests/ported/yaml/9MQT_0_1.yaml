@@ -1,0 +1,5 @@
+# Ported from yaml-test-suite src/9MQT.yaml case 0/1 (unnamed)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+--- "a
+... x
+b"

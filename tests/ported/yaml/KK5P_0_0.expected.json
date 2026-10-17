@@ -1,0 +1,19 @@
+{
+  "complex1": {
+    "key": null
+  },
+  "complex2": {
+    "key": "b"
+  },
+  "complex3": {
+    "key": "b\n"
+  },
+  "complex4": {
+    "a_": null
+  },
+  "complex5": {
+    "key": [
+      "b"
+    ]
+  }
+}

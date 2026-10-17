@@ -1,0 +1,4 @@
+# Ported from toml-test tests/valid/integer/underscore.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+kilo = 1_000
+x = 1_1_1_1

@@ -1,0 +1,2844 @@
+{
+  "229Q_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/229Q.yaml#0/0",
+    "case": "Spec Example 2.4. Sequence of Mappings",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "236B_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/236B.yaml#0/0",
+    "case": "Invalid value after mapping",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "26DV_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/26DV.yaml#0/0",
+    "case": "Whitespace around colon in mappings",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "27NA_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/27NA.yaml#0/0",
+    "case": "Spec Example 5.9. Directive Indicator",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "2AUY_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/2AUY.yaml#0/0",
+    "case": "Tags in Block Sequence",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "2CMS_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/2CMS.yaml#0/0",
+    "case": "Invalid mapping in plain multiline",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "2EBW_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/2EBW.yaml#0/0",
+    "case": "Allowed characters in keys",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "2G84_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/2G84.yaml#0/0",
+    "case": "Literal modifers",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "2G84_0_1": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/2G84.yaml#0/1",
+    "case": "unnamed",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "2G84_0_2": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/2G84.yaml#0/2",
+    "case": "unnamed",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "2G84_0_3": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/2G84.yaml#0/3",
+    "case": "unnamed",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "2JQS_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/2JQS.yaml#0/0",
+    "case": "Block Mapping with Missing Keys",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "2LFX_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/2LFX.yaml#0/0",
+    "case": "Spec Example 6.13. Reserved Directives [1.3]",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "2SXE_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/2SXE.yaml#0/0",
+    "case": "Anchors With Colon in Name",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "2XXW_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/2XXW.yaml#0/0",
+    "case": "Spec Example 2.25. Unordered Sets",
+    "import_codes": "[\"W007\", \"W007\", \"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "33X3_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/33X3.yaml#0/0",
+    "case": "Three explicit integers in a block sequence",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "35KP_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/35KP.yaml#0/0",
+    "case": "Tags for Root Objects",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "36F6_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/36F6.yaml#0/0",
+    "case": "Multiline plain scalar with empty line",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "3ALJ_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/3ALJ.yaml#0/0",
+    "case": "Block Sequence in Block Sequence",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "3GZX_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/3GZX.yaml#0/0",
+    "case": "Spec Example 7.1. Alias Nodes",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "3HFZ_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/3HFZ.yaml#0/0",
+    "case": "Invalid content after document end marker",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "3MYT_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/3MYT.yaml#0/0",
+    "case": "Plain Scalar looking like key, comment, anchor and tag",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "3R3P_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/3R3P.yaml#0/0",
+    "case": "Single block sequence with anchor",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "3RLN_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/3RLN.yaml#0/0",
+    "case": "Leading tabs in double quoted",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "3RLN_0_1": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/3RLN.yaml#0/1",
+    "case": "unnamed",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "3RLN_0_2": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/3RLN.yaml#0/2",
+    "case": "unnamed",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "3RLN_0_3": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/3RLN.yaml#0/3",
+    "case": "unnamed",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "3RLN_0_4": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/3RLN.yaml#0/4",
+    "case": "unnamed",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "3RLN_0_5": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/3RLN.yaml#0/5",
+    "case": "unnamed",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "3UYS_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/3UYS.yaml#0/0",
+    "case": "Escaped slash in double quotes",
+    "import_codes": "[\"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "4ABK_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/4ABK.yaml#0/0",
+    "case": "Flow Mapping Separate Values",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "4CQQ_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/4CQQ.yaml#0/0",
+    "case": "Spec Example 2.18. Multi-line Flow Scalars",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "4EJS_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/4EJS.yaml#0/0",
+    "case": "Invalid tabs as indendation in a mapping",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "4FJ6_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/4FJ6.yaml#0/0",
+    "case": "Nested implicit complex keys",
+    "import_codes": "[\"W007\", \"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "4GC6_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/4GC6.yaml#0/0",
+    "case": "Spec Example 7.7. Single Quoted Characters",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "4H7K_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/4H7K.yaml#0/0",
+    "case": "Flow sequence with invalid extra closing bracket",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "4HVU_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/4HVU.yaml#0/0",
+    "case": "Wrong indendation in Sequence",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "4JVG_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/4JVG.yaml#0/0",
+    "case": "Scalar value with two anchors",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "4MUZ_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/4MUZ.yaml#0/0",
+    "case": "Flow mapping colon on line after key",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "4MUZ_0_1": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/4MUZ.yaml#0/1",
+    "case": "unnamed",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "4MUZ_0_2": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/4MUZ.yaml#0/2",
+    "case": "unnamed",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "4Q9F_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/4Q9F.yaml#0/0",
+    "case": "Folded Block Scalar [1.3]",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "4QFQ_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/4QFQ.yaml#0/0",
+    "case": "Spec Example 8.2. Block Indentation Indicator [1.3]",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "4RWC_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/4RWC.yaml#0/0",
+    "case": "Trailing spaces after flow collection",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "4UYU_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/4UYU.yaml#0/0",
+    "case": "Colon in Double Quoted String",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "4V8U_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/4V8U.yaml#0/0",
+    "case": "Plain scalar with backslashes",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "4WA9_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/4WA9.yaml#0/0",
+    "case": "Literal scalars",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "4ZYM_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/4ZYM.yaml#0/0",
+    "case": "Spec Example 6.4. Line Prefixes",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "52DL_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/52DL.yaml#0/0",
+    "case": "Explicit Non-Specific Tag [1.3]",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "54T7_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/54T7.yaml#0/0",
+    "case": "Flow Mapping",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "55WF_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/55WF.yaml#0/0",
+    "case": "Invalid escape in double quoted string",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "565N_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/565N.yaml#0/0",
+    "case": "Construct Binary",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "57H4_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/57H4.yaml#0/0",
+    "case": "Spec Example 8.22. Block Collection Nodes",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "58MP_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/58MP.yaml#0/0",
+    "case": "Flow mapping edge cases",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "5BVJ_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/5BVJ.yaml#0/0",
+    "case": "Spec Example 5.7. Block Scalar Indicators",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "5C5M_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/5C5M.yaml#0/0",
+    "case": "Spec Example 7.15. Flow Mappings",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "5GBF_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/5GBF.yaml#0/0",
+    "case": "Spec Example 6.5. Empty Lines",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "5KJE_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/5KJE.yaml#0/0",
+    "case": "Spec Example 7.13. Flow Sequence",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "5LLU_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/5LLU.yaml#0/0",
+    "case": "Block scalar with wrong indented line after spaces only",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "5MUD_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/5MUD.yaml#0/0",
+    "case": "Colon and adjacent value on next line",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "5NYZ_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/5NYZ.yaml#0/0",
+    "case": "Spec Example 6.9. Separated Comment",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "5T43_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/5T43.yaml#0/0",
+    "case": "Colon at the beginning of adjacent flow scalar",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "5TRB_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/5TRB.yaml#0/0",
+    "case": "Invalid document-start marker in doublequoted tring",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "5TYM_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/5TYM.yaml#0/0",
+    "case": "Spec Example 6.21. Local Tag Prefix",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "5U3A_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/5U3A.yaml#0/0",
+    "case": "Sequence on same Line as Mapping Key",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "5WE3_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/5WE3.yaml#0/0",
+    "case": "Spec Example 8.17. Explicit Block Mapping Entries",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "62EZ_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/62EZ.yaml#0/0",
+    "case": "Invalid block mapping key on same line as previous key",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "652Z_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/652Z.yaml#0/0",
+    "case": "Question mark at start of flow key",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "65WH_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/65WH.yaml#0/0",
+    "case": "Single Entry Block Sequence",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "6BCT_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/6BCT.yaml#0/0",
+    "case": "Spec Example 6.3. Separation Spaces",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "6BFJ_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/6BFJ.yaml#0/0",
+    "case": "Mapping, key and flow sequence item anchors",
+    "import_codes": "[\"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "6CA3_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/6CA3.yaml#0/0",
+    "case": "Tab indented top flow",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "6CK3_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/6CK3.yaml#0/0",
+    "case": "Spec Example 6.26. Tag Shorthands",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "6FWR_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/6FWR.yaml#0/0",
+    "case": "Block Scalar Keep",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "6H3V_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/6H3V.yaml#0/0",
+    "case": "Backslashes in singlequotes",
+    "import_codes": "[\"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "6HB6_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/6HB6.yaml#0/0",
+    "case": "Spec Example 6.1. Indentation Spaces",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "6JQW_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/6JQW.yaml#0/0",
+    "case": "Spec Example 2.13. In literals, newlines are preserved",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "6JTT_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/6JTT.yaml#0/0",
+    "case": "Flow sequence without closing bracket",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "6JWB_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/6JWB.yaml#0/0",
+    "case": "Tags for Block Objects",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "6KGN_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/6KGN.yaml#0/0",
+    "case": "Anchor for empty node",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "6LVF_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/6LVF.yaml#0/0",
+    "case": "Spec Example 6.13. Reserved Directives",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "6M2F_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/6M2F.yaml#0/0",
+    "case": "Aliases in Explicit Block Mapping",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "6PBE_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/6PBE.yaml#0/0",
+    "case": "Zero-indented sequences in explicit mapping keys",
+    "import_codes": "[\"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "6S55_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/6S55.yaml#0/0",
+    "case": "Invalid scalar at the end of sequence",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "6SLA_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/6SLA.yaml#0/0",
+    "case": "Allowed characters in quoted mapping key",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "6VJK_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/6VJK.yaml#0/0",
+    "case": "Spec Example 2.15. Folded newlines are preserved for \"more indented\" and blank lines",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "6WLZ_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/6WLZ.yaml#0/0",
+    "case": "Spec Example 6.18. Primary Tag Handle [1.3]",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "6WPF_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/6WPF.yaml#0/0",
+    "case": "Spec Example 6.8. Flow Folding [1.3]",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "6XDY_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/6XDY.yaml#0/0",
+    "case": "Two document start markers",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "6ZKB_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/6ZKB.yaml#0/0",
+    "case": "Spec Example 9.6. Stream",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "735Y_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/735Y.yaml#0/0",
+    "case": "Spec Example 8.20. Block Node Types",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "74H7_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/74H7.yaml#0/0",
+    "case": "Tags in Implicit Mapping",
+    "import_codes": "[\"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "753E_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/753E.yaml#0/0",
+    "case": "Block Scalar Strip [1.3]",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "7A4E_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/7A4E.yaml#0/0",
+    "case": "Spec Example 7.6. Double Quoted Lines",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "7BMT_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/7BMT.yaml#0/0",
+    "case": "Node and Mapping Key Anchors [1.3]",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "7BUB_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/7BUB.yaml#0/0",
+    "case": "Spec Example 2.10. Node for \u201cSammy Sosa\u201d appears twice in this document",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "7FWL_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/7FWL.yaml#0/0",
+    "case": "Spec Example 6.24. Verbatim Tags",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "7LBH_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/7LBH.yaml#0/0",
+    "case": "Multiline double quoted implicit keys",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "7MNF_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/7MNF.yaml#0/0",
+    "case": "Missing colon",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "7T8X_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/7T8X.yaml#0/0",
+    "case": "Spec Example 8.10. Folded Lines - 8.13. Final Empty Lines",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "7TMG_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/7TMG.yaml#0/0",
+    "case": "Comment in flow sequence before comma",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "7W2P_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/7W2P.yaml#0/0",
+    "case": "Block Mapping with Missing Values",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "7Z25_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/7Z25.yaml#0/0",
+    "case": "Bare document after document end marker",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "7ZZ5_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/7ZZ5.yaml#0/0",
+    "case": "Empty flow collections",
+    "import_codes": "[\"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "82AN_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/82AN.yaml#0/0",
+    "case": "Three dashes and content without space",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "87E4_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/87E4.yaml#0/0",
+    "case": "Spec Example 7.8. Single Quoted Implicit Keys",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "8CWC_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/8CWC.yaml#0/0",
+    "case": "Plain mapping key ending with colon",
+    "import_codes": "[\"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "8G76_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/8G76.yaml#0/0",
+    "case": "Spec Example 6.10. Comment Lines",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "8KB6_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/8KB6.yaml#0/0",
+    "case": "Multiline plain flow mapping key without value",
+    "import_codes": "[\"W007\", \"W007\", \"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "8MK2_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/8MK2.yaml#0/0",
+    "case": "Explicit Non-Specific Tag",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "8QBE_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/8QBE.yaml#0/0",
+    "case": "Block Sequence in Block Mapping",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "8UDB_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/8UDB.yaml#0/0",
+    "case": "Spec Example 7.14. Flow Sequence Entries",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "8XDJ_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/8XDJ.yaml#0/0",
+    "case": "Comment in plain multiline value",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "8XYN_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/8XYN.yaml#0/0",
+    "case": "Anchor with unicode character",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "93JH_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/93JH.yaml#0/0",
+    "case": "Block Mappings in Block Sequence",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "93WF_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/93WF.yaml#0/0",
+    "case": "Spec Example 6.6. Line Folding [1.3]",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "96L6_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/96L6.yaml#0/0",
+    "case": "Spec Example 2.14. In the folded scalars, newlines become spaces",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "96NN_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/96NN.yaml#0/0",
+    "case": "Leading tab content in literals",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "96NN_0_1": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/96NN.yaml#0/1",
+    "case": "unnamed",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "98YD_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/98YD.yaml#0/0",
+    "case": "Spec Example 5.5. Comment Indicator",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "9BXH_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/9BXH.yaml#0/0",
+    "case": "Multiline doublequoted flow mapping key without value",
+    "import_codes": "[\"W007\", \"W007\", \"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "9C9N_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/9C9N.yaml#0/0",
+    "case": "Wrong indented flow sequence",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "9CWY_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/9CWY.yaml#0/0",
+    "case": "Invalid scalar at the end of mapping",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "9DXL_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/9DXL.yaml#0/0",
+    "case": "Spec Example 9.6. Stream [1.3]",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "9FMG_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/9FMG.yaml#0/0",
+    "case": "Multi-level Mapping Indent",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "9HCY_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/9HCY.yaml#0/0",
+    "case": "Need document footer before directives",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "9J7A_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/9J7A.yaml#0/0",
+    "case": "Simple Mapping Indent",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "9JBA_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/9JBA.yaml#0/0",
+    "case": "Invalid comment after end of flow sequence",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "9KAX_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/9KAX.yaml#0/0",
+    "case": "Various combinations of tags and anchors",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "9KBC_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/9KBC.yaml#0/0",
+    "case": "Mapping starting at --- line",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "9MAG_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/9MAG.yaml#0/0",
+    "case": "Flow sequence with invalid comma at the beginning",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "9MMA_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/9MMA.yaml#0/0",
+    "case": "Directive by itself with no document",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "9MMW_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/9MMW.yaml#0/0",
+    "case": "Single Pair Implicit Entries",
+    "import_codes": "[\"W007\", \"W007\", \"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "9MQT_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/9MQT.yaml#0/0",
+    "case": "Scalar doc with '...' in content",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "9MQT_0_1": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/9MQT.yaml#0/1",
+    "case": "unnamed",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "9SA2_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/9SA2.yaml#0/0",
+    "case": "Multiline double quoted flow mapping key",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "9SHH_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/9SHH.yaml#0/0",
+    "case": "Spec Example 5.8. Quoted Scalar Indicators",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "9TFX_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/9TFX.yaml#0/0",
+    "case": "Spec Example 7.6. Double Quoted Lines [1.3]",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "9U5K_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/9U5K.yaml#0/0",
+    "case": "Spec Example 2.12. Compact Nested Mapping",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "9WXW_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/9WXW.yaml#0/0",
+    "case": "Spec Example 6.18. Primary Tag Handle",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "9YRD_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/9YRD.yaml#0/0",
+    "case": "Multiline Scalar at Top Level",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "A2M4_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/A2M4.yaml#0/0",
+    "case": "Spec Example 6.2. Indentation Indicators",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "A6F9_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/A6F9.yaml#0/0",
+    "case": "Spec Example 8.4. Chomping Final Line Break",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "A984_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/A984.yaml#0/0",
+    "case": "Multiline Scalar in Mapping",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "AB8U_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/AB8U.yaml#0/0",
+    "case": "Sequence entry that looks like two with wrong indentation",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "AVM7_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/AVM7.yaml#0/0",
+    "case": "Empty Stream",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "AZ63_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/AZ63.yaml#0/0",
+    "case": "Sequence With Same Indentation as Parent Mapping",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "AZW3_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/AZW3.yaml#0/0",
+    "case": "Lookahead test cases",
+    "import_codes": "[\"W007\", \"W007\", \"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "B3HG_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/B3HG.yaml#0/0",
+    "case": "Spec Example 8.9. Folded Scalar [1.3]",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "B63P_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/B63P.yaml#0/0",
+    "case": "Directive without document",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "BD7L_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/BD7L.yaml#0/0",
+    "case": "Invalid mapping after sequence",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "BEC7_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/BEC7.yaml#0/0",
+    "case": "Spec Example 6.14. \u201cYAML\u201d directive",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "BF9H_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/BF9H.yaml#0/0",
+    "case": "Trailing comment in multiline plain scalar",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "BS4K_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/BS4K.yaml#0/0",
+    "case": "Comment between plain scalar lines",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "BU8L_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/BU8L.yaml#0/0",
+    "case": "Node Anchor and Tag on Seperate Lines",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "C2DT_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/C2DT.yaml#0/0",
+    "case": "Spec Example 7.18. Flow Mapping Adjacent Values",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "C2SP_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/C2SP.yaml#0/0",
+    "case": "Flow Mapping Key on two lines",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "C4HZ_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/C4HZ.yaml#0/0",
+    "case": "Spec Example 2.24. Global Tags",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "CC74_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/CC74.yaml#0/0",
+    "case": "Spec Example 6.20. Tag Handles",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "CFD4_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/CFD4.yaml#0/0",
+    "case": "Empty implicit key in single pair flow sequences",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "CML9_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/CML9.yaml#0/0",
+    "case": "Missing comma in flow",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "CN3R_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/CN3R.yaml#0/0",
+    "case": "Various location of anchors in flow sequence",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "CPZ3_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/CPZ3.yaml#0/0",
+    "case": "Doublequoted scalar starting with a tab",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "CQ3W_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/CQ3W.yaml#0/0",
+    "case": "Double quoted string without closing quote",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "CT4Q_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/CT4Q.yaml#0/0",
+    "case": "Spec Example 7.20. Single Pair Explicit Entry",
+    "import_codes": "[\"W007\", \"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "CTN5_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/CTN5.yaml#0/0",
+    "case": "Flow sequence with invalid extra comma",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "CUP7_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/CUP7.yaml#0/0",
+    "case": "Spec Example 5.6. Node Property Indicators",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "CVW2_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/CVW2.yaml#0/0",
+    "case": "Invalid comment after comma",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "CXX2_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/CXX2.yaml#0/0",
+    "case": "Mapping with anchor on document start line",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "D49Q_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/D49Q.yaml#0/0",
+    "case": "Multiline single quoted implicit keys",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "D83L_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/D83L.yaml#0/0",
+    "case": "Block scalar indicator order",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "D88J_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/D88J.yaml#0/0",
+    "case": "Flow Sequence in Block Mapping",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "D9TU_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/D9TU.yaml#0/0",
+    "case": "Single Pair Block Mapping",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "DBG4_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/DBG4.yaml#0/0",
+    "case": "Spec Example 7.10. Plain Characters",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "DC7X_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/DC7X.yaml#0/0",
+    "case": "Various trailing tabs",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "DE56_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/DE56.yaml#0/0",
+    "case": "Trailing tabs in double quoted",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "DE56_0_1": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/DE56.yaml#0/1",
+    "case": "unnamed",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "DE56_0_2": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/DE56.yaml#0/2",
+    "case": "unnamed",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "DE56_0_3": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/DE56.yaml#0/3",
+    "case": "unnamed",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "DE56_0_4": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/DE56.yaml#0/4",
+    "case": "unnamed",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "DE56_0_5": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/DE56.yaml#0/5",
+    "case": "unnamed",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "DFF7_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/DFF7.yaml#0/0",
+    "case": "Spec Example 7.16. Flow Mapping Entries",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "DHP8_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/DHP8.yaml#0/0",
+    "case": "Flow Sequence",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "DK3J_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/DK3J.yaml#0/0",
+    "case": "Zero indented block scalar with line that looks like a comment",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "DK4H_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/DK4H.yaml#0/0",
+    "case": "Implicit key followed by newline",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "DK95_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/DK95.yaml#0/0",
+    "case": "Tabs that look like indentation",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "DK95_0_1": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/DK95.yaml#0/1",
+    "case": "unnamed",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "DK95_0_2": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/DK95.yaml#0/2",
+    "case": "unnamed",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "DK95_0_3": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/DK95.yaml#0/3",
+    "case": "unnamed",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "DK95_0_4": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/DK95.yaml#0/4",
+    "case": "unnamed",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "DK95_0_5": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/DK95.yaml#0/5",
+    "case": "unnamed",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "DK95_0_6": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/DK95.yaml#0/6",
+    "case": "unnamed",
+    "import_codes": "[\"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "DK95_0_7": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/DK95.yaml#0/7",
+    "case": "unnamed",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "DK95_0_8": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/DK95.yaml#0/8",
+    "case": "unnamed",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "DMG6_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/DMG6.yaml#0/0",
+    "case": "Wrong indendation in Map",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "DWX9_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/DWX9.yaml#0/0",
+    "case": "Spec Example 8.8. Literal Content",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "E76Z_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/E76Z.yaml#0/0",
+    "case": "Aliases in Implicit Block Mapping",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "EB22_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/EB22.yaml#0/0",
+    "case": "Missing document-end marker before directive",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "EHF6_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/EHF6.yaml#0/0",
+    "case": "Tags for Flow Objects",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "EW3V_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/EW3V.yaml#0/0",
+    "case": "Wrong indendation in mapping",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "EX5H_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/EX5H.yaml#0/0",
+    "case": "Multiline Scalar at Top Level [1.3]",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "EXG3_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/EXG3.yaml#0/0",
+    "case": "Three dashes and content without space [1.3]",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "F2C7_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/F2C7.yaml#0/0",
+    "case": "Anchors and Tags",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "F3CP_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/F3CP.yaml#0/0",
+    "case": "Nested flow collections on one line",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "F6MC_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/F6MC.yaml#0/0",
+    "case": "More indented lines at the beginning of folded block scalars",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "F8F9_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/F8F9.yaml#0/0",
+    "case": "Spec Example 8.5. Chomping Trailing Lines",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "FBC9_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/FBC9.yaml#0/0",
+    "case": "Allowed characters in plain scalars",
+    "import_codes": "[\"W007\", \"W007\", \"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "FH7J_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/FH7J.yaml#0/0",
+    "case": "Tags on Empty Scalars",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "FP8R_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/FP8R.yaml#0/0",
+    "case": "Zero indented block scalar",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "FQ7F_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/FQ7F.yaml#0/0",
+    "case": "Spec Example 2.1. Sequence of Scalars",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "FRK4_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/FRK4.yaml#0/0",
+    "case": "Spec Example 7.3. Completely Empty Flow Nodes",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "FTA2_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/FTA2.yaml#0/0",
+    "case": "Single block sequence with anchor and explicit document start",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "FUP4_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/FUP4.yaml#0/0",
+    "case": "Flow Sequence in Flow Sequence",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "G4RS_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/G4RS.yaml#0/0",
+    "case": "Spec Example 2.17. Quoted Scalars",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "G5U8_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/G5U8.yaml#0/0",
+    "case": "Plain dashes in flow sequence",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "G7JE_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/G7JE.yaml#0/0",
+    "case": "Multiline implicit keys",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "G992_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/G992.yaml#0/0",
+    "case": "Spec Example 8.9. Folded Scalar",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "G9HC_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/G9HC.yaml#0/0",
+    "case": "Invalid anchor in zero indented sequence",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "GDY7_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/GDY7.yaml#0/0",
+    "case": "Comment that looks like a mapping key",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "GH63_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/GH63.yaml#0/0",
+    "case": "Mixed Block Mapping (explicit to implicit)",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "GT5M_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/GT5M.yaml#0/0",
+    "case": "Node anchor in sequence",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "H2RW_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/H2RW.yaml#0/0",
+    "case": "Blank lines",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "H3Z8_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/H3Z8.yaml#0/0",
+    "case": "Literal unicode",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "H7J7_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/H7J7.yaml#0/0",
+    "case": "Node anchor not indented",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "H7TQ_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/H7TQ.yaml#0/0",
+    "case": "Extra words on %YAML directive",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "HM87_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/HM87.yaml#0/0",
+    "case": "Scalars in flow start with syntax char",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "HM87_0_1": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/HM87.yaml#0/1",
+    "case": "unnamed",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "HMK4_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/HMK4.yaml#0/0",
+    "case": "Spec Example 2.16. Indentation determines scope",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "HMQ5_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/HMQ5.yaml#0/0",
+    "case": "Spec Example 6.23. Node Properties",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "HRE5_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/HRE5.yaml#0/0",
+    "case": "Double quoted scalar with escaped single quote",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "HS5T_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/HS5T.yaml#0/0",
+    "case": "Spec Example 7.12. Plain Lines",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "HU3P_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/HU3P.yaml#0/0",
+    "case": "Invalid Mapping in plain scalar",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "HWV9_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/HWV9.yaml#0/0",
+    "case": "Document-end marker",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "J3BT_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/J3BT.yaml#0/0",
+    "case": "Spec Example 5.12. Tabs and Spaces",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "J5UC_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/J5UC.yaml#0/0",
+    "case": "Multiple Pair Block Mapping",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "J7PZ_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/J7PZ.yaml#0/0",
+    "case": "Spec Example 2.26. Ordered Mappings",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "J7VC_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/J7VC.yaml#0/0",
+    "case": "Empty Lines Between Mapping Elements",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "J9HZ_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/J9HZ.yaml#0/0",
+    "case": "Spec Example 2.9. Single Document with Two Comments",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "JEF9_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/JEF9.yaml#0/0",
+    "case": "Trailing whitespace in streams",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "JEF9_0_1": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/JEF9.yaml#0/1",
+    "case": "unnamed",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "JEF9_0_2": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/JEF9.yaml#0/2",
+    "case": "unnamed",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "JHB9_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/JHB9.yaml#0/0",
+    "case": "Spec Example 2.7. Two Documents in a Stream",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "JKF3_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/JKF3.yaml#0/0",
+    "case": "Multiline unidented double quoted block key",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "JQ4R_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/JQ4R.yaml#0/0",
+    "case": "Spec Example 8.14. Block Sequence",
+    "import_codes": "[\"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "JR7V_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/JR7V.yaml#0/0",
+    "case": "Question marks in scalars",
+    "import_codes": "[\"W007\", \"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "JS2J_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/JS2J.yaml#0/0",
+    "case": "Spec Example 6.29. Node Anchors",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "JTV5_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/JTV5.yaml#0/0",
+    "case": "Block Mapping with Multiline Scalars",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "JY7Z_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/JY7Z.yaml#0/0",
+    "case": "Trailing content that looks like a mapping",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "K3WX_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/K3WX.yaml#0/0",
+    "case": "Colon and adjacent value after comment on next line",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "K4SU_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/K4SU.yaml#0/0",
+    "case": "Multiple Entry Block Sequence",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "K527_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/K527.yaml#0/0",
+    "case": "Spec Example 6.6. Line Folding",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "K54U_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/K54U.yaml#0/0",
+    "case": "Tab after document header",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "K858_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/K858.yaml#0/0",
+    "case": "Spec Example 8.6. Empty Scalar Chomping",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "KH5V_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/KH5V.yaml#0/0",
+    "case": "Inline tabs in double quoted",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "KH5V_0_1": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/KH5V.yaml#0/1",
+    "case": "unnamed",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "KH5V_0_2": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/KH5V.yaml#0/2",
+    "case": "unnamed",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "KK5P_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/KK5P.yaml#0/0",
+    "case": "Various combinations of explicit block mappings",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "KMK3_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/KMK3.yaml#0/0",
+    "case": "Block Submapping",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "KS4U_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/KS4U.yaml#0/0",
+    "case": "Invalid item after end of flow sequence",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "KSS4_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/KSS4.yaml#0/0",
+    "case": "Scalars on --- line",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "L24T_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/L24T.yaml#0/0",
+    "case": "Trailing line of spaces",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "L24T_0_1": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/L24T.yaml#0/1",
+    "case": "unnamed",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "L383_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/L383.yaml#0/0",
+    "case": "Two scalar docs with trailing comments",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "L94M_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/L94M.yaml#0/0",
+    "case": "Tags in Explicit Mapping",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "L9U5_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/L9U5.yaml#0/0",
+    "case": "Spec Example 7.11. Plain Implicit Keys",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "LE5A_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/LE5A.yaml#0/0",
+    "case": "Spec Example 7.24. Flow Nodes",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "LHL4_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/LHL4.yaml#0/0",
+    "case": "Invalid tag",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "LP6E_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/LP6E.yaml#0/0",
+    "case": "Whitespace After Scalars in Flow",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "LQZ7_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/LQZ7.yaml#0/0",
+    "case": "Spec Example 7.4. Double Quoted Implicit Keys",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "LX3P_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/LX3P.yaml#0/0",
+    "case": "Implicit Flow Mapping Key on one line",
+    "import_codes": "[\"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "M29M_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/M29M.yaml#0/0",
+    "case": "Literal Block Scalar",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "M2N8_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/M2N8.yaml#0/0",
+    "case": "Question mark edge cases",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "M2N8_0_1": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/M2N8.yaml#0/1",
+    "case": "unnamed",
+    "import_codes": "[\"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "M5C3_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/M5C3.yaml#0/0",
+    "case": "Spec Example 8.21. Block Scalar Nodes",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "M5DY_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/M5DY.yaml#0/0",
+    "case": "Spec Example 2.11. Mapping between Sequences",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "M6YH_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/M6YH.yaml#0/0",
+    "case": "Block sequence indentation",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "M7A3_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/M7A3.yaml#0/0",
+    "case": "Spec Example 9.3. Bare Documents",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "M7NX_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/M7NX.yaml#0/0",
+    "case": "Nested flow collections",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "M9B4_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/M9B4.yaml#0/0",
+    "case": "Spec Example 8.7. Literal Scalar",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "MJS9_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/MJS9.yaml#0/0",
+    "case": "Spec Example 6.7. Block Folding",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "MUS6_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/MUS6.yaml#0/0",
+    "case": "Directive variants",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "MUS6_0_1": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/MUS6.yaml#0/1",
+    "case": "unnamed",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "MUS6_0_2": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/MUS6.yaml#0/2",
+    "case": "unnamed",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "MUS6_0_3": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/MUS6.yaml#0/3",
+    "case": "unnamed",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "MUS6_0_4": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/MUS6.yaml#0/4",
+    "case": "unnamed",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "MUS6_0_5": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/MUS6.yaml#0/5",
+    "case": "unnamed",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "MUS6_0_6": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/MUS6.yaml#0/6",
+    "case": "unnamed",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "MXS3_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/MXS3.yaml#0/0",
+    "case": "Flow Mapping in Block Sequence",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "MYW6_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/MYW6.yaml#0/0",
+    "case": "Block Scalar Strip",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "MZX3_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/MZX3.yaml#0/0",
+    "case": "Non-Specific Tags on Scalars",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "N4JP_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/N4JP.yaml#0/0",
+    "case": "Bad indentation in mapping",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "N782_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/N782.yaml#0/0",
+    "case": "Invalid document markers in flow style",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "NAT4_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/NAT4.yaml#0/0",
+    "case": "Various empty or newline only quoted strings",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "NB6Z_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/NB6Z.yaml#0/0",
+    "case": "Multiline plain value with tabs on empty lines",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "NHX8_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/NHX8.yaml#0/0",
+    "case": "Empty Lines at End of Document",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "NJ66_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/NJ66.yaml#0/0",
+    "case": "Multiline plain flow mapping key",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "NKF9_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/NKF9.yaml#0/0",
+    "case": "Empty keys in block and flow mapping",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "NP9H_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/NP9H.yaml#0/0",
+    "case": "Spec Example 7.5. Double Quoted Line Breaks",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "P2AD_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/P2AD.yaml#0/0",
+    "case": "Spec Example 8.1. Block Scalar Header",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "P2EQ_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/P2EQ.yaml#0/0",
+    "case": "Invalid sequene item on same line as previous item",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "P76L_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/P76L.yaml#0/0",
+    "case": "Spec Example 6.19. Secondary Tag Handle",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "P94K_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/P94K.yaml#0/0",
+    "case": "Spec Example 6.11. Multi-Line Comments",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "PBJ2_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/PBJ2.yaml#0/0",
+    "case": "Spec Example 2.3. Mapping Scalars to Sequences",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "PRH3_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/PRH3.yaml#0/0",
+    "case": "Spec Example 7.9. Single Quoted Lines",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "PUW8_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/PUW8.yaml#0/0",
+    "case": "Document start on last line",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "PW8X_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/PW8X.yaml#0/0",
+    "case": "Anchors on Empty Scalars",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "Q4CL_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/Q4CL.yaml#0/0",
+    "case": "Trailing content after quoted value",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "Q5MG_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/Q5MG.yaml#0/0",
+    "case": "Tab at beginning of line followed by a flow mapping",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "Q88A_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/Q88A.yaml#0/0",
+    "case": "Spec Example 7.23. Flow Content",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "Q8AD_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/Q8AD.yaml#0/0",
+    "case": "Spec Example 7.5. Double Quoted Line Breaks [1.3]",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "Q9WF_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/Q9WF.yaml#0/0",
+    "case": "Spec Example 6.12. Separation Spaces",
+    "import_codes": "[\"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "QB6E_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/QB6E.yaml#0/0",
+    "case": "Wrong indented multiline quoted scalar",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "QF4Y_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/QF4Y.yaml#0/0",
+    "case": "Spec Example 7.19. Single Pair Flow Mappings",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "QLJ7_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/QLJ7.yaml#0/0",
+    "case": "Tag shorthand used in documents but only defined in the first",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "QT73_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/QT73.yaml#0/0",
+    "case": "Comment and document-end marker",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "R4YG_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/R4YG.yaml#0/0",
+    "case": "Spec Example 8.2. Block Indentation Indicator",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "R52L_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/R52L.yaml#0/0",
+    "case": "Nested flow mapping sequence and mappings",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "RHX7_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/RHX7.yaml#0/0",
+    "case": "YAML directive without document end marker",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "RLU9_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/RLU9.yaml#0/0",
+    "case": "Sequence Indent",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "RR7F_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/RR7F.yaml#0/0",
+    "case": "Mixed Block Mapping (implicit to explicit)",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "RTP8_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/RTP8.yaml#0/0",
+    "case": "Spec Example 9.2. Document Markers",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "RXY3_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/RXY3.yaml#0/0",
+    "case": "Invalid document-end marker in single quoted string",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "RZP5_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/RZP5.yaml#0/0",
+    "case": "Various Trailing Comments [1.3]",
+    "import_codes": "[\"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "RZT7_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/RZT7.yaml#0/0",
+    "case": "Spec Example 2.28. Log File",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "S3PD_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/S3PD.yaml#0/0",
+    "case": "Spec Example 8.18. Implicit Block Mapping Entries",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "S4GJ_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/S4GJ.yaml#0/0",
+    "case": "Invalid text after block scalar indicator",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "S4JQ_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/S4JQ.yaml#0/0",
+    "case": "Spec Example 6.28. Non-Specific Tags",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "S4T7_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/S4T7.yaml#0/0",
+    "case": "Document with footer",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "S7BG_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/S7BG.yaml#0/0",
+    "case": "Colon followed by comma",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "S98Z_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/S98Z.yaml#0/0",
+    "case": "Block scalar with more spaces than first content line",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "S9E8_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/S9E8.yaml#0/0",
+    "case": "Spec Example 5.3. Block Structure Indicators",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "SBG9_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/SBG9.yaml#0/0",
+    "case": "Flow Sequence in Flow Mapping",
+    "import_codes": "[\"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "SF5V_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/SF5V.yaml#0/0",
+    "case": "Duplicate YAML directive",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "SKE5_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/SKE5.yaml#0/0",
+    "case": "Anchor before zero indented sequence",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "SM9W_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/SM9W.yaml#0/0",
+    "case": "Single character streams",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "SM9W_0_1": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/SM9W.yaml#0/1",
+    "case": "unnamed",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "SR86_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/SR86.yaml#0/0",
+    "case": "Anchor plus Alias",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "SSW6_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/SSW6.yaml#0/0",
+    "case": "Spec Example 7.7. Single Quoted Characters [1.3]",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "SU5Z_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/SU5Z.yaml#0/0",
+    "case": "Comment without whitespace after doublequoted scalar",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "SU74_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/SU74.yaml#0/0",
+    "case": "Anchor and alias as mapping key",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "SY6V_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/SY6V.yaml#0/0",
+    "case": "Anchor before sequence entry on same line",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "SYW4_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/SYW4.yaml#0/0",
+    "case": "Spec Example 2.2. Mapping Scalars to Scalars",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "T26H_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/T26H.yaml#0/0",
+    "case": "Spec Example 8.8. Literal Content [1.3]",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "T4YY_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/T4YY.yaml#0/0",
+    "case": "Spec Example 7.9. Single Quoted Lines [1.3]",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "T5N4_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/T5N4.yaml#0/0",
+    "case": "Spec Example 8.7. Literal Scalar [1.3]",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "T833_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/T833.yaml#0/0",
+    "case": "Flow mapping missing a separating comma",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "TD5N_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/TD5N.yaml#0/0",
+    "case": "Invalid scalar after sequence",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "TE2A_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/TE2A.yaml#0/0",
+    "case": "Spec Example 8.16. Block Mappings",
+    "import_codes": "[\"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "TL85_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/TL85.yaml#0/0",
+    "case": "Spec Example 6.8. Flow Folding",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "TS54_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/TS54.yaml#0/0",
+    "case": "Folded Block Scalar",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "U3C3_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/U3C3.yaml#0/0",
+    "case": "Spec Example 6.16. \u201cTAG\u201d directive",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "U3XV_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/U3XV.yaml#0/0",
+    "case": "Node and Mapping Key Anchors",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "U44R_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/U44R.yaml#0/0",
+    "case": "Bad indentation in mapping (2)",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "U99R_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/U99R.yaml#0/0",
+    "case": "Invalid comma in tag",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "U9NS_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/U9NS.yaml#0/0",
+    "case": "Spec Example 2.8. Play by Play Feed from a Game",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "UDM2_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/UDM2.yaml#0/0",
+    "case": "Plain URL in flow mapping",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "UDR7_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/UDR7.yaml#0/0",
+    "case": "Spec Example 5.4. Flow Collection Indicators",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "UGM3_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/UGM3.yaml#0/0",
+    "case": "Spec Example 2.27. Invoice",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "UKK6_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/UKK6.yaml#0/0",
+    "case": "Syntax character edge cases",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "UKK6_0_1": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/UKK6.yaml#0/1",
+    "case": "unnamed",
+    "import_codes": "[\"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "UKK6_0_2": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/UKK6.yaml#0/2",
+    "case": "unnamed",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "UT92_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/UT92.yaml#0/0",
+    "case": "Spec Example 9.4. Explicit Documents",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "UV7Q_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/UV7Q.yaml#0/0",
+    "case": "Legal tab after indentation",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "V55R_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/V55R.yaml#0/0",
+    "case": "Aliases in Block Sequence",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "V9D5_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/V9D5.yaml#0/0",
+    "case": "Spec Example 8.19. Compact Block Mappings",
+    "import_codes": "[\"W007\", \"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "VJP3_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/VJP3.yaml#0/0",
+    "case": "Flow collections over many lines",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "VJP3_0_1": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/VJP3.yaml#0/1",
+    "case": "unnamed",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "W42U_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/W42U.yaml#0/0",
+    "case": "Spec Example 8.15. Block Sequence Entry Types",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "W4TN_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/W4TN.yaml#0/0",
+    "case": "Spec Example 9.5. Directives Documents",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "W5VH_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/W5VH.yaml#0/0",
+    "case": "Allowed characters in alias",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "W9L4_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/W9L4.yaml#0/0",
+    "case": "Literal block scalar with more spaces in first line",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "WZ62_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/WZ62.yaml#0/0",
+    "case": "Spec Example 7.2. Empty Content",
+    "import_codes": "[\"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "X38W_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/X38W.yaml#0/0",
+    "case": "Aliases in Flow Objects",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "X4QW_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/X4QW.yaml#0/0",
+    "case": "Comment without whitespace after block scalar indicator",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "X8DW_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/X8DW.yaml#0/0",
+    "case": "Explicit key and value seperated by comment",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "XLQ9_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/XLQ9.yaml#0/0",
+    "case": "Multiline scalar that looks like a YAML directive",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "XV9V_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/XV9V.yaml#0/0",
+    "case": "Spec Example 6.5. Empty Lines [1.3]",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "XW4D_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/XW4D.yaml#0/0",
+    "case": "Various Trailing Comments",
+    "import_codes": "[\"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "Y2GN_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/Y2GN.yaml#0/0",
+    "case": "Anchor with colon in the middle",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "Y79Y_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/Y79Y.yaml#0/0",
+    "case": "Tabs in various contexts",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "Y79Y_0_1": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/Y79Y.yaml#0/1",
+    "case": "unnamed",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "Y79Y_0_2": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/Y79Y.yaml#0/2",
+    "case": "unnamed",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "Y79Y_0_3": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/Y79Y.yaml#0/3",
+    "case": "unnamed",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "Y79Y_0_4": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/Y79Y.yaml#0/4",
+    "case": "unnamed",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "Y79Y_0_5": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/Y79Y.yaml#0/5",
+    "case": "unnamed",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "Y79Y_0_6": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/Y79Y.yaml#0/6",
+    "case": "unnamed",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "Y79Y_0_7": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/Y79Y.yaml#0/7",
+    "case": "unnamed",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "Y79Y_0_8": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/Y79Y.yaml#0/8",
+    "case": "unnamed",
+    "import_codes": "[\"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "Y79Y_0_9": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/Y79Y.yaml#0/9",
+    "case": "unnamed",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "Y79Y_0_10": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/Y79Y.yaml#0/10",
+    "case": "unnamed",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "YD5X_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/YD5X.yaml#0/0",
+    "case": "Spec Example 2.5. Sequence of Sequences",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "YJV2_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/YJV2.yaml#0/0",
+    "case": "Dash in flow sequence",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "Z67P_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/Z67P.yaml#0/0",
+    "case": "Spec Example 8.21. Block Scalar Nodes [1.3]",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "Z9M4_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/Z9M4.yaml#0/0",
+    "case": "Spec Example 6.22. Global Tag Prefix",
+    "import_codes": "[\"W009\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "ZCZ6_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/ZCZ6.yaml#0/0",
+    "case": "Invalid mapping in plain single line value",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "ZF4X_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/ZF4X.yaml#0/0",
+    "case": "Spec Example 2.6. Mapping of Mappings",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "ZH7C_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/ZH7C.yaml#0/0",
+    "case": "Anchors in Mapping",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "ZK9H_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/ZK9H.yaml#0/0",
+    "case": "Nested top level flow mapping",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "ZL4Z_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/ZL4Z.yaml#0/0",
+    "case": "Invalid nested mapping",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "ZVH3_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/ZVH3.yaml#0/0",
+    "case": "Wrong indented sequence item",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "ZWK4_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/ZWK4.yaml#0/0",
+    "case": "Key with anchor after missing explicit mapping value",
+    "import_codes": "[]",
+    "delta": "active-import-semantics-pinned"
+  },
+  "ZXT5_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/ZXT5.yaml#0/0",
+    "case": "Implicit key followed by newline and adjacent value",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "ZYU8_0_0": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/ZYU8.yaml#0/0",
+    "case": "Directive variants",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "ZYU8_0_1": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/ZYU8.yaml#0/1",
+    "case": "unnamed",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "ZYU8_0_2": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/ZYU8.yaml#0/2",
+    "case": "unnamed",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  },
+  "ZYU8_0_3": {
+    "origin": "yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)",
+    "source": "src/ZYU8.yaml#0/3",
+    "case": "unnamed",
+    "delta": "rejected-with-diagnostic",
+    "stage": "IMPORT_HARD_ERROR"
+  }
+}

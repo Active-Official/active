@@ -1,0 +1,13 @@
+{
+  "Section": {
+    "M": "latin letter M",
+    "_": "greek small letter mu",
+    "name": "different section!!"
+  },
+  "sectioN": "NN",
+  "section": {
+    "NAME": "upper",
+    "Name": "capitalized",
+    "name": "lower"
+  }
+}

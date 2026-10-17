@@ -1,0 +1,8 @@
+{
+  "control": "\b1998\t1999\t2000\n",
+  "hex_esc": "\r\n is \r\n",
+  "quoted": " # Not a 'comment'.",
+  "single": "\"Howdy!\" he cried.",
+  "tie_fighter": "|\\-*-/|",
+  "unicode": "Sosa did fine.\u263a"
+}

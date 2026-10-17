@@ -1,0 +1,6 @@
+# Ported from toml-test tests/valid/integer/integer.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+answer = 42
+posanswer = +42
+neganswer = -42
+zero = 0

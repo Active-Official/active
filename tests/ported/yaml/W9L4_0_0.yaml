@@ -1,0 +1,7 @@
+# Ported from yaml-test-suite src/W9L4.yaml case 0/0 (Literal block scalar with more spaces in first line)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+---
+block scalar: |
+␣␣␣␣␣
+  more spaces at the beginning
+  are invalid

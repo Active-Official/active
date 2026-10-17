@@ -1,0 +1,10 @@
+# Ported from toml-test tests/valid/table/empty-name.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+['']
+x = 1
+
+["".a]
+x = 2
+
+[a.'']
+x = 3

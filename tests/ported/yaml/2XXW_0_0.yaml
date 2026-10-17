@@ -1,0 +1,9 @@
+# Ported from yaml-test-suite src/2XXW.yaml case 0/0 (Spec Example 2.25. Unordered Sets)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+# Sets are represented as a
+# Mapping where each key is
+# associated with a null value
+--- !!set
+? Mark McGwire
+? Sammy Sosa
+? Ken Griff

@@ -1,0 +1,15 @@
+{
+  "escaped": "lol\"\"\"",
+  "five_quotes": "Closing with five quotes\n\"\"",
+  "four_quotes": "Closing with four quotes\n\"",
+  "lit_one": "'one quote'",
+  "lit_one_space": " 'one quote' ",
+  "lit_two": "''two quotes''",
+  "lit_two_space": " ''two quotes'' ",
+  "mismatch1": "aaa'''bbb",
+  "mismatch2": "aaa\"\"\"bbb",
+  "one": "\"one quote\"",
+  "one_space": " \"one quote\" ",
+  "two": "\"\"two quotes\"\"",
+  "two_space": " \"\"two quotes\"\" "
+}

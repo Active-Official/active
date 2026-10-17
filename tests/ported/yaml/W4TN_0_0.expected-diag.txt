@@ -1,0 +1,1 @@
+IMPORT_HARD_ERROR: invalid YAML: could not find expected directive name at line 5 column 2, while scanning a directive at line 5 column 1 (source excerpt withheld)

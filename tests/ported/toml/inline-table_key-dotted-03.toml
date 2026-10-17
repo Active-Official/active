@@ -1,0 +1,7 @@
+# Ported from toml-test tests/valid/inline-table/key-dotted-03.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+[tbl]
+a.b.c = {d.e=1}
+
+[tbl.x]
+a.b.c = {d.e=1}

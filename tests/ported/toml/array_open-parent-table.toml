@@ -1,0 +1,6 @@
+# Ported from toml-test tests/valid/array/open-parent-table.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+[[parent-table.arr]]
+[[parent-table.arr]]
+[parent-table]
+not-arr = 1

@@ -1,0 +1,4 @@
+# Ported from yaml-test-suite src/9MAG.yaml case 0/0 (Flow sequence with invalid comma at the beginning)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+---
+[ , a, b, c ]

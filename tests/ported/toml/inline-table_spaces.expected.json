@@ -1,0 +1,23 @@
+{
+  "clap_1": {
+    "features": [
+      "derive",
+      "cargo"
+    ],
+    "version": "4"
+  },
+  "clap_2": {
+    "features": [
+      "derive",
+      "cargo"
+    ],
+    "nest": {
+      "a": "x",
+      "b": [
+        1.5,
+        9.0
+      ]
+    },
+    "version": "4"
+  }
+}

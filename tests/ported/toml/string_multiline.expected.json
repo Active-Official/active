@@ -1,0 +1,11 @@
+{
+  "equivalent_one": "The quick brown fox jumps over the lazy dog.",
+  "equivalent_three": "The quick brown fox jumps over the lazy dog.",
+  "equivalent_two": "The quick brown fox jumps over the lazy dog.",
+  "escape_bs_1": "a \\\nb",
+  "escape_bs_2": "a \\b",
+  "escape_bs_3": "a \\\\\n  b",
+  "keep_ws_before": "a   \tb",
+  "no_space": "ab",
+  "whitespace_after_bs": "The quick brown fox jumps over the lazy dog."
+}

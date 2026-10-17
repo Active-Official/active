@@ -1,0 +1,9 @@
+# Ported from yaml-test-suite src/9DXL.yaml case 0/0 (Spec Example 9.6. Stream [1.3])
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+Mapping: Document
+---
+# Empty
+...
+%YAML 1.2
+---
+matches %: 20

@@ -1,0 +1,6 @@
+# Ported from yaml-test-suite src/33X3.yaml case 0/0 (Three explicit integers in a block sequence)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+---
+- !!int 1
+- !!int -2
+- !!int 33

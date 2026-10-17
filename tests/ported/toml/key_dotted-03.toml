@@ -1,0 +1,11 @@
+# Ported from toml-test tests/valid/key/dotted-03.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+top.key = 1
+
+[tbl]
+a.b.c = 42.666
+
+[a.few.dots]
+polka.dot = "again?"
+polka.dance-with = "Dot"
+

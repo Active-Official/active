@@ -1,0 +1,6 @@
+# Ported from toml-test tests/valid/key/dotted-01.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+name.first = "Arthur"
+"name".'last' = "Dent"
+
+many.dots.dot.dot.dot = 42

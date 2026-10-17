@@ -1,0 +1,6 @@
+# Ported from toml-test tests/valid/spec-1.0.0/keys-0.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+key = "value"
+bare_key = "value"
+bare-key = "value"
+1234 = "value"

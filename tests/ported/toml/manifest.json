@@ -1,0 +1,1586 @@
+{
+  "array_array-subtables": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "array/array-subtables.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "array_array": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "array/array.toml",
+    "import_codes": "[\"W008\", \"W008\", \"W008\", \"W008\"]",
+    "delta": "exact"
+  },
+  "array_bool": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "array/bool.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "array_empty": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "array/empty.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "array_hetergeneous": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "array/hetergeneous.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "array_mixed-int-array": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "array/mixed-int-array.toml",
+    "import_codes": "[\"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "array_mixed-int-float": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "array/mixed-int-float.toml",
+    "import_codes": "[\"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "array_mixed-int-string": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "array/mixed-int-string.toml",
+    "import_codes": "[\"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "array_mixed-string-table": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "array/mixed-string-table.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "array_nested-double": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "array/nested-double.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "array_nested-inline-table": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "array/nested-inline-table.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "array_nested": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "array/nested.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "array_nospaces": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "array/nospaces.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "array_open-parent-table": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "array/open-parent-table.toml",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "array_string-quote-comma-01": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "array/string-quote-comma-01.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "array_string-quote-comma-02": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "array/string-quote-comma-02.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "array_string-with-comma-01": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "array/string-with-comma-01.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "array_string-with-comma-02": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "array/string-with-comma-02.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "array_strings": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "array/strings.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "array_table-array-string-backslash": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "array/table-array-string-backslash.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "array_trailing-comma": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "array/trailing-comma.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "bool_bool": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "bool/bool.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "comment_after-literal-no-ws": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "comment/after-literal-no-ws.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W010\", \"W010\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "comment_at-eof": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "comment/at-eof.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "comment_at-eof2": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "comment/at-eof2.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "comment_everywhere": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "comment/everywhere.toml",
+    "import_codes": "[\"W008\", \"W008\"]",
+    "delta": "exact"
+  },
+  "comment_noeol": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "comment/noeol.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "comment_nonascii": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "comment/nonascii.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "comment_tricky": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "comment/tricky.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "datetime_datetime": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "datetime/datetime.toml",
+    "import_codes": "[\"W008\", \"W008\"]",
+    "delta": "exact"
+  },
+  "datetime_edge": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "datetime/edge.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W008\", \"W008\", \"W008\", \"W008\", \"W008\", \"W008\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "datetime_invalid-date-in-string": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "datetime/invalid-date-in-string.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "datetime_leap-year": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "datetime/leap-year.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W008\", \"W008\", \"W008\", \"W008\", \"W008\", \"W008\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "datetime_local-date": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "datetime/local-date.toml",
+    "import_codes": "[\"W008\"]",
+    "delta": "exact"
+  },
+  "datetime_local-time": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "datetime/local-time.toml",
+    "import_codes": "[\"W008\", \"W008\"]",
+    "delta": "exact"
+  },
+  "datetime_local": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "datetime/local.toml",
+    "import_codes": "[\"W008\", \"W008\", \"W008\"]",
+    "delta": "exact"
+  },
+  "datetime_milliseconds": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "datetime/milliseconds.toml",
+    "import_codes": "[\"W008\", \"W008\", \"W008\", \"W008\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "datetime_no-seconds": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "datetime/no-seconds.toml",
+    "delta": "rejected-with-diagnostic"
+  },
+  "datetime_timezone": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "datetime/timezone.toml",
+    "import_codes": "[\"W008\", \"W008\", \"W008\", \"W008\"]",
+    "delta": "exact"
+  },
+  "empty-crlf": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "empty-crlf.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "empty-lf": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "empty-lf.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "empty-nothing": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "empty-nothing.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "empty-space": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "empty-space.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "empty-tab": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "empty-tab.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "example": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "example.toml",
+    "import_codes": "[\"W007\", \"W008\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "float_exponent-upper": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "float/exponent-upper.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "float_exponent": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "float/exponent.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "float_float": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "float/float.toml",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "float_inf-and-nan": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "float/inf-and-nan.toml",
+    "import_codes": "[\"W010\", \"W010\", \"W010\", \"W010\", \"W010\", \"W010\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "float_long": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "float/long.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "float_max-int": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "float/max-int.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "float_underscore": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "float/underscore.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "float_zero": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "float/zero.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "implicit-and-explicit-after": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "implicit-and-explicit-after.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "implicit-and-explicit-before": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "implicit-and-explicit-before.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "implicit-groups": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "implicit-groups.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "inline-table_array-01": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "inline-table/array-01.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "inline-table_array-02": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "inline-table/array-02.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "inline-table_array-03": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "inline-table/array-03.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "inline-table_bool": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "inline-table/bool.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "inline-table_empty": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "inline-table/empty.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "inline-table_end-in-bool": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "inline-table/end-in-bool.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "inline-table_inline-table": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "inline-table/inline-table.toml",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "inline-table_key-dotted-01": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "inline-table/key-dotted-01.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "inline-table_key-dotted-02": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "inline-table/key-dotted-02.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "inline-table_key-dotted-03": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "inline-table/key-dotted-03.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "inline-table_key-dotted-04": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "inline-table/key-dotted-04.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "inline-table_key-dotted-05": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "inline-table/key-dotted-05.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "inline-table_key-dotted-06": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "inline-table/key-dotted-06.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "inline-table_key-dotted-07": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "inline-table/key-dotted-07.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "inline-table_multiline": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "inline-table/multiline.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "inline-table_nest": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "inline-table/nest.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "inline-table_newline-comment": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "inline-table/newline-comment.toml",
+    "delta": "rejected-with-diagnostic"
+  },
+  "inline-table_newline": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "inline-table/newline.toml",
+    "delta": "rejected-with-diagnostic"
+  },
+  "inline-table_spaces": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "inline-table/spaces.toml",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "integer_float64-max": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "integer/float64-max.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "integer_integer": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "integer/integer.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "integer_literals": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "integer/literals.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "integer_long": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "integer/long.toml",
+    "delta": "rejected-with-diagnostic"
+  },
+  "integer_underscore": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "integer/underscore.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "integer_zero": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "integer/zero.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "key_alphanum": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/alphanum.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "key_case-sensitive": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/case-sensitive.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "key_dotted-01": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/dotted-01.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "key_dotted-02": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/dotted-02.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "key_dotted-03": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/dotted-03.toml",
+    "import_codes": "[\"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "key_dotted-04": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/dotted-04.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "key_dotted-empty": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/dotted-empty.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "key_empty-01": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/empty-01.toml",
+    "import_codes": "[\"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "key_empty-02": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/empty-02.toml",
+    "import_codes": "[\"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "key_empty-03": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/empty-03.toml",
+    "import_codes": "[\"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "key_empty-04": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/empty-04.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "key_empty-05": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/empty-05.toml",
+    "delta": "rejected-with-diagnostic"
+  },
+  "key_equals-nospace": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/equals-nospace.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "key_escapes": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/escapes.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "key_like-date": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/like-date.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "key_numeric-01": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/numeric-01.toml",
+    "import_codes": "[\"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "key_numeric-02": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/numeric-02.toml",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "key_numeric-03": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/numeric-03.toml",
+    "import_codes": "[\"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "key_numeric-04": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/numeric-04.toml",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "key_numeric-05": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/numeric-05.toml",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "key_numeric-06": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/numeric-06.toml",
+    "import_codes": "[\"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "key_numeric-07": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/numeric-07.toml",
+    "import_codes": "[\"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "key_numeric-08": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/numeric-08.toml",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "key_quoted-dots": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/quoted-dots.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "key_quoted-unicode": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/quoted-unicode.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "key_space": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/space.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "key_special-chars": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/special-chars.toml",
+    "import_codes": "[\"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "key_special-word": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/special-word.toml",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "key_start": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/start.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "key_zero": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "key/zero.toml",
+    "import_codes": "[\"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "multibyte": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "multibyte.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "newline-crlf": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "newline-crlf.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "newline-lf": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "newline-lf.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_array-0": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/array-0.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_array-1": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/array-1.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_array-of-tables-0": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/array-of-tables-0.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_array-of-tables-1": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/array-of-tables-1.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_array-of-tables-2": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/array-of-tables-2.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_boolean-0": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/boolean-0.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_comment-0": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/comment-0.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_float-0": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/float-0.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_float-1": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/float-1.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_float-2": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/float-2.toml",
+    "import_codes": "[\"W010\", \"W010\", \"W010\", \"W010\", \"W010\", \"W010\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "spec-1.0.0_inline-table-0": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/inline-table-0.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_inline-table-1": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/inline-table-1.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_inline-table-2": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/inline-table-2.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_inline-table-3": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/inline-table-3.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_integer-0": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/integer-0.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_integer-1": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/integer-1.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_integer-2": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/integer-2.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_key-value-pair-0": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/key-value-pair-0.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_keys-0": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/keys-0.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "spec-1.0.0_keys-1": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/keys-1.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "spec-1.0.0_keys-3": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/keys-3.toml",
+    "import_codes": "[\"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "spec-1.0.0_keys-4": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/keys-4.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_keys-5": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/keys-5.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_keys-6": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/keys-6.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_keys-7": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/keys-7.toml",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "spec-1.0.0_local-date-0": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/local-date-0.toml",
+    "import_codes": "[\"W008\"]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_local-date-time-0": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/local-date-time-0.toml",
+    "import_codes": "[\"W008\", \"W008\"]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_local-time-0": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/local-time-0.toml",
+    "import_codes": "[\"W008\", \"W008\"]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_offset-date-time-0": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/offset-date-time-0.toml",
+    "import_codes": "[\"W008\", \"W008\", \"W008\"]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_offset-date-time-1": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/offset-date-time-1.toml",
+    "import_codes": "[\"W008\"]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_string-0": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/string-0.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_string-1": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/string-1.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_string-2": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/string-2.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_string-3": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/string-3.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_string-4": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/string-4.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_string-5": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/string-5.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_string-6": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/string-6.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_string-7": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/string-7.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_table-0": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/table-0.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_table-1": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/table-1.toml",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "spec-1.0.0_table-2": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/table-2.toml",
+    "import_codes": "[\"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "spec-1.0.0_table-3": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/table-3.toml",
+    "import_codes": "[\"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "spec-1.0.0_table-4": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/table-4.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_table-5": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/table-5.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_table-6": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/table-6.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_table-7": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/table-7.toml",
+    "import_codes": "[\"W008\"]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_table-8": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/table-8.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.0.0_table-9": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.0.0/table-9.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-0": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-0.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-1": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-1.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-10": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-10.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-11": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-11.toml",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "spec-1.1.0_common-12": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-12.toml",
+    "delta": "rejected-with-diagnostic"
+  },
+  "spec-1.1.0_common-13": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-13.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-14": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-14.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-15": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-15.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-16": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-16.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-17": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-17.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-18": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-18.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-19": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-19.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-20": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-20.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-21": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-21.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-22": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-22.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-23": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-23.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-24": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-24.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-25": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-25.toml",
+    "import_codes": "[\"W010\", \"W010\", \"W010\", \"W010\", \"W010\", \"W010\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "spec-1.1.0_common-26": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-26.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-27": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-27.toml",
+    "import_codes": "[\"W008\", \"W008\", \"W008\", \"W008\"]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-28": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-28.toml",
+    "import_codes": "[\"W008\"]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-29": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-29.toml",
+    "delta": "rejected-with-diagnostic"
+  },
+  "spec-1.1.0_common-3": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-3.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "spec-1.1.0_common-30": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-30.toml",
+    "import_codes": "[\"W008\", \"W008\", \"W008\"]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-31": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-31.toml",
+    "delta": "rejected-with-diagnostic"
+  },
+  "spec-1.1.0_common-32": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-32.toml",
+    "import_codes": "[\"W008\"]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-33": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-33.toml",
+    "import_codes": "[\"W008\", \"W008\", \"W008\"]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-34": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-34.toml",
+    "delta": "rejected-with-diagnostic"
+  },
+  "spec-1.1.0_common-35": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-35.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-36": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-36.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-37": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-37.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-38": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-38.toml",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "spec-1.1.0_common-39": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-39.toml",
+    "import_codes": "[\"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "spec-1.1.0_common-4": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-4.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "spec-1.1.0_common-40": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-40.toml",
+    "import_codes": "[\"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "spec-1.1.0_common-41": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-41.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-42": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-42.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-43": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-43.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-44": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-44.toml",
+    "import_codes": "[\"W008\"]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-45": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-45.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-46": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-46.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-47": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-47.toml",
+    "delta": "rejected-with-diagnostic"
+  },
+  "spec-1.1.0_common-48": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-48.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-49": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-49.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-50": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-50.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-51": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-51.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-52": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-52.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-53": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-53.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-6": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-6.toml",
+    "import_codes": "[\"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "spec-1.1.0_common-7": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-7.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-8": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-8.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-1.1.0_common-9": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-1.1.0/common-9.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "spec-example-1-compact": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-example-1-compact.toml",
+    "import_codes": "[\"W008\"]",
+    "delta": "exact"
+  },
+  "spec-example-1": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "spec-example-1.toml",
+    "import_codes": "[\"W008\"]",
+    "delta": "exact"
+  },
+  "string_basic-escape-01": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "string/basic-escape-01.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "string_basic-escape-02": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "string/basic-escape-02.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "string_basic-escape-03": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "string/basic-escape-03.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "string_empty": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "string/empty.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "string_ends-in-whitespace-escape": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "string/ends-in-whitespace-escape.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "string_escape-esc": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "string/escape-esc.toml",
+    "delta": "rejected-with-diagnostic"
+  },
+  "string_escape-tricky": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "string/escape-tricky.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "string_escaped-escape": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "string/escaped-escape.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "string_escapes": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "string/escapes.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "string_hex-escape": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "string/hex-escape.toml",
+    "delta": "rejected-with-diagnostic"
+  },
+  "string_multibyte-escape": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "string/multibyte-escape.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "string_multibyte": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "string/multibyte.toml",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "string_multiline-empty": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "string/multiline-empty.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "string_multiline-escaped-crlf": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "string/multiline-escaped-crlf.toml",
+    "import_codes": "[\"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "string_multiline-quotes": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "string/multiline-quotes.toml",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "string_multiline": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "string/multiline.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "string_nl": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "string/nl.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "string_quoted-unicode": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "string/quoted-unicode.toml",
+    "import_codes": "[]",
+    "delta": "adapted-active-semantics"
+  },
+  "string_raw-empty": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "string/raw-empty.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "string_raw-multiline": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "string/raw-multiline.toml",
+    "import_codes": "[\"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "string_raw": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "string/raw.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "string_simple": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "string/simple.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "string_start-mb": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "string/start-mb.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "string_unicode-escape": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "string/unicode-escape.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "string_with-pound": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "string/with-pound.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "table_array-empty-name": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "table/array-empty-name.toml",
+    "import_codes": "[\"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "table_array-empty": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "table/array-empty.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "table_array-implicit-and-explicit-after": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "table/array-implicit-and-explicit-after.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "table_array-implicit": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "table/array-implicit.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "table_array-many": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "table/array-many.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "table_array-nest": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "table/array-nest.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "table_array-one": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "table/array-one.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "table_array-table-array": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "table/array-table-array.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "table_array-within-dotted": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "table/array-within-dotted.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "table_empty-name": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "table/empty-name.toml",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "table_empty": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "table/empty.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "table_keyword-with-values": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "table/keyword-with-values.toml",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "table_keyword": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "table/keyword.toml",
+    "import_codes": "[\"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "table_names-with-values": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "table/names-with-values.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "table_names": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "table/names.toml",
+    "import_codes": "[\"W007\", \"W007\", \"W007\", \"W007\", \"W007\", \"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "table_no-eol-01": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "table/no-eol-01.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "table_no-eol-02": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "table/no-eol-02.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "table_sub-empty": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "table/sub-empty.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "table_sub": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "table/sub.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "table_whitespace": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "table/whitespace.toml",
+    "import_codes": "[\"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "table_with-literal-string": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "table/with-literal-string.toml",
+    "import_codes": "[\"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "table_with-pound": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "table/with-pound.toml",
+    "import_codes": "[\"W007\"]",
+    "delta": "adapted-active-semantics"
+  },
+  "table_with-single-quotes": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "table/with-single-quotes.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "table_without-super-with-values": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "table/without-super-with-values.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  },
+  "table_without-super": {
+    "origin": "BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)",
+    "source": "table/without-super.toml",
+    "import_codes": "[]",
+    "delta": "exact"
+  }
+}

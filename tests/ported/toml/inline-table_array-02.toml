@@ -1,0 +1,7 @@
+# Ported from toml-test tests/valid/inline-table/array-02.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+# "No newlines are allowed between the curly braces unless they are valid within
+# a value"
+
+a = { a = [
+]}

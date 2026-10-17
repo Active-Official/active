@@ -1,0 +1,11 @@
+# Ported from yaml-test-suite src/F6MC.yaml case 0/0 (More indented lines at the beginning of folded block scalars)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+---
+a: >2
+   more indented
+  regular
+b: >2
+
+
+   more indented
+  regular

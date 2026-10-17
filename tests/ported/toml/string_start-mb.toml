@@ -1,0 +1,15 @@
+# Ported from toml-test tests/valid/string/start-mb.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+# Start first line with a multibyte character.
+#
+# https://github.com/marzer/tomlplusplus/issues/190
+s1 = "§"
+s2 = '§'
+s3 = """\
+§"""
+s4 = """
+§"""
+s5 = """§"""
+s6 = '''
+§'''
+s7 = '''§'''

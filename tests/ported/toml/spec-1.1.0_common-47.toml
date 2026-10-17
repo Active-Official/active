@@ -1,0 +1,15 @@
+# Ported from toml-test tests/valid/spec-1.1.0/common-47.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+name = { first = "Tom", last = "Preston-Werner" }
+point = {x=1, y=2}
+animal = { type.name = "pug" }
+contact = {
+    personal = {
+        name = "Donald Duck",
+        email = "donald@duckburg.com",
+    },
+    work = {
+        name = "Coin cleaner",
+        email = "donald@ScroogeCorp.com",
+    },
+}

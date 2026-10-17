@@ -1,0 +1,4 @@
+# Ported from yaml-test-suite src/EW3V.yaml case 0/0 (Wrong indendation in mapping)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+k1: v1
+ k2: v2

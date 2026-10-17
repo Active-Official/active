@@ -1,0 +1,6 @@
+# Ported from toml-test tests/valid/array/string-quote-comma-01.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+title = [
+"Client: \"XXXX\", Job: XXXX",
+"Code: XXXX"
+]

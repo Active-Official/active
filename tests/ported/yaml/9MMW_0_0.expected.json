@@ -1,0 +1,19 @@
+{
+  "value": [
+    [
+      {
+        "YAML": "separate"
+      }
+    ],
+    [
+      {
+        "JSON_like": "adjacent"
+      }
+    ],
+    [
+      {
+        "key": "adjacent"
+      }
+    ]
+  ]
+}

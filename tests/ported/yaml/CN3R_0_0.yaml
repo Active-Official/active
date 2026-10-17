@@ -1,0 +1,8 @@
+# Ported from yaml-test-suite src/CN3R.yaml case 0/0 (Various location of anchors in flow sequence)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+&flowseq [
+ a: b,
+ &c c: d,
+ { &e e: f },
+ &g { g: h }
+]

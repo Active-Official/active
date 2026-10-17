@@ -1,0 +1,3 @@
+# Ported from yaml-test-suite src/KH5V.yaml case 0/0 (Inline tabs in double quoted)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+"1 inline\ttab"

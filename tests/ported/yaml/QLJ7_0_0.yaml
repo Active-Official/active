@@ -1,0 +1,9 @@
+# Ported from yaml-test-suite src/QLJ7.yaml case 0/0 (Tag shorthand used in documents but only defined in the first)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+%TAG !prefix! tag:example.com,2011:
+--- !prefix!A
+a: b
+--- !prefix!B
+c: d
+--- !prefix!C
+e: f

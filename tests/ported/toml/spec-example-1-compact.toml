@@ -1,0 +1,25 @@
+# Ported from toml-test tests/valid/spec-example-1-compact.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+#Useless spaces eliminated.
+title="TOML Example"
+[owner]
+name="Lance Uppercut"
+dob=1979-05-27T07:32:00-08:00#First class dates
+[database]
+server="192.168.1.1"
+ports=[8001,8001,8002]
+connection_max=5000
+enabled=true
+[servers]
+[servers.alpha]
+ip="10.0.0.1"
+dc="eqdc10"
+[servers.beta]
+ip="10.0.0.2"
+dc="eqdc10"
+[clients]
+data=[["gamma","delta"],[1,2]]
+hosts=[
+"alpha",
+"omega"
+]

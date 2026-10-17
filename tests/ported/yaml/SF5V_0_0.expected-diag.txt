@@ -1,0 +1,1 @@
+IMPORT_HARD_ERROR: invalid YAML: found duplicate %YAML directive at line 4 column 1 (source excerpt withheld)

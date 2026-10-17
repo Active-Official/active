@@ -1,0 +1,4 @@
+# Ported from yaml-test-suite src/5U3A.yaml case 0/0 (Sequence on same Line as Mapping Key)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+key: - a
+     - b

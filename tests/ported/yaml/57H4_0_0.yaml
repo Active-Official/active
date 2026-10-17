@@ -1,0 +1,8 @@
+# Ported from yaml-test-suite src/57H4.yaml case 0/0 (Spec Example 8.22. Block Collection Nodes)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+sequence: !!seq
+- entry
+- !!seq
+ - nested
+mapping: !!map
+ foo: bar

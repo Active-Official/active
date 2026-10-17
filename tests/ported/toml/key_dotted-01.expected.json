@@ -1,0 +1,15 @@
+{
+  "many": {
+    "dots": {
+      "dot": {
+        "dot": {
+          "dot": 42
+        }
+      }
+    }
+  },
+  "name": {
+    "first": "Arthur",
+    "last": "Dent"
+  }
+}

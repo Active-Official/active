@@ -1,0 +1,1 @@
+IMPORT_HARD_ERROR: invalid YAML: block sequence entries are not allowed in this context at line 3 column 9 (source excerpt withheld)

@@ -1,0 +1,7 @@
+# Ported from yaml-test-suite src/LE5A.yaml case 0/0 (Spec Example 7.24. Flow Nodes)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+- !!str "a"
+- 'b'
+- &anchor "c"
+- *anchor
+- !!str

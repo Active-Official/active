@@ -1,0 +1,1 @@
+IMPORT_HARD_ERROR: invalid YAML: did not find expected key at line 5 column 4, while parsing a block mapping at line 4 column 3 (source excerpt withheld)

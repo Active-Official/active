@@ -1,0 +1,9 @@
+# Ported from toml-test tests/valid/inline-table/empty.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+empty1 = {}
+empty2 = { }
+empty_in_array = [ { not_empty = 1 }, {} ]
+empty_in_array2 = [{},{not_empty=1}]
+many_empty = [{},{},{}]
+nested_empty = {"empty"={}}
+with_cmt ={            }#nothing here

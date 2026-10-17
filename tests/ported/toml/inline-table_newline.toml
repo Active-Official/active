@@ -1,0 +1,34 @@
+# Ported from toml-test tests/valid/inline-table/newline.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+# TOML 1.1 supports newlines in inline tables and trailing commas.
+
+trailing-comma-1 = {
+	c = 1,
+}
+trailing-comma-2 = { c = 1, }
+
+tbl-1 = {
+	hello = "world",
+	1     = 2,
+	arr   = [1,
+	         2,
+	         3,
+	        ],
+	tbl = {
+		 k = 1,
+	}
+}
+
+tbl-2 = {
+	k = """
+	Hello
+	"""
+}
+
+no-newline-before-brace = {
+a = 1,
+b = 2}
+
+no-newline-before-brace-with-comma = {
+a = 1,
+b = 2,}

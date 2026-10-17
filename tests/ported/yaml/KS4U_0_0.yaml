@@ -1,0 +1,7 @@
+# Ported from yaml-test-suite src/KS4U.yaml case 0/0 (Invalid item after end of flow sequence)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+---
+[
+sequence item
+]
+invalid item

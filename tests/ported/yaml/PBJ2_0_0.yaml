@@ -1,0 +1,10 @@
+# Ported from yaml-test-suite src/PBJ2.yaml case 0/0 (Spec Example 2.3. Mapping Scalars to Sequences)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+american:
+  - Boston Red Sox
+  - Detroit Tigers
+  - New York Yankees
+national:
+  - New York Mets
+  - Chicago Cubs
+  - Atlanta Braves

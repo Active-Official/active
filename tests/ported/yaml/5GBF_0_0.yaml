@@ -1,0 +1,10 @@
+# Ported from yaml-test-suite src/5GBF.yaml case 0/0 (Spec Example 6.5. Empty Lines)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+Folding:
+  "Empty line
+   »
+  as a line feed"
+Chomping: |
+  Clipped empty lines
+␣
+↵

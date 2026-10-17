@@ -1,0 +1,6 @@
+# Ported from toml-test tests/valid/string/multiline-escaped-crlf.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+# The following line should be an unescaped backslash followed by a Windows
+# newline sequence ("\r\n")
+0="""\
+"""

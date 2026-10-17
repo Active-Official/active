@@ -1,0 +1,7 @@
+# Ported from toml-test tests/valid/key/special-word.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+false = false
+true = 1
+inf = 100000000
+nan = "ceci n'est pas un nombre"
+

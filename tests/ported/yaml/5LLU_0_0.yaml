@@ -1,0 +1,7 @@
+# Ported from yaml-test-suite src/5LLU.yaml case 0/0 (Block scalar with wrong indented line after spaces only)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+block scalar: >
+␣
+␣␣
+␣␣␣
+ invalid

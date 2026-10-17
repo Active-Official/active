@@ -1,0 +1,11 @@
+# Ported from toml-test tests/valid/table/names.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+[a.b.c]
+[a."b.c"]
+[a.'d.e']
+[a.' x ']
+[ d.e.f ]
+[ g . h . i ]
+[ j . "ʞ" . 'l' ]
+
+[x.1.2]

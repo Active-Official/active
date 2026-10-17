@@ -1,0 +1,6 @@
+{
+  "false_": false,
+  "inf": 100000000,
+  "nan": "ceci n'est pas un nombre",
+  "true_": 1
+}

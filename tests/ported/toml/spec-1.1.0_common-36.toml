@@ -1,0 +1,10 @@
+# Ported from toml-test tests/valid/spec-1.1.0/common-36.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+integers2 = [
+  1, 2, 3
+]
+
+integers3 = [
+  1,
+  2, # this is ok
+]

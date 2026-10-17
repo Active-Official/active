@@ -1,0 +1,7 @@
+# Ported from toml-test tests/valid/table/without-super.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+# [x] you
+# [x.y] don't
+# [x.y.z] need these
+[x.y.z.w] # for this to work
+[x] # defining a super-table afterwards is ok

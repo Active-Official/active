@@ -1,0 +1,6 @@
+# Ported from toml-test tests/valid/table/with-literal-string.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+['a']
+[a.'"b"']
+[a.'"b"'.c]
+answer = 42 

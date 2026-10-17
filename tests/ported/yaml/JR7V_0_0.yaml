@@ -1,0 +1,10 @@
+# Ported from yaml-test-suite src/JR7V.yaml case 0/0 (Question marks in scalars)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+- a?string
+- another ? string
+- key: value?
+- [a?string]
+- [another ? string]
+- {key: value? }
+- {key: value?}
+- {key?: value }

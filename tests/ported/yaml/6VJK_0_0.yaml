@@ -1,0 +1,10 @@
+# Ported from yaml-test-suite src/6VJK.yaml case 0/0 (Spec Example 2.15. Folded newlines are preserved for "more indented" and blank lines)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+>
+ Sammy Sosa completed another
+ fine season with great stats.
+
+   63 Home Runs
+   0.288 Batting Average
+
+ What a year!

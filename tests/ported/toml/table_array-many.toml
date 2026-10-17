@@ -1,0 +1,13 @@
+# Ported from toml-test tests/valid/table/array-many.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+[[people]]
+first_name = "Bruce"
+last_name = "Springsteen"
+
+[[people]]
+first_name = "Eric"
+last_name = "Clapton"
+
+[[people]]
+first_name = "Bob"
+last_name = "Seger"

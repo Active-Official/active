@@ -1,0 +1,4 @@
+# Ported from yaml-test-suite src/CUP7.yaml case 0/0 (Spec Example 5.6. Node Property Indicators)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+anchored: !local &anchor value
+alias: *anchor

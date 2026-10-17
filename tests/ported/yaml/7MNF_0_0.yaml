@@ -1,0 +1,5 @@
+# Ported from yaml-test-suite src/7MNF.yaml case 0/0 (Missing colon)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+top1:
+  key1: val1
+top2

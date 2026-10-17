@@ -1,0 +1,4 @@
+# Ported from yaml-test-suite src/R52L.yaml case 0/0 (Nested flow mapping sequence and mappings)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+---
+{ top1: [item1, {key2: value2}, item3], top2: value2 }

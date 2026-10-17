@@ -1,0 +1,1 @@
+IMPORT_HARD_ERROR: invalid YAML: did not find expected ',' or '}' at line 6 column 8, while parsing a flow mapping at line 5 column 3 (source excerpt withheld)

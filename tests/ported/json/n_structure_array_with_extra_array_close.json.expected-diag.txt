@@ -1,0 +1,1 @@
+IMPORT_HARD_ERROR: invalid JSON: trailing characters at line 1 column 4 (source excerpt withheld)

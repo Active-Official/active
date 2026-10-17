@@ -1,0 +1,5 @@
+# Ported from yaml-test-suite src/D49Q.yaml case 0/0 (Multiline single quoted implicit keys)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+'a\nb': 1
+'c
+ d': 1

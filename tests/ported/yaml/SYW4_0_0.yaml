@@ -1,0 +1,5 @@
+# Ported from yaml-test-suite src/SYW4.yaml case 0/0 (Spec Example 2.2. Mapping Scalars to Scalars)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+hr:  65    # Home runs
+avg: 0.278 # Batting average
+rbi: 147   # Runs Batted In

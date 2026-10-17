@@ -1,0 +1,15 @@
+{
+  "plain": 1,
+  "plain_table": {
+    "plain": 3,
+    "with_dot": 4
+  },
+  "table": {
+    "withdot": {
+      "escaped_dot": 7,
+      "key_with_dots": 6,
+      "plain": 5
+    }
+  },
+  "with_dot": 2
+}

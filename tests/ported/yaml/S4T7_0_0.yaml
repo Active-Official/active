@@ -1,0 +1,4 @@
+# Ported from yaml-test-suite src/S4T7.yaml case 0/0 (Document with footer)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+aaa: bbb
+...

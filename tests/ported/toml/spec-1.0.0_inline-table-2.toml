@@ -1,0 +1,5 @@
+# Ported from toml-test tests/valid/spec-1.0.0/inline-table-2.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+[product]
+type = { name = "Nail" }
+# type.edible = false  # INVALID

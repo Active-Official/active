@@ -1,0 +1,1 @@
+IMPORT_HARD_ERROR: invalid YAML: found unexpected ':' at line 4 column 9, while scanning a plain scalar at line 4 column 5 (source excerpt withheld)

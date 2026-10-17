@@ -1,0 +1,4 @@
+# Ported from toml-test tests/valid/key/numeric-08.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+1  = 'one'
+01 = 'zero one'

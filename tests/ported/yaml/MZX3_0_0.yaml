@@ -1,0 +1,8 @@
+# Ported from yaml-test-suite src/MZX3.yaml case 0/0 (Non-Specific Tags on Scalars)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+- plain
+- "double quoted"
+- 'single quoted'
+- >
+  block
+- plain again

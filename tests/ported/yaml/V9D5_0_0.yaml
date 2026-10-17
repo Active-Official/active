@@ -1,0 +1,5 @@
+# Ported from yaml-test-suite src/V9D5.yaml case 0/0 (Spec Example 8.19. Compact Block Mappings)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+- sun: yellow
+- ? earth: blue
+  : moon: white

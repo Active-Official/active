@@ -1,0 +1,10 @@
+# Ported from yaml-test-suite src/7BUB.yaml case 0/0 (Spec Example 2.10. Node for “Sammy Sosa” appears twice in this document)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+---
+hr:
+  - Mark McGwire
+  # Following node labeled SS
+  - &SS Sammy Sosa
+rbi:
+  - *SS # Subsequent occurrence
+  - Ken Griffey

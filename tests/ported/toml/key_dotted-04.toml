@@ -1,0 +1,12 @@
+# Ported from toml-test tests/valid/key/dotted-04.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+top.key = 1
+
+[[arr]]
+a.b.c=1
+a.b.d=2
+
+[[arr]]
+a.b.c=3
+a.b.d=4
+

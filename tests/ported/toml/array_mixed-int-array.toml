@@ -1,0 +1,3 @@
+# Ported from toml-test tests/valid/array/mixed-int-array.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+arrays-and-ints =  [1, ["Arrays are not integers."]]

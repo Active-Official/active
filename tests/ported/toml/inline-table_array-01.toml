@@ -1,0 +1,7 @@
+# Ported from toml-test tests/valid/inline-table/array-01.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+arr = [ {'a'= 1}, {'a'= 2} ]
+
+people = [{first_name = "Bruce", last_name = "Springsteen"},
+          {first_name = "Eric", last_name = "Clapton"},
+          {first_name = "Bob", last_name = "Seger"}]

@@ -1,0 +1,7 @@
+# Ported from toml-test tests/valid/table/array-within-dotted.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+[fruit]
+apple.color = "red"
+
+[[fruit.apple.seeds]]
+size = 2

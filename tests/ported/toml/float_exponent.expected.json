@@ -1,0 +1,10 @@
+{
+  "exp": 300.0,
+  "frac": 310.0,
+  "neg": -0.1,
+  "neg_exp": 0.03,
+  "pos_exp": 300.0,
+  "zero": 0.0,
+  "zero_exp": 3.0,
+  "zero_plus": 0.0
+}

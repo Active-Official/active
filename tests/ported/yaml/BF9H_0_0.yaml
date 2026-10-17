@@ -1,0 +1,6 @@
+# Ported from yaml-test-suite src/BF9H.yaml case 0/0 (Trailing comment in multiline plain scalar)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+---
+plain: a
+       b # end of scalar
+       c

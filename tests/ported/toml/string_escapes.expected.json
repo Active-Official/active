@@ -1,0 +1,15 @@
+{
+  "backslash": "|\\.",
+  "backspace": "|\b.",
+  "carriage": "|\r.",
+  "delete": "|\u007f.",
+  "formfeed": "|\f.",
+  "newline": "|\n.",
+  "notunicode1": "|\\u.",
+  "notunicode2": "|\\u.",
+  "notunicode3": "|\\u0075.",
+  "notunicode4": "|\\u.",
+  "quote": "|\".",
+  "tab": "|\t.",
+  "unitseparator": "|\u001f."
+}

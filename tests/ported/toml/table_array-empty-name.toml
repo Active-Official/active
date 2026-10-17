@@ -1,0 +1,8 @@
+# Ported from toml-test tests/valid/table/array-empty-name.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+# Silly thing to do, but valid.
+
+[['']]
+a = 1
+[['']]
+a = 2

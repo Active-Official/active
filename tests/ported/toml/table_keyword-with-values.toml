@@ -1,0 +1,13 @@
+# Ported from toml-test tests/valid/table/keyword-with-values.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+[true]
+k = 1
+
+[false]
+k = 2
+
+[inf]
+k = 3
+
+[nan]
+k = 4

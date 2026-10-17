@@ -1,0 +1,8 @@
+# Ported from toml-test tests/valid/array/nested-double.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+nest = [
+	[
+		["a"],
+		[1, 2, [3]]
+	]
+]

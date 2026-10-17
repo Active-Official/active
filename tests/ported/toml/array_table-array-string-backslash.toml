@@ -1,0 +1,3 @@
+# Ported from toml-test tests/valid/array/table-array-string-backslash.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+foo = [ { bar="\"{{baz}}\""} ]

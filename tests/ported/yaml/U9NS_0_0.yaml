@@ -1,0 +1,12 @@
+# Ported from yaml-test-suite src/U9NS.yaml case 0/0 (Spec Example 2.8. Play by Play Feed from a Game)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+---
+time: 20:03:20
+player: Sammy Sosa
+action: strike (miss)
+...
+---
+time: 20:03:47
+player: Sammy Sosa
+action: grand slam
+...

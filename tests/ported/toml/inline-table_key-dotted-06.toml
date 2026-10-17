@@ -1,0 +1,6 @@
+# Ported from toml-test tests/valid/inline-table/key-dotted-06.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+top.dot.dot = [
+	{dot.dot.dot = 1},
+	{dot.dot.dot = 2},
+]

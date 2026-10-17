@@ -1,0 +1,5 @@
+# Ported from toml-test tests/valid/inline-table/key-dotted-07.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+arr = [
+	{a.b = [{c.d = 1}]}
+]

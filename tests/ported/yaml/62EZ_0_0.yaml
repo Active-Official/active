@@ -1,0 +1,4 @@
+# Ported from yaml-test-suite src/62EZ.yaml case 0/0 (Invalid block mapping key on same line as previous key)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+---
+x: { y: z }in: valid

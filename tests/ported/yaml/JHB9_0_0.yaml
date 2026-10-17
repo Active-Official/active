@@ -1,0 +1,12 @@
+# Ported from yaml-test-suite src/JHB9.yaml case 0/0 (Spec Example 2.7. Two Documents in a Stream)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+# Ranking of 1998 home runs
+---
+- Mark McGwire
+- Sammy Sosa
+- Ken Griffey
+
+# Team ranking
+---
+- Chicago Cubs
+- St Louis Cardinals

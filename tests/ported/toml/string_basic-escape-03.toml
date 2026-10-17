@@ -1,0 +1,4 @@
+# Ported from toml-test tests/valid/string/basic-escape-03.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+# Escape \ four times and then "
+test = "\\\\\\\\\"one"

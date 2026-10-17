@@ -1,0 +1,9 @@
+# Ported from toml-test tests/valid/string/multibyte.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+# Test each multibyte length: 2, 3, and 4 bytes:
+# ɑ € 𐫱
+
+basic    = "ɑ € 𐫱 ɑ€𐫱"
+raw      = 'ɑ € 𐫱 ɑ€𐫱'
+ml-basic = """ɑ € 𐫱 ɑ€𐫱"""
+ml-raw   = '''ɑ € 𐫱 ɑ€𐫱'''

@@ -1,0 +1,4 @@
+# Ported from yaml-test-suite src/SR86.yaml case 0/0 (Anchor plus Alias)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+key1: &a value
+key2: &b *a

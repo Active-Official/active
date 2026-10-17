@@ -1,0 +1,1 @@
+IMPORT_HARD_ERROR: invalid YAML: did not find expected comment or line break at line 3 column 8, while scanning a block scalar at line 3 column 5 (source excerpt withheld)

@@ -1,0 +1,14 @@
+# Ported from yaml-test-suite src/6HB6.yaml case 0/0 (Spec Example 6.1. Indentation Spaces)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+  # Leading comment line spaces are
+   # neither content nor indentation.
+␣␣␣␣
+Not indented:
+ By one space: |
+    By four
+      spaces
+ Flow style: [    # Leading spaces
+   By two,        # in flow style
+  Also by two,    # are neither
+  —»Still by two   # content nor
+    ]             # indentation.

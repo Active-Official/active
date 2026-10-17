@@ -1,0 +1,18 @@
+# Ported from yaml-test-suite src/7T8X.yaml case 0/0 (Spec Example 8.10. Folded Lines - 8.13. Final Empty Lines)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+>
+
+ folded
+ line
+
+ next
+ line
+   * bullet
+
+   * list
+   * lines
+
+ last
+ line
+
+# Comment

@@ -1,0 +1,6 @@
+# Ported from toml-test tests/valid/key/dotted-empty.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+''.x = "empty.x"
+x."" = "x.empty"
+[a]
+"".'' = "empty.empty"

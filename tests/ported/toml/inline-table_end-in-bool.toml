@@ -1,0 +1,3 @@
+# Ported from toml-test tests/valid/inline-table/end-in-bool.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+black = { python=">3.6", version=">=18.9b0", allow_prereleases=true }

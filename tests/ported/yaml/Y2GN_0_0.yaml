@@ -1,0 +1,4 @@
+# Ported from yaml-test-suite src/Y2GN.yaml case 0/0 (Anchor with colon in the middle)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+---
+key: &an:chor value

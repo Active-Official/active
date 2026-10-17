@@ -1,0 +1,19 @@
+{
+  "value": [
+    null,
+    "a",
+    {
+      "b": null,
+      "null_": "a"
+    },
+    {
+      "null_": null
+    },
+    {
+      "null_": null
+    },
+    {
+      "null_": null
+    }
+  ]
+}

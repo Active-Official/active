@@ -1,0 +1,3 @@
+# Ported from toml-test tests/valid/inline-table/bool.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+a = {a = true, b = false}

@@ -1,0 +1,25 @@
+# Ported from toml-test tests/valid/table/names-with-values.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+[a.b.c]
+key = 1
+
+[a."b.c"]
+key = 2
+
+[a.'d.e']
+key = 3
+
+[a.' x ']
+key = 4
+
+[ d.e.f ]
+key = 5
+
+[ g . h . i ]
+key = 6
+
+[ j . "ʞ" . 'l' ]
+key = 7
+
+[x.1.2]
+key = 8

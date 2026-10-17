@@ -1,0 +1,6 @@
+# Ported from toml-test tests/valid/spec-1.0.0/keys-3.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+name = "Orange"
+physical.color = "orange"
+physical.shape = "round"
+site."google.com" = true

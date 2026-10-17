@@ -1,0 +1,5 @@
+# Ported from toml-test tests/valid/float/underscore.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+before = 3_141.5927
+after = 3141.592_7
+exponent = 3e1_4

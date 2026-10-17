@@ -1,0 +1,9 @@
+# Ported from toml-test tests/valid/spec-1.0.0/table-1.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+[table-1]
+key1 = "some string"
+key2 = 123
+
+[table-2]
+key1 = "another string"
+key2 = 456

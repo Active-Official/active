@@ -1,0 +1,8 @@
+# Ported from toml-test tests/valid/string/ends-in-whitespace-escape.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+beee = """
+heeee
+geeee\  
+
+
+      """

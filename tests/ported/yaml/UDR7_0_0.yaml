@@ -1,0 +1,4 @@
+# Ported from yaml-test-suite src/UDR7.yaml case 0/0 (Spec Example 5.4. Flow Collection Indicators)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+sequence: [ one, two, ]
+mapping: { sky: blue, sea: green }

@@ -1,0 +1,3 @@
+# Ported from yaml-test-suite src/9MMA.yaml case 0/0 (Directive by itself with no document)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+%YAML 1.2

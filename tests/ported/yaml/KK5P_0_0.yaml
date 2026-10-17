@@ -1,0 +1,18 @@
+# Ported from yaml-test-suite src/KK5P.yaml case 0/0 (Various combinations of explicit block mappings)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+complex1:
+  ? - a
+complex2:
+  ? - a
+  : b
+complex3:
+  ? - a
+  : >
+    b
+complex4:
+  ? >
+    a
+  :
+complex5:
+  ? - a
+  : - b

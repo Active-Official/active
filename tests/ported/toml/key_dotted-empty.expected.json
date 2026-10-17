@@ -1,0 +1,13 @@
+{
+  "a": {
+    "key": {
+      "key": "empty.empty"
+    }
+  },
+  "key": {
+    "x": "empty.x"
+  },
+  "x": {
+    "key": "x.empty"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "animal": {
+    "type": {
+      "name": "pug"
+    }
+  },
+  "contact": {
+    "personal": {
+      "email": "donald@duckburg.com",
+      "name": "Donald Duck"
+    },
+    "work": {
+      "email": "donald@ScroogeCorp.com",
+      "name": "Coin cleaner"
+    }
+  },
+  "name": {
+    "first": "Tom",
+    "last": "Preston-Werner"
+  },
+  "point": {
+    "x": 1,
+    "y": 2
+  }
+}

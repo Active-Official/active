@@ -1,0 +1,16 @@
+# Ported from toml-test tests/valid/key/alphanum.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+alpha = "a"
+123 = "num"
+000111 = "leading"
+10e3 = "false float"
+one1two2 = "mixed"
+with-dash = "dashed"
+under_score = "___"
+34-11 = 23
+
+[2018_10]
+001 = 1
+
+[a-a-a]
+_ = false

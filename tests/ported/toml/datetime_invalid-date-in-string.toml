@@ -1,0 +1,3 @@
+# Ported from toml-test tests/valid/datetime/invalid-date-in-string.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+s = '2020-01-01x'

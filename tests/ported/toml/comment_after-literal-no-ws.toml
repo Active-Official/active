@@ -1,0 +1,6 @@
+# Ported from toml-test tests/valid/comment/after-literal-no-ws.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+inf=inf#infinity
+nan=nan#not a number
+true=true#true
+false=false#false

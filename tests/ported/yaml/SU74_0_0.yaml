@@ -1,0 +1,4 @@
+# Ported from yaml-test-suite src/SU74.yaml case 0/0 (Anchor and alias as mapping key)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+key1: &alias value1
+&b *alias : value2

@@ -1,0 +1,3 @@
+# Ported from toml-test tests/valid/key/numeric-06.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+-1    = true

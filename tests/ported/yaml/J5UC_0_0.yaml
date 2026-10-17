@@ -1,0 +1,5 @@
+# Ported from yaml-test-suite src/J5UC.yaml case 0/0 (Multiple Pair Block Mapping)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+foo: blue
+bar: arrr
+baz: jazz

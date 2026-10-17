@@ -1,0 +1,7 @@
+# Ported from toml-test tests/valid/example.toml
+# Origin: BurntSushi/toml-test@ff49d10 (MIT, (c) 2018 TOML authors)
+best-day-ever = 1987-07-05T17:45:00Z
+
+[numtheory]
+boring = false
+perfection = [6, 28, 496]

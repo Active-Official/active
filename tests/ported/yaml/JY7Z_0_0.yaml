@@ -1,0 +1,5 @@
+# Ported from yaml-test-suite src/JY7Z.yaml case 0/0 (Trailing content that looks like a mapping)
+# Origin: yaml/yaml-test-suite@da267a5 (MIT, (c) 2016-2020 Ingy dot Net)
+key1: "quoted1"
+key2: "quoted2" no key: nor value
+key3: "quoted3"

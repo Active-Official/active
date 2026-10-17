@@ -16,6 +16,18 @@ and fixtures: crates `active`, `active-core`, `active-cli`,
 follow. GitHub URLs and prior release notes keep their original
 names (redirects/history).
 
+## [1.1.0] — 2026-10-17
+
+Hardening release, published to crates.io (`active`, `active-core`,
+`active-cli`, `active-fmt`, `active-lsp`). No language changes:
+the 1.0 surface is frozen. Tested brutally since 1.0.0 — lexer/parser
+fuzz harness (no panics, no hangs), property-test invariants
+(determinism, cycle detection, secret non-leakage), execution
+budgets, and a 1500+ case research battery pinning YAML/TOML/JSON
+failure lineages to diagnostics. Repository home moves to
+`Active-Official/active` (mirror); personal repo renamed
+`RatioArtificiosa/active-lang` (redirects preserved).
+
 ## [1.0.0] — 2026-10-16
 
 First stable release. The C-090 readiness review

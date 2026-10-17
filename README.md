@@ -2,6 +2,9 @@
 
 **Symmetric · Overlay-ready · Loop-proof · Intent-driven · Deterministic**
 
+[![crates.io](https://img.shields.io/crates/v/active-core)](https://crates.io/crates/active-core)
+[![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](LICENSE-MIT)
+
 ACTIVE is a modern configuration and data language designed to be safer than YAML, more expressive than TOML, more human-friendly than JSON, and excellent for both humans and AI agents.
 
 This repository contains the **production implementation**: parser, IR,
@@ -9,7 +12,7 @@ dependency graph, evaluator, units, string interpolation, schema
 validation, CLI, formatter, converters, documentation generator, and
 language server.
 
-## Features in this alpha
+## Features in 1.1
 
 - `let` bindings with lexical references
 - `env.VAR ?: default`
@@ -103,10 +106,16 @@ String interpolation: any `"…${ident}…"` becomes an `Interpolate` node.
 
 ## Status
 
-Near-1.0. The Rust implementation in this repository is the
-**reference implementation for the 1.0 conformance suite**
-(`tests/spec/`, contract: `spec/conformance.md`); final 1.0
-declaration follows the C-090 readiness review.
+1.1 is the current release ([crates.io](https://crates.io/crates/active-core):
+`active`, `active-core`, `active-cli`, `active-fmt`, `active-lsp`).
+Beyond the 1.0 conformance suite, 1.1 was tested brutally: a fuzz
+harness over lexer and parser (`fuzz/`, `active-fuzz`: no panics, no
+hangs), property-test invariants (determinism, cycle detection,
+secret non-leakage), execution budgets that always hold, and a
+1500+ case research battery turning YAML/TOML/JSON failure lineages
+into pinned diagnostics. The Rust implementation in this repository
+remains the **reference implementation for the conformance suite**
+(`tests/spec/`, contract: `spec/conformance.md`).
 
 ## License
 

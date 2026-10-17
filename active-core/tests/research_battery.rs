@@ -2654,3 +2654,172 @@ fn rb_148_datetime_round_trips_as_string() {
     // Positive control: datetimes never become a special type.
     assert!(eval_json(src)["d"].is_string());
 }
+
+/// RB-149 — Strict duplicate rejection is not adopted (HIST-YAML-006 §G).
+/// The rejected alternative: fail on any duplicate key. Active policy
+/// (RB-002) warns W011 and keeps last-wins — pinned here one level
+/// deeper, inside a nested inline table.
+#[test]
+fn rb_149_strict_dup_rejection_not_adopted() {
+    let src = "t = {a = {x = 1, x = 2}}\n";
+    let v = eval_json(src);
+    assert_eq!(v["t"]["a"]["x"], 2);
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (1, 22), "{span:?}");
+    // Positive control: distinct nested keys coexist.
+    assert_eq!(eval_json("t = {a = {x = 1, y = 2}}\n")["t"]["a"]["y"], 2);
+}
+
+/// RB-150 — Upstream `double-comma-01` analogue (SRC-TOML-0001 §H).
+/// Origin: toml-test `invalid/array/double-comma-01.toml`.
+/// REFUSAL (spec-gated): upstream says reject; Active's locked
+/// stray-comma policy heals with H002 (RB-089/RB-119). Pinned with span.
+#[test]
+fn rb_150_double_comma_01_heals() {
+    let src = "value = [1,,2]\n";
+    assert_eq!(eval_json(src)["value"], serde_json::json!([1, 2]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 12), "{span:?}");
+}
+
+/// RB-151 — Upstream `double-comma-02` analogue (SRC-TOML-0002 §H).
+/// Origin: toml-test `invalid/array/double-comma-02.toml`.
+/// Same locked H002 policy, exercised across a line break.
+#[test]
+fn rb_151_double_comma_02_heals_multiline() {
+    let src = "value = [1,,\n2]\n";
+    assert_eq!(eval_json(src)["value"], serde_json::json!([1, 2]));
+    let codes = codes_of(src);
+    assert!(
+        codes.iter().any(|c| c == "H002"),
+        "H002 expected, got {codes:?}"
+    );
+    // Positive control: the clean multiline neighbour carries no heal.
+    assert!(!codes_of("value = [1,\n2]\n").iter().any(|c| c == "H002"));
+}
+
+/// RB-152 — Upstream `extend-defined-aot` analogue (SRC-TOML-0003 §H).
+/// Origin: toml-test `invalid/array/extend-defined-aot.toml`.
+/// REFUSAL (spec-gated): upstream says reject the redefinition; Active's
+/// locked last-wins policy (RB-002/RB-116) warns W011 and keeps the
+/// second table wholesale.
+#[test]
+fn rb_152_extend_defined_aot_last_wins() {
+    let src = "fruit = { name = \"apple\" }\nfruit = { name = \"banana\" }\n";
+    assert_eq!(eval_json(src)["fruit"]["name"], "banana");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+}
+
+/// RB-153 — Upstream `extending-table` analogue (SRC-TOML-0004 §H).
+/// Origin: toml-test `invalid/array/extending-table.toml`.
+/// Same locked W011 policy in header form (cross-syntax consistency
+/// per the catalogue's dual-form guidance).
+#[test]
+fn rb_153_extending_table_header_last_wins() {
+    let src = "[fruit]\nname = \"apple\"\n[fruit]\nname = \"banana\"\n";
+    assert_eq!(eval_json(src)["fruit"]["name"], "banana");
+    let codes = codes_of(src);
+    assert!(
+        codes.iter().any(|c| c == "W011"),
+        "W011 expected, got {codes:?}"
+    );
+    // Positive control: extending a table with new keys keeps both.
+    let v = eval_json("[fruit]\nname = \"apple\"\n[veg]\nname = \"carrot\"\n");
+    assert_eq!(v["veg"]["name"], "carrot");
+}
+
+/// RB-154 — Upstream `missing-separator-01` analogue (SRC-TOML-0005 §H).
+/// Origin: toml-test `invalid/array/missing-separator-01.toml`.
+/// REFUSAL (spec-gated): upstream says reject; Active heals a missing
+/// array comma with H003 (RB-090 allows the class; pinned exact here).
+#[test]
+fn rb_154_missing_separator_01_heals() {
+    let src = "value = [1 2]\n";
+    assert_eq!(eval_json(src)["value"], serde_json::json!([1, 2]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H003").expect("H003");
+    let span = h.span.clone().expect("H003 carries a span");
+    assert_eq!((span.line, span.column), (1, 12), "{span:?}");
+}
+
+/// RB-155 — Upstream `missing-separator-02` analogue (SRC-TOML-0006 §H).
+/// Origin: toml-test `invalid/array/missing-separator-02.toml`.
+/// Same locked H003 policy; the healed value keeps every element.
+#[test]
+fn rb_155_missing_separator_02_heals() {
+    let src = "value = [1 2]\n";
+    let v = eval_json(src);
+    assert_eq!(v["value"][0], 1);
+    assert_eq!(v["value"][1], 2);
+    assert_eq!(v["value"].as_array().expect("array").len(), 2);
+    let codes = codes_of(src);
+    assert!(
+        codes.iter().any(|c| c == "H003"),
+        "H003 expected, got {codes:?}"
+    );
+}
+
+/// RB-156 — Upstream `no-close-01` analogue (SRC-TOML-0007 §H).
+/// Origin: toml-test `invalid/array/no-close-01.toml`. E001, span 2:1.
+#[test]
+fn rb_156_no_close_01_rejects() {
+    let src = "value = [1, 2\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    assert!(
+        diags.iter().any(|d| d.code == "E001"),
+        "E001 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: the closed neighbour evaluates.
+    assert_eq!(
+        eval_json("value = [1, 2]\n")["value"],
+        serde_json::json!([1, 2])
+    );
+}
+
+/// RB-157 — Upstream `no-close-02` analogue (SRC-TOML-0008 §H).
+/// Origin: toml-test `invalid/array/no-close-02.toml`.
+/// Same E001 class across a line break; the span marks end-of-input.
+#[test]
+fn rb_157_no_close_02_rejects_multiline() {
+    let src = "value = [1,\n2\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    assert!(
+        diags.iter().any(|d| d.code == "E001"),
+        "E001 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (3, 1), "{span:?}");
+}
+
+/// RB-158 — Upstream `no-close-04` analogue (SRC-TOML-0009 §H).
+/// Origin: toml-test `invalid/array/no-close-04.toml`.
+/// Unterminated nesting rejects at the same class, never hangs.
+#[test]
+fn rb_158_no_close_04_rejects_nested() {
+    let src = "value = [[1, 2]\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    assert!(
+        diags.iter().any(|d| d.code == "E001"),
+        "E001 expected, got {diags:?}"
+    );
+    // Positive control: the fully closed nest evaluates.
+    assert_eq!(
+        eval_json("value = [[1, 2]]\n")["value"],
+        serde_json::json!([[1, 2]])
+    );
+}

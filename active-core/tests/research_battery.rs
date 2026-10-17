@@ -27140,3 +27140,252 @@ fn rb_1228_syn102_lonely_comma_heals_empty() {
     // Positive control: the truly empty neighbour carries no heal.
     assert!(!codes_of("case_0102_03 = []\n").iter().any(|c| c == "H002"));
 }
+/// RB-1229 — Unclosed-array variant: trailing comma allowed (SYN-0102-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0007 (nst JSONTestSuite
+/// n_array_unclosed).
+/// `case_0102_04 = [1,]` heals H002 Info at (1:18) to `[1]` — Active
+/// EXPLICITLY allows trailing commas (RB-004/RB-249/RB-1220).
+#[test]
+fn rb_1229_syn102_trailing_comma_heals() {
+    let src = "case_0102_04 = [1,]\n";
+    assert_eq!(
+        eval_json(src)["case_0102_04"],
+        serde_json::json!([1]),
+        "healed value"
+    );
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H002 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the comma-free neighbour carries no heal.
+    assert!(!codes_of("case_0102_04 = [1]\n").iter().any(|c| c == "H002"));
+}
+
+/// RB-1230 — Unclosed-array variant: clean array silent (SYN-0102-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0007 (nst JSONTestSuite
+/// n_array_unclosed).
+/// `case_0102_05 = [1, 2, 3]` evaluates to three elements with ZERO
+/// diagnostics (converges with RB-1221).
+#[test]
+fn rb_1230_syn102_clean_array_silent() {
+    let src = "case_0102_05 = [1, 2, 3]\n";
+    assert_eq!(
+        eval_json(src)["case_0102_05"],
+        serde_json::json!([1, 2, 3]),
+        "{src}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: the doubled-comma neighbour still announces H002 (no slack).
+    let codes = codes_of("case_0102_05 = [1,,2]\n");
+    assert!(codes.iter().any(|c| c == "H002"), "{codes:?}");
+}
+
+/// RB-1231 — Unclosed-array variant: empty array silent (SYN-0102-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0007 (nst JSONTestSuite
+/// n_array_unclosed).
+/// `case_0102_06 = []` evaluates to an empty array with ZERO diagnostics
+/// (converges with RB-1222).
+#[test]
+fn rb_1231_syn102_empty_array_silent() {
+    let src = "case_0102_06 = []\n";
+    assert_eq!(
+        eval_json(src)["case_0102_06"],
+        serde_json::json!([]),
+        "{src}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: the lonely-comma neighbour still announces H002 (no slack).
+    let codes = codes_of("case_0102_06 = [,]\n");
+    assert!(codes.iter().any(|c| c == "H002"), "{codes:?}");
+}
+
+/// RB-1232 — Unclosed-array variant: nested arrays silent (SYN-0102-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0007 (nst JSONTestSuite
+/// n_array_unclosed).
+/// `case_0102_07 = [[1], [2, 3]]` evaluates nested with ZERO diagnostics
+/// (converges with RB-1223).
+#[test]
+fn rb_1232_syn102_nested_arrays_silent() {
+    let src = "case_0102_07 = [[1], [2, 3]]\n";
+    assert_eq!(
+        eval_json(src)["case_0102_07"],
+        serde_json::json!([[1], [2, 3]]),
+        "{src}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: a single nest is equally silent.
+    let codes = codes_of("case_0102_07 = [[1]]\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1233 — Unclosed-array variant: hetero array accepts (SYN-0102-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0007 (nst JSONTestSuite
+/// n_array_unclosed).
+/// `case_0102_08 = [1, { name = "x" }]` evaluates heterogeneous with ZERO
+/// diagnostics — parser and schema agree: mixed arrays are allowed
+/// (converges with RB-1224).
+#[test]
+fn rb_1233_syn102_hetero_array_accepts() {
+    let src = "case_0102_08 = [1, { name = \"x\" }]\n";
+    let v = eval_json(src);
+    assert_eq!(
+        v["case_0102_08"],
+        serde_json::json!([1, {"name": "x"}]),
+        "{v}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the homogeneous neighbour is equally silent.
+    let codes = codes_of("case_0102_08 = [1, 2]\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1234 — Unclosed-array variant: unterminated points at EOF (SYN-0102-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0007 (nst JSONTestSuite
+/// n_array_unclosed).
+/// `case_0102_09 = [1, 2` (no `]`) fails E001 Error at (2:1) — the diagnostic
+/// points at EOF where the bracket was expected (converges with RB-112,
+/// RB-1225). (Completes SYN-0102 lineage.)
+#[test]
+fn rb_1234_syn102_unterminated_array_eof() {
+    let src = "case_0102_09 = [1, 2\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: the terminated neighbour evaluates silently.
+    assert_eq!(
+        eval_json("case_0102_09 = [1, 2]\n")["case_0102_09"],
+        serde_json::json!([1, 2])
+    );
+    let codes = codes_of("case_0102_09 = [1, 2]\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1235 — Incomplete-false variant: bare `fals` never coerces (SYN-0103-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0008 (nst JSONTestSuite
+/// n_incomplete_false).
+/// REFUSAL (spec-gated): research demands rejecting truncated `fals`, and
+/// Active never coerces it to false — but the locked unresolved-identifier
+/// policy announces W001 Warning at (1:16) and yields null
+/// (DERIVED-0002/P1-TI-002; bool-twin lineages RB-449+), never silent, never
+/// bool. (Opens SYN-0103 lineage.)
+#[test]
+fn rb_1235_syn103_fals_warns_null() {
+    let src = "case_0103_01 = fals\n";
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert!(v["case_0103_01"].is_null(), "unresolved is null, got {v}");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive controls: quoted text stays text; reserved `false` stays bool.
+    assert_eq!(
+        eval_json("case_0103_01 = \"fals\"\n")["case_0103_01"],
+        "fals"
+    );
+    assert_eq!(eval_json("case_0103_01 = false\n")["case_0103_01"], false);
+}
+
+/// RB-1236 — Incomplete-false variant: bare `tru` never coerces (SYN-0103-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0008 (nst JSONTestSuite
+/// n_incomplete_false).
+/// Same locked policy as RB-1235: truncated `tru` announces W001 Warning at
+/// (1:16) and yields null — never coerced to true, never silent.
+#[test]
+fn rb_1236_syn103_tru_warns_null() {
+    let src = "case_0103_02 = tru\n";
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert!(v["case_0103_02"].is_null(), "unresolved is null, got {v}");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive controls: quoted text stays text; reserved `true` stays bool.
+    assert_eq!(eval_json("case_0103_02 = \"tru\"\n")["case_0103_02"], "tru");
+    assert_eq!(eval_json("case_0103_02 = true\n")["case_0103_02"], true);
+}
+
+/// RB-1237 — Incomplete-false variant: bare `nul` never coerces (SYN-0103-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0008 (nst JSONTestSuite
+/// n_incomplete_false).
+/// Same locked policy: truncated `nul` announces W001 Warning at (1:16) and
+/// yields null — the null VALUE, never a coercion of the `nul` token (tokens
+/// do not coerce; only the reserved `null` literal is null).
+#[test]
+fn rb_1237_syn103_nul_warns_null() {
+    let src = "case_0103_03 = nul\n";
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert!(v["case_0103_03"].is_null(), "unresolved is null, got {v}");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive controls: quoted text stays text; reserved `null` is null silently.
+    assert_eq!(eval_json("case_0103_03 = \"nul\"\n")["case_0103_03"], "nul");
+    let v = eval_json("case_0103_03 = null\n");
+    assert!(v["case_0103_03"].is_null(), "{v}");
+    assert!(!codes_of("case_0103_03 = null\n")
+        .iter()
+        .any(|c| c == "W001"));
+}
+
+/// RB-1238 — Incomplete-false variant: reserved `true` stays bool (SYN-0103-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0008 (nst JSONTestSuite
+/// n_incomplete_false).
+/// `case_0103_04 = true` is bool true with ZERO diagnostics — exactly one
+/// boolean spelling carries one value everywhere (P1-TI-006/RB-106;
+/// HIST-YAML-043). The truncated twins above prove the reservation is exact:
+/// only the full token is bool.
+#[test]
+fn rb_1238_syn103_true_reserved_bool() {
+    let src = "case_0103_04 = true\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0103_04"], true, "{v}");
+    assert!(v["case_0103_04"].is_boolean(), "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: the truncated twin still warns (reservation is exact).
+    let codes = codes_of("case_0103_04 = tru\n");
+    assert!(codes.iter().any(|c| c == "W001"), "{codes:?}");
+}

@@ -25861,3 +25861,251 @@ fn rb_1178_syn96_nested_arrays_silent() {
     let codes = codes_of("case_0096_07 = [[1]]\n");
     assert!(codes.is_empty(), "{codes:?}");
 }
+/// RB-1179 — JSONTestSuite hetero array accepts (SYN-0096-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0001 (nst JSONTestSuite
+/// n_array_1_true_without_comma).
+/// `case_0096_08 = [1, { name = "x" }]` evaluates heterogeneous with ZERO
+/// diagnostics — parser and schema agree: mixed arrays are allowed, no
+/// per-element type veto.
+#[test]
+fn rb_1179_syn96_hetero_array_accepts() {
+    let src = "case_0096_08 = [1, { name = \"x\" }]\n";
+    let v = eval_json(src);
+    assert_eq!(
+        v["case_0096_08"],
+        serde_json::json!([1, {"name": "x"}]),
+        "{v}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the homogeneous neighbour is equally silent.
+    let codes = codes_of("case_0096_08 = [1, 2]\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1180 — JSONTestSuite unterminated array points at EOF (SYN-0096-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0001 (nst JSONTestSuite
+/// n_array_1_true_without_comma).
+/// `case_0096_09 = [1, 2` (no `]`) fails E001 Error at (2:1) — the diagnostic
+/// points at EOF where the bracket was expected (converges with RB-112:
+/// unterminated containers end E001 at 2:1). (Completes SYN-0096 lineage.)
+#[test]
+fn rb_1180_syn96_unterminated_array_eof() {
+    let src = "case_0096_09 = [1, 2\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: the terminated neighbour evaluates silently.
+    assert_eq!(
+        eval_json("case_0096_09 = [1, 2]\n")["case_0096_09"],
+        serde_json::json!([1, 2])
+    );
+    let codes = codes_of("case_0096_09 = [1, 2]\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1181 — Invalid-UTF8-array variant: NUL before first token (SYN-0097-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0002 (nst JSONTestSuite
+/// n_array_a_invalid_utf8).
+/// Byte fixture: raw 0x00 at offset 0. E005 Error at (1:1) with the byte
+/// offset reported — a leading NUL never becomes whitespace or an empty
+/// document. Converges with RB-314. (Opens SYN-0097 lineage.)
+#[test]
+fn rb_1181_syn97_nul_before_token_rejects() {
+    let diags = parse_file(
+        &research_fixture("syn_0097_01_nul_before_token.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 1), "{span:?}");
+    // Positive control: the NUL-free document evaluates.
+    assert_eq!(eval_json("case_0097_01 = 1\n")["case_0097_01"], 1);
+}
+
+/// RB-1182 — Invalid-UTF8-array variant: overlong sequence in string (SYN-0097-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0002 (nst JSONTestSuite
+/// n_array_a_invalid_utf8).
+/// Byte fixture: invalid overlong sequence C0 AF inside a string token.
+/// E017 file-level Error with NO span — decode runs before lexing, so no
+/// replacement-decoding ever smuggles bad bytes into a config source.
+#[test]
+fn rb_1182_syn97_invalid_utf8_rejects_spanless() {
+    let diags = parse_file(
+        &research_fixture("syn_0097_02_invalid_utf8_in_string.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E017");
+    let e = diags.iter().find(|d| d.code == "E017").expect("E017");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E017 must be Error, got {:?}",
+        e.severity
+    );
+    assert!(e.span.is_none(), "E017 is file-level, spanless: {e:?}");
+    // Positive control: valid multi-byte text evaluates exactly.
+    assert_eq!(
+        eval_json("case_0097_02 = \"caf\u{e9}\"\n")["case_0097_02"],
+        "caf\u{e9}"
+    );
+}
+
+/// RB-1183 — Invalid-UTF8-array variant: BOM after `x = ` (SYN-0097-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0002 (nst JSONTestSuite
+/// n_array_a_invalid_utf8).
+/// Byte fixture: `x = ` then BOM bytes. BOM acceptance is the leading
+/// position only (RB-197): a mid-stream BOM is E005 Error at (1:5).
+/// Converges with RB-315.
+#[test]
+fn rb_1183_syn97_bom_after_eq_rejects() {
+    let diags = parse_file(
+        &research_fixture("syn_0097_03_bom_after_eq.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 5), "{span:?}");
+    // Positive control: a LEADING BOM is accepted (escape spells the bytes).
+    assert_eq!(eval_json("\u{feff}case_0097_03 = 1\n")["case_0097_03"], 1);
+}
+
+/// RB-1184 — Invalid-UTF8-array variant: `\u0001` stays verbatim (SYN-0097-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0002 (nst JSONTestSuite
+/// n_array_a_invalid_utf8).
+/// REFUSAL (spec-gated): research allows accepting escaped control scalars,
+/// but Active has no `\u` escape at all (spec/grammar.md:64-66) — the value
+/// keeps six verbatim characters, so NO control scalar materializes either
+/// way. Escaped-code-point policy and raw-source-byte policy stay distinct:
+/// raw control bytes reject, verbatim text never decodes.
+#[test]
+fn rb_1184_syn97_escaped_control_verbatim() {
+    let src = "case_0097_04 = \"\\u0001\"\n";
+    let v = eval_json(src)["case_0097_04"].clone();
+    assert_eq!(v, "\\u0001", "verbatim, got {v:?}");
+    assert!(
+        !v.as_str().expect("string").contains('\u{1}'),
+        "no control scalar may materialize, got {v:?}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: a specified escape still decodes.
+    assert_eq!(
+        eval_json("case_0097_04 = \"a\\nb\"\n")["case_0097_04"],
+        "a\nb"
+    );
+}
+
+/// RB-1185 — Invalid-UTF8-array variant: TAB indent rejects (SYN-0097-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0002 (nst JSONTestSuite
+/// n_array_a_invalid_utf8).
+/// Byte fixture: TAB in leading indentation. E006 Error at (1:1) — tabs may
+/// live inside string content, never as structural indentation (RB-316 pins
+/// the same refusal).
+#[test]
+fn rb_1185_syn97_tab_indent_rejects() {
+    let diags = parse_file(
+        &research_fixture("syn_0097_05_tab_indent.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E006");
+    let e = diags.iter().find(|d| d.code == "E006").expect("E006");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E006 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E006 carries a span");
+    assert_eq!((span.line, span.column), (1, 1), "{span:?}");
+    // Positive control: space indentation evaluates.
+    assert_eq!(eval_json("case_0097_05 = 1\n")["case_0097_05"], 1);
+}
+
+/// RB-1186 — Invalid-UTF8-array variant: café survives round-trip (SYN-0097-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0002 (nst JSONTestSuite
+/// n_array_a_invalid_utf8).
+/// `case_0097_06 = "café"` (U+00E9) evaluates exactly with zero diagnostics —
+/// valid multi-byte code points survive decode/encode round-trip.
+/// (Escapes spell the non-ASCII scalar; no editor bytes involved.)
+#[test]
+fn rb_1186_syn97_cafe_exact() {
+    let src = "case_0097_06 = \"caf\u{e9}\"\n";
+    assert_eq!(eval_json(src)["case_0097_06"], "caf\u{e9}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: a plain ASCII neighbour is exact.
+    assert_eq!(
+        eval_json("case_0097_06 = \"cafe\"\n")["case_0097_06"],
+        "cafe"
+    );
+}
+
+/// RB-1187 — Invalid-UTF8-array variant: clef counts consistently (SYN-0097-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0002 (nst JSONTestSuite
+/// n_array_a_invalid_utf8).
+/// `case_0097_07 = "𝄞"` (U+1D11E, supplementary plane) evaluates exactly
+/// with zero diagnostics — the scanner counts code points and bytes
+/// consistently, with no split-surrogate hazard (Rust str is valid Unicode
+/// end to end). (Escapes spell the scalar; no editor bytes involved.)
+#[test]
+fn rb_1187_syn97_clef_exact() {
+    let src = "case_0097_07 = \"\u{1d11e}\"\n";
+    assert_eq!(eval_json(src)["case_0097_07"], "\u{1d11e}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: a BMP neighbour is equally exact.
+    assert_eq!(
+        eval_json("case_0097_07 = \"caf\u{e9}\"\n")["case_0097_07"],
+        "caf\u{e9}"
+    );
+}
+
+/// RB-1188 — Invalid-UTF8-array variant: truncated lead byte at EOF (SYN-0097-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0002 (nst JSONTestSuite
+/// n_array_a_invalid_utf8).
+/// Byte fixture: lead byte E2 with EOF where continuations belong. E017
+/// file-level Error with NO span — EOF inside a multibyte sequence is a
+/// decode error, never a parser crash and never silent truncation.
+#[test]
+fn rb_1188_syn97_truncated_e2_rejects_spanless() {
+    let diags = parse_file(
+        &research_fixture("syn_0097_08_truncated_e2_eof.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E017");
+    let e = diags.iter().find(|d| d.code == "E017").expect("E017");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E017 must be Error, got {:?}",
+        e.severity
+    );
+    assert!(e.span.is_none(), "E017 is file-level, spanless: {e:?}");
+    // Positive control: a COMPLETE two-byte sequence evaluates exactly.
+    assert_eq!(
+        eval_json("case_0097_08 = \"\u{e9}\"\n")["case_0097_08"],
+        "\u{e9}"
+    );
+}

@@ -228,7 +228,7 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 
 | Family | IDs | Mining note | Status |
 |---|---|---|---|
-| SRC-TOML (95) | `SRC-TOML-0001`…`0095` | Upstream toml-test invalid fixtures → Active analogues (reject classes, escapes, tables) | mining: 0001…0079 pinned → Batches 16–23; base prefixes absent (no hex/bin grammar); quoted keys never collide (E002, RB-051) |
+| SRC-TOML (95) | `SRC-TOML-0001`…`0095` | Upstream toml-test invalid fixtures → Active analogues (reject classes, escapes, tables) | mining: 0001…0089 pinned → Batches 16–24; key grammar strict (identifiers only, loud E002); multiline-key fixtures committed |
 | SRC-JSON (34) | `SRC-JSON-0001`…`0034` | JSONTestSuite edges → Active analogues (nesting, numbers, escapes, dup keys) | pending (mine per batch) |
 | SRC-YAML (15) | `SRC-YAML-0001`…`0015` | yaml-test-suite edges → Active analogues | pending (mine per batch) |
 | SRC-CVE (10) | `SRC-CVE-0001`…`0010` | CVE-derived payloads → budget/cycle/sanitization analogues | pending (mine per batch) |
@@ -273,4 +273,5 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | Batch 21 | RB-199…RB-208 (SRC-TOML-0050…0059) | done: all 10 green first-try, no code changes; UTF-16 fixture committed; float-grammar edges pinned (E002/E005/W001, decimal leading zeros, int-keeping dots) |
 | Batch 22 | RB-209…RB-218 (SRC-TOML-0060…0069) | done: 8 green first-try; RB-211/RB-215 needed test-side span corrections (W011 span marks winning value inline, redefined key in block form); RB-218 control corrected (no unary + in grammar, only -); inline-table policy fully pinned |
 | Batch 23 | RB-219…RB-228 (SRC-TOML-0070…0079) | done: all 10 green first-try, no code changes; base prefixes absent (E002); leading `_` is identifier-shaped (W001+null); quoted dotted keys never collide (E002) |
+| Batch 24 | RB-229…RB-238 (SRC-TOML-0080…0089) | done: all 10 green first-try, no code changes; 2 multiline-key fixtures committed; key grammar strict (E002 everywhere); byte escapes verbatim (no invalid Unicode possible) |
 | Batch 17+ | Next catalogue cases (SRC-TOML-0010…, then SRC-JSON/SRC-YAML/SRC-CVE/SRC-SPEC, byte fixtures) | pending |

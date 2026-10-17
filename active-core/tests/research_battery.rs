@@ -4055,3 +4055,190 @@ fn rb_228_quoted_dotted_key_rejects() {
         1
     );
 }
+
+/// RB-229 — Upstream `duplicate-keys-01` analogue (SRC-TOML-0080 §H, HIGH).
+/// Origin: toml-test `invalid/key/duplicate-keys-01.toml`.
+/// Same locked W011 policy in indent-block form (third syntax for the
+/// same rule — RB-211 inline, RB-215 brace-block): last wins at 3:3.
+#[test]
+fn rb_229_indent_dup_warns_last_wins() {
+    let src = "value:\n  key = 1\n  key = 2\n";
+    assert_eq!(eval_json(src)["value"]["key"], 2);
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (3, 3), "{span:?}");
+    // Positive control: distinct indent keys coexist.
+    let v = eval_json("value:\n  a = 1\n  b = 2\n");
+    assert_eq!(v["value"]["b"], 2);
+}
+
+/// RB-230 — Upstream `empty` analogue (SRC-TOML-0081 §H, HIGH).
+/// Origin: toml-test `invalid/key/empty.toml`.
+/// Empty keys are rejected exactly like every quoted key (RB-051):
+/// loud E002 at 1:1 — the empty key is never silently lost.
+#[test]
+fn rb_230_empty_key_rejects_loud() {
+    let src = "\"\" = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 1), "{span:?}");
+    // Positive control: the identifier neighbour binds.
+    assert_eq!(eval_json("key = 1\n")["key"], 1);
+}
+
+/// RB-231 — Upstream `multiline-key-01` analogue (SRC-TOML-0082 §H, HIGH).
+/// Origin: toml-test `invalid/key/multiline-key-01.toml`.
+/// Byte fixture: `"a <LF> b" = 1`. Multiline keys are not in the
+/// grammar — but the string still lexes exactly (raw LF kept per
+/// RB-175) and the KEY position rejects loud E002. Nothing silent.
+#[test]
+fn rb_231_multiline_key_rejects() {
+    let diags = parse_file(
+        &research_fixture("src_toml_0082_multiline_key.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    // Positive control: the same string as a VALUE evaluates exactly.
+    assert_eq!(eval_json("value = \"a\\nb\"\n")["value"], "a\nb");
+}
+
+/// RB-232 — Upstream `newline-01` analogue (SRC-TOML-0083 §H, HIGH).
+/// Origin: toml-test `invalid/key/newline-01.toml`.
+/// Byte fixture (own file per SRC ID): same shape, asserting the
+/// E002 span at the string token — quoted-key newline rules are
+/// explicit: the string is fine, the position is not.
+#[test]
+fn rb_232_newline_key_span_pinned() {
+    let diags = parse_file(
+        &research_fixture("src_toml_0083_multiline_key.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 1), "{span:?}");
+}
+
+/// RB-233 — Upstream `no-eol-01` analogue (SRC-TOML-0084 §H, HIGH).
+/// Origin: toml-test `invalid/key/no-eol-01.toml`.
+/// Final input without a trailing newline evaluates fully — EOF at a
+/// token boundary finalizes; the last assignment is never dropped.
+#[test]
+fn rb_233_no_trailing_newline_accepts() {
+    assert_eq!(eval_json("value = 1")["value"], 1);
+    let module = parse("value = 1", "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    assert!(diags.is_empty(), "{diags:?}");
+    // Positive control: the newline-terminated twin agrees.
+    assert_eq!(eval_json("value = 1\n")["value"], 1);
+}
+
+/// RB-234 — Upstream `only-int` analogue (SRC-TOML-0085 §H, HIGH).
+/// Origin: toml-test `invalid/key/only-int.toml`.
+/// Keys are identifiers (or rejected quoted strings) — a bare integer
+/// cannot be a key: statement-initial value tokens fail E002 (RB-101).
+#[test]
+fn rb_234_int_key_rejects() {
+    let src = "1 = \"value\"\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 1), "{span:?}");
+    // Positive control: the identifier key binds the same value.
+    assert_eq!(eval_json("key = \"value\"\n")["key"], "value");
+}
+
+/// RB-235 — Upstream `tab` analogue (SRC-TOML-0086 §H, HIGH).
+/// Origin: toml-test `invalid/key/tab.toml`.
+/// TAB is whitespace, never identifier glue (spec/grammar.md §1.2):
+/// `bad<TAB>key` splits into two tokens and the statement fails loud
+/// E002 — never silently normalized into one identifier.
+#[test]
+fn rb_235_tab_in_key_rejects() {
+    let src = "bad\tkey = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 1), "{span:?}");
+    // Positive control: the TAB-free key binds.
+    assert_eq!(eval_json("badkey = 1\n")["badkey"], 1);
+}
+
+/// RB-236 — Upstream `two-equals-01` analogue (SRC-TOML-0087 §H, HIGH).
+/// Origin: toml-test `invalid/key/two-equals-01.toml`.
+/// Exactly one explicit assignment operator: the doubled `==` fails
+/// E002 at the statement start — never read as comparison, never
+/// half-bound.
+#[test]
+fn rb_236_two_equals_rejects() {
+    let src = "value == 1\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 1), "{span:?}");
+    // Positive control: the single-`=` neighbour binds.
+    assert_eq!(eval_json("value = 1\n")["value"], 1);
+}
+
+/// RB-237 — Upstream `without-value-01` analogue (SRC-TOML-0088 §H, HIGH).
+/// Origin: toml-test `invalid/key/without-value-01.toml`.
+/// An assignment cannot end without a value: E002 at the newline.
+/// (Bodiless `key:` headers are E008 instead — RB-001's specified
+/// colon-pair rule distinguishes the two shapes.)
+#[test]
+fn rb_237_missing_value_rejects() {
+    let src = "value =\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 8), "{span:?}");
+    // Positive control: the valued neighbour binds.
+    assert_eq!(eval_json("value = 1\n")["value"], 1);
+}
+
+/// RB-238 — Upstream `bad-byte-escape` analogue (SRC-TOML-0089 §H, HIGH).
+/// Origin: toml-test `invalid/string/bad-byte-escape.toml`.
+/// REFUSAL (spec-gated): byte escapes are not special — unknown
+/// escapes keep the backslash verbatim (spec/grammar.md §1.4,
+/// RB-050) — so `\xFF` can never silently create invalid Unicode.
+/// The value is the exact six characters `\xFF`.
+#[test]
+fn rb_238_bad_byte_escape_verbatim() {
+    let v = eval_json("value = \"\\xFF\"\n");
+    assert_eq!(v["value"], "\\xFF");
+    let codes = codes_of("value = \"\\xFF\"\n");
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: specified escapes still decode.
+    assert_eq!(eval_json("value = \"a\\nb\"\n")["value"], "a\nb");
+}

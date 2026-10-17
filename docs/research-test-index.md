@@ -228,7 +228,7 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 
 | Family | IDs | Mining note | Status |
 |---|---|---|---|
-| SRC-TOML (95) | `SRC-TOML-0001`…`0095` | Upstream toml-test invalid fixtures → Active analogues (reject classes, escapes, tables) | mining: 0001…0009 pinned → Batch 16 RB-150…RB-158 (H002/H003 heals + E001/W011 with spans; refusals vs upstream-reject pinned) |
+| SRC-TOML (95) | `SRC-TOML-0001`…`0095` | Upstream toml-test invalid fixtures → Active analogues (reject classes, escapes, tables) | mining: 0001…0019 pinned → Batches 16 (RB-150…158) + 17 (RB-159…168); refusals vs upstream-reject pinned; bool exact-token recognition pinned |
 | SRC-JSON (34) | `SRC-JSON-0001`…`0034` | JSONTestSuite edges → Active analogues (nesting, numbers, escapes, dup keys) | pending (mine per batch) |
 | SRC-YAML (15) | `SRC-YAML-0001`…`0015` | yaml-test-suite edges → Active analogues | pending (mine per batch) |
 | SRC-CVE (10) | `SRC-CVE-0001`…`0010` | CVE-derived payloads → budget/cycle/sanitization analogues | pending (mine per batch) |
@@ -266,4 +266,5 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | Batch 14 | RB-131…RB-140 (P1-SE-011/012/014/015, P1-DS-001/002/003/004/005/009) | done: 9 green first-try; RB-138 needed a test-side oracle correction (model equality, not string order — order is DS-013's domain); RB-133 uses the real YAML/TOML exporters |
 | Batch 15 | RB-141…RB-148 (P1-DS-010/011/012/013/014, HIST-TOML-00P/00H/00O) | done: all 8 green first-try; RB-143 refusal-pinned (fmt re-emits secret() calls per spec/secrets.md:48-49) |
 | Batch 16 | RB-149…RB-158 (HIST-YAML-006, SRC-TOML-0001…0009) | done: all 10 green first-try, no code changes; catalogue mining started (oldest-first); refusals vs upstream-reject pinned (H002/H003/W011 policies) |
+| Batch 17 | RB-159…RB-168 (SRC-TOML-0010…0019) | done: all 10 green first-try, no code changes; bool exact-token + prefix-match refusal pinned (W001+null); catalogue typo noted (0018 prints TRUE, title/origin name FALSE) |
 | Batch 17+ | Next catalogue cases (SRC-TOML-0010…, then SRC-JSON/SRC-YAML/SRC-CVE/SRC-SPEC, byte fixtures) | pending |

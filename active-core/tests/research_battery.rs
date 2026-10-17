@@ -2823,3 +2823,176 @@ fn rb_158_no_close_04_rejects_nested() {
         serde_json::json!([[1, 2]])
     );
 }
+
+/// RB-159 — Upstream `no-close-table-01` analogue (SRC-TOML-0010 §H).
+/// Origin: toml-test `invalid/array/no-close-table-01.toml`.
+/// Compact unterminated form rejects E001 like its spaced sibling.
+#[test]
+fn rb_159_no_close_table_01_rejects() {
+    let src = "value = [1, 2\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    assert!(
+        diags.iter().any(|d| d.code == "E001"),
+        "E001 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+}
+
+/// RB-160 — Upstream `no-comma-01` analogue (SRC-TOML-0011 §H).
+/// Origin: toml-test `invalid/array/no-comma-01.toml`.
+/// Same locked H003 policy inside a table body (dual-form coverage).
+#[test]
+fn rb_160_no_comma_01_heals_in_table() {
+    let src = "[t]\nvalue = [1 2]\n";
+    assert_eq!(eval_json(src)["t"]["value"], serde_json::json!([1, 2]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H003").expect("H003");
+    let span = h.span.clone().expect("H003 carries a span");
+    assert_eq!((span.line, span.column), (2, 12), "{span:?}");
+}
+
+/// RB-161 — Upstream `no-comma-02` analogue (SRC-TOML-0012 §H).
+/// Origin: toml-test `invalid/array/no-comma-02.toml`.
+/// Newline-separated elements heal the same way, span on the join line.
+#[test]
+fn rb_161_no_comma_02_heals_across_lines() {
+    let src = "value = [1\n2]\n";
+    assert_eq!(eval_json(src)["value"], serde_json::json!([1, 2]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H003").expect("H003");
+    let span = h.span.clone().expect("H003 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+}
+
+/// RB-162 — Upstream `only-comma-01` analogue (SRC-TOML-0013 §H).
+/// Origin: toml-test `invalid/array/only-comma-01.toml`.
+/// REFUSAL (spec-gated): upstream says reject the lone separator;
+/// Active's locked H002 policy heals to `[]` (RB-119). Span pinned.
+#[test]
+fn rb_162_only_comma_01_heals() {
+    let src = "value = [,]\n";
+    assert_eq!(eval_json(src)["value"], serde_json::json!([]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 10), "{span:?}");
+}
+
+/// RB-163 — Upstream `tables-01` analogue (SRC-TOML-0014 §H).
+/// Origin: toml-test `invalid/array/tables-01.toml`.
+/// Duplicate keys inside an array element warn W011 and keep last-wins.
+#[test]
+fn rb_163_tables_01_element_dup_last_wins() {
+    let src = "rows = [{name = \"a\", name = \"b\"}]\n";
+    assert_eq!(eval_json(src)["rows"][0]["name"], "b");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (1, 29), "{span:?}");
+    // Positive control: distinct element keys coexist.
+    assert_eq!(
+        eval_json("rows = [{a = 1}, {a = 2}]\n")["rows"],
+        serde_json::json!([{"a": 1}, {"a": 2}])
+    );
+}
+
+/// RB-164 — Upstream `text-in-array` analogue (SRC-TOML-0015 §H).
+/// Origin: toml-test `invalid/array/text-in-array.toml`.
+/// (Catalogue translation repeats the missing-separator shape; pinned
+/// here through the `parse_file` path — same class, file machinery.)
+#[test]
+fn rb_164_text_in_array_heals_via_file() {
+    let dir = std::env::temp_dir().join(format!(
+        "active_rb164_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let main = dir.join("main.active");
+    std::fs::write(&main, "value = [1 2]\n").expect("write main");
+    let module =
+        parse_file(&main, ParseOptions::default()).unwrap_or_else(|d| panic!("must parse: {d:?}"));
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(v["value"], serde_json::json!([1, 2]));
+    assert!(
+        diags.iter().any(|d| d.code == "H003"),
+        "H003 expected, got {diags:?}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// RB-165 — Upstream `almost-false` analogue (SRC-TOML-0016 §H, MEDIUM).
+/// Origin: toml-test `invalid/bool/almost-false.toml`.
+/// Near-keywords never prefix-match: bare `falsee` is unresolved
+/// (W001 + null), never boolean false.
+#[test]
+fn rb_165_almost_false_never_bool() {
+    let v = eval_json("value = falsee\n");
+    assert!(v["value"].is_null(), "{v}");
+    let codes = codes_of("value = falsee\n");
+    assert!(
+        codes.iter().any(|c| c == "W001"),
+        "W001 expected, got {codes:?}"
+    );
+    // Positive control: the exact token is boolean false.
+    assert_eq!(eval_json("value = false\n")["value"], false);
+}
+
+/// RB-166 — Upstream `almost-true` analogue (SRC-TOML-0017 §H, MEDIUM).
+/// Origin: toml-test `invalid/bool/almost-true.toml`.
+#[test]
+fn rb_166_almost_true_never_bool() {
+    let v = eval_json("value = truee\n");
+    assert!(v["value"].is_null(), "{v}");
+    let codes = codes_of("value = truee\n");
+    assert!(
+        codes.iter().any(|c| c == "W001"),
+        "W001 expected, got {codes:?}"
+    );
+    // Positive control: the exact token is boolean true.
+    assert_eq!(eval_json("value = true\n")["value"], true);
+}
+
+/// RB-167 — Upstream `capitalized-false` analogue (SRC-TOML-0018 §H, MEDIUM).
+/// Origin: toml-test `invalid/bool/capitalized-false.toml`.
+/// (Catalogue prints `TRUE` for both 0018/0019 — a copy typo; the 0018
+/// title and origin name the FALSE form, pinned here.)
+/// Boolean recognition uses exact reserved tokens only.
+#[test]
+fn rb_167_capitalized_false_never_bool() {
+    let v = eval_json("value = FALSE\n");
+    assert!(v["value"].is_null(), "{v}");
+    let codes = codes_of("value = FALSE\n");
+    assert!(
+        codes.iter().any(|c| c == "W001"),
+        "W001 expected, got {codes:?}"
+    );
+    // Positive control: quoted form stays a string.
+    assert_eq!(eval_json("value = \"FALSE\"\n")["value"], "FALSE");
+}
+
+/// RB-168 — Upstream `capitalized-true` analogue (SRC-TOML-0019 §H, MEDIUM).
+/// Origin: toml-test `invalid/bool/capitalized-true.toml`.
+#[test]
+fn rb_168_capitalized_true_never_bool() {
+    let v = eval_json("value = TRUE\n");
+    assert!(v["value"].is_null(), "{v}");
+    let codes = codes_of("value = TRUE\n");
+    assert!(
+        codes.iter().any(|c| c == "W001"),
+        "W001 expected, got {codes:?}"
+    );
+    // Positive control: quoted form stays a string.
+    assert_eq!(eval_json("value = \"TRUE\"\n")["value"], "TRUE");
+}

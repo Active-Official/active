@@ -5367,6 +5367,213 @@ fn rb_298_tag_uri_never_executes() {
     assert_eq!(eval_json("value = 1\n")["value"], 1);
 }
 
+/// RB-309 — TOML string-grammar analogue (SRC-SPEC-0006 §H, HIGH).
+/// Origin: TOML v1.0.0 string grammar.
+/// The specified escape alphabet decodes fully (`\n \t \r \\ \" \0`)
+/// while `\u12G4` stays verbatim (RB-240): one test locks the whole
+/// table — strict where specified, verbatim otherwise.
+#[test]
+fn rb_309_escape_alphabet_matrix() {
+    // Rust `\\` = one Active backslash; Rust `\n` = a real statement break.
+    let src = "a = \"n\\n\"\nb = \"t\\t\"\nc = \"r\\r\"\nd = \"q\\\\q\"\ne = \"u\\u12G4\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["a"], "n\n");
+    assert_eq!(v["b"], "t\t");
+    assert_eq!(v["c"], "r\r");
+    assert_eq!(v["d"], "q\\q");
+    assert_eq!(v["e"], "u\\u12G4");
+    let codes = codes_of("a = \"n\\n\"\n");
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: `\0` decodes per the table (RB-178).
+    assert_eq!(eval_json("z = \"a\\0b\"\n")["z"], "a\0b");
+}
+
+/// RB-310 — TOML offset date-time analogue (SRC-SPEC-0007 §H, HIGH).
+/// Origin: TOML v1.0.0 offset date-time grammar.
+/// Quoted date-times stay text independent of calendar support —
+/// pinned at the TYPE level and through both value exporters, so no
+/// host datetime type can ever reinterpret them downstream.
+#[test]
+fn rb_310_quoted_datetime_typed_string() {
+    let src = "value = \"1979-05-27T00:32:00-07:00\"\n";
+    let v = eval_json(src);
+    assert!(v["value"].is_string(), "{v}");
+    assert_eq!(v["value"], "1979-05-27T00:32:00-07:00");
+    let module = parse(src, "research").expect("must parse");
+    let (value, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    let yaml = active_core::convert::value_to_yaml_string(&value).expect("yaml export");
+    assert!(yaml.contains("1979-05-27T00:32:00-07:00"), "{yaml}");
+    let (toml, _) = active_core::convert::value_to_toml_string(&value).expect("toml export");
+    assert!(toml.contains("1979-05-27T00:32:00-07:00"), "{toml}");
+}
+
+/// RB-311 — RFC 8259 number-grammar analogue (SRC-SPEC-0008 §H, MEDIUM).
+/// Origin: RFC 8259 number grammar.
+/// `01.` is int 1 (RB-308) and `00.5` is float 0.5: leading zeros are
+/// plain decimals everywhere, no host-language fallback, types exact.
+#[test]
+fn rb_311_rfc8259_leading_zero_float() {
+    let v = eval_json("value = 00.5\n");
+    assert_eq!(v["value"], 0.5);
+    assert!(v["value"].is_f64());
+    let v = eval_json("value = 01.\n");
+    assert_eq!(v["value"], 1);
+    assert!(v["value"].is_i64());
+}
+
+/// RB-312 — I-JSON duplicate-name analogue (SRC-SPEC-0009 §H, HIGH).
+/// Origin: RFC 7493 (no duplicate member names).
+/// Security-sensitive duplicates cannot change interpretation: the
+/// quoted twin-keys fail E001 at 1:11, so nothing evaluates and no
+/// consumer ever sees `admin` where `user` was meant.
+#[test]
+fn rb_312_ijson_dup_quoted_rejects() {
+    let src = "value = { \"role\" = \"user\", \"role\" = \"admin\" }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    assert!(
+        diags.iter().any(|d| d.code == "E001"),
+        "E001 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 11), "{span:?}");
+    // Positive control: distinct quoted... bare keys bind (quoted never do).
+    assert_eq!(
+        eval_json("value = { role = \"user\" }\n")["value"]["role"],
+        "user"
+    );
+}
+
+/// RB-313 — JSONTestSuite README analogue (SRC-SPEC-0010 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite (y_/n_/i_ prefix contract).
+/// Baseline scalar probes: MUST-accept parses to int 1 with zero
+/// diags — the fixed point every other oracle builds on.
+#[test]
+fn rb_313_baseline_scalar_probes() {
+    let v = eval_json("probe_1010 = 1\n");
+    assert_eq!(v["probe_1010"], 1);
+    assert!(v["probe_1010"].is_i64());
+    let codes = codes_of("probe_1010 = 1\n");
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the JSON export round-trips the scalar.
+    let module = parse("probe_1010 = 1\n", "research").expect("must parse");
+    let (value, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    let back: serde_json::Value = serde_json::from_str(&json).expect("json");
+    assert_eq!(back["probe_1010"], 1);
+}
+
+/// RB-314 — Bare-CR variant: NUL before first token (SYN-0021-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0021 (toml-test bare-cr).
+/// Byte fixture: NUL at offset 0. The decoder reports the byte
+/// offset: loud E005 at 1:1 — a leading NUL never becomes whitespace
+/// or an empty document.
+#[test]
+fn rb_314_nul_first_rejects_offset() {
+    let diags = parse_file(
+        &research_fixture("syn_0021_01_nul_first.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E005");
+    assert!(
+        diags.iter().any(|d| d.code == "E005"),
+        "E005 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 1), "{span:?}");
+    // Positive control: the NUL-free document evaluates.
+    assert_eq!(eval_json("value = 1\n")["value"], 1);
+}
+
+/// RB-315 — Bare-CR variant: BOM at offset 3 (SYN-0021-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0021 (toml-test bare-cr).
+/// Byte fixture: `x = ` then BOM bytes. BOM acceptance is the
+/// leading position only (RB-197): mid-token BOM is E005 at 1:5.
+#[test]
+fn rb_315_bom_offset3_rejects() {
+    let diags = parse_file(
+        &research_fixture("syn_0021_03_bom_offset3.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E005");
+    assert!(
+        diags.iter().any(|d| d.code == "E005"),
+        "E005 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 5), "{span:?}");
+}
+
+/// RB-316 — Bare-CR variant: TAB at line 1 (SYN-0021-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0021 (toml-test bare-cr).
+/// Byte fixture: TAB-indented first line. Structural TABs fail E006
+/// at 1:1 even at document start — never silently dedented.
+/// (Completes the TAB-indent pair with RB-287's line-2 case.)
+#[test]
+fn rb_316_tab_line1_rejects() {
+    let diags = parse_file(
+        &research_fixture("syn_0021_04_tab_line1.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E006");
+    assert!(
+        diags.iter().any(|d| d.code == "E006"),
+        "E006 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E006").expect("E006");
+    let span = e.span.clone().expect("E006 carries a span");
+    assert_eq!((span.line, span.column), (1, 1), "{span:?}");
+    // Positive control: space indentation binds.
+    assert_eq!(eval_json("value = 1\n")["value"], 1);
+}
+
+/// RB-317 — Hostile single-NUL file terminates controlled.
+/// Byte fixture: one NUL byte, nothing else. The smallest hostile
+/// input fails loud E005 at 1:1 — no panic, no hang, no empty-doc
+/// confusion. (P0-016 family evidence, own file.)
+#[test]
+fn rb_317_nul_only_terminates() {
+    let diags = parse_file(
+        &research_fixture("byte_nul_only.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E005");
+    assert!(
+        diags.iter().any(|d| d.code == "E005"),
+        "E005 expected, got {diags:?}"
+    );
+    // Positive control: the empty document is the clean neighbour.
+    let module = parse_file(
+        &research_fixture("byte_empty.active"),
+        ParseOptions::default(),
+    )
+    .unwrap_or_else(|d| panic!("empty must parse: {d:?}"));
+    let (value, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(v, serde_json::json!({}));
+}
+
+/// RB-318 — Empty file evaluates to the empty document.
+/// Byte fixture: zero bytes. EOF at position zero finalizes to `{}` —
+/// the documented floor of the no-EOL policy (RB-233): nothing to
+/// drop, nothing to heal, zero diagnostics.
+#[test]
+fn rb_318_empty_file_evaluates() {
+    let module = parse_file(
+        &research_fixture("byte_empty.active"),
+        ParseOptions::default(),
+    )
+    .unwrap_or_else(|d| panic!("empty must parse: {d:?}"));
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(v, serde_json::json!({}));
+    assert!(diags.is_empty(), "{diags:?}");
+}
+
 /// RB-299 — yaml-cpp flow-stack analogue (SRC-CVE-0006 §H, CRITICAL).
 /// Origin: NVD CVE-2019-6285.
 /// Bounded generator: 400 balanced nested arrays trip E004 with span

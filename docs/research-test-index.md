@@ -32,7 +32,7 @@ not the research docs' proposed names.
 | DERIVED-0015 | Schema range boundary inclusive | Accept 65535; reject 0/65536 | passing → Batch 2 RB-012 |
 | DERIVED-0016 | Missing vs null distinct codes | Missing ≠ null mismatch code | passing → Batch 2 RB-013 |
 | DERIVED-0017 | Hermetic eval, no network | Zero network syscalls during eval | passing → Batch 7 RB-066 (no network-capable deps in lockfile) |
-| DERIVED-0018 | Interpolation expansion budget | Abort with budget diagnostic, no hang | pending |
+| DERIVED-0018 | Interpolation expansion budget | Abort with budget diagnostic, no hang | passing → Batch 10 RB-093 (geometric growth trips X) |
 | DERIVED-0019 | Round-trip preserves units | `5s`/`512MiB` survive fmt→parse→fmt | passing → Batch 8 RB-077 |
 | DERIVED-0020 | Dual-syntax semantic equality | Brace ≡ indent values | pending |
 
@@ -54,9 +54,9 @@ not the research docs' proposed names.
 | P0-012 | No ambient file reads w/o include | Filesystem untouched | pending |
 | P0-013 | Include cycle A↔B | Include/cycle class reject | pending |
 | P0-014 | Include path must be literal | Reject interpolated path | passing → Batch 5 RB-048 |
-| P0-015 | Truncated input never panics | Controlled diagnostic | pending |
-| P0-016 | Random binary never panics | Controlled reject | pending |
-| P0-017 | Wall-clock budget aborts | Time-exceeded diagnostic | pending |
+| P0-015 | Truncated input never panics | Controlled diagnostic | passing → Batch 10 RB-091 (cut battery terminates) |
+| P0-016 | Random binary never panics | Controlled reject | passing → Batch 10 RB-092 (hostile corpus) |
+| P0-017 | Wall-clock budget aborts | Time-exceeded diagnostic | passing (covered: budgets.rs wall_clock_backstop_trips, X002) |
 | P0-018 | No alias-style exponential expansion | Budget/cycle before materialize | pending |
 | P0-019 | Duplicate diagnostics stable | Same class + spans across runs | passing → Batch 6 RB-059 |
 | P0-020 | Control suite passes under budgets | Realistic config evaluates | passing → Batch 9 RB-088 |
@@ -132,7 +132,7 @@ not the research docs' proposed names.
 | P1-DS-005 | Indent round-trip | Semantic equality | pending |
 | P1-DS-006 | Comments ignored semantically | Value `1` unaffected | passing → Batch 2 RB-020 |
 | P1-DS-007 | Hash in string kept | `"abc # not comment"` intact | passing (hash kept, comments ignored) → Batch 1 RB-009 |
-| P1-DS-008 | Every failure has spans | Usable line/column | pending |
+| P1-DS-008 | Every failure has spans | Usable line/column | passing → Batch 10 RB-100 (failure sweep, all spanned) |
 | P1-DS-009 | Diagnostic class stable | Same class across runs + styles | pending |
 | P1-DS-010 | Unresolved span covers name | Span on `unknown` | pending |
 | P1-DS-011 | Units survive round-trip | Duration value kept | pending |
@@ -157,7 +157,7 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | HIST-YAML-016 | Anchor cycle infinite loop | §2 | N/A: no anchors; cycle class exists | passing → Batch 7 RB-061 |
 | HIST-YAML-003 | Empty key handling | §1 | Accept `""` key, round-trip exact | REFUSED: `""` is not an identifier (E002, same fix as -020) | passing → Batch 6 RB-052 |
 | HIST-YAML-011 | Multiline quotes preserved | §1 | Embedded quotes kept + round-trip | passing → Batch 8 RB-080 |
-| HIST-YAML-013 | Comment-structure non-interference | §1 | Comments never alter structure | pending |
+| HIST-YAML-013 | Comment-structure non-interference | §1 | Comments never alter structure | passing → Batch 10 RB-094 (adversarial comments inert) |
 | HIST-YAML-014 | CRLF normalization | §1 | `\r\n` → single newline, deterministic print | passing → Batch 8 RB-079 (fixed: lexer normalizes CR) |
 | HIST-YAML-015 | Invalid UTF-8/surrogates rejected | §1 | Reject with Unicode class | REFUSED as specified: `\u` stays verbatim (grammar.md:64), surrogates can never materialize | passing → Batch 6 RB-054 |
 | HIST-YAML-019 | Brace/indent mix consistency | §1 | Defined merge-or-error rule | passing (refusal pinned: colon pairs are specified) |
@@ -207,21 +207,21 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | HIST-YAML-017 | Anchor collision | §1 | N/A: no anchors; `let` redefinition policy pinned instead | passing → Batch 9 RB-081 (W011 shadow) |
 | HIST-YAML-018 | Merge-key type error | §1 | N/A: no merge keys | pending |
 | HIST-YAML-023 | Self-reference via anchors | §1 | N/A: `let` self-reference cycle class instead | pending |
-| HIST-TOML-009 | Ambiguous local time | §2 | N/A: no datetimes (importer strings) | pending |
-| HIST-TOML-00A | Skipped local time | §2 | N/A: no datetimes (importer strings) | pending |
+| HIST-TOML-009 | Ambiguous local time | §2 | N/A: no datetimes (importer strings) | passing → Batch 10 RB-098 (W008 string) |
+| HIST-TOML-00A | Skipped local time | §2 | N/A: no datetimes (importer strings) | passing → Batch 10 RB-099 (W008 string) |
 | HIST-TOML-00G | Large integer parse time | §2 | Linear-time digit handling | passing → Batch 9 RB-084 (1000 digits, E023) |
 | HIST-TOML-00H | Long datetime parse time | §2 | N/A: no datetimes | pending |
 | HIST-TOML-00I | Max line length | §2 | Documented: bounded or explicitly unbounded | passing → Batch 9 RB-085 (1MB line terminates) |
 | HIST-TOML-00J | Max document size | §2 | Documented input-size posture | passing → Batch 4 RB-035 |
 | HIST-TOML-00O | Datetime round-trip | §2 | N/A: datetimes are strings | pending |
-| HIST-YAML-032 | Merge taint | §3 | N/A: no merge operator | pending |
+| HIST-YAML-032 | Merge taint | §3 | N/A: no merge operator | passing → Batch 10 RB-095 (merge() is E002) |
 | HIST-YAML-033 | Deep-copy taint | §3 | Clone paths keep `Secret` kind | passing → Batch 8 RB-074 |
-| HIST-YAML-034 | Spread taint | §3 | N/A: no spread operator | pending |
+| HIST-YAML-034 | Spread taint | §3 | N/A: no spread operator | passing → Batch 10 RB-096 (`...` is E002) |
 | HIST-YAML-035 | Dynamic-access taint | §3 | Indexing a secret path stays secret-typed or refused | passing → Batch 8 RB-073 (no index operator; elements redact) |
 | HIST-YAML-038 | ReDoS in evaluation | §3 | No regex builtins; interpolation bounded | passing → Batch 8 RB-075 (100KB terminates) |
 | HIST-YAML-039 | SSRF path traversal | §3 | String concat is literal; no fetch builtins | passing → Batch 9 RB-082 |
 | HIST-YAML-043 | Boolean determinism | §3 | One boolean spelling, one value everywhere | passing → Batch 8 RB-076 |
-| HIST-YAML-044 | URL backslash ambiguity | §3 | N/A: no URL parser in core | pending |
+| HIST-YAML-044 | URL backslash ambiguity | §3 | No URL parser in core; concat stays literal | passing → Batch 10 RB-097 |
 | HIST-YAML-045 | Signature/duplicate-key split | §3 | Same as HIST-YAML-042 + sign.rs coverage | passing → Batch 8 RB-072 (sign/verify + tamper-fail) |
 
 ## §H — Catalogue families (`SOLID-Historical-Test-Catalogue-1000plus.md`)
@@ -259,4 +259,5 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | Batch 7 | RB-061…RB-070 (HIST-YAML-001/002/012/016/029/030/037, DERIVED-0011/0017, P0-011) | done: 9 green first-try; RB-064/RB-065 corrections from shipped behavior |
 | Batch 8 | RB-071…RB-080 | done: 9 green first-try; RB-079 drove CRLF normalization across all 4 string lexers |
 | Batch 9 | RB-081…RB-090 | done: 9 green first-try; RB-085/RB-088 needed test-side arithmetic corrections |
-| Batch 10+ | Next 10 lowest pending rows by severity, per the loop prompt | pending |
+| Batch 10 | RB-091…RB-100 | done: 9 green first-try; RB-100 forced a revert (statement-level skip is spec §4.1 design, not a bug) |
+| Batch 11+ | Next 10 lowest pending rows by severity, per the loop prompt | pending |

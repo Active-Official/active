@@ -1023,6 +1023,11 @@ impl Parser {
                 }
                 _ => {
                     // Alpha resilience: skip an unexpected token.
+                    // NOTE (research P1-ST-002): stray value tokens after
+                    // a complete statement are silently absorbed here by
+                    // explicit design (spec/grammar.md §4.1 quirks:
+                    // `x = 5 5` evaluates to `5`). Only string literals
+                    // above are loud (no quirk protects them).
                     self.bump();
                 }
             }

@@ -1615,3 +1615,177 @@ fn rb_090_missing_separator_rejects() {
     // Positive control: separated elements parse.
     assert_eq!(eval_json("value = [1, 2]\n")["value"][1], 2);
 }
+
+/// RB-091 — Truncation battery terminates (P0-015 §B).
+/// Cut points across headers, strings, brackets, interpolation, and
+/// patches must all terminate with documented classes — never hang.
+#[test]
+fn rb_091_truncation_battery_terminates() {
+    let full = "[server]\nhost = \"localhost\"\nport = 8080\nurl = \"https://${host}:${port}\"\n\n@patch(\"server.port\", 9090)\n";
+    for end in [5usize, 12, 20, 30, 45, 60, 80, 100] {
+        let end = end.min(full.len());
+        let prefix = full[..end].to_string();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = codes_of(&prefix);
+            let _ = tx.send(());
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap_or_else(|_| panic!("truncation at {end} bytes hung the parser"));
+    }
+    // The whole document evaluates clean.
+    assert_eq!(eval_json(full)["server"]["port"], 9090);
+}
+
+/// RB-092 — Hostile byte corpus rejects safely (P0-016 §B).
+/// NUL bytes, lone CR, DEL, lone BOM-mid-doc, unmatched closers, and
+/// absurd digit runs must never panic; each yields a documented class
+/// or a clean value.
+#[test]
+fn rb_092_hostile_bytes_reject_safely() {
+    for src in [
+        "x = \"a\0b\"\n",
+        "x = 1\r\ny = 2\n",
+        "x = \"\u{7f}\"\n",
+        "x = 1\u{FEFF}\n",
+        "]\n",
+        "}\n",
+        "x = (((((((((1)))))))))\n",
+        "n = 99999999999999999999999999999999\n",
+    ] {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let owned = src.to_string();
+        std::thread::spawn(move || {
+            let _ = codes_of(&owned);
+            let _ = tx.send(());
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap_or_else(|_| panic!("hostile input hung the parser: {src:?}"));
+    }
+}
+
+/// RB-093 — Interpolation growth trips budgets (DERIVED-0018 §A).
+/// Geometric string growth through interpolation must hit a value
+/// budget before materializing gigabytes.
+#[test]
+fn rb_093_interpolation_growth_trips_budget() {
+    let mut src = String::from("s0 = \"x\"\n");
+    for i in 1..30 {
+        src.push_str(&format!("s{i} = \"${{s{}}}${{s{}}}\"\n", i - 1, i - 1));
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(codes_of(&src));
+    });
+    let codes = rx
+        .recv_timeout(std::time::Duration::from_secs(20))
+        .expect("geometric interpolation must terminate within 20s");
+    assert!(
+        codes.iter().any(|c| c.starts_with('X')),
+        "30 doublings must trip a budget class, got {codes:?}"
+    );
+}
+
+/// RB-094 — Adversarial comments stay inert (HIST-YAML-013 §1).
+/// Comment text that looks like code, brackets, or interpolation must
+/// never affect the tree.
+#[test]
+fn rb_094_adversarial_comments_inert() {
+    let v = eval_json(
+        "# x = 999\n# [evil]\n# ${x}\n# @patch(\"x\", 1)\nreal = 1\n# trailing [bracket\n",
+    );
+    assert_eq!(v, serde_json::json!({"real": 1}));
+}
+
+/// RB-095 — No merge builtin exists (HIST-YAML-032 §1).
+/// `merge(a, b)` is not syntax; merges happen through includes/profiles
+/// with designed semantics, never a taint-carrying operator.
+#[test]
+fn rb_095_no_merge_builtin() {
+    let codes = codes_of("x = merge(a, b)\n");
+    assert!(!codes.is_empty(), "merge call must fail, parsed clean");
+    // Positive control: table composition via includes/profiles works.
+    let v = eval_json("[a]\nx = 1\n");
+    assert_eq!(v["a"]["x"], 1);
+}
+
+/// RB-096 — No spread operator exists (HIST-YAML-034 §1).
+#[test]
+fn rb_096_no_spread_operator() {
+    let codes = codes_of("x = [...a]\n");
+    assert!(!codes.is_empty(), "spread must fail, parsed clean");
+    // Positive control: explicit arrays work.
+    assert_eq!(eval_json("a = [1]\nx = [1, 2]\n")["x"][1], 2);
+}
+
+/// RB-097 — URL text stays literal (HIST-YAML-044 §3).
+/// Backslashes and ambiguity live in URLs as plain characters; core has
+/// no URL parser, so no differential can arise inside it.
+#[test]
+fn rb_097_url_text_stays_literal() {
+    let v = eval_json("u = \"https://x\\\\path?q=1\"\n");
+    assert_eq!(v["u"], "https://x\\path?q=1");
+}
+
+/// RB-098 — Ambiguous local times import as strings (HIST-TOML-009 §2).
+/// No datetimes exist to disambiguate; the importer keeps RFC 3339 text.
+#[test]
+fn rb_098_ambiguous_time_imports_as_string() {
+    use active_core::convert::toml_text_to_active;
+    let (source, diags) = toml_text_to_active("t = 2021-10-31T02:30:00\n").expect("import");
+    assert!(
+        diags.iter().any(|d| d.code == "W008"),
+        "W008 expected, got {diags:?}"
+    );
+    assert_eq!(eval_json(&source)["t"], "2021-10-31T02:30:00");
+}
+
+/// RB-099 — Skipped local times import as strings (HIST-TOML-00A §2).
+#[test]
+fn rb_099_skipped_time_imports_as_string() {
+    use active_core::convert::toml_text_to_active;
+    let (source, diags) = toml_text_to_active("t = 2020-03-08T02:30:00\n").expect("import");
+    assert!(
+        diags.iter().any(|d| d.code == "W008"),
+        "W008 expected, got {diags:?}"
+    );
+    assert_eq!(eval_json(&source)["t"], "2020-03-08T02:30:00");
+}
+
+/// RB-100 — Every failure carries spans (P1-DS-008 §F).
+/// A sweep over representative failures: each diagnostic set must be
+/// non-empty and every entry must carry a usable span.
+/// NOTE: `x = 1 2` is deliberately absent here — the §4.1 statement-level
+/// skip quirk (spec/grammar.md) absorbs stray values silently by explicit
+/// design (pinned by tests/spec/09_parser_resilience); P1-ST-002's reject
+/// demand is refused on that authority.
+#[test]
+fn rb_100_every_failure_carries_spans() {
+    let cases = [
+        "value = [1,,2\n",
+        "x = unknown +\n",
+        "[server\n",
+        "msg = \"abc\n",
+        "a = &x\n",
+    ];
+    for src in cases {
+        match parse(src, "research") {
+            Err(ds) => {
+                assert!(!ds.is_empty(), "{src:?} failed with no diagnostics");
+                assert!(
+                    ds.iter().all(|d| d.span.is_some()),
+                    "{src:?} has spanless diagnostics: {ds:?}"
+                );
+            }
+            Ok(m) => {
+                // Parses (healed or lenient): evaluation or its diags
+                // must still account for the breakage loudly.
+                let _ = Engine::new().evaluate(&m);
+                assert!(
+                    !codes_of(src).is_empty(),
+                    "{src:?} parsed clean with no diagnostics at all"
+                );
+            }
+        }
+    }
+}

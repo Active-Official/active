@@ -31430,3 +31430,253 @@ fn rb_1418_syn123_array_interpolation_refused() {
     let v = eval_json("let a = [1, 2, 3]\ncase_0123_04 = a\n");
     assert_eq!(v["case_0123_04"], serde_json::json!([1, 2, 3]), "{v}");
 }
+
+/// RB-1419 — Nested-arrays twin: `${}` cycles are inexpressible (SYN-0123-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-JSON-0028 (nst JSONTestSuite
+/// i_structure_500_nested_arrays; same shape as SYN-0122-05).
+/// Converges with RB-1410: both `${` sites fail E005 first (2:9) —
+/// interpolation is string-only (spec/grammar.md:72-73). Genuine `let`
+/// cycles stay S001 (control, RB-030 shape).
+#[test]
+fn rb_1419_syn123_interp_cycle_inexpressible() {
+    let src = "case_0123_05 = 1\nlet a = ${b}\nlet b = ${a}\nvalue = ${a}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (2, 9), "{span:?}");
+    // Positive control: a real 2-node `let` cycle is S001 (RB-030).
+    let codes = codes_of("let a = b\nlet b = a\n");
+    assert!(codes.iter().any(|c| c == "S001"), "{codes:?}");
+    // Positive control: acyclic lets evaluate.
+    assert_eq!(eval_json("let a = 1\nlet b = a + 2\ny = b\n")["y"], 3);
+}
+
+/// RB-1420 — Nested-arrays twin: small collection accepts (SYN-0123-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-JSON-0028 (nst JSONTestSuite
+/// i_structure_500_nested_arrays; same shape as SYN-0122-06).
+/// Converges with RB-1411: five elements, zero diagnostics, exact export.
+#[test]
+fn rb_1420_syn123_small_array_accepts() {
+    let src = "case_0123_06 = [1, 2, 3, 4, 5]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0123_06"], serde_json::json!([1, 2, 3, 4, 5]), "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the empty neighbour evaluates too.
+    assert_eq!(
+        eval_json("case_0123_06 = []\n")["case_0123_06"],
+        serde_json::json!([])
+    );
+}
+
+/// RB-1421 — Nested-arrays twin: comment never bypasses depth accounting (SYN-0123-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-JSON-0028 (nst JSONTestSuite
+/// i_structure_500_nested_arrays; same shape as SYN-0122-07).
+/// Converges with RB-1412: 64-deep trips E004 Error with the trailing
+/// comment, trips identically without it, and 32-deep accepts.
+#[test]
+fn rb_1421_syn123_comment_depth_counted() {
+    let src = "case_0123_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]] # bounded-depth control\n";
+    let diags = parse(src, "research").expect_err("must fail E004");
+    let e = diags.iter().find(|d| d.code == "E004").expect("E004");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E004 must be Error, got {:?}",
+        e.severity
+    );
+    // Positive control: the comment-free twin trips identically.
+    let bare = "case_0123_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n";
+    let diags = parse(bare, "research").expect_err("must fail E004");
+    assert!(diags.iter().any(|d| d.code == "E004"), "{diags:?}");
+    // Positive control: 32-deep stays below the bound and accepts.
+    let ok = format!("case_0123_07 = {}0{}\n", "[".repeat(32), "]".repeat(32));
+    assert!(codes_of(&ok).is_empty(), "{ok}");
+}
+
+/// RB-1422 — Nested-arrays twin: fan-out interpolation refused (SYN-0123-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-JSON-0028 (nst JSONTestSuite
+/// i_structure_500_nested_arrays; same shape as SYN-0122-08).
+/// Converges with RB-1413: E005 Error at the first `$` (3:10) —
+/// interpolation is string-only (spec/grammar.md:72-73).
+#[test]
+fn rb_1422_syn123_fanout_refused() {
+    let src = "case_0123_08 = 1\nlet a = [1,2,3]\nlet b = [${a}, ${a}, ${a}, ${a}]\nvalue = b\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (3, 10), "{span:?}");
+    // Positive control: the array itself reads fine through its name.
+    let v = eval_json("let a = [1, 2, 3]\ncase_0123_08 = a\n");
+    assert_eq!(v["case_0123_08"], serde_json::json!([1, 2, 3]), "{v}");
+}
+
+/// RB-1423 — Nested-arrays twin: 200KB scalar stays linear and exact (SYN-0123-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-JSON-0028 (nst JSONTestSuite
+/// i_structure_500_nested_arrays; same shape as SYN-0122-09).
+/// Converges with RB-1414 under the second parent: 100000 `x` + raw LF +
+/// 100000 `x` evaluates silently to the exact 200001-scalar value.
+/// Pinned behavior + the same OPEN SPEC QUESTION (no scalar byte cap in
+/// spec/budgets.md); completion of this test is the linearity proof.
+#[test]
+fn rb_1423_syn123_long_scalar_linear() {
+    let half = "x".repeat(100000);
+    let src = format!("case_0123_09 = \"{half}\n{half}\"\n");
+    let v = eval_json(&src);
+    let s = v["case_0123_09"].as_str().expect("string");
+    assert_eq!(s.len(), 200001, "byte length");
+    assert_eq!(s.chars().count(), 200001, "scalar length");
+    assert_eq!(s.chars().nth(100000), Some('\n'), "embedded raw LF kept");
+    assert!(s
+        .chars()
+        .enumerate()
+        .all(|(i, c)| if i == 100000 { c == '\n' } else { c == 'x' }));
+    assert!(codes_of(&src).is_empty());
+    // Positive control: a small string is exact and silent.
+    assert_eq!(eval_json("case_0123_09 = \"xx\"\n")["case_0123_09"], "xx");
+}
+
+/// RB-1424 — Duplicated-key variant: flat dups warn, last wins (SYN-0124-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0020 (nst JSONTestSuite
+/// y_object_duplicated_key).
+/// REFUSAL (spec-gated, P1-TI-012 §C, RB-002): the catalogue wants
+/// "reject: duplicate-key", but rejecting would break the locked last-wins
+/// behavior that existing tests depend on. `{ key = 1, key = 2 }` evaluates
+/// to 2 with W011 Warning at the winning value (1:33) — never silent, never
+/// first-wins. Silence is forbidden; rejection is frozen out by design
+/// authority.
+#[test]
+fn rb_1424_syn124_flat_dup_warns() {
+    let src = "case_0124_01 = { key = 1, key = 2 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0124_01"]["key"], 2, "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (1, 33), "{span:?}");
+    // Positive control: distinct keys coexist silently.
+    let v = eval_json("case_0124_01 = { key = 1, other = 2 }\n");
+    assert_eq!(v["case_0124_01"]["other"], 2, "{v}");
+    assert!(codes_of("case_0124_01 = { key = 1, other = 2 }\n").is_empty());
+}
+
+/// RB-1425 — Duplicated-key variant: nested dups warn with nested span (SYN-0124-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0020 (nst JSONTestSuite
+/// y_object_duplicated_key).
+/// REFUSAL (spec-gated, P1-TI-012 §C, converges with RB-1424):
+/// duplicate detection recurses — the inner `{ key = 1, key = 2 }` warns
+/// W011 Warning at its own nested span (1:44) and keeps last-wins. The
+/// catalogue's "nested source span" demand is met by the announcement,
+/// not by rejection.
+#[test]
+fn rb_1425_syn124_nested_dup_warns() {
+    let src = "case_0124_02 = { nested = { key = 1, key = 2 } }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0124_02"]["nested"]["key"], 2, "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (1, 44), "{span:?}");
+    // Positive control: distinct nested keys coexist silently.
+    let v = eval_json("case_0124_02 = { nested = { key = 1, other = 2 } }\n");
+    assert_eq!(v["case_0124_02"]["nested"]["other"], 2, "{v}");
+    assert!(codes_of("case_0124_02 = { nested = { key = 1, other = 2 } }\n").is_empty());
+}
+
+/// RB-1426 — Duplicated-key variant: quoted-vs-bare never merges (SYN-0124-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0020 (nst JSONTestSuite
+/// y_object_duplicated_key).
+/// `{ "a" = 1, a = 2 }` fails E001 Error at (1:18) — keys are identifiers,
+/// so the quoted form is rejected before any canonicalization or
+/// duplicate-key question can arise. The catalogue's "reject if quoted and
+/// bare resolve to the same key" holds trivially: they can never resolve
+/// at all. Converges with RB-1347 (quoted-dup) at equal key width.
+#[test]
+fn rb_1426_syn124_quoted_bare_never_merge() {
+    let src = "case_0124_03 = { \"a\" = 1, a = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: bare dups announce W011 last-wins instead.
+    let codes = codes_of("case_0124_03 = { a = 1, a = 2 }\n");
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}
+
+/// RB-1427 — Duplicated-key variant: distinct keys accept (SYN-0124-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0020 (nst JSONTestSuite
+/// y_object_duplicated_key).
+/// `case_0124_04 = { alpha = 1, beta = 2 }` is the lineage's positive
+/// control: two distinct keys, both values exact, zero diagnostics — the
+/// guard against false duplicate positives.
+#[test]
+fn rb_1427_syn124_distinct_keys_accept() {
+    let src = "case_0124_04 = { alpha = 1, beta = 2 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0124_04"]["alpha"], 1, "{v}");
+    assert_eq!(v["case_0124_04"]["beta"], 2, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the nested twin is equally silent.
+    let v = eval_json("case_0124_04 = { nested = { alpha = 1 } }\n");
+    assert_eq!(v["case_0124_04"]["nested"]["alpha"], 1, "{v}");
+}
+
+/// RB-1428 — Duplicated-key variant: no implicit Unicode normalization (SYN-0124-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0020 (nst JSONTestSuite
+/// y_object_duplicated_key).
+/// `{ "é" = 1, "é" = 2 }` (U+00E9 vs `e`+U+0301) fails E001 Error at
+/// (1:18) — quoted forms are never keys, so the equality choice between
+/// precomposed and decomposed never arises. Active applies no Unicode key
+/// normalization, implicitly or otherwise: string values with the same
+/// distinction stay unequal (RB-1358/RB-1367 control), and quoted key
+/// spellings never reach comparison. The catalogue's "keep distinct"
+/// demand holds at both layers.
+#[test]
+fn rb_1428_syn124_no_unicode_key_merge() {
+    let src = "case_0124_05 = { \"\u{e9}\" = 1, \"e\u{301}\" = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: as VALUES the two spellings stay distinct (no NFC).
+    let a = eval_json("case_0124_05 = \"\u{e9}\"\n");
+    let b = eval_json("case_0124_05 = \"e\u{301}\"\n");
+    assert_ne!(a["case_0124_05"], b["case_0124_05"], "{a} vs {b}");
+}

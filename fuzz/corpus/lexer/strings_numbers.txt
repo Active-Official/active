@@ -1,0 +1,6 @@
+s = "escapes \n \t \" \\ \0 \$ \u{1F600}"
+t = 'literal ${not_interp}'
+u = "uni α Ω µ 汉字 🎉"
+q = 1_000
+big = 9223372036854775807
+f = 6.626e-34

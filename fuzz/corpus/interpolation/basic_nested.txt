@@ -1,0 +1,4 @@
+name = "world"
+greeting = "hello ${name}!"
+nested = "${greeting} again ${name}"
+deep = "${nested}!"

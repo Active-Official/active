@@ -1,0 +1,11 @@
+schema = {
+  port = Int(min = 1, max = 65535),
+  host = String,
+  token = Secret,
+}
+port = 8080
+host = "db"
+token = secret("seed")
+profile prod:
+  port = 9090
+@patch("port", 9091)

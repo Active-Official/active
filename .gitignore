@@ -53,8 +53,9 @@ __pycache__/
 *.bak
 
 # Fuzzing artifacts (cargo-fuzz)
+# (Seed inputs under fuzz/corpus/ ARE committed; only fresh crash
+# reproducers stay untracked.)
 fuzz/artifacts/
-fuzz/corpus/
 
 # Agent goal prompts (private working prompts, never committed)
 goal-prompts/

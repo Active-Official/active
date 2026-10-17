@@ -1,0 +1,7 @@
+port = 8080
+host = "db.internal"
+ratio = 0.5
+flag = true
+nothing = null
+[server]
+tls = true

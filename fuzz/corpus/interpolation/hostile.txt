@@ -1,0 +1,7 @@
+a = "${b}"
+b = "${a}"
+self = "${self}"
+empty = "${}"
+unclosed = "${never
+escaped = "\${not_interp}"
+dollar = "$$ ${a}"

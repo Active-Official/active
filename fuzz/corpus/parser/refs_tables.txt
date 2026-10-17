@@ -1,0 +1,8 @@
+let limit = 5
+port = limit
+[server]
+host = "h"
+port = 8080
+url = host
+[nested.deeper.leaf]
+value = "${host}:${port}"

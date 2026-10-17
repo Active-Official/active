@@ -1,0 +1,9 @@
+a = b
+b = a
+[loop]
+x = y
+y = x
+deep = [[[[[[[[[[1]]]]]]]]]]
+expr = 1 + 2 * 3 == 7 && true || false
+neg = - - -5
+not = !!!true

@@ -1,0 +1,10 @@
+# comment line
+# @intent: "seed"
+key: value
+  nested = [1, 2, { a = "b" }]
+"""triple
+block"""
+'''raw block ${x}'''
+wait = 5s
+size = 512MiB
+rate = 100/req/s

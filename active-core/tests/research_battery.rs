@@ -7979,3 +7979,291 @@ fn rb_438_syn14_populated_e019_error() {
         "apple"
     );
 }
+
+/// RB-439 — Derived variant 14-04: no map-and-scalar hybrid (SYN-0014-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0014 (toml-test tables-01).
+/// Redefining a map path with a scalar wins wholesale and announces W011 —
+/// the path is never both at once. The dotted middle spelling is refused
+/// loudly (E002), never merged into a hybrid.
+#[test]
+fn rb_439_syn14_no_map_scalar_hybrid() {
+    let src = "fruit = { apple = { color = \"red\" } }\nfruit = 1\n";
+    let v = eval_json(src);
+    assert_eq!(v["fruit"], 1, "scalar must win wholesale, got {v}");
+    assert!(
+        v["fruit"].get("apple").is_none(),
+        "no map remnant may survive, got {v}"
+    );
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+    // The dotted transliteration is refused loudly, never merged.
+    let diags =
+        parse("fruit = { apple = 1 }\nfruit.apple = 1\n", "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    // Positive control: the map alone keeps its nested shape.
+    let v = eval_json("fruit = { apple = { color = \"red\" } }\n");
+    assert_eq!(v["fruit"]["apple"]["color"], "red");
+}
+
+/// RB-440 — Derived variant 14-05: explicit patch is not a redeclaration (SYN-0014-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0014 (toml-test tables-01).
+/// The naive `@patch fruit { apple = 2 }` form fails E019 at 2:2, while the
+/// explicit call updates with ZERO diagnostics — no W011, so an explicit
+/// update is never confused with a duplicate declaration.
+#[test]
+fn rb_440_syn14_patch_not_redeclaration() {
+    let src = "fruit = { apple = 1 }\n@patch fruit { apple = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    let src = "fruit = { apple = 1 }\n@patch(\"fruit.apple\", 2)\n";
+    assert_eq!(eval_json(src)["fruit"]["apple"], 2);
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "patch must warn nothing, got {codes:?}");
+    // Positive control: a real duplicate still announces W011.
+    let codes = codes_of("fruit = { apple = 1 }\nfruit = { apple = 2 }\n");
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}
+
+/// RB-441 — Derived variant 14-06: removal is structural and deterministic (SYN-0014-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0014 (toml-test tables-01).
+/// The naive `@remove fruit.apple` form fails E019 at 2:2; the explicit call
+/// removes the leaf, keeps siblings, and evaluates identically every run.
+#[test]
+fn rb_441_syn14_removal_deterministic() {
+    let src = "fruit = { apple = 1 }\n@remove fruit.apple\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    let src = "fruit = { apple = 1, pear = 2 }\n@remove(\"fruit.apple\")\n";
+    let v = eval_json(src);
+    assert!(v["fruit"].get("apple").is_none(), "{v}");
+    assert_eq!(v["fruit"]["pear"], 2);
+    assert_eq!(eval_json(src), v, "removal must be deterministic");
+    // Positive control: removing a missing path stays idempotent W004.
+    let codes = codes_of("@remove(\"missing\")\n");
+    assert!(codes.iter().any(|c| c == "W004"), "{codes:?}");
+}
+
+/// RB-442 — Derived variant 14-07: rename preserves nested identity (SYN-0014-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0014 (toml-test tables-01).
+/// The naive `@rename fruit.apple to pear` form fails E019 at 2:2; the
+/// explicit call moves a whole nested table — subtree intact under the
+/// new name, old name gone.
+#[test]
+fn rb_442_syn14_rename_keeps_subtree() {
+    let src = "fruit = { apple = 1 }\n@rename fruit.apple to pear\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    let v =
+        eval_json("fruit = { apple = { color = \"red\" } }\n@rename(\"fruit.apple\", \"pear\")\n");
+    assert_eq!(
+        v["fruit"]["pear"],
+        serde_json::json!({"color": "red"}),
+        "{v}"
+    );
+    assert!(v["fruit"].get("apple").is_none(), "{v}");
+    // Positive control: scalar rename stays exact.
+    let v = eval_json("fruit = { apple = 1 }\n@rename(\"fruit.apple\", \"pear\")\n");
+    assert_eq!(v["fruit"]["pear"], 1);
+}
+
+/// RB-443 — Derived variant 14-08: ordered patch plans are deterministic (SYN-0014-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0014 (toml-test tables-01).
+/// The naive double-rename plan fails E019; explicit sequential patches apply
+/// in order — both orders stable across runs, results order-dependent.
+#[test]
+fn rb_443_syn14_ordered_plan_deterministic() {
+    let src = "fruit = { apple = 1 }\n@rename fruit.apple to pear\n@rename fruit.pear to apple\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    let fwd = "fruit = { apple = 1 }\n@patch(\"fruit.apple\", 2)\n@patch(\"fruit.apple\", 3)\n";
+    assert_eq!(eval_json(fwd)["fruit"]["apple"], 3);
+    assert_eq!(
+        eval_json(fwd),
+        eval_json(fwd),
+        "forward plan must be stable"
+    );
+    let rev = "fruit = { apple = 1 }\n@patch(\"fruit.apple\", 3)\n@patch(\"fruit.apple\", 2)\n";
+    assert_eq!(eval_json(rev)["fruit"]["apple"], 2);
+    assert_eq!(
+        eval_json(rev),
+        eval_json(rev),
+        "reverse plan must be stable"
+    );
+}
+
+/// RB-444 — Derived variant 14-09: nested patch never replaces the parent (SYN-0014-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0014 (toml-test tables-01).
+/// The naive `@patch fruit.apple { color = "green" }` form fails E019; the
+/// explicit leaf call changes only the leaf — whole-document equality pins
+/// the containment, parent and siblings identical in value.
+#[test]
+fn rb_444_syn14_nested_patch_contained() {
+    let src = "fruit = { apple = { color = \"red\" } }\n@patch fruit.apple { color = \"green\" }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    assert!(
+        diags.iter().any(|d| d.code == "E019"),
+        "E019 expected, got {diags:?}"
+    );
+    let v = eval_json(
+        "fruit = { apple = { color = \"red\", size = 1 } }\n@patch(\"fruit.apple.color\", \"green\")\n",
+    );
+    assert_eq!(
+        v,
+        serde_json::json!({"fruit": {"apple": {"color": "green", "size": 1}}}),
+        "{v}"
+    );
+    // Positive control: a second leaf patch leaves the first intact.
+    let v = eval_json("fruit = { apple = { color = \"red\" } }\n@patch(\"fruit.apple.size\", 1)\n");
+    assert_eq!(v["fruit"]["apple"]["color"], "red");
+    assert_eq!(v["fruit"]["apple"]["size"], 1);
+}
+
+/// RB-445 — Derived variant 15-01: doubled comma creates no null (SYN-0015-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0015 (toml-test text-in-array).
+/// H002 Info at 1:19 heals `case_0015_01 = [1,,2]` to exactly `[1, 2]` —
+/// the stray comma is dropped, never materialized as an implicit null.
+#[test]
+fn rb_445_syn15_doubled_comma_no_null() {
+    let src = "case_0015_01 = [1,,2]\n";
+    assert_eq!(
+        eval_json(src)["case_0015_01"],
+        serde_json::json!([1, 2]),
+        "healed value must hold exactly two elements"
+    );
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H002 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 19), "{span:?}");
+    // Positive control: the clean neighbour parses with zero diagnostics.
+    let codes = codes_of("case_0015_01 = [1, 2]\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-446 — Derived variant 15-02: missing separator is announced, never silent (SYN-0015-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0015 (toml-test text-in-array).
+/// H003 Warning at 1:19 announces the inserted separator for `[1 2]` —
+/// adjacent values are accepted only loudly, never merged silently.
+#[test]
+fn rb_446_syn15_missing_separator_announced() {
+    let src = "case_0015_02 = [1 2]\n";
+    assert_eq!(
+        eval_json(src)["case_0015_02"],
+        serde_json::json!([1, 2]),
+        "healed value must hold both elements"
+    );
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H003").expect("H003");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Warning,
+        "H003 must be Warning, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H003 carries a span");
+    assert_eq!((span.line, span.column), (1, 19), "{span:?}");
+    // Positive control: the separated neighbour parses with zero diagnostics.
+    let codes = codes_of("case_0015_02 = [1, 2]\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-447 — Derived variant 15-03: a lone comma stands for no value (SYN-0015-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0015 (toml-test text-in-array).
+/// H002 Info at 1:17 heals `case_0015_03 = [,]` to `[]` — the comma never
+/// becomes a null element or any other implicit value.
+#[test]
+fn rb_447_syn15_lone_comma_no_value() {
+    let src = "case_0015_03 = [,]\n";
+    assert_eq!(
+        eval_json(src)["case_0015_03"],
+        serde_json::json!([]),
+        "healed value must be empty, never [null]"
+    );
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H002 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the empty neighbour parses with zero diagnostics.
+    let codes = codes_of("case_0015_03 = []\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-448 — Derived variant 15-04: trailing-comma policy locked (SYN-0015-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0015 (toml-test text-in-array).
+/// H002 Info at 1:18 heals `case_0015_04 = [1,]` to `[1]` — the trailing
+/// comma is dropped deterministically across runs. (Completes SYN-0014-04…09
+/// + opens SYN-0015-01…04.)
+#[test]
+fn rb_448_syn15_trailing_comma_locked() {
+    let src = "case_0015_04 = [1,]\n";
+    assert_eq!(
+        eval_json(src)["case_0015_04"],
+        serde_json::json!([1]),
+        "healed value must hold exactly one element"
+    );
+    assert_eq!(eval_json(src), eval_json(src), "heal must be deterministic");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H002 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the comma-free neighbour parses with zero diagnostics.
+    let codes = codes_of("case_0015_04 = [1]\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}

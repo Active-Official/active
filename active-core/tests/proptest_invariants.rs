@@ -193,4 +193,51 @@ proptest! {
         prop_assert!(!toml.contains(&secret), "secret leaked into TOML: {toml}");
         prop_assert!(json.contains("***SECRET***"), "redaction marker missing from JSON: {json}");
     }
+
+    /// Invariant 4: W007 key sanitization never drops a key silently.
+    /// Every collision (two input keys → one output key) carries a
+    /// `duplicate key` note; the emitted source always parses and
+    /// evaluates. Found via toml-test key/escapes ports, where `"Μ"`
+    /// and `"μ"` both sanitize to `_` with last-wins.
+    #[test]
+    fn sanitization_collisions_are_announced(
+        keys in prop::collection::vec(
+            prop::sample::select(vec![
+                "a-b", "a_b", "a b", "1a", "", "α", "Ω", "a.b", "true",
+                "null", "name", "na-me", "na me", "-", "_", "0", "q\"q",
+            ]),
+            1..7,
+        ),
+    ) {
+        use active_core::convert::json_value_to_active;
+        let mut map = serde_json::Map::new();
+        for (i, k) in keys.iter().enumerate() {
+            map.insert(k.to_string(), serde_json::Value::from(i as i64));
+        }
+        let input = serde_json::Value::Object(map);
+        let n_in = input.as_object().expect("object").len();
+        let (source, diags) = json_value_to_active(&input);
+        // The importer's always-parses contract holds for every key shape.
+        let module = match active_core::parse(&source, "proptest") {
+            Ok(m) => m,
+            Err(d) => panic!("emitted source must parse: {d:?}\n{source}"),
+        };
+        let value = match Engine::new().evaluate(&module) {
+            Ok((v, _)) => v,
+            Err(e) => panic!("emitted source must evaluate: {e}"),
+        };
+        let n_out = match &value {
+            active_core::Value::Table(t) => t.len(),
+            other => panic!("expected table, got {other:?}"),
+        };
+        let dup_notes = diags
+            .iter()
+            .filter(|d| d.code == "W007" && d.message.contains("duplicate key"))
+            .count();
+        let ctx = format!("{source}\n{diags:?}");
+        prop_assert!(
+            n_in == n_out + dup_notes,
+            "silent key loss: {n_in} in, {n_out} out, {dup_notes} notes\n{ctx}"
+        );
+    }
 }

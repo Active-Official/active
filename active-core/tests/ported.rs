@@ -13,7 +13,8 @@
 use active_core::convert::{
     json_text_to_active, toml_text_to_active, value_to_pretty_json, yaml_text_to_active,
 };
-use active_core::{parse, Diagnostic, Engine};
+use active_core::fmt::format;
+use active_core::{parse, Diagnostic, Engine, Style};
 use std::path::{Path, PathBuf};
 
 type ImportFn = fn(&str) -> Result<(String, Vec<Diagnostic>), String>;
@@ -208,6 +209,74 @@ fn ported_fixtures_are_nonempty() {
                 !read(&f).is_empty() || has_diag,
                 "{suite}/{name} is zero bytes with no rejection expectation"
             );
+        }
+    }
+}
+
+/// Property over the whole ported accept set: format(parse(x)) re-parses
+/// and evaluates to the identical tree (formatter fixed-point), in both
+/// styles. Catches formatter data-loss on real-world shapes.
+#[test]
+fn ported_accept_cases_survive_format_round_trip() {
+    for (suite, ext, import) in [
+        ("toml", "toml", toml_text_to_active as ImportFn),
+        ("json", "json", json_text_to_active as ImportFn),
+        ("yaml", "yaml", yaml_text_to_active as ImportFn),
+    ] {
+        for f in case_files(suite, ext) {
+            let name = f.file_name().unwrap().to_string_lossy().into_owned();
+            let stem = f.file_stem().unwrap().to_string_lossy().into_owned();
+            let stem = if ext == "toml" || ext == "yaml" {
+                stem
+            } else {
+                format!("{stem}.{ext}")
+            };
+            if !f.with_file_name(format!("{stem}.expected.json")).exists() {
+                continue; // rejection cases have no tree to preserve
+            }
+            let text = read(&f);
+            let (source, _) =
+                import(&text).unwrap_or_else(|e| panic!("{suite}/{name}: import failed: {e}"));
+            let first = eval_json(&source, &name);
+            for style in [Style::Brace, Style::Indent] {
+                let module = parse(&source, &name).unwrap_or_else(|d| panic!("{name}: {d:?}"));
+                let reformatted = format(&module, style);
+                let second = eval_json(&reformatted, &name);
+                assert_eq!(
+                    first, second,
+                    "{suite}/{name}: format round-trip changed the tree ({style:?})"
+                );
+            }
+        }
+    }
+}
+
+/// Property over the whole ported accept set: double evaluation is
+/// byte-identical (determinism over 500+ real-world documents).
+#[test]
+fn ported_accept_cases_evaluate_deterministically() {
+    for (suite, ext, import) in [
+        ("toml", "toml", toml_text_to_active as ImportFn),
+        ("json", "json", json_text_to_active as ImportFn),
+        ("yaml", "yaml", yaml_text_to_active as ImportFn),
+    ] {
+        for f in case_files(suite, ext) {
+            let name = f.file_name().unwrap().to_string_lossy().into_owned();
+            let stem = f.file_stem().unwrap().to_string_lossy().into_owned();
+            let stem = if ext == "toml" || ext == "yaml" {
+                stem
+            } else {
+                format!("{stem}.{ext}")
+            };
+            if !f.with_file_name(format!("{stem}.expected.json")).exists() {
+                continue;
+            }
+            let text = read(&f);
+            let (source, _) =
+                import(&text).unwrap_or_else(|e| panic!("{suite}/{name}: import failed: {e}"));
+            let a = eval_json(&source, &name);
+            let b = eval_json(&source, &name);
+            assert_eq!(a, b, "{suite}/{name}: non-deterministic evaluation");
         }
     }
 }

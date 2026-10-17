@@ -20936,3 +20936,224 @@ fn rb_978_syn74_hex_eighteenth_rejects() {
     // Positive control: the decimal neighbour is plain 16.
     assert_eq!(eval_json("case_0074_05 = 16\n")["case_0074_05"], 16);
 }
+/// RB-979 — Derived variant 74-06: underscore eighteenth twin strips to 1000 (SYN-0074-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0074 (toml-test negative-hex).
+/// `case_0074_06 = 1_000` is int 1000 (one thousand) with zero diagnostics —
+/// converges with RB-772, RB-781, RB-790, RB-799, RB-808, RB-817, RB-826,
+/// RB-835, RB-844, RB-853, RB-862, RB-872, RB-881, RB-890, RB-899, RB-908
+/// and RB-961: single underscores normalize by stripping. (The oracle
+/// states the exact stripped value.)
+#[test]
+fn rb_979_syn74_underscore_eighteenth_strips() {
+    let src = "case_0074_06 = 1_000\n";
+    let v = eval_json(src)["case_0074_06"].clone();
+    assert_eq!(v, 1000, "1_000 must strip to 1000, got {v}");
+    assert!(!v.is_f64(), "1_000 must be int, got {v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the separator-free neighbour agrees.
+    assert_eq!(eval_json("case_0074_06 = 1000\n")["case_0074_06"], 1000);
+}
+
+/// RB-980 — Derived variant 74-07: giant-exponent eighteenth twin rejects (SYN-0074-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0074 (toml-test negative-hex).
+/// `case_0074_07 = 1e1000000` fails E002 Error at (1:17) — converges with
+/// RB-773, RB-782, RB-791, RB-800, RB-809, RB-818, RB-827, RB-836, RB-845,
+/// RB-854, RB-863, RB-873, RB-882, RB-891, RB-900, RB-909 and RB-962:
+/// overflow never arises because exponents never parse; the bounded
+/// diagnostic is the grammar reject itself.
+#[test]
+fn rb_980_syn74_giant_exponent_eighteenth_rejects() {
+    let src = "case_0074_07 = 1e1000000\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: a large plain integer parses.
+    assert_eq!(
+        eval_json("case_0074_07 = 1000000\n")["case_0074_07"],
+        1000000
+    );
+}
+
+/// RB-981 — Derived variant 74-08: quoted eighteenth twin preserves digits (SYN-0074-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0074 (toml-test negative-hex).
+/// `case_0074_08 = "01"` is the exact string "01" with zero diagnostics —
+/// converges with RB-774, RB-783, RB-792, RB-801, RB-810, RB-819, RB-828,
+/// RB-837, RB-846, RB-855, RB-864, RB-874, RB-883, RB-892, RB-901, RB-910
+/// and RB-963: quoting preserves digit-looking identifiers without numeric
+/// coercion, while the bare twin is decimal 1.
+#[test]
+fn rb_981_syn74_quoted_digits_eighteenth_exact() {
+    let src = "case_0074_08 = \"01\"\n";
+    assert_eq!(eval_json(src)["case_0074_08"], "01");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: the bare counterpart is decimal 1, never text.
+    let v = eval_json("case_0074_08 = 01\n")["case_0074_08"].clone();
+    assert_eq!(v, 1, "{v}");
+    assert!(!v.is_string(), "{v}");
+}
+
+/// RB-982 — Derived variant 74-09: canonical zero eighteenth twin is int 0 (SYN-0074-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0074 (toml-test negative-hex).
+/// `case_0074_09 = 0` is int 0 with zero diagnostics — converges with
+/// RB-775, RB-784, RB-793, RB-802, RB-811, RB-820, RB-829, RB-838, RB-847,
+/// RB-856, RB-865, RB-875, RB-884, RB-893, RB-902, RB-911 and RB-964:
+/// canonical zero needs no policy, and the zero-prefixed twin (`01` is 1)
+/// shows the policy only strips. (Completes SYN-0074-06…09 coverage.)
+#[test]
+fn rb_982_syn74_zero_eighteenth_canonical() {
+    let src = "case_0074_09 = 0\n";
+    let v = eval_json(src)["case_0074_09"].clone();
+    assert_eq!(v, 0, "{v}");
+    assert!(!v.is_f64(), "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the zero-prefixed twin strips to 1 (RB-974).
+    assert_eq!(eval_json("case_0074_09 = 01\n")["case_0074_09"], 1);
+}
+
+/// RB-983 — Derived variant 75-01: `01` nineteenth twin is decimal 1 (SYN-0075-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0075 (toml-test trailing-us).
+/// `case_0075_01 = 01` is int 1 with zero diagnostics — converges with
+/// RB-767, RB-776, RB-785, RB-794, RB-803, RB-812, RB-821, RB-830, RB-839,
+/// RB-848, RB-857, RB-920, RB-929, RB-938, RB-947, RB-956, RB-965 and
+/// RB-974: the explicit decimal policy holds in every number lineage, never
+/// octal. (Opens SYN-0075 trailing-us lineage.)
+#[test]
+fn rb_983_syn75_leading_zero_nineteenth_decimal() {
+    let src = "case_0075_01 = 01\n";
+    let v = eval_json(src)["case_0075_01"].clone();
+    assert_eq!(v, 1, "01 must be decimal 1, got {v}");
+    assert!(!v.is_f64(), "01 must be int, got {v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: 010 is decimal 10, never octal 8.
+    assert_eq!(eval_json("case_0075_01 = 010\n")["case_0075_01"], 10);
+}
+
+/// RB-984 — Derived variant 75-02: `1.` nineteenth twin is int 1 (SYN-0075-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0075 (toml-test trailing-us).
+/// `case_0075_02 = 1.` is int 1 with zero diagnostics — converges with
+/// RB-768, RB-777, RB-786, RB-795, RB-804, RB-813, RB-822, RB-831, RB-840,
+/// RB-849, RB-858, RB-867, RB-876, RB-885, RB-894, RB-903, RB-939, RB-948
+/// and RB-975: the grammar takes the int path, no float constructed, no
+/// digits required.
+#[test]
+fn rb_984_syn75_trailing_dot_nineteenth_int() {
+    let src = "case_0075_02 = 1.\n";
+    let v = eval_json(src)["case_0075_02"].clone();
+    assert_eq!(v, 1, "1. must be int 1, got {v}");
+    assert!(!v.is_f64(), "1. must not be float, got {v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the dotted spelling stays float.
+    let v = eval_json("case_0075_02 = 1.0\n")["case_0075_02"].clone();
+    assert_eq!(v.as_f64(), Some(1.0), "{v}");
+    assert!(v.is_f64(), "1.0 must be float, got {v}");
+}
+
+/// RB-985 — Derived variant 75-03: bare-exponent nineteenth twin rejects (SYN-0075-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0075 (toml-test trailing-us).
+/// `case_0075_03 = 1e` fails E002 Error at (1:17) — converges with RB-769,
+/// RB-778, RB-787, RB-796, RB-805, RB-814, RB-823, RB-832, RB-841, RB-850,
+/// RB-859, RB-869, RB-878, RB-887, RB-896, RB-905, RB-940, RB-949 and
+/// RB-976: exponent markers need digits because there is no exponent grammar
+/// at all, loud reject in every number lineage.
+#[test]
+fn rb_985_syn75_bare_exponent_nineteenth_rejects() {
+    let src = "case_0075_03 = 1e\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    let src = "case_0075_03 = \"1e\"\n";
+    assert_eq!(eval_json(src)["case_0075_03"], "1e");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-986 — Derived variant 75-04: signed-exponent nineteenth twin rejects (SYN-0075-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0075 (toml-test trailing-us).
+/// `case_0075_04 = 1e+` fails E002 Error at (1:17) — converges with RB-770,
+/// RB-779, RB-788, RB-797, RB-806, RB-815, RB-824, RB-833, RB-842, RB-851,
+/// RB-860, RB-870, RB-879, RB-888, RB-897, RB-906, RB-941, RB-950 and
+/// RB-977: without an exponent grammar the failure is at the `e`, so no
+/// signed-exponent path exists to validate digits on.
+#[test]
+fn rb_986_syn75_signed_exponent_nineteenth_rejects() {
+    let src = "case_0075_04 = 1e+\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    let src = "case_0075_04 = \"1e+\"\n";
+    assert_eq!(eval_json(src)["case_0075_04"], "1e+");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-987 — Derived variant 75-05: hex nineteenth twin rejects (SYN-0075-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0075 (toml-test trailing-us).
+/// `case_0075_05 = 0x10` fails E002 Error at (1:17) — converges with RB-771,
+/// RB-780, RB-789, RB-798, RB-807, RB-816, RB-825, RB-834, RB-843, RB-852,
+/// RB-861, RB-871, RB-880, RB-889, RB-898, RB-907, RB-942, RB-951 and
+/// RB-978: the chosen integer grammar is decimal-only, no host base prefix
+/// is borrowed, so `0x10` fails at the `x`, never 16.
+#[test]
+fn rb_987_syn75_hex_nineteenth_rejects() {
+    let src = "case_0075_05 = 0x10\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the decimal neighbour is plain 16.
+    assert_eq!(eval_json("case_0075_05 = 16\n")["case_0075_05"], 16);
+}
+
+/// RB-988 — Derived variant 75-06: underscore nineteenth twin strips to 1000 (SYN-0075-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0075 (toml-test trailing-us).
+/// `case_0075_06 = 1_000` is int 1000 (one thousand) with zero diagnostics —
+/// converges with RB-772, RB-781, RB-790, RB-799, RB-808, RB-817, RB-826,
+/// RB-835, RB-844, RB-853, RB-862, RB-872, RB-881, RB-890, RB-899, RB-908,
+/// RB-934, RB-943, RB-952, RB-961 and RB-970: single underscores normalize
+/// by stripping. (The oracle states the exact stripped value.) (Completes
+/// SYN-0074-06…09 coverage + opens SYN-0075-01…06.)
+#[test]
+fn rb_988_syn75_underscore_nineteenth_strips() {
+    let src = "case_0075_06 = 1_000\n";
+    let v = eval_json(src)["case_0075_06"].clone();
+    assert_eq!(v, 1000, "1_000 must strip to 1000, got {v}");
+    assert!(!v.is_f64(), "1_000 must be int, got {v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the separator-free neighbour agrees.
+    assert_eq!(eval_json("case_0075_06 = 1000\n")["case_0075_06"], 1000);
+}

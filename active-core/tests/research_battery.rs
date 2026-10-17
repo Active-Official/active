@@ -503,3 +503,192 @@ fn rb_030_let_cycles_rejected() {
     // through keys that read them).
     assert_eq!(eval_json("let a = 1\nlet b = a + 2\ny = b\n")["y"], 3);
 }
+
+/// RB-031 — Merge-key shapes reject cleanly (HIST-YAML-007 §2).
+/// Active has no `<<` merge operator; hostile shapes must fail with
+/// documented classes and terminate, never hang or execute.
+#[test]
+fn rb_031_merge_key_shapes_reject() {
+    for src in ["y = {x = 1}\nz = y\n", "x = 1\n", "a = [1]\nb = [a]\n"] {
+        assert!(
+            codes_of(src).is_empty(),
+            "{src:?} is ordinary Active and must stay clean"
+        );
+    }
+    for src in ["y = {<< = 1}\n", "x = 1 << 2\n"] {
+        let codes = codes_of(src);
+        assert!(
+            codes.iter().any(|c| c == "E001" || c == "E002"),
+            "{src:?} must reject with a documented class, got {codes:?}"
+        );
+    }
+}
+
+/// RB-032 — Exponential let-growth trips budgets (HIST-YAML-009 §2).
+/// Doubling bindings must hit an array/count budget before materializing
+/// millions of values; the suite must terminate either way.
+#[test]
+fn rb_032_exponential_lets_hit_budget() {
+    let mut src = String::from("a0 = [1]\n");
+    for i in 1..25 {
+        src.push_str(&format!("a{i} = [a{}, a{}]\n", i - 1, i - 1));
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let codes = codes_of(&src);
+        let _ = tx.send(codes);
+    });
+    let codes = rx
+        .recv_timeout(std::time::Duration::from_secs(20))
+        .expect("exponential growth must terminate within 20s");
+    assert!(
+        codes.iter().any(|c| c.starts_with('X')),
+        "25 doublings must trip a budget class, got {codes:?}"
+    );
+}
+
+/// RB-033 — Only documented classes escape deep input (HIST-TOML-002 §2).
+/// 500-deep nesting must surface E/X/W/H/T/S codes exclusively — never a
+/// panic, and never an undocumented internal kind.
+#[test]
+fn rb_033_deep_input_only_documented_classes() {
+    let mut src = String::from("x = ");
+    src.push_str(&"[".repeat(500));
+    src.push('1');
+    src.push_str(&"]".repeat(500));
+    src.push('\n');
+    let codes = codes_of(&src);
+    assert!(!codes.is_empty(), "500-deep input must fail loudly");
+    for code in &codes {
+        let ok = code.len() >= 4
+            && matches!(code.chars().next(), Some('E' | 'W' | 'X' | 'H' | 'T' | 'S'))
+            && code[1..4].chars().all(|c| c.is_ascii_digit());
+        assert!(ok, "undocumented diagnostic class escaped: {code}");
+    }
+}
+
+/// RB-034 — Long dotted header paths terminate (HIST-TOML-004 §2).
+/// A 26-segment header must evaluate or fail with a documented class.
+#[test]
+fn rb_034_long_dotted_header_terminates() {
+    let path: Vec<String> = (0..26).map(|i| format!("s{i}")).collect();
+    let dotted = path.join(".");
+    let src = format!("[{dotted}]\nvalue = 1\n");
+    let codes = codes_of(&src);
+    if codes.is_empty() {
+        let v = eval_json(&src);
+        let mut node = &v;
+        for seg in &path {
+            node = &node[seg];
+        }
+        assert_eq!(node["value"], 1);
+    }
+}
+
+/// RB-035 — Large documents terminate documented (HIST-TOML-00J §2).
+/// 10k keys must evaluate cleanly or fail with a budget class — promptly.
+#[test]
+fn rb_035_large_document_terminates() {
+    let mut src = String::new();
+    for i in 0..10_000 {
+        src.push_str(&format!("k{i} = {i}\n"));
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let codes = codes_of(&src);
+        let _ = tx.send(codes);
+    });
+    let codes = rx
+        .recv_timeout(std::time::Duration::from_secs(30))
+        .expect("10k-key document must terminate within 30s");
+    assert!(
+        codes.is_empty() || codes.iter().any(|c| c.starts_with('X')),
+        "large doc must evaluate clean or trip a budget, got {codes:?}"
+    );
+}
+
+/// RB-036 — Self-reference is a cycle (P0-007 §B).
+#[test]
+fn rb_036_self_reference_is_cycle() {
+    let codes = codes_of("let x = x\ny = 1\n");
+    assert!(
+        codes.iter().any(|c| c == "S001"),
+        "self-reference must fail S001, got {codes:?}"
+    );
+    // Positive control: sibling self-read with no binding is null + warning,
+    // never a cycle (see regressions.rs) — and never a hang.
+    let v = eval_json("[app]\nname = name\n");
+    assert!(v["app"]["name"].is_null(), "{v}");
+}
+
+/// RB-037 — Unknown units reject (P1-SE-009 §E).
+/// The lexer accepts only the known suffix table (spec/dual-syntax.md §8);
+/// anything else is not a unit, so `10furlongs` cannot lex as quantity.
+#[test]
+fn rb_037_unknown_unit_rejects() {
+    let codes = codes_of("x = 10furlongs\n");
+    assert!(
+        codes.iter().any(|c| c == "E002"),
+        "unknown unit must reject, got {codes:?}"
+    );
+    // Positive control: known suffixes still work.
+    assert_eq!(eval_json("x = 10s\n")["x"]["ms"], 10000);
+}
+
+/// RB-038 — Units on non-numbers reject (P1-SE-010 §E).
+#[test]
+fn rb_038_unit_on_string_rejects() {
+    let codes = codes_of("x = \"hello\"s\n");
+    assert!(!codes.is_empty(), "unit on string must fail, parsed clean");
+}
+
+/// RB-039 — Unresolved reference code + span (DERIVED-0002 §A, P1-DS-010 §F).
+#[test]
+fn rb_039_unresolved_reference_points_at_name() {
+    let diags = parse("y = z\n", "research")
+        .map(|m| {
+            Engine::new()
+                .evaluate(&m)
+                .map(|(_, ds)| ds)
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+    let hit = diags
+        .iter()
+        .find(|d| d.code == "W001")
+        .expect("W001 expected");
+    let span = hit.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 5), "span: {span:?}");
+    // Unresolved names become null and poison arithmetic with T001.
+    let codes = codes_of("let x = 10\ny = x + z\n");
+    assert!(
+        codes.iter().any(|c| c == "T001"),
+        "T001 expected, got {codes:?}"
+    );
+    // Positive control: bound names resolve silently.
+    let v = eval_json("let x = 10\nlet z = 5\ny = x + z\n");
+    assert_eq!(v["y"], 15);
+}
+
+/// RB-040 — Malformed interpolation rejected with span (DERIVED-0004 §A).
+#[test]
+fn rb_040_malformed_interpolation_rejected() {
+    // Unclosed delimiters are E012; empty `${}` is the more precise E013.
+    for (src, code) in [
+        ("msg = \"hello ${name\"\n", "E012"),
+        ("msg2 = \"hello ${}\"\n", "E013"),
+    ] {
+        let diags = parse(src, "research").expect_err(&format!("{src:?} must fail to parse"));
+        assert!(
+            diags.iter().any(|d| d.code == code),
+            "{code} expected for {src:?}, got {diags:?}"
+        );
+        assert!(
+            diags.iter().any(|d| d.span.is_some()),
+            "{code} must carry a span for {src:?}"
+        );
+    }
+    // Literal `${` escape stays available without interpolating.
+    let v = eval_json("msg = \"hello \\${name}\"\n");
+    assert_eq!(v["msg"], "hello ${name}");
+}

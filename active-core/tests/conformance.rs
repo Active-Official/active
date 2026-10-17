@@ -90,7 +90,7 @@ fn reference_implementation_is_declared() {
         "declaration missing"
     );
     assert!(
-        text.contains("RatioArtificiosa/active-lang"),
+        text.contains("RatioArtificiosa/solid-lang"),
         "declaration must name the repository"
     );
 }

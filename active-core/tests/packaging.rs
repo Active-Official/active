@@ -84,8 +84,9 @@ fn workspace_version_is_single_sourced() {
 
 #[test]
 fn publish_metadata_is_complete() {
-    // Package names follow G:\Active (plain `active-core` belongs to
-    // an unrelated 2020 crate): pin the frozen mapping.
+    // Package names follow the frozen mapping (directory name ==
+    // package name). The old `solid-lang-core` scoping existed because
+    // plain `solid-core` belongs to an unrelated 2020 crate.
     let expectations = [
         ("active", "active"),
         ("active-core", "active-core"),

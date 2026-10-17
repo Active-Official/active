@@ -3,7 +3,7 @@
 ## 1. Declaration
 
 The Rust implementation in this repository
-(`RatioArtificiosa/active-lang`, workspace root) is declared the
+(`RatioArtificiosa/solid-lang`, workspace root) is declared the
 **reference implementation for the 1.0 conformance suite**: the
 compatibility target every other implementation proves against.
 Final 1.0 declaration happens at C-090; disputes meanwhile are

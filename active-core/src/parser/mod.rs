@@ -3293,7 +3293,22 @@ impl Parser {
 
             TokenKind::Integer => {
                 self.bump();
-                let n: i64 = tok.text.parse().unwrap_or(0);
+                // Out-of-range literals must never silently become 0:
+                // E023 records the overflow and the value saturates at
+                // i64::MAX (spec/specification.md §1.3). A leading `-`
+                // is a separate unary operator, so `-9223372036854775808`
+                // evaluates to `i64::MIN + 1`, still with E023.
+                let n: i64 = match tok.text.parse() {
+                    Ok(n) => n,
+                    Err(_) => {
+                        self.error_at(
+                            "E023",
+                            format!("integer literal out of i64 range: `{}`", tok.text),
+                            &tok,
+                        );
+                        i64::MAX
+                    }
+                };
                 let mut node = self.add_spanned(Node::Literal(Value::Int(n)), &tok);
                 // optional unit suffix
                 if let TokenKind::Unit(_) = self.peek_kind() {

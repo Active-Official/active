@@ -64,6 +64,10 @@ Value = Null | Bool(bool) | Int(i64) | Float(f64) | String(String)
       | Secret(String)                       // opaque; redacted on export
 ```
 
+Integer literals outside the i64 range are `E023` (never silent `0`):
+the value saturates at `i64::MAX`. A leading `-` is a separate unary
+operator, so `-9223372036854775808` evaluates to `i64::MIN + 1`.
+
 ### 1.4 Diagnostics
 
 ```

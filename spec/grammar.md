@@ -568,6 +568,7 @@ configuration. Unresolved identifiers warn (W001) in both modes.
 | E007 | inconsistent dedentation | lexer |
 | E008 | `key:` header with no indented body | parser |
 | E010 | unexpected indentation | parser |
+| E023 | integer literal out of i64 range (saturates at `i64::MAX`) | parser |
 | H001–H004 | healing repairs | lexer/parser |
 | W001 | unresolved identifier | evaluator |
 

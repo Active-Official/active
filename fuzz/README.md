@@ -1,7 +1,7 @@
-# Cargo-fuzz scaffold for SOLID (C-012).
+# Cargo-fuzz scaffold for ACTIVE (C-012).
 #
 # The CI-enforced harness is the in-repo proptest suite
-# (solid-core/tests/fuzz.rs). These cargo-fuzz targets drive the same
+# (active-core/tests/fuzz.rs). These cargo-fuzz targets drive the same
 # entry points with libFuzzer for deeper, longer-running fuzzing.
 #
 # Requirements to run:

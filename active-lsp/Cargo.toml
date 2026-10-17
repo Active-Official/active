@@ -1,0 +1,29 @@
+[package]
+name = "active-lsp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+description = "Language server for the Active configuration and data language"
+readme = "README.md"
+keywords = ["configuration", "language", "lsp", "language-server", "editor"]
+categories = ["development-tools"]
+
+[[bin]]
+name = "active-lsp"
+path = "src/main.rs"
+
+[lib]
+name = "active_ls"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+lsp-server = "0.7"
+lsp-types = "0.94"
+serde_json = { workspace = true }
+active-core = { workspace = true }

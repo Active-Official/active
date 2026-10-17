@@ -1,0 +1,27 @@
+[package]
+name = "active-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+description = "Command-line interface for the Active configuration and data language"
+readme = "README.md"
+keywords = ["configuration", "language", "cli", "command-line", "dsl"]
+categories = ["command-line-utilities", "config"]
+
+[[bin]]
+name = "active"
+path = "src/main.rs"
+
+[dependencies]
+active-core = { workspace = true }
+clap = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+toml = "0.8"

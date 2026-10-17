@@ -3,7 +3,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use solid_core::{parse, Engine};
+use active_core::{parse, Engine};
 
 fuzz_target!(|data: &[u8]| {
     let src = String::from_utf8_lossy(data);

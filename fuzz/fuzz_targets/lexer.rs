@@ -4,7 +4,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use solid_core::parser::Lexer;
+use active_core::parser::Lexer;
 
 fuzz_target!(|data: &[u8]| {
     // Lossy conversion is deliberate: invalid UTF-8 must not panic.

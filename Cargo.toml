@@ -1,10 +1,11 @@
 [workspace]
 resolver = "2"
 members = [
-    "solid-core",
-    "solid-cli",
-    "solid-fmt",
-    "solid-ls",
+    "active",
+    "active-core",
+    "active-cli",
+    "active-fmt",
+    "active-lsp",
 ]
 
 [workspace.package]
@@ -12,11 +13,11 @@ version = "1.0.0"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
-authors = ["SOLID Language Team"]
-repository = "https://github.com/RatioArtificiosa/solid-lang"
-homepage = "https://github.com/RatioArtificiosa/solid-lang"
-documentation = "https://github.com/RatioArtificiosa/solid-lang"
-description = "SOLID - Symmetric, Overlay-ready, Loop-proof, Intent-driven, Deterministic configuration language"
+authors = ["Active Language Team"]
+repository = "https://github.com/Active-Official"
+homepage = "https://github.com/Active-Official"
+documentation = "https://github.com/Active-Official"
+description = "Active - Symmetric, Overlay-ready, Loop-proof, Intent-driven, Deterministic configuration language"
 
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -29,4 +30,4 @@ petgraph = "0.6"
 clap = { version = "4.5", features = ["derive"] }
 # Version is duplicated from [workspace.package] (cargo forbids
 # version.workspace here): keep in sync — the packaging test pins it.
-solid-lang-core = { version = "1.0.0", path = "solid-core" }
+active-core = { version = "1.0.0", path = "active-core" }

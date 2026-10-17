@@ -1,0 +1,42 @@
+[package]
+name = "active-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/active-core"
+description = "Core implementation of the Active configuration and data language: lexer, parser, IR, dependency graph, evaluator, type system and diagnostics"
+readme = "README.md"
+keywords = ["configuration", "language", "parser", "evaluator", "dsl"]
+categories = ["config", "parser-implementations"]
+
+[lib]
+name = "active_core"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+indexmap = { workspace = true }
+thiserror = { workspace = true }
+petgraph = { workspace = true }
+regex = { workspace = true }
+serde_yaml = "0.9"
+toml = "0.8"
+sha2 = "0.10"
+ed25519-dalek = "2"
+getrandom = "0.2"
+
+[dev-dependencies]
+anyhow = { workspace = true }
+proptest = "1"
+indexmap = { workspace = true }
+criterion = "0.5"
+codspeed-criterion-compat = "2"
+
+[[bench]]
+name = "eval"
+harness = false

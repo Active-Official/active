@@ -1,0 +1,21 @@
+[package]
+name = "active"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Active is a modern configuration and data language: safer than YAML, more expressive than TOML, more human-friendly than JSON, and built for both humans and AI agents."
+documentation = "https://docs.rs/active"
+readme = "README.md"
+keywords = ["configuration", "config", "language", "parser", "dsl"]
+categories = ["config", "parser-implementations", "development-tools"]
+
+[lib]
+name = "active"
+path = "src/lib.rs"
+
+[dependencies]
+active-core = { workspace = true }

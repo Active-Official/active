@@ -1,0 +1,27 @@
+[package]
+name = "active-fmt"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/active-fmt"
+description = "Formatter for the Active configuration and data language"
+readme = "README.md"
+keywords = ["configuration", "language", "formatter", "formatting", "dsl"]
+categories = ["development-tools", "config"]
+
+[lib]
+name = "active_fmt"
+path = "src/lib.rs"
+
+[[bin]]
+name = "active-fmt"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+anyhow = { workspace = true }
+active-core = { workspace = true }

@@ -1,5 +1,5 @@
 [package]
-name = "solid-fuzz"
+name = "active-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2021"
@@ -8,7 +8,7 @@ edition = "2021"
 cargo-fuzz = true
 
 [dependencies]
-solid-lang-core = { path = "../solid-core" }
+active-core = { path = "../active-core" }
 libfuzzer-sys = "0.4"
 
 # Standalone workspace: not a member of the root workspace.

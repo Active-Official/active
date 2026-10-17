@@ -1806,3 +1806,106 @@ fn rb_101_keyword_like_keys_reject() {
     // Mid-statement strays keep the §4.1 silent skip (pinned quirk).
     assert_eq!(eval_json("x = 1 2\n")["x"], 1);
 }
+
+/// RB-102 — Dual-syntax semantic equality (DERIVED-0020 §A).
+/// Brace and indentation forms of one document evaluate identically.
+#[test]
+fn rb_102_dual_syntax_semantic_equality() {
+    let brace = "server = {\n  host = \"localhost\"\n  port = 8080\n}\n";
+    let indent = "server:\n  host = \"localhost\"\n  port = 8080\n";
+    assert_eq!(eval_json(brace), eval_json(indent));
+}
+
+/// RB-103 — No Norway coercion (P1-TI-001 §C).
+/// Quoted `"NO"` is a string; bare `NO` is unresolved (W001 + null),
+/// never boolean false.
+#[test]
+fn rb_103_no_norway_coercion() {
+    assert_eq!(eval_json("country = \"NO\"\n")["country"], "NO");
+    let v = eval_json("country = NO\n");
+    assert!(v["country"].is_null(), "{v}");
+    let codes = codes_of("country = NO\n");
+    assert!(
+        codes.iter().any(|c| c == "W001"),
+        "bare NO must warn W001, got {codes:?}"
+    );
+    assert_eq!(eval_json("flag = false\n")["flag"], false);
+}
+
+/// RB-104 — Leading zeros are plain decimals (P1-TI-004 §C).
+/// No octal surprises: `0755` evaluates as decimal 755.
+#[test]
+fn rb_104_leading_zero_decimal() {
+    let v = eval_json("mode = 0755\n");
+    assert_eq!(v["mode"], 755);
+    // Quoted form stays a string.
+    assert_eq!(eval_json("mode = \"0755\"\n")["mode"], "0755");
+}
+
+/// RB-105 — Null vs string-null (P1-TI-005 §C).
+#[test]
+fn rb_105_null_vs_string_null() {
+    let v = eval_json("value = null\n");
+    assert!(v["value"].is_null(), "{v}");
+    let v = eval_json("value = \"null\"\n");
+    assert_eq!(v["value"], "null");
+}
+
+/// RB-106 — Quoted booleans stay strings (P1-TI-006 §C).
+#[test]
+fn rb_106_quoted_booleans_stay_strings() {
+    let v = eval_json("c = \"true\"\nd = \"false\"\n");
+    assert_eq!(v["c"], "true");
+    assert_eq!(v["d"], "false");
+    assert_eq!(eval_json("a = true\nb = false\n")["a"], true);
+}
+
+/// RB-107 — Underscores strip to integers (P1-TI-009 §C).
+/// Per spec/grammar.md number rule: digit separators, stripped.
+#[test]
+fn rb_107_underscore_numbers() {
+    assert_eq!(eval_json("big = 1_000_000\n")["big"], 1000000);
+}
+
+/// RB-108 — Keys are case-sensitive (P1-TI-013 §C).
+#[test]
+fn rb_108_keys_case_sensitive() {
+    let v = eval_json("Host = \"A\"\nhost = \"B\"\n");
+    assert_eq!(v["Host"], "A");
+    assert_eq!(v["host"], "B");
+}
+
+/// RB-109 — Unicode keys reject cleanly (P1-TI-014 §C).
+/// Non-ASCII identifier starts are outside the grammar; E005.
+/// (Accept-without-corruption would also satisfy the row; rejection
+/// with a clear class is the documented Active policy.)
+#[test]
+fn rb_109_unicode_keys_reject() {
+    let codes = codes_of("名前 = 1\n");
+    assert!(
+        codes.iter().any(|c| c == "E005"),
+        "non-ASCII key must reject E005, got {codes:?}"
+    );
+}
+
+/// RB-110 — Positive control matrix (P1-TI-015 §C).
+/// One document: integers, floats, bools, null, quoted lookalikes,
+/// a unit, and a secret — exact types, no surprise coercions.
+#[test]
+fn rb_110_positive_control_matrix() {
+    let v = eval_json(
+        "i = 10\nf = 10.0\nt = true\nn = null\ns_yes = \"yes\"\ns_no = \"NO\"\ns_true = \"true\"\ns_null = \"null\"\ntimeout = 5s\npw = secret(\"rb110\")\n",
+    );
+    assert_eq!(v["i"], 10);
+    assert!(v["i"].is_i64());
+    assert_eq!(v["f"], 10.0);
+    assert!(v["f"].is_f64());
+    assert_eq!(v["t"], true);
+    assert!(v["n"].is_null());
+    assert_eq!(v["s_yes"], "yes");
+    assert_eq!(v["s_no"], "NO");
+    assert_eq!(v["s_true"], "true");
+    assert_eq!(v["s_null"], "null");
+    assert_eq!(v["timeout"]["ms"], 5000);
+    assert_eq!(v["pw"], "***SECRET***");
+}

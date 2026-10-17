@@ -34,7 +34,7 @@ not the research docs' proposed names.
 | DERIVED-0017 | Hermetic eval, no network | Zero network syscalls during eval | passing → Batch 7 RB-066 (no network-capable deps in lockfile) |
 | DERIVED-0018 | Interpolation expansion budget | Abort with budget diagnostic, no hang | passing → Batch 10 RB-093 (geometric growth trips X) |
 | DERIVED-0019 | Round-trip preserves units | `5s`/`512MiB` survive fmt→parse→fmt | passing → Batch 8 RB-077 |
-| DERIVED-0020 | Dual-syntax semantic equality | Brace ≡ indent values | pending |
+| DERIVED-0020 | Dual-syntax semantic equality | Brace ≡ indent values | passing → Batch 11 RB-102 |
 
 ## §B — P0 safety (`tests/curated/01-P0-Safety-Resource-Limits.md`)
 
@@ -43,9 +43,9 @@ not the research docs' proposed names.
 | P0-001 | ≥300 nesting bounded | Budget/depth reject, no overflow | passing (budget trips with span) → Batch 1 RB-010 |
 | P0-002 | 5000-key table bounded | Budget accept-or-reject, no hang | passing → Batch 9 RB-086 (evaluates) |
 | P0-003 | Huge array bounded | Size budget enforced | passing → Batch 9 RB-087 (X001 trip) |
-| P0-004 | Interpolation expansion budget | Abort, no unbounded growth | pending |
-| P0-005 | Simple `let` cycle | `E_DEPENDENCY_CYCLE` | pending |
-| P0-006 | 4-chain cycle | `E_DEPENDENCY_CYCLE` | pending |
+| P0-004 | Interpolation expansion budget | Abort, no unbounded growth | passing (covered: RB-093 geometric X-trip + RB-032) |
+| P0-005 | Simple `let` cycle | S001 (E_DEPENDENCY_CYCLE class) | passing (covered: RB-030 2-node) |
+| P0-006 | 4-chain cycle | S001 (E_DEPENDENCY_CYCLE class) | passing (covered: RB-030 3-node) |
 | P0-007 | Self-referential `let x = x` | S001 cycle | passing → Batch 4 RB-036 |
 | P0-008 | Secret absent from diagnostics | No raw bytes in output | pending |
 | P0-009 | Secret absent from JSON export | Redaction marker only | pending |
@@ -65,21 +65,21 @@ not the research docs' proposed names.
 
 | ID | Contract | Expected Active behavior | Status |
 |---|---|---|---|
-| P1-TI-001 | `"NO"` string; bare `NO` rejected/unresolved | No Norway coercion | pending |
+| P1-TI-001 | `"NO"` string; bare `NO` rejected/unresolved | No Norway coercion | passing → Batch 11 RB-103 |
 | P1-TI-002 | `yes/no/on/off` quoted strings | Strings; bare forms not booleans | passing → Batch 2 RB-018 |
 | P1-TI-003 | `"1.10"` keeps zeros | Exact strings, never floats | passing (exact strings) → Batch 1 RB-008 |
-| P1-TI-004 | Leading-zero policy explicit | `0755` rejected or documented | pending |
-| P1-TI-005 | `null` vs `"null"` | Null vs string | pending |
-| P1-TI-006 | `true/false` vs `"true"`/`"false"` | Bool vs string; capitals documented | pending |
+| P1-TI-004 | Leading-zero policy explicit | `0755` rejected or documented | passing → Batch 11 RB-104 (plain decimal 755) |
+| P1-TI-005 | `null` vs `"null"` | Null vs string | passing → Batch 11 RB-105 |
+| P1-TI-006 | `true/false` vs `"true"`/`"false"` | Bool vs string; capitals documented | passing → Batch 11 RB-106 |
 | P1-TI-007 | Empty vs null vs missing trio | Three distinct states | passing → Batch 2 RB-019 |
 | P1-TI-008 | `10` int vs `10.0` float | Distinct types, intent kept | passing → Batch 2 RB-017 |
-| P1-TI-009 | Underscore numbers explicit | `1_000_000` per grammar or reject | pending |
+| P1-TI-009 | Underscore numbers explicit | `1_000_000` per grammar or reject | passing → Batch 11 RB-107 (stripped to 1000000) |
 | P1-TI-010 | Keyword-lookalikes in arrays stay strings | No element coercion | pending |
 | P1-TI-011 | Keyword-like keys policy | Statement-initial value tokens fail E002; mid-statement strays keep §4.1 skip | passing → Batch 12 RB-101 (started) |
 | P1-TI-012 | Duplicate keys explicit | **Last-wins + W011 warning** (reject would break existing last-wins tests) | fixed (W011 warning, last-wins kept) → Batch 1 RB-002 |
-| P1-TI-013 | Key case sensitivity | Case-sensitive distinct keys | pending |
-| P1-TI-014 | Unicode keys | Accept without corruption or clear reject | pending |
-| P1-TI-015 | Positive control matrix | Exact types, no coercions | pending |
+| P1-TI-013 | Key case sensitivity | Case-sensitive distinct keys | passing → Batch 11 RB-108 |
+| P1-TI-014 | Unicode keys | Accept without corruption or clear reject | passing → Batch 11 RB-109 (E005 reject) |
+| P1-TI-015 | Positive control matrix | Exact types, no coercions | passing → Batch 11 RB-110 (10-kind matrix) |
 
 ## §D — P1 structural (`tests/curated/03-P1-Structural-Syntax-Arrays-Tables.md`)
 
@@ -165,13 +165,13 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | HIST-YAML-021 | BOM skipped | §1 | Skip leading U+FEFF | fixed (BOM skipped in lexer) → RB-003 |
 | HIST-YAML-022 | Trailing comma accepted | §1 | H002 healed accept (observed) | passing (H002 healed accept) → RB-004 |
 | HIST-YAML-024 | Long float literals | §1 | Accurate f64 conversion, no crash | passing → Batch 6 RB-058 |
-| HIST-YAML-025 | Scientific notation edges | §1 | Per f64 grammar or clean reject | pending |
+| HIST-YAML-025 | Scientific notation edges | §1 | Per f64 grammar or clean reject | passing (covered: RB-053 exponents reject E002) |
 | HIST-JSON-001 | Deep nesting stack overflow | §2 | Hard depth limit, diagnostic not crash | passing (budget trips with span) → RB-010 |
-| HIST-JSON-002 | No internal exception types leak | §2 | Documented error classes only | pending |
+| HIST-JSON-002 | No internal exception types leak | §2 | Documented error classes only | passing (covered: RB-033 deep-input class audit) |
 | HIST-JSON-003 | Fail fast before memory exhaustion | §2 | Reject long before RAM pressure | passing → Batch 5 RB-044 |
 | HIST-JSON-004 | Large integer precision | §2 | E023 saturation path (exists); pin boundary | passing → Batch 9 RB-083 (u64::MAX) |
 | HIST-JSON-005 | Exponent under/overflow | §2 | IEEE 754 policy for f64 surface | REFUSED as specified: no exponent grammar (E002 reject) | passing → Batch 6 RB-053 |
-| HIST-TOML-001 | Inline nesting depth limit | §2 | Same limit as arrays | pending |
+| HIST-TOML-001 | Inline nesting depth limit | §2 | Same limit as arrays | passing (covered: RB-045 200-deep inline tables) |
 | HIST-TOML-002 | No raw RangeError-class leaks | §2 | Documented classes only (Rust panics = bugs) | passing → Batch 4 RB-033 |
 | HIST-TOML-003 | Inline table nesting limit | §2 | Depth limit applies | passing → Batch 5 RB-045 |
 | HIST-TOML-004 | Long dotted-key recursion | §2 | Graph build protected | passing → Batch 4 RB-034 |
@@ -179,12 +179,12 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | HIST-TOML-006 | Stringifier cycle guard | §2 | Formatter terminates on cyclic IR | passing → Batch 5 RB-043 |
 | HIST-TOML-007 | Array-of-tables growth bound | §2 | No `[[t]]` syntax: clean E001 reject; arrays of inline tables are the Active shape | passing → Batch 5 RB-046 |
 | HIST-TOML-008 | Non-UTC datetime offsets | §2 | N/A: no datetimes; importer stringifies + W008 | passing → Batch 8 RB-078 |
-| HIST-TOML-00B | Trailing comma policy | §2 | Same as HIST-YAML-022 | pending |
-| HIST-TOML-00C | Duplicate keys last-wins | §2 | Same as HIST-YAML-004 | pending |
+| HIST-TOML-00B | Trailing comma policy | §2 | Same as HIST-YAML-022 | passing (covered: RB-004 H002) |
+| HIST-TOML-00C | Duplicate keys last-wins | §2 | Same as HIST-YAML-004 | passing (covered: RB-002 W011 + last-wins) |
 | HIST-TOML-00D | Non-string table key rejected | §2 | Keys are identifiers/strings only | passing → Batch 5 RB-047 |
 | HIST-TOML-00E | Unclosed string diagnostic | §2 | H001 heal + span recorded (specified repair, not a failure) | passing → Batch 5 RB-049 |
 | HIST-TOML-00F | Bad escape rejected | §2 | Verbatim passthrough per grammar.md:64-66 (refusal pinned) | passing → Batch 5 RB-050 |
-| HIST-TOML-00K | Serializer cycle guard | §2 | Same as HIST-TOML-006 | pending |
+| HIST-TOML-00K | Serializer cycle guard | §2 | Same as HIST-TOML-006 | passing (covered: RB-043 formatter-on-cycles) |
 | HIST-TOML-00L | `__proto__` neutral key | §3 | Plain key, no special meaning | passing → Batch 3 RB-026 |
 | HIST-TOML-00M | Secrets absent from error output | §3 | Sanitized diagnostics (Vault CVE-2025-4166 class) | passing → Batch 3 RB-025 |
 | HIST-TOML-00N | Table-merge round-trip | §2 | Merged structure reprints equivalently | passing → Batch 6 RB-055 (W011 + last-wins) |
@@ -260,5 +260,5 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | Batch 8 | RB-071…RB-080 | done: 9 green first-try; RB-079 drove CRLF normalization across all 4 string lexers |
 | Batch 9 | RB-081…RB-090 | done: 9 green first-try; RB-085/RB-088 needed test-side arithmetic corrections |
 | Batch 10 | RB-091…RB-100 | done: 9 green first-try; RB-100 forced a revert (statement-level skip is spec §4.1 design, not a bug) |
-| Batch 11 | RB-101…RB-110 (DERIVED-0020, P1-TI-001/004/005/006/009/011/013/014/015) + dup-folds (HIST-YAML-025, HIST-JSON-002, HIST-TOML-001/00B/00C/00K, DERIVED-0018, P0-004/005/006) | in-progress (RB-101 done: keyword-like keys E002 fix) |
+| Batch 11 | RB-101…RB-110 | done: all 10 green first-try; RB-101 drove the statement-initial E002 fix |
 | Batch 12+ | Next 10 lowest pending rows by severity, per the loop prompt | pending |

@@ -32538,3 +32538,233 @@ fn rb_1468_syn128_trailing_comment_inert() {
     assert_eq!(v["case_0128_09"]["b"], 2, "{v}");
     assert!(codes_of("# leading comment\ncase_0128_09 = { a = 1, b = 2 }\n").is_empty());
 }
+
+/// RB-1469 — Empty-key variant: quoted key rejects (SYN-0129-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0032 (nst JSONTestSuite
+/// y_object_empty_key).
+/// `{ "a" 1 }` fails E001 Error at (1:18) — keys are identifiers.
+/// Opens the 129 lineage converging with the 112–115/128 table rhythm at
+/// equal key width.
+#[test]
+fn rb_1469_syn129_quoted_key_rejects() {
+    let src = "case_0129_01 = { \"a\" 1 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the bare pair evaluates silently.
+    let v = eval_json("case_0129_01 = { a = 1 }\n");
+    assert_eq!(v["case_0129_01"]["a"], 1, "{v}");
+    assert!(codes_of("case_0129_01 = { a = 1 }\n").is_empty());
+}
+
+/// RB-1470 — Empty-key variant: keyless pair rejects (SYN-0129-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0032 (nst JSONTestSuite
+/// y_object_empty_key).
+/// `{ = 1 }` fails E001 Error at (1:18). Converges with RB-1344/1461.
+#[test]
+fn rb_1470_syn129_missing_key_rejects() {
+    let src = "case_0129_02 = { = 1 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the keyed table evaluates silently.
+    let v = eval_json("case_0129_02 = { a = 1 }\n");
+    assert_eq!(v["case_0129_02"]["a"], 1, "{v}");
+    assert!(codes_of("case_0129_02 = { a = 1 }\n").is_empty());
+}
+
+/// RB-1471 — Empty-key variant: trailing comma heals in tables (SYN-0129-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0032 (nst JSONTestSuite
+/// y_object_empty_key).
+/// `{ a = 1, }` heals H002 Info at (1:23) — locked stray-comma policy
+/// (RB-004). Converges with RB-1345/1462.
+#[test]
+fn rb_1471_syn129_table_trailing_comma_heals() {
+    let src = "case_0129_03 = { a = 1, }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0129_03"]["a"], 1, "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H002 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 23), "{span:?}");
+    // Positive control: the comma-free table carries no heal.
+    assert!(codes_of("case_0129_03 = { a = 1 }\n").is_empty());
+}
+
+/// RB-1472 — Empty-key variant: trailing garbage rejects (SYN-0129-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0032 (nst JSONTestSuite
+/// y_object_empty_key).
+/// `{ a = 1 } trailing` fails E002 Error at (1:26). Converges with
+/// RB-1346/1463.
+#[test]
+fn rb_1472_syn129_trailing_garbage_rejects() {
+    let src = "case_0129_04 = { a = 1 } trailing\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 26), "{span:?}");
+    // Positive control: the garbage-free table evaluates silently.
+    let v = eval_json("case_0129_04 = { a = 1 }\n");
+    assert_eq!(v["case_0129_04"]["a"], 1, "{v}");
+    assert!(codes_of("case_0129_04 = { a = 1 }\n").is_empty());
+}
+
+/// RB-1473 — Empty-key variant: quoted dups reject before colliding (SYN-0129-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0032 (nst JSONTestSuite
+/// y_object_empty_key).
+/// `{ "a" = 1, "a" = 2 }` fails E001 Error at (1:18). Converges with
+/// RB-1347/1464.
+#[test]
+fn rb_1473_syn129_quoted_dup_rejects() {
+    let src = "case_0129_05 = { \"a\" = 1, \"a\" = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: bare dups announce W011 last-wins instead.
+    let codes = codes_of("case_0129_05 = { a = 1, a = 2 }\n");
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}
+
+/// RB-1474 — Empty-key variant: empty quoted key rejects (SYN-0129-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0032 (nst JSONTestSuite
+/// y_object_empty_key).
+/// `{ "" = 1 }` fails E001 Error at (1:18) — empty keys are refused, never
+/// defaulted, even in the lineage named for them. Converges with
+/// RB-1348/1465.
+#[test]
+fn rb_1474_syn129_empty_key_rejects() {
+    let src = "case_0129_06 = { \"\" = 1 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: a non-empty bare key evaluates silently.
+    let v = eval_json("case_0129_06 = { a = 1 }\n");
+    assert_eq!(v["case_0129_06"]["a"], 1, "{v}");
+    assert!(codes_of("case_0129_06 = { a = 1 }\n").is_empty());
+}
+
+/// RB-1475 — Empty-key variant: clean one-field map accepts (SYN-0129-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0032 (nst JSONTestSuite
+/// y_object_empty_key).
+/// `{ a = 1 }` evaluates silently — the lineage's positive control.
+/// Converges with RB-1349/1466.
+#[test]
+fn rb_1475_syn129_clean_table_accepts() {
+    let src = "case_0129_07 = { a = 1 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0129_07"]["a"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the block-form twin means the same silently.
+    let v = eval_json("[case_0129_07]\na = 1\n");
+    assert_eq!(v["case_0129_07"]["a"], 1, "{v}");
+    assert!(codes_of("[case_0129_07]\na = 1\n").is_empty());
+}
+
+/// RB-1476 — Empty-key variant: nested map accepts (SYN-0129-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0032 (nst JSONTestSuite
+/// y_object_empty_key).
+/// `{ a = { b = 1 } }` accepts silently. Converges with RB-1350/1467.
+#[test]
+fn rb_1476_syn129_nested_table_accepts() {
+    let src = "case_0129_08 = { a = { b = 1 } }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0129_08"]["a"]["b"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the flat neighbour evaluates identically at depth 1.
+    let v = eval_json("case_0129_08 = { b = 1 }\n");
+    assert_eq!(v["case_0129_08"]["b"], 1, "{v}");
+}
+
+/// RB-1477 — Empty-key variant: trailing comment is inert (SYN-0129-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0032 (nst JSONTestSuite
+/// y_object_empty_key).
+/// `{ a = 1, b = 2 } # trailing comment` accepts silently. Converges with
+/// RB-1351/1468.
+#[test]
+fn rb_1477_syn129_trailing_comment_inert() {
+    let src = "case_0129_09 = { a = 1, b = 2 } # trailing comment\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0129_09"]["a"], 1, "{v}");
+    assert_eq!(v["case_0129_09"]["b"], 2, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a leading full-line comment is equally inert.
+    let v = eval_json("# leading comment\ncase_0129_09 = { a = 1, b = 2 }\n");
+    assert_eq!(v["case_0129_09"]["b"], 2, "{v}");
+    assert!(codes_of("# leading comment\ncase_0129_09 = { a = 1, b = 2 }\n").is_empty());
+}
+
+/// RB-1478 — Norway variant: bare `yes` never becomes bool (SYN-0130-01 §H, HIGH).
+/// Origin: synthetic variation of the Norway implicit-typing report.
+/// REFUSAL (spec-gated, P1-TI-002 §C, RB-018, SYN-0016/0017/0018 lineages):
+/// the catalogue wants "accept string yes", but bare words are neither
+/// bools nor strings in Active — `case_0130_01 = yes` warns W001 Warning at
+/// the (1:16) name span and reads null (locked no-coercion policy
+/// DERIVED-0002). The normative core — "must not infer bool true" — holds
+/// absolutely: Norway stays a non-event. Only the QUOTED spelling is the
+/// string "yes".
+#[test]
+fn rb_1478_syn130_bare_yes_never_bool() {
+    let src = "case_0130_01 = yes\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0130_01"], serde_json::Value::Null, "{v}");
+    assert!(!v["case_0130_01"].is_boolean(), "must never be bool: {v}");
+    assert_ne!(v["case_0130_01"], "yes", "bare yes is not the string: {v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: the quoted spelling IS the exact string, silently.
+    let v = eval_json("case_0130_01 = \"yes\"\n");
+    assert_eq!(v["case_0130_01"], "yes", "{v}");
+    assert!(codes_of("case_0130_01 = \"yes\"\n").is_empty());
+    // Positive control: reserved `true` stays bool (exact-token policy).
+    assert_eq!(eval_json("case_0130_01 = true\n")["case_0130_01"], true);
+}

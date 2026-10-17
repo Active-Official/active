@@ -2996,3 +2996,195 @@ fn rb_168_capitalized_true_never_bool() {
     // Positive control: quoted form stays a string.
     assert_eq!(eval_json("value = \"TRUE\"\n")["value"], "TRUE");
 }
+
+/// RB-169 — Upstream `mixed-case-true` analogue (SRC-TOML-0020 §H, MEDIUM).
+/// Origin: toml-test `invalid/bool/mixed-case-true.toml`.
+/// (Catalogue prints `TRUE` — same copy typo as 0018; the title and
+/// origin name the mixed-case form, pinned here as `TrUe`.)
+/// Any non-exact case is unresolved (W001 + null), never boolean.
+#[test]
+fn rb_169_mixed_case_true_never_bool() {
+    let v = eval_json("value = TrUe\n");
+    assert!(v["value"].is_null(), "{v}");
+    let codes = codes_of("value = TrUe\n");
+    assert!(
+        codes.iter().any(|c| c == "W001"),
+        "W001 expected, got {codes:?}"
+    );
+    // Positive control: the exact lowercase token is boolean true.
+    assert_eq!(eval_json("value = true\n")["value"], true);
+}
+
+/// RB-170 — Upstream `bare-cr` analogue (SRC-TOML-0021 §H, MEDIUM).
+/// Origin: toml-test `invalid/control/bare-cr.toml`.
+/// Byte fixture: `a = 1 <CR> b = 2 <LF>`. CR is specified horizontal
+/// whitespace (spec/grammar.md §1.2); statement recovery is identical
+/// to a space — deterministic, both values intact, no diagnostics.
+/// REFUSAL of the "reject" half: the row allows "reject OR normalize
+/// under documented policy", and §1.2 documents CR as whitespace.
+#[test]
+fn rb_170_bare_cr_is_whitespace() {
+    let module = parse_file(
+        &research_fixture("src_toml_0021_bare_cr.active"),
+        ParseOptions::default(),
+    )
+    .unwrap_or_else(|d| panic!("must parse: {d:?}"));
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(v["a"], 1);
+    assert_eq!(v["b"], 2);
+    assert!(diags.is_empty(), "{diags:?}");
+}
+
+/// RB-171 — Upstream `bare-formfeed` analogue (SRC-TOML-0022 §H, MEDIUM).
+/// Origin: toml-test `invalid/control/bare-formfeed.toml`.
+/// Byte fixture: `value = 1 <FF> <LF>`. FF is outside every specified
+/// char class → loud E005, never silent.
+#[test]
+fn rb_171_bare_formfeed_rejects() {
+    let diags = parse_file(
+        &research_fixture("src_toml_0022_bare_ff.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E005");
+    assert!(
+        diags.iter().any(|d| d.code == "E005"),
+        "E005 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 10), "{span:?}");
+    // Positive control: without the FF byte the document evaluates.
+    assert_eq!(eval_json("value = 1\n")["value"], 1);
+}
+
+/// RB-172 — Upstream `bare-null` analogue (SRC-TOML-0023 §H, MEDIUM).
+/// Origin: toml-test `invalid/control/bare-null.toml`.
+/// Byte fixture: `value = "a <NUL> b"`. REFUSAL (spec-gated): the
+/// grammar's char classes never exclude NUL and RB-092's oracle allows
+/// "a documented class or a clean value" — the NUL is preserved
+/// exactly (no C-style truncation, no silent drop), deterministically.
+#[test]
+fn rb_172_bare_nul_in_string_preserved() {
+    let module = parse_file(
+        &research_fixture("src_toml_0023_bare_nul.active"),
+        ParseOptions::default(),
+    )
+    .unwrap_or_else(|d| panic!("must parse: {d:?}"));
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(v["value"], "a\0b");
+    assert!(diags.is_empty(), "{diags:?}");
+    // Positive control: the NUL-free neighbour evaluates identically.
+    assert_eq!(eval_json("value = \"ab\"\n")["value"], "ab");
+}
+
+/// RB-173 — Upstream `comment-null` analogue (SRC-TOML-0024 §H, MEDIUM).
+/// Origin: toml-test `invalid/control/comment-null.toml`.
+/// Byte fixture: `# com <NUL> ment <LF> value = 1 <LF>`. Comment bytes
+/// are trivia (spec/grammar.md §1.2) — inert, structure untouched.
+#[test]
+fn rb_173_nul_in_comment_inert() {
+    let module = parse_file(
+        &research_fixture("src_toml_0024_comment_nul.active"),
+        ParseOptions::default(),
+    )
+    .unwrap_or_else(|d| panic!("must parse: {d:?}"));
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(v["value"], 1);
+    assert!(diags.is_empty(), "{diags:?}");
+}
+
+/// RB-174 — Upstream `linetab-number-01` analogue (SRC-TOML-0025 §H, MEDIUM).
+/// Origin: toml-test `invalid/control/linetab-number-01.toml`.
+/// Byte fixture: `value = 1 <TAB> 2 <LF>`. TAB is specified whitespace
+/// (spec/grammar.md §1.2), so this lexes as `value = 1 2` and the stray
+/// falls under the §2.1 statement-level skip quirk (RB-100): value 1,
+/// silent. REFUSAL of "reject: invalid-token-whitespace" per §1.2 + §2.1.
+#[test]
+fn rb_174_tab_is_whitespace_stray_skipped() {
+    let module = parse_file(
+        &research_fixture("src_toml_0025_linetab_number.active"),
+        ParseOptions::default(),
+    )
+    .unwrap_or_else(|d| panic!("must parse: {d:?}"));
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(v["value"], 1);
+    assert!(diags.is_empty(), "{diags:?}");
+}
+
+/// RB-175 — Upstream `multi-lf` analogue (SRC-TOML-0026 §H, MEDIUM).
+/// Origin: toml-test `invalid/control/multi-lf.toml`.
+/// Byte fixture: single-line string with a raw LF. REFUSAL (spec-gated):
+/// the §1.4 char class (`any-but-quote`) never excludes newline, so the
+/// string spans lines deterministically with the exact value kept.
+#[test]
+fn rb_175_raw_newline_in_string_kept() {
+    let module = parse_file(
+        &research_fixture("src_toml_0026_multi_lf.active"),
+        ParseOptions::default(),
+    )
+    .unwrap_or_else(|d| panic!("must parse: {d:?}"));
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(v["value"], "line one\nline two");
+    assert!(diags.is_empty(), "{diags:?}");
+}
+
+/// RB-176 — Upstream `rawmulti-null` analogue (SRC-TOML-0027 §H, MEDIUM).
+/// Origin: toml-test `invalid/control/rawmulti-null.toml`.
+/// Byte fixture: NUL inside a `"""` body. Same exact-preservation
+/// policy as RB-172, in the specified multiline form.
+#[test]
+fn rb_176_nul_in_multiline_preserved() {
+    let module = parse_file(
+        &research_fixture("src_toml_0027_rawmulti_nul.active"),
+        ParseOptions::default(),
+    )
+    .unwrap_or_else(|d| panic!("must parse: {d:?}"));
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(v["value"], "a\0b");
+    assert!(diags.is_empty(), "{diags:?}");
+}
+
+/// RB-177 — Upstream `rawstring-lf` analogue (SRC-TOML-0028 §H, MEDIUM).
+/// Origin: toml-test `invalid/control/rawstring-lf.toml`.
+/// Byte fixture: the specified `"""` multiline form carrying newlines —
+/// the row's own "unless multiline strings are specified" clause.
+/// Exact value, deterministic.
+#[test]
+fn rb_177_specified_multiline_spans_lines() {
+    let module = parse_file(
+        &research_fixture("src_toml_0028_rawstring_lf.active"),
+        ParseOptions::default(),
+    )
+    .unwrap_or_else(|d| panic!("must parse: {d:?}"));
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(v["value"], "line one\nline two");
+    assert!(diags.is_empty(), "{diags:?}");
+}
+
+/// RB-178 — Upstream `string-null` analogue (SRC-TOML-0029 §H, MEDIUM).
+/// Origin: toml-test `invalid/control/string-null.toml`.
+/// The `\0` escape decodes to NUL (spec/grammar.md §1.4 escape table) —
+/// specified decoding, exact value, no diagnostics.
+#[test]
+fn rb_178_nul_escape_decodes() {
+    let v = eval_json("value = \"a\\0b\"\n");
+    assert_eq!(v["value"], "a\0b");
+    let codes = codes_of("value = \"a\\0b\"\n");
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: unknown escapes stay verbatim (RB-050 policy).
+    assert_eq!(eval_json("value = \"a\\qb\"\n")["value"], "a\\qb");
+}

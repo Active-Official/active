@@ -228,7 +228,7 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 
 | Family | IDs | Mining note | Status |
 |---|---|---|---|
-| SRC-TOML (95) | `SRC-TOML-0001`…`0095` | Upstream toml-test invalid fixtures → Active analogues (reject classes, escapes, tables) | mining: 0001…0019 pinned → Batches 16 (RB-150…158) + 17 (RB-159…168); refusals vs upstream-reject pinned; bool exact-token recognition pinned |
+| SRC-TOML (95) | `SRC-TOML-0001`…`0095` | Upstream toml-test invalid fixtures → Active analogues (reject classes, escapes, tables) | mining: 0001…0029 pinned → Batches 16 (RB-150…158) + 17 (RB-159…168) + 18 (RB-169…178); byte fixtures under tests/research/; refusals per §1.2/§1.4/§2.1 |
 | SRC-JSON (34) | `SRC-JSON-0001`…`0034` | JSONTestSuite edges → Active analogues (nesting, numbers, escapes, dup keys) | pending (mine per batch) |
 | SRC-YAML (15) | `SRC-YAML-0001`…`0015` | yaml-test-suite edges → Active analogues | pending (mine per batch) |
 | SRC-CVE (10) | `SRC-CVE-0001`…`0010` | CVE-derived payloads → budget/cycle/sanitization analogues | pending (mine per batch) |
@@ -267,4 +267,5 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | Batch 15 | RB-141…RB-148 (P1-DS-010/011/012/013/014, HIST-TOML-00P/00H/00O) | done: all 8 green first-try; RB-143 refusal-pinned (fmt re-emits secret() calls per spec/secrets.md:48-49) |
 | Batch 16 | RB-149…RB-158 (HIST-YAML-006, SRC-TOML-0001…0009) | done: all 10 green first-try, no code changes; catalogue mining started (oldest-first); refusals vs upstream-reject pinned (H002/H003/W011 policies) |
 | Batch 17 | RB-159…RB-168 (SRC-TOML-0010…0019) | done: all 10 green first-try, no code changes; bool exact-token + prefix-match refusal pinned (W001+null); catalogue typo noted (0018 prints TRUE, title/origin name FALSE) |
+| Batch 18 | RB-169…RB-178 (SRC-TOML-0020…0029) | done: all 10 green first-try, no code changes; byte-fixture batch (8 committed fixtures under tests/research/); refusals per grammar §1.2/§1.4/§2.1 + RB-092 oracle |
 | Batch 17+ | Next catalogue cases (SRC-TOML-0010…, then SRC-JSON/SRC-YAML/SRC-CVE/SRC-SPEC, byte fixtures) | pending |

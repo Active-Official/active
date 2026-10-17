@@ -11499,3 +11499,250 @@ fn rb_578_syn30_nul_after_indent_e005() {
     let codes = codes_of("  k = 1\n");
     assert!(codes.iter().any(|c| c == "E010"), "{codes:?}");
 }
+/// RB-579 — Derived variant 30-02: bad-UTF-8 decet agrees (SYN-0030-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0030 (toml-test string-us).
+/// Byte fixture: overlong C0 AF in a string under a tenth key. E017 Error —
+/// converges across ten lineages: no lineage replacement-decodes. (Opens
+/// SYN-0030-02…09.)
+#[test]
+fn rb_579_syn30_utf8_decet_e017() {
+    let diags = parse_file(
+        &research_fixture("syn_0030_02_utf8_in_string.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E017");
+    let e = diags.iter().find(|d| d.code == "E017").expect("E017");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E017 must be Error, got {:?}",
+        e.severity
+    );
+    // Convergence: two earlier twins fail the same class.
+    for name in [
+        "src_toml_0047_bad_utf8_in_string.active",
+        "syn_0029_02_utf8_in_string.active",
+    ] {
+        let diags = parse_file(&research_fixture(name), ParseOptions::default())
+            .expect_err("twin must fail E017");
+        assert!(diags.iter().any(|d| d.code == "E017"), "{name}: {diags:?}");
+    }
+    // Positive control: the valid-spelling neighbour parses.
+    assert_eq!(eval_json("case_0030_02 = \"nxo\"\n")["case_0030_02"], "nxo");
+}
+
+/// RB-580 — Derived variant 30-03: BOM inside strings is data (SYN-0030-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0030 (toml-test string-us).
+/// Byte fixture: valid-encoding BOM between string bytes. The document
+/// evaluates with zero diagnostics and the value keeps U+FEFF as content —
+/// the stream-position restriction governs structure, never string data;
+/// a BOM outside strings stays E005 (RB-315's fixture converges).
+#[test]
+fn rb_580_syn30_bom_in_string_data() {
+    let module = parse_file(
+        &research_fixture("syn_0030_03_bom_in_string.active"),
+        ParseOptions::default(),
+    )
+    .unwrap_or_else(|d| panic!("bom-in-string must parse: {d:?}"));
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(
+        v["case_0030_03"], "a\u{feff}b",
+        "BOM must survive as data, got {v}"
+    );
+    assert!(diags.is_empty(), "{diags:?}");
+    // Control: a BOM outside strings still fails E005.
+    let diags = parse_file(
+        &research_fixture("syn_0021_03_bom_offset3.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("bare BOM must fail E005");
+    assert!(diags.iter().any(|d| d.code == "E005"), "{diags:?}");
+}
+
+/// RB-581 — Derived variant 30-04: tenth `\u` verbatim agrees (SYN-0030-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0030 (toml-test string-us).
+/// `case_0030_04 = "\u0001"` is the 6-char verbatim literal with zero
+/// diagnostics — converges across all ten lineages: no `\u` decoding
+/// anywhere.
+#[test]
+fn rb_581_syn30_unicode_escape_verbatim() {
+    let v = eval_json("case_0030_04 = \"\\u0001\"\n");
+    assert_eq!(
+        v["case_0030_04"], "\\u0001",
+        "escape must stay verbatim, got {v}"
+    );
+    assert_eq!(v["case_0030_04"].as_str().expect("string").len(), 6);
+    let codes = codes_of("case_0030_04 = \"\\u0001\"\n");
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: documented escapes still decode.
+    let v = eval_json("case_0030_04 = \"a\\tb\"\n");
+    assert_eq!(v["case_0030_04"], "a\tb");
+}
+
+/// RB-582 — Derived variant 30-05: tenth TAB-in-string agrees (SYN-0030-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0030 (toml-test string-us).
+/// Byte fixture: literal 0x09 in string content evaluates to "a\tb" with
+/// zero diagnostics — converges across all ten lineages: TABs are content
+/// everywhere, indentation nowhere.
+#[test]
+fn rb_582_syn30_tab_in_string_ok() {
+    let module = parse_file(
+        &research_fixture("syn_0030_05_tab_in_string.active"),
+        ParseOptions::default(),
+    )
+    .unwrap_or_else(|d| panic!("tab-in-string must parse: {d:?}"));
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(v["case_0030_05"], "a\tb", "{v}");
+    assert!(diags.is_empty(), "{diags:?}");
+    // Control: TAB as structural indentation still fails E006.
+    let diags = parse_file(
+        &research_fixture("syn_0021_04_tab_line1.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("tab indent must fail E006");
+    assert!(diags.iter().any(|d| d.code == "E006"), "{diags:?}");
+}
+
+/// RB-583 — Derived variant 30-06: tenth café agrees (SYN-0030-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0030 (toml-test string-us).
+/// `case_0030_06 = "café"` is exactly "café" with zero diagnostics, and the
+/// JSON export carries é — converges across all ten lineages.
+#[test]
+fn rb_583_syn30_cafe_roundtrip_exact() {
+    let src = "case_0030_06 = \"café\"\n";
+    assert_eq!(eval_json(src)["case_0030_06"], "café");
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    assert!(diags.is_empty(), "{diags:?}");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(json.contains("café"), "{json}");
+    // Positive control: ASCII neighbours evaluate alongside cleanly.
+    assert_eq!(
+        eval_json("case_0030_06 = \"cafe\"\n")["case_0030_06"],
+        "cafe"
+    );
+}
+
+/// RB-584 — Derived variant 30-07: tenth clef agrees (SYN-0030-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0030 (toml-test string-us).
+/// `case_0030_07 = "𝄞"` (U+1D11E) is exactly one scalar with zero diagnostics —
+/// converges across all ten lineages: no lineage splits surrogates.
+#[test]
+fn rb_584_syn30_supplementary_scalar_single() {
+    let src = "case_0030_07 = \"𝄞\"\n";
+    let v = eval_json(src)["case_0030_07"].clone();
+    assert_eq!(v, "𝄞", "{v}");
+    assert_eq!(v.as_str().expect("string").chars().count(), 1, "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: BMP multi-byte text evaluates alongside cleanly.
+    assert_eq!(
+        eval_json("case_0030_07 = \"café\"\n")["case_0030_07"],
+        "café"
+    );
+}
+
+/// RB-585 — Derived variant 30-08: truncation inside keys is E017 (SYN-0030-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0030 (toml-test string-us).
+/// Byte fixture: truncated E2 lead inside key bytes. E017 Error — extends
+/// the key-position pin (RB-499) from invalid bytes to truncation:
+/// decode-before-lex holds in keys at every breakage shape.
+#[test]
+fn rb_585_syn30_trunc_in_key_e017() {
+    let diags = parse_file(
+        &research_fixture("syn_0030_08_trunc_in_key.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E017");
+    let e = diags.iter().find(|d| d.code == "E017").expect("E017");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E017 must be Error, got {:?}",
+        e.severity
+    );
+    // Convergence: key-position invalid bytes fail the same class (RB-499).
+    let diags = parse_file(
+        &research_fixture("syn_0021_02_utf8_in_key.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("twin must fail E017");
+    assert!(diags.iter().any(|d| d.code == "E017"), "{diags:?}");
+    // Positive control: the valid-spelling key parses.
+    assert_eq!(eval_json("cse = 1\n")["cse"], 1);
+}
+
+/// RB-586 — Derived variant 30-09: tenth mid-escape agrees (SYN-0030-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0030 (toml-test string-us).
+/// `case_0030_09 = "a\tb"` is byte-exact 3 chars with one 0x09, zero
+/// diagnostics — converges across all ten lineages. (Completes
+/// SYN-0030-02…09 coverage.)
+#[test]
+fn rb_586_syn30_mid_escape_is_tab() {
+    let src = "case_0030_09 = \"a\\tb\"\n";
+    let v = eval_json(src)["case_0030_09"].clone();
+    assert_eq!(v, "a\tb", "{v}");
+    let s = v.as_str().expect("string");
+    assert_eq!(s.chars().count(), 3, "{v}");
+    assert_eq!(s.as_bytes(), b"a\tb", "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the escape-free neighbour evaluates identically clean.
+    assert_eq!(eval_json("case_0030_09 = \"ab\"\n")["case_0030_09"], "ab");
+}
+
+/// RB-587 — Derived variant 31-01: impossible dates are arithmetic, never normalized (SYN-0031-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0031 (toml-test day-zero).
+/// REFUSAL (spec-gated): the catalogue asks rejecting invalid date
+/// literals, but Active has no datetime type (spec; batch-19 no-date-type
+/// policy): `case_0031_01 = 2024-02-30` is the arithmetic 1992 with zero
+/// diagnostics — Feb-30 is never constructed, so it can never be silently
+/// normalized. The quoted neighbour stays the exact string. (Opens
+/// SYN-0031 day-zero lineage.)
+#[test]
+fn rb_587_syn31_day_zero_is_arithmetic() {
+    let src = "case_0031_01 = 2024-02-30\n";
+    let v = eval_json(src);
+    assert_eq!(
+        v,
+        serde_json::json!({"case_0031_01": 1992}),
+        "date-shaped input must be plain arithmetic, got {v}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    assert_eq!(
+        eval_json("case_0031_01 = \"2024-02-30\"\n")["case_0031_01"],
+        "2024-02-30"
+    );
+}
+
+/// RB-588 — Derived variant 31-02: offsets never validate — no datetimes exist (SYN-0031-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0031 (toml-test day-zero).
+/// REFUSAL (spec-gated): offset-range validation presumes a datetime type
+/// Active does not have (spec; batch-19 policy). The bare form degrades to
+/// specified pieces — arithmetic prefix 1993, colon-pair `T12 = 30`, and the
+/// §4.1 statement-level skip for the tail (RB-100 precedent) — pinned here
+/// by whole-document equality so no pseudo-object ever materializes. The
+/// quoted neighbour stays the exact string.
+#[test]
+fn rb_588_syn31_offset_without_datetimes() {
+    let src = "case_0031_02 = 2024-02-29T12:30:00+25:00\n";
+    let v = eval_json(src);
+    assert_eq!(
+        v,
+        serde_json::json!({"case_0031_02": 1993, "T12": 30}),
+        "must degrade to arithmetic + colon pair only, got {v}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    assert_eq!(
+        eval_json("case_0031_02 = \"2024-02-29T12:30:00+25:00\"\n")["case_0031_02"],
+        "2024-02-29T12:30:00+25:00"
+    );
+}

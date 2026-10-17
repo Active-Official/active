@@ -34,7 +34,7 @@ cargo install active-cli active-fmt active-lsp   # needs Rust 1.85+
 
 Release archives (Linux/macOS/Windows × x86_64/ARM64, with SHA256SUMS
 and build attestations) are attached to
-[GitHub releases](https://github.com/RatioArtificiosa/solid-lang/releases).
+[GitHub releases](https://github.com/Active-Official/active/releases).
 Editors: `editors/vscode` (VS Code / Cursor / VSCodium vsix) and
 `editors/neovim` (runtimepath plugin + `active-lsp`). Details and the
 crates.io procedure: `spec/packaging.md`.

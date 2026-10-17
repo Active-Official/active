@@ -7,9 +7,9 @@
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/RatioArtificiosa/solid-lang.git"
+    "url": "https://github.com/Active-Official/active.git"
   },
-  "homepage": "https://github.com/RatioArtificiosa/solid-lang",
+  "homepage": "https://github.com/Active-Official/active",
   "engines": {
     "vscode": "^1.85.0"
   },

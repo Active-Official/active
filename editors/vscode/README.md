@@ -9,7 +9,7 @@ inlay hints, code actions) over stdio.
 
 - **Release vsix** (no Rust needed): download
   `active-lang-<version>.vsix` from the
-  [GitHub releases](https://github.com/RatioArtificiosa/solid-lang/releases),
+  [GitHub releases](https://github.com/Active-Official/active/releases),
   then `code --install-extension active-lang-<version>.vsix`
   (`cursor --install-extension …` / VSCodium equivalent).
 - **From source**: `cargo install active-lsp`, then in `editors/vscode`

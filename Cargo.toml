@@ -14,9 +14,9 @@ edition = "2021"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 authors = ["Active Language Team"]
-repository = "https://github.com/Active-Official"
-homepage = "https://github.com/Active-Official"
-documentation = "https://github.com/Active-Official"
+repository = "https://github.com/Active-Official/active"
+homepage = "https://github.com/Active-Official/active"
+documentation = "https://github.com/Active-Official/active"
 description = "Active - Symmetric, Overlay-ready, Loop-proof, Intent-driven, Deterministic configuration language"
 
 [workspace.dependencies]

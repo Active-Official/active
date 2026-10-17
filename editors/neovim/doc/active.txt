@@ -11,11 +11,11 @@ Filetype detection, buffer defaults, syntax highlighting, and
 
 As a runtimepath plugin (no registry, no build). With vim-plug: >
 
-  Plug 'RatioArtificiosa/solid-lang', {'rtp': 'editors/neovim'}
+  Plug 'RatioArtificiosa/active-lang', {'rtp': 'editors/neovim'}
 
 Manual: >
 
-  set rtp+=~/src/solid-lang/editors/neovim
+  set rtp+=~/src/active-lang/editors/neovim
 
 then `:helptags` the doc dir to read this file offline.
 

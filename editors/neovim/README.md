@@ -10,7 +10,7 @@ diagnostics, inlay hints, code actions).
 vim-plug (subdirectory plugin): >
 
 ```vim
-Plug 'RatioArtificiosa/solid-lang', {'rtp': 'editors/neovim'}
+Plug 'RatioArtificiosa/active-lang', {'rtp': 'editors/neovim'}
 ```
 
 Manual: add `editors/neovim` to `'runtimepath'`, then `:helptags`

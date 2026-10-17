@@ -8,6 +8,6 @@ title = "ACTIVE — Configuration for Humans and AI Agents"
 build-dir = "book"
 
 [output.html]
-git-repository-url = "https://github.com/RatioArtificiosa/solid-lang"
-edit-url-template = "https://github.com/RatioArtificiosa/solid-lang/edit/main/docs-site/src/{path}"
+git-repository-url = "https://github.com/Active-Official/active"
+edit-url-template = "https://github.com/Active-Official/active/edit/main/docs-site/src/{path}"
 search = { enable = true }

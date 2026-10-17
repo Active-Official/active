@@ -168,6 +168,33 @@ fn json_syntax_errors_are_hard() {
     assert!(json_text_to_active("{bad").is_err());
 }
 
+#[test]
+fn import_hard_errors_withhold_source_excerpts() {
+    // Threat model §3.2/§4: broken imports report location only. A
+    // secret sitting in malformed input must not surface in the error.
+    let cases = [
+        (
+            json_text_to_active("{\"token\": \"s3cr3t-j1\"").expect_err("must fail"),
+            "s3cr3t-j1",
+        ),
+        (
+            yaml_text_to_active("token: \"s3cr3t-y1\"\n  bad indent: [\n").expect_err("must fail"),
+            "s3cr3t-y1",
+        ),
+        (
+            toml_text_to_active("[server\ntoken = \"s3cr3t-t1\"\n").expect_err("must fail"),
+            "s3cr3t-t1",
+        ),
+    ];
+    for (err, raw) in cases {
+        assert!(!err.contains(raw), "excerpt leaked: {err}");
+        assert!(
+            err.contains("source excerpt withheld"),
+            "withholding marker missing: {err}"
+        );
+    }
+}
+
 // ------------------------------------------------------------------
 // Reverse: YAML and TOML.
 // ------------------------------------------------------------------

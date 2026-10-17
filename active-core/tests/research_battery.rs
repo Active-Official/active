@@ -32136,3 +32136,187 @@ fn rb_1448_syn126_giant_exponent_rejects() {
         1000000
     );
 }
+
+/// RB-1449 — Huge-neg-exp variant: quoted digits stay a string (SYN-0126-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0029 (nst JSONTestSuite
+/// i_number_double_huge_neg_exp).
+/// `case_0126_08 = "01"` evaluates to the exact string "01" with zero
+/// diagnostics — quoting preserves a digit-looking spelling without numeric
+/// coercion, the mirror of RB-1442 (bare `01` reads decimal 1). Both sides
+/// of the quote boundary are pinned.
+#[test]
+fn rb_1449_syn126_quoted_digits_exact() {
+    let src = "case_0126_08 = \"01\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0126_08"], "01", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the bare twin reads decimal 1 (RB-1442).
+    assert_eq!(eval_json("case_0126_08 = 01\n")["case_0126_08"], 1);
+}
+
+/// RB-1450 — Huge-neg-exp variant: canonical zero (SYN-0126-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0029 (nst JSONTestSuite
+/// i_number_double_huge_neg_exp).
+/// `case_0126_09 = 0` evaluates to integer zero with zero diagnostics and
+/// completes the 126 lineage — the control case every number edge is
+/// measured against: no sign, no fraction, no exponent, no separator.
+#[test]
+fn rb_1450_syn126_canonical_zero() {
+    let src = "case_0126_09 = 0\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0126_09"], 0, "{v}");
+    assert!(!v["case_0126_09"].is_f64(), "must stay int, got {v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: zero beside one — both canonical.
+    let v = eval_json("case_0126_09 = 0\none = 1\n");
+    assert_eq!(v["one"], 1, "{v}");
+}
+
+/// RB-1451 — Huge-exp twin: leading zero reads as plain decimal (SYN-0127-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0030 (nst JSONTestSuite
+/// i_number_huge_exp; same shape as SYN-0126-01).
+/// Converges with RB-1442: `01` evaluates to 1, silently — explicit
+/// decimal, never octal (P1-TI-004 §C).
+#[test]
+fn rb_1451_syn127_leading_zero_decimal() {
+    let src = "case_0127_01 = 01\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0127_01"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the quoted form stays an exact string.
+    assert_eq!(eval_json("case_0127_01 = \"01\"\n")["case_0127_01"], "01");
+}
+
+/// RB-1452 — Huge-exp twin: trailing dot keeps int (SYN-0127-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0030 (nst JSONTestSuite
+/// i_number_huge_exp; same shape as SYN-0126-02).
+/// Converges with RB-1443: `1.` reads as int 1, silently; `1.5` stays float.
+#[test]
+fn rb_1452_syn127_trailing_dot_int() {
+    let src = "case_0127_02 = 1.\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0127_02"], 1, "{v}");
+    assert!(!v["case_0127_02"].is_f64(), "must stay int, got {v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a real fraction stays float.
+    let v = eval_json("case_0127_02 = 1.5\n");
+    assert_eq!(v["case_0127_02"], 1.5, "{v}");
+}
+
+/// RB-1453 — Huge-exp twin: bare exponent rejects (SYN-0127-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0030 (nst JSONTestSuite
+/// i_number_huge_exp; same shape as SYN-0126-03).
+/// Converges with RB-1444: E002 Error at (1:17) — no exponent production.
+#[test]
+fn rb_1453_syn127_bare_exponent_rejects() {
+    let src = "case_0127_03 = 1e\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the plain int evaluates.
+    assert_eq!(eval_json("case_0127_03 = 1\n")["case_0127_03"], 1);
+}
+
+/// RB-1454 — Huge-exp twin: signed bare exponent rejects (SYN-0127-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0030 (nst JSONTestSuite
+/// i_number_huge_exp; same shape as SYN-0126-04).
+/// Converges with RB-1445: E002 Error at (1:17).
+#[test]
+fn rb_1454_syn127_signed_exponent_rejects() {
+    let src = "case_0127_04 = 1e+\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: an explicit sign on an int is fine.
+    assert_eq!(eval_json("case_0127_04 = -1\n")["case_0127_04"], -1);
+}
+
+/// RB-1455 — Huge-exp twin: hex prefix refused (SYN-0127-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0030 (nst JSONTestSuite
+/// i_number_huge_exp; same shape as SYN-0126-05).
+/// Converges with RB-1446: E002 Error at (1:17) — decimal-only grammar.
+#[test]
+fn rb_1455_syn127_hex_rejects() {
+    let src = "case_0127_05 = 0x10\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: plain integers around it evaluate.
+    assert_eq!(eval_json("case_0127_05 = 16\n")["case_0127_05"], 16);
+}
+
+/// RB-1456 — Huge-exp twin: underscore separator canonicalizes (SYN-0127-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0030 (nst JSONTestSuite
+/// i_number_huge_exp; same shape as SYN-0126-06).
+/// Converges with RB-1447: `1_000` evaluates to canonical 1000, silently
+/// (P1-TI-009 §C).
+#[test]
+fn rb_1456_syn127_underscore_canonical() {
+    let src = "case_0127_06 = 1_000\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0127_06"], 1000, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the unseparated twin agrees.
+    assert_eq!(eval_json("case_0127_06 = 1000\n")["case_0127_06"], 1000);
+}
+
+/// RB-1457 — Huge-exp twin: giant exponent rejects, never infinity (SYN-0127-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0030 (nst JSONTestSuite
+/// i_number_huge_exp; same shape as SYN-0126-07).
+/// Converges with RB-1448: E002 Error at (1:17) — no exponent production,
+/// no overflow path, no silent infinity.
+#[test]
+fn rb_1457_syn127_giant_exponent_rejects() {
+    let src = "case_0127_07 = 1e1000000\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: a big plain int evaluates exactly.
+    assert_eq!(
+        eval_json("case_0127_07 = 1000000\n")["case_0127_07"],
+        1000000
+    );
+}
+
+/// RB-1458 — Huge-exp twin: quoted digits stay a string (SYN-0127-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0030 (nst JSONTestSuite
+/// i_number_huge_exp; same shape as SYN-0126-08).
+/// Converges with RB-1449: `"01"` is the exact string "01", silently —
+/// quoting preserves digit-looking spellings without numeric coercion.
+#[test]
+fn rb_1458_syn127_quoted_digits_exact() {
+    let src = "case_0127_08 = \"01\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0127_08"], "01", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the bare twin reads decimal 1.
+    assert_eq!(eval_json("case_0127_08 = 01\n")["case_0127_08"], 1);
+}

@@ -5574,6 +5574,184 @@ fn rb_318_empty_file_evaluates() {
     assert!(diags.is_empty(), "{diags:?}");
 }
 
+/// RB-319 — Derived variant: no implicit null (SYN-0001-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0001 (toml-test double-comma-01).
+/// A doubled comma cannot create an implicit null: the value is
+/// exactly `[1, 2]` — two elements, no nulls — with announced H002.
+#[test]
+fn rb_319_syn_no_implicit_null() {
+    let src = "case_0001_01 = [1,,2]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0001_01"], serde_json::json!([1, 2]));
+    assert_eq!(v["case_0001_01"].as_array().expect("array").len(), 2);
+    assert!(
+        !v["case_0001_01"]
+            .as_array()
+            .expect("array")
+            .iter()
+            .any(|e| e.is_null()),
+        "{v}"
+    );
+    let codes = codes_of(src);
+    assert!(
+        codes.iter().any(|c| c == "H002"),
+        "H002 expected, got {codes:?}"
+    );
+}
+
+/// RB-320 — Derived variant: no silent merge (SYN-0001-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0001 (toml-test double-comma-01).
+/// Adjacent values are not merged: `[1 2]` heals H003 to two
+/// distinct elements — never one merged value, never silent.
+#[test]
+fn rb_320_syn_no_silent_merge() {
+    let src = "case_0001_02 = [1 2]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0001_02"], serde_json::json!([1, 2]));
+    let codes = codes_of(src);
+    assert!(
+        codes.iter().any(|c| c == "H003"),
+        "H003 expected, got {codes:?}"
+    );
+}
+
+/// RB-321 — Derived variant: comma is not a value (SYN-0001-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0001 (toml-test double-comma-01).
+/// `[,]` heals to the empty array — a comma never stands in for a
+/// value, and no placeholder is synthesized.
+#[test]
+fn rb_321_syn_comma_not_value() {
+    let src = "case_0001_03 = [,]\n";
+    assert_eq!(eval_json(src)["case_0001_03"], serde_json::json!([]));
+    let codes = codes_of(src);
+    assert!(
+        codes.iter().any(|c| c == "H002"),
+        "H002 expected, got {codes:?}"
+    );
+    // Positive control: the element-carrying twin keeps its value.
+    assert_eq!(
+        eval_json("case_0001_03 = [1]\n")["case_0001_03"],
+        serde_json::json!([1])
+    );
+}
+
+/// RB-322 — Derived variant: trailing-comma policy (SYN-0001-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0001 (toml-test double-comma-01).
+/// Trailing commas are explicitly allowed (RB-004/RB-216): `[1,]`
+/// heals H002 at 1:18 — one policy across every array spelling.
+#[test]
+fn rb_322_syn_trailing_policy_locked() {
+    let src = "case_0001_04 = [1,]\n";
+    assert_eq!(eval_json(src)["case_0001_04"], serde_json::json!([1]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+}
+
+/// RB-323 — Derived variant: positive control (SYN-0001-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0001 (toml-test double-comma-01).
+/// The clean three-element array proves the failure is
+/// separator-specific: exact value, zero diagnostics.
+#[test]
+fn rb_323_syn_positive_control() {
+    let src = "case_0001_05 = [1, 2, 3]\n";
+    assert_eq!(eval_json(src)["case_0001_05"], serde_json::json!([1, 2, 3]));
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-324 — Derived variant: empty collection valid (SYN-0001-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0001 (toml-test double-comma-01).
+/// No schema forbids it here: `[]` evaluates silently.
+#[test]
+fn rb_324_syn_empty_valid() {
+    assert_eq!(
+        eval_json("case_0001_06 = []\n")["case_0001_06"],
+        serde_json::json!([])
+    );
+    let codes = codes_of("case_0001_06 = []\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-325 — Derived variant: nested delimiters match (SYN-0001-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0001 (toml-test double-comma-01).
+/// Nested collections evaluate exactly when every delimiter matches.
+#[test]
+fn rb_325_syn_nested_match() {
+    let src = "case_0001_07 = [[1], [2, 3]]\n";
+    assert_eq!(
+        eval_json(src)["case_0001_07"],
+        serde_json::json!([[1], [2, 3]])
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-326 — Derived variant: heterogeneous arrays parse (SYN-0001-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0001 (toml-test double-comma-01).
+/// Parser and schema agree by separation of concerns: the parser
+/// accepts mixed arrays (no parse error); any element restriction
+/// would surface as schema validation, never a parse surprise.
+#[test]
+fn rb_326_syn_hetero_parses() {
+    let src = "case_0001_08 = [1, { name = \"x\" }]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0001_08"], serde_json::json!([1, {"name": "x"}]));
+    let codes = codes_of(src);
+    assert!(
+        !codes.iter().any(|c| c.starts_with('E')),
+        "no error class expected, got {codes:?}"
+    );
+}
+
+/// RB-327 — Derived variant: EOF span (SYN-0001-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0001 (toml-test double-comma-01).
+/// "Opening bracket or EOF": shipped policy points at EOF — E001 at
+/// 2:1 for the unterminated array, deterministic across spellings.
+#[test]
+fn rb_327_syn_eof_span() {
+    let src = "case_0001_09 = [1, 2\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    assert!(
+        diags.iter().any(|d| d.code == "E001"),
+        "E001 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: the closed twin evaluates.
+    assert_eq!(
+        eval_json("case_0001_09 = [1, 2]\n")["case_0001_09"],
+        serde_json::json!([1, 2])
+    );
+}
+
+/// RB-328 — Derived variant 02 twin (SYN-0002-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0002 (toml-test double-comma-02).
+/// Same locked H002 policy under the 02 lineage: `[1,,2]` heals at
+/// 1:19 with no implicit null — both upstream twins converge.
+#[test]
+fn rb_328_syn_twin_converges() {
+    let src = "case_0002_01 = [1,,2]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0002_01"], serde_json::json!([1, 2]));
+    assert!(
+        !v["case_0002_01"]
+            .as_array()
+            .expect("array")
+            .iter()
+            .any(|e| e.is_null()),
+        "{v}"
+    );
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 19), "{span:?}");
+}
+
 /// RB-299 — yaml-cpp flow-stack analogue (SRC-CVE-0006 §H, CRITICAL).
 /// Origin: NVD CVE-2019-6285.
 /// Bounded generator: 400 balanced nested arrays trip E004 with span

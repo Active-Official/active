@@ -32320,3 +32320,221 @@ fn rb_1458_syn127_quoted_digits_exact() {
     // Positive control: the bare twin reads decimal 1.
     assert_eq!(eval_json("case_0127_08 = 01\n")["case_0127_08"], 1);
 }
+
+/// RB-1459 — Huge-exp twin: canonical zero (SYN-0127-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0030 (nst JSONTestSuite
+/// i_number_huge_exp; same shape as SYN-0126-09).
+/// Converges with RB-1450 and completes the 127 lineage: `0` evaluates to
+/// integer zero, silently — the control every number edge is measured
+/// against.
+#[test]
+fn rb_1459_syn127_canonical_zero() {
+    let src = "case_0127_09 = 0\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0127_09"], 0, "{v}");
+    assert!(!v["case_0127_09"].is_f64(), "must stay int, got {v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: zero beside one — both canonical.
+    let v = eval_json("case_0127_09 = 0\none = 1\n");
+    assert_eq!(v["one"], 1, "{v}");
+}
+
+/// RB-1460 — Object-with-comment variant: quoted key rejects (SYN-0128-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0031 (nst JSONTestSuite
+/// n_structure_object_with_comment).
+/// `case_0128_01 = { "a" 1 }` fails E001 Error at (1:18) — keys are
+/// identifiers, so a quoted form is rejected before any pair can form.
+/// Opens the 128 lineage converging with the 112/113/114/115 table rhythm
+/// at equal key width.
+#[test]
+fn rb_1460_syn128_quoted_key_rejects() {
+    let src = "case_0128_01 = { \"a\" 1 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the bare pair evaluates silently.
+    let v = eval_json("case_0128_01 = { a = 1 }\n");
+    assert_eq!(v["case_0128_01"]["a"], 1, "{v}");
+    assert!(codes_of("case_0128_01 = { a = 1 }\n").is_empty());
+}
+
+/// RB-1461 — Object-with-comment variant: keyless pair rejects (SYN-0128-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0031 (nst JSONTestSuite
+/// n_structure_object_with_comment).
+/// `case_0128_02 = { = 1 }` fails E001 Error at (1:18) — a pair needs an
+/// identifier key. Converges with RB-1344 at equal key width.
+#[test]
+fn rb_1461_syn128_missing_key_rejects() {
+    let src = "case_0128_02 = { = 1 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the keyed table evaluates silently.
+    let v = eval_json("case_0128_02 = { a = 1 }\n");
+    assert_eq!(v["case_0128_02"]["a"], 1, "{v}");
+    assert!(codes_of("case_0128_02 = { a = 1 }\n").is_empty());
+}
+
+/// RB-1462 — Object-with-comment variant: trailing comma heals in tables (SYN-0128-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0031 (nst JSONTestSuite
+/// n_structure_object_with_comment).
+/// `case_0128_03 = { a = 1, }` heals H002 Info at (1:23) — the locked
+/// stray-comma policy covers brace tables (RB-004). Converges with RB-1345.
+#[test]
+fn rb_1462_syn128_table_trailing_comma_heals() {
+    let src = "case_0128_03 = { a = 1, }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0128_03"]["a"], 1, "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H002 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 23), "{span:?}");
+    // Positive control: the comma-free table carries no heal.
+    assert!(codes_of("case_0128_03 = { a = 1 }\n").is_empty());
+}
+
+/// RB-1463 — Object-with-comment variant: trailing garbage rejects (SYN-0128-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0031 (nst JSONTestSuite
+/// n_structure_object_with_comment).
+/// `case_0128_04 = { a = 1 } trailing` fails E002 Error at (1:26) — a
+/// complete value followed by a stray token is loud, never truncated.
+/// Converges with RB-1346.
+#[test]
+fn rb_1463_syn128_trailing_garbage_rejects() {
+    let src = "case_0128_04 = { a = 1 } trailing\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 26), "{span:?}");
+    // Positive control: the garbage-free table evaluates silently.
+    let v = eval_json("case_0128_04 = { a = 1 }\n");
+    assert_eq!(v["case_0128_04"]["a"], 1, "{v}");
+    assert!(codes_of("case_0128_04 = { a = 1 }\n").is_empty());
+}
+
+/// RB-1464 — Object-with-comment variant: quoted dups reject before colliding (SYN-0128-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0031 (nst JSONTestSuite
+/// n_structure_object_with_comment).
+/// `{ "a" = 1, "a" = 2 }` fails E001 Error at (1:18) — the FIRST quoted
+/// form is rejected before any duplicate-key question arises. Converges
+/// with RB-1347.
+#[test]
+fn rb_1464_syn128_quoted_dup_rejects() {
+    let src = "case_0128_05 = { \"a\" = 1, \"a\" = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: bare dups announce W011 last-wins instead.
+    let codes = codes_of("case_0128_05 = { a = 1, a = 2 }\n");
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}
+
+/// RB-1465 — Object-with-comment variant: empty quoted key rejects (SYN-0128-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0031 (nst JSONTestSuite
+/// n_structure_object_with_comment).
+/// `{ "" = 1 }` fails E001 Error at (1:18) — empty keys are refused, never
+/// defaulted. Converges with RB-1348.
+#[test]
+fn rb_1465_syn128_empty_key_rejects() {
+    let src = "case_0128_06 = { \"\" = 1 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: a non-empty bare key evaluates silently.
+    let v = eval_json("case_0128_06 = { a = 1 }\n");
+    assert_eq!(v["case_0128_06"]["a"], 1, "{v}");
+    assert!(codes_of("case_0128_06 = { a = 1 }\n").is_empty());
+}
+
+/// RB-1466 — Object-with-comment variant: clean one-field map accepts (SYN-0128-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0031 (nst JSONTestSuite
+/// n_structure_object_with_comment).
+/// `{ a = 1 }` is the lineage's positive control: one bare key, one value,
+/// zero diagnostics. Converges with RB-1349.
+#[test]
+fn rb_1466_syn128_clean_table_accepts() {
+    let src = "case_0128_07 = { a = 1 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0128_07"]["a"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the block-form twin means the same silently.
+    let v = eval_json("[case_0128_07]\na = 1\n");
+    assert_eq!(v["case_0128_07"]["a"], 1, "{v}");
+    assert!(codes_of("[case_0128_07]\na = 1\n").is_empty());
+}
+
+/// RB-1467 — Object-with-comment variant: nested map accepts (SYN-0128-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0031 (nst JSONTestSuite
+/// n_structure_object_with_comment).
+/// `{ a = { b = 1 } }` accepts silently — the brace stack closes at the
+/// correct levels. Converges with RB-1350.
+#[test]
+fn rb_1467_syn128_nested_table_accepts() {
+    let src = "case_0128_08 = { a = { b = 1 } }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0128_08"]["a"]["b"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the flat neighbour evaluates identically at depth 1.
+    let v = eval_json("case_0128_08 = { b = 1 }\n");
+    assert_eq!(v["case_0128_08"]["b"], 1, "{v}");
+}
+
+/// RB-1468 — Object-with-comment variant: trailing comment is inert (SYN-0128-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0031 (nst JSONTestSuite
+/// n_structure_object_with_comment).
+/// `{ a = 1, b = 2 } # trailing comment` accepts silently — comment
+/// handling never touches member separators or values. Converges with
+/// RB-1351.
+#[test]
+fn rb_1468_syn128_trailing_comment_inert() {
+    let src = "case_0128_09 = { a = 1, b = 2 } # trailing comment\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0128_09"]["a"], 1, "{v}");
+    assert_eq!(v["case_0128_09"]["b"], 2, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a leading full-line comment is equally inert.
+    let v = eval_json("# leading comment\ncase_0128_09 = { a = 1, b = 2 }\n");
+    assert_eq!(v["case_0128_09"]["b"], 2, "{v}");
+    assert!(codes_of("# leading comment\ncase_0128_09 = { a = 1, b = 2 }\n").is_empty());
+}

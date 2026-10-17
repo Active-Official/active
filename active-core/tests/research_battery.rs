@@ -32768,3 +32768,219 @@ fn rb_1478_syn130_bare_yes_never_bool() {
     // Positive control: reserved `true` stays bool (exact-token policy).
     assert_eq!(eval_json("case_0130_01 = true\n")["case_0130_01"], true);
 }
+
+/// RB-1479 — Norway twin: bare `no` never becomes bool (SYN-0130-02 §H, HIGH).
+/// Origin: synthetic variation of the Norway implicit-typing report.
+/// REFUSAL (spec-gated, P1-TI-002 §C, converges with RB-1478): `no` warns
+/// W001 Warning at (1:16) and reads null — country-code and feature-flag
+/// strings are protected by refusing implicit boolean resolution outright,
+/// not by resolving to a different type.
+#[test]
+fn rb_1479_syn130_bare_no_never_bool() {
+    let src = "case_0130_02 = no\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0130_02"], serde_json::Value::Null, "{v}");
+    assert!(!v["case_0130_02"].is_boolean(), "must never be bool: {v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: the quoted spelling IS the exact string, silently.
+    let v = eval_json("case_0130_02 = \"no\"\n");
+    assert_eq!(v["case_0130_02"], "no", "{v}");
+    assert!(codes_of("case_0130_02 = \"no\"\n").is_empty());
+}
+
+/// RB-1480 — Norway twin: bare `on` never becomes bool (SYN-0130-03 §H, HIGH).
+/// Origin: synthetic variation of the Norway implicit-typing report.
+/// REFUSAL (spec-gated, P1-TI-002 §C, converges with RB-1479): legacy YAML
+/// resolver spellings never silently become booleans — `on` warns W001 at
+/// (1:16) and reads null.
+#[test]
+fn rb_1480_syn130_bare_on_never_bool() {
+    let src = "case_0130_03 = on\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0130_03"], serde_json::Value::Null, "{v}");
+    assert!(!v["case_0130_03"].is_boolean(), "must never be bool: {v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: the quoted spelling IS the exact string, silently.
+    let v = eval_json("case_0130_03 = \"on\"\n");
+    assert_eq!(v["case_0130_03"], "on", "{v}");
+    assert!(codes_of("case_0130_03 = \"on\"\n").is_empty());
+}
+
+/// RB-1481 — Norway twin: bare `off` never becomes bool (SYN-0130-04 §H, HIGH).
+/// Origin: synthetic variation of the Norway implicit-typing report.
+/// REFUSAL (spec-gated, P1-TI-002 §C, converges with RB-1479/1480): `off`
+/// warns W001 at (1:16) and reads null.
+#[test]
+fn rb_1481_syn130_bare_off_never_bool() {
+    let src = "case_0130_04 = off\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0130_04"], serde_json::Value::Null, "{v}");
+    assert!(!v["case_0130_04"].is_boolean(), "must never be bool: {v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: the quoted spelling IS the exact string, silently.
+    let v = eval_json("case_0130_04 = \"off\"\n");
+    assert_eq!(v["case_0130_04"], "off", "{v}");
+    assert!(codes_of("case_0130_04 = \"off\"\n").is_empty());
+}
+
+/// RB-1482 — Norway twin: reserved `true` stays bool (SYN-0130-05 §H, HIGH).
+/// Origin: synthetic variation of the Norway implicit-typing report.
+/// `case_0130_05 = true` evaluates to boolean true with zero diagnostics —
+/// the positive control for the reserved boolean literal: exact lowercase
+/// token, exact type. (Capitals are a different test: RB-1483.)
+#[test]
+fn rb_1482_syn130_reserved_true_bool() {
+    let src = "case_0130_05 = true\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0130_05"], true, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: reserved `false` is bool false, silently.
+    assert_eq!(eval_json("case_0130_05 = false\n")["case_0130_05"], false);
+}
+
+/// RB-1483 — Norway twin: noncanonical `FALSE` is unresolved (SYN-0130-06 §H, HIGH).
+/// Origin: synthetic variation of the Norway implicit-typing report.
+/// `case_0130_06 = FALSE` warns W001 Warning at (1:16) and reads null —
+/// only documented tokens carry boolean type (exact-token policy P1-TI-006
+/// §C, RB-106). The catalogue's "reject as noncanonical literal per
+/// declared bare-token grammar" arm holds as announce-and-null.
+#[test]
+fn rb_1483_syn130_uppercase_false_unresolved() {
+    let src = "case_0130_06 = FALSE\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0130_06"], serde_json::Value::Null, "{v}");
+    assert!(!v["case_0130_06"].is_boolean(), "must never be bool: {v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: lowercase `false` is bool, silently.
+    assert_eq!(eval_json("case_0130_06 = false\n")["case_0130_06"], false);
+}
+
+/// RB-1484 — Norway twin: reserved `null` is null (SYN-0130-07 §H, HIGH).
+/// Origin: synthetic variation of the Norway implicit-typing report.
+/// `case_0130_07 = null` evaluates to null with zero diagnostics — `null`
+/// IS reserved by Active, so the catalogue's accept arm holds exactly.
+/// (Case variants like `NULL` stay unresolved per the exact-token policy.)
+#[test]
+fn rb_1484_syn130_reserved_null() {
+    let src = "case_0130_07 = null\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0130_07"], serde_json::Value::Null, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the quoted spelling is a two-sided string.
+    assert_eq!(
+        eval_json("case_0130_07 = \"null\"\n")["case_0130_07"],
+        "null"
+    );
+}
+
+/// RB-1485 — Norway twin: quoting preserves literal text (SYN-0130-08 §H, HIGH).
+/// Origin: synthetic variation of the Norway implicit-typing report.
+/// `case_0130_08 = "no"` evaluates to the exact string "no" with zero
+/// diagnostics — quoting reliably preserves literal text, the safe harbor
+/// every bare-word refusal points at.
+#[test]
+fn rb_1485_syn130_quoted_no_exact() {
+    let src = "case_0130_08 = \"no\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0130_08"], "no", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the bare twin is null, never the string (RB-1479).
+    assert_eq!(
+        eval_json("case_0130_08 = no\n")["case_0130_08"],
+        serde_json::Value::Null
+    );
+}
+
+/// RB-1486 — Norway twin: numbers are never booleans (SYN-0130-09 §H, HIGH).
+/// Origin: synthetic variation of the Norway implicit-typing report.
+/// `case_0130_09 = 1.0` evaluates to float 1.0 with zero diagnostics — the
+/// scalar resolver never treats numbers as booleans (P1-TI-008 §C, RB-017:
+/// int vs float stay distinct, intent kept).
+#[test]
+fn rb_1486_syn130_float_never_bool() {
+    let src = "case_0130_09 = 1.0\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0130_09"], 1.0, "{v}");
+    assert!(v["case_0130_09"].is_f64(), "must stay float, got {v}");
+    assert!(!v["case_0130_09"].is_boolean(), "must never be bool: {v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: int 1 beside it stays int.
+    let v = eval_json("case_0130_09 = 1\n");
+    assert_eq!(v["case_0130_09"], 1, "{v}");
+    assert!(!v["case_0130_09"].is_f64(), "must stay int, got {v}");
+}
+
+/// RB-1487 — Anchor variant: baseline scalar parses (SYN-0131-01 §H, MEDIUM).
+/// Origin: synthetic variation of the "Colon in anchor accepted" report.
+/// Two plain assignments evaluate silently to integer 1 each — the baseline
+/// the anchor family measures against. (The fixture carries no colon; the
+/// colon-pair policy it names is DERIVED-0001/RB-001 territory, already
+/// pinned: same-line `identifier ":" value` is a specified pair.)
+#[test]
+fn rb_1487_syn131_baseline_scalars_accept() {
+    let src = "case_0131_01 = 1\nprobe_3131 = 1\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0131_01"], 1, "{v}");
+    assert_eq!(v["probe_3131"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a second pair coexists silently.
+    let v = eval_json("case_0131_01 = 1\nprobe_3131 = 1\nextra = 2\n");
+    assert_eq!(v["extra"], 2, "{v}");
+}
+
+/// RB-1488 — Anchor variant: nested values keep independent scopes (SYN-0131-02 §H, MEDIUM).
+/// Origin: synthetic variation of the "Colon in anchor accepted" report.
+/// `probe_3131 = { nested = 1 }` beside the scalar evaluates silently —
+/// nested values keep independent scopes, one integer each, no
+/// cross-contamination between the flat key and the table.
+#[test]
+fn rb_1488_syn131_nested_scopes_accept() {
+    let src = "case_0131_02 = 1\nprobe_3131 = { nested = 1 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0131_02"], 1, "{v}");
+    assert_eq!(v["probe_3131"]["nested"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the flat twin of the nested table agrees at depth 1.
+    let v = eval_json("case_0131_02 = 1\nprobe_3131 = 1\n");
+    assert_eq!(v["probe_3131"], 1, "{v}");
+}

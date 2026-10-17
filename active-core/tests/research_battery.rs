@@ -30265,3 +30265,233 @@ fn rb_1368_syn117_escaped_vs_raw_nul() {
     let span = e.span.clone().expect("E005 carries a span");
     assert_eq!((span.line, span.column), (1, 6), "{span:?}");
 }
+
+/// RB-1369 — Invalid-unicode-escape twin: interpolation and literals never confused (SYN-0117-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_invalid_unicode_escape; same shape as SYN-0116-09).
+/// Converges with RB-1360 and completes the 117 lineage: `"${literal}"`
+/// interpolates to the text "null" with W001 Warning at (1:19)
+/// (spec/grammar.md:72-73, DERIVED-0002); `"literal"` stays exact; a
+/// resolved `let` interpolates to its value.
+#[test]
+fn rb_1369_syn117_interpolation_vs_literal() {
+    let src = "case_0117_09 = \"${literal}\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0117_09"], "null", "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 19), "{span:?}");
+    // Positive control: the literal spelling stays exact and silent.
+    let v = eval_json("case_0117_09 = \"literal\"\n");
+    assert_eq!(v["case_0117_09"], "literal", "{v}");
+    assert!(codes_of("case_0117_09 = \"literal\"\n").is_empty());
+    // Positive control: a resolved name interpolates to its value.
+    let v = eval_json("let who = \"hi\"\ncase_0117_09 = \"yo ${who}\"\n");
+    assert_eq!(v["case_0117_09"], "yo hi", "{v}");
+}
+
+/// RB-1370 — Unescaped-newline twin: dangling backslash heals (SYN-0118-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_unescaped_newline; same shape as SYN-0116-01/0117-01, third
+/// parent fixture).
+/// Converges with RB-1352/RB-1361: `\"` is a specified escape
+/// (spec/grammar.md:62-64), the string is unterminated, and the locked H001
+/// policy heals it with an Info repair at (1:16). Three parents, one
+/// deterministic behavior.
+#[test]
+fn rb_1370_syn118_dangling_backslash_heals() {
+    let src = "case_0118_01 = \"dangling\\\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0118_01"], "dangling\"\n", "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H001").expect("H001");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H001 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: a closed string needs no heal.
+    let v = eval_json("case_0118_01 = \"done\"\n");
+    assert_eq!(v["case_0118_01"], "done", "{v}");
+    assert!(codes_of("case_0118_01 = \"done\"\n").is_empty());
+}
+
+/// RB-1371 — Unescaped-newline twin: lone-surrogate escape stays verbatim (SYN-0118-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_unescaped_newline; same shape as SYN-0116-02/0117-02).
+/// REFUSAL (spec-gated, spec/grammar.md:62-66, RB-050, converges with
+/// RB-1353/RB-1362): no UTF-16 decoding was ever adopted, so `"\uD800"`
+/// keeps its exact six characters silently.
+#[test]
+fn rb_1371_syn118_lone_surrogate_verbatim() {
+    let src = "case_0118_02 = \"\\uD800\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0118_02"], "\\uD800", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a plain ASCII string is exact and silent too.
+    let v = eval_json("case_0118_02 = \"plain\"\n");
+    assert_eq!(v["case_0118_02"], "plain", "{v}");
+}
+
+/// RB-1372 — Unescaped-newline twin: scalar `\u` escape never decodes (SYN-0118-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_unescaped_newline; same shape as SYN-0116-03/0117-03).
+/// REFUSAL (spec-gated, spec/grammar.md:62-66, RB-050, converges with
+/// RB-1354/RB-1363): the exact six characters `\u0061` persist silently,
+/// never "a".
+#[test]
+fn rb_1372_syn118_scalar_escape_never_decodes() {
+    let src = "case_0118_03 = \"\\u0061\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0118_03"], "\\u0061", "{v}");
+    assert_ne!(v["case_0118_03"], "a", "must NOT decode to a: {v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the literal letter evaluates to itself.
+    let v = eval_json("case_0118_03 = \"a\"\n");
+    assert_eq!(v["case_0118_03"], "a", "{v}");
+}
+
+/// RB-1373 — Unescaped-newline twin: `\n` decodes to one LF (SYN-0118-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_unescaped_newline; same shape as SYN-0116-04/0117-04).
+/// Converges with RB-1355/RB-1364: `\n` is specified
+/// (spec/grammar.md:62-64) — one LF, silent, stream never splits.
+#[test]
+fn rb_1373_syn118_escaped_newline_decodes() {
+    let src = "case_0118_04 = \"line1\\nline2\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0118_04"], "line1\nline2", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the sibling specified escape `\t` decodes to TAB.
+    let v = eval_json("case_0118_04 = \"a\\tb\"\n");
+    assert_eq!(v["case_0118_04"], "a\tb", "{v}");
+}
+
+/// RB-1374 — Unescaped-newline twin: raw newline inside quotes is kept (SYN-0118-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_unescaped_newline; same shape as SYN-0116-05/0117-05).
+/// REFUSAL (spec-gated, spec/grammar.md:58-62, RB-175, converges with
+/// RB-1356/RB-1365): the raw LF is deterministic content, kept silently, and
+/// agrees with the `\n` twin — the parent fixture's own namesake behaves.
+#[test]
+fn rb_1374_syn118_raw_newline_kept() {
+    let src = "case_0118_05 = \"line1\nline2\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0118_05"], "line1\nline2", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Twin convergence: raw LF and escaped `\n` spell the same value.
+    let twin = eval_json("case_0118_05 = \"line1\\nline2\"\n");
+    assert_eq!(v["case_0118_05"], twin["case_0118_05"], "{v} vs {twin}");
+}
+
+/// RB-1375 — Unescaped-newline twin: `\x` escape stays verbatim (SYN-0118-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_unescaped_newline; same shape as SYN-0116-06/0117-06).
+/// REFUSAL (spec-gated, spec/grammar.md:62-66, RB-050, converges with
+/// RB-1357/RB-1366): the escape union is refused — `\x41` persists exactly,
+/// silently, never "A".
+#[test]
+fn rb_1375_syn118_hex_escape_verbatim() {
+    let src = "case_0118_06 = \"\\x41\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0118_06"], "\\x41", "{v}");
+    assert_ne!(v["case_0118_06"], "A", "must NOT decode to A: {v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the explicit letter is the way to spell "A".
+    let v = eval_json("case_0118_06 = \"A\"\n");
+    assert_eq!(v["case_0118_06"], "A", "{v}");
+}
+
+/// RB-1376 — Unescaped-newline twin: supplementary-plane and combining marks exact (SYN-0118-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_unescaped_newline; same shape as SYN-0116-07/0117-07).
+/// Converges with RB-1358/RB-1367: U+1F600 + `e` + U+0301, three scalars,
+/// seven bytes, no normalization; precomposed U+00E9 stays different.
+#[test]
+fn rb_1376_syn118_emoji_combining_exact() {
+    let src = "case_0118_07 = \"\u{1F600}e\u{301}\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0118_07"], "\u{1F600}e\u{301}", "{v}");
+    assert_eq!(
+        v["case_0118_07"].as_str().expect("string").chars().count(),
+        3,
+        "{v}"
+    );
+    assert_eq!(v["case_0118_07"].as_str().expect("string").len(), 7, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: precomposed U+00E9 is a different value (no NFC).
+    let pre = eval_json("case_0118_07 = \"\u{e9}\"\n");
+    assert_ne!(v["case_0118_07"], pre["case_0118_07"], "{v} vs {pre}");
+}
+
+/// RB-1377 — Unescaped-newline twin: escaped data vs raw NUL bytes (SYN-0118-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_unescaped_newline; same shape as SYN-0116-08/0117-08).
+/// Converges with RB-1359/RB-1368: `"\u0000"` verbatim, `"\0"` one real
+/// NUL, raw NUL in-string kept, raw NUL outside strings E005 Error at (1:6).
+#[test]
+fn rb_1377_syn118_escaped_vs_raw_nul() {
+    let v = eval_json("case_0118_08 = \"\\u0000\"\n");
+    assert_eq!(v["case_0118_08"], "\\u0000", "{v}");
+    assert!(codes_of("case_0118_08 = \"\\u0000\"\n").is_empty());
+    let v = eval_json("case_0118_08 = \"a\\0b\"\n");
+    assert_eq!(v["case_0118_08"], "a\0b", "{v}");
+    assert!(codes_of("case_0118_08 = \"a\\0b\"\n").is_empty());
+    let v = eval_json("case_0118_08 = \"a\0b\"\n");
+    assert_eq!(v["case_0118_08"], "a\0b", "{v}");
+    assert!(codes_of("case_0118_08 = \"a\0b\"\n").is_empty());
+    // Positive control (negative neighbour): raw NUL outside strings is E005.
+    let diags = parse("v = 1\0\n", "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 6), "{span:?}");
+}
+
+/// RB-1378 — Unescaped-newline twin: interpolation and literals never confused (SYN-0118-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_unescaped_newline; same shape as SYN-0116-09/0117-09).
+/// Converges with RB-1360/RB-1369 and completes the 118 lineage:
+/// `"${literal}"` interpolates to "null" + W001 Warning at (1:19);
+/// `"literal"` stays exact; a resolved `let` interpolates.
+#[test]
+fn rb_1378_syn118_interpolation_vs_literal() {
+    let src = "case_0118_09 = \"${literal}\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0118_09"], "null", "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 19), "{span:?}");
+    // Positive control: the literal spelling stays exact and silent.
+    let v = eval_json("case_0118_09 = \"literal\"\n");
+    assert_eq!(v["case_0118_09"], "literal", "{v}");
+    assert!(codes_of("case_0118_09 = \"literal\"\n").is_empty());
+    // Positive control: a resolved name interpolates to its value.
+    let v = eval_json("let who = \"hi\"\ncase_0118_09 = \"yo ${who}\"\n");
+    assert_eq!(v["case_0118_09"], "yo hi", "{v}");
+}

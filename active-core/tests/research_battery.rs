@@ -5915,6 +5915,198 @@ fn rb_338_syn_patch_typechecks_first() {
     assert_eq!(eval_json("items = []\n")["items"], serde_json::json!([]));
 }
 
+/// RB-339 — Derived variant: array identity vs map keys (SYN-0003-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0003 (toml-test extend-defined-aot).
+/// The naive index-patch transliteration is rejected (E019) — array
+/// elements are not addressable that way — while the explicit
+/// table-path call overlays deterministically (control).
+#[test]
+fn rb_339_syn_array_identity_explicit() {
+    let src = "items = [{ name = \"apple\" }]\n@patch items[0] { color = \"red\" }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    assert!(
+        diags.iter().any(|d| d.code == "E019"),
+        "E019 expected, got {diags:?}"
+    );
+    // Positive control: the explicit table-path call overlays.
+    let v = eval_json("t = { a = 1 }\n@patch(\"t.b\", 2)\n");
+    assert_eq!(v["t"]["b"], 2);
+    assert_eq!(v["t"]["a"], 1);
+}
+
+/// RB-340 — Derived variant: map/scalar conflict impossible (SYN-0003-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0003 (toml-test extend-defined-aot).
+/// Dotted assignment has no grammar (RB-306): E002 with Error
+/// severity at 2:1 — a path can never be map and scalar at once.
+#[test]
+fn rb_340_syn_path_conflict_error() {
+    let src = "fruit = { apple = { color = \"red\" } }\nfruit.apple = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: the table alone evaluates.
+    let v = eval_json("fruit = { apple = { color = \"red\" } }\n");
+    assert_eq!(v["fruit"]["apple"]["color"], "red");
+}
+
+/// RB-341 — Derived variant: update vs duplicate (SYN-0003-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0003 (toml-test extend-defined-aot).
+/// The naive update transliteration is rejected (E019) — while the
+/// explicit call updates to exactly 2 with zero diagnostics,
+/// visibly distinct from a duplicate declaration (W011).
+#[test]
+fn rb_341_syn_update_distinct_silent() {
+    let src = "fruit = { apple = 1 }\n@patch fruit { apple = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    assert!(
+        diags.iter().any(|d| d.code == "E019"),
+        "E019 expected, got {diags:?}"
+    );
+    let v = eval_json("fruit = { apple = 1 }\n@patch(\"fruit.apple\", 2)\n");
+    assert_eq!(v["fruit"]["apple"], 2);
+    let module = parse(
+        "fruit = { apple = 1 }\n@patch(\"fruit.apple\", 2)\n",
+        "research",
+    )
+    .expect("must parse");
+    let (_, d) = Engine::new().evaluate(&module).expect("must evaluate");
+    assert!(d.is_empty(), "{d:?}");
+}
+
+/// RB-342 — Derived variant: structural removal (SYN-0003-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0003 (toml-test extend-defined-aot).
+/// The naive removal transliteration is rejected (E019 at 2:2) —
+/// while the explicit call removes structurally: key absent after.
+#[test]
+fn rb_342_syn_removal_structural() {
+    let src = "fruit = { apple = 1 }\n@remove fruit.apple\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the explicit call removes the key.
+    let v = eval_json("fruit = { apple = 1 }\n@remove(\"fruit.apple\")\n");
+    assert!(v["fruit"].get("apple").is_none(), "{v}");
+}
+
+/// RB-343 — Derived variant: rename preserves node (SYN-0003-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0003 (toml-test extend-defined-aot).
+/// The naive rename transliteration is rejected (E019 at 2:2) —
+/// while the explicit call renames with value intact: pear=1,
+/// apple absent.
+#[test]
+fn rb_343_syn_rename_preserves() {
+    let src = "fruit = { apple = 1 }\n@rename fruit.apple to pear\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the explicit call renames, value intact.
+    let v = eval_json("fruit = { apple = 1 }\n@rename(\"fruit.apple\", \"pear\")\n");
+    assert_eq!(v["fruit"]["pear"], 1);
+    assert!(v["fruit"].get("apple").is_none(), "{v}");
+}
+
+/// RB-344 — Derived variant: ordered plan deterministic (SYN-0003-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0003 (toml-test extend-defined-aot).
+/// The naive double-rename is rejected (E019) — while two explicit
+/// patches apply in source order: last write (3) wins, stable across
+/// runs.
+#[test]
+fn rb_344_syn_ordered_plan_stable() {
+    let src = "fruit = { apple = 1 }\n@rename fruit.apple to pear\n@rename fruit.pear to apple\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    assert!(
+        diags.iter().any(|d| d.code == "E019"),
+        "E019 expected, got {diags:?}"
+    );
+    let src = "fruit = { apple = 1 }\n@patch(\"fruit.apple\", 2)\n@patch(\"fruit.apple\", 3)\n";
+    assert_eq!(eval_json(src)["fruit"]["apple"], 3);
+    assert_eq!(eval_json(src)["fruit"]["apple"], 3);
+}
+
+/// RB-345 — Derived variant: nested replace contained (SYN-0003-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0003 (toml-test extend-defined-aot).
+/// The naive nested-patch transliteration is rejected (E019) — while
+/// the explicit nested-path call changes only the leaf: siblings
+/// and parents intact.
+#[test]
+fn rb_345_syn_nested_contained() {
+    let src = "fruit = { apple = { color = \"red\" } }\n@patch fruit.apple { color = \"green\" }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    assert!(
+        diags.iter().any(|d| d.code == "E019"),
+        "E019 expected, got {diags:?}"
+    );
+    // Positive control: the explicit leaf call changes only the leaf.
+    let v = eval_json(
+        "fruit = { apple = { color = \"red\", size = 1 } }\n@patch(\"fruit.apple.color\", \"green\")\n",
+    );
+    assert_eq!(v["fruit"]["apple"]["color"], "green");
+    assert_eq!(v["fruit"]["apple"]["size"], 1);
+}
+
+/// RB-346 — Derived variant 04-01: structural redefinition (SYN-0004-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0004 (toml-test extending-table).
+/// Same locked W011 policy, now with span AND severity indexed
+/// together: announced Warning at 2:1, banana wins — never silent.
+#[test]
+fn rb_346_syn04_redefinition_announced() {
+    let src = "fruit = { name = \"apple\" }\nfruit = { name = \"banana\" }\n";
+    assert_eq!(eval_json(src)["fruit"]["name"], "banana");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+}
+
+/// RB-347 — Derived variant 04-02: index patch form (SYN-0004-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0004 (toml-test extending-table).
+/// The naive index form fails E019 at 2:2 — paths type-check before
+/// values move, so no element is invented.
+#[test]
+fn rb_347_syn04_index_form_rejects() {
+    let src = "items = []\n@patch items[0] { name = \"x\" }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the array alone stays exactly empty.
+    assert_eq!(eval_json("items = []\n")["items"], serde_json::json!([]));
+}
+
+/// RB-348 — Derived variant 04-03: element identity (SYN-0004-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0004 (toml-test extending-table).
+/// Same naive index form, array pre-populated: still E019 — element
+/// identity never degrades into map-key addressing.
+#[test]
+fn rb_348_syn04_element_identity_kept() {
+    let src = "items = [{ name = \"apple\" }]\n@patch items[0] { color = \"red\" }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    assert!(
+        diags.iter().any(|d| d.code == "E019"),
+        "E019 expected, got {diags:?}"
+    );
+    // Positive control: the element is intact and addressable by index in reads.
+    let v = eval_json("items = [{ name = \"apple\" }]\nfirst = 0\n");
+    assert_eq!(v["items"][0]["name"], "apple");
+    assert_eq!(v["first"], 0);
+}
+
 /// RB-299 — yaml-cpp flow-stack analogue (SRC-CVE-0006 §H, CRITICAL).
 /// Origin: NVD CVE-2019-6285.
 /// Bounded generator: 400 balanced nested arrays trip E004 with span

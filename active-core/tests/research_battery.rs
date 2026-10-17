@@ -28877,3 +28877,234 @@ fn rb_1308_syn111_trailing_dot_int() {
     let v = eval_json("case_0111_02 = 1.0\n")["case_0111_02"].clone();
     assert!(v.is_f64(), "1.0 must be float, got {v}");
 }
+/// RB-1309 — Leading-zero variant: bare `1e` rejects (SYN-0111-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0016 (nst JSONTestSuite
+/// n_number_with_leading_zero.json).
+/// `case_0111_03 = 1e` fails E002 Error at (1:17) — converges with RB-1300
+/// and the whole bare-exponent lineage: exponent markers need digits because
+/// there is no exponent grammar at all.
+#[test]
+fn rb_1309_syn111_bare_exponent_rejects() {
+    let src = "case_0111_03 = 1e\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    let src = "case_0111_03 = \"1e\"\n";
+    assert_eq!(eval_json(src)["case_0111_03"], "1e");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1310 — Leading-zero variant: signed `1e+` rejects (SYN-0111-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0016 (nst JSONTestSuite
+/// n_number_with_leading_zero.json).
+/// `case_0111_04 = 1e+` fails E002 Error at (1:17) — converges with RB-1301
+/// and the whole signed-exponent lineage: a sign needs digits because there
+/// is no exponent grammar at all.
+#[test]
+fn rb_1310_syn111_signed_exponent_rejects() {
+    let src = "case_0111_04 = 1e+\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    let src = "case_0111_04 = \"1e+\"\n";
+    assert_eq!(eval_json(src)["case_0111_04"], "1e+");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1311 — Leading-zero variant: `0x10` rejects, no hex grammar (SYN-0111-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0016 (nst JSONTestSuite
+/// n_number_with_leading_zero.json).
+/// `case_0111_05 = 0x10` fails E002 Error at (1:17) — converges with RB-1302
+/// and the whole hex lineage: base prefixes are absent from the grammar,
+/// loud reject in every number lineage.
+#[test]
+fn rb_1311_syn111_hex_prefix_rejects() {
+    let src = "case_0111_05 = 0x10\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: decimal 16 needs no prefix.
+    assert_eq!(eval_json("case_0111_05 = 16\n")["case_0111_05"], 16);
+}
+
+/// RB-1312 — Leading-zero variant: `1_000` strips to 1000 (SYN-0111-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0016 (nst JSONTestSuite
+/// n_number_with_leading_zero.json).
+/// `case_0111_06 = 1_000` is int 1000 with zero diagnostics — converges with
+/// RB-1303 and the whole underscore lineage: separators strip, never octal,
+/// never float.
+#[test]
+fn rb_1312_syn111_underscore_strips() {
+    let src = "case_0111_06 = 1_000\n";
+    assert_eq!(eval_json(src)["case_0111_06"], 1000);
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the plain spelling agrees.
+    assert_eq!(eval_json("case_0111_06 = 1000\n")["case_0111_06"], 1000);
+}
+
+/// RB-1313 — Leading-zero variant: giant exponent rejects (SYN-0111-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0016 (nst JSONTestSuite
+/// n_number_with_leading_zero.json).
+/// `case_0111_07 = 1e1000000` fails E002 Error at (1:17) — converges with
+/// RB-1304 and the whole giant-exponent lineage: no exponent grammar at any
+/// magnitude.
+#[test]
+fn rb_1313_syn111_giant_exponent_rejects() {
+    let src = "case_0111_07 = 1e1000000\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: a large plain integer parses.
+    assert_eq!(
+        eval_json("case_0111_07 = 1000000\n")["case_0111_07"],
+        1000000
+    );
+}
+
+/// RB-1314 — Leading-zero variant: quoted digits stay exact (SYN-0111-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0016 (nst JSONTestSuite
+/// n_number_with_leading_zero.json).
+/// `case_0111_08 = "01"` is string "01" with zero diagnostics — converges
+/// with RB-1305 and the whole quoted-digits lineage: quoting preserves
+/// digit-looking text with no numeric coercion.
+#[test]
+fn rb_1314_syn111_quoted_digits_exact() {
+    let src = "case_0111_08 = \"01\"\n";
+    assert_eq!(eval_json(src)["case_0111_08"], "01");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: the bare counterpart is decimal 1, never text.
+    let v = eval_json("case_0111_08 = 01\n")["case_0111_08"].clone();
+    assert_eq!(v, 1, "{v}");
+    assert!(!v.is_string(), "{v}");
+}
+
+/// RB-1315 — Leading-zero variant: canonical zero (SYN-0111-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0016 (nst JSONTestSuite
+/// n_number_with_leading_zero.json).
+/// `case_0111_09 = 0` is int 0 with zero diagnostics — converges with
+/// RB-1306 and the whole canonical-zero lineage: zero needs no policy.
+/// (Completes SYN-0111 lineage.)
+#[test]
+fn rb_1315_syn111_zero_canonical() {
+    let src = "case_0111_09 = 0\n";
+    let v = eval_json(src)["case_0111_09"].clone();
+    assert_eq!(v, 0, "{v}");
+    assert!(!v.is_f64(), "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the zero-prefixed twin strips to 1.
+    assert_eq!(eval_json("case_0111_09 = 01\n")["case_0111_09"], 1);
+}
+
+/// RB-1316 — Missing-colon variant: quoted key rejects before separators (SYN-0112-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0017 (nst JSONTestSuite
+/// n_object_missing_colon).
+/// `case_0112_01 = { "a" 1 }` fails E001 Error at (1:18) — keys are
+/// identifiers, so the quoted form is rejected at the bracket before any
+/// missing-colon question arises (converges with the quoted-never-merges
+/// lineage: RB-904, RB-1003 and every later twin). (Opens SYN-0112 lineage.)
+#[test]
+fn rb_1316_syn112_quoted_never_merges() {
+    let src = "case_0112_01 = { \"a\" 1 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the bare-key table evaluates silently.
+    let codes = codes_of("case_0112_01 = { a = 1 }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1317 — Missing-colon variant: keyless pair rejects (SYN-0112-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0017 (nst JSONTestSuite
+/// n_object_missing_colon).
+/// `case_0112_02 = { = 1 }` fails E001 Error at (1:18) — a pair needs an
+/// identifier key; the `=` cannot start one. Empty keys are refused, never
+/// defaulted.
+#[test]
+fn rb_1317_syn112_missing_key_rejects() {
+    let src = "case_0112_02 = { = 1 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the keyed table evaluates silently.
+    let v = eval_json("case_0112_02 = { a = 1 }\n");
+    assert_eq!(v["case_0112_02"]["a"], 1, "{v}");
+    let codes = codes_of("case_0112_02 = { a = 1 }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1318 — Missing-colon variant: trailing comma heals in tables (SYN-0112-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0017 (nst JSONTestSuite
+/// n_object_missing_colon).
+/// `case_0112_03 = { a = 1, }` heals H002 Info at (1:23) to `{a = 1}` — the
+/// locked stray-comma policy covers brace tables as well as arrays:
+/// trailing commas are explicitly allowed (RB-004), healed loudly, never
+/// silent.
+#[test]
+fn rb_1318_syn112_table_trailing_comma_heals() {
+    let src = "case_0112_03 = { a = 1, }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0112_03"]["a"], 1, "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H002 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 23), "{span:?}");
+    // Positive control: the comma-free table carries no heal.
+    let codes = codes_of("case_0112_03 = { a = 1 }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}

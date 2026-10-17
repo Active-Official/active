@@ -8528,3 +8528,259 @@ fn rb_458_syn16_reserved_true_is_bool() {
     assert_eq!(v["case_0016_05"], "true");
     assert_ne!(v["case_0016_05"], true, "quoted true must never be bool");
 }
+/// RB-459 — Derived variant 16-06: noncanonical `FALSE` carries no bool type (SYN-0016-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0016 (toml-test almost-false).
+/// `case_0016_06 = FALSE` warns W001 Warning at (1:16) and evaluates to null —
+/// only the documented lowercase `false` carries boolean type; case variants
+/// never do.
+#[test]
+fn rb_459_syn16_upper_false_never_bool() {
+    let src = "case_0016_06 = FALSE\n";
+    let v = eval_json(src);
+    assert!(v["case_0016_06"].is_null(), "FALSE must be null, got {v}");
+    assert_ne!(v["case_0016_06"], false, "FALSE must never be bool false");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: the documented lowercase literal still means bool.
+    assert_eq!(eval_json("case_0016_06 = false\n")["case_0016_06"], false);
+}
+
+/// RB-460 — Derived variant 16-07: null case policy is explicit (SYN-0016-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0016 (toml-test almost-false).
+/// Lowercase `null` is reserved: null value with ZERO diagnostics. Uppercase
+/// `NULL` also evaluates to null but announces W001 — same value, different
+/// class, so the spelling policy is observable, never implicit.
+#[test]
+fn rb_460_syn16_null_case_policy() {
+    let src = "case_0016_07 = null\n";
+    assert!(
+        eval_json(src)["case_0016_07"].is_null(),
+        "null must be null"
+    );
+    let codes = codes_of(src);
+    assert!(
+        codes.is_empty(),
+        "reserved null must warn nothing, got {codes:?}"
+    );
+    // Control: the uppercase spelling resolves to null only loudly.
+    let v = eval_json("case_0016_07 = NULL\n");
+    assert!(
+        v["case_0016_07"].is_null(),
+        "NULL must still be null, got {v}"
+    );
+    let codes = codes_of("case_0016_07 = NULL\n");
+    assert!(codes.iter().any(|c| c == "W001"), "{codes:?}");
+}
+
+/// RB-461 — Derived variant 16-08: quoting preserves literal text (SYN-0016-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0016 (toml-test almost-false).
+/// `case_0016_08 = "no"` evaluates to exactly "no" with ZERO diagnostics —
+/// quoting reliably preserves literal text regardless of resolver lookalikes.
+#[test]
+fn rb_461_syn16_quoted_no_exact() {
+    let src = "case_0016_08 = \"no\"\n";
+    assert_eq!(
+        eval_json(src)["case_0016_08"],
+        "no",
+        "quoted no must stay exact"
+    );
+    let codes = codes_of(src);
+    assert!(
+        codes.is_empty(),
+        "quoted no must warn nothing, got {codes:?}"
+    );
+    // Control: the bare neighbour never coerces (converges with RB-455).
+    let v = eval_json("case_0016_08 = no\n");
+    assert!(v["case_0016_08"].is_null(), "{v}");
+    let codes = codes_of("case_0016_08 = no\n");
+    assert!(codes.iter().any(|c| c == "W001"), "{codes:?}");
+}
+
+/// RB-462 — Derived variant 16-09: numbers are never booleans (SYN-0016-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0016 (toml-test almost-false).
+/// `case_0016_09 = 1.0` evaluates to float 1.0 with ZERO diagnostics — the
+/// scalar resolver keeps numbers numeric; truthiness never leaks into type.
+#[test]
+fn rb_462_syn16_number_never_bool() {
+    let src = "case_0016_09 = 1.0\n";
+    let v = eval_json(src)["case_0016_09"].clone();
+    assert_eq!(v.as_f64(), Some(1.0), "1.0 must stay float, got {v}");
+    assert!(!v.is_boolean(), "1.0 must never be boolean, got {v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "1.0 must warn nothing, got {codes:?}");
+    // Positive control: the reserved literal still means bool true.
+    assert_eq!(eval_json("case_0016_09 = true\n")["case_0016_09"], true);
+}
+
+/// RB-463 — Derived variant 17-01: twin lineage agrees on `yes` (SYN-0017-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0017 (toml-test almost-true).
+/// `case_0017_01 = yes` warns W001 Warning at (1:16) and evaluates to null —
+/// the almost-true lineage converges exactly with the almost-false twin
+/// (RB-454): same class, same span shape, same value, never bool true.
+#[test]
+fn rb_463_syn17_twin_yes_never_bool() {
+    let src = "case_0017_01 = yes\n";
+    let v = eval_json(src);
+    assert!(
+        v["case_0017_01"].is_null(),
+        "bare yes must be null, got {v}"
+    );
+    assert_ne!(v["case_0017_01"], true, "bare yes must never be bool true");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Twin convergence: the 0016 twin resolves to the same value.
+    assert_eq!(
+        v["case_0017_01"],
+        eval_json("case_0016_01 = yes\n")["case_0016_01"]
+    );
+    // Positive control: the quoted neighbour stays the exact string.
+    assert_eq!(eval_json("case_0017_01 = \"yes\"\n")["case_0017_01"], "yes");
+}
+
+/// RB-464 — Derived variant 17-02: twin lineage agrees on `no` (SYN-0017-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0017 (toml-test almost-true).
+/// `case_0017_02 = no` warns W001 Warning at (1:16) and evaluates to null —
+/// converges with RB-455; the reserved `false` literal still means bool.
+#[test]
+fn rb_464_syn17_twin_no_never_bool() {
+    let src = "case_0017_02 = no\n";
+    let v = eval_json(src);
+    assert!(v["case_0017_02"].is_null(), "bare no must be null, got {v}");
+    assert_ne!(v["case_0017_02"], false, "bare no must never be bool false");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: the reserved literal still means bool false.
+    assert_eq!(eval_json("case_0017_02 = false\n")["case_0017_02"], false);
+}
+
+/// RB-465 — Derived variant 17-03: twin lineage agrees on `on` (SYN-0017-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0017 (toml-test almost-true).
+/// `case_0017_03 = on` warns W001 Warning at (1:16) and evaluates to null —
+/// converges with RB-456; legacy spellings never become bool true.
+#[test]
+fn rb_465_syn17_twin_on_never_bool() {
+    let src = "case_0017_03 = on\n";
+    let v = eval_json(src);
+    assert!(v["case_0017_03"].is_null(), "bare on must be null, got {v}");
+    assert_ne!(v["case_0017_03"], true, "bare on must never be bool true");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    assert_eq!(eval_json("case_0017_03 = \"on\"\n")["case_0017_03"], "on");
+}
+
+/// RB-466 — Derived variant 17-04: twin lineage agrees on `off` (SYN-0017-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0017 (toml-test almost-true).
+/// `case_0017_04 = off` warns W001 Warning at (1:16) and evaluates to null —
+/// converges with RB-457; legacy spellings never become bool false.
+#[test]
+fn rb_466_syn17_twin_off_never_bool() {
+    let src = "case_0017_04 = off\n";
+    let v = eval_json(src);
+    assert!(
+        v["case_0017_04"].is_null(),
+        "bare off must be null, got {v}"
+    );
+    assert_ne!(
+        v["case_0017_04"], false,
+        "bare off must never be bool false"
+    );
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    assert_eq!(eval_json("case_0017_04 = \"off\"\n")["case_0017_04"], "off");
+}
+
+/// RB-467 — Derived variant 17-05: twin lineage agrees on `true` (SYN-0017-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0017 (toml-test almost-true).
+/// `case_0017_05 = true` is bool true with ZERO diagnostics — converges with
+/// RB-458; the quoted "true" neighbour stays a string, never bool.
+#[test]
+fn rb_467_syn17_twin_true_is_bool() {
+    let src = "case_0017_05 = true\n";
+    assert_eq!(
+        eval_json(src)["case_0017_05"],
+        true,
+        "reserved true must be bool"
+    );
+    let codes = codes_of(src);
+    assert!(
+        codes.is_empty(),
+        "reserved true must warn nothing, got {codes:?}"
+    );
+    // Positive control: the quoted neighbour stays the exact string.
+    let v = eval_json("case_0017_05 = \"true\"\n");
+    assert_eq!(v["case_0017_05"], "true");
+    assert_ne!(v["case_0017_05"], true, "quoted true must never be bool");
+}
+
+/// RB-468 — Derived variant 17-06: twin lineage agrees on `FALSE` (SYN-0017-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0017 (toml-test almost-true).
+/// `case_0017_06 = FALSE` warns W001 Warning at (1:16) and evaluates to null —
+/// converges with RB-459: neither lineage lets noncanonical case carry bool
+/// type. (Completes SYN-0016-06…09 + opens SYN-0017-01…06.)
+#[test]
+fn rb_468_syn17_twin_upper_false_never_bool() {
+    let src = "case_0017_06 = FALSE\n";
+    let v = eval_json(src);
+    assert!(v["case_0017_06"].is_null(), "FALSE must be null, got {v}");
+    assert_ne!(v["case_0017_06"], false, "FALSE must never be bool false");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: the documented lowercase literal still means bool.
+    assert_eq!(eval_json("case_0017_06 = false\n")["case_0017_06"], false);
+}

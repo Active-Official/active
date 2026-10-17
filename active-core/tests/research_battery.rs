@@ -27389,3 +27389,243 @@ fn rb_1238_syn103_true_reserved_bool() {
     let codes = codes_of("case_0103_04 = tru\n");
     assert!(codes.iter().any(|c| c == "W001"), "{codes:?}");
 }
+/// RB-1239 — Incomplete-false variant: reserved `false` stays bool (SYN-0103-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0008 (nst JSONTestSuite
+/// n_incomplete_false).
+/// `case_0103_05 = false` is bool false with ZERO diagnostics — exactly one
+/// boolean spelling carries one value everywhere (P1-TI-006/RB-106). The
+/// `fals` twin (RB-1235) proves the reservation is exact: only the full
+/// token is bool.
+#[test]
+fn rb_1239_syn103_false_reserved_bool() {
+    let src = "case_0103_05 = false\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0103_05"], false, "{v}");
+    assert!(v["case_0103_05"].is_boolean(), "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: the truncated twin still warns (reservation is exact).
+    let codes = codes_of("case_0103_05 = fals\n");
+    assert!(codes.iter().any(|c| c == "W001"), "{codes:?}");
+}
+
+/// RB-1240 — Incomplete-false variant: reserved `null` is null (SYN-0103-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0008 (nst JSONTestSuite
+/// n_incomplete_false).
+/// `case_0103_06 = null` is null with ZERO diagnostics — no W001, because
+/// the reserved literal needs no resolution (P1-TI-005). The `nul` twin
+/// (RB-1237) proves the reservation is exact: only the full token is null.
+#[test]
+fn rb_1240_syn103_null_reserved_silent() {
+    let src = "case_0103_06 = null\n";
+    let v = eval_json(src);
+    assert!(v["case_0103_06"].is_null(), "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: the truncated twin still warns (reservation is exact).
+    let codes = codes_of("case_0103_06 = nul\n");
+    assert!(codes.iter().any(|c| c == "W001"), "{codes:?}");
+}
+
+/// RB-1241 — Incomplete-false variant: `truex` never prefix-matches (SYN-0103-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0008 (nst JSONTestSuite
+/// n_incomplete_false).
+/// REFUSAL (spec-gated): `truex` is identifier-shaped, not a truncated
+/// literal — it announces W001 Warning at (1:16) and yields null. Bool
+/// matching is exact-token (batch-17 policy); no prefix match, no coercion,
+/// never silent.
+#[test]
+fn rb_1241_syn103_truex_warns_null() {
+    let src = "case_0103_07 = truex\n";
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert!(v["case_0103_07"].is_null(), "unresolved is null, got {v}");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive controls: quoted text stays text; reserved `true` stays bool.
+    assert_eq!(
+        eval_json("case_0103_07 = \"truex\"\n")["case_0103_07"],
+        "truex"
+    );
+    assert_eq!(eval_json("case_0103_07 = true\n")["case_0103_07"], true);
+}
+
+/// RB-1242 — Incomplete-false variant: `false_value` is an identifier (SYN-0103-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0008 (nst JSONTestSuite
+/// n_incomplete_false).
+/// Same locked policy as RB-1241: `false_value` is one identifier-shaped
+/// token — it announces W001 Warning at (1:16) and yields null. Underscores
+/// do not split tokens into literal prefixes.
+#[test]
+fn rb_1242_syn103_false_value_warns_null() {
+    let src = "case_0103_08 = false_value\n";
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert!(v["case_0103_08"].is_null(), "unresolved is null, got {v}");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: a bound `false_value` resolves silently.
+    let v = eval_json("let false_value = 1\ncase_0103_08 = false_value\n");
+    assert_eq!(v["case_0103_08"], 1, "{v}");
+}
+
+/// RB-1243 — Incomplete-false variant: truncated bool in table warns (SYN-0103-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0008 (nst JSONTestSuite
+/// n_incomplete_false).
+/// `case_0103_09 = { flag = tru }` yields flag null with W001 Warning at
+/// (1:25) — the unresolved-identifier policy recurses into tables; depth
+/// never silences the announcement. (Completes SYN-0103 lineage.)
+#[test]
+fn rb_1243_syn103_nested_tru_warns_null() {
+    let src = "case_0103_09 = { flag = tru }\n";
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert!(
+        v["case_0103_09"]["flag"].is_null(),
+        "unresolved is null, got {v}"
+    );
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 25), "{span:?}");
+    // Positive control: the resolved nest is silent.
+    let codes = codes_of("case_0103_09 = { flag = true }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1244 — Multidigit-then-00 variant: `01` is decimal 1 (SYN-0104-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0009 (nst JSONTestSuite
+/// n_multidigit_number_then_00).
+/// `case_0104_01 = 01` is int 1 with zero diagnostics — converges with
+/// RB-767, RB-776 and every later `01` twin: the explicit decimal policy
+/// holds in every number lineage, never octal. (Opens SYN-0104 lineage.)
+#[test]
+fn rb_1244_syn104_leading_zero_decimal() {
+    let src = "case_0104_01 = 01\n";
+    let v = eval_json(src)["case_0104_01"].clone();
+    assert_eq!(v, 1, "01 must be decimal 1, got {v}");
+    assert!(!v.is_f64(), "01 must be int, got {v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: 010 is decimal 10, never octal 8.
+    assert_eq!(eval_json("case_0104_01 = 010\n")["case_0104_01"], 10);
+}
+
+/// RB-1245 — Multidigit-then-00 variant: `1.` is int 1 (SYN-0104-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0009 (nst JSONTestSuite
+/// n_multidigit_number_then_00).
+/// `case_0104_02 = 1.` is int 1 with zero diagnostics — converges with
+/// RB-768 and every later `1.` twin: the grammar takes the int path, no
+/// float constructed, no digits required.
+#[test]
+fn rb_1245_syn104_trailing_dot_int() {
+    let src = "case_0104_02 = 1.\n";
+    let v = eval_json(src)["case_0104_02"].clone();
+    assert_eq!(v, 1, "1. must be int 1, got {v}");
+    assert!(!v.is_f64(), "1. must not be float, got {v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: `1.0` is the float spelling.
+    let v = eval_json("case_0104_02 = 1.0\n")["case_0104_02"].clone();
+    assert!(v.is_f64(), "1.0 must be float, got {v}");
+}
+
+/// RB-1246 — Multidigit-then-00 variant: bare `1e` rejects (SYN-0104-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0009 (nst JSONTestSuite
+/// n_multidigit_number_then_00).
+/// `case_0104_03 = 1e` fails E002 Error at (1:17) — converges with RB-769,
+/// RB-994 and every later bare-exponent twin: exponent markers need digits
+/// because there is no exponent grammar at all.
+#[test]
+fn rb_1246_syn104_bare_exponent_rejects() {
+    let src = "case_0104_03 = 1e\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    let src = "case_0104_03 = \"1e\"\n";
+    assert_eq!(eval_json(src)["case_0104_03"], "1e");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1247 — Multidigit-then-00 variant: signed `1e+` rejects (SYN-0104-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0009 (nst JSONTestSuite
+/// n_multidigit_number_then_00).
+/// `case_0104_04 = 1e+` fails E002 Error at (1:17) — converges with RB-770,
+/// RB-995 and every later signed-exponent twin: a sign needs digits because
+/// there is no exponent grammar at all.
+#[test]
+fn rb_1247_syn104_signed_exponent_rejects() {
+    let src = "case_0104_04 = 1e+\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    let src = "case_0104_04 = \"1e+\"\n";
+    assert_eq!(eval_json(src)["case_0104_04"], "1e+");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1248 — Multidigit-then-00 variant: `0x10` rejects, no hex grammar (SYN-0104-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0009 (nst JSONTestSuite
+/// n_multidigit_number_then_00).
+/// `case_0104_05 = 0x10` fails E002 Error at (1:17) — converges with RB-771
+/// and every later hex twin: base prefixes are absent from the grammar, loud
+/// reject in every number lineage.
+#[test]
+fn rb_1248_syn104_hex_prefix_rejects() {
+    let src = "case_0104_05 = 0x10\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: decimal 16 needs no prefix.
+    assert_eq!(eval_json("case_0104_05 = 16\n")["case_0104_05"], 16);
+}

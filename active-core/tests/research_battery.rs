@@ -4604,3 +4604,182 @@ fn rb_258_fraction_exp_rejects() {
     // Positive control: the clean float evaluates.
     assert_eq!(eval_json("value = 2.5\n")["value"], 2.5);
 }
+
+/// RB-259 — JSONTestSuite `n_number_Inf` analogue (SRC-JSON-0015 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/n_number_Inf.json`.
+/// Never case-folded into IEEE infinity: bare `Inf` is unresolved
+/// (W001 + null) with span — special floats have no bare spellings.
+#[test]
+fn rb_259_inf_never_infinity() {
+    let v = eval_json("value = Inf\n");
+    assert!(v["value"].is_null(), "{v}");
+    let module = parse("value = Inf\n", "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 9), "{span:?}");
+    // Positive control: quoted form stays a string.
+    assert_eq!(eval_json("value = \"Inf\"\n")["value"], "Inf");
+}
+
+/// RB-260 — JSONTestSuite `n_number_with_leading_zero` analogue (SRC-JSON-0016 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/n_number_with_leading_zero.json`.
+/// REFUSAL (spec-gated): leading zeros are plain decimals (RB-104) —
+/// `01` is exactly int 1, and inside arrays too: `[01, 02]` is `[1, 2]`.
+#[test]
+fn rb_260_json_leading_zero_decimal() {
+    let v = eval_json("value = 01\n");
+    assert_eq!(v["value"], 1);
+    assert!(v["value"].is_i64());
+    assert_eq!(
+        eval_json("value = [01, 02]\n")["value"],
+        serde_json::json!([1, 2])
+    );
+    // Positive control: the zero-free neighbours agree.
+    assert_eq!(
+        eval_json("value = [1, 2]\n")["value"],
+        serde_json::json!([1, 2])
+    );
+}
+
+/// RB-261 — JSONTestSuite `n_object_missing_colon` analogue (SRC-JSON-0017 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/n_object_missing_colon.json`.
+/// A quoted pair fragment is not a pair: the string where an
+/// identifier belongs fails E001 at 1:11 — the separator question
+/// never arises because quoted keys never enter the tree (RB-051).
+#[test]
+fn rb_261_json_missing_colon_rejects() {
+    let src = "value = { \"a\" 1 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    assert!(
+        diags.iter().any(|d| d.code == "E001"),
+        "E001 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 11), "{span:?}");
+    // Positive control: the bare-key pair binds.
+    assert_eq!(eval_json("value = { a = 1 }\n")["value"]["a"], 1);
+}
+
+/// RB-262 — JSONTestSuite `n_object_missing_key` analogue (SRC-JSON-0018 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/n_object_missing_key.json`.
+/// A map pair requires a key: `=` where an identifier belongs fails
+/// E001 at 1:11 — nothing keyless is built.
+#[test]
+fn rb_262_json_missing_key_rejects() {
+    let src = "value = { = 1 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    assert!(
+        diags.iter().any(|d| d.code == "E001"),
+        "E001 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 11), "{span:?}");
+    // Positive control: the keyed pair binds.
+    assert_eq!(eval_json("value = { a = 1 }\n")["value"]["a"], 1);
+}
+
+/// RB-263 — JSONTestSuite `n_object_trailing_comma` analogue (SRC-JSON-0019 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/n_object_trailing_comma.json`.
+/// (Translation repeats the `[1,]` shape; pinned here in table form —
+/// trailing commas are explicitly allowed everywhere, RB-216.)
+/// `{ a = 1, }` heals H002, value exact.
+#[test]
+fn rb_263_json_table_trailing_comma_heals() {
+    let src = "value = { a = 1, }\n";
+    assert_eq!(eval_json(src)["value"], serde_json::json!({"a": 1}));
+    let codes = codes_of(src);
+    assert!(
+        codes.iter().any(|c| c == "H002"),
+        "H002 expected, got {codes:?}"
+    );
+}
+
+/// RB-264 — JSONTestSuite `n_object_unquoted_key` analogue (SRC-JSON-0020 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/n_object_unquoted_key.json`.
+/// Bare keys ARE the decided grammar (identifiers only): `{ a = 1 }`
+/// binds with zero diagnostics — no JSON key restriction copied.
+#[test]
+fn rb_264_json_bare_key_accepts() {
+    let v = eval_json("value = { a = 1 }\n");
+    assert_eq!(v["value"]["a"], 1);
+    let codes = codes_of("value = { a = 1 }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the block-form twin agrees.
+    assert_eq!(eval_json("value:\n  a = 1\n")["value"]["a"], 1);
+}
+
+/// RB-265 — JSONTestSuite `n_string_incomplete_escape` analogue (SRC-JSON-0021 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/n_string_incomplete_escape.json`.
+/// EOF right after a backslash: the unterminated string heals H001
+/// (RB-049 channel) at 1:9 with the backslash preserved — announced,
+/// never silently repaired.
+#[test]
+fn rb_265_escape_at_eof_heals_announced() {
+    let src = "value = \"abc\\";
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    assert!(diags.iter().any(|d| d.code == "H001"), "{diags:?}");
+    let h = diags.iter().find(|d| d.code == "H001").expect("H001");
+    let span = h.span.clone().expect("H001 carries a span");
+    assert_eq!((span.line, span.column), (1, 9), "{span:?}");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(v["value"], "abc\\");
+    // Positive control: the terminated neighbour carries no heal.
+    assert!(!codes_of("value = \"abc\"\n").iter().any(|c| c == "H001"));
+}
+
+/// RB-266 — JSONTestSuite `n_string_invalid_unicode_escape` analogue (SRC-JSON-0022 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/n_string_invalid_unicode_escape.json`.
+/// No `\u` decoding exists to fail on bad hex: the six characters
+/// stay verbatim (RB-240's TOML twin) — char-count proves no decoding.
+#[test]
+fn rb_266_json_bad_unicode_escape_verbatim() {
+    let v = eval_json("value = \"\\u12G4\"\n");
+    assert_eq!(v["value"], "\\u12G4");
+    assert_eq!(v["value"].as_str().expect("string").chars().count(), 6);
+    let codes = codes_of("value = \"\\u12G4\"\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-267 — JSONTestSuite `n_string_unescaped_newline` analogue (SRC-JSON-0023 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/n_string_unescaped_newline.json`.
+/// Byte fixture (own file per SRC ID): raw LF preserved exactly —
+/// the literal-newline policy is explicit (RB-175/RB-242).
+#[test]
+fn rb_267_json_unescaped_newline_kept() {
+    let module = parse_file(
+        &research_fixture("src_json_0023_unescaped_newline.active"),
+        ParseOptions::default(),
+    )
+    .unwrap_or_else(|d| panic!("must parse: {d:?}"));
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(v["value"], "line1\nline2");
+    assert!(diags.is_empty(), "{diags:?}");
+}
+
+/// RB-268 — JSONTestSuite `n_string_unescaped_tab` analogue (SRC-JSON-0024 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/n_string_unescaped_tab.json`.
+/// Byte fixture: raw TAB preserved exactly. REFUSAL of "reject raw
+/// TAB": strings are content-exact — raw control and escaped content
+/// are both kept literally (RB-174 covers TAB outside strings).
+#[test]
+fn rb_268_json_unescaped_tab_kept() {
+    let module = parse_file(
+        &research_fixture("src_json_0024_unescaped_tab.active"),
+        ParseOptions::default(),
+    )
+    .unwrap_or_else(|d| panic!("must parse: {d:?}"));
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(v["value"], "a\tb");
+    assert!(diags.is_empty(), "{diags:?}");
+    // Positive control: the escaped twin agrees exactly.
+    assert_eq!(eval_json("value = \"a\\tb\"\n")["value"], "a\tb");
+}

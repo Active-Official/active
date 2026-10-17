@@ -4242,3 +4242,190 @@ fn rb_238_bad_byte_escape_verbatim() {
     // Positive control: specified escapes still decode.
     assert_eq!(eval_json("value = \"a\\nb\"\n")["value"], "a\nb");
 }
+
+/// RB-239 — Upstream `bad-escape-01` analogue (SRC-TOML-0090 §H, HIGH).
+/// Origin: toml-test `invalid/string/bad-escape-01.toml`.
+/// REFUSAL (spec-gated): unknown escapes are not "accepted literally
+/// by accident" — verbatim passthrough IS the documented rule
+/// (spec/grammar.md §1.4, RB-050/RB-238). `\q` is exactly `\q`.
+#[test]
+fn rb_239_unknown_escape_verbatim() {
+    let v = eval_json("value = \"\\q\"\n");
+    assert_eq!(v["value"], "\\q");
+    let codes = codes_of("value = \"\\q\"\n");
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: specified escapes still decode.
+    assert_eq!(eval_json("value = \"a\\tb\"\n")["value"], "a\tb");
+}
+
+/// RB-240 — Upstream `bad-hex-esc-01` analogue (SRC-TOML-0091 §H, HIGH).
+/// Origin: toml-test `invalid/string/bad-hex-esc-01.toml`.
+/// No `\u` escape exists, so no hex-digit/length validation can fail:
+/// `\u12G4` stays six verbatim characters, deterministic.
+#[test]
+fn rb_240_no_unicode_escape_verbatim() {
+    let v = eval_json("value = \"\\u12G4\"\n");
+    assert_eq!(v["value"], "\\u12G4");
+    let codes = codes_of("value = \"\\u12G4\"\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-241 — Upstream `bad-uni-esc-01` analogue (SRC-TOML-0092 §H, HIGH).
+/// Origin: toml-test `invalid/string/bad-uni-esc-01.toml`.
+/// Unpaired surrogates cannot materialize: without `\u` support there
+/// is no surrogate decoding at all — `\uD800` is verbatim text.
+#[test]
+fn rb_241_surrogate_escape_verbatim() {
+    let v = eval_json("value = \"\\uD800\"\n");
+    assert_eq!(v["value"], "\\uD800");
+    let codes = codes_of("value = \"\\uD800\"\n");
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the `\0` escape decodes per the table (RB-178).
+    assert_eq!(eval_json("value = \"a\\0b\"\n")["value"], "a\0b");
+}
+
+/// RB-242 — Upstream `bad-multiline` analogue (SRC-TOML-0093 §H, HIGH).
+/// Origin: toml-test `invalid/string/bad-multiline.toml`.
+/// Byte fixture (own file per SRC ID): raw LF in a `"…"` string.
+/// Same exact-preservation policy as RB-175, extended through the
+/// formatter: fmt → parse → eval agrees exactly (round-trip stable).
+#[test]
+fn rb_242_raw_newline_format_stable() {
+    use active_core::fmt::format;
+    use active_core::Style;
+    let module = parse_file(
+        &research_fixture("src_toml_0093_bad_multiline.active"),
+        ParseOptions::default(),
+    )
+    .unwrap_or_else(|d| panic!("must parse: {d:?}"));
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(v["value"], "line one\nline two");
+    assert!(diags.is_empty(), "{diags:?}");
+    let out = format(&module, Style::Indent);
+    let module2 =
+        parse(&out, "research").unwrap_or_else(|d| panic!("reparse failed: {d:?}\n{out}"));
+    let (second, _) = Engine::new().evaluate(&module2).expect("must evaluate");
+    assert_eq!(
+        active_core::convert::value_to_pretty_json(&value),
+        active_core::convert::value_to_pretty_json(&second)
+    );
+}
+
+/// RB-243 — Upstream `bad-slash-escape` analogue (SRC-TOML-0094 §H, HIGH).
+/// Origin: toml-test `invalid/string/bad-slash-escape.toml`.
+/// The escape alphabet is exactly the specified table — not a union
+/// of host dialects: `\/` is unknown, hence verbatim (2 chars).
+#[test]
+fn rb_243_slash_escape_verbatim() {
+    let v = eval_json("value = \"\\/\"\n");
+    assert_eq!(v["value"], "\\/");
+    let codes = codes_of("value = \"\\/\"\n");
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: specified escapes still decode.
+    assert_eq!(eval_json("value = \"a\\/b\"\n")["value"], "a\\/b");
+}
+
+/// RB-244 — Upstream `bad-concat` analogue (SRC-TOML-0095 §H, HIGH).
+/// Origin: toml-test `invalid/string/bad-concat.toml`.
+/// Adjacent-string concatenation is not specified: the second string
+/// opens a new statement position and fails loud E002 — implicit
+/// concatenation is never accidental.
+#[test]
+fn rb_244_adjacent_strings_reject() {
+    let src = "value = \"a\" \"b\"\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 13), "{span:?}");
+    // Positive control: the single string binds.
+    assert_eq!(eval_json("value = \"a\"\n")["value"], "a");
+}
+
+/// RB-245 — JSONTestSuite `n_array_1_true_without_comma` analogue (SRC-JSON-0001 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/n_array_1_true_without_comma.json`.
+/// Adjacent array elements heal under the locked H003 policy (RB-154),
+/// booleans included: `[1, true]`, span pinned.
+#[test]
+fn rb_245_json_missing_comma_heals() {
+    let src = "value = [1 true]\n";
+    assert_eq!(eval_json(src)["value"], serde_json::json!([1, true]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H003").expect("H003");
+    let span = h.span.clone().expect("H003 carries a span");
+    assert_eq!((span.line, span.column), (1, 12), "{span:?}");
+    // Positive control: the separated neighbour carries no heal.
+    assert!(!codes_of("value = [1, true]\n").iter().any(|c| c == "H003"));
+}
+
+/// RB-246 — JSONTestSuite `n_array_a_invalid_utf8` analogue (SRC-JSON-0002 §H, HIGH).
+/// Origin: nst/JSONTestSuite `test_parsing/n_array_a_invalid_utf8.json`.
+/// Byte fixture (own file per SRC ID): overlong bytes in an array.
+/// Source encoding validates before parsing: controlled E017.
+#[test]
+fn rb_246_json_invalid_utf8_controlled_e017() {
+    let diags = parse_file(
+        &research_fixture("src_json_0002_invalid_utf8.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E017");
+    assert!(
+        diags.iter().any(|d| d.code == "E017"),
+        "E017 expected, got {diags:?}"
+    );
+    // Positive control: the valid array evaluates.
+    assert_eq!(
+        eval_json("value = [1, 2]\n")["value"],
+        serde_json::json!([1, 2])
+    );
+}
+
+/// RB-247 — JSONTestSuite `n_array_colon_instead_of_comma` analogue (SRC-JSON-0003 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/n_array_colon_instead_of_comma.json`.
+/// The array separator is the documented delimiter only: a colon is
+/// E002 at the token — never a pair, never silent.
+#[test]
+fn rb_247_json_colon_in_array_rejects() {
+    let src = "value = [1:2]\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 11), "{span:?}");
+    // Positive control: the comma neighbour evaluates.
+    assert_eq!(
+        eval_json("value = [1, 2]\n")["value"],
+        serde_json::json!([1, 2])
+    );
+}
+
+/// RB-248 — JSONTestSuite `n_array_double_comma` analogue (SRC-JSON-0004 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/n_array_double_comma.json`.
+/// Same locked H002 policy as the TOML-corpus twins (RB-089/RB-150):
+/// two separators never imply an omitted value. New oracle dimension
+/// here: the heal carries Info severity — it heals, it never fails.
+#[test]
+fn rb_248_json_double_comma_heals_info() {
+    let src = "value = [1,,2]\n";
+    assert_eq!(eval_json(src)["value"], serde_json::json!([1, 2]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H002 must be Info, got {:?}",
+        h.severity
+    );
+    // Positive control: the clean neighbour carries no heal.
+    assert!(!codes_of("value = [1, 2]\n").iter().any(|c| c == "H002"));
+}

@@ -4783,3 +4783,194 @@ fn rb_268_json_unescaped_tab_kept() {
     // Positive control: the escaped twin agrees exactly.
     assert_eq!(eval_json("value = \"a\\tb\"\n")["value"], "a\tb");
 }
+
+/// RB-269 — JSONTestSuite `n_string_invalid_lonely_surrogate` analogue (SRC-JSON-0025 §H, HIGH).
+/// Origin: nst/JSONTestSuite `test_parsing/n_string_invalid_lonely_surrogate.json`.
+/// No lone surrogate can emit invalid Unicode: without `\u` support
+/// the text stays verbatim (RB-241's TOML twin) — and the YAML export
+/// agrees, so the scalar invariant holds end-to-end across formats.
+#[test]
+fn rb_269_lonely_surrogate_verbatim_everywhere() {
+    let v = eval_json("value = \"\\uD800\"\n");
+    assert_eq!(v["value"], "\\uD800");
+    let module = parse("value = \"\\uD800\"\n", "research").expect("must parse");
+    let (value, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    let yaml = active_core::convert::value_to_yaml_string(&value).expect("yaml export");
+    assert!(yaml.contains("\\uD800"), "{yaml}");
+    // Positive control: no diags on the verbatim path.
+    let codes = codes_of("value = \"\\uD800\"\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-270 — JSONTestSuite `n_structure_null-byte-outside-string` analogue (SRC-JSON-0026 §H, HIGH).
+/// Origin: nst/JSONTestSuite `test_parsing/n_structure_null-byte-outside-string.json`.
+/// Byte fixture: raw NUL inside brackets. The parser never receives
+/// NUL as ordinary whitespace: loud E005 at 1:10, parse fails.
+/// (Inside strings NUL is preserved data — RB-172; outside, E005.)
+#[test]
+fn rb_270_nul_outside_string_rejects() {
+    let diags = parse_file(
+        &research_fixture("src_json_0026_nul_outside_string.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E005");
+    assert!(
+        diags.iter().any(|d| d.code == "E005"),
+        "E005 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 10), "{span:?}");
+    // Positive control: the NUL-free brackets evaluate.
+    assert_eq!(eval_json("value = []\n")["value"], serde_json::json!([]));
+}
+
+/// RB-271 — JSONTestSuite `n_structure_100000_opening_arrays` analogue (SRC-JSON-0027 §H, CRITICAL).
+/// Origin: nst/JSONTestSuite `test_parsing/n_structure_100000_opening_arrays.json`.
+/// 100000 consecutive `[` with no closures: the depth budget trips
+/// (E004) instead of overflowing the stack — completion of this very
+/// test is the resource-safety proof.
+#[test]
+fn rb_271_hundred_k_brackets_trip_budget() {
+    let src = format!("value = {}", "[".repeat(100_000));
+    let diags = parse(&src, "research").expect_err("must fail E004");
+    assert!(
+        diags.iter().any(|d| d.code == "E004"),
+        "E004 expected, got {:?}",
+        &diags[..diags.len().min(3)]
+    );
+    // Positive control: a shallow array evaluates.
+    assert_eq!(eval_json("value = [1]\n")["value"], serde_json::json!([1]));
+}
+
+/// RB-272 — JSONTestSuite `i_structure_500_nested_arrays` analogue (SRC-JSON-0028 §H, CRITICAL).
+/// Origin: nst/JSONTestSuite `test_parsing/i_structure_500_nested_arrays.json`.
+/// 500 nested arrays around `0`: E004 at the documented bound (64) —
+/// the `i_` (implementation-defined) case resolves to the documented
+/// limit, terminating cleanly with spans.
+#[test]
+fn rb_272_500_nested_rejects_at_bound() {
+    let src = format!("value = {}0{}", "[".repeat(500), "]".repeat(500));
+    let diags = parse(&src, "research").expect_err("must fail E004");
+    assert!(
+        diags.iter().any(|d| d.code == "E004"),
+        "E004 expected, got {:?}",
+        &diags[..diags.len().min(3)]
+    );
+    // Positive control: nesting below the bound evaluates.
+    let ok = format!("value = {}0{}", "[".repeat(10), "]".repeat(10));
+    let v = eval_json(&ok);
+    assert!(v["value"].is_array(), "{v}");
+}
+
+/// RB-273 — JSONTestSuite `y_object_duplicated_key` analogue (SRC-JSON-0029 §H, HIGH).
+/// Origin: nst/JSONTestSuite `test_parsing/y_object_duplicated_key.json`.
+/// REFUSAL (spec-gated): the row proposes strict duplicate rejection,
+/// but Active's locked W011 last-wins policy (RB-002, HIST-YAML-006)
+/// governs — announced Warning severity, value 2. Interop ambiguity
+/// is resolved by announcement, never silence.
+#[test]
+fn rb_273_json_dup_key_warns_last_wins() {
+    let src = "value = { a = 1, a = 2 }\n";
+    assert_eq!(eval_json(src)["value"]["a"], 2);
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+}
+
+/// RB-274 — JSONTestSuite `y_string_accepted_surrogate_pair` analogue (SRC-JSON-0030 §H, HIGH).
+/// Origin: nst/JSONTestSuite `test_parsing/y_string_accepted_surrogate_pair.json`.
+/// REFUSAL (spec-gated): no surrogate-pair decoding exists (no `\u`
+/// support at all) — the pair form stays twelve verbatim characters
+/// like the lone form (RB-269). Valid pair is achieved by writing the
+/// scalar directly (control).
+#[test]
+fn rb_274_surrogate_pair_verbatim() {
+    let v = eval_json("value = \"\\uD834\\uDD1E\"\n");
+    assert_eq!(v["value"], "\\uD834\\uDD1E");
+    assert_eq!(v["value"].as_str().expect("string").chars().count(), 12);
+    let codes = codes_of("value = \"\\uD834\\uDD1E\"\n");
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the scalar itself is exact data.
+    assert_eq!(eval_json("value = \"𝄞\"\n")["value"], "𝄞");
+}
+
+/// RB-275 — JSONTestSuite `i_number_double_huge_neg_exp` analogue (SRC-JSON-0031 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/i_number_double_huge_neg_exp.json`.
+/// No exponent grammar exists for underflow to occur in: E002 at the
+/// `e` — never a silently bounded-precision result, never an integer.
+#[test]
+fn rb_275_huge_neg_exp_rejects() {
+    let src = "value = 1e-999999\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 10), "{span:?}");
+    // Positive control: the plain one evaluates.
+    assert_eq!(eval_json("value = 1\n")["value"], 1);
+}
+
+/// RB-276 — JSONTestSuite `i_number_huge_exp` analogue (SRC-JSON-0032 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/i_number_huge_exp.json`.
+/// Exponent parsing is bounded by absence: E002 at the `e` — huge
+/// exponents cannot reach any range logic.
+#[test]
+fn rb_276_huge_exp_rejects() {
+    let src = "value = 1e999999\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 10), "{span:?}");
+}
+
+/// RB-277 — JSONTestSuite `n_structure_object_with_comment` analogue (SRC-JSON-0033 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/n_structure_object_with_comment.json`.
+/// Block comments are not in the grammar (only `#` lines, §1.2): the
+/// `/` fails loud E002 — comment syntax is one documented grammar,
+/// never inherited from JavaScript.
+#[test]
+fn rb_277_block_comment_rejects() {
+    let src = "value = { a = 1 /* comment */ }\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    // Positive control: the `#` comment twin binds cleanly.
+    let v = eval_json("value = { a = 1 } # comment\n");
+    assert_eq!(v["value"]["a"], 1);
+}
+
+/// RB-278 — JSONTestSuite `y_object_empty_key` analogue (SRC-JSON-0034 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/y_object_empty_key.json`.
+/// Empty keys are not lost and not kept: quoted keys never enter the
+/// tree (RB-230) — E001 where an identifier belongs, span pinned.
+/// (Completes the JSON family: 34/34 mined.)
+#[test]
+fn rb_278_json_empty_key_rejects() {
+    let src = "value = { \"\" = 1 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    assert!(
+        diags.iter().any(|d| d.code == "E001"),
+        "E001 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 11), "{span:?}");
+    // Positive control: the identifier-key twin binds.
+    assert_eq!(eval_json("value = { a = 1 }\n")["value"]["a"], 1);
+}

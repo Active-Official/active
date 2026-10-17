@@ -229,7 +229,7 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | Family | IDs | Mining note | Status |
 |---|---|---|---|
 | SRC-TOML (95) | `SRC-TOML-0001`…`0095` | Upstream toml-test invalid fixtures → Active analogues (reject classes, escapes, tables) | complete: all 95 pinned → Batches 16–25; escape alphabet exactly the specified table (verbatim unknowns, no \u/surrogate decoding) |
-| SRC-JSON (34) | `SRC-JSON-0001`…`0034` | JSONTestSuite edges → Active analogues (nesting, numbers, escapes, dup keys) | mining: 0001…0024 pinned → Batches 25/26/27; object grammar (bare keys bind, quoted fail E001, pairs need keys); strings content-exact |
+| SRC-JSON (34) | `SRC-JSON-0001`…`0034` | JSONTestSuite edges → Active analogues (nesting, numbers, escapes, dup keys) | complete: all 34 pinned → Batches 25/26/27/28; depth budget E004 (100k brackets trip, 500-deep at bound 64); NUL-outside-string E005 |
 | SRC-YAML (15) | `SRC-YAML-0001`…`0015` | yaml-test-suite edges → Active analogues | pending (mine per batch) |
 | SRC-CVE (10) | `SRC-CVE-0001`…`0010` | CVE-derived payloads → budget/cycle/sanitization analogues | pending (mine per batch) |
 | SRC-SPEC (10) | `SRC-SPEC-0001`…`0010` | Standards-spec edges → grammar conformance analogues | pending (mine per batch) |
@@ -277,4 +277,5 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | Batch 25 | RB-239…RB-248 (SRC-TOML-0090…0095, SRC-JSON-0001…0004) | done: all 10 green first-try, no code changes; SRC-TOML family complete (95/95); JSON mining open (0001…0004); escape alphabet exactly specified; H002 Info severity pinned |
 | Batch 26 | RB-249…RB-258 (SRC-JSON-0005…0014) | done: all 10 green individually; one transient whole-file single failure (unidentified, 3/4 file runs 258/258 green — logged as residual risk); JSON number edges pinned (decimal zeros, no exponents, first-value floats) |
 | Batch 27 | RB-259…RB-268 (SRC-JSON-0015…0024) | done: all 10 green first-try, no code changes; 2 string fixtures committed; object grammar + content-exact strings pinned |
+| Batch 28 | RB-269…RB-278 (SRC-JSON-0025…0034) | done: all 10 green first-try, no code changes; SRC-JSON family complete (34/34); NUL-outside-string fixture committed; CRITICAL depth-budget cases pin E004 |
 | Batch 17+ | Next catalogue cases (SRC-TOML-0010…, then SRC-JSON/SRC-YAML/SRC-CVE/SRC-SPEC, byte fixtures) | pending |

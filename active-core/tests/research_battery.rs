@@ -33202,3 +33202,231 @@ fn rb_1498_syn132_scalar_escape_never_decodes() {
     let v = eval_json("case_0132_03 = \"a\"\n");
     assert_eq!(v["case_0132_03"], "a", "{v}");
 }
+
+/// RB-1499 — Escaped-coverage twin: `\n` decodes to one LF (SYN-0132-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// "Escaped characters coverage gap"; same shape as SYN-0116-04).
+/// Converges with RB-1355/RB-1364/RB-1373/RB-1382/RB-1391/RB-1436
+/// (spec/grammar.md:62-64): one LF, silent, stream never splits.
+#[test]
+fn rb_1499_syn132_escaped_newline_decodes() {
+    let src = "case_0132_04 = \"line1\\nline2\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0132_04"], "line1\nline2", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the sibling specified escape `\t` decodes to TAB.
+    let v = eval_json("case_0132_04 = \"a\\tb\"\n");
+    assert_eq!(v["case_0132_04"], "a\tb", "{v}");
+}
+
+/// RB-1500 — Escaped-coverage twin: raw newline inside quotes is kept (SYN-0132-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// "Escaped characters coverage gap"; same shape as SYN-0116-05).
+/// REFUSAL (spec-gated, spec/grammar.md:58-62, RB-175, converges with
+/// RB-1356/RB-1365/RB-1374/RB-1383/RB-1392/RB-1437): the raw LF is content,
+/// kept silently, agreeing with the `\n` twin.
+#[test]
+fn rb_1500_syn132_raw_newline_kept() {
+    let src = "case_0132_05 = \"line1\nline2\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0132_05"], "line1\nline2", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Twin convergence: raw LF and escaped `\n` spell the same value.
+    let twin = eval_json("case_0132_05 = \"line1\\nline2\"\n");
+    assert_eq!(v["case_0132_05"], twin["case_0132_05"], "{v} vs {twin}");
+}
+
+/// RB-1501 — Escaped-coverage twin: `\x` escape stays verbatim (SYN-0132-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// "Escaped characters coverage gap"; same shape as SYN-0116-06).
+/// REFUSAL (spec-gated, spec/grammar.md:62-66, RB-050, converges with
+/// RB-1357/RB-1366/RB-1375/RB-1384/RB-1393/RB-1438): `\x41` persists
+/// exactly, silently, never "A".
+#[test]
+fn rb_1501_syn132_hex_escape_verbatim() {
+    let src = "case_0132_06 = \"\\x41\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0132_06"], "\\x41", "{v}");
+    assert_ne!(v["case_0132_06"], "A", "must NOT decode to A: {v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the explicit letter is the way to spell "A".
+    let v = eval_json("case_0132_06 = \"A\"\n");
+    assert_eq!(v["case_0132_06"], "A", "{v}");
+}
+
+/// RB-1502 — Escaped-coverage twin: emoji exact, no normalization (SYN-0132-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// "Escaped characters coverage gap"; same shape as SYN-0116-07).
+/// Converges with RB-1358/RB-1367/RB-1376/RB-1385/RB-1394/RB-1439: U+1F600
+/// + `e` + U+0301, three scalars, seven bytes, silent; precomposed U+00E9
+/// stays different (no NFC).
+#[test]
+fn rb_1502_syn132_emoji_combining_exact() {
+    let src = "case_0132_07 = \"\u{1F600}e\u{301}\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0132_07"], "\u{1F600}e\u{301}", "{v}");
+    assert_eq!(
+        v["case_0132_07"].as_str().expect("string").chars().count(),
+        3,
+        "{v}"
+    );
+    assert_eq!(v["case_0132_07"].as_str().expect("string").len(), 7, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: precomposed U+00E9 is a different value (no NFC).
+    let pre = eval_json("case_0132_07 = \"\u{e9}\"\n");
+    assert_ne!(v["case_0132_07"], pre["case_0132_07"], "{v} vs {pre}");
+}
+
+/// RB-1503 — Escaped-coverage twin: escaped data vs raw NUL bytes (SYN-0132-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// "Escaped characters coverage gap"; same shape as SYN-0116-08).
+/// Converges with RB-1359/RB-1368/RB-1377/RB-1386/RB-1395/RB-1440:
+/// `"\u0000"` verbatim, `"\0"` one real NUL, raw NUL in-string kept, raw
+/// NUL outside strings E005 Error at (1:6).
+#[test]
+fn rb_1503_syn132_escaped_vs_raw_nul() {
+    let v = eval_json("case_0132_08 = \"\\u0000\"\n");
+    assert_eq!(v["case_0132_08"], "\\u0000", "{v}");
+    assert!(codes_of("case_0132_08 = \"\\u0000\"\n").is_empty());
+    let v = eval_json("case_0132_08 = \"a\\0b\"\n");
+    assert_eq!(v["case_0132_08"], "a\0b", "{v}");
+    assert!(codes_of("case_0132_08 = \"a\\0b\"\n").is_empty());
+    let v = eval_json("case_0132_08 = \"a\0b\"\n");
+    assert_eq!(v["case_0132_08"], "a\0b", "{v}");
+    assert!(codes_of("case_0132_08 = \"a\0b\"\n").is_empty());
+    // Positive control (negative neighbour): raw NUL outside strings is E005.
+    let diags = parse("v = 1\0\n", "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 6), "{span:?}");
+}
+
+/// RB-1504 — Escaped-coverage twin: interpolation and literals never confused (SYN-0132-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// "Escaped characters coverage gap"; same shape as SYN-0116-09).
+/// Converges with RB-1360/RB-1369/RB-1378/RB-1387/RB-1396/RB-1441 and
+/// completes the 132 lineage: `"${literal}"` interpolates to "null" +
+/// W001 Warning at (1:19); `"literal"` stays exact; a resolved `let`
+/// interpolates.
+#[test]
+fn rb_1504_syn132_interpolation_vs_literal() {
+    let src = "case_0132_09 = \"${literal}\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0132_09"], "null", "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 19), "{span:?}");
+    // Positive control: the literal spelling stays exact and silent.
+    let v = eval_json("case_0132_09 = \"literal\"\n");
+    assert_eq!(v["case_0132_09"], "literal", "{v}");
+    assert!(codes_of("case_0132_09 = \"literal\"\n").is_empty());
+    // Positive control: a resolved name interpolates to its value.
+    let v = eval_json("let who = \"hi\"\ncase_0132_09 = \"yo ${who}\"\n");
+    assert_eq!(v["case_0132_09"], "yo hi", "{v}");
+}
+
+/// RB-1505 — Dual-syntax variant: brace-style baseline parses (SYN-0133-01 §H, MEDIUM).
+/// Origin: synthetic variation of the "a: :a vs a: a:" colon question.
+/// `root = { child = 1 }` beside the scalar evaluates silently and
+/// deterministically — the brace-style baseline the indent twin must equal.
+/// (The colon-pair policy the parent names is DERIVED-0001/RB-001
+/// territory, already pinned.)
+#[test]
+fn rb_1505_syn133_brace_baseline_accepts() {
+    let src = "case_0133_01 = 1\nroot = { child = 1 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0133_01"], 1, "{v}");
+    assert_eq!(v["root"]["child"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the flat twin of the nested table agrees at depth 1.
+    let v = eval_json("root = { child = 1 }\n");
+    assert_eq!(v["root"]["child"], 1, "{v}");
+}
+
+/// RB-1506 — Dual-syntax variant: bodiless `=` never opens an indent block (SYN-0133-02 §H, MEDIUM).
+/// Origin: synthetic variation of the "a: :a vs a: a:" colon question.
+/// REFUSAL (spec-gated, DERIVED-0001/RB-001 + DERIVED-0020/RB-102): the
+/// catalogue fixture `root =\n  child = 1` fails E002 Error at (1:7) with a
+/// riding E010 — a bodiless `=` header never opens an indented block. The
+/// normative assertion (indent style produces the same semantic value)
+/// holds through the SPECIFIED indent spelling: the colon-header twin
+/// `root:\n  child = 1` evaluates silently to exactly the brace-form value.
+/// Same value, correct syntax; the wrong syntax stays loud.
+#[test]
+fn rb_1506_syn133_equals_indent_refused() {
+    let src = "root =\n  child = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 7), "{span:?}");
+    // Normative proof: colon-header indent equals the brace form, silently.
+    let brace = eval_json("root = { child = 1 }\n");
+    let indent = eval_json("root:\n  child = 1\n");
+    assert_eq!(brace, indent, "{brace} vs {indent}");
+    assert!(codes_of("root:\n  child = 1\n").is_empty());
+}
+
+/// RB-1507 — Dual-syntax variant: nested braces close at matching levels (SYN-0133-03 §H, MEDIUM).
+/// Origin: synthetic variation of the "a: :a vs a: a:" colon question.
+/// `root = { child = { grandchild = 1 } }` evaluates silently with every
+/// brace closing at its matching level — the nested baseline the indented
+/// twin must equal.
+#[test]
+fn rb_1507_syn133_nested_brace_accepts() {
+    let src = "case_0133_03 = 1\nroot = { child = { grandchild = 1 } }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0133_03"], 1, "{v}");
+    assert_eq!(v["root"]["child"]["grandchild"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the two-level twin agrees one level down.
+    let v = eval_json("root = { child = 1 }\n");
+    assert_eq!(v["root"]["child"], 1, "{v}");
+}
+
+/// RB-1508 — Dual-syntax variant: indentation stack matches brace semantics (SYN-0133-04 §H, MEDIUM).
+/// Origin: synthetic variation of the "a: :a vs a: a:" colon question.
+/// REFUSAL (spec-gated, DERIVED-0001/RB-001 + DERIVED-0020/RB-102,
+/// converges with RB-1506): the catalogue's `root =\n  child =\n ...`
+/// nesting fails E002 Error at (1:7) — equals-signals never stack indent
+/// levels. The specified colon-header nesting evaluates silently to
+/// exactly the nested-brace value: the indentation stack matches brace
+/// semantics level for level.
+#[test]
+fn rb_1508_syn133_nested_indent_refused() {
+    let src = "root =\n  child =\n    grandchild = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 7), "{span:?}");
+    // Normative proof: colon-header nesting equals nested braces, silently.
+    let brace = eval_json("root = { child = { grandchild = 1 } }\n");
+    let indent = eval_json("root:\n  child:\n    grandchild = 1\n");
+    assert_eq!(brace, indent, "{brace} vs {indent}");
+    assert!(codes_of("root:\n  child:\n    grandchild = 1\n").is_empty());
+}

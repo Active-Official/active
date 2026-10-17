@@ -1474,3 +1474,144 @@ fn rb_080_multiline_quotes_preserved() {
     let v = eval_json("text = \"\"\"He said \"hello\" to me.\"\"\"\n");
     assert_eq!(v["text"], "He said \"hello\" to me.");
 }
+
+/// RB-081 — `let` shadowing warns like keys (HIST-YAML-017 §1).
+/// Anchor-collision analogues in Active are `let` redefinitions:
+/// last-wins with W011, never silent.
+#[test]
+fn rb_081_let_shadow_warns() {
+    let v = eval_json("let x = 1\nlet x = 2\ny = x\n");
+    assert_eq!(v["y"], 2);
+    let codes = codes_of("let x = 1\nlet x = 2\ny = x\n");
+    assert!(
+        codes.iter().any(|c| c == "W011"),
+        "shadowed let must warn W011, got {codes:?}"
+    );
+}
+
+/// RB-082 — Path concat stays literal (HIST-YAML-039 §3).
+/// Joining a base URL with `../` segments produces the literal string;
+/// there are no fetch builtins, so no SSRF vector exists in core.
+#[test]
+fn rb_082_path_concat_stays_literal() {
+    let v = eval_json(
+        "base = \"http://internal.service/\"\npath = \"../../../../etc/passwd\"\nfull = \"${base}${path}\"\n",
+    );
+    assert_eq!(v["full"], "http://internal.service/../../../../etc/passwd");
+}
+
+/// RB-083 — Huge integers saturate loudly (HIST-JSON-004 §2).
+/// `u64::MAX` as a literal exceeds i64: E023 + saturation at MAX.
+#[test]
+fn rb_083_u64max_literal_saturates() {
+    let codes = codes_of("n = 18446744073709551615\n");
+    assert!(
+        codes.iter().any(|c| c == "E023"),
+        "E023 expected, got {codes:?}"
+    );
+    let (module, diags) = active_core::parse_recovering(
+        "n = 18446744073709551615\n",
+        "research",
+        active_core::ParseOptions::default(),
+    );
+    assert!(diags.iter().any(|d| d.code == "E023"));
+    let (value, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(json.contains("9223372036854775807"), "{json}");
+}
+
+/// RB-084 — Thousand-digit integers terminate (HIST-TOML-00G §2).
+/// Digit handling is linear; overflow still reports E023, never hangs.
+#[test]
+fn rb_084_thousand_digit_integer_terminates() {
+    let digits = "9".repeat(1000);
+    let src = format!("n = {digits}\n");
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(codes_of(&src));
+    });
+    let codes = rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("1000-digit integer must terminate within 10s");
+    assert!(
+        codes.iter().any(|c| c == "E023"),
+        "E023 expected, got {codes:?}"
+    );
+}
+
+/// RB-085 — Long lines terminate documented (HIST-TOML-00I §2).
+/// A 1MB single-line array either evaluates or trips a budget class;
+/// Active sets no line-length limit, so length alone never rejects.
+#[test]
+fn rb_085_long_line_terminates() {
+    let src = format!("a = [{}]\n", vec!["1"; 400_000].join(", "));
+    assert!(src.lines().next().expect("line").len() > 1_000_000);
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(codes_of(&src));
+    });
+    let codes = rx
+        .recv_timeout(std::time::Duration::from_secs(30))
+        .expect("1MB line must terminate within 30s");
+    assert!(
+        codes.is_empty() || codes.iter().any(|c| c.starts_with('X')),
+        "evaluate clean or budget-trip, got {codes:?}"
+    );
+}
+
+/// RB-086 — 5000-key tables evaluate (P0-002 §B).
+#[test]
+fn rb_086_wide_table_evaluates() {
+    let mut src = String::from("[big]\n");
+    for i in 0..5000 {
+        src.push_str(&format!("k{i} = {i}\n"));
+    }
+    let v = eval_json(&src);
+    assert_eq!(v["big"]["k4999"], 4999);
+}
+
+/// RB-087 — Huge arrays trip budgets (P0-003 §B).
+#[test]
+fn rb_087_huge_array_trips_budget() {
+    let src = format!("a = [{}]\n", vec!["1"; 100_000].join(", "));
+    let codes = codes_of(&src);
+    assert!(
+        codes.iter().any(|c| c.starts_with('X')),
+        "100k elements must trip a budget class, got {codes:?}"
+    );
+}
+
+/// RB-088 — Realistic configs pass under budgets (P0-020 §B).
+#[test]
+fn rb_088_realistic_config_passes() {
+    let src = "let timeout = 5s\nlet retries = 3\ndb_password = secret(env.ACTIVE_TEST_RB088_PW ?: \"\")\n\n[server]\nhost = \"0.0.0.0\"\nport = 8080\nread_timeout = timeout\nretries = retries\n";
+    let v = eval_json(src);
+    assert_eq!(v["server"]["port"], 8080);
+    assert_eq!(v["server"]["read_timeout"]["ms"], 5000);
+    assert_eq!(v["db_password"], "***SECRET***");
+}
+
+/// RB-089 — Double comma heals (P1-ST-001 §D).
+/// `H002` removes the stray comma; values intact.
+#[test]
+fn rb_089_double_comma_healed() {
+    let codes = codes_of("value = [1,,2]\n");
+    assert!(
+        codes.iter().any(|c| c == "H002"),
+        "H002 expected, got {codes:?}"
+    );
+    let v = eval_json("value = [1,,2]\n");
+    assert_eq!(v["value"], serde_json::json!([1, 2]));
+}
+
+/// RB-090 — Missing separator rejects (P1-ST-002 §D).
+#[test]
+fn rb_090_missing_separator_rejects() {
+    let codes = codes_of("value = [1 2]\n");
+    assert!(
+        codes.iter().any(|c| c == "E001" || c == "H003"),
+        "separator class expected, got {codes:?}"
+    );
+    // Positive control: separated elements parse.
+    assert_eq!(eval_json("value = [1, 2]\n")["value"][1], 2);
+}

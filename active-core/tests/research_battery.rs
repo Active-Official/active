@@ -19051,3 +19051,283 @@ fn rb_898_syn65_empty_array_valid() {
     let codes = codes_of("case_0065_06 = [,]\n");
     assert!(codes.iter().any(|c| c == "H002"), "{codes:?}");
 }
+/// RB-899 — Derived variant 65-07: multi-line nesting is exact (SYN-0065-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0065 (toml-test no-comma).
+/// `[[1], [2, 3]]` and the split-line form both evaluate to the exact nested
+/// shape with ZERO diagnostics — delimiters match across linebreaks;
+/// a mismatched `[[1]` fails E001 Error at EOF (2:1).
+#[test]
+fn rb_899_syn65_multiline_nesting_exact() {
+    let src = "case_0065_07 = [[1], [2, 3]]\n";
+    assert_eq!(
+        eval_json(src)["case_0065_07"],
+        serde_json::json!([[1], [2, 3]]),
+        "nested shape must be exact"
+    );
+    let codes = codes_of(src);
+    assert!(
+        codes.is_empty(),
+        "nested array must warn nothing, got {codes:?}"
+    );
+    // Multi-line twin: split nesting stays silent too.
+    let src = "case_0065_07 = [\n[1],\n[2, 3]\n]\n";
+    assert_eq!(
+        eval_json(src)["case_0065_07"],
+        serde_json::json!([[1], [2, 3]])
+    );
+    let codes = codes_of(src);
+    assert!(
+        codes.is_empty(),
+        "multi-line nesting must warn nothing, got {codes:?}"
+    );
+    // Negative neighbour: mismatched delimiters fail loudly at EOF.
+    let diags = parse("case_0065_07 = [[1]\n", "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+}
+
+/// RB-900 — Derived variant 65-08: multi-line hetero keeps types (SYN-0065-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0065 (toml-test no-comma).
+/// `[1, { name = "x" }]` and the split-line form are both accepted with ZERO
+/// diagnostics and exact types — the integer stays an integer, the table
+/// stays a table; layout never coerces.
+#[test]
+fn rb_900_syn65_multiline_hetero_exact() {
+    let src = "case_0065_08 = [1, { name = \"x\" }]\n";
+    let v = eval_json(src)["case_0065_08"].clone();
+    assert_eq!(v, serde_json::json!([1, {"name": "x"}]), "{v}");
+    let codes = codes_of(src);
+    assert!(
+        codes.is_empty(),
+        "hetero array must warn nothing, got {codes:?}"
+    );
+    // Multi-line twin: split hetero stays silent with exact types too.
+    let src = "case_0065_08 = [\n1,\n{ name = \"x\" }\n]\n";
+    let v = eval_json(src)["case_0065_08"].clone();
+    assert_eq!(v[0], 1, "integer element must stay integer, got {v}");
+    assert_eq!(v[1]["name"], "x", "table element must stay table, got {v}");
+    let codes = codes_of(src);
+    assert!(
+        codes.is_empty(),
+        "multi-line hetero must warn nothing, got {codes:?}"
+    );
+}
+
+/// RB-901 — Derived variant 65-09: unterminated array points at EOF (SYN-0065-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0065 (toml-test no-comma).
+/// `case_0065_09 = [1, 2` (no bracket) fails E001 Error with the span on the
+/// EOF line (2:1) — the diagnostic points at end-of-input, never at the
+/// opening bracket alone and never nowhere. (Completes SYN-0065-07…09
+/// coverage.)
+#[test]
+fn rb_901_syn65_unterminated_points_at_eof() {
+    let src = "case_0065_09 = [1, 2\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: the terminated neighbour evaluates with zero diags.
+    let src = "case_0065_09 = [1, 2]\n";
+    assert_eq!(eval_json(src)["case_0065_09"], serde_json::json!([1, 2]));
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-902 — Derived variant 66-01: inline-table dups announce, never silent (SYN-0066-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0066 (toml-test overwrite-01).
+/// REFUSAL (spec-gated): the catalogue asks rejecting duplicate keys, but
+/// the locked last-wins+W011 policy (RB-002, RB-149) governs every table
+/// form: `{ key = 1, key = 2 }` evaluates to key = 2 and announces exactly
+/// the anti-silence W011 Warning at the winning value span (1:33, batch-22
+/// precedent) — never first-wins, never silent. (Opens SYN-0066
+/// overwrite lineage.)
+#[test]
+fn rb_902_syn66_inline_dup_announces() {
+    let src = "case_0066_01 = { key = 1, key = 2 }\n";
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(v["case_0066_01"]["key"], 2, "last wins, got {v}");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (1, 33), "{span:?}");
+    // Positive control: the duplicate-free table evaluates silently.
+    let codes = codes_of("case_0066_01 = { key = 1 }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-903 — Derived variant 66-02: nested inline dups announce at depth (SYN-0066-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0066 (toml-test overwrite-01).
+/// REFUSAL (spec-gated, same locked policy): `{ nested = { key = 1, key = 2 } }`
+/// evaluates to nested.key = 2 and announces W011 Warning at the nested
+/// winning-value span (1:44) — duplicate detection recurses into nested
+/// maps; depth never silences the announcement.
+#[test]
+fn rb_903_syn66_nested_dup_announces() {
+    let src = "case_0066_02 = { nested = { key = 1, key = 2 } }\n";
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(
+        v["case_0066_02"]["nested"]["key"], 2,
+        "last wins at depth, got {v}"
+    );
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (1, 44), "{span:?}");
+    // Positive control: the duplicate-free nest evaluates silently.
+    let codes = codes_of("case_0066_02 = { nested = { key = 1 } }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-904 — Derived variant 66-03: quoted keys never merge with bare keys (SYN-0066-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0066 (toml-test overwrite-01).
+/// `case_0066_03 = { "a" = 1, a = 2 }` fails with E001 Error at (1:18) —
+/// keys are identifiers, so the quoted form is rejected at the bracket
+/// instead of canonicalizing onto `a`: canonicalization is consistent
+/// because no merge is ever possible, in either syntax form.
+#[test]
+fn rb_904_syn66_quoted_never_merges() {
+    let src = "case_0066_03 = { \"a\" = 1, a = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the bare-only table evaluates silently.
+    let codes = codes_of("case_0066_03 = { a = 1 }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+    assert_eq!(
+        eval_json("case_0066_03 = { a = 1 }\n")["case_0066_03"]["a"],
+        1
+    );
+    // Control: the bare dup announces instead of merging silently (RB-902).
+    let codes = codes_of("case_0066_03 = { a = 1, a = 2 }\n");
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}
+
+/// RB-905 — Derived variant 66-04: distinct keys never false-positive (SYN-0066-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0066 (toml-test overwrite-01).
+/// `case_0066_04 = { alpha = 1, beta = 2 }` evaluates to both keys with ZERO
+/// diagnostics — the duplicate guard compares exact keys, so distinct
+/// neighbours never draw W011; the guard fires only on real duplicates.
+#[test]
+fn rb_905_syn66_distinct_keys_silent() {
+    let src = "case_0066_04 = { alpha = 1, beta = 2 }\n";
+    let v = eval_json(src);
+    assert_eq!(
+        v["case_0066_04"],
+        serde_json::json!({"alpha": 1, "beta": 2}),
+        "{v}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: a real duplicate still announces W011 (RB-902 converges).
+    let codes = codes_of("case_0066_04 = { alpha = 1, alpha = 2 }\n");
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}
+
+/// RB-906 — Derived variant 66-05: quoted keys reject before normalizing (SYN-0066-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0066 (toml-test overwrite-01).
+/// `case_0066_05 = { "\u{e9}" = 1, "\u{e9}" = 2 }` fails with E001 Error at
+/// (1:18) — keys are identifiers, so quoted forms are rejected before any
+/// Unicode normalization question arises: no implicit normalization, no
+/// explicit normalization, never keys. (Escape spells the non-ASCII bytes;
+/// no editor bytes involved.)
+#[test]
+fn rb_906_syn66_unicode_keys_reject() {
+    let src = "case_0066_05 = { \"\u{e9}\" = 1, \"\u{e9}\" = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: bare distinct keys accept silently.
+    let codes = codes_of("case_0066_05 = { alpha = 1, beta = 2 }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-907 — Derived variant 66-06: distinct tables are not duplicates (SYN-0066-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0066 (toml-test overwrite-01).
+/// REFUSAL (spec-gated): the catalogue asks rejecting "repeated assignment",
+/// but the two statements bind DIFFERENT keys (`case_0066_06`, `value`) —
+/// no duplicate exists, so both evaluate with zero diagnostics. Last-wins
+/// governs same-key redefinition (W011), never distinct keys.
+#[test]
+fn rb_907_syn66_distinct_tables_accept() {
+    let src = "case_0066_06 = { a = 1 }\nvalue = { b = 2 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0066_06"]["a"], 1, "{v}");
+    assert_eq!(v["value"]["b"], 2, "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: same-key redefinition still announces W011 last-wins.
+    let src = "value = { b = 1 }\nvalue = { b = 2 }\n";
+    assert_eq!(eval_json(src)["value"]["b"], 2);
+    let codes = codes_of(src);
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}
+
+/// RB-908 — Derived variant 66-07: naive patch form fails, explicit updates (SYN-0066-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0066 (toml-test overwrite-01).
+/// The naive `@patch base { key = 2 }` form fails E019 Error at (3:2) —
+/// ordinary duplicate declarations and intentional patch semantics share no
+/// spelling — while the explicit `@patch("base.key", 2)` call updates
+/// silently to 2 (converges with RB-440: patches warn nothing).
+/// (Completes SYN-0065-07…09 coverage + opens SYN-0066-01…07.)
+#[test]
+fn rb_908_syn66_patch_form_separates() {
+    let src = "case_0066_07 = 1\nbase = { key = 1 }\n@patch base { key = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    // Positive control: the explicit call updates with zero diagnostics.
+    let src = "base = { key = 1 }\n@patch(\"base.key\", 2)\n";
+    assert_eq!(eval_json(src)["base"]["key"], 2);
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}

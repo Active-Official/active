@@ -4429,3 +4429,178 @@ fn rb_248_json_double_comma_heals_info() {
     // Positive control: the clean neighbour carries no heal.
     assert!(!codes_of("value = [1, 2]\n").iter().any(|c| c == "H002"));
 }
+
+/// RB-249 — JSONTestSuite `n_array_extra_comma` analogue (SRC-JSON-0005 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/n_array_extra_comma.json`.
+/// Trailing commas are explicitly allowed (RB-004/RB-216): single
+/// element heals H002 at 1:11, value `[1]`.
+#[test]
+fn rb_249_json_extra_comma_heals() {
+    let src = "value = [1,]\n";
+    assert_eq!(eval_json(src)["value"], serde_json::json!([1]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 11), "{span:?}");
+    // Positive control: the comma-free neighbour carries no heal.
+    assert!(!codes_of("value = [1]\n").iter().any(|c| c == "H002"));
+}
+
+/// RB-250 — JSONTestSuite `n_array_missing_value` analogue (SRC-JSON-0006 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/n_array_missing_value.json`.
+/// REFUSAL (spec-gated): no empty slot is synthesized as null — the
+/// stray comma heals H002 and the value is exactly `[1, 3]`.
+#[test]
+fn rb_250_json_missing_value_heals() {
+    let src = "value = [1,,3]\n";
+    assert_eq!(eval_json(src)["value"], serde_json::json!([1, 3]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 12), "{span:?}");
+}
+
+/// RB-251 — JSONTestSuite `n_array_unclosed` analogue (SRC-JSON-0007 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/n_array_unclosed.json`.
+/// EOF inside a collection diagnoses E001 with Error severity and an
+/// EOF span — never a hang, never a partial tree.
+#[test]
+fn rb_251_json_unclosed_rejects_error() {
+    let src = "value = [1, 2\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: the closed neighbour evaluates.
+    assert_eq!(
+        eval_json("value = [1, 2]\n")["value"],
+        serde_json::json!([1, 2])
+    );
+}
+
+/// RB-252 — JSONTestSuite `n_incomplete_false` analogue (SRC-JSON-0008 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/n_incomplete_false.json`.
+/// A partial keyword never becomes boolean false: bare `fals` is
+/// unresolved (W001 + null), truncated from below like `falsee`
+/// is extended from above (RB-165).
+#[test]
+fn rb_252_incomplete_false_never_bool() {
+    let v = eval_json("value = fals\n");
+    assert!(v["value"].is_null(), "{v}");
+    let codes = codes_of("value = fals\n");
+    assert!(
+        codes.iter().any(|c| c == "W001"),
+        "W001 expected, got {codes:?}"
+    );
+    // Positive control: the complete token is boolean false.
+    assert_eq!(eval_json("value = false\n")["value"], false);
+}
+
+/// RB-253 — JSONTestSuite `n_multidigit_number_then_00` analogue (SRC-JSON-0009 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/n_multidigit_number_then_00.json`.
+/// REFUSAL (spec-gated): extra leading zeros are plain decimals
+/// (RB-104) — `00` is exactly int 0, never a second token, never
+/// octal, never rejected.
+#[test]
+fn rb_253_double_zero_is_decimal() {
+    let v = eval_json("value = 00\n");
+    assert_eq!(v["value"], 0);
+    assert!(v["value"].is_i64());
+    let codes = codes_of("value = 00\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-254 — JSONTestSuite `n_number_++` analogue (SRC-JSON-0010 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/n_number_++.json`.
+/// Numeric syntax admits no duplicated sign: E002 with Error
+/// severity at the second `+` (same rule as the TOML twin RB-218).
+#[test]
+fn rb_254_json_double_sign_rejects_error() {
+    let src = "value = ++1\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 9), "{span:?}");
+    // Positive control: the single-signed neighbour evaluates.
+    assert_eq!(eval_json("value = -1\n")["value"], -1);
+}
+
+/// RB-255 — JSONTestSuite `n_number_-01` analogue (SRC-JSON-0011 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/n_number_-01.json`.
+/// REFUSAL (spec-gated): signed leading zeros are plain decimals —
+/// `-01` is exactly int -1, loudly not octal, loudly not rejected.
+#[test]
+fn rb_255_negative_leading_zero_decimal() {
+    let v = eval_json("value = -01\n");
+    assert_eq!(v["value"], -1);
+    assert!(v["value"].is_i64());
+    // Positive control: the zero-free neighbour agrees.
+    assert_eq!(eval_json("value = -1\n")["value"], -1);
+}
+
+/// RB-256 — JSONTestSuite `n_number_0.1.2` analogue (SRC-JSON-0012 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/n_number_0.1.2.json`.
+/// REFUSAL (spec-gated): a single number token cannot hold two decimal
+/// points — and trailing strays fall under the §2.1/§4.1 skip quirk
+/// (RB-201): deterministic float 0.1, zero diags.
+#[test]
+fn rb_256_double_point_keeps_first_float() {
+    let v = eval_json("value = 0.1.2\n");
+    assert_eq!(v["value"], 0.1);
+    assert!(v["value"].is_f64());
+    let codes = codes_of("value = 0.1.2\n");
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the clean float evaluates identically.
+    assert_eq!(eval_json("value = 0.1\n")["value"], 0.1);
+}
+
+/// RB-257 — JSONTestSuite `n_number_0e+` analogue (SRC-JSON-0013 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/n_number_0e+.json`.
+/// No exponent grammar exists for a sign to attach to: E002 at the `e`.
+#[test]
+fn rb_257_exp_sign_rejects() {
+    let src = "value = 0e+\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 10), "{span:?}");
+    // Positive control: the plain zero evaluates.
+    assert_eq!(eval_json("value = 0\n")["value"], 0);
+}
+
+/// RB-258 — JSONTestSuite `n_number_2.e3` analogue (SRC-JSON-0014 §H, MEDIUM).
+/// Origin: nst/JSONTestSuite `test_parsing/n_number_2.e3.json`.
+/// A fraction point requires digits and no exponent grammar exists:
+/// E002 at the `e` (same rule as the TOML twin RB-202).
+#[test]
+fn rb_258_fraction_exp_rejects() {
+    let src = "value = 2.e3\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 11), "{span:?}");
+    // Positive control: the clean float evaluates.
+    assert_eq!(eval_json("value = 2.5\n")["value"], 2.5);
+}

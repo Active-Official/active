@@ -1028,6 +1028,39 @@ impl Parser {
                     // explicit design (spec/grammar.md §4.1 quirks:
                     // `x = 5 5` evaluates to `5`). Only string literals
                     // above are loud (no quirk protects them).
+                    //
+                    // Exception: a VALUE token starting a statement (at
+                    // the body's statement column) can never be a quirk
+                    // stray — nothing routes value-first tokens — so a
+                    // bare `true = 1` or `2 = 1` line would vanish with
+                    // zero diagnostics. Loud E002 instead (research
+                    // P1-TI-011); same-line strays keep the quirk.
+                    let tok = self.peek().clone();
+                    let stmt_col = match end {
+                        BodyEnd::Block(l) | BodyEnd::HeaderBody(l) => (l + 1) as u32,
+                        _ => 1,
+                    };
+                    match &tok.kind {
+                        TokenKind::Integer
+                        | TokenKind::Float
+                        | TokenKind::True
+                        | TokenKind::False
+                        | TokenKind::Null
+                        | TokenKind::Env
+                        | TokenKind::Secret
+                        | TokenKind::Minus
+                        | TokenKind::Bang
+                        | TokenKind::LParen
+                            if tok.col == stmt_col =>
+                        {
+                            self.error_at(
+                                "E002",
+                                "unexpected value at statement position (values need a key: `name = …`)",
+                                &tok,
+                            );
+                        }
+                        _ => {}
+                    }
                     self.bump();
                 }
             }

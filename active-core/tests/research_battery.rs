@@ -1789,3 +1789,20 @@ fn rb_100_every_failure_carries_spans() {
         }
     }
 }
+
+/// RB-101 — Keyword-like keys are loud, never silent (P1-TI-011 §C).
+/// `true`/`false`/`null`/numbers as would-be keys cannot start a
+/// statement; at statement-initial columns they fail E002 instead of
+/// vanishing (the §4.1 skip quirk covers mid-statement strays only).
+#[test]
+fn rb_101_keyword_like_keys_reject() {
+    for src in ["true = 1\n", "false = 2\n", "null = 3\n", "2 = 1\n", "-5\n"] {
+        let codes = codes_of(src);
+        assert!(
+            codes.iter().any(|c| c == "E002"),
+            "{src:?} must reject E002, got {codes:?}"
+        );
+    }
+    // Mid-statement strays keep the §4.1 silent skip (pinned quirk).
+    assert_eq!(eval_json("x = 1 2\n")["x"], 1);
+}

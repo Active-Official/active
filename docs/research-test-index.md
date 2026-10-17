@@ -75,7 +75,7 @@ not the research docs' proposed names.
 | P1-TI-008 | `10` int vs `10.0` float | Distinct types, intent kept | passing → Batch 2 RB-017 |
 | P1-TI-009 | Underscore numbers explicit | `1_000_000` per grammar or reject | pending |
 | P1-TI-010 | Keyword-lookalikes in arrays stay strings | No element coercion | pending |
-| P1-TI-011 | Keyword-like keys policy | Allowed as keys or clear diagnostic | pending |
+| P1-TI-011 | Keyword-like keys policy | Statement-initial value tokens fail E002; mid-statement strays keep §4.1 skip | passing → Batch 12 RB-101 (started) |
 | P1-TI-012 | Duplicate keys explicit | **Last-wins + W011 warning** (reject would break existing last-wins tests) | fixed (W011 warning, last-wins kept) → Batch 1 RB-002 |
 | P1-TI-013 | Key case sensitivity | Case-sensitive distinct keys | pending |
 | P1-TI-014 | Unicode keys | Accept without corruption or clear reject | pending |
@@ -260,4 +260,5 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | Batch 8 | RB-071…RB-080 | done: 9 green first-try; RB-079 drove CRLF normalization across all 4 string lexers |
 | Batch 9 | RB-081…RB-090 | done: 9 green first-try; RB-085/RB-088 needed test-side arithmetic corrections |
 | Batch 10 | RB-091…RB-100 | done: 9 green first-try; RB-100 forced a revert (statement-level skip is spec §4.1 design, not a bug) |
-| Batch 11+ | Next 10 lowest pending rows by severity, per the loop prompt | pending |
+| Batch 11 | RB-101…RB-110 (DERIVED-0020, P1-TI-001/004/005/006/009/011/013/014/015) + dup-folds (HIST-YAML-025, HIST-JSON-002, HIST-TOML-001/00B/00C/00K, DERIVED-0018, P0-004/005/006) | in-progress (RB-101 done: keyword-like keys E002 fix) |
+| Batch 12+ | Next 10 lowest pending rows by severity, per the loop prompt | pending |

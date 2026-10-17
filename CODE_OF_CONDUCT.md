@@ -31,7 +31,7 @@ limits, or a permanent ban, decided by the repository owner (see
 `.github/CODEOWNERS`).
 
 Report through a
-[private security advisory](https://github.com/RatioArtificiosa/ACTIVE-lang/security/advisories/new)
+[private security advisory](https://github.com/RatioArtificiosa/active-lang/security/advisories/new)
 with a `[CoC]` title prefix — never by public issue. Advisory
 reports are visible only to people with repository security access
 (the owner, plus anyone explicitly granted it); they are

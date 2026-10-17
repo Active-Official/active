@@ -13672,3 +13672,246 @@ fn rb_668_syn40_feb30_tenth_arithmetic() {
         "2024-02-30"
     );
 }
+/// RB-669 — Derived variant 40-02: offset tenth twin degrades (SYN-0040-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0040 (toml-test second-over).
+/// `case_0040_02 = 2024-02-29T12:30:00+25:00` degrades whole-doc to exactly
+/// `{case_0040_02: 1993, T12: 30}` with zero diagnostics — converges with
+/// RB-588, RB-597, RB-606, RB-615, RB-624, RB-633, RB-642, RB-651 and
+/// RB-660: offset validation is N/A everywhere.
+#[test]
+fn rb_669_syn40_offset_tenth_degrades() {
+    let src = "case_0040_02 = 2024-02-29T12:30:00+25:00\n";
+    let v = eval_json(src);
+    assert_eq!(
+        v,
+        serde_json::json!({"case_0040_02": 1993, "T12": 30}),
+        "must degrade to arithmetic + colon pair only, got {v}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    assert_eq!(
+        eval_json("case_0040_02 = \"2024-02-29T12:30:00+25:00\"\n")["case_0040_02"],
+        "2024-02-29T12:30:00+25:00"
+    );
+}
+
+/// RB-670 — Derived variant 40-03: trailing-`Z` tenth twin rejects (SYN-0040-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0040 (toml-test second-over).
+/// `case_0040_03 = 2024-01-01T12:30Z` fails E002 Error at (1:32) — converges
+/// with RB-589, RB-598, RB-607, RB-616, RB-625, RB-634, RB-643, RB-652 and
+/// RB-661: one timezone syntax contract in all ten lineages, loud reject,
+/// never a pseudo-object.
+#[test]
+fn rb_670_syn40_trailing_z_tenth_rejects() {
+    let src = "case_0040_03 = 2024-01-01T12:30Z\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 32), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    let src = "case_0040_03 = \"2024-01-01T12:30Z\"\n";
+    assert_eq!(eval_json(src)["case_0040_03"], "2024-01-01T12:30Z");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-671 — Derived variant 40-04: quoted tenth twin never validated (SYN-0040-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0040 (toml-test second-over).
+/// `case_0040_04 = "2024-02-30"` is the exact string with zero diagnostics —
+/// converges with RB-590, RB-599, RB-608, RB-617, RB-626, RB-635, RB-644,
+/// RB-653 and RB-662: quoted content skips calendar validation in all ten
+/// lineages.
+#[test]
+fn rb_671_syn40_quoted_tenth_never_validated() {
+    let src = "case_0040_04 = \"2024-02-30\"\n";
+    assert_eq!(eval_json(src)["case_0040_04"], "2024-02-30");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: the bare counterpart is arithmetic 1992, never a date.
+    assert_eq!(
+        eval_json("case_0040_04 = 2024-02-30\n")["case_0040_04"],
+        1992
+    );
+}
+
+/// RB-672 — Derived variant 40-05: fractional tenth twin rejects (SYN-0040-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0040 (toml-test second-over).
+/// `case_0040_05 = 2024-01-01T12:30:00.123456789Z` fails E002 Error at
+/// (1:45) — converges with RB-591, RB-600, RB-609, RB-618, RB-627, RB-636,
+/// RB-645, RB-654 and RB-663: no precision handling without a datetime type,
+/// loud reject in all ten lineages.
+#[test]
+fn rb_672_syn40_fractional_tenth_rejects() {
+    let src = "case_0040_05 = 2024-01-01T12:30:00.123456789Z\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 45), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    let src = "case_0040_05 = \"2024-01-01T12:30:00.123456789Z\"\n";
+    assert_eq!(
+        eval_json(src)["case_0040_05"],
+        "2024-01-01T12:30:00.123456789Z"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-673 — Derived variant 40-06: offset tenth twin degrades (SYN-0040-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0040 (toml-test second-over).
+/// `case_0040_06 = 2024-01-01T12:30:00-07:00` evaluates whole-doc to exactly
+/// `{case_0040_06: 2022, T12: 30}` with zero diagnostics — converges with
+/// RB-592, RB-601, RB-610, RB-619, RB-628, RB-637, RB-646, RB-655 and
+/// RB-664: the offset never becomes an opaque fallback object.
+#[test]
+fn rb_673_syn40_offset_tenth_degrades() {
+    let src = "case_0040_06 = 2024-01-01T12:30:00-07:00\n";
+    let v = eval_json(src);
+    assert_eq!(
+        v,
+        serde_json::json!({"case_0040_06": 2022, "T12": 30}),
+        "must degrade to arithmetic + colon pair only, got {v}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    assert_eq!(
+        eval_json("case_0040_06 = \"2024-01-01T12:30:00-07:00\"\n")["case_0040_06"],
+        "2024-01-01T12:30:00-07:00"
+    );
+}
+
+/// RB-674 — Derived variant 40-07: leading-zero tenth twin is decimal (SYN-0040-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0040 (toml-test second-over).
+/// `case_0040_07 = 0001-01-01` is the arithmetic -1 whole-doc with zero
+/// diagnostics — converges with RB-593, RB-602, RB-611, RB-620, RB-629,
+/// RB-638, RB-647, RB-656 and RB-665: leading zeros follow the decimal
+/// policy (RB-104) in all ten lineages.
+#[test]
+fn rb_674_syn40_leading_zero_tenth_decimal() {
+    let src = "case_0040_07 = 0001-01-01\n";
+    let v = eval_json(src);
+    assert_eq!(
+        v,
+        serde_json::json!({"case_0040_07": -1}),
+        "must be decimal arithmetic, got {v}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    assert_eq!(
+        eval_json("case_0040_07 = \"0001-01-01\"\n")["case_0040_07"],
+        "0001-01-01"
+    );
+}
+
+/// RB-675 — Derived variant 40-08: quoted tenth twin preserved (SYN-0040-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0040 (toml-test second-over).
+/// `case_0040_08 = "1979-05-27T07:32:00Z"` is the exact string with zero
+/// diagnostics — converges with RB-594, RB-603, RB-612, RB-621, RB-630,
+/// RB-639, RB-648, RB-657 and RB-666: datetime-looking text is preserved
+/// character-for-character when quoted, in all ten lineages.
+#[test]
+fn rb_675_syn40_quoted_datetime_tenth_exact() {
+    let src = "case_0040_08 = \"1979-05-27T07:32:00Z\"\n";
+    assert_eq!(eval_json(src)["case_0040_08"], "1979-05-27T07:32:00Z");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: the bare date prefix is arithmetic, never a datetime.
+    assert_eq!(
+        eval_json("case_0040_08 = 1979-05-27\n")["case_0040_08"],
+        1947
+    );
+}
+
+/// RB-676 — Derived variant 40-09: bad-minutes tenth twin rejects (SYN-0040-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0040 (toml-test second-over).
+/// `case_0040_09 = 2024-01-01T12:60:00Z` fails E002 Error at (1:35) —
+/// converges with RB-595, RB-604, RB-613, RB-622, RB-631, RB-640, RB-649,
+/// RB-658 and RB-667: no minute field exists to range-check anywhere, loud
+/// reject in all ten lineages. (Completes SYN-0040-02…09 coverage.)
+#[test]
+fn rb_676_syn40_bad_minutes_tenth_reject() {
+    let src = "case_0040_09 = 2024-01-01T12:60:00Z\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 35), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    let src = "case_0040_09 = \"2024-01-01T12:60:00Z\"\n";
+    assert_eq!(eval_json(src)["case_0040_09"], "2024-01-01T12:60:00Z");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-677 — Derived variant 41-01: Feb-30 eleventh twin is arithmetic (SYN-0041-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0041 (toml-test second-trailing-dot).
+/// `case_0041_01 = 2024-02-30` is the arithmetic 1992 whole-doc with zero
+/// diagnostics — converges with RB-587, RB-596, RB-605, RB-614, RB-623,
+/// RB-632, RB-641, RB-650, RB-659 and RB-668: eleven lineages, one resolver,
+/// Feb-30 never constructed. (Opens SYN-0041 second-trailing-dot lineage.)
+#[test]
+fn rb_677_syn41_feb30_eleventh_arithmetic() {
+    let src = "case_0041_01 = 2024-02-30\n";
+    let v = eval_json(src);
+    assert_eq!(
+        v,
+        serde_json::json!({"case_0041_01": 1992}),
+        "date-shaped input must be plain arithmetic, got {v}"
+    );
+    assert_eq!(
+        v["case_0041_01"],
+        eval_json("case_0040_01 = 2024-02-30\n")["case_0040_01"]
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    assert_eq!(
+        eval_json("case_0041_01 = \"2024-02-30\"\n")["case_0041_01"],
+        "2024-02-30"
+    );
+}
+
+/// RB-678 — Derived variant 41-02: offset eleventh twin degrades (SYN-0041-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0041 (toml-test second-trailing-dot).
+/// `case_0041_02 = 2024-02-29T12:30:00+25:00` degrades whole-doc to exactly
+/// `{case_0041_02: 1993, T12: 30}` with zero diagnostics — converges with
+/// RB-588, RB-597, RB-606, RB-615, RB-624, RB-633, RB-642, RB-651, RB-660 and
+/// RB-669: offset validation is N/A everywhere. (Completes SYN-0040-02…09
+/// coverage + opens SYN-0041-01…02.)
+#[test]
+fn rb_678_syn41_offset_eleventh_degrades() {
+    let src = "case_0041_02 = 2024-02-29T12:30:00+25:00\n";
+    let v = eval_json(src);
+    assert_eq!(
+        v,
+        serde_json::json!({"case_0041_02": 1993, "T12": 30}),
+        "must degrade to arithmetic + colon pair only, got {v}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    assert_eq!(
+        eval_json("case_0041_02 = \"2024-02-29T12:30:00+25:00\"\n")["case_0041_02"],
+        "2024-02-29T12:30:00+25:00"
+    );
+}

@@ -102,7 +102,7 @@ fn check_suite(suite: &str, ext: &str, import: ImportFn, minimum: usize) {
     );
     for f in &files {
         let name = f.file_name().unwrap().to_string_lossy().into_owned();
-        let stem = stem_of(&f, ext);
+        let stem = stem_of(f, ext);
         let dir = f.parent().unwrap();
         let expected = dir.join(format!("{stem}.expected.json"));
         let diag = dir.join(format!("{stem}.expected-diag.txt"));

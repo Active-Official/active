@@ -9041,3 +9041,262 @@ fn rb_478_syn18_third_null_reserved() {
     let codes = codes_of("case_0018_07 = NULL\n");
     assert!(codes.iter().any(|c| c == "W001"), "{codes:?}");
 }
+/// RB-479 — Derived variant 18-08: third quoting agrees (SYN-0018-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0018 (toml-test capitalized-false).
+/// `case_0018_08 = "no"` is exactly "no" with ZERO diagnostics — converges
+/// with RB-461/RB-470: quoting preserves literal text in every lineage.
+#[test]
+fn rb_479_syn18_third_quoted_no_exact() {
+    let src = "case_0018_08 = \"no\"\n";
+    assert_eq!(
+        eval_json(src)["case_0018_08"],
+        "no",
+        "quoted no must stay exact"
+    );
+    let codes = codes_of(src);
+    assert!(
+        codes.is_empty(),
+        "quoted no must warn nothing, got {codes:?}"
+    );
+    // Control: the bare neighbour never coerces.
+    let v = eval_json("case_0018_08 = no\n");
+    assert!(v["case_0018_08"].is_null(), "{v}");
+    let codes = codes_of("case_0018_08 = no\n");
+    assert!(codes.iter().any(|c| c == "W001"), "{codes:?}");
+}
+
+/// RB-480 — Derived variant 18-09: third numbers agree (SYN-0018-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0018 (toml-test capitalized-false).
+/// `case_0018_09 = 1.0` is float 1.0 with ZERO diagnostics — converges with
+/// RB-462/RB-471: no lineage treats numbers as booleans. (Completes
+/// SYN-0018-01…09.)
+#[test]
+fn rb_480_syn18_third_number_never_bool() {
+    let src = "case_0018_09 = 1.0\n";
+    let v = eval_json(src)["case_0018_09"].clone();
+    assert_eq!(v.as_f64(), Some(1.0), "1.0 must stay float, got {v}");
+    assert!(!v.is_boolean(), "1.0 must never be boolean, got {v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "1.0 must warn nothing, got {codes:?}");
+    // Positive control: the reserved literal still means bool true.
+    assert_eq!(eval_json("case_0018_09 = true\n")["case_0018_09"], true);
+}
+
+/// RB-481 — Derived variant 19-01: fourth lineage agrees on `yes` (SYN-0019-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0019 (toml-test capitalized-true).
+/// `case_0019_01 = yes` warns W001 Warning at (1:16) and evaluates to null —
+/// four lineages (16/17/18/19) now agree, so the guard is on the resolver,
+/// never on one parent fixture.
+#[test]
+fn rb_481_syn19_fourth_yes_never_bool() {
+    let src = "case_0019_01 = yes\n";
+    let v = eval_json(src);
+    assert!(
+        v["case_0019_01"].is_null(),
+        "bare yes must be null, got {v}"
+    );
+    assert_ne!(v["case_0019_01"], true, "bare yes must never be bool true");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Four-lineage convergence: 16/17/18 twins resolve to the same value.
+    assert_eq!(
+        v["case_0019_01"],
+        eval_json("case_0016_01 = yes\n")["case_0016_01"]
+    );
+    assert_eq!(
+        v["case_0019_01"],
+        eval_json("case_0017_01 = yes\n")["case_0017_01"]
+    );
+    assert_eq!(
+        v["case_0019_01"],
+        eval_json("case_0018_01 = yes\n")["case_0018_01"]
+    );
+    // Positive control: the quoted neighbour stays the exact string.
+    assert_eq!(eval_json("case_0019_01 = \"yes\"\n")["case_0019_01"], "yes");
+}
+
+/// RB-482 — Derived variant 19-02: fourth lineage agrees on `no` (SYN-0019-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0019 (toml-test capitalized-true).
+/// `case_0019_02 = no` warns W001 Warning at (1:16) and evaluates to null —
+/// converges across all four lineages; the reserved `false` still means bool.
+#[test]
+fn rb_482_syn19_fourth_no_never_bool() {
+    let src = "case_0019_02 = no\n";
+    let v = eval_json(src);
+    assert!(v["case_0019_02"].is_null(), "bare no must be null, got {v}");
+    assert_ne!(v["case_0019_02"], false, "bare no must never be bool false");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: the reserved literal still means bool false.
+    assert_eq!(eval_json("case_0019_02 = false\n")["case_0019_02"], false);
+}
+
+/// RB-483 — Derived variant 19-03: fourth lineage agrees on `on` (SYN-0019-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0019 (toml-test capitalized-true).
+/// `case_0019_03 = on` warns W001 Warning at (1:16) and evaluates to null —
+/// legacy spellings never become bool true in any lineage.
+#[test]
+fn rb_483_syn19_fourth_on_never_bool() {
+    let src = "case_0019_03 = on\n";
+    let v = eval_json(src);
+    assert!(v["case_0019_03"].is_null(), "bare on must be null, got {v}");
+    assert_ne!(v["case_0019_03"], true, "bare on must never be bool true");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    assert_eq!(eval_json("case_0019_03 = \"on\"\n")["case_0019_03"], "on");
+}
+
+/// RB-484 — Derived variant 19-04: fourth lineage agrees on `off` (SYN-0019-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0019 (toml-test capitalized-true).
+/// `case_0019_04 = off` warns W001 Warning at (1:16) and evaluates to null —
+/// legacy spellings never become bool false in any lineage.
+#[test]
+fn rb_484_syn19_fourth_off_never_bool() {
+    let src = "case_0019_04 = off\n";
+    let v = eval_json(src);
+    assert!(
+        v["case_0019_04"].is_null(),
+        "bare off must be null, got {v}"
+    );
+    assert_ne!(
+        v["case_0019_04"], false,
+        "bare off must never be bool false"
+    );
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    assert_eq!(eval_json("case_0019_04 = \"off\"\n")["case_0019_04"], "off");
+}
+
+/// RB-485 — Derived variant 19-05: fourth lineage agrees on `true` (SYN-0019-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0019 (toml-test capitalized-true).
+/// `case_0019_05 = true` is bool true with ZERO diagnostics — converges
+/// across all four lineages; the quoted "true" neighbour stays a string.
+#[test]
+fn rb_485_syn19_fourth_true_is_bool() {
+    let src = "case_0019_05 = true\n";
+    assert_eq!(
+        eval_json(src)["case_0019_05"],
+        true,
+        "reserved true must be bool"
+    );
+    let codes = codes_of(src);
+    assert!(
+        codes.is_empty(),
+        "reserved true must warn nothing, got {codes:?}"
+    );
+    // Positive control: the quoted neighbour stays the exact string.
+    let v = eval_json("case_0019_05 = \"true\"\n");
+    assert_eq!(v["case_0019_05"], "true");
+    assert_ne!(v["case_0019_05"], true, "quoted true must never be bool");
+}
+
+/// RB-486 — Derived variant 19-06: fourth lineage agrees on `FALSE` (SYN-0019-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0019 (toml-test capitalized-true).
+/// `case_0019_06 = FALSE` warns W001 Warning at (1:16) and evaluates to null —
+/// all four lineages refuse bool type to noncanonical case.
+#[test]
+fn rb_486_syn19_fourth_upper_false_never_bool() {
+    let src = "case_0019_06 = FALSE\n";
+    let v = eval_json(src);
+    assert!(v["case_0019_06"].is_null(), "FALSE must be null, got {v}");
+    assert_ne!(v["case_0019_06"], false, "FALSE must never be bool false");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: the documented lowercase literal still means bool.
+    assert_eq!(eval_json("case_0019_06 = false\n")["case_0019_06"], false);
+}
+
+/// RB-487 — Derived variant 19-07: fourth null policy agrees (SYN-0019-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0019 (toml-test capitalized-true).
+/// `case_0019_07 = null` is null with ZERO diagnostics — converges across
+/// all four lineages; the uppercase spelling resolves loudly.
+#[test]
+fn rb_487_syn19_fourth_null_reserved() {
+    let src = "case_0019_07 = null\n";
+    assert!(
+        eval_json(src)["case_0019_07"].is_null(),
+        "null must be null"
+    );
+    let codes = codes_of(src);
+    assert!(
+        codes.is_empty(),
+        "reserved null must warn nothing, got {codes:?}"
+    );
+    // Control: the uppercase spelling resolves to null only loudly.
+    let v = eval_json("case_0019_07 = NULL\n");
+    assert!(v["case_0019_07"].is_null(), "{v}");
+    let codes = codes_of("case_0019_07 = NULL\n");
+    assert!(codes.iter().any(|c| c == "W001"), "{codes:?}");
+}
+
+/// RB-488 — Derived variant 19-08: fourth quoting agrees (SYN-0019-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0019 (toml-test capitalized-true).
+/// `case_0019_08 = "no"` is exactly "no" with ZERO diagnostics — converges
+/// across all four lineages; the bare neighbour never coerces. (Completes
+/// SYN-0018-08…09 + opens SYN-0019-01…08.)
+#[test]
+fn rb_488_syn19_fourth_quoted_no_exact() {
+    let src = "case_0019_08 = \"no\"\n";
+    assert_eq!(
+        eval_json(src)["case_0019_08"],
+        "no",
+        "quoted no must stay exact"
+    );
+    let codes = codes_of(src);
+    assert!(
+        codes.is_empty(),
+        "quoted no must warn nothing, got {codes:?}"
+    );
+    // Control: the bare neighbour never coerces.
+    let v = eval_json("case_0019_08 = no\n");
+    assert!(v["case_0019_08"].is_null(), "{v}");
+    let codes = codes_of("case_0019_08 = no\n");
+    assert!(codes.iter().any(|c| c == "W001"), "{codes:?}");
+}

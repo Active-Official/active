@@ -14401,3 +14401,251 @@ fn rb_698_syn43_quoted_thirteenth_never_validated() {
         1992
     );
 }
+/// RB-699 — Derived variant 43-05: fractional thirteenth twin rejects (SYN-0043-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0043 (toml-test y10k-date).
+/// `case_0043_05 = 2024-01-01T12:30:00.123456789Z` fails E002 Error at
+/// (1:45) — converges with RB-591, RB-600, RB-609, RB-618, RB-627, RB-636,
+/// RB-645, RB-654, RB-663, RB-672, RB-681 and RB-690: no precision handling
+/// without a datetime type, loud reject in all thirteen lineages.
+#[test]
+fn rb_699_syn43_fractional_thirteenth_rejects() {
+    let src = "case_0043_05 = 2024-01-01T12:30:00.123456789Z\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 45), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    let src = "case_0043_05 = \"2024-01-01T12:30:00.123456789Z\"\n";
+    assert_eq!(
+        eval_json(src)["case_0043_05"],
+        "2024-01-01T12:30:00.123456789Z"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-700 — Derived variant 43-06: offset thirteenth twin degrades (SYN-0043-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0043 (toml-test y10k-date).
+/// `case_0043_06 = 2024-01-01T12:30:00-07:00` evaluates whole-doc to exactly
+/// `{case_0043_06: 2022, T12: 30}` with zero diagnostics — converges with
+/// RB-592, RB-601, RB-610, RB-619, RB-628, RB-637, RB-646, RB-655, RB-664,
+/// RB-673, RB-682 and RB-691: the offset never becomes an opaque fallback
+/// object.
+#[test]
+fn rb_700_syn43_offset_thirteenth_degrades() {
+    let src = "case_0043_06 = 2024-01-01T12:30:00-07:00\n";
+    let v = eval_json(src);
+    assert_eq!(
+        v,
+        serde_json::json!({"case_0043_06": 2022, "T12": 30}),
+        "must degrade to arithmetic + colon pair only, got {v}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    assert_eq!(
+        eval_json("case_0043_06 = \"2024-01-01T12:30:00-07:00\"\n")["case_0043_06"],
+        "2024-01-01T12:30:00-07:00"
+    );
+}
+
+/// RB-701 — Derived variant 43-07: leading-zero thirteenth twin is decimal (SYN-0043-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0043 (toml-test y10k-date).
+/// `case_0043_07 = 0001-01-01` is the arithmetic -1 whole-doc with zero
+/// diagnostics — converges with RB-593, RB-602, RB-611, RB-620, RB-629,
+/// RB-638, RB-647, RB-656, RB-665, RB-674, RB-683 and RB-692: leading zeros
+/// follow the decimal policy (RB-104) in all thirteen lineages.
+#[test]
+fn rb_701_syn43_leading_zero_thirteenth_decimal() {
+    let src = "case_0043_07 = 0001-01-01\n";
+    let v = eval_json(src);
+    assert_eq!(
+        v,
+        serde_json::json!({"case_0043_07": -1}),
+        "must be decimal arithmetic, got {v}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    assert_eq!(
+        eval_json("case_0043_07 = \"0001-01-01\"\n")["case_0043_07"],
+        "0001-01-01"
+    );
+}
+
+/// RB-702 — Derived variant 43-08: quoted thirteenth twin preserved (SYN-0043-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0043 (toml-test y10k-date).
+/// `case_0043_08 = "1979-05-27T07:32:00Z"` is the exact string with zero
+/// diagnostics — converges with RB-594, RB-603, RB-612, RB-621, RB-630,
+/// RB-639, RB-648, RB-657, RB-666, RB-675, RB-684 and RB-693:
+/// datetime-looking text is preserved character-for-character when quoted,
+/// in all thirteen lineages.
+#[test]
+fn rb_702_syn43_quoted_datetime_thirteenth_exact() {
+    let src = "case_0043_08 = \"1979-05-27T07:32:00Z\"\n";
+    assert_eq!(eval_json(src)["case_0043_08"], "1979-05-27T07:32:00Z");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: the bare date prefix is arithmetic, never a datetime.
+    assert_eq!(
+        eval_json("case_0043_08 = 1979-05-27\n")["case_0043_08"],
+        1947
+    );
+}
+
+/// RB-703 — Derived variant 43-09: bad-minutes thirteenth twin rejects (SYN-0043-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0043 (toml-test y10k-date).
+/// `case_0043_09 = 2024-01-01T12:60:00Z` fails E002 Error at (1:35) —
+/// converges with RB-595, RB-604, RB-613, RB-622, RB-631, RB-640, RB-649,
+/// RB-658, RB-667, RB-676, RB-685 and RB-694: no minute field exists to
+/// range-check anywhere, loud reject in all thirteen lineages. (Completes
+/// SYN-0043-05…09 coverage.)
+#[test]
+fn rb_703_syn43_bad_minutes_thirteenth_reject() {
+    let src = "case_0043_09 = 2024-01-01T12:60:00Z\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 35), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    let src = "case_0043_09 = \"2024-01-01T12:60:00Z\"\n";
+    assert_eq!(eval_json(src)["case_0043_09"], "2024-01-01T12:60:00Z");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-704 — Derived variant 44-01: NUL inside number literals is E005 (SYN-0044-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0044 (toml-test bad-codepoint).
+/// Byte fixture: `v = 12\0 3`. E005 Error at (1:7) — a NUL between digits is
+/// outside any string-or-comment, so numeric tokens get no NUL tolerance and
+/// the offset lands mid-literal. (Opens SYN-0044 bad-codepoint lineage.)
+#[test]
+fn rb_704_syn44_nul_in_number_e005() {
+    let diags = parse_file(
+        &research_fixture("syn_0044_01_nul_in_number.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 7), "{span:?}");
+    // Positive control: the NUL-free number parses.
+    assert_eq!(eval_json("v = 123\n")["v"], 123);
+}
+
+/// RB-705 — Derived variant 44-02: overlong NUL never smuggles past decoding (SYN-0044-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0044 (toml-test bad-codepoint).
+/// Byte fixture: overlong C0 80 inside a string (the classic encoded-NUL
+/// smuggle). E017 Error — the decoder rejects the overlong form at the
+/// stream level, so no encoded NUL ever reaches the NUL check: there is no
+/// decoding whose output bypasses validation.
+#[test]
+fn rb_705_syn44_overlong_nul_e017() {
+    let diags = parse_file(
+        &research_fixture("syn_0044_02_overlong_nul.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E017");
+    let e = diags.iter().find(|d| d.code == "E017").expect("E017");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E017 must be Error, got {:?}",
+        e.severity
+    );
+    // Positive control: the well-formed neighbour parses.
+    assert_eq!(eval_json("v = \"a\"\n")["v"], "a");
+}
+
+/// RB-706 — Derived variant 44-03: exactly one leading BOM is skipped (SYN-0044-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0044 (toml-test bad-codepoint).
+/// Byte fixture: two BOMs before `k = 1`. E005 Error at (1:1) — the leading
+/// skip covers exactly offset 0 (RB-003 converges); the second BOM is a
+/// misplaced character like any other, so BOM acceptance cannot be doubled.
+#[test]
+fn rb_706_syn44_double_bom_e005() {
+    let diags = parse_file(
+        &research_fixture("syn_0044_03_double_bom.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 1), "{span:?}");
+    // Positive control: a single leading BOM is skipped (RB-003 converges).
+    let codes = codes_of("\u{feff}k = 1\n");
+    assert!(codes.is_empty(), "{codes:?}");
+    assert_eq!(eval_json("\u{feff}k = 1\n")["k"], 1);
+}
+
+/// RB-707 — Derived variant 44-04: eleventh `\u` verbatim agrees (SYN-0044-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0044 (toml-test bad-codepoint).
+/// `case_0044_04 = "\u0001"` is the 6-char verbatim literal with zero
+/// diagnostics — converges with RB-500, RB-509, RB-518, RB-527, RB-536,
+/// RB-545, RB-554, RB-563, RB-572 and RB-581: no `\u` decoding anywhere,
+/// now across eleven byte lineages.
+#[test]
+fn rb_707_syn44_unicode_escape_verbatim() {
+    let v = eval_json("case_0044_04 = \"\\u0001\"\n");
+    assert_eq!(
+        v["case_0044_04"], "\\u0001",
+        "escape must stay verbatim, got {v}"
+    );
+    assert_eq!(v["case_0044_04"].as_str().expect("string").len(), 6);
+    let codes = codes_of("case_0044_04 = \"\\u0001\"\n");
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: documented escapes still decode.
+    let v = eval_json("case_0044_04 = \"a\\tb\"\n");
+    assert_eq!(v["case_0044_04"], "a\tb");
+}
+
+/// RB-708 — Derived variant 44-05: TAB inside headers is inert (SYN-0044-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0044 (toml-test bad-codepoint).
+/// Byte fixture: `[s\t]` then `k = 1`. The section binds as `s` with zero
+/// diagnostics — TABs are rejected only as structural indentation (E006);
+/// inside brackets the TAB is inert, so the indent rule never over-fires
+/// into headers. (Completes SYN-0043-05…09 coverage + opens SYN-0044-01…05.)
+#[test]
+fn rb_708_syn44_tab_in_header_inert() {
+    let module = parse_file(
+        &research_fixture("syn_0044_05_tab_in_header.active"),
+        ParseOptions::default(),
+    )
+    .unwrap_or_else(|d| panic!("tab-in-header must parse: {d:?}"));
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(v, serde_json::json!({"s": {"k": 1}}), "{v}");
+    assert!(diags.is_empty(), "{diags:?}");
+    // Control: TAB as structural indentation still fails E006.
+    let diags = parse_file(
+        &research_fixture("syn_0021_04_tab_line1.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("tab indent must fail E006");
+    assert!(diags.iter().any(|d| d.code == "E006"), "{diags:?}");
+}

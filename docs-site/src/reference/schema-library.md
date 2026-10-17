@@ -4,15 +4,15 @@ The standard schema library (`schemas/`, versioned with the
 language) ships reusable schemas and include fragments. Pull any
 file in with a literal include — relative to the including
 document (vendor `schemas/` next to your configs; no registry, no
-download step), e.g. `include "schemas/http-server.solid"`.
+download step), e.g. `include "schemas/http-server.active"`.
 
 | File | Covers | Required (no default) |
 |---|---|---|
-| `http-server.solid` | `host`, `port`, `tls`, `timeout`, `max_requests` | — (all defaulted) |
-| `postgres.solid` | `host`, `port`, `database`, `user`, `password`, `pool` | `host`, `database`, `user`, `password` |
-| `observability.solid` | `level`, `metrics`, `sample_rate`, `endpoint` | `level` |
-| `feature-flags.solid` | `flags` of `{name, enabled, rollout}` | flag entries |
-| `ai-agent.solid` | `model`, `temperature`, `max_tokens`, `retries` | `model` |
+| `http-server.active` | `host`, `port`, `tls`, `timeout`, `max_requests` | — (all defaulted) |
+| `postgres.active` | `host`, `port`, `database`, `user`, `password`, `pool` | `host`, `database`, `user`, `password` |
+| `observability.active` | `level`, `metrics`, `sample_rate`, `endpoint` | `level` |
+| `feature-flags.active` | `flags` of `{name, enabled, rollout}` | flag entries |
+| `ai-agent.active` | `model`, `temperature`, `max_tokens`, `retries` | `model` |
 
 Every file follows the library rules (`spec/schema-library.md`):
 closed tables, a descriptive comment on every field, defaults where

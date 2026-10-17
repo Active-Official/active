@@ -1,8 +1,8 @@
-# SOLID
+# ACTIVE
 
 **Symmetric · Overlay-ready · Loop-proof · Intent-driven · Deterministic**
 
-SOLID is a configuration and data language in the TOML/YAML/JSON class,
+ACTIVE is a configuration and data language in the TOML/YAML/JSON class,
 built for humans and AI agents alike: safer than YAML, more expressive
 than TOML, more human-friendly than JSON.
 
@@ -24,7 +24,7 @@ takes you from zero to validated configs. The
 [Migration](migration/toml.md) brings your TOML/YAML/JSON over.
 [Reference](reference/syntax.md) is the precise surface.
 
-Install in one line (`cargo install solid-cli solid-fmt solid-ls`,
+Install in one line (`cargo install active-cli active-fmt active-lsp`,
 Rust 1.85+), or grab a release archive from
 [GitHub releases](https://github.com/RatioArtificiosa/solid-lang/releases).
 The language server ships as a VS Code extension (`editors/vscode`)

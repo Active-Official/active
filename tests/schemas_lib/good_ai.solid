@@ -1,6 +1,0 @@
-include "../../schemas/ai-agent.solid"
-
-model = "m1"
-temperature = 0.5
-max_tokens = 2048
-retries = 5

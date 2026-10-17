@@ -1,0 +1,6 @@
+let region = env.AWS_REGION ?: "us-east-1"
+let port = env.ACTIVE_TEST_PORT ?: 8080
+
+[app]
+region = region
+port = port

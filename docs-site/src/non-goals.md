@@ -1,6 +1,6 @@
 # Non-goals
 
-SOLID stays a configuration and data language. The following are
+ACTIVE stays a configuration and data language. The following are
 permanent non-goals, re-affirmed every major release cycle (checklist
 C-070) to prevent scope creep:
 

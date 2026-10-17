@@ -1,5 +1,0 @@
-@patch("x", "first")
-
-include "order_a.solid"
-
-@patch("y", "local")

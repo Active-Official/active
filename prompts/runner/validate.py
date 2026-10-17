@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Validate the SOLID prompt pack (C-054) against live backends.
+"""Validate the Active prompt pack (C-054) against live backends.
 
 Runs every task in prompts/tasks/ through each backend exactly
 once (first-attempt metric — no retries, no repair loops),
-extracts the fenced document, checks it with the real `solid`
+extracts the fenced document, checks it with the real `ACTIVE`
 binary, and writes prompts/results/<stamp>.json.
 
 Backends:
@@ -32,7 +32,7 @@ PROMPTS = ROOT / "prompts"
 TASKS = PROMPTS / "tasks"
 RESULTS = PROMPTS / "results"
 VERSION = (PROMPTS / "VERSION").read_text().strip()
-SOLID = ROOT / "target" / "debug" / ("solid.exe" if os.name == "nt" else "solid")
+ACTIVE = ROOT / "target" / "debug" / ("active.exe" if os.name == "nt" else "active")
 
 SYSTEM_FILES = {
     "generator": PROMPTS / "v1" / "system-generator.md",
@@ -71,7 +71,7 @@ def load_tasks(only):
 def user_message(task):
     parts = []
     if task.get("document", "").strip():
-        parts.append("Document:\n```solid\n" + task["document"].strip() + "\n```")
+        parts.append("Document:\n```active\n" + task["document"].strip() + "\n```")
     parts.append(task["user"].strip())
     return "\n\n".join(parts)
 
@@ -129,7 +129,7 @@ def call_direct(system, user):
 
 
 def extract_code(response, kind):
-    # Info string must be exactly `solid` (whitespace-tolerant):
+    # Info string must be exactly `ACTIVE` (whitespace-tolerant):
     # a ```toml fence or fenceless prose is a contract miss for
     # code tasks, recorded via the extraction label (never silently
     # accepted).
@@ -137,17 +137,17 @@ def extract_code(response, kind):
     if kind != "code":
         return response, "prose"
     for info, body in fences:
-        if info.strip().lower() == "solid":
-            return body.strip(), "solid-fence"
+        if info.strip().lower() == "active":
+            return body.strip(), "active-fence"
     if fences:
         return fences[0][1].strip(), "first-fence"
     return response.strip(), "whole-response"
 
 
-def solid_run(args):
+def active_run(args):
     try:
         proc = subprocess.run(
-            [str(SOLID)] + args,
+            [str(ACTIVE)] + args,
             capture_output=True,
             text=True,
             timeout=60,
@@ -155,11 +155,11 @@ def solid_run(args):
         )
         return proc
     except subprocess.TimeoutExpired:
-        return subprocess.CompletedProcess(args, 124, "", "solid binary timeout")
+        return subprocess.CompletedProcess(args, 124, "", "ACTIVE binary timeout")
 
 
 def get_path(tree, dotted):
-    # SOLID keys are identifiers (never contain dots), so a plain
+    # Active keys are identifiers (never contain dots), so a plain
     # split is exact — no quoting rules to honor.
     node = tree
     for part in dotted.split("."):
@@ -171,7 +171,7 @@ def get_path(tree, dotted):
 
 def run_checks(task, code, tmpdir):
     results = []
-    doc_path = Path(tmpdir) / (task["id"] + ".solid")
+    doc_path = Path(tmpdir) / (task["id"] + ".active")
     eval_source = code
     if task.get("append_to_base") and task.get("document", "").strip():
         eval_source = task["document"].strip() + "\n" + code.strip() + "\n"
@@ -184,7 +184,7 @@ def run_checks(task, code, tmpdir):
     def need_eval():
         nonlocal evaluated
         if evaluated is None:
-            proc = solid_run(["eval", str(doc_path)])
+            proc = active_run(["eval", str(doc_path)])
             if proc.returncode != 0:
                 return None
             try:
@@ -196,17 +196,17 @@ def run_checks(task, code, tmpdir):
     for check in task.get("checks", []):
         kind = check["type"]
         if kind == "parse":
-            # Parses iff no error diagnostic: `solid check` also
+            # Parses iff no error diagnostic: `ACTIVE check` also
             # evaluates, so S/X failures (cycles, budgets) fail here
             # too — a document that cannot evaluate is not
             # well-formed output. Warnings are fine.
-            proc = solid_run(["check", str(doc_path)])
+            proc = active_run(["check", str(doc_path)])
             passed = "[Error]" not in proc.stderr
             results.append(
                 {"check": "parse", "pass": passed, "detail": proc.stderr[-500:]}
             )
         elif kind == "check_exit0":
-            proc = solid_run(["check", str(doc_path)])
+            proc = active_run(["check", str(doc_path)])
             results.append(
                 {
                     "check": "check_exit0",
@@ -235,9 +235,9 @@ def run_checks(task, code, tmpdir):
                 }
             )
         elif kind == "same_eval":
-            base_path = Path(tmpdir) / (task["id"] + "-base.solid")
+            base_path = Path(tmpdir) / (task["id"] + "-base.active")
             base_path.write_text(task["document"].strip() + "\n", newline="\n")
-            base_proc = solid_run(["eval", str(base_path)])
+            base_proc = active_run(["eval", str(base_path)])
             tree = need_eval()
             try:
                 base_tree = (
@@ -336,7 +336,7 @@ def run_task(task, backend):
             0,
             {
                 "check": "fence",
-                "pass": how == "solid-fence",
+                "pass": how == "active-fence",
                 "detail": how,
             },
         )
@@ -372,8 +372,8 @@ def main():
             i += 2
         else:
             i += 1
-    if not SOLID.exists():
-        print(f"missing binary: {SOLID} (run cargo build first)", file=sys.stderr)
+    if not ACTIVE.exists():
+        print(f"missing binary: {ACTIVE} (run cargo build first)", file=sys.stderr)
         sys.exit(2)
     tasks = load_tasks(only)
     print(f"pack v{VERSION}: {len(tasks)} tasks x {backends}", flush=True)

@@ -1,0 +1,7 @@
+include "lib_extra.active"
+
+schema = {
+  port = Int(min = 1),
+}
+
+port = 8080

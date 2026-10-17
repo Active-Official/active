@@ -1,0 +1,8 @@
+include "guard_a.active"
+include "guard_b.active"
+
+parent {
+  sub {
+    x = 1
+  }
+}

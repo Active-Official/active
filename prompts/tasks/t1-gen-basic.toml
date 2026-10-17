@@ -3,7 +3,7 @@ system = "generator"
 kind = "code"
 
 user = """
-Write SOLID for a web service: application name "api" with debug
+Write ACTIVE for a web service: application name "api" with debug
 off, served on port 8080.
 """
 

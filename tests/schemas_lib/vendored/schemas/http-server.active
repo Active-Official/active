@@ -1,0 +1,14 @@
+# Standard HTTP server schema (ACTIVE schema library).
+schema {
+  closed = true
+  # Interface to bind (use 0.0.0.0 in containers).
+  host = String(default = "localhost")
+  # TCP port to listen on.
+  port = Int(min = 1, max = 65535, default = 8080)
+  # Terminate TLS here (certificates come from the proxy).
+  tls = Bool(default = false)
+  # Request timeout before 503.
+  timeout = Duration(min = 1ms, max = 5m, default = 30s)
+  # Sustained request budget per timeout window (a count, not a rate).
+  max_requests = Int(min = 1, default = 100)
+}

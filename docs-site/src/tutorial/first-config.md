@@ -3,13 +3,13 @@
 Tables group keys. Write them with brackets or indentation — the
 value tree is identical either way:
 
-```solid
+```active
 [server]
 host = "localhost"
 port = 8080
 ```
 
-```solid
+```active
 server:
   host = "localhost"
   port = 8080
@@ -21,7 +21,7 @@ References point at other keys and always resolve before use —
 `let` bindings are visible everywhere (bare top-level keys are
 visible only at the top level):
 
-```solid
+```active
 let base_port = 8000
 [server]
 port = base_port + 80

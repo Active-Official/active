@@ -3,7 +3,7 @@
 Schemas declare the contract; validation runs after evaluation, in
 both modes:
 
-```solid
+```active
 schema = { closed = true, port = Int(min = 1, max = 65535) }
 port = 8080
 ```

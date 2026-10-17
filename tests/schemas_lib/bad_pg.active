@@ -1,0 +1,7 @@
+include "../../schemas/postgres.active"
+
+host = "db.internal"
+port = 5432
+database = "app"
+user = "app"
+pool = 10

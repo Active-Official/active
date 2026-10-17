@@ -1,3 +1,0 @@
-include "lib_schema.solid"
-
-mode = "dev"

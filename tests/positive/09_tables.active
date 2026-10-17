@@ -1,0 +1,10 @@
+[app]
+name = "active"
+version = "1.0.0"
+
+[server]
+host = "localhost"
+port = 8080
+
+[services]
+url = "https://api.example.com"

@@ -19,9 +19,9 @@ key totals, materialized size) — exceeding any is a hard `X0xx`
 error, which also kills billion-laughs shapes before they
 materialize.
 
-**Provenance and signing.** `solid lock` binds content hash +
+**Provenance and signing.** `ACTIVE lock` binds content hash +
 provenance + toolchain version. Overlays sign detached Ed25519
-sidecars verified against trusted key sets (`solid keygen` /
+sidecars verified against trusted key sets (`ACTIVE keygen` /
 `sign` / `verify`); releases add SHA-256 checksums, build
-attestations, and optional `solid-sign` sidecars. Full model:
+attestations, and optional `ACTIVE-sign` sidecars. Full model:
 `spec/threat-model.md`.

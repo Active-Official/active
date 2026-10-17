@@ -1,6 +1,6 @@
 # From TOML
 
-SOLID is a superset of TOML's shape with stricter evaluation.
+ACTIVE is a superset of TOML's shape with stricter evaluation.
 Mechanical migration first, improvements after.
 
 TOML in:
@@ -11,11 +11,11 @@ host = "localhost"
 port = 8080
 ```
 
-SOLID out (`solid import --from toml` produces the equivalent
+ACTIVE out (`ACTIVE import --from toml` produces the equivalent
 source, or write it directly):
 
-```solid
-{{#include ./toml.solid}}
+```active
+{{#include ./toml.active}}
 ```
 
 What changes on day one: nothing — tables, keys, and scalars map

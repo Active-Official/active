@@ -1,5 +1,0 @@
-include "../../schemas/feature-flags.solid"
-
-flags = [
-  { name = "checkout", enabled = true, rollout = 50 }
-]

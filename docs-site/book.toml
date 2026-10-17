@@ -1,8 +1,8 @@
 [book]
-authors = ["SOLID Language Team"]
+authors = ["ACTIVE Language Team"]
 language = "en"
 src = "src"
-title = "SOLID — Configuration for Humans and AI Agents"
+title = "ACTIVE — Configuration for Humans and AI Agents"
 
 [build]
 build-dir = "book"

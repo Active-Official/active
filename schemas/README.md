@@ -1,4 +1,4 @@
-# SOLID standard schema library (C-062, spec/schema-library.md)
+# ACTIVE standard schema library (C-062, spec/schema-library.md)
 
 Versioned with the language (same workspace version): `http-server`,
 `postgres`, `observability`, `feature-flags`, and `ai-agent` schemas
@@ -8,8 +8,8 @@ defaults where a universal value exists.
 Consume by vendoring this directory next to your documents and
 including downward — no flags, no escapes:
 
-```solid
-include "schemas/http-server.solid"
+```active
+include "schemas/http-server.active"
 ```
 
 Fields with no sane default (passwords, hostnames, model names)

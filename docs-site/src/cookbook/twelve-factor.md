@@ -1,12 +1,12 @@
 # 12-factor application
 
-Twelve-factor config is environment by definition. SOLID reads it
+Twelve-factor config is environment by definition. ACTIVE reads it
 from a snapshot: `env.NAME ?: default` resolves variables injected
 at startup (never live I/O during evaluation), with written
 defaults for local runs:
 
-```solid
-{{#include ./twelve-factor.solid}}
+```active
+{{#include ./twelve-factor.active}}
 ```
 
 `DATABASE_URL` unset locally? The default applies and evaluation

@@ -3,12 +3,12 @@
 Install the toolchain (Rust 1.85+), then evaluate your first file.
 
 ```bash
-cargo install solid-cli solid-fmt solid-ls
+cargo install active-cli active-fmt active-lsp
 ```
 
-Write `hello.solid`:
+Write `hello.active`:
 
-```solid
+```active
 name = "world"
 greeting = "hello ${name}!"
 ```
@@ -16,7 +16,7 @@ greeting = "hello ${name}!"
 Evaluate it:
 
 ```bash
-solid eval hello.solid
+ACTIVE eval hello.active
 ```
 
 ```json
@@ -26,8 +26,8 @@ solid eval hello.solid
 }
 ```
 
-`solid check` validates without printing (`OK` means clean, exit 0).
-`solid fmt` formats, `solid lint` lints, `solid-ls` serves editors.
+`ACTIVE check` validates without printing (`OK` means clean, exit 0).
+`ACTIVE fmt` formats, `ACTIVE lint` lints, `active-lsp` serves editors.
 Every command below works on the files in this book — each cookbook
 and migration sample is executed by the test suite, so nothing here
 rots.

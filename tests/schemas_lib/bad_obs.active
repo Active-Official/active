@@ -1,0 +1,6 @@
+include "../../schemas/observability.active"
+
+level = "verbose"
+metrics = true
+sample_rate = 0.5
+endpoint = "https://otel.internal"

@@ -1,7 +1,0 @@
-include "../../schemas/postgres.solid"
-
-host = "db.internal"
-port = 5432
-database = "app"
-user = "app"
-pool = 10

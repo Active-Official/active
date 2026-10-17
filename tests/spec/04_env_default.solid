@@ -1,3 +1,0 @@
-[app]
-region = env.SOLID_SPEC_REGION ?: "us-east-1"
-missing = env.SOLID_SPEC_UNSET_VAR ?: null

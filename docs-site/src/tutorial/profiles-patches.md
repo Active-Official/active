@@ -4,7 +4,7 @@ One base file, many environments. Profiles select overlays;
 patches rewrite structure — both participate in the dependency
 graph, apply after evaluation, and validate like written values:
 
-```solid
+```active
 [server]
 port = 8080
 
@@ -21,7 +21,7 @@ document-level operations with dotted-path targets (`@patch` sets,
 `@remove` deletes, `@rename` takes a dotted source and a plain new
 name in the same parent):
 
-```solid
+```active
 [server]
 port = 5
 debug = true
@@ -31,10 +31,10 @@ old_key = 1
 @rename("server.old_key", "new_key")
 ```
 
-`include "shared/base.solid"` pulls in literal-path fragments
+`include "shared/base.active"` pulls in literal-path fragments
 (relative, never escaping the parent, cycles rejected; private
 includes never leak bindings) — the unit of reuse behind the
 [standard schema library](../reference/schema-library.md).
-`solid graph` shows the dependency shape; `solid impact <key>` /
-`solid why <key>` answer single-file dependent/dependency queries
+`ACTIVE graph` shows the dependency shape; `ACTIVE impact <key>` /
+`ACTIVE why <key>` answer single-file dependent/dependency queries
 for any key.

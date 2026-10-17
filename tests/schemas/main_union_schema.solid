@@ -1,7 +1,0 @@
-include "lib_extra.solid"
-
-schema = {
-  port = Int(min = 1),
-}
-
-port = 8080

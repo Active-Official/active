@@ -1,7 +1,7 @@
 # Conformance
 
 `tests/spec/` is the official conformance suite: 13 case pairs
-(`<name>.solid` + `<name>.expected.json`) asserting accepted
+(`<name>.active` + `<name>.expected.json`) asserting accepted
 documents' value trees byte for byte. The Rust implementation in
 this repository is declared the **reference implementation for
 the 1.0 conformance suite** — the compatibility target every other

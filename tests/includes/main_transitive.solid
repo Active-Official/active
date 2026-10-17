@@ -1,4 +1,0 @@
-include "lib_mid.solid"
-
-[app]
-name = "top"

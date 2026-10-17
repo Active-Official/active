@@ -1,6 +1,0 @@
-include "../../schemas/observability.solid"
-
-level = "warn"
-metrics = true
-sample_rate = 0.5
-endpoint = "https://otel.internal"

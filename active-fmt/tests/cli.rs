@@ -50,3 +50,93 @@ fn check_passes_clean_files() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+#[test]
+fn write_reformats_file_in_place() {
+    let f = fixture("write.active", "port=8080\n");
+    let out = active_fmt()
+        .arg("--write")
+        .arg(&f)
+        .output()
+        .expect("run active-fmt");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(&f).expect("read back"),
+        "port = 8080\n"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("formatted"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+#[test]
+fn style_flags_convert_between_syntaxes_on_stdout() {
+    let brace = fixture("to_indent.active", "[app]\nname = \"x\"\n");
+    let out = active_fmt()
+        .arg("--indented")
+        .arg(&brace)
+        .output()
+        .expect("run active-fmt");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("app:"), "{text}");
+
+    let indent = fixture("to_brace.active", "app:\n  name = \"x\"\n");
+    let out = active_fmt()
+        .arg("--bracketed")
+        .arg(&indent)
+        .output()
+        .expect("run active-fmt");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("[app]"), "{text}");
+    // Style flags only select output style: the file itself is untouched.
+    assert_eq!(
+        std::fs::read_to_string(&indent).expect("read back"),
+        "app:\n  name = \"x\"\n"
+    );
+}
+
+#[test]
+fn broken_files_fail_loudly_and_untouched() {
+    let before = "port = \n";
+    let f = fixture("broken.active", before);
+    let out = active_fmt()
+        .arg("--write")
+        .arg(&f)
+        .output()
+        .expect("run active-fmt");
+    assert!(!out.status.success(), "broken input must fail");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("cannot format"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(std::fs::read_to_string(&f).expect("read back"), before);
+}
+
+#[test]
+fn conflicting_flags_are_rejected() {
+    let f = fixture("conflict.active", "port = 8080\n");
+    let out = active_fmt()
+        .arg("--check")
+        .arg("--write")
+        .arg(&f)
+        .output()
+        .expect("run active-fmt");
+    assert!(!out.status.success(), "conflicting flags must fail");
+}

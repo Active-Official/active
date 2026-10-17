@@ -350,3 +350,14 @@ fn clean_corpus_and_examples_raise_nothing() {
         assert!(diags.is_empty(), "{}: {diags:?}", path.display());
     }
 }
+
+#[test]
+fn chained_and_nested_uses_count_as_used() {
+    // Guard for the unused_lets flat scan: uses through chains, nested
+    // tables/arrays, and interpolation must mark bindings used.
+    let src = "let a = 1\nlet b = a\nlet idle = 2\n[tbl]\ndeep = [{ v = b }]\nmsg = \"${a}\"\n";
+    let diags = lint(&parse_ok(src));
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert_eq!(diags[0].code, "L001");
+    assert!(diags[0].message.contains("idle"), "{:?}", diags[0]);
+}

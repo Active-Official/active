@@ -164,11 +164,15 @@ fn ref_targets(module: &Module, id: NodeId) -> HashSet<NodeId> {
 
 /// L001: `let` bindings never referenced by any `Ref`.
 fn unused_lets(module: &Module) -> Vec<Diagnostic> {
+    // Single flat scan: every Ref node in the arena contributes its
+    // target. The old code unioned `ref_targets(id)` over every node —
+    // O(V·E) re-walks of the same subgraphs. The sets are identical:
+    // each arena node is reachable from itself, so the union over all
+    // nodes is exactly the set of all Ref targets (C-055 perf audit).
     let mut used = HashSet::new();
-    for (i, _) in module.arena.iter().enumerate() {
-        let id = NodeId(i as u32);
-        for target in ref_targets(module, id) {
-            used.insert(target);
+    for node in module.arena.iter() {
+        if let Node::Ref(target) = node {
+            used.insert(*target);
         }
     }
     // Bindings sort by name: HashMap iteration is random, diagnostics

@@ -79,6 +79,25 @@ fn criterion_benchmark(c: &mut Criterion) {
         let engine = bench_engine();
         b.iter(|| engine.evaluate(&module).expect("must evaluate"));
     });
+
+    // Hot-path extensions: formatter, linter, and JSON converter over
+    // the same 10k document (spec/performance.md §1).
+    let fmt_module = parse(&src, "bench").expect("must parse");
+    c.bench_function("fmt_10k_brace", |b| {
+        b.iter(|| active_core::fmt::format(&fmt_module, active_core::Style::Brace));
+    });
+
+    c.bench_function("lint_10k", |b| {
+        b.iter(|| active_core::lint(&fmt_module));
+    });
+
+    let value = bench_engine()
+        .evaluate(&fmt_module)
+        .expect("must evaluate")
+        .0;
+    c.bench_function("convert_json_10k", |b| {
+        b.iter(|| active_core::convert::value_to_pretty_json(&value));
+    });
 }
 
 criterion_group!(benches, criterion_benchmark);

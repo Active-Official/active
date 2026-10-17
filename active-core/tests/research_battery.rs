@@ -26109,3 +26109,256 @@ fn rb_1188_syn97_truncated_e2_rejects_spanless() {
         "\u{e9}"
     );
 }
+/// RB-1189 — Invalid-UTF8-array variant: TAB escape decodes (SYN-0097-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0002 (nst JSONTestSuite
+/// n_array_a_invalid_utf8).
+/// `case_0097_09 = "a\tb"` is `a<TAB>b` with zero diagnostics — `\t` is a
+/// SPECIFIED escape (spec/grammar.md:64-66), decoded like `\n`. Structural
+/// TABs still reject E006 (RB-1185); TABs inside string content decode.
+/// (Completes SYN-0097 lineage.)
+#[test]
+fn rb_1189_syn97_tab_escape_decodes() {
+    let src = "case_0097_09 = \"a\\tb\"\n";
+    assert_eq!(eval_json(src)["case_0097_09"], "a\tb");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the sibling specified escape agrees.
+    assert_eq!(
+        eval_json("case_0097_09 = \"a\\nb\"\n")["case_0097_09"],
+        "a\nb"
+    );
+}
+
+/// RB-1190 — Colon-instead-of-comma variant: doubled comma heals (SYN-0098-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0003 (nst JSONTestSuite
+/// n_array_colon_instead_of_comma).
+/// REFUSAL (spec-gated): research demands rejecting `[1,,2]`, but the locked
+/// stray-comma policy heals H002 Info at (1:19) to exactly `[1, 2]` —
+/// the stray comma is dropped, never materialized as an implicit null
+/// (RB-089/RB-911/RB-1172 pin the heal). (Opens SYN-0098 lineage.)
+#[test]
+fn rb_1190_syn98_doubled_comma_heals_info() {
+    let src = "case_0098_01 = [1,,2]\n";
+    assert_eq!(
+        eval_json(src)["case_0098_01"],
+        serde_json::json!([1, 2]),
+        "healed value"
+    );
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H002 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 19), "{span:?}");
+    // Positive control: the clean neighbour carries no heal.
+    assert!(!codes_of("case_0098_01 = [1, 2]\n")
+        .iter()
+        .any(|c| c == "H002"));
+}
+
+/// RB-1191 — Colon-instead-of-comma variant: missing separator heals (SYN-0098-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0003 (nst JSONTestSuite
+/// n_array_colon_instead_of_comma).
+/// REFUSAL (spec-gated): research demands rejecting `[1 2]`, but the locked
+/// missing-comma policy heals H003 Warning at (1:19) to `[1, 2]` — adjacent
+/// values are never merged or accepted silently (RB-090 pins E001||H003;
+/// RB-1173 pins the shipped H003).
+#[test]
+fn rb_1191_syn98_missing_separator_heals() {
+    let src = "case_0098_02 = [1 2]\n";
+    assert_eq!(
+        eval_json(src)["case_0098_02"],
+        serde_json::json!([1, 2]),
+        "healed value"
+    );
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H003").expect("H003");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Warning,
+        "H003 must be Warning, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H003 carries a span");
+    assert_eq!((span.line, span.column), (1, 19), "{span:?}");
+    // Positive control: the separated neighbour carries no heal.
+    assert!(!codes_of("case_0098_02 = [1, 2]\n")
+        .iter()
+        .any(|c| c == "H003"));
+}
+
+/// RB-1192 — Colon-instead-of-comma variant: lonely comma heals empty (SYN-0098-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0003 (nst JSONTestSuite
+/// n_array_colon_instead_of_comma).
+/// REFUSAL (spec-gated): research demands rejecting `[,]`, but the locked
+/// stray-comma policy heals H002 Info at (1:17) to `[]` — a comma never
+/// stands in for a value (RB-119/RB-1174 pin the heal).
+#[test]
+fn rb_1192_syn98_lonely_comma_heals_empty() {
+    let src = "case_0098_03 = [,]\n";
+    assert_eq!(
+        eval_json(src)["case_0098_03"],
+        serde_json::json!([]),
+        "healed value"
+    );
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H002 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the truly empty neighbour carries no heal.
+    assert!(!codes_of("case_0098_03 = []\n").iter().any(|c| c == "H002"));
+}
+
+/// RB-1193 — Colon-instead-of-comma variant: trailing comma allowed (SYN-0098-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0003 (nst JSONTestSuite
+/// n_array_colon_instead_of_comma).
+/// `case_0098_04 = [1,]` heals H002 Info at (1:18) to `[1]` — Active
+/// EXPLICITLY allows trailing commas (RB-004/RB-249/RB-1175), so the
+/// research "reject unless explicitly allowed" condition resolves to
+/// accept-with-heal.
+#[test]
+fn rb_1193_syn98_trailing_comma_heals() {
+    let src = "case_0098_04 = [1,]\n";
+    assert_eq!(
+        eval_json(src)["case_0098_04"],
+        serde_json::json!([1]),
+        "healed value"
+    );
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H002 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the comma-free neighbour carries no heal.
+    assert!(!codes_of("case_0098_04 = [1]\n").iter().any(|c| c == "H002"));
+}
+
+/// RB-1194 — Colon-instead-of-comma variant: clean array silent (SYN-0098-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0003 (nst JSONTestSuite
+/// n_array_colon_instead_of_comma).
+/// `case_0098_05 = [1, 2, 3]` evaluates to three elements with ZERO
+/// diagnostics — well-separated elements never draw a heal (converges with
+/// RB-1176).
+#[test]
+fn rb_1194_syn98_clean_array_silent() {
+    let src = "case_0098_05 = [1, 2, 3]\n";
+    assert_eq!(
+        eval_json(src)["case_0098_05"],
+        serde_json::json!([1, 2, 3]),
+        "{src}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: the doubled-comma neighbour still announces H002 (no slack).
+    let codes = codes_of("case_0098_05 = [1,,2]\n");
+    assert!(codes.iter().any(|c| c == "H002"), "{codes:?}");
+}
+
+/// RB-1195 — Colon-instead-of-comma variant: empty array silent (SYN-0098-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0003 (nst JSONTestSuite
+/// n_array_colon_instead_of_comma).
+/// `case_0098_06 = []` evaluates to an empty array with ZERO diagnostics
+/// (converges with RB-1177).
+#[test]
+fn rb_1195_syn98_empty_array_silent() {
+    let src = "case_0098_06 = []\n";
+    assert_eq!(
+        eval_json(src)["case_0098_06"],
+        serde_json::json!([]),
+        "{src}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: the lonely-comma neighbour still announces H002 (no slack).
+    let codes = codes_of("case_0098_06 = [,]\n");
+    assert!(codes.iter().any(|c| c == "H002"), "{codes:?}");
+}
+
+/// RB-1196 — Colon-instead-of-comma variant: nested arrays silent (SYN-0098-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0003 (nst JSONTestSuite
+/// n_array_colon_instead_of_comma).
+/// `case_0098_07 = [[1], [2, 3]]` evaluates nested with ZERO diagnostics
+/// (converges with RB-1178).
+#[test]
+fn rb_1196_syn98_nested_arrays_silent() {
+    let src = "case_0098_07 = [[1], [2, 3]]\n";
+    assert_eq!(
+        eval_json(src)["case_0098_07"],
+        serde_json::json!([[1], [2, 3]]),
+        "{src}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: a single nest is equally silent.
+    let codes = codes_of("case_0098_07 = [[1]]\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1197 — Colon-instead-of-comma variant: hetero array accepts (SYN-0098-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0003 (nst JSONTestSuite
+/// n_array_colon_instead_of_comma).
+/// `case_0098_08 = [1, { name = "x" }]` evaluates heterogeneous with ZERO
+/// diagnostics — parser and schema agree: mixed arrays are allowed
+/// (converges with RB-1179).
+#[test]
+fn rb_1197_syn98_hetero_array_accepts() {
+    let src = "case_0098_08 = [1, { name = \"x\" }]\n";
+    let v = eval_json(src);
+    assert_eq!(
+        v["case_0098_08"],
+        serde_json::json!([1, {"name": "x"}]),
+        "{v}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the homogeneous neighbour is equally silent.
+    let codes = codes_of("case_0098_08 = [1, 2]\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1198 — Colon-instead-of-comma variant: unterminated points at EOF (SYN-0098-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0003 (nst JSONTestSuite
+/// n_array_colon_instead_of_comma).
+/// `case_0098_09 = [1, 2` (no `]`) fails E001 Error at (2:1) — the diagnostic
+/// points at EOF where the bracket was expected (converges with RB-112 and
+/// RB-1180). (Completes SYN-0098 lineage.)
+#[test]
+fn rb_1198_syn98_unterminated_array_eof() {
+    let src = "case_0098_09 = [1, 2\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: the terminated neighbour evaluates silently.
+    assert_eq!(
+        eval_json("case_0098_09 = [1, 2]\n")["case_0098_09"],
+        serde_json::json!([1, 2])
+    );
+    let codes = codes_of("case_0098_09 = [1, 2]\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}

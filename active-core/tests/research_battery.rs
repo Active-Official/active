@@ -31680,3 +31680,224 @@ fn rb_1428_syn124_no_unicode_key_merge() {
     let b = eval_json("case_0124_05 = \"e\u{301}\"\n");
     assert_ne!(a["case_0124_05"], b["case_0124_05"], "{a} vs {b}");
 }
+
+/// RB-1429 — Duplicated-key variant: distinct tables never collide (SYN-0124-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0020 (nst JSONTestSuite
+/// y_object_duplicated_key).
+/// `case_0124_06 = { a = 1 }` beside `value = { b = 2 }` evaluates both
+/// silently — different top-level keys are different scopes, so the
+/// catalogue's "implicit last-write-wins must not bypass duplicate checks"
+/// worry never materializes: there is no write to the same key at all.
+/// (A same-key repeat would announce W011 per RB-1424, never slide by.)
+#[test]
+fn rb_1429_syn124_distinct_tables_accept() {
+    let src = "case_0124_06 = { a = 1 }\nvalue = { b = 2 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0124_06"]["a"], 1, "{v}");
+    assert_eq!(v["value"]["b"], 2, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a same-key repeat announces W011 (RB-1424).
+    let codes = codes_of("case_0124_06 = { a = 1, a = 2 }\n");
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}
+
+/// RB-1430 — Duplicated-key variant: naive patch form rejects (SYN-0124-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0020 (nst JSONTestSuite
+/// y_object_duplicated_key).
+/// `@patch base { key = 2 }` (bare-name block form) fails E019 Error at
+/// (3:2) — ordinary duplicate declarations and intentional patch semantics
+/// stay visibly separate: only the explicit call form
+/// `@patch("base.key", 2)` overrides, silently (RB-341 shape). Converges
+/// with the batch-35 naive-form lineage.
+#[test]
+fn rb_1430_syn124_naive_patch_rejects() {
+    let src = "case_0124_07 = 1\nbase = { key = 1 }\n@patch base { key = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    // Positive control: the explicit call form overrides silently.
+    let v = eval_json("base = { key = 1 }\n@patch(\"base.key\", 2)\n");
+    assert_eq!(v["base"]["key"], 2, "{v}");
+    let module =
+        parse("base = { key = 1 }\n@patch(\"base.key\", 2)\n", "research").expect("must parse");
+    let (_, d) = Engine::new().evaluate(&module).expect("must evaluate");
+    assert!(d.is_empty(), "{d:?}");
+}
+
+/// RB-1431 — Duplicated-key variant: naive remove form rejects (SYN-0124-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0020 (nst JSONTestSuite
+/// y_object_duplicated_key).
+/// `@remove base.key` (bare-path form, twice) fails E019 Error at (3:2) —
+/// repeated structural operations need explicit semantics, and the bare
+/// form has none. The explicit call form `@remove("base.key")` removes an
+/// existing key silently (RB-014 shape). The catalogue's "deterministic
+/// no-op" arm lives in the call form's W004 path (DERIVED-0012), never in
+/// a silent acceptance of the bare form.
+#[test]
+fn rb_1431_syn124_naive_remove_rejects() {
+    let src = "case_0124_08 = 1\nbase = { key = 1 }\n@remove base.key\n@remove base.key\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    // Positive control: the explicit call form removes an existing key.
+    let v = eval_json("base = { key = 1 }\n@remove(\"base.key\")\n");
+    assert!(v["base"].get("key").is_none(), "{v}");
+}
+
+/// RB-1432 — Duplicated-key variant: dotted quoted key never aliases (SYN-0124-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0020 (nst JSONTestSuite
+/// y_object_duplicated_key).
+/// `{ "a.b" = 1, a = { b = 2 } }` fails E001 Error at (1:18) — the quoted
+/// form is rejected before any dotted-key aliasing question can arise, so
+/// TOML-style `"a.b"`-vs-nested-path surprises are impossible by
+/// construction. Quoted and nested paths are "distinct by spec" because
+/// only one of them exists. Converges with the quoted-key lineage
+/// (RB-1347) at equal key width.
+#[test]
+fn rb_1432_syn124_dotted_quoted_rejects() {
+    let src = "case_0124_09 = { \"a.b\" = 1, a = { b = 2 } }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the bare nested path evaluates silently.
+    let v = eval_json("case_0124_09 = { a = { b = 2 } }\n");
+    assert_eq!(v["case_0124_09"]["a"]["b"], 2, "{v}");
+    assert!(codes_of("case_0124_09 = { a = { b = 2 } }\n").is_empty());
+}
+
+/// RB-1433 — Accepted-surrogate-pair twin: dangling backslash heals (SYN-0125-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// y_string_accepted_surrogate_pair; same shape as SYN-0116-01, sixth
+/// parent fixture).
+/// Converges with RB-1352/RB-1361/RB-1370/RB-1379/RB-1388: `\"` is a
+/// specified escape (spec/grammar.md:62-64), the string is unterminated,
+/// H001 Info at (1:16).
+#[test]
+fn rb_1433_syn125_dangling_backslash_heals() {
+    let src = "case_0125_01 = \"dangling\\\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0125_01"], "dangling\"\n", "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H001").expect("H001");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H001 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: a closed string needs no heal.
+    let v = eval_json("case_0125_01 = \"done\"\n");
+    assert_eq!(v["case_0125_01"], "done", "{v}");
+    assert!(codes_of("case_0125_01 = \"done\"\n").is_empty());
+}
+
+/// RB-1434 — Accepted-surrogate-pair twin: lone-surrogate escape stays verbatim (SYN-0125-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// y_string_accepted_surrogate_pair; same shape as SYN-0116-02).
+/// REFUSAL (spec-gated, spec/grammar.md:62-66, RB-050, converges with
+/// RB-1353/RB-1362/RB-1371/RB-1380/RB-1389): no UTF-16 decoding was ever
+/// adopted — not even for the "accepted pair" parent — so `"\uD800"` keeps
+/// its exact six characters silently.
+#[test]
+fn rb_1434_syn125_lone_surrogate_verbatim() {
+    let src = "case_0125_02 = \"\\uD800\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0125_02"], "\\uD800", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a plain ASCII string is exact and silent too.
+    let v = eval_json("case_0125_02 = \"plain\"\n");
+    assert_eq!(v["case_0125_02"], "plain", "{v}");
+}
+
+/// RB-1435 — Accepted-surrogate-pair twin: scalar `\u` escape never decodes (SYN-0125-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// y_string_accepted_surrogate_pair; same shape as SYN-0116-03).
+/// REFUSAL (spec-gated, spec/grammar.md:62-66, RB-050, converges with
+/// RB-1354/RB-1363/RB-1372/RB-1381/RB-1390): `\u0061` persists exactly,
+/// never "a".
+#[test]
+fn rb_1435_syn125_scalar_escape_never_decodes() {
+    let src = "case_0125_03 = \"\\u0061\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0125_03"], "\\u0061", "{v}");
+    assert_ne!(v["case_0125_03"], "a", "must NOT decode to a: {v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the literal letter evaluates to itself.
+    let v = eval_json("case_0125_03 = \"a\"\n");
+    assert_eq!(v["case_0125_03"], "a", "{v}");
+}
+
+/// RB-1436 — Accepted-surrogate-pair twin: `\n` decodes to one LF (SYN-0125-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// y_string_accepted_surrogate_pair; same shape as SYN-0116-04).
+/// Converges with RB-1355/RB-1364/RB-1373/RB-1382/RB-1391
+/// (spec/grammar.md:62-64): one LF, silent, stream never splits.
+#[test]
+fn rb_1436_syn125_escaped_newline_decodes() {
+    let src = "case_0125_04 = \"line1\\nline2\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0125_04"], "line1\nline2", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the sibling specified escape `\t` decodes to TAB.
+    let v = eval_json("case_0125_04 = \"a\\tb\"\n");
+    assert_eq!(v["case_0125_04"], "a\tb", "{v}");
+}
+
+/// RB-1437 — Accepted-surrogate-pair twin: raw newline inside quotes is kept (SYN-0125-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// y_string_accepted_surrogate_pair; same shape as SYN-0116-05).
+/// REFUSAL (spec-gated, spec/grammar.md:58-62, RB-175, converges with
+/// RB-1356/RB-1365/RB-1374/RB-1383/RB-1392): the raw LF is content, kept
+/// silently, agreeing with the `\n` twin.
+#[test]
+fn rb_1437_syn125_raw_newline_kept() {
+    let src = "case_0125_05 = \"line1\nline2\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0125_05"], "line1\nline2", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Twin convergence: raw LF and escaped `\n` spell the same value.
+    let twin = eval_json("case_0125_05 = \"line1\\nline2\"\n");
+    assert_eq!(v["case_0125_05"], twin["case_0125_05"], "{v} vs {twin}");
+}
+
+/// RB-1438 — Accepted-surrogate-pair twin: `\x` escape stays verbatim (SYN-0125-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// y_string_accepted_surrogate_pair; same shape as SYN-0116-06).
+/// REFUSAL (spec-gated, spec/grammar.md:62-66, RB-050, converges with
+/// RB-1357/RB-1366/RB-1375/RB-1384/RB-1393): `\x41` persists exactly,
+/// silently, never "A".
+#[test]
+fn rb_1438_syn125_hex_escape_verbatim() {
+    let src = "case_0125_06 = \"\\x41\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0125_06"], "\\x41", "{v}");
+    assert_ne!(v["case_0125_06"], "A", "must NOT decode to A: {v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the explicit letter is the way to spell "A".
+    let v = eval_json("case_0125_06 = \"A\"\n");
+    assert_eq!(v["case_0125_06"], "A", "{v}");
+}

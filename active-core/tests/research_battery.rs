@@ -7120,6 +7120,208 @@ fn rb_408_syn10_eof_triple() {
     );
 }
 
+/// RB-409 — Derived variant 11-01: heal triple (SYN-0011-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0011 (toml-test no-comma-01).
+/// Doubled comma heals with value `[1, 2]`, class H002 at 1:19, Info
+/// severity — the full repair triple indexed for the 11 lineage.
+#[test]
+fn rb_409_syn11_heal_triple() {
+    let src = "case_0011_01 = [1,,2]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0011_01"], serde_json::json!([1, 2]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H002 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 19), "{span:?}");
+}
+
+/// RB-410 — Derived variant 11-02: insert triple (SYN-0011-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0011 (toml-test no-comma-01).
+/// Missing comma heals with value `[1, 2]`, class H003 at 1:19,
+/// Warning severity — insertions announce louder than removals.
+#[test]
+fn rb_410_syn11_insert_triple() {
+    let src = "case_0011_02 = [1 2]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0011_02"], serde_json::json!([1, 2]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H003").expect("H003");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Warning,
+        "H003 must be Warning, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H003 carries a span");
+    assert_eq!((span.line, span.column), (1, 19), "{span:?}");
+}
+
+/// RB-411 — Derived variant 11-03: lone-comma triple (SYN-0011-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0011 (toml-test no-comma-01).
+/// `[,]` heals H002 at the comma (1:17) to empty with Info severity —
+/// value, class, span, and severity indexed jointly.
+#[test]
+fn rb_411_syn11_lone_comma_triple() {
+    let src = "case_0011_03 = [,]\n";
+    assert_eq!(eval_json(src)["case_0011_03"], serde_json::json!([]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H002 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+}
+
+/// RB-412 — Derived variant 11-04: trailing span + control (SYN-0011-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0011 (toml-test no-comma-01).
+/// Trailing comma heals H002 at 1:18 — and the clean neighbour
+/// carries no heal, proving the repair is input-specific.
+#[test]
+fn rb_412_syn11_trailing_control() {
+    let src = "case_0011_04 = [1,]\n";
+    assert_eq!(eval_json(src)["case_0011_04"], serde_json::json!([1]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the clean neighbour carries no heal.
+    assert!(!codes_of("case_0011_04 = [1]\n").iter().any(|c| c == "H002"));
+}
+
+/// RB-413 — Derived variant 11-05: typed determinism (SYN-0011-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0011 (toml-test no-comma-01).
+/// Clean triple asserts value, int element types, determinism, and
+/// silence jointly — the full good-case contract.
+#[test]
+fn rb_413_syn11_typed_deterministic() {
+    let src = "case_0011_05 = [1, 2, 3]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0011_05"], serde_json::json!([1, 2, 3]));
+    for e in v["case_0011_05"].as_array().expect("array") {
+        assert!(e.is_i64(), "{v}");
+    }
+    assert_eq!(eval_json(src), eval_json(src));
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-414 — Derived variant 11-06: empty determinism (SYN-0011-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0011 (toml-test no-comma-01).
+/// Empty arrays evaluate deterministically — repeated runs agree
+/// exactly with zero diagnostics.
+#[test]
+fn rb_414_syn11_empty_deterministic() {
+    let src = "case_0011_06 = []\n";
+    assert_eq!(eval_json(src)["case_0011_06"], serde_json::json!([]));
+    assert_eq!(eval_json(src), eval_json(src));
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-415 — Derived variant 11-07: nested lengths (SYN-0011-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0011 (toml-test no-comma-01).
+/// Nested collections assert outer and inner lengths — every
+/// boundary lands exactly where written, both levels arrays.
+#[test]
+fn rb_415_syn11_nested_lengths() {
+    let src = "case_0011_07 = [[1], [2, 3]]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0011_07"], serde_json::json!([[1], [2, 3]]));
+    assert_eq!(v["case_0011_07"].as_array().expect("array").len(), 2);
+    assert_eq!(v["case_0011_07"][0].as_array().expect("array").len(), 1);
+    assert_eq!(v["case_0011_07"][1].as_array().expect("array").len(), 2);
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-416 — Derived variant 11-08: hetero joint oracle (SYN-0011-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0011 (toml-test no-comma-01).
+/// Mixed arrays assert value, int type, table key-set, and no error
+/// class jointly — parser/schema agreement for the 11 lineage.
+#[test]
+fn rb_416_syn11_hetero_joint() {
+    let src = "case_0011_08 = [1, { name = \"x\" }]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0011_08"], serde_json::json!([1, {"name": "x"}]));
+    assert!(v["case_0011_08"][0].is_i64(), "{v}");
+    let keys: Vec<&str> = v["case_0011_08"][1]
+        .as_object()
+        .expect("table")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(keys, vec!["name"]);
+    let codes = codes_of(src);
+    assert!(
+        !codes.iter().any(|c| c.starts_with('E')),
+        "no error class expected, got {codes:?}"
+    );
+}
+
+/// RB-417 — Derived variant 11-09: EOF triple (SYN-0011-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0011 (toml-test no-comma-01).
+/// Unterminated array fails E001 Error at EOF (2:1) — class,
+/// severity, and span indexed jointly for the 11 lineage.
+#[test]
+fn rb_417_syn11_eof_triple() {
+    let src = "case_0011_09 = [1, 2\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: the closed twin evaluates.
+    assert_eq!(
+        eval_json("case_0011_09 = [1, 2]\n")["case_0011_09"],
+        serde_json::json!([1, 2])
+    );
+}
+
+/// RB-418 — Derived variant 12-01: no implicit null (SYN-0012-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0012 (toml-test no-comma-02).
+/// A doubled comma cannot create an implicit null: the value is
+/// exactly `[1, 2]` — two elements, no nulls — with announced H002.
+/// (Completes SYN-0011-01…09 + opens SYN-0012-01…09.)
+#[test]
+fn rb_418_syn12_no_implicit_null() {
+    let src = "case_0012_01 = [1,,2]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0012_01"], serde_json::json!([1, 2]));
+    assert_eq!(v["case_0012_01"].as_array().expect("array").len(), 2);
+    assert!(
+        !v["case_0012_01"]
+            .as_array()
+            .expect("array")
+            .iter()
+            .any(|e| e.is_null()),
+        "{v}"
+    );
+    let codes = codes_of(src);
+    assert!(
+        codes.iter().any(|c| c == "H002"),
+        "H002 expected, got {codes:?}"
+    );
+}
+
 /// RB-386 — Derived variant 08-05: typed determinism (SYN-0008-05 §H, HIGH).
 /// Origin: synthetic variation of SRC-TOML-0008 (toml-test no-close-02).
 /// Clean triple asserts value, int element types, determinism, and

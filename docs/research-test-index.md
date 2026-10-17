@@ -283,4 +283,5 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | Batch 31 | RB-299…RB-308 (SRC-CVE-0006…0010, SRC-SPEC-0001…0005) | done: all 10 green individually; one transient whole-file single failure (2nd occurrence, 2/3 file runs 308/308 green — residual risk updated); SRC-CVE complete (10/10); SPEC mining open |
 | Batch 32 | RB-309…RB-318 (SRC-SPEC-0006…0010, byte-fixture mining 5) | done: 9 green first-try; RB-309 needed a test-side escape fix (Rust newlines vs Active escapes); SRC-SPEC complete (10/10); 5 byte fixtures committed |
 | Batch 33 | RB-319…RB-328 (SYN-0001-01…09, SYN-0002-01) | done: all 10 green first-try, no code changes; SYN mining open (variant-specific assertions: no-null, no-merge, comma≠value, EOF span, twin convergence) |
+| Batch 34 | RB-329…RB-338 (SYN-0002-02…09, SYN-0003-01…02) | done: all 10 green first-try, no code changes; 02-lineage spans/severities/types indexed; redefinition announcement = anti-silence; patch paths type-check first |
 | Byte fixtures (mined) | headed cases → tests/research/*.active + RB IDs | mined per batch, ledger cites |

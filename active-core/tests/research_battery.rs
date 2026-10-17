@@ -5752,6 +5752,169 @@ fn rb_328_syn_twin_converges() {
     assert_eq!((span.line, span.column), (1, 19), "{span:?}");
 }
 
+/// RB-329 — Derived variant 02, no silent merge (SYN-0002-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0002 (toml-test double-comma-02).
+/// Same H003 policy under the 02 lineage, span pinned at the longer
+/// key's join point (1:19) — lineage-independent healing.
+#[test]
+fn rb_329_syn02_no_silent_merge() {
+    let src = "case_0002_02 = [1 2]\n";
+    assert_eq!(eval_json(src)["case_0002_02"], serde_json::json!([1, 2]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H003").expect("H003");
+    let span = h.span.clone().expect("H003 carries a span");
+    assert_eq!((span.line, span.column), (1, 19), "{span:?}");
+}
+
+/// RB-330 — Derived variant 02, comma is not a value (SYN-0002-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0002 (toml-test double-comma-02).
+/// `[,]` heals to empty with Info severity — announced repair, never
+/// a synthesized placeholder, never a failure.
+#[test]
+fn rb_330_syn02_comma_not_value_info() {
+    let src = "case_0002_03 = [,]\n";
+    assert_eq!(eval_json(src)["case_0002_03"], serde_json::json!([]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H002 must be Info, got {:?}",
+        h.severity
+    );
+}
+
+/// RB-331 — Derived variant 02, trailing policy (SYN-0002-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0002 (toml-test double-comma-02).
+/// Trailing comma heals H002 at the comma (1:18) — one spelled-out
+/// policy everywhere, both lineages, every key width.
+#[test]
+fn rb_331_syn02_trailing_span() {
+    let src = "case_0002_04 = [1,]\n";
+    assert_eq!(eval_json(src)["case_0002_04"], serde_json::json!([1]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+}
+
+/// RB-332 — Derived variant 02, positive control (SYN-0002-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0002 (toml-test double-comma-02).
+/// Clean triple asserts element TYPES as well as values — the
+/// failure is separator-specific, and the good case is typed int.
+#[test]
+fn rb_332_syn02_typed_control() {
+    let src = "case_0002_05 = [1, 2, 3]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0002_05"], serde_json::json!([1, 2, 3]));
+    for e in v["case_0002_05"].as_array().expect("array") {
+        assert!(e.is_i64(), "{v}");
+    }
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-333 — Derived variant 02, empty valid (SYN-0002-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0002 (toml-test double-comma-02).
+/// Empty array asserts the TYPE (array, length 0) — valid by shape,
+/// not merely by value equality.
+#[test]
+fn rb_333_syn02_empty_typed() {
+    let v = eval_json("case_0002_06 = []\n");
+    assert!(v["case_0002_06"].is_array(), "{v}");
+    assert_eq!(v["case_0002_06"].as_array().expect("array").len(), 0);
+}
+
+/// RB-334 — Derived variant 02, nested shape (SYN-0002-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0002 (toml-test double-comma-02).
+/// Delimiters match: assert the nested SHAPE by index — inner
+/// boundaries land exactly where written.
+#[test]
+fn rb_334_syn02_nested_indexed() {
+    let v = eval_json("case_0002_07 = [[1], [2, 3]]\n");
+    assert_eq!(v["case_0002_07"][0][0], 1);
+    assert_eq!(v["case_0002_07"][1][1], 3);
+    assert_eq!(v["case_0002_07"][1].as_array().expect("array").len(), 2);
+}
+
+/// RB-335 — Derived variant 02, hetero types (SYN-0002-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0002 (toml-test double-comma-02).
+/// Mixed arrays parse: assert per-ELEMENT types (int vs table) plus
+/// the absence of any error class — parser/schema agreement.
+#[test]
+fn rb_335_syn02_hetero_typed() {
+    let src = "case_0002_08 = [1, { name = \"x\" }]\n";
+    let v = eval_json(src);
+    assert!(v["case_0002_08"][0].is_i64(), "{v}");
+    assert!(v["case_0002_08"][1].is_object(), "{v}");
+    assert_eq!(v["case_0002_08"][1]["name"], "x");
+    let codes = codes_of(src);
+    assert!(
+        !codes.iter().any(|c| c.starts_with('E')),
+        "no error class expected, got {codes:?}"
+    );
+}
+
+/// RB-336 — Derived variant 02, EOF severity (SYN-0002-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0002 (toml-test double-comma-02).
+/// Unterminated array fails E001 with Error severity at EOF (2:1) —
+/// a missing bracket is a failure, never a heal, never a hang.
+#[test]
+fn rb_336_syn02_eof_error() {
+    let src = "case_0002_09 = [1, 2\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+}
+
+/// RB-337 — Derived variant: redefinition announced (SYN-0003-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0003 (toml-test extend-defined-aot).
+/// "Must not silently replace": it does not — W011 carries Warning
+/// severity with span, and the winner is pinned. Announcement IS the
+/// anti-silence mechanism (refusal of strict-reject per RB-002).
+#[test]
+fn rb_337_syn_redefinition_announced() {
+    let src = "fruit = { name = \"apple\" }\nfruit = { name = \"banana\" }\n";
+    assert_eq!(eval_json(src)["fruit"]["name"], "banana");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+    assert!(w.span.is_some(), "W011 carries a span");
+}
+
+/// RB-338 — Derived variant: patch type-checks first (SYN-0003-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0003 (toml-test extend-defined-aot).
+/// The naive index-patch transliteration is rejected (E019: `(`
+/// required) — paths type-check before any value is touched, so an
+/// empty array can never sprout an element implicitly.
+#[test]
+fn rb_338_syn_patch_typechecks_first() {
+    let src = "items = []\n@patch items[0] { name = \"x\" }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    assert!(
+        diags.iter().any(|d| d.code == "E019"),
+        "E019 expected, got {diags:?}"
+    );
+    // Positive control: the array alone evaluates; nothing sprouted.
+    assert_eq!(eval_json("items = []\n")["items"], serde_json::json!([]));
+}
+
 /// RB-299 — yaml-cpp flow-stack analogue (SRC-CVE-0006 §H, CRITICAL).
 /// Origin: NVD CVE-2019-6285.
 /// Bounded generator: 400 balanced nested arrays trip E004 with span

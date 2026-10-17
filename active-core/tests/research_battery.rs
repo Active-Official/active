@@ -18758,3 +18758,296 @@ fn rb_888_syn64_clean_three_array_silent() {
     let codes = codes_of("case_0064_05 = [1,,2, 3]\n");
     assert!(codes.iter().any(|c| c == "H002"), "{codes:?}");
 }
+/// RB-889 — Derived variant 64-06: multi-line emptiness is valid (SYN-0064-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0064 (toml-test no-close).
+/// `case_0064_06 = []` and the split-bracket form both evaluate to an empty
+/// array with ZERO diagnostics — emptiness is valid in every layout; only a
+/// degenerate comma needs a heal.
+#[test]
+fn rb_889_syn64_multiline_empty_valid() {
+    let src = "case_0064_06 = []\n";
+    assert_eq!(
+        eval_json(src)["case_0064_06"],
+        serde_json::json!([]),
+        "empty array must stay empty"
+    );
+    let codes = codes_of(src);
+    assert!(
+        codes.is_empty(),
+        "empty array must warn nothing, got {codes:?}"
+    );
+    // Multi-line twin: split brackets stay silent too.
+    let src = "case_0064_06 = [\n]\n";
+    assert_eq!(eval_json(src)["case_0064_06"], serde_json::json!([]));
+    let codes = codes_of(src);
+    assert!(
+        codes.is_empty(),
+        "multi-line empty must warn nothing, got {codes:?}"
+    );
+    // Control: the lone-comma neighbour heals (H002), never fails.
+    assert_eq!(
+        eval_json("case_0064_06 = [,]\n")["case_0064_06"],
+        serde_json::json!([])
+    );
+    let codes = codes_of("case_0064_06 = [,]\n");
+    assert!(codes.iter().any(|c| c == "H002"), "{codes:?}");
+}
+
+/// RB-890 — Derived variant 64-07: multi-line nesting is exact (SYN-0064-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0064 (toml-test no-close).
+/// `[[1], [2, 3]]` and the split-line form both evaluate to the exact nested
+/// shape with ZERO diagnostics — delimiters match across linebreaks;
+/// a mismatched `[[1]` fails E001 Error at EOF (2:1).
+#[test]
+fn rb_890_syn64_multiline_nesting_exact() {
+    let src = "case_0064_07 = [[1], [2, 3]]\n";
+    assert_eq!(
+        eval_json(src)["case_0064_07"],
+        serde_json::json!([[1], [2, 3]]),
+        "nested shape must be exact"
+    );
+    let codes = codes_of(src);
+    assert!(
+        codes.is_empty(),
+        "nested array must warn nothing, got {codes:?}"
+    );
+    // Multi-line twin: split nesting stays silent too.
+    let src = "case_0064_07 = [\n[1],\n[2, 3]\n]\n";
+    assert_eq!(
+        eval_json(src)["case_0064_07"],
+        serde_json::json!([[1], [2, 3]])
+    );
+    let codes = codes_of(src);
+    assert!(
+        codes.is_empty(),
+        "multi-line nesting must warn nothing, got {codes:?}"
+    );
+    // Negative neighbour: mismatched delimiters fail loudly at EOF.
+    let diags = parse("case_0064_07 = [[1]\n", "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+}
+
+/// RB-891 — Derived variant 64-08: multi-line hetero keeps types (SYN-0064-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0064 (toml-test no-close).
+/// `[1, { name = "x" }]` and the split-line form are both accepted with ZERO
+/// diagnostics and exact types — the integer stays an integer, the table
+/// stays a table; layout never coerces.
+#[test]
+fn rb_891_syn64_multiline_hetero_exact() {
+    let src = "case_0064_08 = [1, { name = \"x\" }]\n";
+    let v = eval_json(src)["case_0064_08"].clone();
+    assert_eq!(v, serde_json::json!([1, {"name": "x"}]), "{v}");
+    let codes = codes_of(src);
+    assert!(
+        codes.is_empty(),
+        "hetero array must warn nothing, got {codes:?}"
+    );
+    // Multi-line twin: split hetero stays silent with exact types too.
+    let src = "case_0064_08 = [\n1,\n{ name = \"x\" }\n]\n";
+    let v = eval_json(src)["case_0064_08"].clone();
+    assert_eq!(v[0], 1, "integer element must stay integer, got {v}");
+    assert_eq!(v[1]["name"], "x", "table element must stay table, got {v}");
+    let codes = codes_of(src);
+    assert!(
+        codes.is_empty(),
+        "multi-line hetero must warn nothing, got {codes:?}"
+    );
+}
+
+/// RB-892 — Derived variant 64-09: unterminated array points at EOF (SYN-0064-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0064 (toml-test no-close).
+/// `case_0064_09 = [1, 2` (no bracket) fails E001 Error with the span on the
+/// EOF line (2:1) — the diagnostic points at end-of-input, never at the
+/// opening bracket alone and never nowhere. (Completes SYN-0064-06…09
+/// coverage.)
+#[test]
+fn rb_892_syn64_unterminated_points_at_eof() {
+    let src = "case_0064_09 = [1, 2\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: the terminated neighbour evaluates with zero diags.
+    let src = "case_0064_09 = [1, 2]\n";
+    assert_eq!(eval_json(src)["case_0064_09"], serde_json::json!([1, 2]));
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-893 — Derived variant 65-01: doubled comma creates no null (SYN-0065-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0065 (toml-test no-comma).
+/// `case_0065_01 = [1,,2]` heals H002 Info at (1:19) to exactly `[1, 2]` —
+/// the stray comma is dropped, never materialized as an implicit null.
+/// (Opens SYN-0065 no-comma lineage.)
+#[test]
+fn rb_893_syn65_doubled_comma_no_null() {
+    let src = "case_0065_01 = [1,,2]\n";
+    assert_eq!(
+        eval_json(src)["case_0065_01"],
+        serde_json::json!([1, 2]),
+        "healed value must hold exactly two elements"
+    );
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H002 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 19), "{span:?}");
+    // Positive control: the clean neighbour parses with zero diagnostics.
+    let codes = codes_of("case_0065_01 = [1, 2]\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-894 — Derived variant 65-02: missing separator is announced (SYN-0065-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0065 (toml-test no-comma).
+/// `case_0065_02 = [1 2]` heals H003 Warning at (1:19) to `[1, 2]` —
+/// adjacent values are accepted only loudly, never merged silently.
+#[test]
+fn rb_894_syn65_missing_separator_announced() {
+    let src = "case_0065_02 = [1 2]\n";
+    assert_eq!(
+        eval_json(src)["case_0065_02"],
+        serde_json::json!([1, 2]),
+        "healed value must hold both elements"
+    );
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H003").expect("H003");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Warning,
+        "H003 must be Warning, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H003 carries a span");
+    assert_eq!((span.line, span.column), (1, 19), "{span:?}");
+    // Positive control: the separated neighbour parses with zero diagnostics.
+    let codes = codes_of("case_0065_02 = [1, 2]\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-895 — Derived variant 65-03: a lone comma stands for no value (SYN-0065-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0065 (toml-test no-comma).
+/// `case_0065_03 = [,]` heals H002 Info at (1:17) to `[]` — the comma never
+/// becomes a null element or any other implicit value.
+#[test]
+fn rb_895_syn65_lone_comma_no_value() {
+    let src = "case_0065_03 = [,]\n";
+    assert_eq!(
+        eval_json(src)["case_0065_03"],
+        serde_json::json!([]),
+        "healed value must be empty, never [null]"
+    );
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H002 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the empty neighbour parses with zero diagnostics.
+    let codes = codes_of("case_0065_03 = []\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-896 — Derived variant 65-04: trailing-comma policy locked (SYN-0065-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0065 (toml-test no-comma).
+/// `case_0065_04 = [1,]` heals H002 Info at (1:18) to `[1]` — the trailing
+/// comma is dropped deterministically across runs.
+#[test]
+fn rb_896_syn65_trailing_comma_locked() {
+    let src = "case_0065_04 = [1,]\n";
+    assert_eq!(
+        eval_json(src)["case_0065_04"],
+        serde_json::json!([1]),
+        "healed value must hold exactly one element"
+    );
+    assert_eq!(eval_json(src), eval_json(src), "heal must be deterministic");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H002 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the comma-free neighbour parses with zero diagnostics.
+    let codes = codes_of("case_0065_04 = [1]\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-897 — Derived variant 65-05: clean array proves heals are separator-specific (SYN-0065-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0065 (toml-test no-comma).
+/// `case_0065_05 = [1, 2, 3]` evaluates to exactly three elements with ZERO
+/// diagnostics — the lineage heals fire only on broken separators, never on
+/// well-formed input.
+#[test]
+fn rb_897_syn65_clean_three_array_silent() {
+    let src = "case_0065_05 = [1, 2, 3]\n";
+    assert_eq!(
+        eval_json(src)["case_0065_05"],
+        serde_json::json!([1, 2, 3]),
+        "clean array must hold exactly three elements"
+    );
+    let codes = codes_of(src);
+    assert!(
+        codes.is_empty(),
+        "clean array must warn nothing, got {codes:?}"
+    );
+    // Control: the doubled-comma neighbour still announces H002.
+    let codes = codes_of("case_0065_05 = [1,,2, 3]\n");
+    assert!(codes.iter().any(|c| c == "H002"), "{codes:?}");
+}
+
+/// RB-898 — Derived variant 65-06: empty array is valid (SYN-0065-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0065 (toml-test no-comma).
+/// `case_0065_06 = []` evaluates to an empty array with ZERO diagnostics —
+/// emptiness is valid; only a degenerate comma needs a heal. (Completes
+/// SYN-0064-06…09 coverage + opens SYN-0065-01…06.)
+#[test]
+fn rb_898_syn65_empty_array_valid() {
+    let src = "case_0065_06 = []\n";
+    assert_eq!(
+        eval_json(src)["case_0065_06"],
+        serde_json::json!([]),
+        "empty array must stay empty"
+    );
+    let codes = codes_of(src);
+    assert!(
+        codes.is_empty(),
+        "empty array must warn nothing, got {codes:?}"
+    );
+    // Control: the lone-comma neighbour heals (H002), never fails.
+    assert_eq!(
+        eval_json("case_0065_06 = [,]\n")["case_0065_06"],
+        serde_json::json!([])
+    );
+    let codes = codes_of("case_0065_06 = [,]\n");
+    assert!(codes.iter().any(|c| c == "H002"), "{codes:?}");
+}

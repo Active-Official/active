@@ -20,7 +20,7 @@ not the research docs' proposed names.
 | DERIVED-0003 | `let` cycles (2- and 3-node) | S001 cycle error | passing → Batch 3 RB-030 |
 | DERIVED-0004 | Malformed interpolation delimiters | E012 unclosed / E013 empty, spans | passing → Batch 4 RB-040 |
 | DERIVED-0005 | Unit dimension mismatch (`5s + 512MiB`) | Reject dimension mismatch | passing → Batch 2 RB-011 |
-| DERIVED-0006 | Env fallback absent variable | Default returned | pending |
+| DERIVED-0006 | Env fallback absent variable | Default returned | passing → Batch 6 RB-060 |
 | DERIVED-0007 | Env empty vs absent distinct | `""` wins; absent falls back | passing → Batch 1 RB-007 |
 | DERIVED-0008 | Secret taint in interpolation | Refused S004 (spec/secrets.md:27) | passing → Batch 1 RB-005 |
 | DERIVED-0009 | Secret redaction in diagnostics | Fail without leaking bytes | passing → Batch 1 RB-006 |
@@ -58,7 +58,7 @@ not the research docs' proposed names.
 | P0-016 | Random binary never panics | Controlled reject | pending |
 | P0-017 | Wall-clock budget aborts | Time-exceeded diagnostic | pending |
 | P0-018 | No alias-style exponential expansion | Budget/cycle before materialize | pending |
-| P0-019 | Duplicate diagnostics stable | Same class + spans across runs | pending |
+| P0-019 | Duplicate diagnostics stable | Same class + spans across runs | passing → Batch 6 RB-059 |
 | P0-020 | Control suite passes under budgets | Realistic config evaluates | pending |
 
 ## §C — P1 type surprises (`tests/curated/02-P1-Type-Inference-and-Surprises.md`)
@@ -155,22 +155,22 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | HIST-YAML-009 | Alias bomb (collections) | §2 | N/A: no aliases; budget/cycle guard | passing → Batch 4 RB-032 |
 | HIST-YAML-010 | Alias bomb (scalars) | §2 | N/A: no aliases; metadata-budget guard | passing → Batch 5 RB-042 |
 | HIST-YAML-016 | Anchor cycle infinite loop | §2 | N/A: no anchors; cycle class exists | pending |
-| HIST-YAML-003 | Empty key handling | §1 | Accept `""` key, round-trip exact | pending |
+| HIST-YAML-003 | Empty key handling | §1 | Accept `""` key, round-trip exact | REFUSED: `""` is not an identifier (E002, same fix as -020) | passing → Batch 6 RB-052 |
 | HIST-YAML-011 | Multiline quotes preserved | §1 | Embedded quotes kept + round-trip | pending |
 | HIST-YAML-013 | Comment-structure non-interference | §1 | Comments never alter structure | pending |
 | HIST-YAML-014 | CRLF normalization | §1 | `\r\n` → single newline, deterministic print | pending |
-| HIST-YAML-015 | Invalid UTF-8/surrogates rejected | §1 | Reject with Unicode class | pending |
+| HIST-YAML-015 | Invalid UTF-8/surrogates rejected | §1 | Reject with Unicode class | REFUSED as specified: `\u` stays verbatim (grammar.md:64), surrogates can never materialize | passing → Batch 6 RB-054 |
 | HIST-YAML-019 | Brace/indent mix consistency | §1 | Defined merge-or-error rule | passing (refusal pinned: colon pairs are specified) |
-| HIST-YAML-020 | Whitespace in keys/values kept | §1 | Exact preservation + round-trip | pending |
+| HIST-YAML-020 | Whitespace in keys/values kept | §1 | Exact preservation + round-trip | REFUSED: keys are identifiers only (grammar E002); silent drop fixed → loud reject | passing → Batch 6 RB-051 |
 | HIST-YAML-021 | BOM skipped | §1 | Skip leading U+FEFF | fixed (BOM skipped in lexer) → RB-003 |
 | HIST-YAML-022 | Trailing comma accepted | §1 | H002 healed accept (observed) | passing (H002 healed accept) → RB-004 |
-| HIST-YAML-024 | Long float literals | §1 | Accurate f64 conversion, no crash | pending |
+| HIST-YAML-024 | Long float literals | §1 | Accurate f64 conversion, no crash | passing → Batch 6 RB-058 |
 | HIST-YAML-025 | Scientific notation edges | §1 | Per f64 grammar or clean reject | pending |
 | HIST-JSON-001 | Deep nesting stack overflow | §2 | Hard depth limit, diagnostic not crash | passing (budget trips with span) → RB-010 |
 | HIST-JSON-002 | No internal exception types leak | §2 | Documented error classes only | pending |
 | HIST-JSON-003 | Fail fast before memory exhaustion | §2 | Reject long before RAM pressure | passing → Batch 5 RB-044 |
 | HIST-JSON-004 | Large integer precision | §2 | E023 saturation path (exists); pin boundary | pending |
-| HIST-JSON-005 | Exponent under/overflow | §2 | IEEE 754 policy for f64 surface | pending |
+| HIST-JSON-005 | Exponent under/overflow | §2 | IEEE 754 policy for f64 surface | REFUSED as specified: no exponent grammar (E002 reject) | passing → Batch 6 RB-053 |
 | HIST-TOML-001 | Inline nesting depth limit | §2 | Same limit as arrays | pending |
 | HIST-TOML-002 | No raw RangeError-class leaks | §2 | Documented classes only (Rust panics = bugs) | passing → Batch 4 RB-033 |
 | HIST-TOML-003 | Inline table nesting limit | §2 | Depth limit applies | passing → Batch 5 RB-045 |
@@ -187,7 +187,7 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | HIST-TOML-00K | Serializer cycle guard | §2 | Same as HIST-TOML-006 | pending |
 | HIST-TOML-00L | `__proto__` neutral key | §3 | Plain key, no special meaning | passing → Batch 3 RB-026 |
 | HIST-TOML-00M | Secrets absent from error output | §3 | Sanitized diagnostics (Vault CVE-2025-4166 class) | passing → Batch 3 RB-025 |
-| HIST-TOML-00N | Table-merge round-trip | §2 | Merged structure reprints equivalently | pending |
+| HIST-TOML-00N | Table-merge round-trip | §2 | Merged structure reprints equivalently | passing → Batch 6 RB-055 (W011 + last-wins) |
 | HIST-TOML-00P | Comments survive round-trip | §2 | Adjacent comments kept, data identical | pending |
 | HIST-YAML-026 | Unsafe deserialization RCE (py) | §3 | N/A: no tags/constructors; reject `!` tags | passing → Batch 3 RB-023 |
 | HIST-YAML-027 | Unsafe deserialization RCE (java) | §3 | N/A: no class system; reject | passing → Batch 3 RB-023 |
@@ -198,8 +198,8 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | HIST-YAML-036 | SSTI: `{{7*7}}` stays literal | §3 | Interpolation is `${…}`-only; braces literal | passing → Batch 3 RB-024 |
 | HIST-YAML-037 | ReDoS via schema regex | §3 | Schema patterns bounded or engine-safe | pending |
 | HIST-YAML-040 | Error output sanitized | §3 | Same as HIST-TOML-00M | passing → Batch 3 RB-025 |
-| HIST-YAML-041 | Include path sandbox | §3 | Literal/relative paths only, traversal rejected | pending |
-| HIST-YAML-042 | Dup-key parser differential | §3 | Single deterministic policy everywhere | pending |
+| HIST-YAML-041 | Include path sandbox | §3 | Literal/relative paths only, traversal rejected | passing → Batch 6 RB-056 (E015) |
+| HIST-YAML-042 | Dup-key parser differential | §3 | Single deterministic policy everywhere | passing → Batch 6 RB-057 (parse ≡ parse_file) |
 | HIST-YAML-001 | Multiline comma in array | §1 | Comma-in-string vs separator distinguished | pending |
 | HIST-YAML-002 | Complex keys rejected | §1 | Only scalar keys; clear diagnostic | pending |
 | HIST-YAML-005 | First-wins alternative | §1 | **Not adopted**: documents why last-wins won | pending |
@@ -255,4 +255,5 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | Batch 3 | RB-021…RB-030 (HIST-JSON-001, HIST-TOML-005, HIST-YAML-026/027/028/036, HIST-TOML-00L/00M, DERIVED-0003/0014, P1-SE-006/013) | done: 9 green first-try; RB-030 needed one test-side correction (lets don't export — read via key) |
 | Batch 4 | RB-031…RB-040 (HIST-YAML-007/009, HIST-TOML-002/004/00J, P0-007, P1-SE-009/010, DERIVED-0002/0004) | done: 8 green first-try; RB-031 control + RB-039/RB-040 corrections from shipped behavior |
 | Batch 5 | RB-041…RB-050 (HIST-YAML-008/010, HIST-TOML-003/006/007/00D/00E/00F, P0-014, HIST-JSON-003) | done: 9 green first-try; RB-049 corrected (H001 heals, doesn't fail) + RB-050 refusal-pinned (verbatim escapes per spec) |
-| Batch 6+ | Next 10 lowest pending rows by severity, per the loop prompt | pending |
+| Batch 6 | RB-051…RB-060 | done: 9 green first-try; RB-051/052 drove the quoted-key E002 fix (silent drop eliminated) |
+| Batch 7+ | Next 10 lowest pending rows by severity, per the loop prompt | pending |

@@ -1005,6 +1005,22 @@ impl Parser {
                     self.error("E010", "unexpected indentation");
                     self.bump();
                 }
+                TokenKind::String(_)
+                | TokenKind::SingleString
+                | TokenKind::MlString(_)
+                | TokenKind::MlSingleString => {
+                    // Quoted keys are not part of the grammar (identifiers
+                    // only): a string literal cannot start a statement.
+                    // Skipping it would silently drop data (research
+                    // HIST-YAML-020), so this is a loud E002 instead.
+                    let tok = self.peek().clone();
+                    self.error_at(
+                        "E002",
+                        "unexpected string literal at statement position (keys must be identifiers)",
+                        &tok,
+                    );
+                    self.bump();
+                }
                 _ => {
                     // Alpha resilience: skip an unexpected token.
                     self.bump();

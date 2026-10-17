@@ -1,0 +1,4 @@
+# RB-056 fixture: parent-directory traversal must reject (HIST-YAML-041).
+# This file must never resolve, with or without --allow-parent-escapes
+# in the default test configuration.
+include "../outside.active"

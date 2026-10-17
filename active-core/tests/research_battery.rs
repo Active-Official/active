@@ -880,3 +880,187 @@ fn rb_050_unknown_escape_kept_verbatim() {
     let v = eval_json("ok = \"a\\nb\\t\\\\\\\"\"\n");
     assert_eq!(v["ok"], "a\nb\t\\\"");
 }
+
+/// RB-051 — Quoted keys reject loudly (HIST-YAML-020 §1).
+/// A string literal cannot start a statement (grammar: keys are
+/// identifiers); silently dropping it would corrupt data. E002.
+/// (Single-quoted, triple-quoted, and whitespace-padded forms included.)
+#[test]
+fn rb_051_quoted_keys_reject() {
+    for src in [
+        "\" key \" = 1\n",
+        "'key' = 1\n",
+        "\"\"\"k\"\"\" = 1\n",
+        "'' = 2\n",
+    ] {
+        let codes = codes_of(src);
+        assert!(
+            codes.iter().any(|c| c == "E002"),
+            "{src:?} must reject E002, got {codes:?}"
+        );
+    }
+    // Positive control: identifier keys (incl. underscore/digits) work.
+    let v = eval_json("_k2 = 1\n");
+    assert_eq!(v["_k2"], 1);
+}
+
+/// RB-052 — Empty string keys reject (HIST-YAML-003 §1).
+/// `""` is not an identifier; accepting it would break key invariants
+/// (round-trip, spans, LSP ranges). E002 like any quoted key.
+#[test]
+fn rb_052_empty_key_rejects() {
+    let codes = codes_of("\"\" = \"blank\"\n");
+    assert!(
+        codes.iter().any(|c| c == "E002"),
+        "empty key must reject E002, got {codes:?}"
+    );
+}
+
+/// RB-053 — Exponents are not Active numbers (HIST-JSON-005 §2).
+/// The f64 grammar has no exponent form; `1e400` cannot lex as a number.
+/// E002, never a misparse into `1` + identifier.
+#[test]
+fn rb_053_exponents_reject() {
+    for src in ["x = 1e400\n", "x = 5e+22\n", "x = 1e-3\n"] {
+        let codes = codes_of(src);
+        assert!(!codes.is_empty(), "{src:?} must fail, parsed clean");
+    }
+    // Positive control: plain floats evaluate exactly.
+    // (Spelled out: the point is the literal `3.14` survives exactly,
+    // so no approx-constant refactor applies here.)
+    let text = active_core::convert::value_to_pretty_json(
+        &Engine::new()
+            .evaluate(&parse("x = 3.14\n", "research").expect("must parse"))
+            .expect("must evaluate")
+            .0,
+    );
+    assert!(text.contains("3.14"), "{text}");
+}
+
+/// RB-054 — Undecoded escapes never become surrogates (HIST-YAML-015 §1).
+/// `\u` is not an escape introducer in Active: the text stays verbatim,
+/// so lone surrogates can never materialize and crash downstream code.
+#[test]
+fn rb_054_no_surrogate_materialization() {
+    let v = eval_json("x = \"\\uDEAD\"\n");
+    assert_eq!(v["x"], "\\uDEAD");
+    let text = active_core::convert::value_to_pretty_json(
+        &Engine::new()
+            .evaluate(&parse("x = \"\\uDEAD\"\n", "research").expect("must parse"))
+            .expect("must evaluate")
+            .0,
+    );
+    // Six ASCII chars (`\`, `u`, `D`, `E`, `A`, `D`), never a surrogate:
+    // Rust `char` cannot even hold one (from_u32 rejects the range).
+    assert!(text.contains("\\uDEAD"));
+    assert!(char::from_u32(0xD800).is_none() && char::from_u32(0xDFFF).is_none());
+}
+
+/// RB-055 — Header redefinition warns, last wins (HIST-TOML-00N §2).
+#[test]
+fn rb_055_header_redefinition_warns() {
+    let src = "[a.b]\nc = 1\n[a]\nd = 2\n";
+    let codes = codes_of(src);
+    assert!(
+        codes.iter().any(|c| c == "W011"),
+        "redefined header must warn W011, got {codes:?}"
+    );
+    let v = eval_json(src);
+    assert_eq!(v["a"]["d"], 2, "last header wins: {v}");
+}
+
+/// RB-056 — Include traversal rejected (HIST-YAML-041 §3).
+/// `../` escapes fail E015 by default; absolute paths fail too.
+#[test]
+fn rb_056_include_traversal_rejected() {
+    use active_core::{parse_file, ParseOptions};
+    let diags = parse_file(
+        &research_fixture("rb056_main.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("traversal include must fail");
+    assert!(
+        diags.iter().any(|d| d.code == "E015"),
+        "E015 expected, got {diags:?}"
+    );
+}
+
+/// RB-057 — One dup-key policy on every path (HIST-YAML-042 §3).
+/// Inline `parse` and file `parse_file` agree exactly: same value,
+/// same W011 diagnostics. No parser differential between entry points.
+#[test]
+fn rb_057_dup_policy_agrees_across_entry_points() {
+    use active_core::{parse_file, ParseOptions};
+    let inline_src = "[server]\nhost = \"a\"\nhost = \"b\"\n";
+    let inline_module = parse(inline_src, "research").expect("must parse");
+    let (inline_value, inline_diags) = Engine::new()
+        .evaluate(&inline_module)
+        .expect("must evaluate");
+    let file_module = parse_file(
+        &research_fixture("rb057_dup.active"),
+        ParseOptions::default(),
+    )
+    .expect("must parse");
+    let (file_value, file_diags) = Engine::new().evaluate(&file_module).expect("must evaluate");
+    let inline_json = active_core::convert::value_to_pretty_json(&inline_value);
+    let file_json = active_core::convert::value_to_pretty_json(&file_value);
+    assert_eq!(inline_json, file_json, "entry points disagree on value");
+    let inline_codes: Vec<&str> = inline_diags.iter().map(|d| d.code.as_str()).collect();
+    let file_codes: Vec<&str> = file_diags.iter().map(|d| d.code.as_str()).collect();
+    assert_eq!(inline_codes, file_codes, "entry points disagree on diags");
+    assert!(inline_codes.contains(&"W011"), "{inline_codes:?}");
+}
+
+/// RB-058 — Long floats stay accurate (HIST-YAML-024 §1).
+#[test]
+fn rb_058_long_float_accurate() {
+    let v = eval_json("x = 1.123456789012345678901234567890\n");
+    let f = v["x"].as_f64().expect("float");
+    assert!((f - 1.1234567890123457).abs() < 1e-15, "{v}");
+}
+
+/// RB-059 — Diagnostics stable across runs (P0-019 §B).
+/// Same failing document twice: identical classes and spans, no
+/// addresses or nondeterminism in output.
+#[test]
+fn rb_059_diagnostics_stable_across_runs() {
+    let src = "y = x + z\n";
+    let snap = || codes_of(src).into_iter().collect::<Vec<_>>();
+    assert_eq!(snap(), snap(), "diagnostic classes must be stable");
+    let spans = || {
+        parse(src, "research")
+            .map(|m| {
+                Engine::new()
+                    .evaluate(&m)
+                    .map(|(_, ds)| ds)
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|d| d.span.map(|s| (s.line, s.column)))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(spans(), spans(), "diagnostic spans must be stable");
+}
+
+/// RB-060 — Absent env falls back (DERIVED-0006 §A).
+#[test]
+fn rb_060_absent_env_falls_back() {
+    let prior = std::env::var("ACTIVE_TEST_RB060_ABSENT_XYZ").ok();
+    std::env::remove_var("ACTIVE_TEST_RB060_ABSENT_XYZ");
+    let v = eval_json("value = env.ACTIVE_TEST_RB060_ABSENT_XYZ ?: \"fallback\"\n");
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_TEST_RB060_ABSENT_XYZ", val),
+        None => std::env::remove_var("ACTIVE_TEST_RB060_ABSENT_XYZ"),
+    }
+    assert_eq!(v["value"], "fallback");
+    // Positive control: present variable wins.
+    let prior2 = std::env::var("ACTIVE_TEST_RB060_PRESENT").ok();
+    std::env::set_var("ACTIVE_TEST_RB060_PRESENT", "hello");
+    let v = eval_json("value = env.ACTIVE_TEST_RB060_PRESENT ?: \"fallback\"\n");
+    match prior2 {
+        Some(val) => std::env::set_var("ACTIVE_TEST_RB060_PRESENT", val),
+        None => std::env::remove_var("ACTIVE_TEST_RB060_PRESENT"),
+    }
+    assert_eq!(v["value"], "hello");
+}

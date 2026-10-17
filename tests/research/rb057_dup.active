@@ -1,0 +1,5 @@
+# RB-057 fixture: duplicate keys via file path (HIST-YAML-042).
+# Must agree exactly with the inline-parse policy (last-wins + W011).
+[server]
+host = "a"
+host = "b"

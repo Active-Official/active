@@ -200,6 +200,9 @@ key-value     = identifier ( "=" | ":" ) expression
   layout is cosmetic (`spec/dual-syntax.md` §3).
 - A table body (`[name]`) ends at the next header, `let`, EOF, or a Dedent
   belonging to an enclosing block.
+- Keys are identifiers only: a string literal at statement position
+  (e.g. `" key " = 1`) is E002, never silently dropped (research
+  HIST-YAML-020).
 - An indented block ends at its Dedent; a brace block at its `}`.
 
 ### 2.1 Document

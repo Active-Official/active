@@ -2468,3 +2468,189 @@ fn rb_140_diagnostic_class_stable_across_styles() {
         (s.line, s.column)
     });
 }
+
+/// RB-141 — Unresolved span covers the name (P1-DS-010 §F).
+#[test]
+fn rb_141_unresolved_span_covers_name() {
+    let module = parse("x = unknown\n", "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 5), "{span:?}");
+    assert!(span.end_column > span.column, "{span:?}");
+    // Positive control: a resolved name carries no diagnostics.
+    let module = parse("x = 1\n", "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    assert!(diags.is_empty(), "{diags:?}");
+}
+
+/// RB-142 — Units survive dual-syntax round-trips (P1-DS-011 §F).
+#[test]
+fn rb_142_units_survive_dual_syntax_round_trip() {
+    use active_core::fmt::format;
+    use active_core::Style;
+    for (src, style) in [
+        ("timeout = 5s\nlimit = 512MiB\n", Style::Brace),
+        ("timeout = 5s\nlimit = 512MiB\n", Style::Indent),
+    ] {
+        let module = parse(src, "research").expect("must parse");
+        let out = format(&module, style);
+        let module2 = parse(&out, "research")
+            .unwrap_or_else(|d| panic!("reparse failed ({style:?}): {d:?}\n{out}"));
+        let (first, _) = Engine::new().evaluate(&module).expect("must evaluate");
+        let (second, _) = Engine::new().evaluate(&module2).expect("must evaluate");
+        let a: serde_json::Value =
+            serde_json::from_str(&active_core::convert::value_to_pretty_json(&first))
+                .expect("json");
+        let b: serde_json::Value =
+            serde_json::from_str(&active_core::convert::value_to_pretty_json(&second))
+                .expect("json");
+        assert_eq!(a, b, "style {style:?}");
+        assert_eq!(a["timeout"]["ms"], 5000);
+        assert_eq!(a["limit"], 536870912);
+    }
+}
+
+/// RB-143 — Formatter re-emits `secret(…)` source calls (P1-DS-012 §F).
+/// REFUSAL (spec-gated, spec/secrets.md:48-49): the row asks for no raw
+/// bytes in printer output, but `ACTIVE fmt` is specified source-to-source
+/// (spec/formatter.md: "never evaluates … re-emit") — it prints the
+/// user's own source call, never an evaluated value. The pinned property:
+/// `secret(env.VAR)` formats as the call while VAR stays unresolved and
+/// its value appears nowhere.
+#[test]
+fn rb_143_formatter_reemits_secret_calls_without_values() {
+    use active_core::fmt::format;
+    use active_core::Style;
+    let prior = std::env::var("ACTIVE_TEST_RB143_PW").ok();
+    std::env::set_var("ACTIVE_TEST_RB143_PW", "RAW-RB143-VALUE");
+    let src = "pw = secret(env.ACTIVE_TEST_RB143_PW)\nport = 1\n";
+    let module = parse(src, "research").expect("must parse");
+    for style in [Style::Brace, Style::Indent] {
+        let out = format(&module, style);
+        assert!(out.contains("secret("), "{out}");
+        assert!(!out.contains("RAW-RB143-VALUE"), "{out}");
+    }
+    // Control: evaluation still redacts the resolved value on export.
+    let (value, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains("RAW-RB143-VALUE"), "{json}");
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_TEST_RB143_PW", val),
+        None => std::env::remove_var("ACTIVE_TEST_RB143_PW"),
+    }
+}
+
+/// RB-144 — Key order is document order, deterministic (P1-DS-013 §F).
+#[test]
+fn rb_144_key_order_document_deterministic() {
+    let src = "z = 1\na = 2\nm = 3\n";
+    let first = eval_json(src);
+    let second = eval_json(src);
+    let a = serde_json::to_string_pretty(&first).expect("json");
+    let b = serde_json::to_string_pretty(&second).expect("json");
+    assert_eq!(a, b);
+    let keys: Vec<&str> = first
+        .as_object()
+        .expect("table")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(keys, vec!["z", "a", "m"]);
+    // Positive control: formatter output is byte-stable too.
+    use active_core::fmt::format;
+    use active_core::Style;
+    let module = parse(src, "research").expect("must parse");
+    assert_eq!(
+        format(&module, Style::Indent),
+        format(&module, Style::Indent)
+    );
+}
+
+/// RB-145 — Triple-form matrix (P1-DS-014 §F).
+/// Brace, indent, and mixed forms evaluate identically and each
+/// survives a format round-trip.
+#[test]
+fn rb_145_triple_form_matrix() {
+    use active_core::fmt::format;
+    use active_core::Style;
+    let brace = "server = {\n  host = \"h\",\n  port = 1\n}\n";
+    let indent = "server:\n  host = \"h\"\n  port = 1\n";
+    let mixed = "server:\n  db = {\n    name = \"m\"\n  }\n  port = 1\n";
+    let (vb, vi) = (eval_json(brace), eval_json(indent));
+    assert_eq!(vb, vi);
+    assert_eq!(eval_json(mixed)["server"]["db"]["name"], "m");
+    for (src, style) in [
+        (brace, Style::Brace),
+        (indent, Style::Indent),
+        (mixed, Style::Brace),
+    ] {
+        let module = parse(src, "research").expect("must parse");
+        let out = format(&module, style);
+        let module2 = parse(&out, "research")
+            .unwrap_or_else(|d| panic!("reparse failed ({style:?}): {d:?}\n{out}"));
+        let (first, _) = Engine::new().evaluate(&module).expect("must evaluate");
+        let (second, _) = Engine::new().evaluate(&module2).expect("must evaluate");
+        let a: serde_json::Value =
+            serde_json::from_str(&active_core::convert::value_to_pretty_json(&first))
+                .expect("json");
+        let b: serde_json::Value =
+            serde_json::from_str(&active_core::convert::value_to_pretty_json(&second))
+                .expect("json");
+        assert_eq!(a, b, "style {style:?}");
+    }
+}
+
+/// RB-146 — Comments survive the round-trip (HIST-TOML-00P §H).
+#[test]
+fn rb_146_comments_survive_round_trip() {
+    use active_core::fmt::format;
+    use active_core::Style;
+    let src = "# leading comment\nport = 8080 # trailing comment\n";
+    let module = parse(src, "research").expect("must parse");
+    let out = format(&module, Style::Indent);
+    assert!(out.contains("# leading comment"), "{out}");
+    assert!(out.contains("# trailing comment"), "{out}");
+    let module2 =
+        parse(&out, "research").unwrap_or_else(|d| panic!("reparse failed: {d:?}\n{out}"));
+    let (first, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    let (second, _) = Engine::new().evaluate(&module2).expect("must evaluate");
+    assert_eq!(
+        active_core::convert::value_to_pretty_json(&first),
+        active_core::convert::value_to_pretty_json(&second)
+    );
+    assert_eq!(eval_json(src)["port"], 8080);
+}
+
+/// RB-147 — Long datetime-looking strings parse as plain strings, fast
+/// (HIST-TOML-00H §H). Active has no datetimes: no datetime parser
+/// exists to blow up; the value is an exact string. Completion with the
+/// exact value is the proof.
+#[test]
+fn rb_147_long_datetime_string_parses_fast() {
+    let long = format!("2024-01-01T00:00:00Z-{}", "9".repeat(8000));
+    let src = format!("d = \"{long}\"\n");
+    let v = eval_json(&src);
+    assert_eq!(v["d"], long);
+}
+
+/// RB-148 — Datetimes round-trip as strings (HIST-TOML-00O §H).
+#[test]
+fn rb_148_datetime_round_trips_as_string() {
+    use active_core::fmt::format;
+    use active_core::Style;
+    let src = "d = \"2024-01-01T10:00:00Z\"\n";
+    assert_eq!(eval_json(src)["d"], "2024-01-01T10:00:00Z");
+    let module = parse(src, "research").expect("must parse");
+    let out = format(&module, Style::Indent);
+    let module2 =
+        parse(&out, "research").unwrap_or_else(|d| panic!("reparse failed: {d:?}\n{out}"));
+    let (first, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    let (second, _) = Engine::new().evaluate(&module2).expect("must evaluate");
+    assert_eq!(
+        active_core::convert::value_to_pretty_json(&first),
+        active_core::convert::value_to_pretty_json(&second)
+    );
+    // Positive control: datetimes never become a special type.
+    assert!(eval_json(src)["d"].is_string());
+}

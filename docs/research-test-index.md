@@ -134,11 +134,11 @@ not the research docs' proposed names.
 | P1-DS-007 | Hash in string kept | `"abc # not comment"` intact | passing (hash kept, comments ignored) → Batch 1 RB-009 |
 | P1-DS-008 | Every failure has spans | Usable line/column | passing → Batch 10 RB-100 (failure sweep, all spanned) |
 | P1-DS-009 | Diagnostic class stable | Same class across runs + styles | passing → Batch 14 RB-140 (W001 + name spans, flat and nested) |
-| P1-DS-010 | Unresolved span covers name | Span on `unknown` | pending |
-| P1-DS-011 | Units survive round-trip | Duration value kept | pending |
-| P1-DS-012 | Secrets redacted across print | No raw bytes in printer output | pending |
-| P1-DS-013 | Canonical key order deterministic | Documented order | pending |
-| P1-DS-014 | Triple-form matrix | Equal values + round-trip | pending |
+| P1-DS-010 | Unresolved span covers name | Span on `unknown` | passing → Batch 15 RB-141 (W001 span 1:5, non-empty) |
+| P1-DS-011 | Units survive round-trip | Duration value kept | passing → Batch 15 RB-142 (brace + indent round-trips) |
+| P1-DS-012 | Secrets redacted across print | No raw bytes in printer output | passing (refusal pinned: fmt re-emits secret() source calls per spec/secrets.md:48-49; values never printed) → Batch 15 RB-143 |
+| P1-DS-013 | Canonical key order deterministic | Documented order | passing → Batch 15 RB-144 (document order z,a,m; byte-stable) |
+| P1-DS-014 | Triple-form matrix | Equal values + round-trip | passing → Batch 15 RB-145 |
 | P1-DS-015 | Colon variants reject uniformly | Same class as 0001 | passing (refusal pinned: colon pairs are specified) → Batch 1 RB-001 |
 
 ## §G — Resilience report, 75 HIST items (`Architecting Resilience…md`)
@@ -188,7 +188,7 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | HIST-TOML-00L | `__proto__` neutral key | §3 | Plain key, no special meaning | passing → Batch 3 RB-026 |
 | HIST-TOML-00M | Secrets absent from error output | §3 | Sanitized diagnostics (Vault CVE-2025-4166 class) | passing → Batch 3 RB-025 |
 | HIST-TOML-00N | Table-merge round-trip | §2 | Merged structure reprints equivalently | passing → Batch 6 RB-055 (W011 + last-wins) |
-| HIST-TOML-00P | Comments survive round-trip | §2 | Adjacent comments kept, data identical | pending |
+| HIST-TOML-00P | Comments survive round-trip | §2 | Adjacent comments kept, data identical | passing → Batch 15 RB-146 |
 | HIST-YAML-026 | Unsafe deserialization RCE (py) | §3 | N/A: no tags/constructors; reject `!` tags | passing → Batch 3 RB-023 |
 | HIST-YAML-027 | Unsafe deserialization RCE (java) | §3 | N/A: no class system; reject | passing → Batch 3 RB-023 |
 | HIST-YAML-028 | Unsafe deserialization RCE (js) | §3 | N/A: hermetic eval, no host calls | passing → Batch 3 RB-023 |
@@ -210,10 +210,10 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | HIST-TOML-009 | Ambiguous local time | §2 | N/A: no datetimes (importer strings) | passing → Batch 10 RB-098 (W008 string) |
 | HIST-TOML-00A | Skipped local time | §2 | N/A: no datetimes (importer strings) | passing → Batch 10 RB-099 (W008 string) |
 | HIST-TOML-00G | Large integer parse time | §2 | Linear-time digit handling | passing → Batch 9 RB-084 (1000 digits, E023) |
-| HIST-TOML-00H | Long datetime parse time | §2 | N/A: no datetimes | pending |
+| HIST-TOML-00H | Long datetime parse time | §2 | N/A: no datetimes | passing → Batch 15 RB-147 (8KB datetime-lookalike parses as exact string) |
 | HIST-TOML-00I | Max line length | §2 | Documented: bounded or explicitly unbounded | passing → Batch 9 RB-085 (1MB line terminates) |
 | HIST-TOML-00J | Max document size | §2 | Documented input-size posture | passing → Batch 4 RB-035 |
-| HIST-TOML-00O | Datetime round-trip | §2 | N/A: datetimes are strings | pending |
+| HIST-TOML-00O | Datetime round-trip | §2 | N/A: datetimes are strings | passing → Batch 15 RB-148 |
 | HIST-YAML-032 | Merge taint | §3 | N/A: no merge operator | passing → Batch 10 RB-095 (merge() is E002) |
 | HIST-YAML-033 | Deep-copy taint | §3 | Clone paths keep `Secret` kind | passing → Batch 8 RB-074 |
 | HIST-YAML-034 | Spread taint | §3 | N/A: no spread operator | passing → Batch 10 RB-096 (`...` is E002) |
@@ -264,4 +264,4 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | Batch 12 | RB-111…RB-120 (P0-012, P1-ST-003/004/006/007/009/010/011/012/013) + dup-folds (P0-008/009/010/013/018, HIST-YAML-018/023, P1-ST-008) | done: all 10 green first-try, no code changes; RB-119 refusal-pinned (H002 stray-comma policy) |
 | Batch 13 | RB-121…RB-130 (P1-TI-010, P1-ST-014/015, P1-SE-001/002/003/004/005/007/008) | done: all 10 green first-try, no code changes; secrets/units/normalization all shipped behavior pinned |
 | Batch 14 | RB-131…RB-140 (P1-SE-011/012/014/015, P1-DS-001/002/003/004/005/009) | done: 9 green first-try; RB-138 needed a test-side oracle correction (model equality, not string order — order is DS-013's domain); RB-133 uses the real YAML/TOML exporters |
-| Batch 15+ | Next pending rows (P1-DS-010…014, HIST-TOML-00P/00H/00O) | pending |
+| Batch 15 | RB-141…RB-148 (P1-DS-010/011/012/013/014, HIST-TOML-00P/00H/00O) | done: all 8 green first-try; RB-143 refusal-pinned (fmt re-emits secret() calls per spec/secrets.md:48-49); backlog empty |

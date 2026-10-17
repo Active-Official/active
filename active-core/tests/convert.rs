@@ -221,6 +221,38 @@ fn toml_syntax_errors_are_hard() {
     assert!(toml_text_to_active("[unclosed\n").is_err());
 }
 
+#[test]
+fn exponent_floats_emit_parseable_plain_decimals() {
+    // Bug (found via toml-test spec float-0): `{f:?}` Debug formatting
+    // emitted `5e22`, which Active cannot parse (the grammar has no
+    // exponents) — violating the importer's always-parses contract.
+    // Display emits plain decimals that round-trip; integer-valued
+    // floats keep their `.0` so they still lex as Float.
+    for (input, want) in [
+        ("v = 5e+22\n", "5e+22"),
+        ("v = 1e06\n", "1000000.0"),
+        ("v = -2E-2\n", "-0.02"),
+        ("v = 6.626e-34\n", "6.626e-34"),
+        ("v = 300.0\n", "300.0"),
+    ] {
+        let (source, _) = toml_text_to_active(input).expect("import");
+        let value = eval(&source);
+        let json = value_to_pretty_json(&value);
+        assert!(json.contains(want), "{input} -> {json}\n{source}");
+    }
+    // Same contract through the JSON importer (expects f64 equality,
+    // not string matching).
+    let (source, _) = json_text_to_active(r#"{"v": 5e22}"#).expect("import");
+    let value = eval(&source);
+    match &value {
+        active_core::Value::Table(map) => match map.get("v") {
+            Some(active_core::Value::Float(f)) => assert_eq!(*f, 5e22),
+            other => panic!("expected Float(5e22), got {other:?}"),
+        },
+        other => panic!("table expected: {other:?}"),
+    }
+}
+
 // ------------------------------------------------------------------
 // Round trips and one-way markers.
 // ------------------------------------------------------------------

@@ -171,8 +171,26 @@ impl Emitter {
                     // spec/converters.md §4).
                     format!("{}.0", u as f64)
                 } else {
+                    // Display, never Debug: Debug switches to scientific
+                    // notation (`5e22`) for large/small magnitudes, which
+                    // Active cannot parse (grammar has no exponents) —
+                    // violating the always-parses contract. Display always
+                    // emits plain decimals and round-trips. A bare `300`
+                    // would lex as Int, so integers-valued floats keep
+                    // their `.0`; non-finite stays null (W010, §4).
                     n.as_f64()
-                        .map(|f| format!("{f:?}"))
+                        .map(|f| {
+                            if !f.is_finite() {
+                                "null".to_string()
+                            } else {
+                                let s = format!("{f}");
+                                if s.contains('.') {
+                                    s
+                                } else {
+                                    format!("{s}.0")
+                                }
+                            }
+                        })
                         .unwrap_or("null".to_string())
                 }
             }

@@ -30938,3 +30938,239 @@ fn rb_1398_syn121_bad_utf8_never_decodes() {
     assert_eq!(v["case_0121_02"], "a", "{v}");
     assert!(codes_of("case_0121_02 = \"a\"\n").is_empty());
 }
+
+/// RB-1399 — Null-byte variant: misplaced BOM rejects with span (SYN-0121-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0026 (nst JSONTestSuite
+/// n_structure_null-byte-outside-string).
+/// Byte fixture: UTF-8 BOM bytes right after `x = `. BOM acceptance lives
+/// at exactly one stream position (leading); anywhere else it is an
+/// unexpected character — E005 Error at (1:5), the BOM's own offset.
+/// Converges with RB-197 (BOM after a first assignment).
+#[test]
+fn rb_1399_syn121_bom_after_eq_rejects() {
+    let diags = parse_file(
+        &research_fixture("syn_0121_03_bom_after_eq.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 5), "{span:?}");
+    // Positive control: a LEADING BOM is skipped (RB-003 policy).
+    assert_eq!(eval_json("\u{FEFF}x = 1\n")["x"], 1);
+}
+
+/// RB-1400 — Null-byte variant: escaped control scalar stays verbatim (SYN-0121-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0026 (nst JSONTestSuite
+/// n_structure_null-byte-outside-string).
+/// REFUSAL (spec-gated, spec/grammar.md:62-66, RB-050): the catalogue
+/// allows `"\u0001"` only if escaped control scalars decode, but Active
+/// decodes no `\u` escape at all. The six characters persist exactly and
+/// silently — escaped-code-point policy stays disjoint from raw source
+/// control bytes (which reject as E005 outside strings).
+#[test]
+fn rb_1400_syn121_escaped_control_verbatim() {
+    let src = "case_0121_04 = \"\\u0001\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0121_04"], "\\u0001", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a plain ASCII string is exact and silent too.
+    let v = eval_json("case_0121_04 = \"plain\"\n");
+    assert_eq!(v["case_0121_04"], "plain", "{v}");
+}
+
+/// RB-1401 — Null-byte variant: TAB indentation rejects (SYN-0121-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0026 (nst JSONTestSuite
+/// n_structure_null-byte-outside-string).
+/// Byte fixture: TAB in leading indentation. Structural TABs are loud —
+/// E006 Error at (1:1); tabs may live inside string content, never as
+/// structural indentation. Converges with RB-287/RB-1185 (same refusal,
+/// same span).
+#[test]
+fn rb_1401_syn121_tab_indent_rejects() {
+    let diags = parse_file(
+        &research_fixture("syn_0121_05_tab_indent.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E006");
+    let e = diags.iter().find(|d| d.code == "E006").expect("E006");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E006 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E006 carries a span");
+    assert_eq!((span.line, span.column), (1, 1), "{span:?}");
+    // Positive control: space indentation evaluates.
+    assert_eq!(eval_json("case_0121_05 = 1\n")["case_0121_05"], 1);
+}
+
+/// RB-1402 — Null-byte variant: café survives round-trip (SYN-0121-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0026 (nst JSONTestSuite
+/// n_structure_null-byte-outside-string).
+/// `case_0121_06 = "café"` (U+00E9) evaluates exactly with zero
+/// diagnostics — valid multi-byte code points survive decode/encode
+/// round-trip. Converges with RB-1186. (The escape spells the non-ASCII
+/// scalar; no editor bytes involved.)
+#[test]
+fn rb_1402_syn121_cafe_exact() {
+    let src = "case_0121_06 = \"caf\u{e9}\"\n";
+    assert_eq!(eval_json(src)["case_0121_06"], "caf\u{e9}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: a plain ASCII neighbour is exact.
+    assert_eq!(
+        eval_json("case_0121_06 = \"cafe\"\n")["case_0121_06"],
+        "cafe"
+    );
+}
+
+/// RB-1403 — Null-byte variant: supplementary-plane scalar exact (SYN-0121-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0026 (nst JSONTestSuite
+/// n_structure_null-byte-outside-string).
+/// `case_0121_07` holds U+1D11E (musical G-clef): one scalar, four UTF-8
+/// bytes, accepted silently with the exact value — the scanner counts code
+/// points and bytes consistently with no split-surrogate hazard (there is
+/// no UTF-16 decoding anywhere to split). Converges with the 116/117/118
+/// emoji twins (RB-1358/RB-1367/RB-1376) at a second code point.
+#[test]
+fn rb_1403_syn121_gclef_exact() {
+    let src = "case_0121_07 = \"\u{1d11e}\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0121_07"], "\u{1d11e}", "{v}");
+    assert_eq!(
+        v["case_0121_07"].as_str().expect("string").chars().count(),
+        1,
+        "{v}"
+    );
+    assert_eq!(v["case_0121_07"].as_str().expect("string").len(), 4, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a BMP neighbour is exact too.
+    assert_eq!(
+        eval_json("case_0121_07 = \"\u{e9}\"\n")["case_0121_07"],
+        "\u{e9}"
+    );
+}
+
+/// RB-1404 — Null-byte variant: truncated UTF-8 at EOF is a decode error (SYN-0121-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0026 (nst JSONTestSuite
+/// n_structure_null-byte-outside-string).
+/// Byte fixture: lead byte E2 with the file ending before its continuations.
+/// EOF inside a multibyte sequence is a controlled decode failure — E017
+/// Error with no span (file-decode time, before lexing) — never a parser
+/// crash, never silent truncation. Converges with RB-196/RB-1398.
+#[test]
+fn rb_1404_syn121_truncated_e2_rejects() {
+    let diags = parse_file(
+        &research_fixture("syn_0121_08_truncated_e2_eof.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E017");
+    let e = diags.iter().find(|d| d.code == "E017").expect("E017");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E017 must be Error, got {:?}",
+        e.severity
+    );
+    // Positive control: the complete sequence evaluates silently.
+    let v = eval_json("case_0121_08 = \"a\u{00e2}\"\n");
+    assert_eq!(v["case_0121_08"], "a\u{00e2}", "{v}");
+    assert!(codes_of("case_0121_08 = \"a\u{00e2}\"\n").is_empty());
+}
+
+/// RB-1405 — Null-byte variant: escaped TAB is a value, not indentation (SYN-0121-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0026 (nst JSONTestSuite
+/// n_structure_null-byte-outside-string).
+/// `case_0121_09 = "a\tb"` accepts silently with one real TAB in the value
+/// (spec/grammar.md:62-64) — a valid escape is never treated as source
+/// indentation. Completes the 121 lineage alongside the structural-TAB
+/// refusal in RB-1401: `\t` in content decodes, TAB as structure rejects.
+#[test]
+fn rb_1405_syn121_escaped_tab_decodes() {
+    let src = "case_0121_09 = \"a\\tb\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0121_09"], "a\tb", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the sibling specified escape `\n` decodes to LF.
+    let v = eval_json("case_0121_09 = \"a\\nb\"\n");
+    assert_eq!(v["case_0121_09"], "a\nb", "{v}");
+}
+
+/// RB-1406 — Opening-arrays variant: below-limit nesting parses (SYN-0122-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-JSON-0027 (nst JSONTestSuite
+/// n_structure_100000_opening_arrays).
+/// 32 balanced brackets around `0` sit below the documented depth bound
+/// (64) and evaluate silently to 32 nested arrays. The oracle value is
+/// built by an independent JSON parse (serde_json), never by Active.
+/// (Completing this very test without hanging is part of the proof.)
+#[test]
+fn rb_1406_syn122_shallow_nesting_accepts() {
+    let src = format!("case_0122_01 = {}0{}\n", "[".repeat(32), "]".repeat(32));
+    let v = eval_json(&src);
+    let wire = format!("{}0{}", "[".repeat(32), "]".repeat(32));
+    let expected: serde_json::Value = serde_json::from_str(&wire).expect("oracle parses");
+    assert_eq!(v["case_0122_01"], expected, "{v}");
+    assert!(codes_of(&src).is_empty());
+    // Positive control: the flat neighbour evaluates.
+    assert_eq!(
+        eval_json("case_0122_01 = [0]\n")["case_0122_01"],
+        serde_json::json!([0])
+    );
+}
+
+/// RB-1407 — Opening-arrays variant: depth overflow fails controllably (SYN-0122-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-JSON-0027 (nst JSONTestSuite
+/// n_structure_100000_opening_arrays).
+/// 256 balanced brackets trip the depth budget (E004 Error) instead of
+/// overflowing the native stack — completion of this very test is the
+/// resource-safety proof. Converges with RB-271/RB-272 (same class at the
+/// documented bound of 64).
+#[test]
+fn rb_1407_syn122_deep_nesting_trips_budget() {
+    let src = format!("case_0122_02 = {}0{}\n", "[".repeat(256), "]".repeat(256));
+    let diags = parse(&src, "research").expect_err("must fail E004");
+    let e = diags.iter().find(|d| d.code == "E004").expect("E004");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E004 must be Error, got {:?}",
+        e.severity
+    );
+    // Positive control: a shallow array evaluates.
+    assert_eq!(
+        eval_json("case_0122_02 = [0]\n")["case_0122_02"],
+        serde_json::json!([0])
+    );
+}
+
+/// RB-1408 — Opening-arrays variant: adversarial depth bounded (SYN-0122-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-JSON-0027 (nst JSONTestSuite
+/// n_structure_100000_opening_arrays).
+/// 2048 balanced brackets trip E004 Error long before recursive descent
+/// could exhaust the stack — the budget binds adversarial depth first.
+/// Converges with RB-1407 at 8x the depth: same class, same control.
+#[test]
+fn rb_1408_syn122_adversarial_depth_bounded() {
+    let src = format!("case_0122_03 = {}0{}\n", "[".repeat(2048), "]".repeat(2048));
+    let diags = parse(&src, "research").expect_err("must fail E004");
+    let e = diags.iter().find(|d| d.code == "E004").expect("E004");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E004 must be Error, got {:?}",
+        e.severity
+    );
+    // Positive control: a shallow array evaluates.
+    assert_eq!(
+        eval_json("case_0122_03 = [0]\n")["case_0122_03"],
+        serde_json::json!([0])
+    );
+}

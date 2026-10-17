@@ -6932,6 +6932,194 @@ fn rb_398_syn09_hetero_count() {
     );
 }
 
+/// RB-399 — Derived variant 09-09: EOF triple (SYN-0009-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0009 (toml-test no-close-04).
+/// Unterminated array fails E001 Error at EOF (2:1) — class,
+/// severity, and span indexed jointly for the 09 lineage.
+#[test]
+fn rb_399_syn09_eof_triple() {
+    let src = "case_0009_09 = [1, 2\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: the closed twin evaluates.
+    assert_eq!(
+        eval_json("case_0009_09 = [1, 2]\n")["case_0009_09"],
+        serde_json::json!([1, 2])
+    );
+}
+
+/// RB-400 — Derived variant 10-01: heal triple (SYN-0010-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0010 (toml-test no-close-table-01).
+/// Doubled comma heals with value `[1, 2]`, class H002 at 1:19, Info
+/// severity — the full repair triple indexed for the 10 lineage.
+#[test]
+fn rb_400_syn10_heal_triple() {
+    let src = "case_0010_01 = [1,,2]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0010_01"], serde_json::json!([1, 2]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H002 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 19), "{span:?}");
+}
+
+/// RB-401 — Derived variant 10-02: insert triple (SYN-0010-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0010 (toml-test no-close-table-01).
+/// Missing comma heals with value `[1, 2]`, class H003 at 1:19,
+/// Warning severity — insertions announce louder than removals.
+#[test]
+fn rb_401_syn10_insert_triple() {
+    let src = "case_0010_02 = [1 2]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0010_02"], serde_json::json!([1, 2]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H003").expect("H003");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Warning,
+        "H003 must be Warning, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H003 carries a span");
+    assert_eq!((span.line, span.column), (1, 19), "{span:?}");
+}
+
+/// RB-402 — Derived variant 10-03: lone-comma span (SYN-0010-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0010 (toml-test no-close-table-01).
+/// `[,]` heals H002 at the comma (1:17) to empty — the span marks
+/// the repair site under the 10 key width.
+#[test]
+fn rb_402_syn10_lone_comma_span() {
+    let src = "case_0010_03 = [,]\n";
+    assert_eq!(eval_json(src)["case_0010_03"], serde_json::json!([]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+}
+
+/// RB-403 — Derived variant 10-04: trailing span + control (SYN-0010-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0010 (toml-test no-close-table-01).
+/// Trailing comma heals H002 at 1:18 — and the clean neighbour
+/// carries no heal, proving the repair is input-specific.
+#[test]
+fn rb_403_syn10_trailing_control() {
+    let src = "case_0010_04 = [1,]\n";
+    assert_eq!(eval_json(src)["case_0010_04"], serde_json::json!([1]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the clean neighbour carries no heal.
+    assert!(!codes_of("case_0010_04 = [1]\n").iter().any(|c| c == "H002"));
+}
+
+/// RB-404 — Derived variant 10-05: typed determinism (SYN-0010-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0010 (toml-test no-close-table-01).
+/// Clean triple asserts value, int element types, determinism, and
+/// silence jointly — the full good-case contract.
+#[test]
+fn rb_404_syn10_typed_deterministic() {
+    let src = "case_0010_05 = [1, 2, 3]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0010_05"], serde_json::json!([1, 2, 3]));
+    for e in v["case_0010_05"].as_array().expect("array") {
+        assert!(e.is_i64(), "{v}");
+    }
+    assert_eq!(eval_json(src), eval_json(src));
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-405 — Derived variant 10-06: empty determinism (SYN-0010-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0010 (toml-test no-close-table-01).
+/// Empty arrays evaluate deterministically — repeated runs agree
+/// exactly with zero diagnostics.
+#[test]
+fn rb_405_syn10_empty_deterministic() {
+    let src = "case_0010_06 = []\n";
+    assert_eq!(eval_json(src)["case_0010_06"], serde_json::json!([]));
+    assert_eq!(eval_json(src), eval_json(src));
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-406 — Derived variant 10-07: nested determinism (SYN-0010-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0010 (toml-test no-close-table-01).
+/// Nested collections evaluate exactly and deterministically —
+/// value plus twice-eval equality plus silence.
+#[test]
+fn rb_406_syn10_nested_deterministic() {
+    let src = "case_0010_07 = [[1], [2, 3]]\n";
+    assert_eq!(
+        eval_json(src)["case_0010_07"],
+        serde_json::json!([[1], [2, 3]])
+    );
+    assert_eq!(eval_json(src), eval_json(src));
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-407 — Derived variant 10-08: hetero count (SYN-0010-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0010 (toml-test no-close-table-01).
+/// Mixed arrays assert value, two-element count, and no error class —
+/// the hetero shape holds exactly.
+#[test]
+fn rb_407_syn10_hetero_count() {
+    let src = "case_0010_08 = [1, { name = \"x\" }]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0010_08"], serde_json::json!([1, {"name": "x"}]));
+    assert_eq!(v["case_0010_08"].as_array().expect("array").len(), 2);
+    let codes = codes_of(src);
+    assert!(
+        !codes.iter().any(|c| c.starts_with('E')),
+        "no error class expected, got {codes:?}"
+    );
+}
+
+/// RB-408 — Derived variant 10-09: EOF triple (SYN-0010-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0010 (toml-test no-close-table-01).
+/// Unterminated array fails E001 Error at EOF (2:1) — class,
+/// severity, and span indexed jointly. (Completes SYN-0009-09 +
+/// opens SYN-0010-01…09.)
+#[test]
+fn rb_408_syn10_eof_triple() {
+    let src = "case_0010_09 = [1, 2\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: the closed twin evaluates.
+    assert_eq!(
+        eval_json("case_0010_09 = [1, 2]\n")["case_0010_09"],
+        serde_json::json!([1, 2])
+    );
+}
+
 /// RB-386 — Derived variant 08-05: typed determinism (SYN-0008-05 §H, HIGH).
 /// Origin: synthetic variation of SRC-TOML-0008 (toml-test no-close-02).
 /// Clean triple asserts value, int element types, determinism, and

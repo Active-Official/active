@@ -115,25 +115,25 @@ not the research docs' proposed names.
 | P1-SE-008 | Byte units normalize | Common byte representation | passing → Batch 13 RB-130 (integer bytes) |
 | P1-SE-009 | Unknown unit explicit | E002 reject (known-suffix table only) | passing → Batch 4 RB-037 |
 | P1-SE-010 | Unit on non-number rejects | E002 reject | passing → Batch 4 RB-038 |
-| P1-SE-011 | Dimension mismatch (suite form) | Same as 0005 | pending |
-| P1-SE-012 | Scalar unit multiply (`5s * 3`) | 15s normalized | pending |
+| P1-SE-011 | Dimension mismatch (suite form) | Same as 0005 | passing → Batch 14 RB-131 (T001 suite form of RB-011) |
+| P1-SE-012 | Scalar unit multiply (`5s * 3`) | 15s normalized | passing → Batch 14 RB-132 (ms 15000) |
 | P1-SE-013 | `secret("5s")` opaque | Never auto-parsed as unit | passing → Batch 3 RB-028 |
-| P1-SE-014 | Export redaction matrix | All positions × all formats redact | pending |
-| P1-SE-015 | Realistic service config control | Evaluates, redacts, normalizes | pending |
+| P1-SE-014 | Export redaction matrix | All positions × all formats redact | passing → Batch 14 RB-133 (top/nest/array × JSON/YAML/TOML/diags) |
+| P1-SE-015 | Realistic service config control | Evaluates, redacts, normalizes | passing → Batch 14 RB-134 |
 
 ## §F — P1 dual-syntax/diagnostics (`tests/curated/05-P1-Dual-Syntax-Roundtrip-Diagnostics.md`)
 
 | ID | Contract | Expected Active behavior | Status |
 |---|---|---|---|
-| P1-DS-001 | Brace ≡ indent values | Structurally equal | pending |
-| P1-DS-002 | Nested dual-syntax equality | Equal semantics | pending |
-| P1-DS-003 | Mixed style legal-or-reject | Deterministic either way | pending |
-| P1-DS-004 | Brace round-trip | Semantic equality | pending |
-| P1-DS-005 | Indent round-trip | Semantic equality | pending |
+| P1-DS-001 | Brace ≡ indent values | Structurally equal | passing → Batch 14 RB-135 |
+| P1-DS-002 | Nested dual-syntax equality | Equal semantics | passing → Batch 14 RB-136 |
+| P1-DS-003 | Mixed style legal-or-reject | Deterministic either way | passing → Batch 14 RB-137 (legal + deterministic) |
+| P1-DS-004 | Brace round-trip | Semantic equality | passing → Batch 14 RB-138 (model equality; order is DS-013's domain) |
+| P1-DS-005 | Indent round-trip | Semantic equality | passing → Batch 14 RB-139 |
 | P1-DS-006 | Comments ignored semantically | Value `1` unaffected | passing → Batch 2 RB-020 |
 | P1-DS-007 | Hash in string kept | `"abc # not comment"` intact | passing (hash kept, comments ignored) → Batch 1 RB-009 |
 | P1-DS-008 | Every failure has spans | Usable line/column | passing → Batch 10 RB-100 (failure sweep, all spanned) |
-| P1-DS-009 | Diagnostic class stable | Same class across runs + styles | pending |
+| P1-DS-009 | Diagnostic class stable | Same class across runs + styles | passing → Batch 14 RB-140 (W001 + name spans, flat and nested) |
 | P1-DS-010 | Unresolved span covers name | Span on `unknown` | pending |
 | P1-DS-011 | Units survive round-trip | Duration value kept | pending |
 | P1-DS-012 | Secrets redacted across print | No raw bytes in printer output | pending |
@@ -263,4 +263,5 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | Batch 11 | RB-101…RB-110 | done: all 10 green first-try; RB-101 drove the statement-initial E002 fix |
 | Batch 12 | RB-111…RB-120 (P0-012, P1-ST-003/004/006/007/009/010/011/012/013) + dup-folds (P0-008/009/010/013/018, HIST-YAML-018/023, P1-ST-008) | done: all 10 green first-try, no code changes; RB-119 refusal-pinned (H002 stray-comma policy) |
 | Batch 13 | RB-121…RB-130 (P1-TI-010, P1-ST-014/015, P1-SE-001/002/003/004/005/007/008) | done: all 10 green first-try, no code changes; secrets/units/normalization all shipped behavior pinned |
-| Batch 14+ | Next 10 lowest pending rows by severity, per the loop prompt | pending |
+| Batch 14 | RB-131…RB-140 (P1-SE-011/012/014/015, P1-DS-001/002/003/004/005/009) | done: 9 green first-try; RB-138 needed a test-side oracle correction (model equality, not string order — order is DS-013's domain); RB-133 uses the real YAML/TOML exporters |
+| Batch 15+ | Next pending rows (P1-DS-010…014, HIST-TOML-00P/00H/00O) | pending |

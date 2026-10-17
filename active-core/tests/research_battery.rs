@@ -2296,3 +2296,175 @@ fn rb_130_byte_units_normalize() {
     // Positive control: the quoted form stays a string.
     assert_eq!(eval_json("a = \"512MiB\"\n")["a"], "512MiB");
 }
+
+/// RB-131 — Dimension mismatch, suite form (P1-SE-011 §E).
+/// Same policy as DERIVED-0005 (RB-011): durations and bytes never add.
+#[test]
+fn rb_131_dimension_mismatch_suite() {
+    let src = "x = 5s + 512MiB\n";
+    let module = parse(src, "research").expect("must parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail T001");
+    assert_eq!(err.code(), "T001");
+    // Positive control: the duration operand alone evaluates.
+    assert_eq!(eval_json("x = 5s\n")["x"]["ms"], 5000);
+}
+
+/// RB-132 — Scalar unit multiply normalizes (P1-SE-012 §E).
+#[test]
+fn rb_132_scalar_unit_multiply() {
+    assert_eq!(eval_json("x = 5s * 3\n")["x"]["ms"], 15000);
+    // Positive control: plain scalar arithmetic is unaffected.
+    assert_eq!(eval_json("y = 3 * 4\n")["y"], 12);
+}
+
+/// RB-133 — Export redaction matrix (P1-SE-014 §E).
+/// Secrets in top-level, nested-table, and array positions redact in
+/// JSON and TOML exports and in diagnostics; markers absent everywhere.
+#[test]
+fn rb_133_export_redaction_matrix() {
+    let src = "pw = secret(\"RAW-RB133-TOP\")\nt = {pw = secret(\"RAW-RB133-NEST\")}\nlist = [secret(\"RAW-RB133-ARR\")]\n";
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    let yaml = active_core::convert::value_to_yaml_string(&value).expect("yaml export");
+    let (toml, toml_diags) =
+        active_core::convert::value_to_toml_string(&value).expect("toml export");
+    for marker in ["RAW-RB133-TOP", "RAW-RB133-NEST", "RAW-RB133-ARR"] {
+        assert!(!json.contains(marker), "{marker} leaked in JSON: {json}");
+        assert!(!yaml.contains(marker), "{marker} leaked in YAML: {yaml}");
+        assert!(!toml.contains(marker), "{marker} leaked in TOML: {toml}");
+        assert!(
+            !format!("{diags:?}").contains(marker),
+            "{marker} leaked in diags: {diags:?}"
+        );
+        assert!(
+            !format!("{toml_diags:?}").contains(marker),
+            "{marker} leaked in toml diags: {toml_diags:?}"
+        );
+    }
+    let v: serde_json::Value = serde_json::from_str(&json).expect("json");
+    assert_eq!(v["pw"], "***SECRET***");
+    assert_eq!(v["t"]["pw"], "***SECRET***");
+    assert_eq!(v["list"][0], "***SECRET***");
+}
+
+/// RB-134 — Realistic service config control (P1-SE-015 §E).
+/// Ports, hosts, timeouts, byte limits, and a secret evaluate together:
+/// values normalize, the secret redacts.
+#[test]
+fn rb_134_realistic_service_config() {
+    let src = "port = 8080\nhost = \"svc\"\ntimeout = 30s\nlimit = 512MiB\npw = secret(\"RAW-RB134-SE015\")\n";
+    let v = eval_json(src);
+    assert_eq!(v["port"], 8080);
+    assert_eq!(v["host"], "svc");
+    assert_eq!(v["timeout"]["ms"], 30000);
+    assert_eq!(v["limit"], 536870912);
+    assert_eq!(v["pw"], "***SECRET***");
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains("RAW-RB134-SE015"), "{json}");
+    assert!(
+        !format!("{diags:?}").contains("RAW-RB134-SE015"),
+        "{diags:?}"
+    );
+}
+
+/// RB-135 — Brace ≡ indent values (P1-DS-001 §E).
+#[test]
+fn rb_135_brace_indent_values_equal() {
+    let brace = "server = {\n  host = \"h\",\n  port = 1\n}\n";
+    let indent = "server:\n  host = \"h\"\n  port = 1\n";
+    assert_eq!(eval_json(brace), eval_json(indent));
+    assert_eq!(eval_json(brace)["server"]["port"], 1);
+}
+
+/// RB-136 — Nested dual-syntax equality (P1-DS-002 §E).
+#[test]
+fn rb_136_nested_dual_syntax_equality() {
+    let brace = "a = {\n  b = {\n    c = [1, {d = 2}],\n  },\n}\n";
+    let indent = "a:\n  b:\n    c = [1, {d = 2}]\n";
+    let (vb, vi) = (eval_json(brace), eval_json(indent));
+    assert_eq!(vb, vi);
+    assert_eq!(vb["a"]["b"]["c"], serde_json::json!([1, {"d": 2}]));
+}
+
+/// RB-137 — Mixed styles are legal and deterministic (P1-DS-003 §E).
+/// Indent blocks may contain inline brace tables; repeated evaluation
+/// agrees exactly.
+#[test]
+fn rb_137_mixed_styles_legal_deterministic() {
+    let src = "server:\n  db = {\n    name = \"m\"\n  }\n  port = 1\n";
+    let first = eval_json(src);
+    assert_eq!(first["server"]["db"]["name"], "m");
+    assert_eq!(first["server"]["port"], 1);
+    assert_eq!(first, eval_json(src));
+    let codes = codes_of(src);
+    assert!(
+        !codes.iter().any(|c| c.starts_with('E')),
+        "no error class expected, got {codes:?}"
+    );
+}
+
+/// RB-138 — Brace round-trip keeps semantics (P1-DS-004 §E).
+/// Values compare as JSON models (object equality ignores key order —
+/// ordering policy belongs to P1-DS-013, not to semantic equality).
+#[test]
+fn rb_138_brace_round_trip() {
+    use active_core::fmt::format;
+    use active_core::Style;
+    let src = "server:\n  host = \"h\"\n  port = 1\ntimeout = 5s\n";
+    let module = parse(src, "research").expect("must parse");
+    let out = format(&module, Style::Brace);
+    let module2 =
+        parse(&out, "research").unwrap_or_else(|d| panic!("brace reparse failed: {d:?}\n{out}"));
+    let (first, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    let (second, _) = Engine::new().evaluate(&module2).expect("must evaluate");
+    let a: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&first)).expect("json");
+    let b: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&second)).expect("json");
+    assert_eq!(a, b);
+}
+
+/// RB-139 — Indent round-trip keeps semantics (P1-DS-005 §E).
+/// Same model-equality oracle as RB-138: key order is DS-013's domain.
+#[test]
+fn rb_139_indent_round_trip() {
+    use active_core::fmt::format;
+    use active_core::Style;
+    let src = "server = {\n  host = \"h\",\n  port = 1\n}\ntimeout = 5s\n";
+    let module = parse(src, "research").expect("must parse");
+    let out = format(&module, Style::Indent);
+    let module2 =
+        parse(&out, "research").unwrap_or_else(|d| panic!("indent reparse failed: {d:?}\n{out}"));
+    let (first, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    let (second, _) = Engine::new().evaluate(&module2).expect("must evaluate");
+    let a: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&first)).expect("json");
+    let b: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&second)).expect("json");
+    assert_eq!(a, b);
+}
+
+/// RB-140 — Diagnostic class stable across runs and styles (P1-DS-009 §E).
+/// The same unresolved name warns W001 in flat and brace-wrapped forms,
+/// with the span covering the name in both.
+#[test]
+fn rb_140_diagnostic_class_stable_across_styles() {
+    fn w001_span(src: &str) -> active_core::diag::Span {
+        let module = parse(src, "research").expect("must parse");
+        let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+        let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+        w.span.clone().expect("W001 carries a span")
+    }
+    let flat = w001_span("bad = nosuchkey\n");
+    let nested = w001_span("server = {\n  bad = nosuchkey\n}\n");
+    assert_eq!((flat.line, flat.column), (1, 7), "{flat:?}");
+    assert_eq!((nested.line, nested.column), (2, 9), "{nested:?}");
+    // Stability: repeated runs report the same class and span.
+    assert_eq!((flat.line, flat.column), {
+        let s = w001_span("bad = nosuchkey\n");
+        (s.line, s.column)
+    });
+}

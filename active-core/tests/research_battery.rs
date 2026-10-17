@@ -3705,3 +3705,177 @@ fn rb_208_trailing_exp_rejects() {
     let span = e.span.clone().expect("E002 carries a span");
     assert_eq!((span.line, span.column), (1, 10), "{span:?}");
 }
+
+/// RB-209 — Upstream `trailing-us` analogue (SRC-TOML-0060 §H, HIGH).
+/// Origin: toml-test `invalid/float/trailing-us.toml`.
+/// REFUSAL (spec-gated): digit separators strip wherever they appear
+/// (RB-107: `1_000_000` → 1000000) — `1_` is exactly 1, deterministic,
+/// no diagnostics. No octal-style reinterpretation is possible.
+#[test]
+fn rb_209_trailing_separator_strips() {
+    let v = eval_json("value = 1_\n");
+    assert_eq!(v["value"], 1);
+    assert!(v["value"].is_i64());
+    let codes = codes_of("value = 1_\n");
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: interior separators strip identically.
+    assert_eq!(eval_json("value = 1_000\n")["value"], 1000);
+}
+
+/// RB-210 — Upstream `us-after-dot` analogue (SRC-TOML-0061 §H, HIGH).
+/// Origin: toml-test `invalid/float/us-after-dot.toml`.
+/// A separator directly after the decimal point cannot lex: E002.
+#[test]
+fn rb_210_separator_after_dot_rejects() {
+    let src = "value = 1._2\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 11), "{span:?}");
+    // Positive control: the clean float evaluates.
+    assert_eq!(eval_json("value = 1.2\n")["value"], 1.2);
+}
+
+/// RB-211 — Upstream `duplicate-key-01` analogue (SRC-TOML-0062 §H, HIGH).
+/// Origin: toml-test `invalid/inline-table/duplicate-key-01.toml`.
+/// REFUSAL (spec-gated): upstream says reject; Active's locked W011
+/// last-wins policy (RB-002) applies inside inline tables — announced,
+/// deterministic, with span. Convention: the W011 span marks the
+/// winning value token (1:26 here, the second `2`).
+#[test]
+fn rb_211_inline_dup_warns_last_wins() {
+    let src = "value = { key = 1, key = 2 }\n";
+    assert_eq!(eval_json(src)["value"]["key"], 2);
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (1, 26), "{span:?}");
+}
+
+/// RB-212 — Upstream `linebreak-01` analogue (SRC-TOML-0063 §H, HIGH).
+/// Origin: toml-test `invalid/inline-table/linebreak-01.toml`.
+/// Brace maps permit multiline formatting (spec/grammar.md §2.6:
+/// arrays and inline tables may span lines freely) — the multiline
+/// form equals the one-line form exactly.
+#[test]
+fn rb_212_multiline_inline_table_accepts() {
+    let multi = "value = { a = 1,\n b = 2 }\n";
+    let flat = "value = { a = 1, b = 2 }\n";
+    assert_eq!(eval_json(multi), eval_json(flat));
+    assert_eq!(eval_json(multi)["value"]["b"], 2);
+}
+
+/// RB-213 — Upstream `no-close-01` analogue (SRC-TOML-0064 §H, HIGH).
+/// Origin: toml-test `invalid/inline-table/no-close-01.toml`.
+/// Unterminated inline table inside a table body: E001 at EOF.
+#[test]
+fn rb_213_unterminated_table_in_body_rejects() {
+    let src = "[t]\nvalue = { a = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    assert!(
+        diags.iter().any(|d| d.code == "E001"),
+        "E001 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (3, 1), "{span:?}");
+    // Positive control: the closed neighbour evaluates.
+    assert_eq!(eval_json("[t]\nvalue = { a = 1 }\n")["t"]["value"]["a"], 1);
+}
+
+/// RB-214 — Upstream `no-comma-01` analogue (SRC-TOML-0065 §H, HIGH).
+/// Origin: toml-test `invalid/inline-table/no-comma-01.toml`.
+/// REFUSAL (spec-gated): adjacent pairs are not merged — the locked
+/// H003 policy inserts the missing comma announced (same as arrays,
+/// RB-154), with span.
+#[test]
+fn rb_214_table_missing_comma_heals() {
+    let src = "value = { a = 1 b = 2 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["value"]["a"], 1);
+    assert_eq!(v["value"]["b"], 2);
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H003").expect("H003");
+    let span = h.span.clone().expect("H003 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+}
+
+/// RB-215 — Upstream `overwrite-01` analogue (SRC-TOML-0066 §H, HIGH).
+/// Origin: toml-test `invalid/inline-table/overwrite-01.toml`.
+/// Same locked W011 policy in brace-block form (cross-syntax per the
+/// catalogue's dual-form guidance): last wins, announced with span.
+/// (Block-form span marks the redefined key token — 1:18 here — while
+/// the inline-form span marks the winning value; both shipped facts.)
+#[test]
+fn rb_215_block_dup_warns_last_wins() {
+    let src = "value { key = 1, key = 2 }\n";
+    assert_eq!(eval_json(src)["value"]["key"], 2);
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+}
+
+/// RB-216 — Upstream `trailing-comma` analogue (SRC-TOML-0067 §H, HIGH).
+/// Origin: toml-test `invalid/inline-table/trailing-comma.toml`.
+/// REFUSAL (spec-gated): trailing map commas ARE explicitly allowed —
+/// H002 heals (`removed trailing comma before closing brace`), so the
+/// policy is consistent across arrays and maps as the row demands.
+#[test]
+fn rb_216_table_trailing_comma_heals() {
+    let src = "value = { a = 1, }\n";
+    assert_eq!(eval_json(src)["value"], serde_json::json!({"a": 1}));
+    let codes = codes_of(src);
+    assert!(
+        codes.iter().any(|c| c == "H002"),
+        "H002 expected, got {codes:?}"
+    );
+    // Positive control: the comma-free neighbour carries no heal.
+    assert!(!codes_of("value = { a = 1 }\n").iter().any(|c| c == "H002"));
+}
+
+/// RB-217 — Upstream `capital-hex` analogue (SRC-TOML-0068 §H, HIGH).
+/// Origin: toml-test `invalid/integer/capital-hex.toml`.
+/// No hex literals exist in the alpha (spec/grammar.md §1.1:
+/// "hex-digit — none"), so `0XFF` cannot lex as a number: E002 at
+/// the stray identifier. The documented base-prefix case is: none.
+#[test]
+fn rb_217_capital_hex_rejects() {
+    let src = "value = 0XFF\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 10), "{span:?}");
+    // Positive control: the decimal neighbour evaluates.
+    assert_eq!(eval_json("value = 255\n")["value"], 255);
+}
+
+/// RB-218 — Upstream `double-sign-plus` analogue (SRC-TOML-0069 §H, HIGH).
+/// Origin: toml-test `invalid/integer/double-sign-plus.toml`.
+/// A numeric token takes at most one sign: the second `+` is E002.
+/// (There is no unary `+` in the grammar at all — only unary `-`.)
+#[test]
+fn rb_218_double_sign_rejects() {
+    let src = "value = ++1\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 9), "{span:?}");
+    // Positive control: the single-signed neighbour evaluates.
+    assert_eq!(eval_json("value = -1\n")["value"], -1);
+}

@@ -32984,3 +32984,221 @@ fn rb_1488_syn131_nested_scopes_accept() {
     let v = eval_json("case_0131_02 = 1\nprobe_3131 = 1\n");
     assert_eq!(v["probe_3131"], 1, "{v}");
 }
+
+/// RB-1489 — Anchor variant: array commas unambiguous (SYN-0131-03 §H, MEDIUM).
+/// Origin: synthetic variation of the "Colon in anchor accepted" report.
+/// `probe_3131 = [1, 2]` evaluates to the exact two-element array with zero
+/// diagnostics — commas separate, never merge or split.
+#[test]
+fn rb_1489_syn131_array_commas_exact() {
+    let src = "case_0131_03 = 1\nprobe_3131 = [1, 2]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0131_03"], 1, "{v}");
+    assert_eq!(v["probe_3131"], serde_json::json!([1, 2]), "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the single-element twin agrees at index 0.
+    assert_eq!(
+        eval_json("probe_3131 = [1]\n")["probe_3131"],
+        serde_json::json!([1])
+    );
+}
+
+/// RB-1490 — Anchor variant: quoted scalar never coerces (SYN-0131-04 §H, MEDIUM).
+/// Origin: synthetic variation of the "Colon in anchor accepted" report.
+/// `probe_3131 = "1"` evaluates to the exact string "1" with zero
+/// diagnostics — quoting pins text; no numeric coercion in either
+/// direction (bare `1` stays int beside it).
+#[test]
+fn rb_1490_syn131_quoted_scalar_exact() {
+    let src = "case_0131_04 = 1\nprobe_3131 = \"1\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0131_04"], 1, "{v}");
+    assert_eq!(v["probe_3131"], "1", "{v}");
+    assert!(!v["probe_3131"].is_i64(), "must stay string, got {v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the bare twin stays int.
+    let v = eval_json("probe_3131 = 1\n");
+    assert_eq!(v["probe_3131"], 1, "{v}");
+    assert!(v["probe_3131"].is_i64(), "must stay int, got {v}");
+}
+
+/// RB-1491 — Anchor variant: trailing comment never enters the value (SYN-0131-05 §H, MEDIUM).
+/// Origin: synthetic variation of the "Colon in anchor accepted" report.
+/// `probe_3131 = 1 # comment` evaluates to integer 1 with zero diagnostics
+/// — the comment is inert; no token value absorbs it.
+#[test]
+fn rb_1491_syn131_trailing_comment_inert() {
+    let src = "case_0131_05 = 1\nprobe_3131 = 1 # comment\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0131_05"], 1, "{v}");
+    assert_eq!(v["probe_3131"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the comment-free twin agrees.
+    assert_eq!(eval_json("probe_3131 = 1\n")["probe_3131"], 1);
+}
+
+/// RB-1492 — Anchor variant: env lookup explicit with fallback (SYN-0131-06 §H, MEDIUM).
+/// Origin: synthetic variation of the "Colon in anchor accepted" report.
+/// `probe_3131 = env.ACTIVE_TEST_RB1492_V ?: 1` reads the injected variable
+/// when set and falls back to 1 when absent — environment lookup is
+/// explicit (`env.` prefix + `?:` default) and testable. Uniquely-named
+/// vars with prior save/restore keep the test parallel-safe (RB-125
+/// pattern); the goal-mandated `env.TEST` spelling is represented by the
+/// same production with a collision-free name.
+#[test]
+fn rb_1492_syn131_env_fallback_explicit() {
+    let prior = std::env::var("ACTIVE_TEST_RB1492_V").ok();
+    std::env::set_var("ACTIVE_TEST_RB1492_V", "from-env");
+    let v = eval_json("case_0131_06 = 1\nprobe_3131 = env.ACTIVE_TEST_RB1492_V ?: 1\n");
+    assert_eq!(v["probe_3131"], "from-env", "{v}");
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_TEST_RB1492_V", val),
+        None => std::env::remove_var("ACTIVE_TEST_RB1492_V"),
+    }
+    // Positive control neighbour: the absent variable falls back to 1.
+    let prior2 = std::env::var("ACTIVE_TEST_RB1492_ABSENT_XYZ").ok();
+    std::env::remove_var("ACTIVE_TEST_RB1492_ABSENT_XYZ");
+    let v = eval_json("case_0131_06 = 1\nprobe_3131 = env.ACTIVE_TEST_RB1492_ABSENT_XYZ ?: 1\n");
+    assert_eq!(v["probe_3131"], 1, "{v}");
+    assert!(codes_of("probe_3131 = env.ACTIVE_TEST_RB1492_ABSENT_XYZ ?: 1\n").is_empty());
+    match prior2 {
+        Some(val) => std::env::set_var("ACTIVE_TEST_RB1492_ABSENT_XYZ", val),
+        None => std::env::remove_var("ACTIVE_TEST_RB1492_ABSENT_XYZ"),
+    }
+}
+
+/// RB-1493 — Anchor variant: secret taint propagates and redacts (SYN-0131-07 §H, HIGH).
+/// Origin: synthetic variation of the "Colon in anchor accepted" report.
+/// `probe_3131 = secret("RAW-RB1493-SE131")` evaluates with the tainted
+/// value redacted: the export carries `***SECRET***` and the unique marker
+/// is absent from the value, the JSON, and the diagnostics. (The catalogue
+/// fixture spells `secret("x")`; the goal-mandated unique RAW marker tests
+/// the identical production with a leak-detectable payload.)
+#[test]
+fn rb_1493_syn131_secret_taint_redacts() {
+    let src = "case_0131_07 = 1\nprobe_3131 = secret(\"RAW-RB1493-SE131\")\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0131_07"], 1, "{v}");
+    assert_eq!(v["probe_3131"], "***SECRET***", "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains("RAW-RB1493-SE131"), "{json}");
+    assert!(
+        !format!("{diags:?}").contains("RAW-RB1493-SE131"),
+        "{diags:?}"
+    );
+    // Positive control: a plain string beside it exports exactly.
+    let v = eval_json("case_0131_07 = 1\nprobe_3131 = \"plain\"\n");
+    assert_eq!(v["probe_3131"], "plain", "{v}");
+}
+
+/// RB-1494 — Anchor variant: bare interpolation refused, references resolve (SYN-0131-08 §H, MEDIUM).
+/// Origin: synthetic variation of the "Colon in anchor accepted" report.
+/// REFUSAL (spec-gated, spec/grammar.md:72-73, converges with
+/// RB-1409/1410/1418/1419/1422): `probe_3131 = ${base}` fails E005 Error
+/// at (3:14) — interpolation is string-only, so a bare `${...}` value is
+/// inexpressible. The dependency still resolves consistently through the
+/// two specified spellings: a name reference and a string interpolation
+/// (controls below, both silent).
+#[test]
+fn rb_1494_syn131_bare_interp_refused() {
+    let src = "case_0131_08 = 1\nlet base = 1\nprobe_3131 = ${base}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (3, 14), "{span:?}");
+    // Positive control: a name reference resolves to the binding value.
+    let v = eval_json("let base = 1\nprobe_3131 = base\n");
+    assert_eq!(v["probe_3131"], 1, "{v}");
+    // Positive control: string interpolation resolves identically.
+    let v = eval_json("let base = 1\nprobe_3131 = \"${base}\"\n");
+    assert_eq!(v["probe_3131"], "1", "{v}");
+}
+
+/// RB-1495 — Anchor variant: unit suffix consumes the full token (SYN-0131-09 §H, MEDIUM).
+/// Origin: synthetic variation of the "Colon in anchor accepted" report.
+/// `probe_3131 = 5s` evaluates to the normalized duration (`ms` 5000) with
+/// zero diagnostics — unit recognition consumes the full token against the
+/// known-suffix registry (P1-SE-007 §E, RB-129: ms map). No bare `5` with
+/// a stray `s` survives.
+#[test]
+fn rb_1495_syn131_unit_suffix_consumed() {
+    let src = "case_0131_09 = 1\nprobe_3131 = 5s\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0131_09"], 1, "{v}");
+    assert_eq!(v["probe_3131"]["ms"], 5000, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the bare scalar beside it stays a plain int.
+    let v = eval_json("probe_3131 = 5\n");
+    assert_eq!(v["probe_3131"], 5, "{v}");
+}
+
+/// RB-1496 — Escaped-coverage twin: dangling backslash heals (SYN-0132-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// "Escaped characters coverage gap"; same shape as SYN-0116-01, seventh
+/// parent fixture).
+/// Converges with RB-1352/RB-1361/RB-1370/RB-1379/RB-1388/RB-1433: `\"` is
+/// a specified escape (spec/grammar.md:62-64), the string is unterminated,
+/// H001 Info at (1:16).
+#[test]
+fn rb_1496_syn132_dangling_backslash_heals() {
+    let src = "case_0132_01 = \"dangling\\\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0132_01"], "dangling\"\n", "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H001").expect("H001");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H001 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: a closed string needs no heal.
+    let v = eval_json("case_0132_01 = \"done\"\n");
+    assert_eq!(v["case_0132_01"], "done", "{v}");
+    assert!(codes_of("case_0132_01 = \"done\"\n").is_empty());
+}
+
+/// RB-1497 — Escaped-coverage twin: lone-surrogate escape stays verbatim (SYN-0132-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// "Escaped characters coverage gap"; same shape as SYN-0116-02).
+/// REFUSAL (spec-gated, spec/grammar.md:62-66, RB-050): `"\uD800"` keeps
+/// its exact six characters silently — no UTF-16 decoding exists to pair.
+#[test]
+fn rb_1497_syn132_lone_surrogate_verbatim() {
+    let src = "case_0132_02 = \"\\uD800\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0132_02"], "\\uD800", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a plain ASCII string is exact and silent too.
+    let v = eval_json("case_0132_02 = \"plain\"\n");
+    assert_eq!(v["case_0132_02"], "plain", "{v}");
+}
+
+/// RB-1498 — Escaped-coverage twin: scalar `\u` escape never decodes (SYN-0132-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// "Escaped characters coverage gap"; same shape as SYN-0116-03).
+/// REFUSAL (spec-gated, spec/grammar.md:62-66, RB-050): `"\u0061"`
+/// persists exactly, silently, never "a" — the 150-cap closing pin on the
+/// escape-union refusal running through all seven twin lineages.
+#[test]
+fn rb_1498_syn132_scalar_escape_never_decodes() {
+    let src = "case_0132_03 = \"\\u0061\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0132_03"], "\\u0061", "{v}");
+    assert_ne!(v["case_0132_03"], "a", "must NOT decode to a: {v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the literal letter evaluates to itself.
+    let v = eval_json("case_0132_03 = \"a\"\n");
+    assert_eq!(v["case_0132_03"], "a", "{v}");
+}

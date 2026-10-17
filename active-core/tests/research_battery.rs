@@ -17309,3 +17309,212 @@ fn rb_828_syn57_quoted_digits_seventh_exact() {
     assert_eq!(v, 1, "{v}");
     assert!(!v.is_string(), "{v}");
 }
+/// RB-829 — Derived variant 57-09: canonical zero seventh twin is int 0 (SYN-0057-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0057 (toml-test nan-capital).
+/// `case_0057_09 = 0` is int 0 with zero diagnostics — converges with
+/// RB-775, RB-784, RB-793, RB-802, RB-811 and RB-820: canonical zero needs
+/// no policy, and the zero-prefixed twin (`01` is 1) shows the policy only
+/// strips. (Completes SYN-0057-09 coverage.)
+#[test]
+fn rb_829_syn57_zero_seventh_canonical() {
+    let src = "case_0057_09 = 0\n";
+    let v = eval_json(src)["case_0057_09"].clone();
+    assert_eq!(v, 0, "{v}");
+    assert!(!v.is_f64(), "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the zero-prefixed twin strips to 1 (RB-821).
+    assert_eq!(eval_json("case_0057_09 = 01\n")["case_0057_09"], 1);
+}
+
+/// RB-830 — Derived variant 58-01: `01` eighth twin is decimal 1 (SYN-0058-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0058 (toml-test trailing-dot).
+/// `case_0058_01 = 01` is int 1 with zero diagnostics — converges with
+/// RB-767, RB-776, RB-785, RB-794, RB-803, RB-812 and RB-821: the explicit
+/// decimal policy holds in every number lineage, never octal. (Opens
+/// SYN-0058 trailing-dot lineage.)
+#[test]
+fn rb_830_syn58_leading_zero_eighth_decimal() {
+    let src = "case_0058_01 = 01\n";
+    let v = eval_json(src)["case_0058_01"].clone();
+    assert_eq!(v, 1, "01 must be decimal 1, got {v}");
+    assert!(!v.is_f64(), "01 must be int, got {v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: 010 is decimal 10, never octal 8.
+    assert_eq!(eval_json("case_0058_01 = 010\n")["case_0058_01"], 10);
+}
+
+/// RB-831 — Derived variant 58-02: `1.` eighth twin is int 1 (SYN-0058-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0058 (toml-test trailing-dot).
+/// `case_0058_02 = 1.` is int 1 with zero diagnostics — converges with
+/// RB-768, RB-777, RB-786, RB-795, RB-804, RB-813 and RB-822: the grammar
+/// takes the int path, no float constructed, no digits required.
+#[test]
+fn rb_831_syn58_trailing_dot_eighth_int() {
+    let src = "case_0058_02 = 1.\n";
+    let v = eval_json(src)["case_0058_02"].clone();
+    assert_eq!(v, 1, "1. must be int 1, got {v}");
+    assert!(!v.is_f64(), "1. must not be float, got {v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the dotted spelling stays float.
+    let v = eval_json("case_0058_02 = 1.0\n")["case_0058_02"].clone();
+    assert_eq!(v.as_f64(), Some(1.0), "{v}");
+    assert!(v.is_f64(), "1.0 must be float, got {v}");
+}
+
+/// RB-832 — Derived variant 58-03: bare-exponent eighth twin rejects (SYN-0058-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0058 (toml-test trailing-dot).
+/// `case_0058_03 = 1e` fails E002 Error at (1:17) — converges with RB-769,
+/// RB-778, RB-787, RB-796, RB-805, RB-814 and RB-823: exponent markers need
+/// digits because there is no exponent grammar at all, loud reject in every
+/// number lineage.
+#[test]
+fn rb_832_syn58_bare_exponent_eighth_rejects() {
+    let src = "case_0058_03 = 1e\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    let src = "case_0058_03 = \"1e\"\n";
+    assert_eq!(eval_json(src)["case_0058_03"], "1e");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-833 — Derived variant 58-04: signed-exponent eighth twin rejects (SYN-0058-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0058 (toml-test trailing-dot).
+/// `case_0058_04 = 1e+` fails E002 Error at (1:17) — converges with RB-770,
+/// RB-779, RB-788, RB-797, RB-806, RB-815 and RB-824: without an exponent
+/// grammar the failure is at the `e`, so no signed-exponent path exists to
+/// validate digits on.
+#[test]
+fn rb_833_syn58_signed_exponent_eighth_rejects() {
+    let src = "case_0058_04 = 1e+\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    let src = "case_0058_04 = \"1e+\"\n";
+    assert_eq!(eval_json(src)["case_0058_04"], "1e+");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-834 — Derived variant 58-05: hex eighth twin rejects (SYN-0058-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0058 (toml-test trailing-dot).
+/// `case_0058_05 = 0x10` fails E002 Error at (1:17) — converges with RB-771,
+/// RB-780, RB-789, RB-798, RB-807, RB-816 and RB-825: the chosen integer
+/// grammar is decimal-only, no host base prefix is borrowed, so `0x10`
+/// fails at the `x`, never 16.
+#[test]
+fn rb_834_syn58_hex_eighth_rejects() {
+    let src = "case_0058_05 = 0x10\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the decimal neighbour is plain 16.
+    assert_eq!(eval_json("case_0058_05 = 16\n")["case_0058_05"], 16);
+}
+
+/// RB-835 — Derived variant 58-06: underscore eighth twin strips to 1000 (SYN-0058-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0058 (toml-test trailing-dot).
+/// `case_0058_06 = 1_000` is int 1000 (one thousand) with zero diagnostics —
+/// converges with RB-772, RB-781, RB-790, RB-799, RB-808, RB-817 and RB-826:
+/// single underscores normalize by stripping. (The oracle states the exact
+/// stripped value.)
+#[test]
+fn rb_835_syn58_underscore_eighth_strips() {
+    let src = "case_0058_06 = 1_000\n";
+    let v = eval_json(src)["case_0058_06"].clone();
+    assert_eq!(v, 1000, "1_000 must strip to 1000, got {v}");
+    assert!(!v.is_f64(), "1_000 must be int, got {v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the separator-free neighbour agrees.
+    assert_eq!(eval_json("case_0058_06 = 1000\n")["case_0058_06"], 1000);
+}
+
+/// RB-836 — Derived variant 58-07: giant-exponent eighth twin rejects (SYN-0058-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0058 (toml-test trailing-dot).
+/// `case_0058_07 = 1e1000000` fails E002 Error at (1:17) — converges with
+/// RB-773, RB-782, RB-791, RB-800, RB-809, RB-818 and RB-827: overflow never
+/// arises because exponents never parse; the bounded diagnostic is the
+/// grammar reject itself.
+#[test]
+fn rb_836_syn58_giant_exponent_eighth_rejects() {
+    let src = "case_0058_07 = 1e1000000\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: a large plain integer parses.
+    assert_eq!(
+        eval_json("case_0058_07 = 1000000\n")["case_0058_07"],
+        1000000
+    );
+}
+
+/// RB-837 — Derived variant 58-08: quoted eighth twin preserves digits (SYN-0058-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0058 (toml-test trailing-dot).
+/// `case_0058_08 = "01"` is the exact string "01" with zero diagnostics —
+/// converges with RB-774, RB-783, RB-792, RB-801, RB-810, RB-819 and RB-828:
+/// quoting preserves digit-looking identifiers without numeric coercion,
+/// while the bare twin is decimal 1.
+#[test]
+fn rb_837_syn58_quoted_digits_eighth_exact() {
+    let src = "case_0058_08 = \"01\"\n";
+    assert_eq!(eval_json(src)["case_0058_08"], "01");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: the bare counterpart is decimal 1, never text.
+    let v = eval_json("case_0058_08 = 01\n")["case_0058_08"].clone();
+    assert_eq!(v, 1, "{v}");
+    assert!(!v.is_string(), "{v}");
+}
+
+/// RB-838 — Derived variant 58-09: canonical zero eighth twin is int 0 (SYN-0058-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0058 (toml-test trailing-dot).
+/// `case_0058_09 = 0` is int 0 with zero diagnostics — converges with
+/// RB-775, RB-784, RB-793, RB-802, RB-811 and RB-820: canonical zero needs
+/// no policy, and the zero-prefixed twin (`01` is 1) shows the policy only
+/// strips. (Completes SYN-0057-09 coverage + opens SYN-0058-01…09.)
+#[test]
+fn rb_838_syn58_zero_eighth_canonical() {
+    let src = "case_0058_09 = 0\n";
+    let v = eval_json(src)["case_0058_09"].clone();
+    assert_eq!(v, 0, "{v}");
+    assert!(!v.is_f64(), "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the zero-prefixed twin strips to 1 (RB-830).
+    assert_eq!(eval_json("case_0058_09 = 01\n")["case_0058_09"], 1);
+}

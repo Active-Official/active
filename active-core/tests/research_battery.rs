@@ -3188,3 +3188,164 @@ fn rb_178_nul_escape_decodes() {
     // Positive control: unknown escapes stay verbatim (RB-050 policy).
     assert_eq!(eval_json("value = \"a\\qb\"\n")["value"], "a\\qb");
 }
+
+/// RB-179 — Upstream `string-us` analogue (SRC-TOML-0030 §H, MEDIUM).
+/// Origin: toml-test `invalid/control/string-us.toml`.
+/// Byte fixture: ASCII 0x1F inside string data. Same exact-preservation
+/// policy as NUL (RB-172): char classes never exclude it, the value is
+/// byte-exact, no diagnostics. REFUSAL of "reject: raw-control-byte".
+#[test]
+fn rb_179_control_0x1f_in_string_preserved() {
+    let module = parse_file(
+        &research_fixture("src_toml_0030_string_us.active"),
+        ParseOptions::default(),
+    )
+    .unwrap_or_else(|d| panic!("must parse: {d:?}"));
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(v["value"], "a\u{1f}b");
+    assert!(diags.is_empty(), "{diags:?}");
+    // Positive control: the control-free neighbour evaluates identically.
+    assert_eq!(eval_json("value = \"ab\"\n")["value"], "ab");
+}
+
+/// RB-180 — Upstream `day-zero` analogue (SRC-TOML-0031 §H, HIGH).
+/// Origin: toml-test `invalid/datetime/day-zero.toml`.
+/// REFUSAL (spec-gated): Active has no date type (datetimes are strings
+/// — HIST-TOML-00O/RB-148), so no calendar validation can or must run.
+/// Bare `2024-01-00` lexes as integer arithmetic (2024-1-0 = 2023),
+/// deterministic and exact — it cannot "normalize to a different date".
+#[test]
+fn rb_180_day_zero_is_arithmetic() {
+    assert_eq!(eval_json("value = 2024-01-00\n")["value"], 2023);
+    // Positive control: the quoted form stays an exact string.
+    assert_eq!(eval_json("value = \"2024-01-00\"\n")["value"], "2024-01-00");
+}
+
+/// RB-181 — Upstream `feb-29` analogue (SRC-TOML-0032 §H, HIGH).
+/// Origin: toml-test `invalid/datetime/feb-29.toml`.
+/// Same no-date-type policy: 2023-2-29 = 1992, never a leap decision.
+#[test]
+fn rb_181_feb_29_is_arithmetic() {
+    assert_eq!(eval_json("value = 2023-02-29\n")["value"], 1992);
+    // Positive control: the quoted form stays an exact string.
+    assert_eq!(eval_json("value = \"2023-02-29\"\n")["value"], "2023-02-29");
+}
+
+/// RB-182 — Upstream `feb-30` analogue (SRC-TOML-0033 §H, HIGH).
+/// Origin: toml-test `invalid/datetime/feb-30.toml`.
+/// Impossible calendar dates cannot occur: 2024-2-30 = 1992.
+#[test]
+fn rb_182_feb_30_is_arithmetic() {
+    assert_eq!(eval_json("value = 2024-02-30\n")["value"], 1992);
+    // Positive control: the quoted form stays an exact string.
+    assert_eq!(eval_json("value = \"2024-02-30\"\n")["value"], "2024-02-30");
+}
+
+/// RB-183 — Upstream `hour-over` analogue (SRC-TOML-0034 §H, HIGH).
+/// Origin: toml-test `invalid/datetime/hour-over.toml`.
+/// The `T24:00` tail cannot lex as time — E002 at the offending token.
+/// This is the grammar rejecting, not date validation.
+#[test]
+fn rb_183_hour_over_rejects() {
+    let src = "value = 2024-01-01T24:00:00Z\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 28), "{span:?}");
+    // Positive control: the quoted form stays an exact string.
+    assert_eq!(
+        eval_json("value = \"2024-01-01T24:00:00Z\"\n")["value"],
+        "2024-01-01T24:00:00Z"
+    );
+}
+
+/// RB-184 — Upstream `leading-zero-date` analogue (SRC-TOML-0035 §H, HIGH).
+/// Origin: toml-test `invalid/datetime/leading-zero-date.toml`.
+/// Leading zeros are plain decimals (RB-104): 001979-5-27 = 1947.
+/// Quoted text stays text.
+#[test]
+fn rb_184_leading_zero_date_is_arithmetic() {
+    assert_eq!(eval_json("value = 001979-05-27\n")["value"], 1947);
+    // Positive control: the quoted form stays an exact string.
+    assert_eq!(
+        eval_json("value = \"001979-05-27\"\n")["value"],
+        "001979-05-27"
+    );
+}
+
+/// RB-185 — Upstream `no-secs` analogue (SRC-TOML-0036 §H, HIGH).
+/// Origin: toml-test `invalid/datetime/no-secs.toml`.
+/// No seconds-optional grammar exists to consult: the `T07` tail
+/// rejects E002 like any non-grammar token sequence.
+#[test]
+fn rb_185_no_secs_rejects() {
+    let src = "value = 1979-05-27T07:32Z\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 25), "{span:?}");
+}
+
+/// RB-186 — Upstream `no-t` analogue (SRC-TOML-0037 §H, HIGH).
+/// Origin: toml-test `invalid/datetime/no-t.toml`.
+/// Space-separated date/time has no grammar either: E002.
+#[test]
+fn rb_186_no_t_rejects() {
+    let src = "value = 1979-05-27 07:32:00Z\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 28), "{span:?}");
+}
+
+/// RB-187 — Upstream `offset-overflow-hour` analogue (SRC-TOML-0038 §H, HIGH).
+/// Origin: toml-test `invalid/datetime/offset-overflow-hour.toml`.
+/// REFUSAL (spec-gated): no offset grammar exists to range-check.
+/// The input deterministically evaluates by shipped rules (integer
+/// arithmetic + the specified same-line colon pair, RB-001): no date,
+/// no fallback object, no crash — and repeated runs agree exactly.
+#[test]
+fn rb_187_offset_overflow_hour_deterministic() {
+    let src = "value = 1979-05-27T07:32:00+25:00\n";
+    let first = eval_json(src);
+    assert_eq!(first["value"], 1947);
+    assert_eq!(first["T07"], 32);
+    assert_eq!(first, eval_json(src));
+    // Positive control: the quoted form stays an exact string.
+    assert_eq!(
+        eval_json("value = \"1979-05-27T07:32:00+25:00\"\n")["value"],
+        "1979-05-27T07:32:00+25:00"
+    );
+}
+
+/// RB-188 — Upstream `offset-overflow-minute` analogue (SRC-TOML-0039 §H, HIGH).
+/// Origin: toml-test `invalid/datetime/offset-overflow-minute.toml`.
+/// Same deterministic rules as RB-187: the bad minute never becomes a
+/// date, and both malformed offsets agree structurally.
+#[test]
+fn rb_188_offset_overflow_minute_deterministic() {
+    let src = "value = 1979-05-27T07:32:00+05:99\n";
+    let first = eval_json(src);
+    assert_eq!(first["value"], 1947);
+    assert_eq!(first["T07"], 32);
+    assert_eq!(first, eval_json(src));
+    // Positive control: quoted forms of both offsets stay strings.
+    assert_eq!(
+        eval_json("value = \"1979-05-27T07:32:00+05:99\"\n")["value"],
+        "1979-05-27T07:32:00+05:99"
+    );
+}

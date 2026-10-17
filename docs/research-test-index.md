@@ -228,7 +228,7 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 
 | Family | IDs | Mining note | Status |
 |---|---|---|---|
-| SRC-TOML (95) | `SRC-TOML-0001`…`0095` | Upstream toml-test invalid fixtures → Active analogues (reject classes, escapes, tables) | mining: 0001…0039 pinned → Batches 16/17/18/19; no-date-type policy (bare dates are arithmetic or E002); byte fixtures under tests/research/ |
+| SRC-TOML (95) | `SRC-TOML-0001`…`0095` | Upstream toml-test invalid fixtures → Active analogues (reject classes, escapes, tables) | mining: 0001…0049 pinned → Batches 16/17/18/19/20; encoding boundary (invalid UTF-8 → E017, misplaced BOM/U+3000 → E005) |
 | SRC-JSON (34) | `SRC-JSON-0001`…`0034` | JSONTestSuite edges → Active analogues (nesting, numbers, escapes, dup keys) | pending (mine per batch) |
 | SRC-YAML (15) | `SRC-YAML-0001`…`0015` | yaml-test-suite edges → Active analogues | pending (mine per batch) |
 | SRC-CVE (10) | `SRC-CVE-0001`…`0010` | CVE-derived payloads → budget/cycle/sanitization analogues | pending (mine per batch) |
@@ -269,4 +269,5 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | Batch 17 | RB-159…RB-168 (SRC-TOML-0010…0019) | done: all 10 green first-try, no code changes; bool exact-token + prefix-match refusal pinned (W001+null); catalogue typo noted (0018 prints TRUE, title/origin name FALSE) |
 | Batch 18 | RB-169…RB-178 (SRC-TOML-0020…0029) | done: all 10 green first-try, no code changes; byte-fixture batch (8 committed fixtures under tests/research/); refusals per grammar §1.2/§1.4/§2.1 + RB-092 oracle |
 | Batch 19 | RB-179…RB-188 (SRC-TOML-0030…0039) | done: all 10 green first-try, no code changes; 0x1F fixture committed; no-date-type policy pinned (arithmetic values or E002, quoted stays string) |
+| Batch 20 | RB-189…RB-198 (SRC-TOML-0040…0049) | done: all 10 green first-try, no code changes; 6 encoding fixtures committed; invalid UTF-8 → E017, misplaced BOM/U+3000 → E005 |
 | Batch 17+ | Next catalogue cases (SRC-TOML-0010…, then SRC-JSON/SRC-YAML/SRC-CVE/SRC-SPEC, byte fixtures) | pending |

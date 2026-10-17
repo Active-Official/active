@@ -3349,3 +3349,194 @@ fn rb_188_offset_overflow_minute_deterministic() {
         "1979-05-27T07:32:00+05:99"
     );
 }
+
+/// RB-189 — Upstream `second-over` analogue (SRC-TOML-0040 §H, HIGH).
+/// Origin: toml-test `invalid/datetime/second-over.toml`.
+/// No seconds range exists to check (no date type): the `T32` tail
+/// rejects E002 like any non-grammar token sequence.
+#[test]
+fn rb_189_second_over_rejects() {
+    let src = "value = 1979-05-27T07:32:99Z\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 28), "{span:?}");
+    // Positive control: the quoted form stays an exact string.
+    assert_eq!(
+        eval_json("value = \"1979-05-27T07:32:99Z\"\n")["value"],
+        "1979-05-27T07:32:99Z"
+    );
+}
+
+/// RB-190 — Upstream `second-trailing-dot` analogue (SRC-TOML-0041 §H, HIGH).
+/// Origin: toml-test `invalid/datetime/second-trailing-dot.toml`.
+/// A fraction dot with no digits is not silently accepted: E002.
+#[test]
+fn rb_190_second_trailing_dot_rejects() {
+    let src = "value = 1979-05-27T07:32:00.Z\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 29), "{span:?}");
+}
+
+/// RB-191 — Upstream `trailing-x` analogue (SRC-TOML-0042 §H, HIGH).
+/// Origin: toml-test `invalid/datetime/trailing-x.toml`.
+/// Trailing garbage after the `Z` rejects E002 — parsing consumes the
+/// whole token stream, never stops early and silent.
+#[test]
+fn rb_191_trailing_x_rejects() {
+    let src = "value = 1979-05-27T07:32:00Zx\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 28), "{span:?}");
+}
+
+/// RB-192 — Upstream `y10k-date` analogue (SRC-TOML-0043 §H, HIGH).
+/// Origin: toml-test `invalid/datetime/y10k-date.toml`.
+/// REFUSAL (spec-gated): no year-range specification exists because no
+/// date type exists. Bare `10000-01-01` is integer arithmetic
+/// (10000-1-1 = 9998) — overflow-safe i64, deterministic.
+#[test]
+fn rb_192_y10k_date_is_arithmetic() {
+    assert_eq!(eval_json("value = 10000-01-01\n")["value"], 9998);
+    // Positive control: the quoted form stays an exact string.
+    assert_eq!(
+        eval_json("value = \"10000-01-01\"\n")["value"],
+        "10000-01-01"
+    );
+}
+
+/// RB-193 — Upstream `bad-codepoint` analogue (SRC-TOML-0044 §H, HIGH).
+/// Origin: toml-test `invalid/encoding/bad-codepoint.toml`.
+/// Byte fixture: lone continuation byte 0x80. The UTF-8 decoder
+/// rejects before lexing: controlled E017, never a panic, never
+/// replacement-decoded silently.
+#[test]
+fn rb_193_bad_codepoint_controlled_e017() {
+    let diags = parse_file(
+        &research_fixture("src_toml_0044_bad_codepoint.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E017");
+    assert!(
+        diags.iter().any(|d| d.code == "E017"),
+        "E017 expected, got {diags:?}"
+    );
+    // Positive control: the same document without the bad byte parses.
+    assert_eq!(eval_json("value = 1\n")["value"], 1);
+}
+
+/// RB-194 — Upstream `bad-utf8-at-end` analogue (SRC-TOML-0045 §H, HIGH).
+/// Origin: toml-test `invalid/encoding/bad-utf8-at-end.toml`.
+/// Byte fixture: truncated 0xE2 sequence at EOF. Same controlled E017.
+#[test]
+fn rb_194_truncated_utf8_controlled_e017() {
+    let diags = parse_file(
+        &research_fixture("src_toml_0045_bad_utf8_at_end.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E017");
+    assert!(
+        diags.iter().any(|d| d.code == "E017"),
+        "E017 expected, got {diags:?}"
+    );
+}
+
+/// RB-195 — Upstream `bad-utf8-in-array` analogue (SRC-TOML-0046 §H, HIGH).
+/// Origin: toml-test `invalid/encoding/bad-utf8-in-array.toml`.
+/// Byte fixture: overlong C0 AF inside an array. Invalid encoding is
+/// caught at the file boundary, before any AST construction: E017.
+#[test]
+fn rb_195_bad_utf8_in_array_controlled_e017() {
+    let diags = parse_file(
+        &research_fixture("src_toml_0046_bad_utf8_in_array.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E017");
+    assert!(
+        diags.iter().any(|d| d.code == "E017"),
+        "E017 expected, got {diags:?}"
+    );
+    // Positive control: the valid array evaluates.
+    assert_eq!(
+        eval_json("value = [1, 2]\n")["value"],
+        serde_json::json!([1, 2])
+    );
+}
+
+/// RB-196 — Upstream `bad-utf8-in-string` analogue (SRC-TOML-0047 §H, HIGH).
+/// Origin: toml-test `invalid/encoding/bad-utf8-in-string.toml`.
+/// Byte fixture: overlong C0 AF inside quotes. No silent
+/// replacement-decoding of untrusted text: E017.
+#[test]
+fn rb_196_bad_utf8_in_string_controlled_e017() {
+    let diags = parse_file(
+        &research_fixture("src_toml_0047_bad_utf8_in_string.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E017");
+    assert!(
+        diags.iter().any(|d| d.code == "E017"),
+        "E017 expected, got {diags:?}"
+    );
+}
+
+/// RB-197 — Upstream `bom-not-at-start-01` analogue (SRC-TOML-0048 §H, HIGH).
+/// Origin: toml-test `invalid/encoding/bom-not-at-start-01.toml`.
+/// Byte fixture: BOM bytes after a first assignment. Only a LEADING
+/// BOM is skipped (spec/grammar.md §1.0); a mid-file BOM is an
+/// unexpected character: loud E005 with span, never silent.
+#[test]
+fn rb_197_misplaced_bom_rejects() {
+    let diags = parse_file(
+        &research_fixture("src_toml_0048_bom_not_at_start.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E005");
+    assert!(
+        diags.iter().any(|d| d.code == "E005"),
+        "E005 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: a leading BOM is skipped (RB-003 policy).
+    assert_eq!(eval_json("\u{FEFF}value = 1\n")["value"], 1);
+}
+
+/// RB-198 — Upstream `ideographic-space` analogue (SRC-TOML-0049 §H, HIGH).
+/// Origin: toml-test `invalid/encoding/ideographic-space.toml`.
+/// Byte fixture: U+3000 between key and `=`. Specified whitespace is
+/// ASCII-only (spec/grammar.md §1.2: space, TAB, CR) — U+3000 is never
+/// casually normalized to a space: loud E005 with span.
+#[test]
+fn rb_198_ideographic_space_rejects() {
+    let diags = parse_file(
+        &research_fixture("src_toml_0049_ideographic_space.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E005");
+    assert!(
+        diags.iter().any(|d| d.code == "E005"),
+        "E005 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 6), "{span:?}");
+    // Positive control: the ASCII-space neighbour evaluates.
+    assert_eq!(eval_json("value = 1\n")["value"], 1);
+}

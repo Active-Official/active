@@ -6,7 +6,7 @@
 //! control neighbours ride along so fixes cannot break the good case.
 //! Rule: red test ⇒ fix the code (spec-gated), never the expectation.
 
-use active_core::{parse, Engine};
+use active_core::{parse, parse_file, Engine, ParseOptions};
 
 fn eval_json(src: &str) -> serde_json::Value {
     let module = parse(src, "research").unwrap_or_else(|d| panic!("parse failed: {d:?}"));
@@ -1908,4 +1908,205 @@ fn rb_110_positive_control_matrix() {
     assert_eq!(v["s_null"], "null");
     assert_eq!(v["timeout"]["ms"], 5000);
     assert_eq!(v["pw"], "***SECRET***");
+}
+
+/// RB-111 — Includes resolve relative to the including document (P0-012 §B).
+/// A missing include fails E017 naming a path joined onto the including
+/// file's directory (proof of document-relative, not ambient-CWD,
+/// resolution); a present sibling merges. Covers the P0-012 research
+/// demand that the filesystem stays untouched without an include.
+#[test]
+fn rb_111_include_resolves_document_relative() {
+    let dir = std::env::temp_dir().join(format!(
+        "active_rb111_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let main = dir.join("main.active");
+    let sibling = dir.join("sibling_inc.active");
+    std::fs::write(&sibling, "y = 2\n").expect("write sibling");
+    // Missing include: E017 with a span on line 1 and a document-relative path.
+    std::fs::write(&main, "include \"nope-missing-rb111.active\"\nx = 1\n").expect("write main");
+    let diags = parse_file(&main, ParseOptions::default()).expect_err("must fail E017");
+    assert!(
+        diags.iter().any(|d| d.code == "E017"),
+        "E017 expected, got {diags:?}"
+    );
+    let missing = diags.iter().find(|d| d.code == "E017").expect("E017");
+    let span = missing.span.as_ref().expect("E017 carries a span");
+    assert_eq!((span.line, span.column), (1, 9), "{span:?}");
+    assert!(
+        missing.message.contains("nope-missing-rb111.active")
+            && missing.message.contains(&dir.to_string_lossy().to_string()),
+        "E017 must name the document-relative path, got {}",
+        missing.message
+    );
+    // Positive control: a present sibling resolves from the same directory.
+    std::fs::write(&main, "include \"sibling_inc.active\"\nx = 1\n").expect("write main");
+    let module = parse_file(&main, ParseOptions::default())
+        .unwrap_or_else(|d| panic!("sibling include must parse: {d:?}"));
+    let (value, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(v["x"], 1);
+    assert_eq!(v["y"], 2);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// RB-112 — Unterminated array rejects E001 (P1-ST-003 §D).
+#[test]
+fn rb_112_unterminated_array_rejects() {
+    let diags = parse("x = [1, 2\n", "research").expect_err("must fail E001");
+    assert!(
+        diags.iter().any(|d| d.code == "E001"),
+        "E001 expected, got {diags:?}"
+    );
+    let unterminated = diags.iter().find(|d| d.code == "E001").expect("E001");
+    let span = unterminated.span.as_ref().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: the terminated neighbour evaluates.
+    assert_eq!(eval_json("x = [1, 2]\n")["x"], serde_json::json!([1, 2]));
+}
+
+/// RB-113 — Unterminated inline table rejects E001 (P1-ST-004 §D).
+#[test]
+fn rb_113_unterminated_inline_table_rejects() {
+    let diags = parse("x = {a = 1\n", "research").expect_err("must fail E001");
+    assert!(
+        diags.iter().any(|d| d.code == "E001"),
+        "E001 expected, got {diags:?}"
+    );
+    let unterminated = diags.iter().find(|d| d.code == "E001").expect("E001");
+    let span = unterminated.span.as_ref().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: the terminated neighbour evaluates.
+    assert_eq!(eval_json("x = {a = 1}\n")["x"]["a"], 1);
+}
+
+/// RB-114 — Empty containers accept (P1-ST-006 §D).
+#[test]
+fn rb_114_empty_containers_accept() {
+    let v = eval_json("x = []\ny = {}\n");
+    assert_eq!(v["x"], serde_json::json!([]));
+    assert_eq!(v["y"], serde_json::json!({}));
+    let codes = codes_of("x = []\ny = {}\n");
+    assert!(
+        !codes.iter().any(|c| c.starts_with('E')),
+        "no error class expected, got {codes:?}"
+    );
+}
+
+/// RB-115 — Nested arrays and tables of inline tables (P1-ST-007 §D).
+#[test]
+fn rb_115_nested_arrays_tables_of_inline_tables() {
+    let v = eval_json("x = [[1, 2], {a = 1}]\n");
+    assert_eq!(v["x"], serde_json::json!([[1, 2], {"a": 1}]));
+    let v = eval_json("rows = [{a = 1}, {a = 2}]\n");
+    assert_eq!(v["rows"], serde_json::json!([{"a": 1}, {"a": 2}]));
+    // Positive control: flat neighbours keep working.
+    assert_eq!(eval_json("x = [1, 2]\n")["x"], serde_json::json!([1, 2]));
+}
+
+/// RB-116 — Array/table same-key conflict warns, last wins (P1-ST-009 §D).
+/// Table-level last-wins (RB-002 policy): the second `[fruit]` table
+/// replaces the first wholesale, announced by W011 — never a silent merge.
+#[test]
+fn rb_116_table_redefinition_warns_last_wins() {
+    let src = "[fruit]\nname = \"apple\"\n[fruit]\ncolor = \"red\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["fruit"], serde_json::json!({"color": "red"}));
+    let codes = codes_of(src);
+    assert!(
+        codes.iter().any(|c| c == "W011"),
+        "redefined table must warn W011, got {codes:?}"
+    );
+    // Positive control: distinct tables coexist.
+    let v = eval_json("[a]\nx = 1\n[b]\ny = 2\n");
+    assert_eq!(v["a"]["x"], 1);
+    assert_eq!(v["b"]["y"], 2);
+}
+
+/// RB-117 — Inline-then-block conflict warns, last wins (P1-ST-010 §D).
+/// Same RB-002 policy across definition styles: the `[t]` block replaces
+/// the inline `t` wholesale, announced by W011.
+#[test]
+fn rb_117_inline_then_block_warns_last_wins() {
+    let src = "t = {a = 1}\n[t]\nb = 2\n";
+    let v = eval_json(src);
+    assert_eq!(v["t"], serde_json::json!({"b": 2}));
+    let codes = codes_of(src);
+    assert!(
+        codes.iter().any(|c| c == "W011"),
+        "inline-then-block conflict must warn W011, got {codes:?}"
+    );
+    // Positive control: non-conflicting inline + block coexist.
+    let v = eval_json("u = {a = 1}\n[t]\nb = 2\n");
+    assert_eq!(v["u"]["a"], 1);
+    assert_eq!(v["t"]["b"], 2);
+}
+
+/// RB-118 — Dotted headers nest; dotted keys and `[[tables]]` cleanly reject
+/// (P1-ST-011 §D; folds P1-ST-008 §D: no `[[table]]` array-of-tables form).
+/// `[a.b]` is specified nesting, equal to the inline nested form. Bare
+/// `a.b.c = 1` dotted-key assignment is outside the grammar (E002), and
+/// `[[fruit]]` fails E001 — per-grammar clean rejects, no half-behavior.
+#[test]
+fn rb_118_dotted_header_nests_quirk_forms_reject() {
+    assert_eq!(
+        eval_json("[a.b]\nc = 1\n"),
+        eval_json("a = {b = {c = 1}}\n")
+    );
+    let codes = codes_of("a.b.c = 1\n");
+    assert!(
+        codes.iter().any(|c| c == "E002"),
+        "dotted-key assignment must reject E002, got {codes:?}"
+    );
+    let codes = codes_of("[[fruit]]\nname = \"apple\"\n");
+    assert!(
+        codes.iter().any(|c| c == "E001"),
+        "double-bracket tables must reject E001, got {codes:?}"
+    );
+}
+
+/// RB-119 — Stray commas heal, never silently drop (P1-ST-012 §D).
+/// REFUSAL (spec-gated): the row asks for rejection, but Active's locked
+/// stray-comma policy (P1-ST-001/RB-089, P1-ST-005/RB-004) heals `[,]`
+/// and `[1,,]` with H002. Values are pinned: `[]` and `[1]`.
+#[test]
+fn rb_119_stray_commas_heal() {
+    assert_eq!(eval_json("x = [,]\n")["x"], serde_json::json!([]));
+    assert!(
+        codes_of("x = [,]\n").iter().any(|c| c == "H002"),
+        "H002 expected for [,]"
+    );
+    assert_eq!(eval_json("x = [1,,]\n")["x"], serde_json::json!([1]));
+    assert!(
+        codes_of("x = [1,,]\n").iter().any(|c| c == "H002"),
+        "H002 expected for [1,,]"
+    );
+    // Positive control: the clean neighbour carries no heal.
+    assert!(!codes_of("x = [1]\n").iter().any(|c| c == "H002"));
+}
+
+/// RB-120 — Bare words in arrays warn, never coerce (P1-ST-013 §D).
+/// Unresolved identifiers heal to null with W001 (Norway protection,
+/// RB-103 policy); quoted elements stay strings.
+#[test]
+fn rb_120_bare_word_in_array_warns() {
+    let v = eval_json("x = [1, hello, 2]\n");
+    assert_eq!(v["x"], serde_json::json!([1, null, 2]));
+    let codes = codes_of("x = [1, hello, 2]\n");
+    assert!(
+        codes.iter().any(|c| c == "W001"),
+        "bare word must warn W001, got {codes:?}"
+    );
+    // Positive control: quoted elements stay strings.
+    assert_eq!(
+        eval_json("x = [\"hello\", \"NO\"]\n")["x"],
+        serde_json::json!(["hello", "NO"])
+    );
 }

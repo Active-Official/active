@@ -47,17 +47,17 @@ not the research docs' proposed names.
 | P0-005 | Simple `let` cycle | S001 (E_DEPENDENCY_CYCLE class) | passing (covered: RB-030 2-node) |
 | P0-006 | 4-chain cycle | S001 (E_DEPENDENCY_CYCLE class) | passing (covered: RB-030 3-node) |
 | P0-007 | Self-referential `let x = x` | S001 cycle | passing → Batch 4 RB-036 |
-| P0-008 | Secret absent from diagnostics | No raw bytes in output | pending |
-| P0-009 | Secret absent from JSON export | Redaction marker only | pending |
-| P0-010 | Taint through interpolation | Tainted or rejected, export redacts | pending |
+| P0-008 | Secret absent from diagnostics | No raw bytes in output | passing (covered: Batch 1 RB-005 S004 + RB-006 redaction) |
+| P0-009 | Secret absent from JSON export | Redaction marker only | passing (covered: Batch 1 RB-006) |
+| P0-010 | Taint through interpolation | Tainted or rejected, export redacts | passing (covered: Batch 1 RB-005 S004 refusal) |
 | P0-011 | No network during eval | Harness-observed zero I/O; lockfile has no network-capable crates | passing → Batch 7 RB-066 |
-| P0-012 | No ambient file reads w/o include | Filesystem untouched | pending |
-| P0-013 | Include cycle A↔B | Include/cycle class reject | pending |
+| P0-012 | No ambient file reads w/o include | Filesystem untouched | passing → Batch 12 RB-111 (document-relative E017 + sibling merge) |
+| P0-013 | Include cycle A↔B | Include/cycle class reject | passing (covered: includes.rs E016 circular-include test; spec/grammar.md:265) |
 | P0-014 | Include path must be literal | Reject interpolated path | passing → Batch 5 RB-048 |
 | P0-015 | Truncated input never panics | Controlled diagnostic | passing → Batch 10 RB-091 (cut battery terminates) |
 | P0-016 | Random binary never panics | Controlled reject | passing → Batch 10 RB-092 (hostile corpus) |
 | P0-017 | Wall-clock budget aborts | Time-exceeded diagnostic | passing (covered: budgets.rs wall_clock_backstop_trips, X002) |
-| P0-018 | No alias-style exponential expansion | Budget/cycle before materialize | pending |
+| P0-018 | No alias-style exponential expansion | Budget/cycle before materialize | passing (covered: Batch 10 RB-093 geometric X-trip + RB-032) |
 | P0-019 | Duplicate diagnostics stable | Same class + spans across runs | passing → Batch 6 RB-059 |
 | P0-020 | Control suite passes under budgets | Realistic config evaluates | passing → Batch 9 RB-088 |
 
@@ -75,7 +75,7 @@ not the research docs' proposed names.
 | P1-TI-008 | `10` int vs `10.0` float | Distinct types, intent kept | passing → Batch 2 RB-017 |
 | P1-TI-009 | Underscore numbers explicit | `1_000_000` per grammar or reject | passing → Batch 11 RB-107 (stripped to 1000000) |
 | P1-TI-010 | Keyword-lookalikes in arrays stay strings | No element coercion | pending |
-| P1-TI-011 | Keyword-like keys policy | Statement-initial value tokens fail E002; mid-statement strays keep §4.1 skip | passing → Batch 12 RB-101 (started) |
+| P1-TI-011 | Keyword-like keys policy | Statement-initial value tokens fail E002; mid-statement strays keep §4.1 skip | passing → Batch 11 RB-101 |
 | P1-TI-012 | Duplicate keys explicit | **Last-wins + W011 warning** (reject would break existing last-wins tests) | fixed (W011 warning, last-wins kept) → Batch 1 RB-002 |
 | P1-TI-013 | Key case sensitivity | Case-sensitive distinct keys | passing → Batch 11 RB-108 |
 | P1-TI-014 | Unicode keys | Accept without corruption or clear reject | passing → Batch 11 RB-109 (E005 reject) |
@@ -87,17 +87,17 @@ not the research docs' proposed names.
 |---|---|---|---|
 | P1-ST-001 | `[1,,2]` rejects | H002 heals accept (stray-comma policy) | passing → Batch 9 RB-089 |
 | P1-ST-002 | `[1 2]` rejects | Missing-separator class | passing → Batch 9 RB-090 |
-| P1-ST-003 | Unterminated array rejects | Unterminated class | pending |
-| P1-ST-004 | Unterminated inline table rejects | Unterminated class | pending |
+| P1-ST-003 | Unterminated array rejects | Unterminated class | passing → Batch 12 RB-112 (E001, span 2:1) |
+| P1-ST-004 | Unterminated inline table rejects | Unterminated class | passing → Batch 12 RB-113 (E001, span 2:1) |
 | P1-ST-005 | Trailing comma policy locked | H002 healed accept (observed) | passing (H002 healed accept) → Batch 1 RB-004 |
-| P1-ST-006 | `[]` and `{}` accept | Empty containers | pending |
-| P1-ST-007 | Nested arrays/tables of inline tables | Correct structure | pending |
-| P1-ST-008 | `[[tables]]` support or clean reject | Per grammar, no half-behavior | pending |
-| P1-ST-009 | Array/table same-key conflict | Structural-conflict diagnostic | pending |
-| P1-ST-010 | Inline-then-block table conflict | Documented conflict behavior | pending |
-| P1-ST-011 | Dotted keys ≡ nested tables (or not) | Locked semantics, dual forms | pending |
-| P1-ST-012 | `[,]` / `[1,,]` reject | Reject | pending |
-| P1-ST-013 | Bare word in array rejects | Unresolved identifier unless quoted | pending |
+| P1-ST-006 | `[]` and `{}` accept | Empty containers | passing → Batch 12 RB-114 |
+| P1-ST-007 | Nested arrays/tables of inline tables | Correct structure | passing → Batch 12 RB-115 |
+| P1-ST-008 | `[[tables]]` support or clean reject | Per grammar, no half-behavior | passing (covered: Batch 12 RB-118 pins clean E001 reject) |
+| P1-ST-009 | Array/table same-key conflict | Structural-conflict diagnostic | passing → Batch 12 RB-116 (W011 last-wins, wholesale) |
+| P1-ST-010 | Inline-then-block table conflict | Documented conflict behavior | passing → Batch 12 RB-117 (W011 last-wins, wholesale) |
+| P1-ST-011 | Dotted keys ≡ nested tables (or not) | Locked semantics, dual forms | passing → Batch 12 RB-118 (`[a.b]` ≡ inline nest; dotted-key E002) |
+| P1-ST-012 | `[,]` / `[1,,]` reject | Reject | passing (refusal pinned: H002 heals per locked stray-comma policy RB-089/RB-004) → Batch 12 RB-119 |
+| P1-ST-013 | Bare word in array rejects | Unresolved identifier unless quoted | passing → Batch 12 RB-120 (W001 + null, quoted stays string) |
 | P1-ST-014 | `[server host]` rejects | No spaces in headers | pending |
 | P1-ST-015 | Positive structural matrix | Identical semantics incl. dual-syntax | pending |
 
@@ -205,8 +205,8 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | HIST-YAML-005 | First-wins alternative | §1 | **Not adopted**: documents why last-wins won | passing → Batch 8 RB-071 (both syntaxes agree) |
 | HIST-YAML-012 | Chomping behavior | §1 | N/A: no chomping indicators; triple-quote rules pinned | passing → Batch 7 RB-070 |
 | HIST-YAML-017 | Anchor collision | §1 | N/A: no anchors; `let` redefinition policy pinned instead | passing → Batch 9 RB-081 (W011 shadow) |
-| HIST-YAML-018 | Merge-key type error | §1 | N/A: no merge keys | pending |
-| HIST-YAML-023 | Self-reference via anchors | §1 | N/A: `let` self-reference cycle class instead | pending |
+| HIST-YAML-018 | Merge-key type error | §1 | N/A: no merge keys | passing (refusal pinned: no merge-key operator; merge() is E002 → Batch 10 RB-095) |
+| HIST-YAML-023 | Self-reference via anchors | §1 | N/A: `let` self-reference cycle class instead | passing (covered: Batch 4 RB-036 self-ref S001) |
 | HIST-TOML-009 | Ambiguous local time | §2 | N/A: no datetimes (importer strings) | passing → Batch 10 RB-098 (W008 string) |
 | HIST-TOML-00A | Skipped local time | §2 | N/A: no datetimes (importer strings) | passing → Batch 10 RB-099 (W008 string) |
 | HIST-TOML-00G | Large integer parse time | §2 | Linear-time digit handling | passing → Batch 9 RB-084 (1000 digits, E023) |
@@ -261,4 +261,5 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | Batch 9 | RB-081…RB-090 | done: 9 green first-try; RB-085/RB-088 needed test-side arithmetic corrections |
 | Batch 10 | RB-091…RB-100 | done: 9 green first-try; RB-100 forced a revert (statement-level skip is spec §4.1 design, not a bug) |
 | Batch 11 | RB-101…RB-110 | done: all 10 green first-try; RB-101 drove the statement-initial E002 fix |
-| Batch 12+ | Next 10 lowest pending rows by severity, per the loop prompt | pending |
+| Batch 12 | RB-111…RB-120 (P0-012, P1-ST-003/004/006/007/009/010/011/012/013) + dup-folds (P0-008/009/010/013/018, HIST-YAML-018/023, P1-ST-008) | done: all 10 green first-try, no code changes; RB-119 refusal-pinned (H002 stray-comma policy) |
+| Batch 13+ | Next 10 lowest pending rows by severity, per the loop prompt | pending |

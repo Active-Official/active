@@ -30495,3 +30495,222 @@ fn rb_1378_syn118_interpolation_vs_literal() {
     let v = eval_json("let who = \"hi\"\ncase_0118_09 = \"yo ${who}\"\n");
     assert_eq!(v["case_0118_09"], "yo hi", "{v}");
 }
+
+/// RB-1379 — Unescaped-tab twin: dangling backslash heals (SYN-0119-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_unescaped_tab; same shape as SYN-0116-01, fourth parent fixture).
+/// Converges with RB-1352/RB-1361/RB-1370: `\"` is specified
+/// (spec/grammar.md:62-64), the string is unterminated, H001 Info at (1:16).
+#[test]
+fn rb_1379_syn119_dangling_backslash_heals() {
+    let src = "case_0119_01 = \"dangling\\\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0119_01"], "dangling\"\n", "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H001").expect("H001");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H001 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: a closed string needs no heal.
+    let v = eval_json("case_0119_01 = \"done\"\n");
+    assert_eq!(v["case_0119_01"], "done", "{v}");
+    assert!(codes_of("case_0119_01 = \"done\"\n").is_empty());
+}
+
+/// RB-1380 — Unescaped-tab twin: lone-surrogate escape stays verbatim (SYN-0119-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_unescaped_tab; same shape as SYN-0116-02).
+/// REFUSAL (spec-gated, spec/grammar.md:62-66, RB-050, converges with
+/// RB-1353/RB-1362/RB-1371): `"\uD800"` keeps its exact six characters.
+#[test]
+fn rb_1380_syn119_lone_surrogate_verbatim() {
+    let src = "case_0119_02 = \"\\uD800\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0119_02"], "\\uD800", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a plain ASCII string is exact and silent too.
+    let v = eval_json("case_0119_02 = \"plain\"\n");
+    assert_eq!(v["case_0119_02"], "plain", "{v}");
+}
+
+/// RB-1381 — Unescaped-tab twin: scalar `\u` escape never decodes (SYN-0119-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_unescaped_tab; same shape as SYN-0116-03).
+/// REFUSAL (spec-gated, spec/grammar.md:62-66, RB-050, converges with
+/// RB-1354/RB-1363/RB-1372): `\u0061` persists exactly, never "a".
+#[test]
+fn rb_1381_syn119_scalar_escape_never_decodes() {
+    let src = "case_0119_03 = \"\\u0061\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0119_03"], "\\u0061", "{v}");
+    assert_ne!(v["case_0119_03"], "a", "must NOT decode to a: {v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the literal letter evaluates to itself.
+    let v = eval_json("case_0119_03 = \"a\"\n");
+    assert_eq!(v["case_0119_03"], "a", "{v}");
+}
+
+/// RB-1382 — Unescaped-tab twin: `\n` decodes to one LF (SYN-0119-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_unescaped_tab; same shape as SYN-0116-04).
+/// Converges with RB-1355/RB-1364/RB-1373 (spec/grammar.md:62-64).
+#[test]
+fn rb_1382_syn119_escaped_newline_decodes() {
+    let src = "case_0119_04 = \"line1\\nline2\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0119_04"], "line1\nline2", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the sibling specified escape `\t` decodes to TAB.
+    let v = eval_json("case_0119_04 = \"a\\tb\"\n");
+    assert_eq!(v["case_0119_04"], "a\tb", "{v}");
+}
+
+/// RB-1383 — Unescaped-tab twin: raw newline inside quotes is kept (SYN-0119-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_unescaped_tab; same shape as SYN-0116-05).
+/// REFUSAL (spec-gated, spec/grammar.md:58-62, RB-175, converges with
+/// RB-1356/RB-1365/RB-1374): the raw LF is content, kept silently, and
+/// agrees with the `\n` twin.
+#[test]
+fn rb_1383_syn119_raw_newline_kept() {
+    let src = "case_0119_05 = \"line1\nline2\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0119_05"], "line1\nline2", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Twin convergence: raw LF and escaped `\n` spell the same value.
+    let twin = eval_json("case_0119_05 = \"line1\\nline2\"\n");
+    assert_eq!(v["case_0119_05"], twin["case_0119_05"], "{v} vs {twin}");
+}
+
+/// RB-1384 — Unescaped-tab twin: `\x` escape stays verbatim (SYN-0119-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_unescaped_tab; same shape as SYN-0116-06).
+/// REFUSAL (spec-gated, spec/grammar.md:62-66, RB-050, converges with
+/// RB-1357/RB-1366/RB-1375): `\x41` persists exactly, never "A".
+#[test]
+fn rb_1384_syn119_hex_escape_verbatim() {
+    let src = "case_0119_06 = \"\\x41\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0119_06"], "\\x41", "{v}");
+    assert_ne!(v["case_0119_06"], "A", "must NOT decode to A: {v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the explicit letter is the way to spell "A".
+    let v = eval_json("case_0119_06 = \"A\"\n");
+    assert_eq!(v["case_0119_06"], "A", "{v}");
+}
+
+/// RB-1385 — Unescaped-tab twin: supplementary-plane and combining marks exact (SYN-0119-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_unescaped_tab; same shape as SYN-0116-07).
+/// Converges with RB-1358/RB-1367/RB-1376: U+1F600 + `e` + U+0301, three
+/// scalars, seven bytes, no NFC; U+00E9 stays different.
+#[test]
+fn rb_1385_syn119_emoji_combining_exact() {
+    let src = "case_0119_07 = \"\u{1F600}e\u{301}\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0119_07"], "\u{1F600}e\u{301}", "{v}");
+    assert_eq!(
+        v["case_0119_07"].as_str().expect("string").chars().count(),
+        3,
+        "{v}"
+    );
+    assert_eq!(v["case_0119_07"].as_str().expect("string").len(), 7, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: precomposed U+00E9 is a different value (no NFC).
+    let pre = eval_json("case_0119_07 = \"\u{e9}\"\n");
+    assert_ne!(v["case_0119_07"], pre["case_0119_07"], "{v} vs {pre}");
+}
+
+/// RB-1386 — Unescaped-tab twin: escaped data vs raw NUL bytes (SYN-0119-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_unescaped_tab; same shape as SYN-0116-08).
+/// Converges with RB-1359/RB-1368/RB-1377: `"\u0000"` verbatim, `"\0"` one
+/// real NUL, raw NUL in-string kept, raw NUL outside E005 Error at (1:6).
+#[test]
+fn rb_1386_syn119_escaped_vs_raw_nul() {
+    let v = eval_json("case_0119_08 = \"\\u0000\"\n");
+    assert_eq!(v["case_0119_08"], "\\u0000", "{v}");
+    assert!(codes_of("case_0119_08 = \"\\u0000\"\n").is_empty());
+    let v = eval_json("case_0119_08 = \"a\\0b\"\n");
+    assert_eq!(v["case_0119_08"], "a\0b", "{v}");
+    assert!(codes_of("case_0119_08 = \"a\\0b\"\n").is_empty());
+    let v = eval_json("case_0119_08 = \"a\0b\"\n");
+    assert_eq!(v["case_0119_08"], "a\0b", "{v}");
+    assert!(codes_of("case_0119_08 = \"a\0b\"\n").is_empty());
+    // Positive control (negative neighbour): raw NUL outside strings is E005.
+    let diags = parse("v = 1\0\n", "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 6), "{span:?}");
+}
+
+/// RB-1387 — Unescaped-tab twin: interpolation and literals never confused (SYN-0119-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_unescaped_tab; same shape as SYN-0116-09).
+/// Converges with RB-1360/RB-1369/RB-1378 and completes the 119 lineage:
+/// `"${literal}"` interpolates to "null" + W001 Warning at (1:19);
+/// `"literal"` stays exact; a resolved `let` interpolates.
+#[test]
+fn rb_1387_syn119_interpolation_vs_literal() {
+    let src = "case_0119_09 = \"${literal}\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0119_09"], "null", "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 19), "{span:?}");
+    // Positive control: the literal spelling stays exact and silent.
+    let v = eval_json("case_0119_09 = \"literal\"\n");
+    assert_eq!(v["case_0119_09"], "literal", "{v}");
+    assert!(codes_of("case_0119_09 = \"literal\"\n").is_empty());
+    // Positive control: a resolved name interpolates to its value.
+    let v = eval_json("let who = \"hi\"\ncase_0119_09 = \"yo ${who}\"\n");
+    assert_eq!(v["case_0119_09"], "yo hi", "{v}");
+}
+
+/// RB-1388 — Lonely-surrogate twin: dangling backslash heals (SYN-0120-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_invalid_lonely_surrogate; same shape as SYN-0116-01, fifth
+/// parent fixture opening here).
+/// Converges with RB-1352/RB-1361/RB-1370/RB-1379: `\"` is specified
+/// (spec/grammar.md:62-64), the string is unterminated, H001 Info at (1:16).
+#[test]
+fn rb_1388_syn120_dangling_backslash_heals() {
+    let src = "case_0120_01 = \"dangling\\\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0120_01"], "dangling\"\n", "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H001").expect("H001");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H001 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: a closed string needs no heal.
+    let v = eval_json("case_0120_01 = \"done\"\n");
+    assert_eq!(v["case_0120_01"], "done", "{v}");
+    assert!(codes_of("case_0120_01 = \"done\"\n").is_empty());
+}

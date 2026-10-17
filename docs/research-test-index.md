@@ -293,4 +293,5 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | Batch 41 | RB-399…RB-408 (SYN-0009-09, SYN-0010-01…09) | done: all 10 green first-try, no code changes; 09-lineage completed (EOF triple); 10-lineage opened (heal/insert triples, comma spans, typed determinism) |
 | Batch 42 | RB-409…RB-418 (SYN-0011-01…09, SYN-0012-01) | done: all 10 green first-try, no code changes; 11-lineage completed (heal/insert triples, comma spans, typed determinism); 12-lineage opened (no-null scan) |
 | Batch 43 | RB-419…RB-428 (SYN-0012-02…09, SYN-0013-01…02) | done: all 10 green first-try, no code changes; 12-lineage completed (insert/lone/trailing triples, typed determinism, hetero joint, EOF triple); 13-lineage opened (heal/insert triples) |
+| Batch 44 | RB-429…RB-438 (SYN-0013-03…09, SYN-0014-01…03) | done: all 10 green first-try, no code changes; 13-lineage completed (lone/trailing triples, typed determinism, hetero joint, EOF triple); 14-lineage opened (exactly-one-warning, E019 severities) |
 | Byte fixtures (mined) | headed cases → tests/research/*.active + RB IDs | mined per batch, ledger cites |

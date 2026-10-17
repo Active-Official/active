@@ -7780,3 +7780,202 @@ fn rb_428_syn13_insert_triple() {
     let span = h.span.clone().expect("H003 carries a span");
     assert_eq!((span.line, span.column), (1, 19), "{span:?}");
 }
+
+/// RB-429 — Derived variant 13-03: lone-comma triple (SYN-0013-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0013 (toml-test only-comma-01).
+/// `[,]` heals H002 at the comma (1:17) to empty with Info severity —
+/// value, class, span, and severity indexed jointly.
+#[test]
+fn rb_429_syn13_lone_comma_triple() {
+    let src = "case_0013_03 = [,]\n";
+    assert_eq!(eval_json(src)["case_0013_03"], serde_json::json!([]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H002 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+}
+
+/// RB-430 — Derived variant 13-04: trailing span + control (SYN-0013-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0013 (toml-test only-comma-01).
+/// Trailing comma heals H002 at 1:18 — and the clean neighbour
+/// carries no heal, proving the repair is input-specific.
+#[test]
+fn rb_430_syn13_trailing_control() {
+    let src = "case_0013_04 = [1,]\n";
+    assert_eq!(eval_json(src)["case_0013_04"], serde_json::json!([1]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the clean neighbour carries no heal.
+    assert!(!codes_of("case_0013_04 = [1]\n").iter().any(|c| c == "H002"));
+}
+
+/// RB-431 — Derived variant 13-05: typed determinism (SYN-0013-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0013 (toml-test only-comma-01).
+/// Clean triple asserts value, int element types, determinism, and
+/// silence jointly — the full good-case contract.
+#[test]
+fn rb_431_syn13_typed_deterministic() {
+    let src = "case_0013_05 = [1, 2, 3]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0013_05"], serde_json::json!([1, 2, 3]));
+    for e in v["case_0013_05"].as_array().expect("array") {
+        assert!(e.is_i64(), "{v}");
+    }
+    assert_eq!(eval_json(src), eval_json(src));
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-432 — Derived variant 13-06: empty determinism (SYN-0013-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0013 (toml-test only-comma-01).
+/// Empty arrays evaluate deterministically — repeated runs agree
+/// exactly with zero diagnostics.
+#[test]
+fn rb_432_syn13_empty_deterministic() {
+    let src = "case_0013_06 = []\n";
+    assert_eq!(eval_json(src)["case_0013_06"], serde_json::json!([]));
+    assert_eq!(eval_json(src), eval_json(src));
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-433 — Derived variant 13-07: nested lengths (SYN-0013-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0013 (toml-test only-comma-01).
+/// Nested collections assert outer and inner lengths plus
+/// determinism — every boundary lands exactly where written.
+#[test]
+fn rb_433_syn13_nested_lengths() {
+    let src = "case_0013_07 = [[1], [2, 3]]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0013_07"], serde_json::json!([[1], [2, 3]]));
+    assert_eq!(v["case_0013_07"].as_array().expect("array").len(), 2);
+    assert_eq!(v["case_0013_07"][0].as_array().expect("array").len(), 1);
+    assert_eq!(v["case_0013_07"][1].as_array().expect("array").len(), 2);
+    assert_eq!(eval_json(src), eval_json(src));
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-434 — Derived variant 13-08: hetero joint oracle (SYN-0013-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0013 (toml-test only-comma-01).
+/// Mixed arrays assert value, int type, table key-set, and no error
+/// class jointly — parser/schema agreement for the 13 lineage.
+#[test]
+fn rb_434_syn13_hetero_joint() {
+    let src = "case_0013_08 = [1, { name = \"x\" }]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0013_08"], serde_json::json!([1, {"name": "x"}]));
+    assert!(v["case_0013_08"][0].is_i64(), "{v}");
+    let keys: Vec<&str> = v["case_0013_08"][1]
+        .as_object()
+        .expect("table")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(keys, vec!["name"]);
+    let codes = codes_of(src);
+    assert!(
+        !codes.iter().any(|c| c.starts_with('E')),
+        "no error class expected, got {codes:?}"
+    );
+}
+
+/// RB-435 — Derived variant 13-09: EOF triple (SYN-0013-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0013 (toml-test only-comma-01).
+/// Unterminated array fails E001 Error at EOF (2:1) — class,
+/// severity, and span indexed jointly for the 13 lineage.
+#[test]
+fn rb_435_syn13_eof_triple() {
+    let src = "case_0013_09 = [1, 2\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: the closed twin evaluates.
+    assert_eq!(
+        eval_json("case_0013_09 = [1, 2]\n")["case_0013_09"],
+        serde_json::json!([1, 2])
+    );
+}
+
+/// RB-436 — Derived variant 14-01: exactly one warning (SYN-0014-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0014 (toml-test tables-01).
+/// Redefinition announces with EXACTLY one diagnostic — a single
+/// W011, nothing else: no cascade, no duplicate notice, no silence.
+#[test]
+fn rb_436_syn14_exactly_one_warning() {
+    let src = "fruit = { name = \"apple\" }\nfruit = { name = \"banana\" }\n";
+    assert_eq!(eval_json(src)["fruit"]["name"], "banana");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+}
+
+/// RB-437 — Derived variant 14-02: E019 severity (SYN-0014-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0014 (toml-test tables-01).
+/// The naive index form fails E019 with Error severity at 2:2 —
+/// paths type-check before values move, loudly.
+#[test]
+fn rb_437_syn14_e019_error() {
+    let src = "items = []\n@patch items[0] { name = \"x\" }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the array alone stays exactly empty.
+    assert_eq!(eval_json("items = []\n")["items"], serde_json::json!([]));
+}
+
+/// RB-438 — Derived variant 14-03: E019 severity (SYN-0014-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0014 (toml-test tables-01).
+/// Same E019 Error at 2:2 with a populated array — element identity
+/// never degrades into map-key addressing. (Completes SYN-0013-03…09
+/// + opens SYN-0014-01…03.)
+#[test]
+fn rb_438_syn14_populated_e019_error() {
+    let src = "items = [{ name = \"apple\" }]\n@patch items[0] { color = \"red\" }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the element is intact.
+    assert_eq!(
+        eval_json("items = [{ name = \"apple\" }]\n")["items"][0]["name"],
+        "apple"
+    );
+}

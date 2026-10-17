@@ -21387,3 +21387,250 @@ fn rb_998_syn76_giant_exponent_twentieth_rejects() {
         1000000
     );
 }
+/// RB-999 — Derived variant 76-08: quoting preserves digit-looking text (SYN-0076-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0076 (toml-test us-after-bin).
+/// `case_0076_08 = "01"` is string "01" with zero diagnostics — converges
+/// with RB-990: quoting preserves a digit-looking identifier with no numeric
+/// coercion, and the bare twin (`01` is 1) shows the policy only strips bare
+/// forms. (Completes SYN-0076-08…09 coverage from the quoted end.)
+#[test]
+fn rb_999_syn76_quoted_digits_twentieth_exact() {
+    let src = "case_0076_08 = \"01\"\n";
+    assert_eq!(eval_json(src)["case_0076_08"], "01");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: the bare counterpart is decimal 1, never text.
+    let v = eval_json("case_0076_08 = 01\n")["case_0076_08"].clone();
+    assert_eq!(v, 1, "{v}");
+    assert!(!v.is_string(), "{v}");
+}
+
+/// RB-1000 — Derived variant 76-09: canonical zero twentieth twin is int 0 (SYN-0076-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0076 (toml-test us-after-bin).
+/// `case_0076_09 = 0` is int 0 with zero diagnostics — converges with
+/// RB-991: canonical zero needs no policy, and the zero-prefixed twin
+/// (`01` is 1) shows the policy only strips. (Completes SYN-0076 lineage.)
+#[test]
+fn rb_1000_syn76_zero_twentieth_canonical() {
+    let src = "case_0076_09 = 0\n";
+    let v = eval_json(src)["case_0076_09"].clone();
+    assert_eq!(v, 0, "{v}");
+    assert!(!v.is_f64(), "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the zero-prefixed twin strips to 1.
+    assert_eq!(eval_json("case_0076_09 = 01\n")["case_0076_09"], 1);
+}
+
+/// RB-1001 — Derived variant 77-01: inline dups announce, never silent (SYN-0077-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0077 (toml-test after-array).
+/// REFUSAL (spec-gated, locked last-wins+W011 policy per P1-TI-012):
+/// `case_0077_01 = { key = 1, key = 2 }` evaluates to key = 2 and announces
+/// W011 Warning at the winning-value span (1:33) — neither first-wins nor
+/// last-wins is permitted SILENTLY; the announcement is the guard.
+/// Converges with RB-902. (Opens SYN-0077 after-array lineage.)
+#[test]
+fn rb_1001_syn77_inline_dup_announces() {
+    let src = "case_0077_01 = { key = 1, key = 2 }\n";
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(v["case_0077_01"]["key"], 2, "last wins, got {v}");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (1, 33), "{span:?}");
+    // Positive control: the duplicate-free table evaluates silently.
+    let codes = codes_of("case_0077_01 = { key = 1 }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1002 — Derived variant 77-02: nested inline dups announce at depth (SYN-0077-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0077 (toml-test after-array).
+/// REFUSAL (spec-gated, same locked policy): `{ nested = { key = 1, key = 2 } }`
+/// evaluates to nested.key = 2 and announces W011 Warning at the nested
+/// winning-value span (1:44) — duplicate detection recurses into nested
+/// maps; depth never silences the announcement. Converges with RB-903.
+#[test]
+fn rb_1002_syn77_nested_dup_announces() {
+    let src = "case_0077_02 = { nested = { key = 1, key = 2 } }\n";
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(
+        v["case_0077_02"]["nested"]["key"], 2,
+        "last wins at depth, got {v}"
+    );
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (1, 44), "{span:?}");
+    // Positive control: the duplicate-free nest evaluates silently.
+    let codes = codes_of("case_0077_02 = { nested = { key = 1 } }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1003 — Derived variant 77-03: quoted keys never merge with bare keys (SYN-0077-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0077 (toml-test after-array).
+/// `case_0077_03 = { "a" = 1, a = 2 }` fails with E001 Error at (1:18) —
+/// keys are identifiers, so the quoted form is rejected at the bracket
+/// instead of canonicalizing onto `a`: canonicalization is consistent
+/// because no merge is ever possible, in either syntax form.
+/// Converges with RB-904.
+#[test]
+fn rb_1003_syn77_quoted_never_merges() {
+    let src = "case_0077_03 = { \"a\" = 1, a = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the bare-only form evaluates silently.
+    let codes = codes_of("case_0077_03 = { a = 1 }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: a bare duplicate still announces W011 (no merge gap).
+    let codes = codes_of("case_0077_03 = { a = 1, a = 2 }\n");
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}
+
+/// RB-1004 — Derived variant 77-04: distinct keys never false-positive (SYN-0077-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0077 (toml-test after-array).
+/// `case_0077_04 = { alpha = 1, beta = 2 }` evaluates to both keys with ZERO
+/// diagnostics — the duplicate guard compares exact keys, so distinct
+/// neighbours never draw W011; the guard fires only on real duplicates.
+/// Converges with RB-905.
+#[test]
+fn rb_1004_syn77_distinct_keys_silent() {
+    let src = "case_0077_04 = { alpha = 1, beta = 2 }\n";
+    let v = eval_json(src);
+    assert_eq!(
+        v["case_0077_04"],
+        serde_json::json!({"alpha": 1, "beta": 2}),
+        "{v}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: a real duplicate still announces W011.
+    let codes = codes_of("case_0077_04 = { alpha = 1, alpha = 2 }\n");
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}
+
+/// RB-1005 — Derived variant 77-05: quoted keys reject before normalizing (SYN-0077-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0077 (toml-test after-array).
+/// `case_0077_05 = { "NFC-e-acute" = 1, "NFD-e-plus-combining-acute" = 2 }`
+/// fails with E001 Error at (1:18) — keys are identifiers, so quoted forms
+/// are rejected before any Unicode normalization question arises: Active
+/// never normalizes implicitly (nor explicitly) because quoted forms are
+/// never keys. (Escapes spell the non-ASCII bytes: U+00E9 vs U+0065 U+0301;
+/// no editor bytes involved.) Converges with RB-906.
+#[test]
+fn rb_1005_syn77_unicode_keys_reject() {
+    let src = "case_0077_05 = { \"\u{e9}\" = 1, \"e\u{301}\" = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: bare distinct keys accept silently.
+    let codes = codes_of("case_0077_05 = { alpha = 1, beta = 2 }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1006 — Derived variant 77-06: distinct tables are not duplicates (SYN-0077-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0077 (toml-test after-array).
+/// REFUSAL (spec-gated): the catalogue asks rejecting "repeated assignment",
+/// but the two statements bind DIFFERENT keys (`case_0077_06`, `value`) —
+/// no duplicate exists, so both evaluate with zero diagnostics. Last-wins
+/// governs same-key redefinition (W011), never distinct keys.
+/// Converges with RB-907.
+#[test]
+fn rb_1006_syn77_distinct_tables_accept() {
+    let src = "case_0077_06 = { a = 1 }\nvalue = { b = 2 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0077_06"]["a"], 1, "{v}");
+    assert_eq!(v["value"]["b"], 2, "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: same-key redefinition still announces W011 last-wins.
+    let src = "value = { b = 1 }\nvalue = { b = 2 }\n";
+    assert_eq!(eval_json(src)["value"]["b"], 2);
+    let codes = codes_of(src);
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}
+
+/// RB-1007 — Derived variant 77-07: naive patch form fails, explicit updates (SYN-0077-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0077 (toml-test after-array).
+/// The naive `@patch base { key = 2 }` form fails E019 Error at (3:2) —
+/// ordinary duplicate declarations and intentional patch semantics share no
+/// spelling — while the explicit `@patch("base.key", 2)` call updates
+/// silently to 2 (converges with RB-908: patches warn nothing).
+#[test]
+fn rb_1007_syn77_patch_form_separates() {
+    let src = "case_0077_07 = 1\nbase = { key = 1 }\n@patch base { key = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    // Positive control: the explicit call updates with zero diagnostics.
+    let src = "base = { key = 1 }\n@patch(\"base.key\", 2)\n";
+    assert_eq!(eval_json(src)["base"]["key"], 2);
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1008 — Derived variant 77-08: naive repeated removals fail at the first form (SYN-0077-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0077 (toml-test after-array).
+/// The naive double `@remove base.key` plan fails E019 Error at (3:2) — the
+/// FIRST naive form already rejects, so repetition never reaches a second
+/// step; repeated structural operations need explicit semantics from the
+/// start. The single explicit `@remove("base.key")` call removes silently
+/// with siblings intact. (Converges with RB-909; completes SYN-0077-01…08.)
+#[test]
+fn rb_1008_syn77_naive_repeat_fails_first() {
+    let src = "case_0077_08 = 1\nbase = { key = 1 }\n@remove base.key\n@remove base.key\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    // Positive control: the single explicit call removes silently.
+    let src = "base = { key = 1, other = 0 }\n@remove(\"base.key\")\n";
+    let v = eval_json(src);
+    assert!(v["base"].get("key").is_none(), "{v}");
+    assert_eq!(v["base"]["other"], 0);
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}

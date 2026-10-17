@@ -4784,6 +4784,208 @@ fn rb_268_json_unescaped_tab_kept() {
     assert_eq!(eval_json("value = \"a\\tb\"\n")["value"], "a\tb");
 }
 
+/// RB-279 — Norway implicit-typing report analogue (SRC-YAML-0001 §H, HIGH).
+/// Origin: yaml-test-suite issue #123 (Norway problem).
+/// REFUSAL (spec-gated): bare `no`/`on` do NOT remain strings — no
+/// bare word becomes a string implicitly (explicitness). They resolve
+/// W001 + null like every bare word (RB-103); only exact `true` is
+/// boolean. Quoted forms stay strings (control).
+#[test]
+fn rb_279_norway_no_implicit_strings() {
+    let v = eval_json("country = no\nflag = on\nanswer = true\n");
+    assert!(v["country"].is_null(), "{v}");
+    assert!(v["flag"].is_null(), "{v}");
+    assert_eq!(v["answer"], true);
+    let codes = codes_of("country = no\nflag = on\nanswer = true\n");
+    assert_eq!(
+        codes.iter().filter(|c| *c == "W001").count(),
+        2,
+        "{codes:?}"
+    );
+    // Positive control: quoted forms stay exact strings.
+    let v = eval_json("country = \"no\"\nflag = \"on\"\n");
+    assert_eq!(v["country"], "no");
+    assert_eq!(v["flag"], "on");
+}
+
+/// RB-280 — Colon-in-anchor report analogue (SRC-YAML-0002 §H, HIGH).
+/// Origin: yaml-test-suite issue #144.
+/// No anchor construct exists: `&` is an unexpected character (E005
+/// at 1:9) — never accidentally accepted, never half-parsed.
+#[test]
+fn rb_280_anchor_sigil_rejects() {
+    let src = "value = &anchor: 1\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    assert!(
+        diags.iter().any(|d| d.code == "E005"),
+        "E005 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 9), "{span:?}");
+    // Positive control: the sigil-free value binds.
+    assert_eq!(eval_json("value = 1\n")["value"], 1);
+}
+
+/// RB-281 — Escaped-characters gap analogue (SRC-YAML-0003 §H, MEDIUM).
+/// Origin: yaml-test-suite issue #135 (spec §5.13/5.14 escapes).
+/// Same closed alphabet as the TOML twin (RB-240): `\u12G4` stays
+/// six verbatim characters — now pinned through the TOML exporter,
+/// proving exports never decode what the grammar did not.
+#[test]
+fn rb_281_yaml_bad_escape_verbatim_export() {
+    let v = eval_json("value = \"\\u12G4\"\n");
+    assert_eq!(v["value"], "\\u12G4");
+    let module = parse("value = \"\\u12G4\"\n", "research").expect("must parse");
+    let (value, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    let (toml, _) = active_core::convert::value_to_toml_string(&value).expect("toml export");
+    assert!(toml.contains("\\u12G4"), "{toml}");
+}
+
+/// RB-282 — Colon-handling question analogue (SRC-YAML-0004 §H, MEDIUM).
+/// Origin: yaml-test-suite issue #126 (`a: :a` vs `a: a`).
+/// Explicit `=` fixes the value boundary: a second colon inside the
+/// value fails E002 at 1:13 — no key separator can shift the
+/// boundary. The quoted text stays a string (control).
+#[test]
+fn rb_282_double_colon_value_rejects() {
+    let src = "value = a: :a\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 13), "{span:?}");
+    // Positive control: quoted text stays an exact string.
+    assert_eq!(eval_json("value = \"a: :a\"\n")["value"], "a: :a");
+}
+
+/// RB-283 — Merge-key test-request analogue (SRC-YAML-0005 §H, MEDIUM).
+/// Origin: yaml-test-suite issue #150 (merge-key coverage).
+/// YAML `<<` is not imported: the merge-key spelling fails, while the
+/// analogous structural overlay uses explicit `@patch` semantics —
+/// deterministic, base untouched, target extended.
+#[test]
+fn rb_283_merge_key_refused_patch_explicit() {
+    let src = "base = { x = 1 }\nconfig = { y = 2 }\n@patch(\"config.x\", 1)\n";
+    let v = eval_json(src);
+    assert_eq!(v["config"]["x"], 1);
+    assert_eq!(v["config"]["y"], 2);
+    assert_eq!(v["base"], serde_json::json!({"x": 1}));
+    // The `<<` spelling has no meaning: quoted merge keys never bind.
+    let codes = codes_of("config = { y = 2, \"<<\" = 1 }\n");
+    assert!(
+        codes.iter().any(|c| c == "E002" || c == "E001"),
+        "E-class expected, got {codes:?}"
+    );
+}
+
+/// RB-284 — Duplicate-keys-ignored report analogue (SRC-YAML-0006 §H, MEDIUM).
+/// Origin: symfony/symfony#19526.
+/// Never silently ignored AND never silent last-wins: the locked
+/// W011 policy announces with Warning severity (RB-273's Symfony
+/// twin pins value + severity here).
+#[test]
+fn rb_284_symfony_dup_warns_announced() {
+    let src = "value = { key = 1, key = 2 }\n";
+    assert_eq!(eval_json(src)["value"]["key"], 2);
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+    // Positive control: distinct keys bind silently.
+    let codes = codes_of("value = { a = 1, b = 2 }\n");
+    assert!(!codes.iter().any(|c| c == "W011"), "{codes:?}");
+}
+
+/// RB-285 — Flow-collection fixture VJP3 analogue (SRC-YAML-0007 §H, MEDIUM).
+/// Origin: yaml-test-suite `src/VJP3.yaml`.
+/// Nested bracket/brace balance is checked: `}` where `]` belongs
+/// fails E001 at 1:25 — mismatched delimiters never close silently.
+#[test]
+fn rb_285_mismatched_delimiter_rejects() {
+    let src = "value = { child = [1, 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    assert!(
+        diags.iter().any(|d| d.code == "E001"),
+        "E001 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 25), "{span:?}");
+    // Positive control: the balanced twin evaluates.
+    assert_eq!(
+        eval_json("value = { child = [1, 2] }\n")["value"]["child"],
+        serde_json::json!([1, 2])
+    );
+}
+
+/// RB-286 — Block-scalar fixture Z67P analogue (SRC-YAML-0008 §H, HIGH).
+/// Origin: yaml-test-suite `src/Z67P.yaml`.
+/// Escaped newlines are exact: one LF between lines plus one
+/// terminal LF — code points pinned, round-trip stable.
+#[test]
+fn rb_286_escaped_newlines_exact() {
+    let v = eval_json("value = \"line one\\nline two\\n\"\n");
+    assert_eq!(v["value"], "line one\nline two\n");
+    // Positive control: the round-trip keeps every code point.
+    let module = parse("value = \"line one\\nline two\\n\"\n", "research").expect("must parse");
+    let out = active_core::fmt::format(&module, active_core::Style::Indent);
+    let module2 =
+        parse(&out, "research").unwrap_or_else(|d| panic!("reparse failed: {d:?}\n{out}"));
+    let (first, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    let (second, _) = Engine::new().evaluate(&module2).expect("must evaluate");
+    assert_eq!(
+        active_core::convert::value_to_pretty_json(&first),
+        active_core::convert::value_to_pretty_json(&second)
+    );
+}
+
+/// RB-287 — Indentation-and-tabs spec analogue (SRC-YAML-0009 §H, HIGH).
+/// Origin: YAML 1.2.2 (tabs forbidden for indentation).
+/// Byte fixture: TAB-indented child. Structural TABs fail loud E006
+/// at 2:1 — never silently dedented, never spaces.
+#[test]
+fn rb_287_tab_indent_rejects() {
+    let diags = parse_file(
+        &research_fixture("src_yaml_0009_tab_indent.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E006");
+    assert!(
+        diags.iter().any(|c| c.code == "E006"),
+        "E006 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E006").expect("E006");
+    let span = e.span.clone().expect("E006 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: space indentation binds the same shape.
+    assert_eq!(eval_json("root:\n  child = 1\n")["root"]["child"], 1);
+}
+
+/// RB-288 — Core-schema analogue (SRC-YAML-0010 §H, HIGH).
+/// Origin: YAML 1.2.2 core schema (implicit resolution).
+/// Same Norway input as RB-279, asserted at the TYPE level:
+/// bare words are null (never string, never bool), exact `true`
+/// is boolean, quoted forms are strings. No implicit resolution.
+#[test]
+fn rb_288_core_schema_types_exact() {
+    let v = eval_json("country = no\nflag = on\nanswer = true\n");
+    assert!(v["country"].is_null(), "{v}");
+    assert!(v["flag"].is_null(), "{v}");
+    assert!(v["answer"].is_boolean(), "{v}");
+    let v = eval_json("country = \"no\"\nflag = \"on\"\n");
+    assert!(v["country"].is_string(), "{v}");
+    assert!(v["flag"].is_string(), "{v}");
+}
+
 /// RB-269 — JSONTestSuite `n_string_invalid_lonely_surrogate` analogue (SRC-JSON-0025 §H, HIGH).
 /// Origin: nst/JSONTestSuite `test_parsing/n_string_invalid_lonely_surrogate.json`.
 /// No lone surrogate can emit invalid Unicode: without `\u` support

@@ -5366,3 +5366,188 @@ fn rb_298_tag_uri_never_executes() {
     // Positive control: the tag-free neighbour binds.
     assert_eq!(eval_json("value = 1\n")["value"], 1);
 }
+
+/// RB-299 — yaml-cpp flow-stack analogue (SRC-CVE-0006 §H, CRITICAL).
+/// Origin: NVD CVE-2019-6285.
+/// Bounded generator: 400 balanced nested arrays trip E004 with span
+/// — flow-style nesting is bounded before stack consumption matters.
+#[test]
+fn rb_299_cve_flow_stack_bounded() {
+    let src = format!("value = {}0{}", "[".repeat(400), "]".repeat(400));
+    let diags = parse(&src, "research").expect_err("must fail E004");
+    assert!(
+        diags.iter().any(|d| d.code == "E004"),
+        "E004 expected, got {:?}",
+        &diags[..diags.len().min(3)]
+    );
+    let e = diags.iter().find(|d| d.code == "E004").expect("E004");
+    assert!(e.span.is_some(), "E004 carries a span");
+    // Positive control: shallow flow nesting evaluates.
+    assert_eq!(
+        eval_json("value = [1, [2]]\n")["value"],
+        serde_json::json!([1, [2]])
+    );
+}
+
+/// RB-300 — Jackson TOML stack-overflow analogue (SRC-CVE-0007 §H, CRITICAL).
+/// Origin: NVD CVE-2023-3894.
+/// Bounded generator: 400 nested inline tables trip E004 — the same
+/// structural bound as arrays (RB-296), one shared gate.
+#[test]
+fn rb_300_cve_jackson_depth_bounded() {
+    let src = format!("value = {}0{}", "{ a = ".repeat(400), " }".repeat(400));
+    let diags = parse(&src, "research").expect_err("must fail E004");
+    assert!(
+        diags.iter().any(|d| d.code == "E004"),
+        "E004 expected, got {:?}",
+        &diags[..diags.len().min(3)]
+    );
+}
+
+/// RB-301 — MLAlchemy unsafe-deserialization analogue (SRC-CVE-0008 §H, CRITICAL).
+/// Origin: NVD CVE-2017-16615.
+/// Unsafe `load` has no analogue: the tag line fails E002 with Error
+/// severity at parse — no constructor exists to invoke, so attacker
+/// code can never execute through configuration text.
+#[test]
+fn rb_301_cve_unsafe_load_impossible() {
+    let src = "value = !python/object/apply:os.system [\"echo forbidden\"]\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    // Positive control: data-only content binds without execution.
+    assert_eq!(
+        eval_json("value = \"echo forbidden\"\n")["value"],
+        "echo forbidden"
+    );
+}
+
+/// RB-302 — kaml endless-loop analogue (SRC-CVE-0009 §H, CRITICAL).
+/// Origin: NVD CVE-2021-39194.
+/// Bare `${…}` outside strings is not a reference cycle risk: `$`
+/// rejects loud E005 — and the valid string-interpolation cycle is
+/// S001 (RB-290). Termination is structural, never traversal-luck.
+#[test]
+fn rb_302_cve_bare_interp_rejects() {
+    let src = "let a = ${b}\nlet b = ${a}\nvalue = ${a}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    assert!(
+        diags.iter().any(|d| d.code == "E005"),
+        "E005 expected, got {diags:?}"
+    );
+    // Positive control: acyclic `let` indirection binds.
+    assert_eq!(eval_json("let a = 1\nvalue = a\n")["value"], 1);
+}
+
+/// RB-303 — RFC 8259 security-considerations analogue (SRC-CVE-0010 §H, HIGH).
+/// Origin: RFC 8259 (limits, duplicate names, interop).
+/// The interoperable duplicate member resolves under the locked
+/// W011 policy with span — announcement ends cross-implementation
+/// disagreement deterministically.
+#[test]
+fn rb_303_rfc8259_dup_announced_span() {
+    let src = "value = { a = 1, a = 2 }\n";
+    assert_eq!(eval_json(src)["value"]["a"], 2);
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (1, 22), "{span:?}");
+    // Positive control: distinct members bind silently.
+    let codes = codes_of("value = { a = 1, b = 2 }\n");
+    assert!(!codes.iter().any(|c| c == "W011"), "{codes:?}");
+}
+
+/// RB-304 — TOML offset-datetime mismatch analogue (SRC-SPEC-0001 §H, HIGH).
+/// Origin: typst/typst#7920 (non-UTC offsets misrepresented).
+/// REFUSAL (spec-gated): no timezone-aware datetime can be
+/// misrepresented — no date type exists. The bare form evaluates by
+/// shipped rules (1979-5-27 = 1947 plus the specified `T00:32` colon
+/// pair): explicit, deterministic, never an opaque fallback map.
+#[test]
+fn rb_304_offset_datetime_deterministic() {
+    let src = "value = 1979-05-27T00:32:00-07:00\n";
+    let first = eval_json(src);
+    assert_eq!(first["value"], 1947);
+    assert_eq!(first["T00"], 32);
+    assert_eq!(first, eval_json(src));
+    // Positive control: the quoted form stays an exact string.
+    assert_eq!(
+        eval_json("value = \"1979-05-27T00:32:00-07:00\"\n")["value"],
+        "1979-05-27T00:32:00-07:00"
+    );
+}
+
+/// RB-305 — Valid/invalid suite-matrix analogue (SRC-SPEC-0002 §H, MEDIUM).
+/// Origin: toml-test valid/invalid separation (+1.0/1.1 matrix).
+/// SOLID chooses its own contract and pairs both sides in one test:
+/// the duplicate warns W011 while the distinct twin binds silently —
+/// acceptance, rejection, and warned-acceptance each have a class.
+#[test]
+fn rb_305_valid_invalid_pair_contract() {
+    let bad = "value = { a = 1, a = 2 }\n";
+    assert_eq!(eval_json(bad)["value"]["a"], 2);
+    assert!(codes_of(bad).iter().any(|c| c == "W011"), "W011 expected");
+    let good = "value = { a = 1, b = 2 }\n";
+    assert_eq!(
+        eval_json(good)["value"],
+        serde_json::json!({"a": 1, "b": 2})
+    );
+    assert!(codes_of(good).is_empty(), "clean twin must be silent");
+}
+
+/// RB-306 — TOML key/table-redefinition analogue (SRC-SPEC-0003 §H, HIGH).
+/// Origin: TOML v1.0.0 (no repeated tables, no table/scalar conflicts).
+/// A map can never become a scalar implicitly: dotted assignment has
+/// no grammar — E002 at 2:1 — so the conflict class cannot occur.
+#[test]
+fn rb_306_path_kind_conflict_impossible() {
+    let src = "fruit = { apple = { color = \"red\" } }\nfruit.apple = 3\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: the table alone evaluates.
+    let v = eval_json("fruit = { apple = { color = \"red\" } }\n");
+    assert_eq!(v["fruit"]["apple"]["color"], "red");
+}
+
+/// RB-307 — TOML array-of-tables-ordering analogue (SRC-SPEC-0004 §H, HIGH).
+/// Origin: TOML v1.0.0 (element parent must exist first).
+/// The naive patch transliteration is rejected (E019: `(` required),
+/// so no child operation can invent a parent node or index — the
+/// operation never runs.
+#[test]
+fn rb_307_patch_needs_existing_parent() {
+    let src = "fruit = []\n@patch fruit[0] { name = \"apple\" }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    assert!(
+        diags.iter().any(|d| d.code == "E019"),
+        "E019 expected, got {diags:?}"
+    );
+    // Positive control: the array alone evaluates.
+    assert_eq!(eval_json("fruit = []\n")["fruit"], serde_json::json!([]));
+}
+
+/// RB-308 — TOML numeric-grammar analogue (SRC-SPEC-0005 §H, HIGH).
+/// Origin: TOML v1.0.0 numeric grammar.
+/// REFUSAL (spec-gated): `01.` is not an invalid number — leading
+/// zeros are plain decimals (RB-184) and the trailing dot falls
+/// under the skip quirk (RB-207): exactly int 1, no host fallback.
+#[test]
+fn rb_308_toml_numeric_grammar_decimal() {
+    let v = eval_json("value = 01.\n");
+    assert_eq!(v["value"], 1);
+    assert!(v["value"].is_i64());
+    // Positive control: the clean decimal neighbour agrees.
+    assert_eq!(eval_json("value = 1\n")["value"], 1);
+}

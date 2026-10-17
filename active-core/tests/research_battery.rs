@@ -337,3 +337,169 @@ fn rb_020_comments_ignored_structurally() {
     );
     assert_eq!(plain, commented, "comments must not alter structure");
 }
+
+/// RB-021 — Deep array nesting bounded (HIST-JSON-001 §2).
+/// 500 nested arrays must trip a budget/depth diagnostic, never overflow.
+#[test]
+fn rb_021_deep_array_nesting_bounded() {
+    let mut src = String::from("x = ");
+    src.push_str(&"[".repeat(500));
+    src.push('1');
+    src.push_str(&"]".repeat(500));
+    src.push('\n');
+    let codes = codes_of(&src);
+    assert!(!codes.is_empty(), "500-deep arrays must trip a budget");
+    // Positive control: shallow nesting succeeds.
+    assert_eq!(eval_json("x = [[1], [2]]\n")["x"][1][0], 2);
+}
+
+/// RB-022 — Comment-to-EOF never hangs (HIST-TOML-005 §2).
+/// `a = [1 #` with no trailing newline must terminate promptly; a
+/// hanging parser fails this test via the join timeout instead of CI.
+#[test]
+fn rb_022_comment_to_eof_terminates() {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let r = parse("a = [1 #", "research").map(|_| "parsed");
+        let _ = tx.send(r);
+    });
+    let outcome = rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("parser must terminate within 10s");
+    assert!(outcome.is_ok() || outcome.is_err(), "terminated");
+    // Positive control: comment with newline parses fine.
+    assert_eq!(eval_json("a = [1] # done\n")["a"][0], 1);
+}
+
+/// RB-023 — Tag-like markers never execute (HIST-YAML-026/027/028 §3).
+/// `!!` is just double negation in Active; hostile payloads fail safely
+/// with a type error, never with code execution or a crash.
+#[test]
+fn rb_023_tag_markers_never_execute() {
+    for src in [
+        "x = !!foo\n",
+        "x = !!python/object\n",
+        "x = !!js/function\n",
+    ] {
+        let codes = codes_of(src);
+        assert!(
+            codes.iter().any(|c| c == "T001" || c == "W001"),
+            "{src:?} must fail safe (T001) or warn-and-null (W001), got {codes:?}"
+        );
+    }
+    // Positive control: ordinary negation works.
+    assert_eq!(eval_json("x = !false\n")["x"], true);
+}
+
+/// RB-024 — Template braces stay literal (HIST-YAML-036 §3).
+/// Only `${…}` interpolates; `{{…}}` is inert text.
+#[test]
+fn rb_024_template_braces_stay_literal() {
+    let v = eval_json("template_part = \"{{7*7}}\"\n");
+    assert_eq!(v["template_part"], "{{7*7}}");
+}
+
+/// RB-025 — Malformed docs sanitize errors (HIST-TOML-00M/HIST-YAML-040 §3).
+/// A secret sitting in a broken document must not surface in diagnostics.
+#[test]
+fn rb_025_broken_doc_errors_sanitized() {
+    let raw = "vault-secret-rb025";
+    let src = format!("token = secret(\"{raw}\")\nbad = [1,\n");
+    let diags = parse(&src, "research")
+        .map(|m| {
+            Engine::new()
+                .evaluate(&m)
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default()
+        })
+        .unwrap_or_else(|ds| format!("{ds:?}"));
+    assert!(!diags.contains(raw), "leak in diagnostics: {diags}");
+    // Positive control: well-formed secret docs evaluate + redact.
+    let v = eval_json(&format!("token = secret(\"{raw}\")\n"));
+    assert_eq!(v["token"], "***SECRET***");
+}
+
+/// RB-026 — `__proto__` is a neutral key (HIST-TOML-00L/HIST-YAML-031 §3).
+/// Active has no prototypes; the key is plain data. Dotted assignment
+/// is not Active syntax at all, so it rejects like any dotted assignment.
+#[test]
+fn rb_026_proto_key_neutral() {
+    let v = eval_json("__proto__ = 1\n");
+    assert_eq!(v["__proto__"], 1);
+    let codes = codes_of("__proto__.isAdmin = true\n");
+    assert!(!codes.is_empty(), "dotted assignment must reject");
+    let plain_codes = codes_of("a.b = 1\n");
+    assert_eq!(
+        codes, plain_codes,
+        "__proto__ must behave exactly like any other dotted assignment"
+    );
+}
+
+/// RB-027 — Env fallback chain first-wins (P1-SE-006 §E).
+#[test]
+fn rb_027_env_fallback_chain_first_wins() {
+    let prior_a = std::env::var("ACTIVE_TEST_RB027_A").ok();
+    let prior_b = std::env::var("ACTIVE_TEST_RB027_B").ok();
+    std::env::set_var("ACTIVE_TEST_RB027_A", "from-a");
+    std::env::remove_var("ACTIVE_TEST_RB027_B");
+    let v =
+        eval_json("value = env.ACTIVE_TEST_RB027_A ?: env.ACTIVE_TEST_RB027_B ?: \"default\"\n");
+    let v2 =
+        eval_json("value = env.ACTIVE_TEST_RB027_B ?: env.ACTIVE_TEST_RB027_A ?: \"default\"\n");
+    match prior_a {
+        Some(val) => std::env::set_var("ACTIVE_TEST_RB027_A", val),
+        None => std::env::remove_var("ACTIVE_TEST_RB027_A"),
+    }
+    match prior_b {
+        Some(val) => std::env::set_var("ACTIVE_TEST_RB027_B", val),
+        None => std::env::remove_var("ACTIVE_TEST_RB027_B"),
+    }
+    assert_eq!(v["value"], "from-a", "first present must win");
+    assert_eq!(
+        v2["value"], "from-a",
+        "order must not matter, presence does"
+    );
+}
+
+/// RB-028 — Secret payloads stay opaque (P1-SE-013 §E).
+/// `secret("5s")` is a secret string, never auto-parsed as a unit.
+#[test]
+fn rb_028_secret_payload_never_unit_parsed() {
+    let v = eval_json("delay = secret(\"5s\")\n");
+    assert_eq!(v["delay"], "***SECRET***");
+    // And it never behaves as a duration downstream.
+    let codes = codes_of("delay = secret(\"5s\")\nbad = delay + 1\n");
+    assert!(!codes.is_empty(), "secret arithmetic must fail");
+    // Positive control: plain units still normalize.
+    assert_eq!(eval_json("t = 5s\n")["t"]["ms"], 5000);
+}
+
+/// RB-029 — Patches preserve taint (DERIVED-0014 §A).
+#[test]
+fn rb_029_patch_preserves_taint() {
+    let src = "password = secret(\"x-rb029\")\ntoken = \"plain\"\n\n@patch(\"token\", password)\n";
+    let v = eval_json(src);
+    assert_eq!(
+        v["token"], "***SECRET***",
+        "patched-in secret must redact: {v}"
+    );
+}
+
+/// RB-030 — Let cycles rejected with S001 (DERIVED-0003 §A).
+#[test]
+fn rb_030_let_cycles_rejected() {
+    for src in [
+        "let a = b\nlet b = a\n",
+        "let a = b\nlet b = c\nlet c = a\n",
+    ] {
+        let codes = codes_of(src);
+        assert!(
+            codes.iter().any(|c| c == "S001"),
+            "{src:?} must fail S001, got {codes:?}"
+        );
+    }
+    // Positive control: acyclic lets evaluate (`let` bindings surface
+    // through keys that read them).
+    assert_eq!(eval_json("let a = 1\nlet b = a + 2\ny = b\n")["y"], 3);
+}

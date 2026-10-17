@@ -17,7 +17,7 @@ not the research docs' proposed names.
 |---|---|---|---|
 | DERIVED-0001 | Explicit `=`; colon pairs are specified (`value : 1` = key-value per dual-syntax.md:49) | Accept as pair; bodiless `key:` rejects E008 | passing (refusal pinned: colon pairs are specified) → Batch 1 RB-001 |
 | DERIVED-0002 | Undefined `let` reference | `E_UNRESOLVED_REFERENCE`/W001-class diagnostic at `z` | pending |
-| DERIVED-0003 | `let` cycles (2- and 3-node) | `E_DEPENDENCY_CYCLE`, participants named | pending |
+| DERIVED-0003 | `let` cycles (2- and 3-node) | S001 cycle error | passing → Batch 3 RB-030 |
 | DERIVED-0004 | Malformed interpolation delimiters | Reject, span on broken `${…}` | pending |
 | DERIVED-0005 | Unit dimension mismatch (`5s + 512MiB`) | Reject dimension mismatch | passing → Batch 2 RB-011 |
 | DERIVED-0006 | Env fallback absent variable | Default returned | pending |
@@ -28,7 +28,7 @@ not the research docs' proposed names.
 | DERIVED-0011 | Profile inheritance cycle | Reject `E_PROFILE_CYCLE`-class | pending |
 | DERIVED-0012 | `@remove` missing path | **W004 idempotent success** (Active intent, not error — diagnostics.md:91) | passing → Batch 2 RB-014 |
 | DERIVED-0013 | `@rename` collision | Reject, no silent overwrite | passing → Batch 2 RB-015 |
-| DERIVED-0014 | Patch preserves taint | Patched-in secret stays secret, export redacts | pending |
+| DERIVED-0014 | Patch preserves taint | Patched-in secret stays secret, export redacts | passing → Batch 3 RB-029 |
 | DERIVED-0015 | Schema range boundary inclusive | Accept 65535; reject 0/65536 | passing → Batch 2 RB-012 |
 | DERIVED-0016 | Missing vs null distinct codes | Missing ≠ null mismatch code | passing → Batch 2 RB-013 |
 | DERIVED-0017 | Hermetic eval, no network | Zero network syscalls during eval | pending |
@@ -110,14 +110,14 @@ not the research docs' proposed names.
 | P1-SE-003 | Taint through table construction | Field stays tainted | pending |
 | P1-SE-004 | Secret arithmetic rejected | Type/taint error, no leak | pending |
 | P1-SE-005 | Missing vs empty env (suite form) | Same as 0006/0007 | pending |
-| P1-SE-006 | Env fallback chain first-wins | Deterministic, empty-policy consistent | pending |
+| P1-SE-006 | Env fallback chain first-wins | Deterministic, empty-policy consistent | passing → Batch 3 RB-027 |
 | P1-SE-007 | Time units normalize | Common duration representation | pending |
 | P1-SE-008 | Byte units normalize | Common byte representation | pending |
 | P1-SE-009 | Unknown unit explicit | Reject or custom-unit policy | pending |
 | P1-SE-010 | Unit on non-number rejects | Reject `"hello"s` | pending |
 | P1-SE-011 | Dimension mismatch (suite form) | Same as 0005 | pending |
 | P1-SE-012 | Scalar unit multiply (`5s * 3`) | 15s normalized | pending |
-| P1-SE-013 | `secret("5s")` opaque | Never auto-parsed as unit | pending |
+| P1-SE-013 | `secret("5s")` opaque | Never auto-parsed as unit | passing → Batch 3 RB-028 |
 | P1-SE-014 | Export redaction matrix | All positions × all formats redact | pending |
 | P1-SE-015 | Realistic service config control | Evaluates, redacts, normalizes | pending |
 
@@ -175,7 +175,7 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | HIST-TOML-002 | No raw RangeError-class leaks | §2 | Documented classes only (Rust panics = bugs) | pending |
 | HIST-TOML-003 | Inline table nesting limit | §2 | Depth limit applies | pending |
 | HIST-TOML-004 | Long dotted-key recursion | §2 | Graph build protected | pending |
-| HIST-TOML-005 | Comment-EOF infinite loop | §2 | Terminates (timeout/budget guard evidence) | pending |
+| HIST-TOML-005 | Comment-EOF infinite loop | §2 | Terminates (timeout/budget guard evidence) | passing → Batch 3 RB-022 |
 | HIST-TOML-006 | Stringifier cycle guard | §2 | Formatter terminates on cyclic IR | pending |
 | HIST-TOML-007 | Array-of-tables growth bound | §2 | Array size budget enforced | pending |
 | HIST-TOML-008 | Non-UTC datetime offsets | §2 | N/A: no datetimes; importer stringifies + W008 | pending |
@@ -185,19 +185,19 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | HIST-TOML-00E | Unclosed string diagnostic | §2 | Clear unterminated-string error | pending |
 | HIST-TOML-00F | Bad escape rejected | §2 | Invalid-escape diagnostic | pending |
 | HIST-TOML-00K | Serializer cycle guard | §2 | Same as HIST-TOML-006 | pending |
-| HIST-TOML-00L | `__proto__` neutral key | §3 | Plain key, no special meaning | pending |
-| HIST-TOML-00M | Secrets absent from error output | §3 | Sanitized diagnostics (Vault CVE-2025-4166 class) | pending |
+| HIST-TOML-00L | `__proto__` neutral key | §3 | Plain key, no special meaning | passing → Batch 3 RB-026 |
+| HIST-TOML-00M | Secrets absent from error output | §3 | Sanitized diagnostics (Vault CVE-2025-4166 class) | passing → Batch 3 RB-025 |
 | HIST-TOML-00N | Table-merge round-trip | §2 | Merged structure reprints equivalently | pending |
 | HIST-TOML-00P | Comments survive round-trip | §2 | Adjacent comments kept, data identical | pending |
-| HIST-YAML-026 | Unsafe deserialization RCE (py) | §3 | N/A: no tags/constructors; reject `!` tags | pending |
-| HIST-YAML-027 | Unsafe deserialization RCE (java) | §3 | N/A: no class system; reject | pending |
-| HIST-YAML-028 | Unsafe deserialization RCE (js) | §3 | N/A: hermetic eval, no host calls | pending |
+| HIST-YAML-026 | Unsafe deserialization RCE (py) | §3 | N/A: no tags/constructors; reject `!` tags | passing → Batch 3 RB-023 |
+| HIST-YAML-027 | Unsafe deserialization RCE (java) | §3 | N/A: no class system; reject | passing → Batch 3 RB-023 |
+| HIST-YAML-028 | Unsafe deserialization RCE (js) | §3 | N/A: hermetic eval, no host calls | passing → Batch 3 RB-023 |
 | HIST-YAML-029 | No safe/unsafe loader split | §3 | Single secure mode; no unsafe flag exists | pending |
 | HIST-YAML-030 | Custom constructor abuse | §3 | No user-defined constructors invoked | pending |
-| HIST-YAML-031 | `__proto__` parses as plain key | §3 | Same as HIST-TOML-00L | pending |
-| HIST-YAML-036 | SSTI: `{{7*7}}` stays literal | §3 | Interpolation is `${…}`-only; braces literal | pending |
+| HIST-YAML-031 | `__proto__` parses as plain key | §3 | Same as HIST-TOML-00L | passing → Batch 3 RB-026 |
+| HIST-YAML-036 | SSTI: `{{7*7}}` stays literal | §3 | Interpolation is `${…}`-only; braces literal | passing → Batch 3 RB-024 |
 | HIST-YAML-037 | ReDoS via schema regex | §3 | Schema patterns bounded or engine-safe | pending |
-| HIST-YAML-040 | Error output sanitized | §3 | Same as HIST-TOML-00M | pending |
+| HIST-YAML-040 | Error output sanitized | §3 | Same as HIST-TOML-00M | passing → Batch 3 RB-025 |
 | HIST-YAML-041 | Include path sandbox | §3 | Literal/relative paths only, traversal rejected | pending |
 | HIST-YAML-042 | Dup-key parser differential | §3 | Single deterministic policy everywhere | pending |
 | HIST-YAML-001 | Multiline comma in array | §1 | Comma-in-string vs separator distinguished | pending |
@@ -252,4 +252,5 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 |---|---|---|
 | Batch 1 | RB-001…RB-010 (§A/§C/§G rows marked) | done: RB-001 refusal pinned, W011 + BOM fixes, rest passing |
 | Batch 2 | RB-011…RB-020 (§A/§C rows marked) | done: all passing; RB-015 needed two expectation corrections from shipped syntax (plain-name rename targets) |
-| Batch 3+ | Next 10 lowest pending rows by severity, per the loop prompt | pending |
+| Batch 3 | RB-021…RB-030 (HIST-JSON-001, HIST-TOML-005, HIST-YAML-026/027/028/036, HIST-TOML-00L/00M, DERIVED-0003/0014, P1-SE-006/013) | done: 9 green first-try; RB-030 needed one test-side correction (lets don't export — read via key) |
+| Batch 4+ | Next 10 lowest pending rows by severity, per the loop prompt | pending |

@@ -29807,3 +29807,219 @@ fn rb_1348_syn115_empty_key_rejects() {
     let codes = codes_of("case_0115_06 = { a = 1 }\n");
     assert!(codes.is_empty(), "{codes:?}");
 }
+
+/// RB-1349 — Unquoted-key variant: clean one-field map accepts (SYN-0115-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0020 (nst JSONTestSuite
+/// n_object_unquoted_key).
+/// `case_0115_07 = { a = 1 }` is the positive control of the lineage: one
+/// bare key, one value, no diagnostics. Completes the 115 convergence opened
+/// at RB-1343 (quoted/keyless/trailing/dup/empty edges all pinned).
+#[test]
+fn rb_1349_syn115_clean_table_accepts() {
+    let src = "case_0115_07 = { a = 1 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0115_07"]["a"], 1, "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the block-form twin means the same silently.
+    let v = eval_json("[case_0115_07]\na = 1\n");
+    assert_eq!(v["case_0115_07"]["a"], 1, "{v}");
+    let codes = codes_of("[case_0115_07]\na = 1\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1350 — Unquoted-key variant: nested map accepts (SYN-0115-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0020 (nst JSONTestSuite
+/// n_object_unquoted_key).
+/// `case_0115_08 = { a = { b = 1 } }` accepts silently — the brace stack
+/// closes at the correct levels and the nested value survives the JSON
+/// export intact.
+#[test]
+fn rb_1350_syn115_nested_table_accepts() {
+    let src = "case_0115_08 = { a = { b = 1 } }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0115_08"]["a"]["b"], 1, "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the flat neighbour evaluates identically at depth 1.
+    let v = eval_json("case_0115_08 = { b = 1 }\n");
+    assert_eq!(v["case_0115_08"]["b"], 1, "{v}");
+}
+
+/// RB-1351 — Unquoted-key variant: trailing comment is inert (SYN-0115-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0020 (nst JSONTestSuite
+/// n_object_unquoted_key).
+/// `case_0115_09 = { a = 1, b = 2 } # trailing comment` accepts silently —
+/// comment handling never touches member separators or values.
+#[test]
+fn rb_1351_syn115_trailing_comment_inert() {
+    let src = "case_0115_09 = { a = 1, b = 2 } # trailing comment\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0115_09"]["a"], 1, "{v}");
+    assert_eq!(v["case_0115_09"]["b"], 2, "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: a leading full-line comment is equally inert.
+    let v = eval_json("# leading comment\ncase_0115_09 = { a = 1, b = 2 }\n");
+    assert_eq!(v["case_0115_09"]["b"], 2, "{v}");
+    let codes = codes_of("# leading comment\ncase_0115_09 = { a = 1, b = 2 }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1352 — Incomplete-escape variant: dangling backslash heals, never terminates (SYN-0116-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_incomplete_escape).
+/// `case_0116_01 = "dangling\"` carries `\"`, which the specified escape
+/// table resolves to a literal quote (spec/grammar.md:62-64) — so the string
+/// is unterminated, NOT terminated by the backslash. The locked H001 policy
+/// (spec/grammar.md:68-70, RB-049) heals it with an Info repair at (1:16);
+/// the catalogue assertion holds because the backslash never acts as a
+/// literal terminator: the value keeps the escaped quote and the trailing
+/// newline the §1.4 char class preserves.
+#[test]
+fn rb_1352_syn116_dangling_backslash_heals() {
+    let src = "case_0116_01 = \"dangling\\\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0116_01"], "dangling\"\n", "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H001").expect("H001");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H001 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: a closed string needs no heal and keeps its value.
+    let v = eval_json("case_0116_01 = \"done\"\n");
+    assert_eq!(v["case_0116_01"], "done", "{v}");
+    let codes = codes_of("case_0116_01 = \"done\"\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1353 — Incomplete-escape variant: lone-surrogate escape stays verbatim (SYN-0116-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_incomplete_escape).
+/// REFUSAL (spec-gated, spec/grammar.md:62-66, RB-050): Active never adopted
+/// UTF-16 `\u` decoding, so the catalogue's "reject: lone-surrogate" can
+/// only apply if escapes decoded. `"\uD800"` keeps its exact six source
+/// characters silently — no surrogate hazard can exist where no decoding
+/// happens, and explicitness forbids guessing a scalar the author never wrote.
+#[test]
+fn rb_1353_syn116_lone_surrogate_verbatim() {
+    let src = "case_0116_02 = \"\\uD800\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0116_02"], "\\uD800", "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: a plain ASCII string is exact and silent too.
+    let v = eval_json("case_0116_02 = \"plain\"\n");
+    assert_eq!(v["case_0116_02"], "plain", "{v}");
+}
+
+/// RB-1354 — Incomplete-escape variant: scalar `\u` escape never decodes (SYN-0116-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_incomplete_escape).
+/// REFUSAL (spec-gated, spec/grammar.md:62-66, RB-050): the catalogue wants
+/// `"\u0061"` to decode to "a", but unknown escapes keep the backslash in
+/// Active. The value stays the exact six characters `\u0061`, silently.
+/// Decoding would be the silent coercion the north star forbids; the
+/// explicit spelling of "a" is the quoted letter itself.
+#[test]
+fn rb_1354_syn116_scalar_escape_never_decodes() {
+    let src = "case_0116_03 = \"\\u0061\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0116_03"], "\\u0061", "{v}");
+    assert_ne!(v["case_0116_03"], "a", "must NOT decode to a: {v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the literal letter evaluates to itself.
+    let v = eval_json("case_0116_03 = \"a\"\n");
+    assert_eq!(v["case_0116_03"], "a", "{v}");
+}
+
+/// RB-1355 — Incomplete-escape variant: `\n` decodes to one LF (SYN-0116-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_incomplete_escape).
+/// `case_0116_04 = "line1\nline2"` accepts silently with exactly one LF in
+/// the value (spec/grammar.md:62-64: `\n` → LF is in the specified table).
+/// The escaped newline never splits the parse stream: one key, one string.
+#[test]
+fn rb_1355_syn116_escaped_newline_decodes() {
+    let src = "case_0116_04 = \"line1\\nline2\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0116_04"], "line1\nline2", "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the sibling specified escape `\t` decodes to TAB.
+    let v = eval_json("case_0116_04 = \"a\\tb\"\n");
+    assert_eq!(v["case_0116_04"], "a\tb", "{v}");
+}
+
+/// RB-1356 — Incomplete-escape variant: raw newline inside quotes is kept (SYN-0116-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_incomplete_escape).
+/// REFUSAL (spec-gated, spec/grammar.md:58-62, RB-175): the catalogue wants
+/// rejection unless multiline strings are specified, but the §1.4 char class
+/// (`any-but-quote`) never excludes newline, so a raw LF is deterministic
+/// content, not a guess. The value keeps the exact newline silently — and it
+/// agrees character-for-character with the `\n` twin (RB-1355).
+#[test]
+fn rb_1356_syn116_raw_newline_kept() {
+    let src = "case_0116_05 = \"line1\nline2\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0116_05"], "line1\nline2", "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Twin convergence: raw LF and escaped `\n` spell the same value.
+    let twin = eval_json("case_0116_05 = \"line1\\nline2\"\n");
+    assert_eq!(v["case_0116_05"], twin["case_0116_05"], "{v} vs {twin}");
+}
+
+/// RB-1357 — Incomplete-escape variant: `\x` escape stays verbatim (SYN-0116-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_incomplete_escape).
+/// REFUSAL (spec-gated, spec/grammar.md:62-66, RB-050): the catalogue wants
+/// rejection unless `\x` escapes are specified. Active goes further than
+/// silent acceptance — it refuses the whole JSON/TOML/YAML escape union and
+/// keeps the exact four characters `\x41` with no diagnostics. No accidental
+/// hex decoding is possible where the table names no `\x` production.
+#[test]
+fn rb_1357_syn116_hex_escape_verbatim() {
+    let src = "case_0116_06 = \"\\x41\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0116_06"], "\\x41", "{v}");
+    assert_ne!(v["case_0116_06"], "A", "must NOT decode to A: {v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the explicit letter is the way to spell "A".
+    let v = eval_json("case_0116_06 = \"A\"\n");
+    assert_eq!(v["case_0116_06"], "A", "{v}");
+}
+
+/// RB-1358 — Incomplete-escape variant: supplementary-plane and combining marks exact (SYN-0116-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_incomplete_escape).
+/// `case_0116_07` holds U+1F600 + `e` + U+0301 and accepts silently with the
+/// exact scalar sequence: three scalar values, seven UTF-8 bytes, no
+/// normalization. The precomposed U+00E9 neighbour stays a DIFFERENT value —
+/// Active never normalizes strings into equality the author did not write.
+#[test]
+fn rb_1358_syn116_emoji_combining_exact() {
+    let src = "case_0116_07 = \"\u{1F600}e\u{301}\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0116_07"], "\u{1F600}e\u{301}", "{v}");
+    assert_eq!(
+        v["case_0116_07"].as_str().expect("string").chars().count(),
+        3,
+        "{v}"
+    );
+    assert_eq!(v["case_0116_07"].as_str().expect("string").len(), 7, "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: precomposed U+00E9 is a different value (no NFC).
+    let pre = eval_json("case_0116_07 = \"\u{e9}\"\n");
+    assert_ne!(v["case_0116_07"], pre["case_0116_07"], "{v} vs {pre}");
+}

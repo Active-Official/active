@@ -3879,3 +3879,179 @@ fn rb_218_double_sign_rejects() {
     // Positive control: the single-signed neighbour evaluates.
     assert_eq!(eval_json("value = -1\n")["value"], -1);
 }
+
+/// RB-219 — Upstream `incomplete-hex` analogue (SRC-TOML-0070 §H, HIGH).
+/// Origin: toml-test `invalid/integer/incomplete-hex.toml`.
+/// No hex grammar exists (RB-217), so a bare `0x` prefix cannot open
+/// a number either: E002 at the stray identifier.
+#[test]
+fn rb_219_incomplete_hex_rejects() {
+    let src = "value = 0x\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 10), "{span:?}");
+    // Positive control: the plain zero evaluates.
+    assert_eq!(eval_json("value = 0\n")["value"], 0);
+}
+
+/// RB-220 — Upstream `invalid-bin` analogue (SRC-TOML-0071 §H, HIGH).
+/// Origin: toml-test `invalid/integer/invalid-bin.toml`.
+/// No binary grammar exists either: `0` then stray `b102` → E002.
+/// Out-of-base digits cannot occur where no base lexes.
+#[test]
+fn rb_220_invalid_bin_rejects() {
+    let src = "value = 0b102\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 10), "{span:?}");
+}
+
+/// RB-221 — Upstream `leading-us` analogue (SRC-TOML-0072 §H, HIGH).
+/// Origin: toml-test `invalid/integer/leading-us.toml`.
+/// REFUSAL (spec-gated): a leading `_` makes the token an identifier
+/// (ident-start includes `_`), not a number — and bare words resolve
+/// W001 + null under locked policy (RB-103/RB-120), never a number,
+/// never a crash. No silent numeric coercion is possible.
+#[test]
+fn rb_221_leading_separator_is_identifier() {
+    let v = eval_json("value = _123\n");
+    assert!(v["value"].is_null(), "{v}");
+    let codes = codes_of("value = _123\n");
+    assert!(
+        codes.iter().any(|c| c == "W001"),
+        "W001 expected, got {codes:?}"
+    );
+    // Positive control: the separator-free number evaluates.
+    assert_eq!(eval_json("value = 123\n")["value"], 123);
+}
+
+/// RB-222 — Upstream `leading-zero-01` analogue (SRC-TOML-0073 §H, HIGH).
+/// Origin: toml-test `invalid/integer/leading-zero-01.toml`.
+/// REFUSAL (spec-gated): leading zeros are plain decimals (RB-104) —
+/// `01` is exactly 1, loudly not octal, loudly not rejected.
+#[test]
+fn rb_222_leading_zero_is_decimal() {
+    let v = eval_json("value = 01\n");
+    assert_eq!(v["value"], 1);
+    assert!(v["value"].is_i64());
+    // Positive control: the zero-free neighbour agrees.
+    assert_eq!(eval_json("value = 1\n")["value"], 1);
+}
+
+/// RB-223 — Upstream `negative-hex` analogue (SRC-TOML-0074 §H, HIGH).
+/// Origin: toml-test `invalid/integer/negative-hex.toml`.
+/// Signed base-prefixed numbers are not specified (no hex in the
+/// alpha, grammar §1.1): E002 at the stray identifier.
+#[test]
+fn rb_223_negative_hex_rejects() {
+    let src = "value = -0xFF\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 11), "{span:?}");
+    // Positive control: signed decimals evaluate.
+    assert_eq!(eval_json("value = -255\n")["value"], -255);
+}
+
+/// RB-224 — Upstream `trailing-us` analogue (SRC-TOML-0075 §H, HIGH).
+/// Origin: toml-test `invalid/integer/trailing-us.toml`.
+/// REFUSAL (spec-gated): same strip rule as RB-209 — `123_` is
+/// exactly 123, deterministic, no diagnostics.
+#[test]
+fn rb_224_trailing_separator_strips_multi() {
+    let v = eval_json("value = 123_\n");
+    assert_eq!(v["value"], 123);
+    assert!(v["value"].is_i64());
+    let codes = codes_of("value = 123_\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-225 — Upstream `us-after-bin` analogue (SRC-TOML-0076 §H, HIGH).
+/// Origin: toml-test `invalid/integer/us-after-bin.toml`.
+/// No separator can touch a base prefix that does not exist: E002.
+#[test]
+fn rb_225_separator_after_bin_rejects() {
+    let src = "value = 0b_1\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 10), "{span:?}");
+}
+
+/// RB-226 — Upstream `after-array` analogue (SRC-TOML-0077 §H, HIGH).
+/// Origin: toml-test `invalid/key/after-array.toml`.
+/// REFUSAL (spec-gated): redefinition across types warns W011 and
+/// keeps last-wins (RB-002) — key ownership is consistent: exactly
+/// one binding survives, announced with span.
+#[test]
+fn rb_226_redefinition_across_types_last_wins() {
+    let src = "value = [1]\nvalue = 2\n";
+    assert_eq!(eval_json(src)["value"], 2);
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: distinct keys coexist.
+    let v = eval_json("a = [1]\nb = 2\n");
+    assert_eq!(v["a"], serde_json::json!([1]));
+    assert_eq!(v["b"], 2);
+}
+
+/// RB-227 — Upstream `bare-invalid-character-01` analogue (SRC-TOML-0078 §H, HIGH).
+/// Origin: toml-test `invalid/key/bare-invalid-character-01.toml`.
+/// Bare keys are identifiers only: `/` cannot appear — E002 at the
+/// statement, nothing half-bound.
+#[test]
+fn rb_227_slash_in_key_rejects() {
+    let src = "bad/key = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 1), "{span:?}");
+    // Positive control: the underscore neighbour is a valid key.
+    assert_eq!(eval_json("bad_key = 1\n")["bad_key"], 1);
+}
+
+/// RB-228 — Upstream `dotted-redefine-table-01` analogue (SRC-TOML-0079 §H, HIGH).
+/// Origin: toml-test `invalid/key/dotted-redefine-table-01.toml`.
+/// REFUSAL (spec-gated): quoted keys never enter the tree — they
+/// reject loud E002 (RB-051/RB-052: "keys must be identifiers") — so
+/// a quoted `"a.b"` can never collide with path `a.b`. The explicit
+/// path/key equality policy is: quoted keys do not exist as keys.
+#[test]
+fn rb_228_quoted_dotted_key_rejects() {
+    let src = "value = { a = { b = 1 }, \"a.b\" = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    // Positive control: the unquoted nested form evaluates.
+    assert_eq!(
+        eval_json("value = { a = { b = 1 } }\n")["value"]["a"]["b"],
+        1
+    );
+}

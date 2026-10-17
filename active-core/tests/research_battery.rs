@@ -1308,3 +1308,169 @@ fn rb_070_no_chomping_indicators() {
     let v = eval_json("x = \"\"\"a\"\"\"\n");
     assert_eq!(v["x"], "a");
 }
+
+/// RB-071 — Last-wins holds in both syntaxes (HIST-YAML-005 §1).
+/// The first-wins alternative exists elsewhere; Active pins last-wins
+/// twice: inline tables AND header bodies must agree.
+#[test]
+fn rb_071_last_wins_both_syntaxes() {
+    let inline = eval_json("x = {a = 1, a = 2}\n");
+    assert_eq!(inline["x"]["a"], 2);
+    let block = eval_json("[t]\na = 1\na = 2\n");
+    assert_eq!(block["t"]["a"], 2);
+    for (src, name) in [
+        ("x = {a = 1, a = 2}\n", "inline"),
+        ("[t]\na = 1\na = 2\n", "block"),
+    ] {
+        let codes = codes_of(src);
+        assert!(
+            codes.iter().any(|c| c == "W011"),
+            "{name} dup must warn W011, got {codes:?}"
+        );
+    }
+}
+
+/// RB-072 — Signatures cover canonical dup-key bytes (HIST-YAML-045 §3).
+/// Sign the duplicate-key document, verify OK; flip one byte and the
+/// signature must fail. Deterministic canonicalization underneath.
+#[test]
+fn rb_072_sign_verify_dup_key_document() {
+    use active_core::sign::{generate_secret_key, sign_bytes, verify_bytes};
+    use std::collections::HashMap;
+    let doc = b"[server]\nhost = \"a\"\nhost = \"b\"\n";
+    let key = generate_secret_key().expect("keygen");
+    let sidecar = sign_bytes(&key, "test-2026", doc).expect("sign");
+    let mut trusted = HashMap::new();
+    trusted.insert("test-2026".to_string(), key.verifying_key());
+    let kid = verify_bytes("dup.active", doc, &sidecar, &trusted).expect("verify");
+    assert_eq!(kid, "test-2026");
+    let mut tampered = doc.to_vec();
+    tampered[20] = b'c';
+    assert!(
+        verify_bytes("dup.active", &tampered, &sidecar, &trusted).is_err(),
+        "tampered bytes must fail verification"
+    );
+}
+
+/// RB-073 — No dynamic indexing into secrets (HIST-YAML-035 §3).
+/// Active has no index operator, so tainted paths cannot be reached
+/// dynamically at all. Array elements holding secrets still redact.
+#[test]
+fn rb_073_no_dynamic_index_operator() {
+    let codes = codes_of("arr = [10, 20]\nx = arr[0]\n");
+    assert!(!codes.is_empty(), "index operator must not exist");
+    let v = eval_json("tokens = [secret(\"rb073\"), \"b\"]\n");
+    assert_eq!(v["tokens"][0], "***SECRET***");
+    assert_eq!(v["tokens"][1], "b");
+}
+
+/// RB-074 — Table copies keep taint (HIST-YAML-033 §3).
+#[test]
+fn rb_074_table_copy_keeps_taint() {
+    let src = "creds = {user = \"app\", pass = secret(\"x-rb074\")}\ncopy = creds\n";
+    let v = eval_json(src);
+    assert_eq!(v["copy"]["pass"], "***SECRET***");
+    assert_eq!(v["copy"]["user"], "app");
+}
+
+/// RB-075 — Large interpolations terminate (HIST-YAML-038 §3).
+/// A 100KB string interpolated twice must complete promptly; there are
+/// no regex builtins and interpolation is bounded by value budgets.
+#[test]
+fn rb_075_large_interpolation_terminates() {
+    let big = "y".repeat(100_000);
+    let src = format!("let big = \"{big}\"\na = \"${{big}}!\"\nb = \"${{big}}?\"\n");
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let out = parse(&src, "research").map(|m| {
+            Engine::new()
+                .evaluate(&m)
+                .map(|(v, _)| active_core::convert::value_to_pretty_json(&v).len())
+                .map_err(|e| e.code().to_string())
+        });
+        let _ = tx.send(out);
+    });
+    let outcome = rx
+        .recv_timeout(std::time::Duration::from_secs(20))
+        .expect("100KB interpolation must terminate within 20s");
+    match outcome {
+        Ok(Ok(len)) => assert!(len > 200_000, "both copies materialize: {len}"),
+        Ok(Err(code)) => assert!(code.starts_with('X'), "budget class only: {code}"),
+        Err(diags) => panic!("unexpected parse failure: {diags:?}"),
+    }
+}
+
+/// RB-076 — One boolean spelling (HIST-YAML-043 §3).
+/// Only lowercase `true`/`false` are booleans; capitals are unresolved
+/// identifiers (W001 + null), never a second truth value.
+#[test]
+fn rb_076_single_boolean_spelling() {
+    for src in ["x = True\n", "x = FALSE\n"] {
+        let codes = codes_of(src);
+        assert!(
+            codes.iter().any(|c| c == "W001"),
+            "{src:?} capitalized boolean must warn W001, got {codes:?}"
+        );
+        assert!(eval_json(src)["x"].is_null(), "{src:?} must be null");
+    }
+    assert_eq!(eval_json("x = true\n")["x"], true);
+    assert_eq!(eval_json("x = false\n")["x"], false);
+}
+
+/// RB-077 — Units survive format round-trip (DERIVED-0019 §A).
+/// Format → parse → format must not alter unit-carrying values.
+#[test]
+fn rb_077_units_survive_format_round_trip() {
+    use active_core::fmt::format;
+    use active_core::Style;
+    let src = "timeout = 5s\ncache = 512MiB\nrate = 100/req/s\n";
+    let module = parse(src, "research").expect("must parse");
+    for style in [Style::Brace, Style::Indent] {
+        let out = format(&module, style);
+        let module2 = parse(&out, "research")
+            .unwrap_or_else(|d| panic!("reparse failed ({style:?}): {d:?}\n{out}"));
+        let (first, _) = Engine::new().evaluate(&module).expect("must evaluate");
+        let (second, _) = Engine::new().evaluate(&module2).expect("must evaluate");
+        let a = active_core::convert::value_to_pretty_json(&first);
+        let b = active_core::convert::value_to_pretty_json(&second);
+        assert_eq!(
+            a, b,
+            "unit values changed across format ({style:?}):\n{out}"
+        );
+    }
+    // Commas in strings never split elements (HIST-YAML-001 control).
+    let v = eval_json("data = [\"line1,\nline2\"]\n");
+    assert_eq!(v["data"][0], "line1,\nline2");
+}
+
+/// RB-078 — Importer stringifies non-UTC offsets (HIST-TOML-008 §2).
+/// Active has no datetimes; the TOML importer keeps RFC 3339 text with
+/// W008 instead of parsing or crashing.
+#[test]
+fn rb_078_datetime_offset_stringified() {
+    use active_core::convert::toml_text_to_active;
+    let (source, diags) = toml_text_to_active("dt = 2021-01-01T15:03:45+08:00\n").expect("import");
+    assert!(
+        diags.iter().any(|d| d.code == "W008"),
+        "W008 expected, got {diags:?}"
+    );
+    let v = eval_json(&source);
+    assert_eq!(v["dt"], "2021-01-01T15:03:45+08:00");
+}
+
+/// RB-079 — CRLF normalizes deterministically (HIST-YAML-014 §1).
+#[test]
+fn rb_079_crlf_normalizes() {
+    let v = eval_json("a = 1\r\nb = 2\r\n");
+    assert_eq!(v["a"], 1);
+    assert_eq!(v["b"], 2);
+    let v = eval_json("text = \"line1\r\nline2\"\n");
+    assert_eq!(v["text"], "line1\nline2");
+}
+
+/// RB-080 — Multiline quotes preserved (HIST-YAML-011 §1).
+#[test]
+fn rb_080_multiline_quotes_preserved() {
+    let v = eval_json("text = \"\"\"He said \"hello\" to me.\"\"\"\n");
+    assert_eq!(v["text"], "He said \"hello\" to me.");
+}

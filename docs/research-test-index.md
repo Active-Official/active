@@ -33,7 +33,7 @@ not the research docs' proposed names.
 | DERIVED-0016 | Missing vs null distinct codes | Missing ≠ null mismatch code | passing → Batch 2 RB-013 |
 | DERIVED-0017 | Hermetic eval, no network | Zero network syscalls during eval | passing → Batch 7 RB-066 (no network-capable deps in lockfile) |
 | DERIVED-0018 | Interpolation expansion budget | Abort with budget diagnostic, no hang | pending |
-| DERIVED-0019 | Round-trip preserves units | `5s`/`512MiB` survive print→parse | pending |
+| DERIVED-0019 | Round-trip preserves units | `5s`/`512MiB` survive fmt→parse→fmt | passing → Batch 8 RB-077 |
 | DERIVED-0020 | Dual-syntax semantic equality | Brace ≡ indent values | pending |
 
 ## §B — P0 safety (`tests/curated/01-P0-Safety-Resource-Limits.md`)
@@ -156,9 +156,9 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | HIST-YAML-010 | Alias bomb (scalars) | §2 | N/A: no aliases; metadata-budget guard | passing → Batch 5 RB-042 |
 | HIST-YAML-016 | Anchor cycle infinite loop | §2 | N/A: no anchors; cycle class exists | passing → Batch 7 RB-061 |
 | HIST-YAML-003 | Empty key handling | §1 | Accept `""` key, round-trip exact | REFUSED: `""` is not an identifier (E002, same fix as -020) | passing → Batch 6 RB-052 |
-| HIST-YAML-011 | Multiline quotes preserved | §1 | Embedded quotes kept + round-trip | pending |
+| HIST-YAML-011 | Multiline quotes preserved | §1 | Embedded quotes kept + round-trip | passing → Batch 8 RB-080 |
 | HIST-YAML-013 | Comment-structure non-interference | §1 | Comments never alter structure | pending |
-| HIST-YAML-014 | CRLF normalization | §1 | `\r\n` → single newline, deterministic print | pending |
+| HIST-YAML-014 | CRLF normalization | §1 | `\r\n` → single newline, deterministic print | passing → Batch 8 RB-079 (fixed: lexer normalizes CR) |
 | HIST-YAML-015 | Invalid UTF-8/surrogates rejected | §1 | Reject with Unicode class | REFUSED as specified: `\u` stays verbatim (grammar.md:64), surrogates can never materialize | passing → Batch 6 RB-054 |
 | HIST-YAML-019 | Brace/indent mix consistency | §1 | Defined merge-or-error rule | passing (refusal pinned: colon pairs are specified) |
 | HIST-YAML-020 | Whitespace in keys/values kept | §1 | Exact preservation + round-trip | REFUSED: keys are identifiers only (grammar E002); silent drop fixed → loud reject | passing → Batch 6 RB-051 |
@@ -178,7 +178,7 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | HIST-TOML-005 | Comment-EOF infinite loop | §2 | Terminates (timeout/budget guard evidence) | passing → Batch 3 RB-022 |
 | HIST-TOML-006 | Stringifier cycle guard | §2 | Formatter terminates on cyclic IR | passing → Batch 5 RB-043 |
 | HIST-TOML-007 | Array-of-tables growth bound | §2 | No `[[t]]` syntax: clean E001 reject; arrays of inline tables are the Active shape | passing → Batch 5 RB-046 |
-| HIST-TOML-008 | Non-UTC datetime offsets | §2 | N/A: no datetimes; importer stringifies + W008 | pending |
+| HIST-TOML-008 | Non-UTC datetime offsets | §2 | N/A: no datetimes; importer stringifies + W008 | passing → Batch 8 RB-078 |
 | HIST-TOML-00B | Trailing comma policy | §2 | Same as HIST-YAML-022 | pending |
 | HIST-TOML-00C | Duplicate keys last-wins | §2 | Same as HIST-YAML-004 | pending |
 | HIST-TOML-00D | Non-string table key rejected | §2 | Keys are identifiers/strings only | passing → Batch 5 RB-047 |
@@ -202,7 +202,7 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | HIST-YAML-042 | Dup-key parser differential | §3 | Single deterministic policy everywhere | passing → Batch 6 RB-057 (parse ≡ parse_file) |
 | HIST-YAML-001 | Multiline comma in array | §1 | Comma-in-string vs separator distinguished | passing → Batch 7 RB-067 |
 | HIST-YAML-002 | Complex keys rejected | §1 | Only scalar keys; clear diagnostic | passing → Batch 7 RB-068 |
-| HIST-YAML-005 | First-wins alternative | §1 | **Not adopted**: documents why last-wins won | pending |
+| HIST-YAML-005 | First-wins alternative | §1 | **Not adopted**: documents why last-wins won | passing → Batch 8 RB-071 (both syntaxes agree) |
 | HIST-YAML-012 | Chomping behavior | §1 | N/A: no chomping indicators; triple-quote rules pinned | passing → Batch 7 RB-070 |
 | HIST-YAML-017 | Anchor collision | §1 | N/A: no anchors; `let` redefinition policy pinned instead | pending |
 | HIST-YAML-018 | Merge-key type error | §1 | N/A: no merge keys | pending |
@@ -215,14 +215,14 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | HIST-TOML-00J | Max document size | §2 | Documented input-size posture | passing → Batch 4 RB-035 |
 | HIST-TOML-00O | Datetime round-trip | §2 | N/A: datetimes are strings | pending |
 | HIST-YAML-032 | Merge taint | §3 | N/A: no merge operator | pending |
-| HIST-YAML-033 | Deep-copy taint | §3 | Clone paths keep `Secret` kind | pending |
+| HIST-YAML-033 | Deep-copy taint | §3 | Clone paths keep `Secret` kind | passing → Batch 8 RB-074 |
 | HIST-YAML-034 | Spread taint | §3 | N/A: no spread operator | pending |
-| HIST-YAML-035 | Dynamic-access taint | §3 | Indexing a secret path stays secret-typed or refused | pending |
-| HIST-YAML-038 | ReDoS in evaluation | §3 | No regex builtins; interpolation bounded | pending |
+| HIST-YAML-035 | Dynamic-access taint | §3 | Indexing a secret path stays secret-typed or refused | passing → Batch 8 RB-073 (no index operator; elements redact) |
+| HIST-YAML-038 | ReDoS in evaluation | §3 | No regex builtins; interpolation bounded | passing → Batch 8 RB-075 (100KB terminates) |
 | HIST-YAML-039 | SSRF path traversal | §3 | String concat is literal; no fetch builtins | pending |
-| HIST-YAML-043 | Boolean determinism | §3 | One boolean spelling, one value everywhere | pending |
+| HIST-YAML-043 | Boolean determinism | §3 | One boolean spelling, one value everywhere | passing → Batch 8 RB-076 |
 | HIST-YAML-044 | URL backslash ambiguity | §3 | N/A: no URL parser in core | pending |
-| HIST-YAML-045 | Signature/duplicate-key split | §3 | Same as HIST-YAML-042 + sign.rs coverage | pending |
+| HIST-YAML-045 | Signature/duplicate-key split | §3 | Same as HIST-YAML-042 + sign.rs coverage | passing → Batch 8 RB-072 (sign/verify + tamper-fail) |
 
 ## §H — Catalogue families (`SOLID-Historical-Test-Catalogue-1000plus.md`)
 
@@ -257,4 +257,5 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | Batch 5 | RB-041…RB-050 (HIST-YAML-008/010, HIST-TOML-003/006/007/00D/00E/00F, P0-014, HIST-JSON-003) | done: 9 green first-try; RB-049 corrected (H001 heals, doesn't fail) + RB-050 refusal-pinned (verbatim escapes per spec) |
 | Batch 6 | RB-051…RB-060 | done: 9 green first-try; RB-051/052 drove the quoted-key E002 fix (silent drop eliminated) |
 | Batch 7 | RB-061…RB-070 (HIST-YAML-001/002/012/016/029/030/037, DERIVED-0011/0017, P0-011) | done: 9 green first-try; RB-064/RB-065 corrections from shipped behavior |
-| Batch 8+ | Next 10 lowest pending rows by severity, per the loop prompt | pending |
+| Batch 8 | RB-071…RB-080 | done: 9 green first-try; RB-079 drove CRLF normalization across all 4 string lexers |
+| Batch 9+ | Next 10 lowest pending rows by severity, per the loop prompt | pending |

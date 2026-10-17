@@ -14,7 +14,9 @@ Spec-before-code rule: when the grammar changes, this file changes first.
 ### 1.0 Input text
 
 Source text is UTF-8. A single leading byte-order mark (U+FEFF) is skipped
-before lexing and never becomes a token (research HIST-YAML-021).
+before lexing and never becomes a token (research HIST-YAML-021). Inside
+string literals, `\r\n` contributes one newline and a lone `\r` becomes LF
+(research HIST-YAML-014); explicit `\r` escapes still decode to CR.
 
 ### 1.1 Character classes
 

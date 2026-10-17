@@ -301,6 +301,15 @@ impl Lexer {
                 self.bump();
                 self.bump();
                 return (s, true, pos);
+            } else if ch == '\r' {
+                // Same CRLF normalization as single-line strings.
+                if self.peek_ahead(1) == Some('\n') {
+                    self.bump();
+                    continue;
+                }
+                pos.push((real_off, self.col));
+                s.push('\n');
+                self.bump();
             } else {
                 if ch == '\n' {
                     pos.push((real_off, self.col));
@@ -331,6 +340,16 @@ impl Lexer {
                 self.bump();
                 self.bump();
                 return (s, true);
+            }
+            // Same CRLF normalization; fully literal otherwise.
+            if ch == '\r' {
+                if self.peek_ahead(1) == Some('\n') {
+                    self.bump();
+                    continue;
+                }
+                s.push('\n');
+                self.bump();
+                continue;
             }
             s.push(ch);
             self.bump();
@@ -769,6 +788,18 @@ impl Lexer {
                             self.bump();
                             terminated = true;
                             break;
+                        } else if ch == '\r' {
+                            // CRLF normalization (research HIST-YAML-014):
+                            // `\r\n` contributes one newline; a lone CR
+                            // becomes LF. Explicit `\r` escapes decode
+                            // elsewhere and never reach this branch.
+                            if self.peek_ahead(1) == Some('\n') {
+                                self.bump();
+                                continue;
+                            }
+                            pos.push((real_off, self.col));
+                            s.push('\n');
+                            self.bump();
                         } else {
                             if ch == '\n' {
                                 pos.push((real_off, self.col));
@@ -820,6 +851,14 @@ impl Lexer {
                             self.bump();
                             terminated = true;
                             break;
+                        } else if ch == '\r' {
+                            // Same CRLF normalization as double-quoted.
+                            if self.peek_ahead(1) == Some('\n') {
+                                self.bump();
+                                continue;
+                            }
+                            s.push('\n');
+                            self.bump();
                         } else {
                             s.push(ch);
                             self.bump();

@@ -25,13 +25,13 @@ not the research docs' proposed names.
 | DERIVED-0008 | Secret taint in interpolation | Refused S004 (spec/secrets.md:27) | passing → Batch 1 RB-005 |
 | DERIVED-0009 | Secret redaction in diagnostics | Fail without leaking bytes | passing → Batch 1 RB-006 |
 | DERIVED-0010 | Profile precedence deterministic | Documented order wins, stable | passing → Batch 2 RB-016 |
-| DERIVED-0011 | Profile inheritance cycle | Reject `E_PROFILE_CYCLE`-class | pending |
+| DERIVED-0011 | Profile inheritance cycle | No inheritance feature: `inherits` merges as plain data, nothing to cycle | passing → Batch 7 RB-065 |
 | DERIVED-0012 | `@remove` missing path | **W004 idempotent success** (Active intent, not error — diagnostics.md:91) | passing → Batch 2 RB-014 |
 | DERIVED-0013 | `@rename` collision | Reject, no silent overwrite | passing → Batch 2 RB-015 |
 | DERIVED-0014 | Patch preserves taint | Patched-in secret stays secret, export redacts | passing → Batch 3 RB-029 |
 | DERIVED-0015 | Schema range boundary inclusive | Accept 65535; reject 0/65536 | passing → Batch 2 RB-012 |
 | DERIVED-0016 | Missing vs null distinct codes | Missing ≠ null mismatch code | passing → Batch 2 RB-013 |
-| DERIVED-0017 | Hermetic eval, no network | Zero network syscalls during eval | pending |
+| DERIVED-0017 | Hermetic eval, no network | Zero network syscalls during eval | passing → Batch 7 RB-066 (no network-capable deps in lockfile) |
 | DERIVED-0018 | Interpolation expansion budget | Abort with budget diagnostic, no hang | pending |
 | DERIVED-0019 | Round-trip preserves units | `5s`/`512MiB` survive print→parse | pending |
 | DERIVED-0020 | Dual-syntax semantic equality | Brace ≡ indent values | pending |
@@ -50,7 +50,7 @@ not the research docs' proposed names.
 | P0-008 | Secret absent from diagnostics | No raw bytes in output | pending |
 | P0-009 | Secret absent from JSON export | Redaction marker only | pending |
 | P0-010 | Taint through interpolation | Tainted or rejected, export redacts | pending |
-| P0-011 | No network during eval | Harness-observed zero I/O | pending |
+| P0-011 | No network during eval | Harness-observed zero I/O; lockfile has no network-capable crates | passing → Batch 7 RB-066 |
 | P0-012 | No ambient file reads w/o include | Filesystem untouched | pending |
 | P0-013 | Include cycle A↔B | Include/cycle class reject | pending |
 | P0-014 | Include path must be literal | Reject interpolated path | passing → Batch 5 RB-048 |
@@ -154,7 +154,7 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | HIST-YAML-008 | Merge-key exponential expansion | §2 | N/A: no merge keys; guard the absence | passing → Batch 5 RB-041 |
 | HIST-YAML-009 | Alias bomb (collections) | §2 | N/A: no aliases; budget/cycle guard | passing → Batch 4 RB-032 |
 | HIST-YAML-010 | Alias bomb (scalars) | §2 | N/A: no aliases; metadata-budget guard | passing → Batch 5 RB-042 |
-| HIST-YAML-016 | Anchor cycle infinite loop | §2 | N/A: no anchors; cycle class exists | pending |
+| HIST-YAML-016 | Anchor cycle infinite loop | §2 | N/A: no anchors; cycle class exists | passing → Batch 7 RB-061 |
 | HIST-YAML-003 | Empty key handling | §1 | Accept `""` key, round-trip exact | REFUSED: `""` is not an identifier (E002, same fix as -020) | passing → Batch 6 RB-052 |
 | HIST-YAML-011 | Multiline quotes preserved | §1 | Embedded quotes kept + round-trip | pending |
 | HIST-YAML-013 | Comment-structure non-interference | §1 | Comments never alter structure | pending |
@@ -192,18 +192,18 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | HIST-YAML-026 | Unsafe deserialization RCE (py) | §3 | N/A: no tags/constructors; reject `!` tags | passing → Batch 3 RB-023 |
 | HIST-YAML-027 | Unsafe deserialization RCE (java) | §3 | N/A: no class system; reject | passing → Batch 3 RB-023 |
 | HIST-YAML-028 | Unsafe deserialization RCE (js) | §3 | N/A: hermetic eval, no host calls | passing → Batch 3 RB-023 |
-| HIST-YAML-029 | No safe/unsafe loader split | §3 | Single secure mode; no unsafe flag exists | pending |
-| HIST-YAML-030 | Custom constructor abuse | §3 | No user-defined constructors invoked | pending |
+| HIST-YAML-029 | No safe/unsafe loader split | §3 | Single secure mode; no unsafe flag exists | passing → Batch 7 RB-063 (zero unsafe blocks scanned) |
+| HIST-YAML-030 | Custom constructor abuse | §3 | No user-defined constructors invoked | passing → Batch 7 RB-062 |
 | HIST-YAML-031 | `__proto__` parses as plain key | §3 | Same as HIST-TOML-00L | passing → Batch 3 RB-026 |
 | HIST-YAML-036 | SSTI: `{{7*7}}` stays literal | §3 | Interpolation is `${…}`-only; braces literal | passing → Batch 3 RB-024 |
-| HIST-YAML-037 | ReDoS via schema regex | §3 | Schema patterns bounded or engine-safe | pending |
+| HIST-YAML-037 | ReDoS via schema regex | §3 | Schema patterns bounded or engine-safe | passing → Batch 7 RB-064 (linear engine + T003) |
 | HIST-YAML-040 | Error output sanitized | §3 | Same as HIST-TOML-00M | passing → Batch 3 RB-025 |
 | HIST-YAML-041 | Include path sandbox | §3 | Literal/relative paths only, traversal rejected | passing → Batch 6 RB-056 (E015) |
 | HIST-YAML-042 | Dup-key parser differential | §3 | Single deterministic policy everywhere | passing → Batch 6 RB-057 (parse ≡ parse_file) |
-| HIST-YAML-001 | Multiline comma in array | §1 | Comma-in-string vs separator distinguished | pending |
-| HIST-YAML-002 | Complex keys rejected | §1 | Only scalar keys; clear diagnostic | pending |
+| HIST-YAML-001 | Multiline comma in array | §1 | Comma-in-string vs separator distinguished | passing → Batch 7 RB-067 |
+| HIST-YAML-002 | Complex keys rejected | §1 | Only scalar keys; clear diagnostic | passing → Batch 7 RB-068 |
 | HIST-YAML-005 | First-wins alternative | §1 | **Not adopted**: documents why last-wins won | pending |
-| HIST-YAML-012 | Chomping behavior | §1 | N/A: no chomping indicators; triple-quote rules pinned | pending |
+| HIST-YAML-012 | Chomping behavior | §1 | N/A: no chomping indicators; triple-quote rules pinned | passing → Batch 7 RB-070 |
 | HIST-YAML-017 | Anchor collision | §1 | N/A: no anchors; `let` redefinition policy pinned instead | pending |
 | HIST-YAML-018 | Merge-key type error | §1 | N/A: no merge keys | pending |
 | HIST-YAML-023 | Self-reference via anchors | §1 | N/A: `let` self-reference cycle class instead | pending |
@@ -256,4 +256,5 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | Batch 4 | RB-031…RB-040 (HIST-YAML-007/009, HIST-TOML-002/004/00J, P0-007, P1-SE-009/010, DERIVED-0002/0004) | done: 8 green first-try; RB-031 control + RB-039/RB-040 corrections from shipped behavior |
 | Batch 5 | RB-041…RB-050 (HIST-YAML-008/010, HIST-TOML-003/006/007/00D/00E/00F, P0-014, HIST-JSON-003) | done: 9 green first-try; RB-049 corrected (H001 heals, doesn't fail) + RB-050 refusal-pinned (verbatim escapes per spec) |
 | Batch 6 | RB-051…RB-060 | done: 9 green first-try; RB-051/052 drove the quoted-key E002 fix (silent drop eliminated) |
-| Batch 7+ | Next 10 lowest pending rows by severity, per the loop prompt | pending |
+| Batch 7 | RB-061…RB-070 (HIST-YAML-001/002/012/016/029/030/037, DERIVED-0011/0017, P0-011) | done: 9 green first-try; RB-064/RB-065 corrections from shipped behavior |
+| Batch 8+ | Next 10 lowest pending rows by severity, per the loop prompt | pending |

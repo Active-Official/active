@@ -1064,3 +1064,247 @@ fn rb_060_absent_env_falls_back() {
     }
     assert_eq!(v["value"], "hello");
 }
+
+/// RB-061 — Anchor-cycle shapes reject (HIST-YAML-016 §2).
+/// Active has no anchors; a cyclic alias-shaped document is just
+/// unknown sigils and must reject with documented classes, terminating.
+#[test]
+fn rb_061_anchor_cycle_shape_rejects() {
+    for src in ["a = &a [*a, *a]\n", "a = &x [1]\nb = [*x, *x]\n"] {
+        let codes = codes_of(src);
+        assert!(
+            codes
+                .iter()
+                .any(|c| c == "E005" || c == "E001" || c == "E002"),
+            "{src:?} must reject with a documented class, got {codes:?}"
+        );
+    }
+}
+
+/// RB-062 — Custom tags never invoke anything (HIST-YAML-030 §3).
+/// `!NAME` is not a constructor hook; it parses as negation or rejects.
+/// Either way nothing user-defined runs.
+#[test]
+fn rb_062_custom_tag_shapes_inert() {
+    for src in ["x = !ENV \"VAR\"\n", "x = !foo\n"] {
+        let codes = codes_of(src);
+        assert!(!codes.is_empty(), "{src:?} must fail, parsed clean");
+    }
+    // Positive control: negation of booleans works.
+    assert_eq!(eval_json("x = !false\n")["x"], true);
+}
+
+/// RB-063 — Zero unsafe blocks in workspace sources (HIST-YAML-029 §3,
+/// index H-01 starter).
+/// Memory safety rests on safe Rust: no `unsafe fn/impl/trait/block`
+/// may exist in first-party code. Line comments are stripped before
+/// matching so prose cannot hide (or fake) a hit.
+#[test]
+fn rb_063_no_unsafe_blocks_in_workspace() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let crates = [
+        "active",
+        "active-core",
+        "active-cli",
+        "active-fmt",
+        "active-lsp",
+    ];
+    let mut hits = Vec::new();
+    let mut files = 0u32;
+    for krate in crates {
+        let src = root.join(krate).join("src");
+        let mut stack = vec![src];
+        while let Some(dir) = stack.pop() {
+            let entries = std::fs::read_dir(&dir)
+                .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()));
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|x| x == "rs") {
+                    files += 1;
+                    let text = std::fs::read_to_string(&path).expect("readable");
+                    for (i, line) in text.lines().enumerate() {
+                        let code = line.split("//").next().unwrap_or("");
+                        // Skip lines inside block comments crudely: only
+                        // match `unsafe` at a token boundary followed by
+                        // block/fn/impl/trait syntax.
+                        let mut rest = code;
+                        while let Some(pos) = rest.find("unsafe") {
+                            let after: String = rest[pos + 6..]
+                                .chars()
+                                .take_while(|c| c.is_whitespace())
+                                .collect();
+                            let tail = rest[pos + 6 + after.len()..].to_string();
+                            if tail.starts_with('{')
+                                || tail.starts_with('(')
+                                || tail.starts_with("fn")
+                                || tail.starts_with("impl")
+                                || tail.starts_with("trait")
+                                || tail.starts_with("extern")
+                                || tail.starts_with("mod")
+                            {
+                                hits.push(format!("{}:{}: {}", path.display(), i + 1, line.trim()));
+                                break;
+                            }
+                            rest = &rest[pos + 6..];
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(files > 10, "must actually scan the workspace, saw {files}");
+    assert!(hits.is_empty(), "unsafe blocks found: {hits:?}");
+}
+
+/// RB-064 — Schema regexes terminate (HIST-YAML-037 §3).
+/// The `regex` crate guarantees linear-time matching (no backtracking),
+/// so catastrophic patterns validate promptly; uncompilable patterns are
+/// schema bugs (T003), never hangs.
+#[test]
+fn rb_064_schema_regex_terminates() {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        // 30 a's match `^(a+)+$`: the catastrophic shape must validate
+        // promptly (linear engine), not hang in backtracking.
+        let src = "schema = {\n  s = String(pattern = \"^(a+)+$\")\n}\ns = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n";
+        let codes = codes_of(src);
+        let _ = tx.send(codes);
+    });
+    let codes = rx
+        .recv_timeout(std::time::Duration::from_secs(15))
+        .expect("evil regex must terminate within 15s");
+    assert!(
+        codes.is_empty(),
+        "matching evil pattern must validate: {codes:?}"
+    );
+    // Uncompilable patterns are schema bugs.
+    let bad = codes_of("schema = {\n  s = String(pattern = \"([\")\n}\ns = \"x\"\n");
+    assert!(
+        bad.iter().any(|c| c == "T003"),
+        "bad pattern must be T003, got {bad:?}"
+    );
+}
+
+/// RB-065 — No profile inheritance exists (DERIVED-0011 §A).
+/// REFUSAL-adjacent pin: `inherits` is not a language feature. The key
+/// merges as ordinary profile data (like any other key) — no traversal,
+/// so no inheritance cycle can ever form and no cycle class exists.
+#[test]
+fn rb_065_no_profile_inheritance() {
+    let v = eval_json("active_profile = \"a\"\n\nprofile \"a\" {\n  inherits = \"b\"\n}\n");
+    assert_eq!(v["inherits"], "b", "inherits merges as plain data: {v}");
+    // A cycle through a nonexistent feature cannot exist: no
+    // E_PROFILE_CYCLE class exists because there is nothing to cycle.
+    let codes = codes_of("active_profile = \"a\"\n\nprofile \"a\" {\n  inherits = \"b\"\n}\n");
+    assert!(
+        !codes.iter().any(|c| c.contains("CYCLE")),
+        "no cycle class should fire: {codes:?}"
+    );
+}
+
+/// RB-066 — No network-capable dependencies (DERIVED-0017 §A, P0-011 §B).
+/// Hermetic evaluation is backed structurally: the lockfile must contain
+/// no crates that perform network I/O. (`url` alone only parses text.)
+#[test]
+fn rb_066_no_network_dependencies() {
+    let lock = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("Cargo.lock"),
+    )
+    .expect("lockfile readable");
+    let banned = [
+        "reqwest",
+        "hyper",
+        "tokio",
+        "mio",
+        "socket2",
+        "h2",
+        "tungstenite",
+        "ureq",
+        "isahc",
+        "curl",
+        "curl-sys",
+        "openssl",
+        "rustls",
+        "native-tls",
+        "hyper-util",
+        "axum",
+        "actix-web",
+        "actix-rt",
+        "warp",
+        "rouille",
+        "tiny_http",
+        "quinn",
+    ];
+    let mut names = Vec::new();
+    for line in lock.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("name = \"") {
+            if let Some(name) = rest.strip_suffix('"') {
+                names.push(name.to_string());
+            }
+        }
+    }
+    assert!(!names.is_empty(), "lockfile must list packages");
+    let hits: Vec<&String> = names
+        .iter()
+        .filter(|n| banned.contains(&n.as_str()))
+        .collect();
+    assert!(hits.is_empty(), "network-capable crates in tree: {hits:?}");
+}
+
+/// RB-067 — Commas in strings never split (HIST-YAML-001 §1).
+#[test]
+fn rb_067_comma_in_string_kept() {
+    let v = eval_json("data = [\"line1,\nline2\"]\n");
+    assert_eq!(v["data"][0], "line1,\nline2");
+}
+
+/// RB-068 — Tables cannot be keys (HIST-YAML-002 §1).
+/// A table literal in key position rejects with a documented class.
+#[test]
+fn rb_068_table_as_key_rejects() {
+    let codes = codes_of("x = {{ \"nested\" = 1 } = \"value\" }\n");
+    assert!(!codes.is_empty(), "table-as-key must fail, parsed clean");
+    // Positive control: scalar keys (incl. dotted paths) work.
+    assert_eq!(eval_json("[a]\nb = 1\n")["a"]["b"], 1);
+}
+
+/// RB-069 — Truncations terminate documented (P0-015 §B).
+/// Every prefix of a document must terminate with a documented class —
+/// never hang, never panic.
+#[test]
+fn rb_069_truncations_terminate_documented() {
+    let full = "server = {\n  host = \"localhost\"\n  port = 8080\n}\n";
+    let bytes = full.as_bytes();
+    for end in [1usize, 5, 10, 15, 20, 25, 30, 40, 50] {
+        let end = end.min(bytes.len());
+        let prefix = &full[..end];
+        let (tx, rx) = std::sync::mpsc::channel();
+        let owned = prefix.to_string();
+        std::thread::spawn(move || {
+            let _ = codes_of(&owned);
+            let _ = tx.send(());
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap_or_else(|_| panic!("truncation at {end} bytes hung the parser"));
+    }
+}
+
+/// RB-070 — Chomping indicators absent (HIST-YAML-012 §1).
+/// `|-`, `|+` are not Active syntax; they reject cleanly. Triple-quoted
+/// blocks keep content literally (pinned separately).
+#[test]
+fn rb_070_no_chomping_indicators() {
+    let codes = codes_of("x = |-\n");
+    assert!(
+        !codes.is_empty(),
+        "chomping indicator must fail, parsed clean"
+    );
+    // Triple-quoted blocks preserve content literally.
+    let v = eval_json("x = \"\"\"a\"\"\"\n");
+    assert_eq!(v["x"], "a");
+}

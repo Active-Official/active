@@ -27629,3 +27629,208 @@ fn rb_1248_syn104_hex_prefix_rejects() {
     // Positive control: decimal 16 needs no prefix.
     assert_eq!(eval_json("case_0104_05 = 16\n")["case_0104_05"], 16);
 }
+/// RB-1249 — Multidigit-then-00 variant: `1_000` strips to 1000 (SYN-0104-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0009 (nst JSONTestSuite
+/// n_multidigit_number_then_00).
+/// `case_0104_06 = 1_000` is int 1000 with zero diagnostics — converges with
+/// RB-772, RB-997 and every later underscore twin: separators strip, never
+/// octal, never float.
+#[test]
+fn rb_1249_syn104_underscore_strips() {
+    let src = "case_0104_06 = 1_000\n";
+    assert_eq!(eval_json(src)["case_0104_06"], 1000);
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the plain spelling agrees.
+    assert_eq!(eval_json("case_0104_06 = 1000\n")["case_0104_06"], 1000);
+}
+
+/// RB-1250 — Multidigit-then-00 variant: giant exponent rejects (SYN-0104-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0009 (nst JSONTestSuite
+/// n_multidigit_number_then_00).
+/// `case_0104_07 = 1e1000000` fails E002 Error at (1:17) — converges with
+/// RB-773, RB-998 and every later giant-exponent twin: no exponent grammar
+/// at any magnitude.
+#[test]
+fn rb_1250_syn104_giant_exponent_rejects() {
+    let src = "case_0104_07 = 1e1000000\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: a large plain integer parses.
+    assert_eq!(
+        eval_json("case_0104_07 = 1000000\n")["case_0104_07"],
+        1000000
+    );
+}
+
+/// RB-1251 — Multidigit-then-00 variant: quoted digits stay exact (SYN-0104-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0009 (nst JSONTestSuite
+/// n_multidigit_number_then_00).
+/// `case_0104_08 = "01"` is string "01" with zero diagnostics — converges
+/// with RB-990 and every later quoted-digits twin: quoting preserves
+/// digit-looking text with no numeric coercion.
+#[test]
+fn rb_1251_syn104_quoted_digits_exact() {
+    let src = "case_0104_08 = \"01\"\n";
+    assert_eq!(eval_json(src)["case_0104_08"], "01");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: the bare counterpart is decimal 1, never text.
+    let v = eval_json("case_0104_08 = 01\n")["case_0104_08"].clone();
+    assert_eq!(v, 1, "{v}");
+    assert!(!v.is_string(), "{v}");
+}
+
+/// RB-1252 — Multidigit-then-00 variant: canonical zero (SYN-0104-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0009 (nst JSONTestSuite
+/// n_multidigit_number_then_00).
+/// `case_0104_09 = 0` is int 0 with zero diagnostics — converges with RB-991
+/// and every later canonical-zero twin: zero needs no policy. (Completes
+/// SYN-0104 lineage.)
+#[test]
+fn rb_1252_syn104_zero_canonical() {
+    let src = "case_0104_09 = 0\n";
+    let v = eval_json(src)["case_0104_09"].clone();
+    assert_eq!(v, 0, "{v}");
+    assert!(!v.is_f64(), "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the zero-prefixed twin strips to 1.
+    assert_eq!(eval_json("case_0104_09 = 01\n")["case_0104_09"], 1);
+}
+
+/// RB-1253 — Number-++ variant: `01` is decimal 1 (SYN-0105-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0010 (nst JSONTestSuite
+/// n_number_++.json).
+/// `case_0105_01 = 01` is int 1 with zero diagnostics — converges with
+/// RB-1244 and the whole `01` lineage: the explicit decimal policy holds in
+/// every number lineage, never octal. (Opens SYN-0105 lineage.)
+#[test]
+fn rb_1253_syn105_leading_zero_decimal() {
+    let src = "case_0105_01 = 01\n";
+    let v = eval_json(src)["case_0105_01"].clone();
+    assert_eq!(v, 1, "01 must be decimal 1, got {v}");
+    assert!(!v.is_f64(), "01 must be int, got {v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: 010 is decimal 10, never octal 8.
+    assert_eq!(eval_json("case_0105_01 = 010\n")["case_0105_01"], 10);
+}
+
+/// RB-1254 — Number-++ variant: `1.` is int 1 (SYN-0105-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0010 (nst JSONTestSuite
+/// n_number_++.json).
+/// `case_0105_02 = 1.` is int 1 with zero diagnostics — converges with
+/// RB-1245 and the whole `1.` lineage: the grammar takes the int path, no
+/// float constructed, no digits required.
+#[test]
+fn rb_1254_syn105_trailing_dot_int() {
+    let src = "case_0105_02 = 1.\n";
+    let v = eval_json(src)["case_0105_02"].clone();
+    assert_eq!(v, 1, "1. must be int 1, got {v}");
+    assert!(!v.is_f64(), "1. must not be float, got {v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: `1.0` is the float spelling.
+    let v = eval_json("case_0105_02 = 1.0\n")["case_0105_02"].clone();
+    assert!(v.is_f64(), "1.0 must be float, got {v}");
+}
+
+/// RB-1255 — Number-++ variant: bare `1e` rejects (SYN-0105-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0010 (nst JSONTestSuite
+/// n_number_++.json).
+/// `case_0105_03 = 1e` fails E002 Error at (1:17) — converges with RB-1246
+/// and the whole bare-exponent lineage: exponent markers need digits because
+/// there is no exponent grammar at all.
+#[test]
+fn rb_1255_syn105_bare_exponent_rejects() {
+    let src = "case_0105_03 = 1e\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    let src = "case_0105_03 = \"1e\"\n";
+    assert_eq!(eval_json(src)["case_0105_03"], "1e");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1256 — Number-++ variant: signed `1e+` rejects (SYN-0105-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0010 (nst JSONTestSuite
+/// n_number_++.json).
+/// `case_0105_04 = 1e+` fails E002 Error at (1:17) — converges with RB-1247
+/// and the whole signed-exponent lineage: a sign needs digits because there
+/// is no exponent grammar at all.
+#[test]
+fn rb_1256_syn105_signed_exponent_rejects() {
+    let src = "case_0105_04 = 1e+\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    let src = "case_0105_04 = \"1e+\"\n";
+    assert_eq!(eval_json(src)["case_0105_04"], "1e+");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1257 — Number-++ variant: `0x10` rejects, no hex grammar (SYN-0105-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0010 (nst JSONTestSuite
+/// n_number_++.json).
+/// `case_0105_05 = 0x10` fails E002 Error at (1:17) — converges with RB-1248
+/// and the whole hex lineage: base prefixes are absent from the grammar,
+/// loud reject in every number lineage.
+#[test]
+fn rb_1257_syn105_hex_prefix_rejects() {
+    let src = "case_0105_05 = 0x10\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: decimal 16 needs no prefix.
+    assert_eq!(eval_json("case_0105_05 = 16\n")["case_0105_05"], 16);
+}
+
+/// RB-1258 — Number-++ variant: `1_000` strips to 1000 (SYN-0105-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0010 (nst JSONTestSuite
+/// n_number_++.json).
+/// `case_0105_06 = 1_000` is int 1000 with zero diagnostics — converges with
+/// RB-1249 and the whole underscore lineage: separators strip, never octal,
+/// never float.
+#[test]
+fn rb_1258_syn105_underscore_strips() {
+    let src = "case_0105_06 = 1_000\n";
+    assert_eq!(eval_json(src)["case_0105_06"], 1000);
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the plain spelling agrees.
+    assert_eq!(eval_json("case_0105_06 = 1000\n")["case_0105_06"], 1000);
+}

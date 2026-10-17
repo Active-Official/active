@@ -29108,3 +29108,237 @@ fn rb_1318_syn112_table_trailing_comma_heals() {
     let codes = codes_of("case_0112_03 = { a = 1 }\n");
     assert!(codes.is_empty(), "{codes:?}");
 }
+/// RB-1319 — Missing-colon variant: trailing garbage rejects (SYN-0112-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0017 (nst JSONTestSuite
+/// n_object_missing_colon).
+/// `case_0112_04 = { a = 1 } trailing` fails E002 Error at (1:26) — a
+/// complete value followed by a stray token is loud, never truncated or
+/// absorbed.
+#[test]
+fn rb_1319_syn112_trailing_garbage_rejects() {
+    let src = "case_0112_04 = { a = 1 } trailing\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 26), "{span:?}");
+    // Positive control: the garbage-free table evaluates silently.
+    let v = eval_json("case_0112_04 = { a = 1 }\n");
+    assert_eq!(v["case_0112_04"]["a"], 1, "{v}");
+    let codes = codes_of("case_0112_04 = { a = 1 }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1320 — Missing-colon variant: quoted dups reject before colliding (SYN-0112-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0017 (nst JSONTestSuite
+/// n_object_missing_colon).
+/// `case_0112_05 = { "a" = 1, "a" = 2 }` fails E001 Error at (1:18) — keys
+/// are identifiers, so the FIRST quoted form is rejected before any
+/// duplicate-key question can arise (converges with the quoted-never-merges
+/// lineage).
+#[test]
+fn rb_1320_syn112_quoted_dup_rejects() {
+    let src = "case_0112_05 = { \"a\" = 1, \"a\" = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: bare dups announce W011 last-wins instead.
+    let codes = codes_of("case_0112_05 = { a = 1, a = 2 }\n");
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}
+
+/// RB-1321 — Missing-colon variant: empty quoted key rejects (SYN-0112-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0017 (nst JSONTestSuite
+/// n_object_missing_colon).
+/// `case_0112_06 = { "" = 1 }` fails E001 Error at (1:18) — empty keys are
+/// refused, never defaulted: a key must be a non-empty identifier, quoted or
+/// otherwise.
+#[test]
+fn rb_1321_syn112_empty_key_rejects() {
+    let src = "case_0112_06 = { \"\" = 1 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: a non-empty bare key evaluates silently.
+    let v = eval_json("case_0112_06 = { a = 1 }\n");
+    assert_eq!(v["case_0112_06"]["a"], 1, "{v}");
+    let codes = codes_of("case_0112_06 = { a = 1 }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1322 — Missing-colon variant: clean table silent (SYN-0112-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0017 (nst JSONTestSuite
+/// n_object_missing_colon).
+/// `case_0112_07 = { a = 1 }` evaluates with ZERO diagnostics — the
+/// well-formed neighbour every refusal above is measured against.
+#[test]
+fn rb_1322_syn112_clean_table_silent() {
+    let src = "case_0112_07 = { a = 1 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0112_07"]["a"], 1, "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: the quoted-key neighbour still rejects E001 (no slack).
+    let codes = codes_of("case_0112_07 = { \"a\" = 1 }\n");
+    assert!(codes.iter().any(|c| c == "E001"), "{codes:?}");
+}
+
+/// RB-1323 — Missing-colon variant: nested table silent (SYN-0112-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0017 (nst JSONTestSuite
+/// n_object_missing_colon).
+/// `case_0112_08 = { a = { b = 1 } }` evaluates nested with ZERO diagnostics.
+#[test]
+fn rb_1323_syn112_nested_table_silent() {
+    let src = "case_0112_08 = { a = { b = 1 } }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0112_08"]["a"]["b"], 1, "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: a nested dup still announces W011 (no slack at depth).
+    let codes = codes_of("case_0112_08 = { a = { b = 1, b = 2 } }\n");
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}
+
+/// RB-1324 — Missing-colon variant: trailing comment ignored (SYN-0112-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0017 (nst JSONTestSuite
+/// n_object_missing_colon).
+/// `case_0112_09 = { a = 1, b = 2 } # trailing comment` evaluates both keys
+/// with ZERO diagnostics — `#` comments attach to nothing and change
+/// nothing. (Completes SYN-0112 lineage.)
+#[test]
+fn rb_1324_syn112_trailing_comment_silent() {
+    let src = "case_0112_09 = { a = 1, b = 2 } # trailing comment\n";
+    let v = eval_json(src);
+    assert_eq!(
+        v["case_0112_09"],
+        serde_json::json!({"a": 1, "b": 2}),
+        "{v}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: trailing GARBAGE (not a comment) still rejects E002.
+    let codes = codes_of("case_0112_09 = { a = 1 } trailing\n");
+    assert!(codes.iter().any(|c| c == "E002"), "{codes:?}");
+}
+
+/// RB-1325 — Missing-key variant: quoted key rejects before separators (SYN-0113-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0018 (nst JSONTestSuite
+/// n_object_missing_key).
+/// `case_0113_01 = { "a" 1 }` fails E001 Error at (1:18) — keys are
+/// identifiers, so the quoted form is rejected at the bracket before any
+/// missing-separator question arises (converges with RB-1316). (Opens
+/// SYN-0113 lineage.)
+#[test]
+fn rb_1325_syn113_quoted_never_merges() {
+    let src = "case_0113_01 = { \"a\" 1 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the bare-key table evaluates silently.
+    let codes = codes_of("case_0113_01 = { a = 1 }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1326 — Missing-key variant: keyless pair rejects (SYN-0113-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0018 (nst JSONTestSuite
+/// n_object_missing_key).
+/// `case_0113_02 = { = 1 }` fails E001 Error at (1:18) — a pair needs an
+/// identifier key; the `=` cannot start one (converges with RB-1317).
+#[test]
+fn rb_1326_syn113_missing_key_rejects() {
+    let src = "case_0113_02 = { = 1 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the keyed table evaluates silently.
+    let v = eval_json("case_0113_02 = { a = 1 }\n");
+    assert_eq!(v["case_0113_02"]["a"], 1, "{v}");
+    let codes = codes_of("case_0113_02 = { a = 1 }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1327 — Missing-key variant: trailing comma heals in tables (SYN-0113-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0018 (nst JSONTestSuite
+/// n_object_missing_key).
+/// `case_0113_03 = { a = 1, }` heals H002 Info at (1:23) to `{a = 1}` — the
+/// locked stray-comma policy covers brace tables as well as arrays
+/// (converges with RB-1318).
+#[test]
+fn rb_1327_syn113_table_trailing_comma_heals() {
+    let src = "case_0113_03 = { a = 1, }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0113_03"]["a"], 1, "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H002 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 23), "{span:?}");
+    // Positive control: the comma-free table carries no heal.
+    let codes = codes_of("case_0113_03 = { a = 1 }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1328 — Missing-key variant: trailing garbage rejects (SYN-0113-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0018 (nst JSONTestSuite
+/// n_object_missing_key).
+/// `case_0113_04 = { a = 1 } trailing` fails E002 Error at (1:26) — a
+/// complete value followed by a stray token is loud, never truncated
+/// (converges with RB-1319).
+#[test]
+fn rb_1328_syn113_trailing_garbage_rejects() {
+    let src = "case_0113_04 = { a = 1 } trailing\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 26), "{span:?}");
+    // Positive control: the garbage-free table evaluates silently.
+    let v = eval_json("case_0113_04 = { a = 1 }\n");
+    assert_eq!(v["case_0113_04"]["a"], 1, "{v}");
+    let codes = codes_of("case_0113_04 = { a = 1 }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}

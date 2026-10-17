@@ -289,4 +289,5 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | Batch 37 | RB-359…RB-368 (SYN-0005-05…09, SYN-0006-01…05) | done: all 10 green first-try, no code changes; determinism indexed on accepts; heal/insert severity triples; lone/trailing comma spans per key width |
 | Batch 38 | RB-369…RB-378 (SYN-0006-06…09, SYN-0007-01…06) | done: all 10 green first-try, no code changes; 06-lineage completed (determinism, nested types, hetero values, EOF triple); 07-lineage opened (heal/insert triples, comma spans, control determinism) |
 | Batch 39 | RB-379…RB-388 (SYN-0007-07…09, SYN-0008-01…07) | done: all 10 green first-try, no code changes; 07-lineage completed (lengths, joint hetero oracle, EOF triple); 08-lineage opened (heal/insert triples, comma spans, typed determinism) |
+| Batch 40 | RB-389…RB-398 (SYN-0008-08…09, SYN-0009-01…08) | done: all 10 green first-try, no code changes; 08-lineage completed (hetero export, EOF triple); 09-lineage opened (heal/insert triples, comma spans, typed determinism) |
 | Byte fixtures (mined) | headed cases → tests/research/*.active + RB IDs | mined per batch, ledger cites |

@@ -16053,3 +16053,214 @@ fn rb_768_syn51_trailing_dot_is_int() {
     assert_eq!(v.as_f64(), Some(1.0), "{v}");
     assert!(v.is_f64(), "1.0 must be float, got {v}");
 }
+/// RB-769 — Derived variant 51-03: digit-less exponents fail, no float built (SYN-0051-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0051 (toml-test arabic-zero).
+/// `case_0051_03 = 1e` fails E002 Error at (1:17) — there is no exponent
+/// grammar (RB-053 precedent), so a marker without digits cannot even reach
+/// a "missing digits" question; it fails at the `e` itself, never building
+/// a partial float.
+#[test]
+fn rb_769_syn51_bare_exponent_rejects() {
+    let src = "case_0051_03 = 1e\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    let src = "case_0051_03 = \"1e\"\n";
+    assert_eq!(eval_json(src)["case_0051_03"], "1e");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-770 — Derived variant 51-04: signed digit-less exponents fail (SYN-0051-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0051 (toml-test arabic-zero).
+/// `case_0051_04 = 1e+` fails E002 Error at (1:17) — the sign changes
+/// nothing: without an exponent grammar the failure is at the `e`, so no
+/// signed-exponent path exists to validate digits on.
+#[test]
+fn rb_770_syn51_signed_exponent_rejects() {
+    let src = "case_0051_04 = 1e+\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    let src = "case_0051_04 = \"1e+\"\n";
+    assert_eq!(eval_json(src)["case_0051_04"], "1e+");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-771 — Derived variant 51-05: hex prefixes are not integers (SYN-0051-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0051 (toml-test arabic-zero).
+/// `case_0051_05 = 0x10` fails E002 Error at (1:17) — the chosen integer
+/// grammar is decimal-only (batch-23 base-prefix refusal): no host base
+/// prefix is borrowed, so `0x10` fails at the `x`, never 16.
+#[test]
+fn rb_771_syn51_hex_prefix_rejects() {
+    let src = "case_0051_05 = 0x10\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the decimal neighbour is plain 16.
+    assert_eq!(eval_json("case_0051_05 = 16\n")["case_0051_05"], 16);
+}
+
+/// RB-772 — Derived variant 51-06: underscores strip deterministically (SYN-0051-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0051 (toml-test arabic-zero).
+/// `case_0051_06 = 1_000` is int 1000000 with zero diagnostics — converges
+/// with RB-107: single underscores normalize by stripping, so separators
+/// are cosmetic, never structural, and never leading/trailing/doubled here.
+#[test]
+fn rb_772_syn51_underscore_strips() {
+    let src = "case_0051_06 = 1_000\n";
+    let v = eval_json(src)["case_0051_06"].clone();
+    assert_eq!(v, 1000, "1_000 must strip to 1000, got {v}");
+    assert!(!v.is_f64(), "1_000 must be int, got {v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the separator-free neighbour agrees.
+    assert_eq!(eval_json("case_0051_06 = 1000\n")["case_0051_06"], 1000);
+}
+
+/// RB-773 — Derived variant 51-07: giant exponents fail, never overflow (SYN-0051-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0051 (toml-test arabic-zero).
+/// `case_0051_07 = 1e1000000` fails E002 Error at (1:17) — overflow never
+/// arises because exponents never parse: without an exponent grammar there
+/// is no magnitude to bound, saturate, or infinity-convert, so the bounded
+/// diagnostic is the grammar reject itself.
+#[test]
+fn rb_773_syn51_giant_exponent_rejects() {
+    let src = "case_0051_07 = 1e1000000\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: a large plain integer parses.
+    assert_eq!(
+        eval_json("case_0051_07 = 1000000\n")["case_0051_07"],
+        1000000
+    );
+}
+
+/// RB-774 — Derived variant 51-08: quoting preserves digit-looking text (SYN-0051-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0051 (toml-test arabic-zero).
+/// `case_0051_08 = "01"` is the exact string "01" with zero diagnostics —
+/// quoting preserves digit-looking identifiers without numeric coercion,
+/// while the bare twin is decimal 1 (RB-767 converges on the distinction).
+#[test]
+fn rb_774_syn51_quoted_digits_exact() {
+    let src = "case_0051_08 = \"01\"\n";
+    assert_eq!(eval_json(src)["case_0051_08"], "01");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: the bare counterpart is decimal 1, never text.
+    let v = eval_json("case_0051_08 = 01\n")["case_0051_08"].clone();
+    assert_eq!(v, 1, "{v}");
+    assert!(!v.is_string(), "{v}");
+}
+
+/// RB-775 — Derived variant 51-09: canonical zero is int 0 (SYN-0051-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0051 (toml-test arabic-zero).
+/// `case_0051_09 = 0` is int 0 with zero diagnostics — the control case for
+/// the whole leading-zero family: canonical zero needs no policy, and the
+/// zero-prefixed twin (`01` is 1) shows the policy only strips.
+#[test]
+fn rb_775_syn51_zero_canonical() {
+    let src = "case_0051_09 = 0\n";
+    let v = eval_json(src)["case_0051_09"].clone();
+    assert_eq!(v, 0, "{v}");
+    assert!(!v.is_f64(), "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the zero-prefixed twin strips to 1 (RB-767).
+    assert_eq!(eval_json("case_0051_09 = 01\n")["case_0051_09"], 1);
+}
+
+/// RB-776 — Derived variant 52-01: `01` twin is decimal 1 (SYN-0052-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0052 (toml-test double-dot).
+/// `case_0052_01 = 01` is int 1 with zero diagnostics — converges with
+/// RB-767: the explicit decimal policy holds in every number lineage, never
+/// octal. (Opens SYN-0052 double-dot lineage.)
+#[test]
+fn rb_776_syn52_leading_zero_twin_decimal() {
+    let src = "case_0052_01 = 01\n";
+    let v = eval_json(src)["case_0052_01"].clone();
+    assert_eq!(v, 1, "01 must be decimal 1, got {v}");
+    assert!(!v.is_f64(), "01 must be int, got {v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: 010 is decimal 10, never octal 8.
+    assert_eq!(eval_json("case_0052_01 = 010\n")["case_0052_01"], 10);
+}
+
+/// RB-777 — Derived variant 52-02: `1.` twin is int 1 (SYN-0052-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0052 (toml-test double-dot).
+/// `case_0052_02 = 1.` is int 1 with zero diagnostics — converges with
+/// RB-768: the grammar takes the int path, no float constructed, no digits
+/// required.
+#[test]
+fn rb_777_syn52_trailing_dot_twin_int() {
+    let src = "case_0052_02 = 1.\n";
+    let v = eval_json(src)["case_0052_02"].clone();
+    assert_eq!(v, 1, "1. must be int 1, got {v}");
+    assert!(!v.is_f64(), "1. must not be float, got {v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the dotted spelling stays float.
+    let v = eval_json("case_0052_02 = 1.0\n")["case_0052_02"].clone();
+    assert_eq!(v.as_f64(), Some(1.0), "{v}");
+    assert!(v.is_f64(), "1.0 must be float, got {v}");
+}
+
+/// RB-778 — Derived variant 52-03: bare-exponent twin rejects (SYN-0052-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0052 (toml-test double-dot).
+/// `case_0052_03 = 1e` fails E002 Error at (1:17) — converges with RB-769:
+/// exponent markers need digits because there is no exponent grammar at
+/// all, loud reject in every number lineage. (Completes SYN-0051-03…09
+/// coverage + opens SYN-0052-01…03.)
+#[test]
+fn rb_778_syn52_bare_exponent_twin_rejects() {
+    let src = "case_0052_03 = 1e\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    let src = "case_0052_03 = \"1e\"\n";
+    assert_eq!(eval_json(src)["case_0052_03"], "1e");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}

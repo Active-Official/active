@@ -30714,3 +30714,227 @@ fn rb_1388_syn120_dangling_backslash_heals() {
     assert_eq!(v["case_0120_01"], "done", "{v}");
     assert!(codes_of("case_0120_01 = \"done\"\n").is_empty());
 }
+
+/// RB-1389 — Lonely-surrogate twin: lone-surrogate escape stays verbatim (SYN-0120-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_invalid_lonely_surrogate; same shape as SYN-0116-02).
+/// REFUSAL (spec-gated, spec/grammar.md:62-66, RB-050, converges with
+/// RB-1353/RB-1362/RB-1371/RB-1380): `"\uD800"` keeps its exact six
+/// characters silently.
+#[test]
+fn rb_1389_syn120_lone_surrogate_verbatim() {
+    let src = "case_0120_02 = \"\\uD800\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0120_02"], "\\uD800", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a plain ASCII string is exact and silent too.
+    let v = eval_json("case_0120_02 = \"plain\"\n");
+    assert_eq!(v["case_0120_02"], "plain", "{v}");
+}
+
+/// RB-1390 — Lonely-surrogate twin: scalar `\u` escape never decodes (SYN-0120-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_invalid_lonely_surrogate; same shape as SYN-0116-03).
+/// REFUSAL (spec-gated, spec/grammar.md:62-66, RB-050, converges with
+/// RB-1354/RB-1363/RB-1372/RB-1381): `\u0061` persists exactly, never "a".
+#[test]
+fn rb_1390_syn120_scalar_escape_never_decodes() {
+    let src = "case_0120_03 = \"\\u0061\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0120_03"], "\\u0061", "{v}");
+    assert_ne!(v["case_0120_03"], "a", "must NOT decode to a: {v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the literal letter evaluates to itself.
+    let v = eval_json("case_0120_03 = \"a\"\n");
+    assert_eq!(v["case_0120_03"], "a", "{v}");
+}
+
+/// RB-1391 — Lonely-surrogate twin: `\n` decodes to one LF (SYN-0120-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_invalid_lonely_surrogate; same shape as SYN-0116-04).
+/// Converges with RB-1355/RB-1364/RB-1373/RB-1382
+/// (spec/grammar.md:62-64): one LF, silent, stream never splits.
+#[test]
+fn rb_1391_syn120_escaped_newline_decodes() {
+    let src = "case_0120_04 = \"line1\\nline2\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0120_04"], "line1\nline2", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the sibling specified escape `\t` decodes to TAB.
+    let v = eval_json("case_0120_04 = \"a\\tb\"\n");
+    assert_eq!(v["case_0120_04"], "a\tb", "{v}");
+}
+
+/// RB-1392 — Lonely-surrogate twin: raw newline inside quotes is kept (SYN-0120-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_invalid_lonely_surrogate; same shape as SYN-0116-05).
+/// REFUSAL (spec-gated, spec/grammar.md:58-62, RB-175, converges with
+/// RB-1356/RB-1365/RB-1374/RB-1383): the raw LF is content, kept silently,
+/// and agrees with the `\n` twin.
+#[test]
+fn rb_1392_syn120_raw_newline_kept() {
+    let src = "case_0120_05 = \"line1\nline2\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0120_05"], "line1\nline2", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Twin convergence: raw LF and escaped `\n` spell the same value.
+    let twin = eval_json("case_0120_05 = \"line1\\nline2\"\n");
+    assert_eq!(v["case_0120_05"], twin["case_0120_05"], "{v} vs {twin}");
+}
+
+/// RB-1393 — Lonely-surrogate twin: `\x` escape stays verbatim (SYN-0120-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_invalid_lonely_surrogate; same shape as SYN-0116-06).
+/// REFUSAL (spec-gated, spec/grammar.md:62-66, RB-050, converges with
+/// RB-1357/RB-1366/RB-1375/RB-1384): `\x41` persists exactly, never "A".
+#[test]
+fn rb_1393_syn120_hex_escape_verbatim() {
+    let src = "case_0120_06 = \"\\x41\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0120_06"], "\\x41", "{v}");
+    assert_ne!(v["case_0120_06"], "A", "must NOT decode to A: {v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the explicit letter is the way to spell "A".
+    let v = eval_json("case_0120_06 = \"A\"\n");
+    assert_eq!(v["case_0120_06"], "A", "{v}");
+}
+
+/// RB-1394 — Lonely-surrogate twin: supplementary-plane and combining marks exact (SYN-0120-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_invalid_lonely_surrogate; same shape as SYN-0116-07).
+/// Converges with RB-1358/RB-1367/RB-1376/RB-1385: U+1F600 + `e` + U+0301,
+/// three scalars, seven bytes, no NFC; U+00E9 stays different.
+#[test]
+fn rb_1394_syn120_emoji_combining_exact() {
+    let src = "case_0120_07 = \"\u{1F600}e\u{301}\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0120_07"], "\u{1F600}e\u{301}", "{v}");
+    assert_eq!(
+        v["case_0120_07"].as_str().expect("string").chars().count(),
+        3,
+        "{v}"
+    );
+    assert_eq!(v["case_0120_07"].as_str().expect("string").len(), 7, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: precomposed U+00E9 is a different value (no NFC).
+    let pre = eval_json("case_0120_07 = \"\u{e9}\"\n");
+    assert_ne!(v["case_0120_07"], pre["case_0120_07"], "{v} vs {pre}");
+}
+
+/// RB-1395 — Lonely-surrogate twin: escaped data vs raw NUL bytes (SYN-0120-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_invalid_lonely_surrogate; same shape as SYN-0116-08).
+/// Converges with RB-1359/RB-1368/RB-1377/RB-1386: `"\u0000"` verbatim,
+/// `"\0"` one real NUL, raw NUL in-string kept, raw NUL outside E005 at (1:6).
+#[test]
+fn rb_1395_syn120_escaped_vs_raw_nul() {
+    let v = eval_json("case_0120_08 = \"\\u0000\"\n");
+    assert_eq!(v["case_0120_08"], "\\u0000", "{v}");
+    assert!(codes_of("case_0120_08 = \"\\u0000\"\n").is_empty());
+    let v = eval_json("case_0120_08 = \"a\\0b\"\n");
+    assert_eq!(v["case_0120_08"], "a\0b", "{v}");
+    assert!(codes_of("case_0120_08 = \"a\\0b\"\n").is_empty());
+    let v = eval_json("case_0120_08 = \"a\0b\"\n");
+    assert_eq!(v["case_0120_08"], "a\0b", "{v}");
+    assert!(codes_of("case_0120_08 = \"a\0b\"\n").is_empty());
+    // Positive control (negative neighbour): raw NUL outside strings is E005.
+    let diags = parse("v = 1\0\n", "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 6), "{span:?}");
+}
+
+/// RB-1396 — Lonely-surrogate twin: interpolation and literals never confused (SYN-0120-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// n_string_invalid_lonely_surrogate; same shape as SYN-0116-09).
+/// Converges with RB-1360/RB-1369/RB-1378/RB-1387 and completes the 120
+/// lineage: `"${literal}"` interpolates to "null" + W001 Warning at (1:19);
+/// `"literal"` stays exact; a resolved `let` interpolates.
+#[test]
+fn rb_1396_syn120_interpolation_vs_literal() {
+    let src = "case_0120_09 = \"${literal}\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0120_09"], "null", "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 19), "{span:?}");
+    // Positive control: the literal spelling stays exact and silent.
+    let v = eval_json("case_0120_09 = \"literal\"\n");
+    assert_eq!(v["case_0120_09"], "literal", "{v}");
+    assert!(codes_of("case_0120_09 = \"literal\"\n").is_empty());
+    // Positive control: a resolved name interpolates to its value.
+    let v = eval_json("let who = \"hi\"\ncase_0120_09 = \"yo ${who}\"\n");
+    assert_eq!(v["case_0120_09"], "yo hi", "{v}");
+}
+
+/// RB-1397 — Null-byte-outside-string variant: leading NUL rejects with span (SYN-0121-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0026 (nst JSONTestSuite
+/// n_structure_null-byte-outside-string).
+/// Byte fixture: raw 0x00 before the first token. The decoder rejects NUL
+/// outside strings loudly — E005 Error at (1:1), the exact byte offset, so
+/// hostile prefixes can never slide the parse stream. Converges with RB-270
+/// (NUL inside brackets) and the `v = 1<NUL>` neighbour pinned in
+/// RB-1359/RB-1368/RB-1377/RB-1386/RB-1395.
+#[test]
+fn rb_1397_syn121_nul_before_token_rejects() {
+    let diags = parse_file(
+        &research_fixture("syn_0121_01_nul_before_token.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 1), "{span:?}");
+    // Positive control: the NUL-free assignment evaluates silently.
+    let v = eval_json("case_0121_01 = 1\n");
+    assert_eq!(v["case_0121_01"], 1, "{v}");
+    assert!(codes_of("case_0121_01 = 1\n").is_empty());
+}
+
+/// RB-1398 — Null-byte-outside-string variant: overlong UTF-8 never replacement-decodes (SYN-0121-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0026 (nst JSONTestSuite
+/// n_structure_null-byte-outside-string).
+/// Byte fixture: overlong C0 AF inside a string token. Untrusted source
+/// bytes are never lossy-decoded into config text: loud E017 Error, no
+/// span (the failure is at file-decode time, before lexing), no silent
+/// U+FFFD substitution. Converges with RB-196 (same C0 AF bytes under the
+/// toml-test parent).
+#[test]
+fn rb_1398_syn121_bad_utf8_never_decodes() {
+    let diags = parse_file(
+        &research_fixture("syn_0121_02_bad_utf8_in_string.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E017");
+    let e = diags.iter().find(|d| d.code == "E017").expect("E017");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E017 must be Error, got {:?}",
+        e.severity
+    );
+    // Positive control: the valid-UTF-8 twin evaluates silently.
+    let v = eval_json("case_0121_02 = \"a\"\n");
+    assert_eq!(v["case_0121_02"], "a", "{v}");
+    assert!(codes_of("case_0121_02 = \"a\"\n").is_empty());
+}

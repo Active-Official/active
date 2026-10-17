@@ -17941,3 +17941,251 @@ fn rb_858_syn61_trailing_dot_eleventh_int() {
     assert_eq!(v.as_f64(), Some(1.0), "{v}");
     assert!(v.is_f64(), "1.0 must be float, got {v}");
 }
+/// RB-859 — Derived variant 61-03: bare-exponent eleventh twin rejects (SYN-0061-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0061 (toml-test us-after-dot).
+/// `case_0061_03 = 1e` fails E002 Error at (1:17) — converges with RB-769,
+/// RB-778, RB-787, RB-796, RB-805, RB-814, RB-823, RB-832, RB-841 and
+/// RB-850: exponent markers need digits because there is no exponent grammar
+/// at all, loud reject in every number lineage.
+#[test]
+fn rb_859_syn61_bare_exponent_eleventh_rejects() {
+    let src = "case_0061_03 = 1e\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    let src = "case_0061_03 = \"1e\"\n";
+    assert_eq!(eval_json(src)["case_0061_03"], "1e");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-860 — Derived variant 61-04: signed-exponent eleventh twin rejects (SYN-0061-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0061 (toml-test us-after-dot).
+/// `case_0061_04 = 1e+` fails E002 Error at (1:17) — converges with RB-770,
+/// RB-779, RB-788, RB-797, RB-806, RB-815, RB-824, RB-833, RB-842 and
+/// RB-851: without an exponent grammar the failure is at the `e`, so no
+/// signed-exponent path exists to validate digits on.
+#[test]
+fn rb_860_syn61_signed_exponent_eleventh_rejects() {
+    let src = "case_0061_04 = 1e+\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    let src = "case_0061_04 = \"1e+\"\n";
+    assert_eq!(eval_json(src)["case_0061_04"], "1e+");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-861 — Derived variant 61-05: hex eleventh twin rejects (SYN-0061-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0061 (toml-test us-after-dot).
+/// `case_0061_05 = 0x10` fails E002 Error at (1:17) — converges with RB-771,
+/// RB-780, RB-789, RB-798, RB-807, RB-816, RB-825, RB-834, RB-843 and
+/// RB-852: the chosen integer grammar is decimal-only, no host base prefix
+/// is borrowed, so `0x10` fails at the `x`, never 16.
+#[test]
+fn rb_861_syn61_hex_eleventh_rejects() {
+    let src = "case_0061_05 = 0x10\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the decimal neighbour is plain 16.
+    assert_eq!(eval_json("case_0061_05 = 16\n")["case_0061_05"], 16);
+}
+
+/// RB-862 — Derived variant 61-06: underscore eleventh twin strips to 1000 (SYN-0061-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0061 (toml-test us-after-dot).
+/// `case_0061_06 = 1_000` is int 1000 (one thousand) with zero diagnostics —
+/// converges with RB-772, RB-781, RB-790, RB-799, RB-808, RB-817, RB-826,
+/// RB-835, RB-844 and RB-853: single underscores normalize by stripping.
+/// (The oracle states the exact stripped value.)
+#[test]
+fn rb_862_syn61_underscore_eleventh_strips() {
+    let src = "case_0061_06 = 1_000\n";
+    let v = eval_json(src)["case_0061_06"].clone();
+    assert_eq!(v, 1000, "1_000 must strip to 1000, got {v}");
+    assert!(!v.is_f64(), "1_000 must be int, got {v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the separator-free neighbour agrees.
+    assert_eq!(eval_json("case_0061_06 = 1000\n")["case_0061_06"], 1000);
+}
+
+/// RB-863 — Derived variant 61-07: giant-exponent eleventh twin rejects (SYN-0061-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0061 (toml-test us-after-dot).
+/// `case_0061_07 = 1e1000000` fails E002 Error at (1:17) — converges with
+/// RB-773, RB-782, RB-791, RB-800, RB-809, RB-818, RB-827, RB-836, RB-845
+/// and RB-854: overflow never arises because exponents never parse; the
+/// bounded diagnostic is the grammar reject itself.
+#[test]
+fn rb_863_syn61_giant_exponent_eleventh_rejects() {
+    let src = "case_0061_07 = 1e1000000\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: a large plain integer parses.
+    assert_eq!(
+        eval_json("case_0061_07 = 1000000\n")["case_0061_07"],
+        1000000
+    );
+}
+
+/// RB-864 — Derived variant 61-08: quoted eleventh twin preserves digits (SYN-0061-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0061 (toml-test us-after-dot).
+/// `case_0061_08 = "01"` is the exact string "01" with zero diagnostics —
+/// converges with RB-774, RB-783, RB-792, RB-801, RB-810, RB-819, RB-828,
+/// RB-837, RB-846 and RB-855: quoting preserves digit-looking identifiers
+/// without numeric coercion, while the bare twin is decimal 1.
+#[test]
+fn rb_864_syn61_quoted_digits_eleventh_exact() {
+    let src = "case_0061_08 = \"01\"\n";
+    assert_eq!(eval_json(src)["case_0061_08"], "01");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: the bare counterpart is decimal 1, never text.
+    let v = eval_json("case_0061_08 = 01\n")["case_0061_08"].clone();
+    assert_eq!(v, 1, "{v}");
+    assert!(!v.is_string(), "{v}");
+}
+
+/// RB-865 — Derived variant 61-09: canonical zero eleventh twin is int 0 (SYN-0061-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0061 (toml-test us-after-dot).
+/// `case_0061_09 = 0` is int 0 with zero diagnostics — converges with
+/// RB-775, RB-784, RB-793, RB-802, RB-811, RB-820, RB-829, RB-838, RB-847
+/// and RB-856: canonical zero needs no policy, and the zero-prefixed twin
+/// (`01` is 1) shows the policy only strips. (Completes SYN-0061-03…09
+/// coverage.)
+#[test]
+fn rb_865_syn61_zero_eleventh_canonical() {
+    let src = "case_0061_09 = 0\n";
+    let v = eval_json(src)["case_0061_09"].clone();
+    assert_eq!(v, 0, "{v}");
+    assert!(!v.is_f64(), "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the zero-prefixed twin strips to 1 (RB-857).
+    assert_eq!(eval_json("case_0061_09 = 01\n")["case_0061_09"], 1);
+}
+
+/// RB-866 — Derived variant 62-01: inline-table dups announce, never silent (SYN-0062-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0062 (toml-test duplicate-key-01).
+/// REFUSAL (spec-gated): the catalogue asks rejecting duplicate keys, but
+/// the locked last-wins+W011 policy (RB-002, RB-149) governs every table
+/// form: `{ key = 1, key = 2 }` evaluates to key = 2 and announces exactly
+/// the anti-silence W011 Warning at the winning value span (1:33, batch-22
+/// precedent) — never first-wins, never silent. (Opens SYN-0062
+/// duplicate-key lineage.)
+#[test]
+fn rb_866_syn62_inline_dup_announces() {
+    let src = "case_0062_01 = { key = 1, key = 2 }\n";
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(v["case_0062_01"]["key"], 2, "last wins, got {v}");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (1, 33), "{span:?}");
+    // Positive control: the duplicate-free table evaluates silently.
+    let codes = codes_of("case_0062_01 = { key = 1 }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-867 — Derived variant 62-02: nested inline dups announce at depth (SYN-0062-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0062 (toml-test duplicate-key-01).
+/// REFUSAL (spec-gated, same locked policy): `{ nested = { key = 1, key = 2 } }`
+/// evaluates to nested.key = 2 and announces W011 Warning at the nested
+/// winning-value span (1:44) — duplicate detection recurses into nested
+/// maps; depth never silences the announcement.
+#[test]
+fn rb_867_syn62_nested_dup_announces() {
+    let src = "case_0062_02 = { nested = { key = 1, key = 2 } }\n";
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(
+        v["case_0062_02"]["nested"]["key"], 2,
+        "last wins at depth, got {v}"
+    );
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (1, 44), "{span:?}");
+    // Positive control: the duplicate-free nest evaluates silently.
+    let codes = codes_of("case_0062_02 = { nested = { key = 1 } }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-868 — Derived variant 62-03: quoted keys never merge with bare keys (SYN-0062-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0062 (toml-test duplicate-key-01).
+/// `case_0062_03 = { "a" = 1, a = 2 }` fails with E001 Error at (1:18) —
+/// keys are identifiers, so the quoted form is rejected at the bracket
+/// (E001 cascade) instead of canonicalizing onto `a`: canonicalization is
+/// consistent because no merge is ever possible, in either syntax form.
+/// (Completes SYN-0061-03…09 coverage + opens SYN-0062-01…03.)
+#[test]
+fn rb_868_syn62_quoted_never_merges() {
+    let src = "case_0062_03 = { \"a\" = 1, a = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the bare-only table evaluates silently.
+    let codes = codes_of("case_0062_03 = { a = 1 }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+    assert_eq!(
+        eval_json("case_0062_03 = { a = 1 }\n")["case_0062_03"]["a"],
+        1
+    );
+    // Control: the bare dup announces instead of merging silently (RB-866).
+    let codes = codes_of("case_0062_03 = { a = 1, a = 2 }\n");
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}

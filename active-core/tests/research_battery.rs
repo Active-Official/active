@@ -23731,3 +23731,268 @@ fn rb_1088_syn86_patch_form_separates() {
     let codes = codes_of(src);
     assert!(codes.is_empty(), "{codes:?}");
 }
+/// RB-1089 — Derived variant 86-08: naive repeated removals fail at the first form (SYN-0086-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0086 (toml-test bare-invalid-character-09).
+/// The naive double `@remove base.key` plan fails E019 Error at (3:2) — the
+/// FIRST naive form already rejects, so repetition never reaches a second
+/// step; repeated structural operations need explicit semantics from the
+/// start. The single explicit `@remove("base.key")` call removes silently
+/// with siblings intact. (Converges with RB-1080.)
+#[test]
+fn rb_1089_syn86_naive_repeat_fails_first() {
+    let src = "case_0086_08 = 1\nbase = { key = 1 }\n@remove base.key\n@remove base.key\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    // Positive control: the single explicit call removes silently.
+    let src = "base = { key = 1, other = 0 }\n@remove(\"base.key\")\n";
+    let v = eval_json(src);
+    assert!(v["base"].get("key").is_none(), "{v}");
+    assert_eq!(v["base"]["other"], 0);
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1090 — Derived variant 86-09: dotted-quoted keys never alias (SYN-0086-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0086 (toml-test bare-invalid-character-09).
+/// `case_0086_09 = { "a.b" = 1, a = { b = 2 } }` fails with E001 Error at
+/// (1:18) — converges with RB-1081: the dotted-quoted form is rejected before
+/// any aliasing with the nested path can arise. (Completes SYN-0086 lineage.)
+#[test]
+fn rb_1090_syn86_dotted_alias_impossible() {
+    let src = "case_0086_09 = { \"a.b\" = 1, a = { b = 2 } }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the nested path alone evaluates silently.
+    let v = eval_json("case_0086_09 = { a = { b = 2 } }\n");
+    assert_eq!(v["case_0086_09"]["a"]["b"], 2);
+    let codes = codes_of("case_0086_09 = { a = { b = 2 } }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1091 — Derived variant 87-01: inline dups announce, never silent (SYN-0087-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0087 (toml-test bare-invalid-character-10).
+/// REFUSAL (spec-gated, locked last-wins+W011 policy per P1-TI-012):
+/// `case_0087_01 = { key = 1, key = 2 }` evaluates to key = 2 and announces
+/// W011 Warning at the winning-value span (1:33) — neither first-wins nor
+/// last-wins is permitted SILENTLY; the announcement is the guard.
+/// Converges with RB-1082. (Opens SYN-0087 lineage.)
+#[test]
+fn rb_1091_syn87_inline_dup_announces() {
+    let src = "case_0087_01 = { key = 1, key = 2 }\n";
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(v["case_0087_01"]["key"], 2, "last wins, got {v}");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (1, 33), "{span:?}");
+    // Positive control: the duplicate-free table evaluates silently.
+    let codes = codes_of("case_0087_01 = { key = 1 }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1092 — Derived variant 87-02: nested inline dups announce at depth (SYN-0087-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0087 (toml-test bare-invalid-character-10).
+/// REFUSAL (spec-gated, same locked policy): `{ nested = { key = 1, key = 2 } }`
+/// evaluates to nested.key = 2 and announces W011 Warning at the nested
+/// winning-value span (1:44) — duplicate detection recurses into nested
+/// maps; depth never silences the announcement. Converges with RB-1083.
+#[test]
+fn rb_1092_syn87_nested_dup_announces() {
+    let src = "case_0087_02 = { nested = { key = 1, key = 2 } }\n";
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(
+        v["case_0087_02"]["nested"]["key"], 2,
+        "last wins at depth, got {v}"
+    );
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (1, 44), "{span:?}");
+    // Positive control: the duplicate-free nest evaluates silently.
+    let codes = codes_of("case_0087_02 = { nested = { key = 1 } }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1093 — Derived variant 87-03: quoted keys never merge with bare keys (SYN-0087-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0087 (toml-test bare-invalid-character-10).
+/// `case_0087_03 = { "a" = 1, a = 2 }` fails with E001 Error at (1:18) —
+/// keys are identifiers, so the quoted form is rejected at the bracket
+/// instead of canonicalizing onto `a`: canonicalization is consistent
+/// because no merge is ever possible, in either syntax form.
+/// Converges with RB-1084.
+#[test]
+fn rb_1093_syn87_quoted_never_merges() {
+    let src = "case_0087_03 = { \"a\" = 1, a = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the bare-only form evaluates silently.
+    let codes = codes_of("case_0087_03 = { a = 1 }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: a bare duplicate still announces W011 (no merge gap).
+    let codes = codes_of("case_0087_03 = { a = 1, a = 2 }\n");
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}
+
+/// RB-1094 — Derived variant 87-04: distinct keys never false-positive (SYN-0087-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0087 (toml-test bare-invalid-character-10).
+/// `case_0087_04 = { alpha = 1, beta = 2 }` evaluates to both keys with ZERO
+/// diagnostics — the duplicate guard compares exact keys, so distinct
+/// neighbours never draw W011; the guard fires only on real duplicates.
+/// Converges with RB-1085.
+#[test]
+fn rb_1094_syn87_distinct_keys_silent() {
+    let src = "case_0087_04 = { alpha = 1, beta = 2 }\n";
+    let v = eval_json(src);
+    assert_eq!(
+        v["case_0087_04"],
+        serde_json::json!({"alpha": 1, "beta": 2}),
+        "{v}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: a real duplicate still announces W011.
+    let codes = codes_of("case_0087_04 = { alpha = 1, alpha = 2 }\n");
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}
+
+/// RB-1095 — Derived variant 87-05: quoted keys reject before normalizing (SYN-0087-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0087 (toml-test bare-invalid-character-10).
+/// The NFC/NFD pair (`"U+00E9"` vs `"U+0065 U+0301"`) fails with E001 Error
+/// at (1:18) — keys are identifiers, so quoted forms are rejected before any
+/// Unicode normalization question arises: Active never normalizes implicitly
+/// (nor explicitly) because quoted forms are never keys. (Escapes spell the
+/// non-ASCII bytes; no editor bytes involved.) Converges with RB-1086.
+#[test]
+fn rb_1095_syn87_unicode_keys_reject() {
+    let src = "case_0087_05 = { \"\u{e9}\" = 1, \"e\u{301}\" = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: bare distinct keys accept silently.
+    let codes = codes_of("case_0087_05 = { alpha = 1, beta = 2 }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1096 — Derived variant 87-06: distinct tables are not duplicates (SYN-0087-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0087 (toml-test bare-invalid-character-10).
+/// REFUSAL (spec-gated): the catalogue asks rejecting "repeated assignment",
+/// but the two statements bind DIFFERENT keys (`case_0087_06`, `value`) —
+/// no duplicate exists, so both evaluate with zero diagnostics. Last-wins
+/// governs same-key redefinition (W011), never distinct keys.
+/// Converges with RB-1087.
+#[test]
+fn rb_1096_syn87_distinct_tables_accept() {
+    let src = "case_0087_06 = { a = 1 }\nvalue = { b = 2 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0087_06"]["a"], 1, "{v}");
+    assert_eq!(v["value"]["b"], 2, "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: same-key redefinition still announces W011 last-wins.
+    let src = "value = { b = 1 }\nvalue = { b = 2 }\n";
+    assert_eq!(eval_json(src)["value"]["b"], 2);
+    let codes = codes_of(src);
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}
+
+/// RB-1097 — Derived variant 87-07: naive patch form fails, explicit updates (SYN-0087-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0087 (toml-test bare-invalid-character-10).
+/// The naive `@patch base { key = 2 }` form fails E019 Error at (3:2) —
+/// ordinary duplicate declarations and intentional patch semantics share no
+/// spelling — while the explicit `@patch("base.key", 2)` call updates
+/// silently to 2 (converges with RB-1088: patches warn nothing).
+#[test]
+fn rb_1097_syn87_patch_form_separates() {
+    let src = "case_0087_07 = 1\nbase = { key = 1 }\n@patch base { key = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    // Positive control: the explicit call updates with zero diagnostics.
+    let src = "base = { key = 1 }\n@patch(\"base.key\", 2)\n";
+    assert_eq!(eval_json(src)["base"]["key"], 2);
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-1098 — Derived variant 87-08: naive repeated removals fail at the first form (SYN-0087-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0087 (toml-test bare-invalid-character-10).
+/// The naive double `@remove base.key` plan fails E019 Error at (3:2) — the
+/// FIRST naive form already rejects, so repetition never reaches a second
+/// step; repeated structural operations need explicit semantics from the
+/// start. The single explicit `@remove("base.key")` call removes silently
+/// with siblings intact. (Converges with RB-1089.)
+#[test]
+fn rb_1098_syn87_naive_repeat_fails_first() {
+    let src = "case_0087_08 = 1\nbase = { key = 1 }\n@remove base.key\n@remove base.key\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    // Positive control: the single explicit call removes silently.
+    let src = "base = { key = 1, other = 0 }\n@remove(\"base.key\")\n";
+    let v = eval_json(src);
+    assert!(v["base"].get("key").is_none(), "{v}");
+    assert_eq!(v["base"]["other"], 0);
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}

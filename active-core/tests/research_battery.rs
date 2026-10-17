@@ -2110,3 +2110,189 @@ fn rb_120_bare_word_in_array_warns() {
         serde_json::json!(["hello", "NO"])
     );
 }
+
+/// RB-121 — Keyword-lookalikes in arrays never coerce (P1-TI-010 §C).
+/// Quoted elements stay exact strings; bare words are unresolved
+/// (W001 + null), never coerced to booleans or strings.
+#[test]
+fn rb_121_keyword_lookalikes_in_arrays_stay_put() {
+    let v = eval_json("x = [\"yes\", \"NO\", \"on\", \"off\", \"true\", \"null\"]\n");
+    assert_eq!(
+        v["x"],
+        serde_json::json!(["yes", "NO", "on", "off", "true", "null"])
+    );
+    let v = eval_json("x = [yes]\n");
+    assert_eq!(v["x"], serde_json::json!([null]));
+    let codes = codes_of("x = [yes]\n");
+    assert!(
+        codes.iter().any(|c| c == "W001"),
+        "bare word must warn W001, got {codes:?}"
+    );
+    // Positive control: real booleans keep their type.
+    let v = eval_json("x = [true, false]\n");
+    assert_eq!(v["x"], serde_json::json!([true, false]));
+    assert!(v["x"][0].is_boolean());
+}
+
+/// RB-122 — Spaces in headers reject (P1-ST-014 §D).
+#[test]
+fn rb_122_spaces_in_headers_reject() {
+    let codes = codes_of("[server host]\nx = 1\n");
+    assert!(
+        codes.iter().any(|c| c == "E001"),
+        "E001 expected, got {codes:?}"
+    );
+    assert!(
+        codes.iter().any(|c| c == "E002"),
+        "E002 expected, got {codes:?}"
+    );
+    // Positive control: the spaceless header works.
+    assert_eq!(eval_json("[server]\nhost = \"h\"\n")["server"]["host"], "h");
+}
+
+/// RB-123 — Positive structural matrix (P1-ST-015 §D).
+/// One document exercising arrays, inline tables, block tables, empty
+/// containers, nesting, and dotted headers — plus brace ≡ indent equality.
+#[test]
+fn rb_123_positive_structural_matrix() {
+    let v = eval_json(
+        "nums = [1, 2, 3]\npoint = {x = 1, y = 2}\nempty_a = []\nempty_t = {}\nnested = [[1], {a = [true]}]\n[svc]\nport = 8080\n[svc.db]\nname = \"main\"\n",
+    );
+    assert_eq!(v["nums"], serde_json::json!([1, 2, 3]));
+    assert_eq!(v["point"], serde_json::json!({"x": 1, "y": 2}));
+    assert_eq!(v["empty_a"], serde_json::json!([]));
+    assert_eq!(v["empty_t"], serde_json::json!({}));
+    assert_eq!(v["nested"], serde_json::json!([[1], {"a": [true]}]));
+    assert_eq!(v["svc"]["port"], 8080);
+    assert_eq!(v["svc"]["db"]["name"], "main");
+    assert_eq!(
+        eval_json("[a.b]\nc = 1\n"),
+        eval_json("a = {b = {c = 1}}\n")
+    );
+}
+
+/// RB-124 — `secret("…")` is typed and redacted (P1-SE-001 §E).
+/// The RAW marker appears nowhere: not in the value, not in JSON export,
+/// not in diagnostics.
+#[test]
+fn rb_124_secret_typed_and_redacted() {
+    let src = "pw = secret(\"RAW-RB124-SE001\")\n";
+    let v = eval_json(src);
+    assert_eq!(v["pw"], "***SECRET***");
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains("RAW-RB124-SE001"), "{json}");
+    let diag_text = format!("{diags:?}");
+    assert!(!diag_text.contains("RAW-RB124-SE001"), "{diag_text}");
+}
+
+/// RB-125 — `secret(env.…)` never dumps (P1-SE-002 §E).
+/// Set and unset backing variables alike: the export redacts and the
+/// marker is absent from diagnostics.
+#[test]
+fn rb_125_env_backed_secret_never_dumped() {
+    let prior = std::env::var("ACTIVE_TEST_RB125_PW").ok();
+    std::env::set_var("ACTIVE_TEST_RB125_PW", "RAW-RB125-SE002-SET");
+    let src = "pw = secret(env.ACTIVE_TEST_RB125_PW)\n";
+    let v = eval_json(src);
+    assert_eq!(v["pw"], "***SECRET***");
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains("RAW-RB125-SE002-SET"), "{json}");
+    assert!(
+        !format!("{diags:?}").contains("RAW-RB125-SE002-SET"),
+        "{diags:?}"
+    );
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_TEST_RB125_PW", val),
+        None => std::env::remove_var("ACTIVE_TEST_RB125_PW"),
+    }
+    // Positive control neighbour: unset backing var still yields a
+    // redacted secret, no crash and no leak.
+    let prior2 = std::env::var("ACTIVE_TEST_RB125_UNSET_XYZ").ok();
+    std::env::remove_var("ACTIVE_TEST_RB125_UNSET_XYZ");
+    let v = eval_json("pw = secret(env.ACTIVE_TEST_RB125_UNSET_XYZ)\n");
+    assert_eq!(v["pw"], "***SECRET***");
+    match prior2 {
+        Some(val) => std::env::set_var("ACTIVE_TEST_RB125_UNSET_XYZ", val),
+        None => std::env::remove_var("ACTIVE_TEST_RB125_UNSET_XYZ"),
+    }
+}
+
+/// RB-126 — Taint survives table construction (P1-SE-003 §E).
+#[test]
+fn rb_126_taint_through_table_construction() {
+    let src = "t = {pw = secret(\"RAW-RB126-SE003\")}\n";
+    let v = eval_json(src);
+    assert_eq!(v["t"]["pw"], "***SECRET***");
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains("RAW-RB126-SE003"), "{json}");
+    assert!(
+        !format!("{diags:?}").contains("RAW-RB126-SE003"),
+        "{diags:?}"
+    );
+}
+
+/// RB-127 — Secret arithmetic is refused without leaking (P1-SE-004 §E).
+#[test]
+fn rb_127_secret_arithmetic_refused() {
+    let src = "pw = secret(\"RAW-RB127-SE004\")\nx = pw + 1\n";
+    let module = parse(src, "research").expect("must parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail T001");
+    assert_eq!(err.code(), "T001");
+    let text = format!("{err:?}");
+    assert!(!text.contains("RAW-RB127-SE004"), "{text}");
+    // Positive control: plain arithmetic is unaffected.
+    assert_eq!(eval_json("x = 1 + 2\n")["x"], 3);
+}
+
+/// RB-128 — Missing vs empty env, suite form (P1-SE-005 §E).
+/// Same policy as DERIVED-0006/0007 (RB-060/RB-007): `""` wins, absent
+/// falls back — exercised together in one document.
+#[test]
+fn rb_128_missing_vs_empty_env_suite() {
+    let prior_empty = std::env::var("ACTIVE_TEST_RB128_EMPTY").ok();
+    let prior_absent = std::env::var("ACTIVE_TEST_RB128_ABSENT_XYZ").ok();
+    std::env::set_var("ACTIVE_TEST_RB128_EMPTY", "");
+    std::env::remove_var("ACTIVE_TEST_RB128_ABSENT_XYZ");
+    let v = eval_json(
+        "e = env.ACTIVE_TEST_RB128_EMPTY ?: \"fallback\"\nm = env.ACTIVE_TEST_RB128_ABSENT_XYZ ?: \"fallback\"\n",
+    );
+    match prior_empty {
+        Some(val) => std::env::set_var("ACTIVE_TEST_RB128_EMPTY", val),
+        None => std::env::remove_var("ACTIVE_TEST_RB128_EMPTY"),
+    }
+    match prior_absent {
+        Some(val) => std::env::set_var("ACTIVE_TEST_RB128_ABSENT_XYZ", val),
+        None => std::env::remove_var("ACTIVE_TEST_RB128_ABSENT_XYZ"),
+    }
+    assert_eq!(v["e"], "", "empty env must win over fallback");
+    assert_eq!(v["m"], "fallback", "absent env must fall back");
+}
+
+/// RB-129 — Time units normalize to milliseconds (P1-SE-007 §E).
+#[test]
+fn rb_129_time_units_normalize() {
+    let v = eval_json("a = 1h\nb = 1m\nc = 500ms\nd = 5s\n");
+    assert_eq!(v["a"]["ms"], 3600000);
+    assert_eq!(v["b"]["ms"], 60000);
+    assert_eq!(v["c"]["ms"], 500);
+    assert_eq!(v["d"]["ms"], 5000);
+    // Positive control: a plain number stays a number.
+    assert_eq!(eval_json("n = 5\n")["n"], 5);
+}
+
+/// RB-130 — Byte units normalize to integer bytes (P1-SE-008 §E).
+#[test]
+fn rb_130_byte_units_normalize() {
+    let v = eval_json("a = 512MiB\nb = 1KiB\nc = 2GB\n");
+    assert_eq!(v["a"], 536870912);
+    assert_eq!(v["b"], 1024);
+    assert_eq!(v["c"], 2000000000);
+    // Positive control: the quoted form stays a string.
+    assert_eq!(eval_json("a = \"512MiB\"\n")["a"], "512MiB");
+}

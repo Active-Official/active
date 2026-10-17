@@ -74,7 +74,7 @@ not the research docs' proposed names.
 | P1-TI-007 | Empty vs null vs missing trio | Three distinct states | passing → Batch 2 RB-019 |
 | P1-TI-008 | `10` int vs `10.0` float | Distinct types, intent kept | passing → Batch 2 RB-017 |
 | P1-TI-009 | Underscore numbers explicit | `1_000_000` per grammar or reject | passing → Batch 11 RB-107 (stripped to 1000000) |
-| P1-TI-010 | Keyword-lookalikes in arrays stay strings | No element coercion | pending |
+| P1-TI-010 | Keyword-lookalikes in arrays stay strings | No element coercion | passing → Batch 13 RB-121 (quoted exact; bare W001+null, never coerced) |
 | P1-TI-011 | Keyword-like keys policy | Statement-initial value tokens fail E002; mid-statement strays keep §4.1 skip | passing → Batch 11 RB-101 |
 | P1-TI-012 | Duplicate keys explicit | **Last-wins + W011 warning** (reject would break existing last-wins tests) | fixed (W011 warning, last-wins kept) → Batch 1 RB-002 |
 | P1-TI-013 | Key case sensitivity | Case-sensitive distinct keys | passing → Batch 11 RB-108 |
@@ -98,21 +98,21 @@ not the research docs' proposed names.
 | P1-ST-011 | Dotted keys ≡ nested tables (or not) | Locked semantics, dual forms | passing → Batch 12 RB-118 (`[a.b]` ≡ inline nest; dotted-key E002) |
 | P1-ST-012 | `[,]` / `[1,,]` reject | Reject | passing (refusal pinned: H002 heals per locked stray-comma policy RB-089/RB-004) → Batch 12 RB-119 |
 | P1-ST-013 | Bare word in array rejects | Unresolved identifier unless quoted | passing → Batch 12 RB-120 (W001 + null, quoted stays string) |
-| P1-ST-014 | `[server host]` rejects | No spaces in headers | pending |
-| P1-ST-015 | Positive structural matrix | Identical semantics incl. dual-syntax | pending |
+| P1-ST-014 | `[server host]` rejects | No spaces in headers | passing → Batch 13 RB-122 (E001+E002) |
+| P1-ST-015 | Positive structural matrix | Identical semantics incl. dual-syntax | passing → Batch 13 RB-123 |
 
 ## §E — P1 secrets/env/units (`tests/curated/04-P1-Secrets-Env-Taint-Units.md`)
 
 | ID | Contract | Expected Active behavior | Status |
 |---|---|---|---|
-| P1-SE-001 | `secret("s3cr3t")` typed + redacted | Secret kind, export redacts | pending |
-| P1-SE-002 | `secret(env.DB_PASSWORD)` | Env-backed secret, never dumped | pending |
-| P1-SE-003 | Taint through table construction | Field stays tainted | pending |
-| P1-SE-004 | Secret arithmetic rejected | Type/taint error, no leak | pending |
-| P1-SE-005 | Missing vs empty env (suite form) | Same as 0006/0007 | pending |
+| P1-SE-001 | `secret("s3cr3t")` typed + redacted | Secret kind, export redacts | passing → Batch 13 RB-124 (RAW marker absent everywhere) |
+| P1-SE-002 | `secret(env.DB_PASSWORD)` | Env-backed secret, never dumped | passing → Batch 13 RB-125 (set + unset redact) |
+| P1-SE-003 | Taint through table construction | Field stays tainted | passing → Batch 13 RB-126 |
+| P1-SE-004 | Secret arithmetic rejected | Type/taint error, no leak | passing → Batch 13 RB-127 (T001, message redacted) |
+| P1-SE-005 | Missing vs empty env (suite form) | Same as 0006/0007 | passing → Batch 13 RB-128 (suite form of RB-007/RB-060) |
 | P1-SE-006 | Env fallback chain first-wins | Deterministic, empty-policy consistent | passing → Batch 3 RB-027 |
-| P1-SE-007 | Time units normalize | Common duration representation | pending |
-| P1-SE-008 | Byte units normalize | Common byte representation | pending |
+| P1-SE-007 | Time units normalize | Common duration representation | passing → Batch 13 RB-129 (ms map) |
+| P1-SE-008 | Byte units normalize | Common byte representation | passing → Batch 13 RB-130 (integer bytes) |
 | P1-SE-009 | Unknown unit explicit | E002 reject (known-suffix table only) | passing → Batch 4 RB-037 |
 | P1-SE-010 | Unit on non-number rejects | E002 reject | passing → Batch 4 RB-038 |
 | P1-SE-011 | Dimension mismatch (suite form) | Same as 0005 | pending |
@@ -262,4 +262,5 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | Batch 10 | RB-091…RB-100 | done: 9 green first-try; RB-100 forced a revert (statement-level skip is spec §4.1 design, not a bug) |
 | Batch 11 | RB-101…RB-110 | done: all 10 green first-try; RB-101 drove the statement-initial E002 fix |
 | Batch 12 | RB-111…RB-120 (P0-012, P1-ST-003/004/006/007/009/010/011/012/013) + dup-folds (P0-008/009/010/013/018, HIST-YAML-018/023, P1-ST-008) | done: all 10 green first-try, no code changes; RB-119 refusal-pinned (H002 stray-comma policy) |
-| Batch 13+ | Next 10 lowest pending rows by severity, per the loop prompt | pending |
+| Batch 13 | RB-121…RB-130 (P1-TI-010, P1-ST-014/015, P1-SE-001/002/003/004/005/007/008) | done: all 10 green first-try, no code changes; secrets/units/normalization all shipped behavior pinned |
+| Batch 14+ | Next 10 lowest pending rows by severity, per the loop prompt | pending |

@@ -312,9 +312,21 @@ fn deep_dotted_header_nests_three_levels() {
 
 #[test]
 fn dotted_header_repeated_leaf_is_last_wins() {
-    // Same last-wins rule as repeated single headers.
-    let json = tree("[a.b]\nc = 1\n[a.b]\nc = 2\n");
-    let v: serde_json::Value = serde_json::from_str(&json).expect("valid json");
+    // Same last-wins rule as repeated single headers — now announced
+    // with W011 instead of silent (research P1-TI-012/HIST-YAML-004).
+    let module = parse("[a.b]\nc = 1\n[a.b]\nc = 2\n", "dual")
+        .unwrap_or_else(|d| panic!("parse failed: {d:?}"));
+    let engine = Engine::new();
+    let (value, diags) = engine
+        .evaluate(&module)
+        .unwrap_or_else(|e| panic!("evaluation failed: {e}"));
+    assert!(
+        diags.iter().any(|d| d.code == "W011"),
+        "redefined header must warn W011: {diags:?}"
+    );
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value))
+            .expect("valid json");
     assert_eq!(v["a"]["b"]["c"], 2);
 }
 

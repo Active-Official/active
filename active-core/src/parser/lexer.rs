@@ -175,6 +175,10 @@ pub struct Lexer {
 
 impl Lexer {
     pub fn new(src: &str) -> Self {
+        // A leading byte-order mark is not content (research HIST-YAML-021;
+        // JSON RFC policy: parsers may ignore it). Strip one U+FEFF so it
+        // never becomes an E005 token or shifts the first column.
+        let src = src.strip_prefix('\u{FEFF}').unwrap_or(src);
         Self {
             chars: src.chars().collect(),
             pos: 0,

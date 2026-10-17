@@ -6,7 +6,10 @@ drives the SHIPPED importer (`toml_text_to_active`, `json_text_to_active`,
 `active-core/tests/ported.rs` — no re-implemented logic. Each case has one
 expectation sidecar: `<stem>.expected.json` (Active canonical value tree)
 or `<stem>.expected-diag.txt` (the exact pipeline stage that rejects it:
-`IMPORT_HARD_ERROR`, `PARSE_ERROR`, `EVAL_ERROR`).
+`IMPORT_HARD_ERROR`, `PARSE_ERROR`, `EVAL_ERROR`). Cases whose documented
+behavior includes eval warnings carry `<stem>.expected-warnings.json`
+(the exact eval-diag code multiset; absent means clean — e.g. W011 on
+sanitization collisions).
 
 ## Suites
 

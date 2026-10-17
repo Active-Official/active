@@ -51,13 +51,46 @@ fn read(path: &Path) -> String {
 }
 
 fn eval_json(source: &str, name: &str) -> serde_json::Value {
+    eval_json_allowed(source, name, &[])
+}
+
+/// Evaluate like `eval_json`, but the eval diagnostics' code multiset must
+/// equal `allowed` exactly. Cases whose documented behavior includes
+/// warnings (e.g. W011 on sanitization collisions) list them in a
+/// `<stem>.expected-warnings.json` sidecar; anything unlisted still fails.
+fn eval_json_allowed(source: &str, name: &str, allowed: &[String]) -> serde_json::Value {
     let module =
         parse(source, name).unwrap_or_else(|diags| panic!("{name}: parse failed: {diags:?}"));
     let (value, diags) = Engine::new()
         .evaluate(&module)
         .unwrap_or_else(|e| panic!("{name}: evaluation failed: {e}"));
-    assert!(diags.is_empty(), "{name}: eval diagnostics: {diags:?}");
+    let mut got: Vec<String> = diags.into_iter().map(|d| d.code).collect();
+    let mut want: Vec<String> = allowed.to_vec();
+    got.sort();
+    want.sort();
+    assert_eq!(got, want, "{name}: eval diagnostics changed");
     serde_json::from_str(&value_to_pretty_json(&value)).expect("canonical json")
+}
+
+/// Optional `<stem>.expected-warnings.json` sidecar: the exact eval-diag
+/// code multiset a case is documented to produce. Absent = must be clean.
+fn allowed_warnings(dir: &Path, stem: &str) -> Vec<String> {
+    let path = dir.join(format!("{stem}.expected-warnings.json"));
+    if !path.exists() {
+        return Vec::new();
+    }
+    serde_json::from_str(&read(&path)).unwrap_or_else(|e| panic!("bad warnings sidecar: {e}"))
+}
+
+/// Sidecar stem: `example` for `example.toml`, `y_x.json` for
+/// `y_x.json` (the `.json` source extension is part of the stem).
+fn stem_of(f: &Path, ext: &str) -> String {
+    let stem = f.file_stem().unwrap().to_string_lossy().into_owned();
+    if ext == "toml" || ext == "yaml" {
+        stem
+    } else {
+        format!("{stem}.{ext}")
+    }
 }
 
 fn check_suite(suite: &str, ext: &str, import: ImportFn, minimum: usize) {
@@ -69,14 +102,7 @@ fn check_suite(suite: &str, ext: &str, import: ImportFn, minimum: usize) {
     );
     for f in &files {
         let name = f.file_name().unwrap().to_string_lossy().into_owned();
-        // Sidecar stem: `example` for `example.toml`, `y_x.json` for
-        // `y_x.json` (the `.json` source extension is part of the stem).
-        let stem = f.file_stem().unwrap().to_string_lossy().into_owned();
-        let stem = if ext == "toml" || ext == "yaml" {
-            stem
-        } else {
-            format!("{stem}.{ext}")
-        };
+        let stem = stem_of(&f, ext);
         let dir = f.parent().unwrap();
         let expected = dir.join(format!("{stem}.expected.json"));
         let diag = dir.join(format!("{stem}.expected-diag.txt"));
@@ -85,7 +111,8 @@ fn check_suite(suite: &str, ext: &str, import: ImportFn, minimum: usize) {
             let (source, notes) =
                 import(&text).unwrap_or_else(|e| panic!("{suite}/{name}: import failed: {e}"));
             let _ = notes;
-            let got = eval_json(&source, &name);
+            let allowed = allowed_warnings(dir, &stem);
+            let got = eval_json_allowed(&source, &name, &allowed);
             let want: serde_json::Value = serde_json::from_str(&read(&expected))
                 .unwrap_or_else(|e| panic!("{suite}/{name}: bad expectation: {e}"));
             assert_eq!(got, want, "{suite}/{name}: value mismatch");
@@ -225,19 +252,15 @@ fn ported_accept_cases_survive_format_round_trip() {
     ] {
         for f in case_files(suite, ext) {
             let name = f.file_name().unwrap().to_string_lossy().into_owned();
-            let stem = f.file_stem().unwrap().to_string_lossy().into_owned();
-            let stem = if ext == "toml" || ext == "yaml" {
-                stem
-            } else {
-                format!("{stem}.{ext}")
-            };
+            let stem = stem_of(&f, ext);
             if !f.with_file_name(format!("{stem}.expected.json")).exists() {
                 continue; // rejection cases have no tree to preserve
             }
             let text = read(&f);
             let (source, _) =
                 import(&text).unwrap_or_else(|e| panic!("{suite}/{name}: import failed: {e}"));
-            let first = eval_json(&source, &name);
+            let allowed = allowed_warnings(f.parent().unwrap(), &stem);
+            let first = eval_json_allowed(&source, &name, &allowed);
             for style in [Style::Brace, Style::Indent] {
                 let module = parse(&source, &name).unwrap_or_else(|d| panic!("{name}: {d:?}"));
                 let reformatted = format(&module, style);
@@ -262,20 +285,16 @@ fn ported_accept_cases_evaluate_deterministically() {
     ] {
         for f in case_files(suite, ext) {
             let name = f.file_name().unwrap().to_string_lossy().into_owned();
-            let stem = f.file_stem().unwrap().to_string_lossy().into_owned();
-            let stem = if ext == "toml" || ext == "yaml" {
-                stem
-            } else {
-                format!("{stem}.{ext}")
-            };
+            let stem = stem_of(&f, ext);
             if !f.with_file_name(format!("{stem}.expected.json")).exists() {
                 continue;
             }
             let text = read(&f);
             let (source, _) =
                 import(&text).unwrap_or_else(|e| panic!("{suite}/{name}: import failed: {e}"));
-            let a = eval_json(&source, &name);
-            let b = eval_json(&source, &name);
+            let allowed = allowed_warnings(f.parent().unwrap(), &stem);
+            let a = eval_json_allowed(&source, &name, &allowed);
+            let b = eval_json_allowed(&source, &name, &allowed);
             assert_eq!(a, b, "{suite}/{name}: non-deterministic evaluation");
         }
     }

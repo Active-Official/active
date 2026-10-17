@@ -11,6 +11,11 @@ Spec-before-code rule: when the grammar changes, this file changes first.
 
 ## 1. Lexical grammar
 
+### 1.0 Input text
+
+Source text is UTF-8. A single leading byte-order mark (U+FEFF) is skipped
+before lexing and never becomes a token (research HIST-YAML-021).
+
 ### 1.1 Character classes
 
 ```

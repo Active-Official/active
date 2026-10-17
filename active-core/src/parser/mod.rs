@@ -1049,6 +1049,7 @@ impl Parser {
                     self.record_stmt(&k, start.line, end, level);
                     self.extract_annotations(&k, id, start.line);
                     if self.check_depends_on_statement(&k, id) {
+                        self.note_duplicate_key(&k, Some(span_of(&start)), fields.contains_key(&k));
                         fields.insert(k, id);
                     }
                 }
@@ -1061,6 +1062,7 @@ impl Parser {
                     self.record_stmt(&k, start.line, end, level);
                     self.extract_annotations(&k, id, start.line);
                     if self.check_depends_on_statement(&k, id) {
+                        self.note_duplicate_key(&k, Some(span_of(&start)), fields.contains_key(&k));
                         fields.insert(k, id);
                     }
                 }
@@ -2057,6 +2059,7 @@ impl Parser {
         self.statements[stmt_idx].end_line = self.last_end_line();
         self.current_path.pop();
         self.extract_annotations(&key, table_id, key_tok.line);
+        self.note_duplicate_key(&key, Some(span_of(&key_tok)), parent.contains_key(&key));
         parent.insert(key, table_id);
     }
 
@@ -2115,6 +2118,7 @@ impl Parser {
         self.statements[stmt_idx].end_line = self.last_end_line();
         self.current_path.pop();
         self.extract_annotations(&key, table_id, key_tok.line);
+        self.note_duplicate_key(&key, Some(span_of(&key_tok)), parent.contains_key(&key));
         parent.insert(key, table_id);
     }
 
@@ -2145,6 +2149,28 @@ impl Parser {
             confidence: 1.0,
             file: self.current_file_name(),
         });
+    }
+
+    /// Duplicate-key notice (W011): a same-scope redefinition keeps
+    /// last-wins (long-standing behavior everywhere), but silence is not
+    /// allowed (research P1-TI-012/HIST-YAML-004). Warning-class, recorded
+    /// on module.healing so strict parsing still succeeds and the notice
+    /// surfaces through evaluation diagnostics. Call BEFORE overwriting;
+    /// pass whether the key already exists. Include-merge paths never call
+    /// this (cross-file composition is designed, not accidental).
+    fn note_duplicate_key(&mut self, key: &str, span: Option<Span>, existed: bool) {
+        if existed {
+            self.module.healing.push(Diagnostic {
+                severity: Severity::Warning,
+                code: "W011".into(),
+                message: format!("duplicate key '{key}'; last wins"),
+                path: None,
+                span,
+                repair: None,
+                confidence: 1.0,
+                file: self.current_file_name(),
+            });
+        }
     }
 
     /// Extract `schema` tables from value fields into the schema tree
@@ -2480,6 +2506,11 @@ impl Parser {
             // name always wins (spec §2.7).
             self.module.bindings.entry(name_tok.text).or_insert(expr);
         } else {
+            self.note_duplicate_key(
+                &name_tok.text,
+                Some(span_of(&name_tok)),
+                self.module.bindings.contains_key(&name_tok.text),
+            );
             self.module.bindings.insert(name_tok.text.clone(), expr);
             // A local `let` reclaims its name: later includes must skip it.
             self.binding_spliced.remove(&name_tok.text);
@@ -2624,22 +2655,30 @@ impl Parser {
         self.extract_annotations(&name, table_id, open.line);
         match scope {
             None => {
+                self.note_duplicate_key(&leaf, Some(span_of(&open)), parent.contains_key(&leaf));
                 parent.insert(leaf, table_id);
             }
-            Some(pid) => match self.module.get_mut(pid) {
-                Some(Node::Table { fields }) => {
-                    fields.insert(leaf, table_id);
+            Some(pid) => {
+                let existed = matches!(
+                    self.module.get(pid),
+                    Some(Node::Table { fields }) if fields.contains_key(&leaf)
+                );
+                self.note_duplicate_key(&leaf, Some(span_of(&open)), existed);
+                match self.module.get_mut(pid) {
+                    Some(Node::Table { fields }) => {
+                        fields.insert(leaf, table_id);
+                    }
+                    _ => {
+                        self.error(
+                            "E001",
+                            format!(
+                                "table path '{}' conflicts with a non-table value",
+                                segments.join(".")
+                            ),
+                        );
+                    }
                 }
-                _ => {
-                    self.error(
-                        "E001",
-                        format!(
-                            "table path '{}' conflicts with a non-table value",
-                            segments.join(".")
-                        ),
-                    );
-                }
-            },
+            }
         }
     }
 
@@ -4702,6 +4741,8 @@ impl Parser {
                 continue;
             }
             if let Some((k, id)) = self.parse_key_value() {
+                let span = self.module.node_spans.get(&id).cloned();
+                self.note_duplicate_key(&k, span, fields.contains_key(&k));
                 fields.insert(k, id);
             } else {
                 break;

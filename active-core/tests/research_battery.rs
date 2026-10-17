@@ -24257,3 +24257,248 @@ fn rb_1108_syn88_dotted_alias_impossible() {
     let codes = codes_of("case_0088_09 = { a = { b = 2 } }\n");
     assert!(codes.is_empty(), "{codes:?}");
 }
+/// RB-1109 — Derived variant 89-01: dangling backslash heals, never silently (SYN-0089-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0089 (toml-test bad-byte-escape).
+/// REFUSAL (spec-gated): research demands rejecting `"dangling\"`, but
+/// spec/grammar.md:68-70 rules that a string token terminates at the closing
+/// quote or end of input and an unclosed string consumes to EOF with an H001
+/// repair (RB-049 pins the heal). The trailing `\"` is an escaped quote, not
+/// a literal terminator: H001 Info at (1:16) inserts the close, and the
+/// healed value keeps the escaped quote plus the consumed newline.
+/// (Opens SYN-0089 bad-byte-escape lineage.)
+#[test]
+fn rb_1109_syn89_dangling_heals_loudly() {
+    let src = "case_0089_01 = \"dangling\\\"\n";
+    let module = parse(src, "research").expect("H001 must heal, not fail");
+    let h = module
+        .healing
+        .iter()
+        .find(|d| d.code == "H001")
+        .expect("H001");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H001 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    let (value, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(v["case_0089_01"], "dangling\"\n", "healed value, got {v}");
+    // Positive control: a terminated neighbour needs no repair.
+    let module = parse("case_0089_01 = \"ok\"\n", "research").expect("must parse");
+    assert!(
+        module.healing.iter().all(|d| d.code != "H001"),
+        "no H001 expected"
+    );
+    assert_eq!(eval_json("case_0089_01 = \"ok\"\n")["case_0089_01"], "ok");
+}
+
+/// RB-1110 — Derived variant 89-02: surrogate escape stays verbatim (SYN-0089-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0089 (toml-test bad-byte-escape).
+/// REFUSAL (spec-gated): research demands rejecting lone-surrogate
+/// `\uD800`, but spec/grammar.md:64-66 defines no `\u` escape at all —
+/// unknown escapes keep the backslash verbatim (RB-050 pins `\q` → `\q`).
+/// There is no surrogate to be lone: the value is the six characters
+/// `\uD800` with zero diagnostics.
+#[test]
+fn rb_1110_syn89_surrogate_escape_verbatim() {
+    let src = "case_0089_02 = \"\\uD800\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0089_02"], "\\uD800", "verbatim, got {v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: a specified escape still decodes.
+    assert_eq!(
+        eval_json("case_0089_02 = \"a\\nb\"\n")["case_0089_02"],
+        "a\nb"
+    );
+}
+
+/// RB-1111 — Derived variant 89-03: scalar escape stays verbatim, never "a" (SYN-0089-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0089 (toml-test bad-byte-escape).
+/// REFUSAL (spec-gated, same verbatim alphabet): research demands decoding
+/// `\u0061` to "a", but spec/grammar.md:64-66 lists no `\u` escape —
+/// decoding it would invent an escape union the grammar never specified
+/// (the exact hazard SYN-0089-06 names). The value stays six verbatim
+/// characters; `"a"` is spelled `"a"`.
+#[test]
+fn rb_1111_syn89_scalar_escape_not_decoded() {
+    let src = "case_0089_03 = \"\\u0061\"\n";
+    let v = eval_json(src)["case_0089_03"].clone();
+    assert_eq!(v, "\\u0061", "verbatim, got {v}");
+    assert_ne!(v, "a", "must never decode to a, got {v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the plain spelling is exact.
+    assert_eq!(eval_json("case_0089_03 = \"a\"\n")["case_0089_03"], "a");
+}
+
+/// RB-1112 — Derived variant 89-04: escaped newline stays one string (SYN-0089-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0089 (toml-test bad-byte-escape).
+/// `case_0089_04 = "line1\nline2"` is one string containing LF with zero
+/// diagnostics — the specified `\n` escape decodes per spec/grammar.md:64-66
+/// and never splits the parse stream.
+#[test]
+fn rb_1112_syn89_escaped_newline_single_string() {
+    let src = "case_0089_04 = \"line1\\nline2\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0089_04"], "line1\nline2", "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: the specified backslash escape decodes (no over-broad verbatim).
+    assert_eq!(
+        eval_json("case_0089_04 = \"a\\\\b\"\n")["case_0089_04"],
+        "a\\b"
+    );
+}
+
+/// RB-1113 — Derived variant 89-05: literal newline spans the token (SYN-0089-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0089 (toml-test bad-byte-escape).
+/// REFUSAL (spec-gated): research demands rejecting a literal newline inside
+/// `"…"`, but spec/grammar.md:68-70 terminates a string token at the closing
+/// quote or end of input — a newline is an ordinary character, and the input
+/// evaluates to one two-line string with zero diagnostics. The EXPLICIT
+/// multiline form is `"""` (spec/grammar.md:1.4.1); both spellings agree on
+/// the value here.
+#[test]
+fn rb_1113_syn89_literal_newline_spans() {
+    let src = "case_0089_05 = \"line1\nline2\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0089_05"], "line1\nline2", "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: the explicit triple-quoted form agrees on the value.
+    let v = eval_json("case_0089_05 = \"\"\"line1\nline2\"\"\"\n");
+    assert_eq!(v["case_0089_05"], "line1\nline2", "{v}");
+}
+
+/// RB-1114 — Derived variant 89-06: `\x` stays verbatim, no escape union (SYN-0089-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0089 (toml-test bad-byte-escape).
+/// `case_0089_06 = "\x41"` keeps four verbatim characters with zero
+/// diagnostics — spec/grammar.md:64-66 specifies exactly
+/// `\n \t \r \\ \" \0`, so `\x` is unknown and kept (RB-050). Active never
+/// assembles a JSON/TOML/YAML escape union: unspecified escapes decode to
+/// nothing, ever.
+#[test]
+fn rb_1114_syn89_hex_escape_verbatim() {
+    let src = "case_0089_06 = \"\\x41\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0089_06"], "\\x41", "verbatim, got {v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: a SPECIFIED escape still decodes (`\0` is a real NUL byte).
+    let v = eval_json("case_0089_06 = \"a\\0b\"\n")["case_0089_06"].clone();
+    assert_eq!(v, "a\0b", "specified escape decodes, got {v:?}");
+}
+
+/// RB-1115 — Derived variant 89-07: supplementary + combining scalars exact (SYN-0089-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0089 (toml-test bad-byte-escape).
+/// `case_0089_07` holds exactly [U+1F600, U+0065, U+0301] with zero
+/// diagnostics — no Unicode normalization is applied unless specified, so
+/// the NFD tail never collapses to U+00E9. (Escapes spell the non-ASCII
+/// scalars; no editor bytes involved.)
+#[test]
+fn rb_1115_syn89_emoji_combining_exact() {
+    let src = "case_0089_07 = \"\u{1F600}e\u{301}\"\n";
+    let v = eval_json(src)["case_0089_07"].clone();
+    assert_eq!(v, "\u{1F600}e\u{301}", "exact scalars, got {v}");
+    assert_ne!(v, "\u{1F600}\u{e9}", "must not NFC-normalize, got {v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: a plain ASCII neighbour is exact.
+    assert_eq!(eval_json("case_0089_07 = \"e\"\n")["case_0089_07"], "e");
+}
+
+/// RB-1116 — Derived variant 89-08: escaped NUL never materializes (SYN-0089-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0089 (toml-test bad-byte-escape).
+/// `case_0089_08 = "\u0000"` keeps six verbatim characters — no `\u` escape
+/// exists, so no NUL byte is ever constructed from source text (escaped data
+/// cannot smuggle what raw bytes cannot carry). A RAW NUL byte outside a
+/// string rejects E005. (The `\0` escape below spells the raw byte; no
+/// editor bytes involved.)
+#[test]
+fn rb_1116_syn89_escaped_nul_not_materialized() {
+    let src = "case_0089_08 = \"\\u0000\"\n";
+    let v = eval_json(src)["case_0089_08"].clone();
+    assert_eq!(v, "\\u0000", "verbatim, got {v:?}");
+    assert!(
+        !v.as_str().expect("string").contains('\0'),
+        "no NUL byte may materialize, got {v:?}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: a raw NUL byte outside a string rejects E005.
+    let diags = parse("case_0089_08 = 1\0\n", "research").expect_err("raw NUL must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+}
+
+/// RB-1117 — Derived variant 89-09: undefined interpolation warns, never confuses (SYN-0089-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0089 (toml-test bad-byte-escape).
+/// `case_0089_09 = "${literal}"` interpolates per the documented rule:
+/// `literal` is unresolved, so W001 Warning at (1:19) fires and the null
+/// renders as the text "null" inside the string (DERIVED-0002/RB-039:
+/// unresolved names become null; string context stringifies) — expansion
+/// and literal escaping cannot be confused because `\${` stays literal
+/// while `${` always expands.
+#[test]
+fn rb_1117_syn89_undefined_interpolation_warns() {
+    let src = "case_0089_09 = \"${literal}\"\n";
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(
+        v["case_0089_09"], "null",
+        "unresolved renders as text, got {v}"
+    );
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 19), "{span:?}");
+    // Positive control: a bound name expands silently.
+    let v = eval_json("let name = \"world\"\nmsg = \"hello ${name}\"\n");
+    assert_eq!(v["msg"], "hello world", "{v}");
+}
+
+/// RB-1118 — Derived variant 90-01: dangling backslash heals, never silently (SYN-0090-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0090 (toml-test bad-escape-01).
+/// Same locked H001 policy as RB-1109 in the next escape family:
+/// `case_0090_01 = "dangling\"` heals H001 Info at (1:16), value keeps the
+/// escaped quote plus the consumed newline. (Opens SYN-0090 lineage.)
+#[test]
+fn rb_1118_syn90_dangling_heals_loudly() {
+    let src = "case_0090_01 = \"dangling\\\"\n";
+    let module = parse(src, "research").expect("H001 must heal, not fail");
+    let h = module
+        .healing
+        .iter()
+        .find(|d| d.code == "H001")
+        .expect("H001");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H001 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    let (value, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(v["case_0090_01"], "dangling\"\n", "healed value, got {v}");
+    // Positive control: a terminated neighbour needs no repair.
+    let module = parse("case_0090_01 = \"ok\"\n", "research").expect("must parse");
+    assert!(
+        module.healing.iter().all(|d| d.code != "H001"),
+        "no H001 expected"
+    );
+    assert_eq!(eval_json("case_0090_01 = \"ok\"\n")["case_0090_01"], "ok");
+}

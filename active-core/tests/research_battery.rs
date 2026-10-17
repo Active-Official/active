@@ -5176,3 +5176,193 @@ fn rb_278_json_empty_key_rejects() {
     // Positive control: the identifier-key twin binds.
     assert_eq!(eval_json("value = { a = 1 }\n")["value"]["a"], 1);
 }
+
+/// RB-289 — Block-scalar chomping analogue (SRC-YAML-0011 §H, HIGH).
+/// Origin: YAML 1.2.2 block scalar chomping.
+/// Representation is explicit: the escaped form keeps its terminal
+/// LF exactly, while the `"""` block twin drops the final
+/// whitespace-only line (spec/grammar.md §1.4.1) — the two differ by
+/// exactly the terminal LF, never by silent chomping.
+#[test]
+fn rb_289_chomping_explicit_per_form() {
+    let v = eval_json("value = \"line one\\nline two\\n\"\n");
+    assert_eq!(v["value"], "line one\nline two\n");
+    let v = eval_json("value = \"\"\"\nline one\nline two\n\"\"\"\n");
+    assert_eq!(v["value"], "line one\nline two");
+    // Positive control: single-line content agrees across forms.
+    assert_eq!(
+        eval_json("a = \"x\"\n")["a"],
+        eval_json("a = \"\"\"x\"\"\"\n")["a"]
+    );
+}
+
+/// RB-290 — Anchors-and-aliases analogue (SRC-YAML-0012 §H, HIGH).
+/// Origin: YAML 1.2.2 anchors/aliases.
+/// No anchors exist to chase; the alias-like indirection that DOES
+/// exist (interpolation) participates in cycle detection: a 2-cycle
+/// through strings fails S001 like every cycle (RB-030).
+#[test]
+fn rb_290_interp_cycle_is_s001() {
+    let src = "let a = \"${b}\"\nlet b = \"${a}\"\nvalue = a\n";
+    let module = parse(src, "research").expect("must parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail S001");
+    assert_eq!(err.code(), "S001");
+    // Positive control: acyclic interpolation evaluates.
+    assert_eq!(
+        eval_json("let b = \"x\"\nvalue = \"${b}yz\"\n")["value"],
+        "xyz"
+    );
+}
+
+/// RB-291 — Fixture-format analogue (SRC-YAML-0013 §H, MEDIUM).
+/// Origin: yaml-test-suite usage (input/expected/events per case).
+/// The portable conformance oracle: one document formatted in BOTH
+/// styles reparses to equal values — emission agrees, not just eval.
+#[test]
+fn rb_291_dual_format_emission_agrees() {
+    use active_core::fmt::format;
+    use active_core::Style;
+    let src = "value = { a = 1 }\n";
+    for style in [Style::Brace, Style::Indent] {
+        let module = parse(src, "research").expect("must parse");
+        let out = format(&module, style);
+        let module2 = parse(&out, "research")
+            .unwrap_or_else(|d| panic!("reparse failed ({style:?}): {d:?}\n{out}"));
+        let (first, _) = Engine::new().evaluate(&module).expect("must evaluate");
+        let (second, _) = Engine::new().evaluate(&module2).expect("must evaluate");
+        let a: serde_json::Value =
+            serde_json::from_str(&active_core::convert::value_to_pretty_json(&first))
+                .expect("json");
+        let b: serde_json::Value =
+            serde_json::from_str(&active_core::convert::value_to_pretty_json(&second))
+                .expect("json");
+        assert_eq!(a, b, "style {style:?}");
+        assert_eq!(a["value"]["a"], 1);
+    }
+}
+
+/// RB-292 — Tag-definitions analogue (SRC-YAML-0014 §H, MEDIUM).
+/// Origin: yaml-test-suite `doc/tag-usage.md` (empty-key class).
+/// Suite categories inspire the coverage; YAML syntax is not
+/// imported: a quoted key inside braces fails E001 at 1:11.
+#[test]
+fn rb_292_tag_class_empty_key_rejects() {
+    let src = "value = { \"empty\" = 1 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    assert!(
+        diags.iter().any(|d| d.code == "E001"),
+        "E001 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 11), "{span:?}");
+    // Positive control: the bare-key twin binds.
+    assert_eq!(eval_json("value = { empty = 1 }\n")["value"]["empty"], 1);
+}
+
+/// RB-293 — Merge-semantics discussion analogue (SRC-YAML-0015 §H, MEDIUM).
+/// Origin: community merge-precedence question (non-normative).
+/// The naive transliteration `@patch config { x = 1 }` is rejected
+/// (E019: `(` required) — only the explicit call form overlays, so
+/// merge precedence is never a community question in Active.
+#[test]
+fn rb_293_naive_patch_form_rejects() {
+    let src = "base = { x = 1 }\nconfig = { y = 2 }\n@patch config { x = 1 }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    assert!(
+        diags.iter().any(|d| d.code == "E019"),
+        "E019 expected, got {diags:?}"
+    );
+    // Positive control: the explicit call form overlays deterministically.
+    let v = eval_json("base = { x = 1 }\nconfig = { y = 2 }\n@patch(\"config.x\", 1)\n");
+    assert_eq!(v["config"]["x"], 1);
+    assert_eq!(v["base"]["x"], 1);
+}
+
+/// RB-294 — SnakeYAML nested-depth DoS analogue (SRC-CVE-0001 §H, CRITICAL).
+/// Origin: NVD CVE-2022-25857.
+/// Bounded generator (not the destructive PoC): 2000 unclosed `[`
+/// trip E004 with span — depth is bounded before stack is at risk.
+#[test]
+fn rb_294_cve_nested_depth_bounded() {
+    let src = format!("value = {}", "[".repeat(2000));
+    let diags = parse(&src, "research").expect_err("must fail E004");
+    assert!(
+        diags.iter().any(|d| d.code == "E004"),
+        "E004 expected, got {:?}",
+        &diags[..diags.len().min(3)]
+    );
+    let e = diags.iter().find(|d| d.code == "E004").expect("E004");
+    assert!(e.span.is_some(), "E004 carries a span");
+    // Positive control: shallow nesting evaluates.
+    assert_eq!(
+        eval_json("value = [[1]]\n")["value"],
+        serde_json::json!([[1]])
+    );
+}
+
+/// RB-295 — SnakeYAML stack-overflow analogue (SRC-CVE-0002 §H, CRITICAL).
+/// Origin: NVD CVE-2022-41854.
+/// Bounded generator: 300 balanced nested arrays trip E004 — bounded
+/// input, controlled failure, no stack exhaustion.
+#[test]
+fn rb_295_cve_stack_overflow_bounded() {
+    let src = format!("value = {}0{}", "[".repeat(300), "]".repeat(300));
+    let diags = parse(&src, "research").expect_err("must fail E004");
+    assert!(
+        diags.iter().any(|d| d.code == "E004"),
+        "E004 expected, got {:?}",
+        &diags[..diags.len().min(3)]
+    );
+}
+
+/// RB-296 — SnakeYAML stack-overflow analogue 2 (SRC-CVE-0003 §H, CRITICAL).
+/// Origin: NVD CVE-2022-38752.
+/// Same bound through a different construct: 150 nested inline
+/// tables trip E004 — the limit is structural, not array-specific.
+#[test]
+fn rb_296_cve_table_nesting_bounded() {
+    let src = format!("value = {}0{}", "{ a = ".repeat(150), " }".repeat(150));
+    let diags = parse(&src, "research").expect_err("must fail E004");
+    assert!(
+        diags.iter().any(|d| d.code == "E004"),
+        "E004 expected, got {:?}",
+        &diags[..diags.len().min(3)]
+    );
+    // Positive control: shallow tables evaluate.
+    assert_eq!(eval_json("value = { a = 0 }\n")["value"]["a"], 0);
+}
+
+/// RB-297 — Go YAML alias-chasing analogue (SRC-CVE-0004 §H, CRITICAL).
+/// Origin: NVD CVE-2021-4235.
+/// No aliases exist to chase; the reference-like fan-out that DOES
+/// exist (interpolation) materializes exactly under budget: four
+/// copies of `xyz` — deterministic, zero diags. Geometric abuse
+/// trips the expansion budget instead (RB-093).
+#[test]
+fn rb_297_alias_fanout_exact_under_budget() {
+    let src = "let a = \"xyz\"\nlet b = \"${a}${a}${a}${a}\"\nvalue = b\n";
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(v["value"], "xyzxyzxyzxyz");
+    assert!(diags.is_empty(), "{diags:?}");
+}
+
+/// RB-298 — LibYAML tag-URI heap-overflow analogue (SRC-CVE-0005 §H, CRITICAL).
+/// Origin: NVD CVE-2013-6393.
+/// No tag construct exists: the hostile line fails E002 at parse, so
+/// no host constructor is ever invoked — nothing evaluates, nothing
+/// executes. (Completes SRC-YAML-0011…0015 + opens SRC-CVE 0001…0005.)
+#[test]
+fn rb_298_tag_uri_never_executes() {
+    let src = "value = !python/object/apply:os.system [\"echo forbidden\"]\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    // Positive control: the tag-free neighbour binds.
+    assert_eq!(eval_json("value = 1\n")["value"], 1);
+}

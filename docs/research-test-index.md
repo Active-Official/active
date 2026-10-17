@@ -230,8 +230,8 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 |---|---|---|---|
 | SRC-TOML (95) | `SRC-TOML-0001`…`0095` | Upstream toml-test invalid fixtures → Active analogues (reject classes, escapes, tables) | complete: all 95 pinned → Batches 16–25; escape alphabet exactly the specified table (verbatim unknowns, no \u/surrogate decoding) |
 | SRC-JSON (34) | `SRC-JSON-0001`…`0034` | JSONTestSuite edges → Active analogues (nesting, numbers, escapes, dup keys) | complete: all 34 pinned → Batches 25/26/27/28; depth budget E004 (100k brackets trip, 500-deep at bound 64); NUL-outside-string E005 |
-| SRC-YAML (15) | `SRC-YAML-0001`…`0015` | yaml-test-suite edges → Active analogues | mining: 0001…0010 pinned → Batch 29 RB-279…RB-288; Norway refusal (no bare strings), anchors absent (E005), TAB indent E006 |
-| SRC-CVE (10) | `SRC-CVE-0001`…`0010` | CVE-derived payloads → budget/cycle/sanitization analogues | pending (mine per batch) |
+| SRC-YAML (15) | `SRC-YAML-0001`…`0015` | yaml-test-suite edges → Active analogues | complete: all 15 pinned → Batches 29 (RB-279…288) + 30 (RB-289…293); chomping explicit per form; interp cycles are S001 |
+| SRC-CVE (10) | `SRC-CVE-0001`…`0010` | CVE-derived payloads → budget/cycle/sanitization analogues | mining: 0001…0005 pinned → Batch 30 RB-294…RB-298 (bounded generators, E004; fan-out exact; tags never execute) |
 | SRC-SPEC (10) | `SRC-SPEC-0001`…`0010` | Standards-spec edges → grammar conformance analogues | pending (mine per batch) |
 | Byte/token fixtures | `#` headings (~117) | Raw-byte edges (CR/NUL/TAB/controls); byte-exact inputs live beside tests | pending (mine per batch) |
 
@@ -279,4 +279,5 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | Batch 27 | RB-259…RB-268 (SRC-JSON-0015…0024) | done: all 10 green first-try, no code changes; 2 string fixtures committed; object grammar + content-exact strings pinned |
 | Batch 28 | RB-269…RB-278 (SRC-JSON-0025…0034) | done: all 10 green first-try, no code changes; SRC-JSON family complete (34/34); NUL-outside-string fixture committed; CRITICAL depth-budget cases pin E004 |
 | Batch 29 | RB-279…RB-288 (SRC-YAML-0001…0010) | done: all 10 green first-try, no code changes; TAB-indent fixture committed; YAML mining open (anchors absent, Norway refused, merge via @patch) |
+| Batch 30 | RB-289…RB-298 (SRC-YAML-0011…0015, SRC-CVE-0001…0005) | done: all 10 green first-try, no code changes; SRC-YAML family complete (15/15); CVE mining open with bounded generators (E004, exact fan-out, tags never execute) |
 | Batch 17+ | Next catalogue cases (SRC-TOML-0010…, then SRC-JSON/SRC-YAML/SRC-CVE/SRC-SPEC, byte fixtures) | pending |

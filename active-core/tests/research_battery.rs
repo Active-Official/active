@@ -11746,3 +11746,242 @@ fn rb_588_syn31_offset_without_datetimes() {
         "2024-02-29T12:30:00+25:00"
     );
 }
+/// RB-589 — Derived variant 31-03: trailing `Z` rejects loudly (SYN-0031-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0031 (toml-test day-zero).
+/// `case_0031_03 = 2024-01-01T12:30Z` fails E002 Error at (1:32) — the `Z`
+/// suffix fits no token, so one timezone syntax never degrades into a
+/// malformed pseudo-object; it fails loudly. The quoted neighbour stays exact.
+#[test]
+fn rb_589_syn31_trailing_z_rejects() {
+    let src = "case_0031_03 = 2024-01-01T12:30Z\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 32), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    let src = "case_0031_03 = \"2024-01-01T12:30Z\"\n";
+    assert_eq!(eval_json(src)["case_0031_03"], "2024-01-01T12:30Z");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-590 — Derived variant 31-04: quoted date-shapes skip validation (SYN-0031-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0031 (toml-test day-zero).
+/// `case_0031_04 = "2024-02-30"` is the exact string with zero diagnostics —
+/// quoted content is never calendar-validated (there is no calendar type to
+/// validate against); only quotes preserve the text, the bare form is
+/// arithmetic (RB-587 converges).
+#[test]
+fn rb_590_syn31_quoted_never_validated() {
+    let src = "case_0031_04 = \"2024-02-30\"\n";
+    assert_eq!(eval_json(src)["case_0031_04"], "2024-02-30");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: the bare counterpart is arithmetic 1992, never a date.
+    assert_eq!(
+        eval_json("case_0031_04 = 2024-02-30\n")["case_0031_04"],
+        1992
+    );
+}
+
+/// RB-591 — Derived variant 31-05: fractional `Z` form rejects loudly (SYN-0031-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0031 (toml-test day-zero).
+/// `case_0031_05 = 2024-01-01T12:30:00.123456789Z` fails E002 Error at
+/// (1:45) — precision is never the question: without a datetime type there
+/// is no precision to handle deterministically, so the form fails loudly
+/// instead of rounding, truncating, or keeping phantom nanoseconds.
+#[test]
+fn rb_591_syn31_fractional_z_rejects() {
+    let src = "case_0031_05 = 2024-01-01T12:30:00.123456789Z\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 45), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    let src = "case_0031_05 = \"2024-01-01T12:30:00.123456789Z\"\n";
+    assert_eq!(
+        eval_json(src)["case_0031_05"],
+        "2024-01-01T12:30:00.123456789Z"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-592 — Derived variant 31-06: numeric offsets degrade without objects (SYN-0031-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0031 (toml-test day-zero).
+/// `case_0031_06 = 2024-01-01T12:30:00-07:00` evaluates whole-doc to
+/// exactly `{case_0031_06: 2022, T12: 30}` with zero diagnostics — the offset
+/// never becomes an opaque fallback object: arithmetic prefix, colon pair,
+/// §4.1 skip (RB-100 precedent), nothing else materializes.
+#[test]
+fn rb_592_syn31_offset_degrades_cleanly() {
+    let src = "case_0031_06 = 2024-01-01T12:30:00-07:00\n";
+    let v = eval_json(src);
+    assert_eq!(
+        v,
+        serde_json::json!({"case_0031_06": 2022, "T12": 30}),
+        "must degrade to arithmetic + colon pair only, got {v}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    assert_eq!(
+        eval_json("case_0031_06 = \"2024-01-01T12:30:00-07:00\"\n")["case_0031_06"],
+        "2024-01-01T12:30:00-07:00"
+    );
+}
+
+/// RB-593 — Derived variant 31-07: leading zeros follow decimal policy (SYN-0031-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0031 (toml-test day-zero).
+/// `case_0031_07 = 0001-01-01` is the arithmetic -1 (1-1-1, leading zeros
+/// stripped per the RB-104 decimal policy) with zero diagnostics — never a
+/// numeric date token, never octal, never a year type.
+#[test]
+fn rb_593_syn31_leading_zero_decimal() {
+    let src = "case_0031_07 = 0001-01-01\n";
+    let v = eval_json(src);
+    assert_eq!(
+        v,
+        serde_json::json!({"case_0031_07": -1}),
+        "must be decimal arithmetic, got {v}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    assert_eq!(
+        eval_json("case_0031_07 = \"0001-01-01\"\n")["case_0031_07"],
+        "0001-01-01"
+    );
+}
+
+/// RB-594 — Derived variant 31-08: quoted datetimes survive exactly (SYN-0031-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0031 (toml-test day-zero).
+/// `case_0031_08 = "1979-05-27T07:32:00Z"` is the exact string with zero
+/// diagnostics — datetime-looking text is preserved character-for-character
+/// when quoted; the catalogue's preservation demand holds via quoting.
+#[test]
+fn rb_594_syn31_quoted_datetime_exact() {
+    let src = "case_0031_08 = \"1979-05-27T07:32:00Z\"\n";
+    assert_eq!(eval_json(src)["case_0031_08"], "1979-05-27T07:32:00Z");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: the bare date prefix is arithmetic, never a datetime.
+    assert_eq!(
+        eval_json("case_0031_08 = 1979-05-27\n")["case_0031_08"],
+        1947
+    );
+}
+
+/// RB-595 — Derived variant 31-09: out-of-range minutes reject loudly (SYN-0031-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0031 (toml-test day-zero).
+/// `case_0031_09 = 2024-01-01T12:60:00Z` fails E002 Error at (1:35) — range
+/// validation never runs because type construction never runs: without a
+/// datetime type there is no minute field to range-check, so the form fails
+/// loudly at the `Z` instead of validating 60.
+#[test]
+fn rb_595_syn31_bad_minutes_reject() {
+    let src = "case_0031_09 = 2024-01-01T12:60:00Z\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 35), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    let src = "case_0031_09 = \"2024-01-01T12:60:00Z\"\n";
+    assert_eq!(eval_json(src)["case_0031_09"], "2024-01-01T12:60:00Z");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-596 — Derived variant 32-01: Feb-30 twin is arithmetic (SYN-0032-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0032 (toml-test feb-29).
+/// `case_0032_01 = 2024-02-30` is the arithmetic 1992 whole-doc with zero
+/// diagnostics — converges with RB-587 under a new key: no parent fixture
+/// changes the outcome, Feb-30 is never constructed anywhere.
+#[test]
+fn rb_596_syn32_feb30_twin_arithmetic() {
+    let src = "case_0032_01 = 2024-02-30\n";
+    let v = eval_json(src);
+    assert_eq!(
+        v,
+        serde_json::json!({"case_0032_01": 1992}),
+        "date-shaped input must be plain arithmetic, got {v}"
+    );
+    assert_eq!(
+        v["case_0032_01"],
+        eval_json("case_0031_01 = 2024-02-30\n")["case_0031_01"]
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    assert_eq!(
+        eval_json("case_0032_01 = \"2024-02-30\"\n")["case_0032_01"],
+        "2024-02-30"
+    );
+}
+
+/// RB-597 — Derived variant 32-02: offset twin degrades identically (SYN-0032-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0032 (toml-test feb-29).
+/// `case_0032_02 = 2024-02-29T12:30:00+25:00` degrades whole-doc to exactly
+/// `{case_0032_02: 1993, T12: 30}` with zero diagnostics — converges with
+/// RB-588: offset validation is N/A in every lineage. (Opens SYN-0032
+/// feb-29 lineage.)
+#[test]
+fn rb_597_syn32_offset_twin_degrades() {
+    let src = "case_0032_02 = 2024-02-29T12:30:00+25:00\n";
+    let v = eval_json(src);
+    assert_eq!(
+        v,
+        serde_json::json!({"case_0032_02": 1993, "T12": 30}),
+        "must degrade to arithmetic + colon pair only, got {v}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    assert_eq!(
+        eval_json("case_0032_02 = \"2024-02-29T12:30:00+25:00\"\n")["case_0032_02"],
+        "2024-02-29T12:30:00+25:00"
+    );
+}
+
+/// RB-598 — Derived variant 32-03: trailing-`Z` twin rejects (SYN-0032-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0032 (toml-test feb-29).
+/// `case_0032_03 = 2024-01-01T12:30Z` fails E002 Error at (1:32) — converges
+/// with RB-589: one timezone syntax contract in every lineage, loud reject,
+/// never a pseudo-object. (Completes SYN-0031-03…09 coverage.)
+#[test]
+fn rb_598_syn32_trailing_z_twin_rejects() {
+    let src = "case_0032_03 = 2024-01-01T12:30Z\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 32), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    let src = "case_0032_03 = \"2024-01-01T12:30Z\"\n";
+    assert_eq!(eval_json(src)["case_0032_03"], "2024-01-01T12:30Z");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}

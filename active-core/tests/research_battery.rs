@@ -31901,3 +31901,238 @@ fn rb_1438_syn125_hex_escape_verbatim() {
     let v = eval_json("case_0125_06 = \"A\"\n");
     assert_eq!(v["case_0125_06"], "A", "{v}");
 }
+
+/// RB-1439 — Accepted-surrogate-pair twin: emoji exact, no normalization (SYN-0125-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// y_string_accepted_surrogate_pair; same shape as SYN-0116-07).
+/// Converges with RB-1358/RB-1367/RB-1376/RB-1385/RB-1394 and completes the
+/// 125 lineage: U+1F600 + `e` + U+0301, three scalars, seven bytes, silent;
+/// precomposed U+00E9 stays different (no NFC).
+#[test]
+fn rb_1439_syn125_emoji_combining_exact() {
+    let src = "case_0125_07 = \"\u{1F600}e\u{301}\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0125_07"], "\u{1F600}e\u{301}", "{v}");
+    assert_eq!(
+        v["case_0125_07"].as_str().expect("string").chars().count(),
+        3,
+        "{v}"
+    );
+    assert_eq!(v["case_0125_07"].as_str().expect("string").len(), 7, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: precomposed U+00E9 is a different value (no NFC).
+    let pre = eval_json("case_0125_07 = \"\u{e9}\"\n");
+    assert_ne!(v["case_0125_07"], pre["case_0125_07"], "{v} vs {pre}");
+}
+
+/// RB-1440 — Accepted-surrogate-pair twin: escaped data vs raw NUL bytes (SYN-0125-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// y_string_accepted_surrogate_pair; same shape as SYN-0116-08).
+/// Converges with RB-1359/RB-1368/RB-1377/RB-1386/RB-1395 and completes the
+/// 125 lineage: `"\u0000"` verbatim, `"\0"` one real NUL, raw NUL in-string
+/// kept, raw NUL outside strings E005 Error at (1:6).
+#[test]
+fn rb_1440_syn125_escaped_vs_raw_nul() {
+    let v = eval_json("case_0125_08 = \"\\u0000\"\n");
+    assert_eq!(v["case_0125_08"], "\\u0000", "{v}");
+    assert!(codes_of("case_0125_08 = \"\\u0000\"\n").is_empty());
+    let v = eval_json("case_0125_08 = \"a\\0b\"\n");
+    assert_eq!(v["case_0125_08"], "a\0b", "{v}");
+    assert!(codes_of("case_0125_08 = \"a\\0b\"\n").is_empty());
+    let v = eval_json("case_0125_08 = \"a\0b\"\n");
+    assert_eq!(v["case_0125_08"], "a\0b", "{v}");
+    assert!(codes_of("case_0125_08 = \"a\0b\"\n").is_empty());
+    // Positive control (negative neighbour): raw NUL outside strings is E005.
+    let diags = parse("v = 1\0\n", "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 6), "{span:?}");
+}
+
+/// RB-1441 — Accepted-surrogate-pair twin: interpolation and literals never confused (SYN-0125-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0021 (nst JSONTestSuite
+/// y_string_accepted_surrogate_pair; same shape as SYN-0116-09).
+/// Converges with RB-1360/RB-1369/RB-1378/RB-1387/RB-1396 and completes the
+/// 125 lineage: `"${literal}"` interpolates to "null" + W001 Warning at
+/// (1:19); `"literal"` stays exact; a resolved `let` interpolates.
+#[test]
+fn rb_1441_syn125_interpolation_vs_literal() {
+    let src = "case_0125_09 = \"${literal}\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0125_09"], "null", "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 19), "{span:?}");
+    // Positive control: the literal spelling stays exact and silent.
+    let v = eval_json("case_0125_09 = \"literal\"\n");
+    assert_eq!(v["case_0125_09"], "literal", "{v}");
+    assert!(codes_of("case_0125_09 = \"literal\"\n").is_empty());
+    // Positive control: a resolved name interpolates to its value.
+    let v = eval_json("let who = \"hi\"\ncase_0125_09 = \"yo ${who}\"\n");
+    assert_eq!(v["case_0125_09"], "yo hi", "{v}");
+}
+
+/// RB-1442 — Huge-neg-exp variant: leading zero reads as plain decimal (SYN-0126-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0029 (nst JSONTestSuite
+/// i_number_double_huge_neg_exp).
+/// REFUSAL (spec-gated, P1-TI-004 §C, RB-104): the catalogue wants
+/// "reject: invalid-number", but Active numbers are explicitly decimal —
+/// `01` evaluates to 1 with zero diagnostics. There is no octal to confuse
+/// it with and no implicit base to guess; explicitness means the digits
+/// mean exactly what they say.
+#[test]
+fn rb_1442_syn126_leading_zero_decimal() {
+    let src = "case_0126_01 = 01\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0126_01"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the quoted form stays an exact string.
+    assert_eq!(eval_json("case_0126_01 = \"01\"\n")["case_0126_01"], "01");
+}
+
+/// RB-1443 — Huge-neg-exp variant: trailing dot keeps int (SYN-0126-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0029 (nst JSONTestSuite
+/// i_number_double_huge_neg_exp).
+/// REFUSAL (spec-gated, number-grammar lineage RB-1290s): the catalogue
+/// wants "reject: invalid-number", but the grammar reads `1.` as the int 1
+/// — a trailing dot with no fraction adds no type information, so none is
+/// invented. `1.5` beside it stays float: intent kept on both sides.
+#[test]
+fn rb_1443_syn126_trailing_dot_int() {
+    let src = "case_0126_02 = 1.\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0126_02"], 1, "{v}");
+    assert!(!v["case_0126_02"].is_f64(), "must stay int, got {v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a real fraction stays float.
+    let v = eval_json("case_0126_02 = 1.5\n");
+    assert_eq!(v["case_0126_02"], 1.5, "{v}");
+}
+
+/// RB-1444 — Huge-neg-exp variant: bare exponent rejects (SYN-0126-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0029 (nst JSONTestSuite
+/// i_number_double_huge_neg_exp).
+/// `case_0126_03 = 1e` fails E002 Error at (1:17) — the grammar names no
+/// exponent production, so the marker cannot start a number and the stray
+/// token is loud. Converges with the 109/110/111-lineage twins.
+#[test]
+fn rb_1444_syn126_bare_exponent_rejects() {
+    let src = "case_0126_03 = 1e\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the plain int evaluates.
+    assert_eq!(eval_json("case_0126_03 = 1\n")["case_0126_03"], 1);
+}
+
+/// RB-1445 — Huge-neg-exp variant: signed bare exponent rejects (SYN-0126-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0029 (nst JSONTestSuite
+/// i_number_double_huge_neg_exp).
+/// `case_0126_04 = 1e+` fails E002 Error at (1:17) — a sign after a
+/// non-existent exponent marker changes nothing: the token is still stray.
+/// Converges with RB-1444 at the same span.
+#[test]
+fn rb_1445_syn126_signed_exponent_rejects() {
+    let src = "case_0126_04 = 1e+\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: an explicit sign on an int is fine.
+    assert_eq!(eval_json("case_0126_04 = -1\n")["case_0126_04"], -1);
+}
+
+/// RB-1446 — Huge-neg-exp variant: hex prefix refused (SYN-0126-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0029 (nst JSONTestSuite
+/// i_number_double_huge_neg_exp).
+/// `case_0126_05 = 0x10` fails E002 Error at (1:17) — the "reject" arm of
+/// the catalogue's alternative holds because no base-prefixed integer is
+/// specified. The grammar is decimal-only; no host parser is borrowed.
+/// Converges with the 109/110/111-lineage hex twins.
+#[test]
+fn rb_1446_syn126_hex_rejects() {
+    let src = "case_0126_05 = 0x10\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: plain integers around it evaluate.
+    assert_eq!(eval_json("case_0126_05 = 16\n")["case_0126_05"], 16);
+}
+
+/// RB-1447 — Huge-neg-exp variant: underscore separator canonicalizes (SYN-0126-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0029 (nst JSONTestSuite
+/// i_number_double_huge_neg_exp).
+/// `case_0126_06 = 1_000` evaluates to the canonical 1000 with zero
+/// diagnostics — the catalogue's "canonical value is 1000" arm holds
+/// exactly (P1-TI-009 §C, RB-107: separators strip to the plain integer).
+#[test]
+fn rb_1447_syn126_underscore_canonical() {
+    let src = "case_0126_06 = 1_000\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0126_06"], 1000, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the unseparated twin agrees.
+    assert_eq!(eval_json("case_0126_06 = 1000\n")["case_0126_06"], 1000);
+}
+
+/// RB-1448 — Huge-neg-exp variant: giant exponent rejects, never infinity (SYN-0126-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0029 (nst JSONTestSuite
+/// i_number_double_huge_neg_exp).
+/// `case_0126_07 = 1e1000000` fails E002 Error at (1:17) — with no exponent
+/// production in the grammar there is no overflow path and no silent
+/// infinity: the token is stray before magnitude ever matters. The
+/// catalogue's "bounded diagnostic, never infinity" demand holds at lex
+/// time. Converges with the 109/110/111-lineage giant twins.
+#[test]
+fn rb_1448_syn126_giant_exponent_rejects() {
+    let src = "case_0126_07 = 1e1000000\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: a big plain int evaluates exactly.
+    assert_eq!(
+        eval_json("case_0126_07 = 1000000\n")["case_0126_07"],
+        1000000
+    );
+}

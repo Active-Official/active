@@ -285,4 +285,5 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | Batch 33 | RB-319…RB-328 (SYN-0001-01…09, SYN-0002-01) | done: all 10 green first-try, no code changes; SYN mining open (variant-specific assertions: no-null, no-merge, comma≠value, EOF span, twin convergence) |
 | Batch 34 | RB-329…RB-338 (SYN-0002-02…09, SYN-0003-01…02) | done: all 10 green first-try, no code changes; 02-lineage spans/severities/types indexed; redefinition announcement = anti-silence; patch paths type-check first |
 | Batch 35 | RB-339…RB-348 (SYN-0003-03…09, SYN-0004-01…03) | done: all 10 green first-try, no code changes; naive patch/remove/rename/index forms all E019; explicit call forms pinned (patch/remove/rename/nested, ordered plans) |
+| Batch 36 | RB-349…RB-358 (SYN-0004-04…09, SYN-0005-01…04) | done: all 10 green first-try, no code changes; 04-lineage E019 spans at 2:2 + sibling-aware controls; 05-lineage severities/spans (H002 Info, H003 Warning, comma spans) |
 | Byte fixtures (mined) | headed cases → tests/research/*.active + RB IDs | mined per batch, ledger cites |

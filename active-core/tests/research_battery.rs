@@ -6107,6 +6107,187 @@ fn rb_348_syn04_element_identity_kept() {
     assert_eq!(v["first"], 0);
 }
 
+/// RB-349 — Derived variant 04-04: header-form conflict (SYN-0004-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0004 (toml-test extending-table).
+/// Dotted assignment is rejected in header context too — E002 at
+/// 3:1 — so table bodies can never sprout scalar shadows of maps.
+#[test]
+fn rb_349_syn04_header_conflict_rejects() {
+    let src = "[fruit]\napple = { color = \"red\" }\nfruit.apple = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (3, 1), "{span:?}");
+    // Positive control: the header table alone evaluates.
+    let v = eval_json("[fruit]\napple = { color = \"red\" }\n");
+    assert_eq!(v["fruit"]["apple"]["color"], "red");
+}
+
+/// RB-350 — Derived variant 04-05: naive update span (SYN-0004-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0004 (toml-test extending-table).
+/// The naive update form fails E019 at 2:2 — updates arrive only
+/// through the explicit call, which lands silently and exactly.
+#[test]
+fn rb_350_syn04_update_span() {
+    let src = "fruit = { apple = 1 }\n@patch fruit { apple = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the explicit call updates silently and exactly.
+    let v = eval_json("fruit = { apple = 1 }\n@patch(\"fruit.apple\", 2)\n");
+    assert_eq!(v["fruit"]["apple"], 2);
+    let codes = codes_of("fruit = { apple = 1 }\n@patch(\"fruit.apple\", 2)\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-351 — Derived variant 04-06: naive removal span (SYN-0004-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0004 (toml-test extending-table).
+/// E019 at 2:2 for the naive form; the explicit call removes with
+/// the sibling intact.
+#[test]
+fn rb_351_syn04_removal_span() {
+    let src = "fruit = { apple = 1 }\n@remove fruit.apple\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: explicit removal keeps siblings.
+    let v = eval_json("fruit = { apple = 1, pear = 2 }\n@remove(\"fruit.apple\")\n");
+    assert!(v["fruit"].get("apple").is_none(), "{v}");
+    assert_eq!(v["fruit"]["pear"], 2);
+}
+
+/// RB-352 — Derived variant 04-07: naive rename span (SYN-0004-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0004 (toml-test extending-table).
+/// E019 at 2:2; the explicit call preserves the value under the new
+/// name with siblings intact.
+#[test]
+fn rb_352_syn04_rename_span() {
+    let src = "fruit = { apple = 1 }\n@rename fruit.apple to pear\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: explicit rename preserves value and siblings.
+    let v = eval_json("fruit = { apple = 1, plum = 0 }\n@rename(\"fruit.apple\", \"pear\")\n");
+    assert_eq!(v["fruit"]["pear"], 1);
+    assert_eq!(v["fruit"]["plum"], 0);
+    assert!(v["fruit"].get("apple").is_none(), "{v}");
+}
+
+/// RB-353 — Derived variant 04-08: naive plan span (SYN-0004-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0004 (toml-test extending-table).
+/// The naive double rename fails at the FIRST operation (E019 at
+/// 2:2) — plans are atomic per operation; nothing half-applies.
+#[test]
+fn rb_353_syn04_plan_first_op_fails() {
+    let src = "fruit = { apple = 1 }\n@rename fruit.apple to pear\n@rename fruit.pear to apple\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the explicit double-patch plan is deterministic.
+    let src = "fruit = { apple = 1 }\n@patch(\"fruit.apple\", 2)\n@patch(\"fruit.apple\", 3)\n";
+    assert_eq!(eval_json(src)["fruit"]["apple"], 3);
+}
+
+/// RB-354 — Derived variant 04-09: naive nested span (SYN-0004-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0004 (toml-test extending-table).
+/// E019 at 2:2; the explicit leaf call changes only the leaf while
+/// the parent and siblings stand.
+#[test]
+fn rb_354_syn04_nested_span() {
+    let src = "fruit = { apple = { color = \"red\" } }\n@patch fruit.apple { color = \"green\" }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: explicit leaf call, parent and siblings intact.
+    let v = eval_json(
+        "fruit = { apple = { color = \"red\" }, pear = 1 }\n@patch(\"fruit.apple.color\", \"green\")\n",
+    );
+    assert_eq!(v["fruit"]["apple"]["color"], "green");
+    assert_eq!(v["fruit"]["pear"], 1);
+}
+
+/// RB-355 — Derived variant 05-01: heal severity (SYN-0005-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0005 (toml-test missing-separator-01).
+/// The doubled comma heals H002 with Info severity and value
+/// `[1, 2]` — repair class, repair severity, exact value indexed
+/// jointly for the 05 lineage.
+#[test]
+fn rb_355_syn05_heal_severity() {
+    let src = "case_0005_01 = [1,,2]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0005_01"], serde_json::json!([1, 2]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H002 must be Info, got {:?}",
+        h.severity
+    );
+}
+
+/// RB-356 — Derived variant 05-02: heal warning severity (SYN-0005-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0005 (toml-test missing-separator-01).
+/// The missing comma heals H003 with Warning severity — repairs that
+/// insert tokens announce louder than repairs that remove them.
+#[test]
+fn rb_356_syn05_insert_warns() {
+    let src = "case_0005_02 = [1 2]\n";
+    assert_eq!(eval_json(src)["case_0005_02"], serde_json::json!([1, 2]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H003").expect("H003");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Warning,
+        "H003 must be Warning, got {:?}",
+        h.severity
+    );
+}
+
+/// RB-357 — Derived variant 05-03: lone-comma span (SYN-0005-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0005 (toml-test missing-separator-01).
+/// `[,]` heals H002 at the comma (1:17) to the empty array — the
+/// comma position is the span, never a synthesized element.
+#[test]
+fn rb_357_syn05_lone_comma_span() {
+    let src = "case_0005_03 = [,]\n";
+    assert_eq!(eval_json(src)["case_0005_03"], serde_json::json!([]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+}
+
+/// RB-358 — Derived variant 05-04: trailing span (SYN-0005-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0005 (toml-test missing-separator-01).
+/// Trailing comma heals H002 at 1:18 — the 05 lineage converges with
+/// 01/02 on one spelled-out policy. (Completes SYN-0004-04…09 +
+/// opens SYN-0005-01…04.)
+#[test]
+fn rb_358_syn05_trailing_span() {
+    let src = "case_0005_04 = [1,]\n";
+    assert_eq!(eval_json(src)["case_0005_04"], serde_json::json!([1]));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the clean neighbour carries no heal.
+    assert!(!codes_of("case_0005_04 = [1]\n").iter().any(|c| c == "H002"));
+}
+
 /// RB-299 — yaml-cpp flow-stack analogue (SRC-CVE-0006 §H, CRITICAL).
 /// Origin: NVD CVE-2019-6285.
 /// Bounded generator: 400 balanced nested arrays trip E004 with span

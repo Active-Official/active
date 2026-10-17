@@ -8267,3 +8267,264 @@ fn rb_448_syn15_trailing_comma_locked() {
     let codes = codes_of("case_0015_04 = [1]\n");
     assert!(codes.is_empty(), "{codes:?}");
 }
+/// RB-449 — Derived variant 15-05: clean array proves heals are separator-specific (SYN-0015-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0015 (toml-test text-in-array).
+/// `case_0015_05 = [1, 2, 3]` evaluates to exactly three elements with ZERO
+/// diagnostics — the lineage heals (H002/H003) fire only on broken
+/// separators, never on well-formed input.
+#[test]
+fn rb_449_syn15_clean_three_array_silent() {
+    let src = "case_0015_05 = [1, 2, 3]\n";
+    assert_eq!(
+        eval_json(src)["case_0015_05"],
+        serde_json::json!([1, 2, 3]),
+        "clean array must hold exactly three elements"
+    );
+    let codes = codes_of(src);
+    assert!(
+        codes.is_empty(),
+        "clean array must warn nothing, got {codes:?}"
+    );
+    // Control: the doubled-comma neighbour still announces H002.
+    let codes = codes_of("case_0015_05 = [1,,2, 3]\n");
+    assert!(codes.iter().any(|c| c == "H002"), "{codes:?}");
+}
+
+/// RB-450 — Derived variant 15-06: empty array is valid (SYN-0015-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0015 (toml-test text-in-array).
+/// `case_0015_06 = []` evaluates to an empty array with ZERO diagnostics —
+/// emptiness is valid; only a degenerate comma needs a heal.
+#[test]
+fn rb_450_syn15_empty_array_valid() {
+    let src = "case_0015_06 = []\n";
+    assert_eq!(
+        eval_json(src)["case_0015_06"],
+        serde_json::json!([]),
+        "empty array must stay empty"
+    );
+    let codes = codes_of(src);
+    assert!(
+        codes.is_empty(),
+        "empty array must warn nothing, got {codes:?}"
+    );
+    // Control: the lone-comma neighbour heals (H002), never fails.
+    assert_eq!(
+        eval_json("case_0015_06 = [,]\n")["case_0015_06"],
+        serde_json::json!([])
+    );
+    let codes = codes_of("case_0015_06 = [,]\n");
+    assert!(codes.iter().any(|c| c == "H002"), "{codes:?}");
+}
+
+/// RB-451 — Derived variant 15-07: nested delimiters match or fail loudly (SYN-0015-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0015 (toml-test text-in-array).
+/// `[[1], [2, 3]]` evaluates to the exact nested shape with ZERO diagnostics;
+/// a mismatched `[[1]` fails E001 Error at EOF (2:1) — delimiters must match
+/// properly, never degrade silently.
+#[test]
+fn rb_451_syn15_nested_delimiters_match() {
+    let src = "case_0015_07 = [[1], [2, 3]]\n";
+    assert_eq!(
+        eval_json(src)["case_0015_07"],
+        serde_json::json!([[1], [2, 3]]),
+        "nested shape must be exact"
+    );
+    let codes = codes_of(src);
+    assert!(
+        codes.is_empty(),
+        "nested array must warn nothing, got {codes:?}"
+    );
+    // Negative neighbour: mismatched delimiters fail loudly at EOF.
+    let diags = parse("case_0015_07 = [[1]\n", "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+}
+
+/// RB-452 — Derived variant 15-08: heterogeneous arrays keep exact element types (SYN-0015-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0015 (toml-test text-in-array).
+/// `[1, { name = "x" }]` is accepted with ZERO diagnostics and exact types —
+/// the integer stays an integer, the table stays a table; parser and value
+/// model agree, no coercion either way.
+#[test]
+fn rb_452_syn15_hetero_types_exact() {
+    let src = "case_0015_08 = [1, { name = \"x\" }]\n";
+    let v = eval_json(src)["case_0015_08"].clone();
+    assert_eq!(v[0], 1, "integer element must stay integer, got {v}");
+    assert_eq!(v[1]["name"], "x", "table element must stay table, got {v}");
+    assert_eq!(v, serde_json::json!([1, {"name": "x"}]), "{v}");
+    let codes = codes_of(src);
+    assert!(
+        codes.is_empty(),
+        "hetero array must warn nothing, got {codes:?}"
+    );
+    // Positive control: homogeneous arrays evaluate identically clean.
+    let codes = codes_of("case_0015_08 = [1, 2]\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-453 — Derived variant 15-09: unterminated array points at EOF (SYN-0015-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0015 (toml-test text-in-array).
+/// `case_0015_09 = [1, 2` (no bracket) fails E001 Error with the span on the
+/// EOF line (2:1) — the diagnostic points at end-of-input, never at the
+/// opening bracket alone and never nowhere.
+#[test]
+fn rb_453_syn15_unterminated_points_at_eof() {
+    let src = "case_0015_09 = [1, 2\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: the terminated neighbour evaluates with zero diags.
+    let src = "case_0015_09 = [1, 2]\n";
+    assert_eq!(eval_json(src)["case_0015_09"], serde_json::json!([1, 2]));
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-454 — Derived variant 16-01: bare `yes` never becomes bool (SYN-0016-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0016 (toml-test almost-false).
+/// `case_0016_01 = yes` warns W001 Warning at the name span (1:16) and
+/// evaluates to null — the Norway flip is impossible: no YAML 1.1 resolver
+/// runs, so `yes` is never bool true.
+#[test]
+fn rb_454_syn16_bare_yes_never_bool() {
+    let src = "case_0016_01 = yes\n";
+    let v = eval_json(src);
+    assert!(
+        v["case_0016_01"].is_null(),
+        "bare yes must be null, got {v}"
+    );
+    assert_ne!(v["case_0016_01"], true, "bare yes must never be bool true");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    assert_eq!(eval_json("case_0016_01 = \"yes\"\n")["case_0016_01"], "yes");
+}
+
+/// RB-455 — Derived variant 16-02: bare `no` never becomes bool (SYN-0016-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0016 (toml-test almost-false).
+/// `case_0016_02 = no` warns W001 Warning at (1:16) and evaluates to null —
+/// country-code and feature-flag spellings never resolve to bool false,
+/// while the reserved `false` literal still does.
+#[test]
+fn rb_455_syn16_bare_no_never_bool() {
+    let src = "case_0016_02 = no\n";
+    let v = eval_json(src);
+    assert!(v["case_0016_02"].is_null(), "bare no must be null, got {v}");
+    assert_ne!(v["case_0016_02"], false, "bare no must never be bool false");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: the reserved literal still means bool false.
+    assert_eq!(eval_json("case_0016_02 = false\n")["case_0016_02"], false);
+}
+
+/// RB-456 — Derived variant 16-03: bare `on` never becomes bool (SYN-0016-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0016 (toml-test almost-false).
+/// `case_0016_03 = on` warns W001 Warning at (1:16) and evaluates to null —
+/// legacy YAML resolver spellings never silently become bool true.
+#[test]
+fn rb_456_syn16_bare_on_never_bool() {
+    let src = "case_0016_03 = on\n";
+    let v = eval_json(src);
+    assert!(v["case_0016_03"].is_null(), "bare on must be null, got {v}");
+    assert_ne!(v["case_0016_03"], true, "bare on must never be bool true");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    assert_eq!(eval_json("case_0016_03 = \"on\"\n")["case_0016_03"], "on");
+}
+
+/// RB-457 — Derived variant 16-04: bare `off` never becomes bool (SYN-0016-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0016 (toml-test almost-false).
+/// `case_0016_04 = off` warns W001 Warning at (1:16) and evaluates to null —
+/// legacy YAML resolver spellings never silently become bool false.
+#[test]
+fn rb_457_syn16_bare_off_never_bool() {
+    let src = "case_0016_04 = off\n";
+    let v = eval_json(src);
+    assert!(
+        v["case_0016_04"].is_null(),
+        "bare off must be null, got {v}"
+    );
+    assert_ne!(
+        v["case_0016_04"], false,
+        "bare off must never be bool false"
+    );
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: the quoted neighbour stays the exact string.
+    assert_eq!(eval_json("case_0016_04 = \"off\"\n")["case_0016_04"], "off");
+}
+
+/// RB-458 — Derived variant 16-05: reserved `true` stays bool (SYN-0016-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-TOML-0016 (toml-test almost-false).
+/// `case_0016_05 = true` evaluates to bool true with ZERO diagnostics — only
+/// the documented `true`/`false` tokens carry boolean type, and the quoted
+/// "true" neighbour stays a string. (Completes SYN-0015-05…09 + 16-01…05.)
+#[test]
+fn rb_458_syn16_reserved_true_is_bool() {
+    let src = "case_0016_05 = true\n";
+    assert_eq!(
+        eval_json(src)["case_0016_05"],
+        true,
+        "reserved true must be bool"
+    );
+    let codes = codes_of(src);
+    assert!(
+        codes.is_empty(),
+        "reserved true must warn nothing, got {codes:?}"
+    );
+    // Positive control: the quoted neighbour stays the exact string.
+    let v = eval_json("case_0016_05 = \"true\"\n");
+    assert_eq!(v["case_0016_05"], "true");
+    assert_ne!(v["case_0016_05"], true, "quoted true must never be bool");
+}

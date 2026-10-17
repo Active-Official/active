@@ -240,7 +240,9 @@ evaluate(module):
 ### 3.3 Arithmetic rules
 
 - `Int`/`Float` arithmetic is homogeneous or mixed (mixed promotes to `Float`);
-  integer division by zero is a `TypeError` (T001).
+  integer division by zero is a `TypeError` (T001). `Int` `+`/`-`/`*` and
+  unary `-` saturate at the i64 bounds (never panic, never wrap);
+  `i64::MIN / -1` saturates at `i64::MAX`.
 - `DurationMs` arithmetic: `+`/`-` with another duration, `*`/`÷` with an
   `Int`/`Float` scalar, `÷` duration-by-duration ⇒ `Int` ratio; ordering
   comparisons on two durations. Adding a duration to a non-duration is a

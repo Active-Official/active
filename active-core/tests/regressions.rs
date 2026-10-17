@@ -117,3 +117,73 @@ fn integer_max_parses_cleanly_with_no_e023() {
         other => panic!("expected Int, got {other:?}"),
     }
 }
+
+fn int_field(src: &str, key: &str) -> i64 {
+    let module = parse(src, "regression").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    assert!(diags.is_empty(), "{diags:?}");
+    match value {
+        Value::Table(t) => match t.get(key) {
+            Some(Value::Int(n)) => *n,
+            other => panic!("expected Int for {key}, got {other:?}"),
+        },
+        other => panic!("expected table, got {other:?}"),
+    }
+}
+
+#[test]
+fn int_arithmetic_saturates_never_panics_or_wraps() {
+    // Audit find: `m * 2` with `m = i64::MAX` panicked in debug builds
+    // (overflow checks) and would wrap in release. All integer ops now
+    // saturate, consistent with the DurationMs arms.
+    assert_eq!(
+        int_field("let m = 9223372036854775807\nx = m + 1\n", "x"),
+        i64::MAX
+    );
+    assert_eq!(
+        int_field("let m = -9223372036854775807 - 1\nx = m - 1\n", "x"),
+        i64::MIN
+    );
+    assert_eq!(
+        int_field("let m = 9223372036854775807\nx = m * 2\n", "x"),
+        i64::MAX
+    );
+    assert_eq!(
+        int_field("let m = -9223372036854775807 - 1\nx = m * 2\n", "x"),
+        i64::MIN
+    );
+    // i64::MIN / -1 is the only overflowing division: saturates at MAX.
+    assert_eq!(
+        int_field("let m = -9223372036854775807 - 1\nx = m / -1\n", "x"),
+        i64::MAX
+    );
+    // Negation of MIN saturates (never panics).
+    assert_eq!(
+        int_field("let m = -9223372036854775807 - 1\nx = -m\n", "x"),
+        i64::MAX
+    );
+    // Ordinary arithmetic is untouched by saturation.
+    assert_eq!(int_field("x = 6 * 7 - 2\n", "x"), 40);
+}
+
+#[test]
+fn huge_byte_quantities_saturate_not_wrap_negative() {
+    // Audit find: `bytes as i64` wrapped u64 counts past i64::MAX into
+    // negative values (`20000000TiB` → negative). Now saturates at MAX.
+    assert_eq!(int_field("x = 20000000TiB\n", "x"), i64::MAX);
+    assert_eq!(int_field("x = 512MiB\n", "x"), 536870912);
+}
+
+#[test]
+fn huge_durations_evaluate_without_panic() {
+    // 9999999999999999 days overflows u64 milliseconds: saturates at
+    // u64::MAX (f64→u64 `as` saturates) instead of panicking.
+    let module = parse("x = 9999999999999999d\n", "regression").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    assert!(diags.is_empty(), "{diags:?}");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(
+        json.contains(&u64::MAX.to_string()),
+        "saturates at u64::MAX ms, got: {json}"
+    );
+}

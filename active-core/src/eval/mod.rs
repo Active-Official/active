@@ -1799,8 +1799,10 @@ fn normalize_quantity(v: &Value, unit: &Unit) -> Result<Value, String> {
         return Ok(Value::DurationMs(ms));
     }
     if let Some(bytes) = unit.normalize_to_bytes(num) {
-        // Represent bytes as Int for simplicity in the alpha
-        return Ok(Value::Int(bytes as i64));
+        // Represent bytes as Int for simplicity in the alpha.
+        // Saturate: u64 byte counts past i64::MAX must not wrap
+        // negative through `as` (found by audit: `20000000TiB`).
+        return Ok(Value::Int(i64::try_from(bytes).unwrap_or(i64::MAX)));
     }
     // Rates and custom units retain their dimension (e.g. 100/req/s).
     Ok(Value::Quantity(num, unit.clone()))
@@ -1809,10 +1811,16 @@ fn normalize_quantity(v: &Value, unit: &Unit) -> Result<Value, String> {
 pub(crate) fn eval_binary(op: BinOp, lhs: &Value, rhs: &Value) -> Result<Value, String> {
     use BinOp::*;
     match (op, lhs, rhs) {
-        (Add, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a + b)),
-        (Sub, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a - b)),
-        (Mul, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a * b)),
-        (Div, Value::Int(a), Value::Int(b)) if *b != 0 => Ok(Value::Int(a / b)),
+        // Integer arithmetic saturates: user input must never panic
+        // (debug) or wrap (release). Consistent with the DurationMs
+        // arms below and the budget code's saturating style.
+        // `MIN / -1` is the only overflow division: checked, saturates.
+        (Add, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a.saturating_add(*b))),
+        (Sub, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a.saturating_sub(*b))),
+        (Mul, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a.saturating_mul(*b))),
+        (Div, Value::Int(a), Value::Int(b)) if *b != 0 => {
+            Ok(Value::Int(a.checked_div(*b).unwrap_or(i64::MAX)))
+        }
 
         (Add, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
         (Sub, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
@@ -1881,7 +1889,7 @@ fn scale_dur(ms: u64, factor: f64) -> u64 {
 
 pub(crate) fn eval_unary(op: UnOp, v: &Value) -> Result<Value, String> {
     match (op, v) {
-        (UnOp::Neg, Value::Int(n)) => Ok(Value::Int(-n)),
+        (UnOp::Neg, Value::Int(n)) => Ok(Value::Int(n.saturating_neg())),
         (UnOp::Neg, Value::Float(f)) => Ok(Value::Float(-f)),
         (UnOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
         _ => Err(format!("unsupported unary op {op:?} on {v:?}")),

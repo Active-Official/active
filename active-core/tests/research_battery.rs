@@ -18189,3 +18189,274 @@ fn rb_868_syn62_quoted_never_merges() {
     let codes = codes_of("case_0062_03 = { a = 1, a = 2 }\n");
     assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
 }
+/// RB-869 — Derived variant 62-04: distinct keys never false-positive (SYN-0062-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0062 (toml-test duplicate-key-01).
+/// `case_0062_04 = { alpha = 1, beta = 2 }` evaluates to both keys with ZERO
+/// diagnostics — the duplicate guard compares exact keys, so distinct
+/// neighbours never draw W011; the guard fires only on real duplicates.
+#[test]
+fn rb_869_syn62_distinct_keys_silent() {
+    let src = "case_0062_04 = { alpha = 1, beta = 2 }\n";
+    let v = eval_json(src);
+    assert_eq!(
+        v["case_0062_04"],
+        serde_json::json!({"alpha": 1, "beta": 2}),
+        "{v}"
+    );
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: a real duplicate still announces W011 (RB-866 converges).
+    let codes = codes_of("case_0062_04 = { alpha = 1, alpha = 2 }\n");
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}
+
+/// RB-870 — Derived variant 62-05: quoted keys reject before normalizing (SYN-0062-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0062 (toml-test duplicate-key-01).
+/// `case_0062_05 = { "\u{e9}" = 1, "\u{e9}" = 2 }` fails with E001 Error at
+/// (1:18) — keys are identifiers, so quoted forms are rejected before any
+/// Unicode normalization question arises: no implicit normalization, no
+/// explicit normalization, never keys. (Escape spells the non-ASCII bytes;
+/// no editor bytes involved.)
+#[test]
+fn rb_870_syn62_unicode_keys_reject() {
+    let src = "case_0062_05 = { \"\u{e9}\" = 1, \"\u{e9}\" = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: bare distinct keys accept silently.
+    let codes = codes_of("case_0062_05 = { alpha = 1, beta = 2 }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-871 — Derived variant 62-06: distinct tables are not duplicates (SYN-0062-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0062 (toml-test duplicate-key-01).
+/// REFUSAL (spec-gated): the catalogue asks rejecting "repeated assignment",
+/// but the two statements bind DIFFERENT keys (`case_0062_06`, `value`) —
+/// no duplicate exists, so both evaluate with zero diagnostics. Last-wins
+/// governs same-key redefinition (W011), never distinct keys.
+#[test]
+fn rb_871_syn62_distinct_tables_accept() {
+    let src = "case_0062_06 = { a = 1 }\nvalue = { b = 2 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0062_06"]["a"], 1, "{v}");
+    assert_eq!(v["value"]["b"], 2, "{v}");
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+    // Control: same-key redefinition still announces W011 last-wins.
+    let src = "value = { b = 1 }\nvalue = { b = 2 }\n";
+    assert_eq!(eval_json(src)["value"]["b"], 2);
+    let codes = codes_of(src);
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}
+
+/// RB-872 — Derived variant 62-07: naive patch form fails, explicit updates (SYN-0062-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0062 (toml-test duplicate-key-01).
+/// The naive `@patch base { key = 2 }` form fails E019 Error at (3:2) —
+/// ordinary duplicate declarations and intentional patch semantics share no
+/// spelling — while the explicit `@patch("base.key", 2)` call updates
+/// silently to 2 (converges with RB-440: patches warn nothing).
+#[test]
+fn rb_872_syn62_patch_form_separates() {
+    let src = "case_0062_07 = 1\nbase = { key = 1 }\n@patch base { key = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    // Positive control: the explicit call updates with zero diagnostics.
+    let src = "base = { key = 1 }\n@patch(\"base.key\", 2)\n";
+    assert_eq!(eval_json(src)["base"]["key"], 2);
+    let codes = codes_of(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-873 — Derived variant 62-08: double removal is W004-idempotent (SYN-0062-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0062 (toml-test duplicate-key-01).
+/// Two explicit `@remove("base.key")` calls leave `base` empty and announce
+/// W004 Warning at (4:1) on the second — repeated structural operations
+/// have explicit semantics: the rerun is a deterministic no-op, never a
+/// failure. The naive `@remove base.key` spelling still fails E019.
+#[test]
+fn rb_873_syn62_double_remove_idempotent() {
+    let src =
+        "case_0062_08 = 1\nbase = { key = 1 }\n@remove(\"base.key\")\n@remove(\"base.key\")\n";
+    let v = eval_json(src);
+    assert_eq!(v["base"], serde_json::json!({}), "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W004").expect("W004");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W004 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W004 carries a span");
+    assert_eq!((span.line, span.column), (4, 1), "{span:?}");
+    // Control: the naive spelling fails E019.
+    let diags =
+        parse("base = { key = 1 }\n@remove base.key\n", "research").expect_err("must fail E019");
+    assert!(diags.iter().any(|d| d.code == "E019"), "{diags:?}");
+}
+
+/// RB-874 — Derived variant 62-09: dotted-quoted keys never alias (SYN-0062-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0062 (toml-test duplicate-key-01).
+/// `case_0062_09 = { "a.b" = 1, a = { b = 2 } }` fails with E001 Error at
+/// (1:18) — the dotted-quoted form is rejected before any aliasing with the
+/// nested path can arise: TOML dotted-key surprises are impossible where
+/// quoted keys are never keys.
+#[test]
+fn rb_874_syn62_dotted_alias_impossible() {
+    let src = "case_0062_09 = { \"a.b\" = 1, a = { b = 2 } }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the nested path alone evaluates silently.
+    let v = eval_json("case_0062_09 = { a = { b = 2 } }\n");
+    assert_eq!(v["case_0062_09"]["a"]["b"], 2);
+    let codes = codes_of("case_0062_09 = { a = { b = 2 } }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-875 — Derived variant 63-01: multi-line stray comma heals at 2:1 (SYN-0063-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0063 (toml-test linebreak-01).
+/// `case_0063_01 = [1,\n,2]` heals H002 Info at (2:1) to exactly `[1, 2]` —
+/// the linebreak lineage pins cross-line spans: the heal is reported where
+/// the stray comma sits (line 2), and no implicit null is created.
+/// (Opens SYN-0063 linebreak lineage.)
+#[test]
+fn rb_875_syn63_multiline_stray_heals() {
+    let src = "case_0063_01 = [1,\n,2]\n";
+    let v = eval_json(src)["case_0063_01"].clone();
+    assert_eq!(
+        v,
+        serde_json::json!([1, 2]),
+        "healed value must hold two elements"
+    );
+    assert_eq!(v.as_array().expect("array").len(), 2);
+    assert!(
+        !v.as_array().expect("array").iter().any(|e| e.is_null()),
+        "{v}"
+    );
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H002 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: the single-line twin heals at its own column.
+    let codes = codes_of("case_0063_01 = [1,,2]\n");
+    assert!(codes.iter().any(|c| c == "H002"), "{codes:?}");
+}
+
+/// RB-876 — Derived variant 63-02: multi-line separator is announced (SYN-0063-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0063 (toml-test linebreak-01).
+/// `case_0063_02 = [1\n2]` heals H003 Warning at (2:1) to `[1, 2]` —
+/// adjacent values across a linebreak are accepted only loudly, never
+/// merged silently.
+#[test]
+fn rb_876_syn63_multiline_separator_announced() {
+    let src = "case_0063_02 = [1\n2]\n";
+    assert_eq!(
+        eval_json(src)["case_0063_02"],
+        serde_json::json!([1, 2]),
+        "healed value must hold both elements"
+    );
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H003").expect("H003");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Warning,
+        "H003 must be Warning, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H003 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: the separated neighbour parses with zero diagnostics.
+    let codes = codes_of("case_0063_02 = [1,\n2]\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-877 — Derived variant 63-03: lone comma on its own line heals (SYN-0063-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0063 (toml-test linebreak-01).
+/// `case_0063_03 = [\n,]` heals H002 Info at (2:1) to `[]` — a comma alone
+/// on a line stands for no value, never null, even across linebreaks.
+#[test]
+fn rb_877_syn63_multiline_lone_comma() {
+    let src = "case_0063_03 = [\n,]\n";
+    assert_eq!(
+        eval_json(src)["case_0063_03"],
+        serde_json::json!([]),
+        "healed value must be empty, never [null]"
+    );
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H002 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: the empty neighbour parses with zero diagnostics.
+    let codes = codes_of("case_0063_03 = []\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+/// RB-878 — Derived variant 63-04: trailing comma reports its own line (SYN-0063-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-TOML-0063 (toml-test linebreak-01).
+/// `case_0063_04 = [1,\n]` heals H002 Info at (1:18) to `[1]` — the trailing
+/// comma is reported where it sits (line 1), not where the bracket closes:
+/// spans track the token, never the linebreak. (Completes SYN-0062-04…09
+/// coverage + opens SYN-0063-01…04.)
+#[test]
+fn rb_878_syn63_trailing_reports_own_line() {
+    let src = "case_0063_04 = [1,\n]\n";
+    assert_eq!(
+        eval_json(src)["case_0063_04"],
+        serde_json::json!([1]),
+        "healed value must hold exactly one element"
+    );
+    assert_eq!(eval_json(src), eval_json(src), "heal must be deterministic");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags.iter().find(|d| d.code == "H002").expect("H002");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Info,
+        "H002 must be Info, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H002 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the comma-free neighbour parses with zero diagnostics.
+    let codes = codes_of("case_0063_04 = [1]\n");
+    assert!(codes.is_empty(), "{codes:?}");
+}

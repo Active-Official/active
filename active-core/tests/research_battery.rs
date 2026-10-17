@@ -3540,3 +3540,168 @@ fn rb_198_ideographic_space_rejects() {
     // Positive control: the ASCII-space neighbour evaluates.
     assert_eq!(eval_json("value = 1\n")["value"], 1);
 }
+
+/// RB-199 — Upstream `utf16-bom` analogue (SRC-TOML-0050 §H, HIGH).
+/// Origin: toml-test `invalid/encoding/utf16-bom.toml`.
+/// Byte fixture: FF FE + UTF-16LE assignments. Source text is UTF-8
+/// (spec/grammar.md §1.0); UTF-16 is not negotiated — the decoder
+/// fails controlled E017 before lexing, never mojibake, never panic.
+#[test]
+fn rb_199_utf16_bom_controlled_e017() {
+    let diags = parse_file(
+        &research_fixture("src_toml_0050_utf16_bom.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E017");
+    assert!(
+        diags.iter().any(|d| d.code == "E017"),
+        "E017 expected, got {diags:?}"
+    );
+    // Positive control: the UTF-8 form evaluates.
+    assert_eq!(eval_json("value = 1\n")["value"], 1);
+}
+
+/// RB-200 — Upstream `arabic-zero-01` analogue (SRC-TOML-0051 §H, HIGH).
+/// Origin: toml-test `invalid/float/arabic-zero-01.toml`.
+/// Only ASCII digits lex numbers (spec/grammar.md §1.1 `digit =
+/// [0-9]`): U+0661 is an unexpected character, loud E005 with span.
+#[test]
+fn rb_200_arabic_zero_rejects() {
+    let codes = codes_of("value = ١\n");
+    assert!(
+        codes.iter().any(|c| c == "E005"),
+        "E005 expected, got {codes:?}"
+    );
+    // Positive control: the ASCII zero evaluates.
+    assert_eq!(eval_json("value = 0\n")["value"], 0);
+}
+
+/// RB-201 — Upstream `double-dot-01` analogue (SRC-TOML-0052 §H, HIGH).
+/// Origin: toml-test `invalid/float/double-dot-01.toml`.
+/// REFUSAL (spec-gated): no malformed-number reject exists for trailing
+/// dots — mid-statement strays fall under the §2.1/§4.1 skip quirk
+/// (RB-100 design authority). Deterministic: first value 1, zero diags.
+#[test]
+fn rb_201_double_dot_keeps_first_value() {
+    let v = eval_json("value = 1..2\n");
+    assert_eq!(v["value"], 1);
+    assert!(v["value"].is_i64());
+    let codes = codes_of("value = 1..2\n");
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the clean float evaluates with its type.
+    let v = eval_json("value = 1.2\n");
+    assert_eq!(v["value"], 1.2);
+    assert!(v["value"].is_f64());
+}
+
+/// RB-202 — Upstream `exp-dot-01` analogue (SRC-TOML-0053 §H, HIGH).
+/// Origin: toml-test `invalid/float/exp-dot-01.toml`.
+/// No exponent grammar (RB-053): `1.e2` cannot lex as a number —
+/// E002 at the stray identifier.
+#[test]
+fn rb_202_exp_dot_rejects() {
+    let codes = codes_of("value = 1.e2\n");
+    assert!(
+        codes.iter().any(|c| c == "E002"),
+        "E002 expected, got {codes:?}"
+    );
+}
+
+/// RB-203 — Upstream `exp-double-e-01` analogue (SRC-TOML-0054 §H, HIGH).
+/// Origin: toml-test `invalid/float/exp-double-e-01.toml`.
+/// One exponent only — and Active has zero: E002 at the first `e`.
+#[test]
+fn rb_203_exp_double_e_rejects() {
+    let src = "value = 1e2e3\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 10), "{span:?}");
+    // Positive control: plain integers around it evaluate.
+    assert_eq!(eval_json("value = 123\n")["value"], 123);
+}
+
+/// RB-204 — Upstream `leading-dot` analogue (SRC-TOML-0055 §H, HIGH).
+/// Origin: toml-test `invalid/float/leading-dot.toml`.
+/// Leading-dot floats are not in the grammar: E002 on the Dot.
+/// (No permissive host float grammar is borrowed.)
+#[test]
+fn rb_204_leading_dot_rejects() {
+    let src = "value = .5\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 9), "{span:?}");
+    // Positive control: the dotted float evaluates.
+    assert_eq!(eval_json("value = 0.5\n")["value"], 0.5);
+}
+
+/// RB-205 — Upstream `leading-zero` analogue (SRC-TOML-0056 §H, HIGH).
+/// Origin: toml-test `invalid/float/leading-zero.toml`.
+/// REFUSAL (spec-gated): leading zeros are plain decimals (RB-104 —
+/// never octal), floats included: `01.5` is exactly 1.5.
+#[test]
+fn rb_205_leading_zero_float_decimal() {
+    let v = eval_json("value = 01.5\n");
+    assert_eq!(v["value"], 1.5);
+    assert!(v["value"].is_f64());
+    // Positive control: the zero-free neighbour agrees.
+    assert_eq!(eval_json("value = 1.5\n")["value"], 1.5);
+}
+
+/// RB-206 — Upstream `nan-capital` analogue (SRC-TOML-0057 §H, HIGH).
+/// Origin: toml-test `invalid/float/nan-capital.toml`.
+/// Never case-folded into IEEE NaN: bare `NaN` is unresolved
+/// (W001 + null). Special floats have no bare spellings at all.
+#[test]
+fn rb_206_nan_capital_never_nan() {
+    let v = eval_json("value = NaN\n");
+    assert!(v["value"].is_null(), "{v}");
+    let codes = codes_of("value = NaN\n");
+    assert!(
+        codes.iter().any(|c| c == "W001"),
+        "W001 expected, got {codes:?}"
+    );
+    // Positive control: quoted form stays a string.
+    assert_eq!(eval_json("value = \"NaN\"\n")["value"], "NaN");
+}
+
+/// RB-207 — Upstream `trailing-dot` analogue (SRC-TOML-0058 §H, HIGH).
+/// Origin: toml-test `invalid/float/trailing-dot.toml`.
+/// REFUSAL (spec-gated): same §2.1/§4.1 skip quirk as RB-201 — `1.`
+/// keeps int 1 deterministically with zero diags (RB-100 authority).
+#[test]
+fn rb_207_trailing_dot_keeps_int() {
+    let v = eval_json("value = 1.\n");
+    assert_eq!(v["value"], 1);
+    assert!(v["value"].is_i64());
+    let codes = codes_of("value = 1.\n");
+    assert!(codes.is_empty(), "{codes:?}");
+    // Positive control: the clean int evaluates.
+    assert_eq!(eval_json("value = 1\n")["value"], 1);
+}
+
+/// RB-208 — Upstream `trailing-exp` analogue (SRC-TOML-0059 §H, HIGH).
+/// Origin: toml-test `invalid/float/trailing-exp.toml`.
+/// An exponent marker cannot terminate a token with no exponent
+/// grammar: E002 at the `e`.
+#[test]
+fn rb_208_trailing_exp_rejects() {
+    let src = "value = 1e\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 10), "{span:?}");
+}

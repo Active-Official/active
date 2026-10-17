@@ -53,7 +53,7 @@ not the research docs' proposed names.
 | P0-011 | No network during eval | Harness-observed zero I/O | pending |
 | P0-012 | No ambient file reads w/o include | Filesystem untouched | pending |
 | P0-013 | Include cycle A↔B | Include/cycle class reject | pending |
-| P0-014 | Include path must be literal | Reject interpolated path | pending |
+| P0-014 | Include path must be literal | Reject interpolated path | passing → Batch 5 RB-048 |
 | P0-015 | Truncated input never panics | Controlled diagnostic | pending |
 | P0-016 | Random binary never panics | Controlled reject | pending |
 | P0-017 | Wall-clock budget aborts | Time-exceeded diagnostic | pending |
@@ -151,9 +151,9 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | HIST-YAML-004 | Duplicate key last-wins | §1 | Deterministic last-wins + W011 | fixed (W011 warning, last-wins kept) → RB-002 |
 | HIST-YAML-006 | Duplicate key rejection (strict) | §1 | **Not adopted**: Active warns, keeps last-wins (existing tests depend on it) | pending (documents rejection of the alternative) |
 | HIST-YAML-007 | Merge-key quadratic DoS | §2 | N/A: no merge keys; regression-guard the absence | passing → Batch 4 RB-031 |
-| HIST-YAML-008 | Merge-key exponential expansion | §2 | N/A: no merge keys; guard the absence | pending |
+| HIST-YAML-008 | Merge-key exponential expansion | §2 | N/A: no merge keys; guard the absence | passing → Batch 5 RB-041 |
 | HIST-YAML-009 | Alias bomb (collections) | §2 | N/A: no aliases; budget/cycle guard | passing → Batch 4 RB-032 |
-| HIST-YAML-010 | Alias bomb (scalars) | §2 | N/A: no aliases; metadata-budget guard | pending |
+| HIST-YAML-010 | Alias bomb (scalars) | §2 | N/A: no aliases; metadata-budget guard | passing → Batch 5 RB-042 |
 | HIST-YAML-016 | Anchor cycle infinite loop | §2 | N/A: no anchors; cycle class exists | pending |
 | HIST-YAML-003 | Empty key handling | §1 | Accept `""` key, round-trip exact | pending |
 | HIST-YAML-011 | Multiline quotes preserved | §1 | Embedded quotes kept + round-trip | pending |
@@ -168,22 +168,22 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | HIST-YAML-025 | Scientific notation edges | §1 | Per f64 grammar or clean reject | pending |
 | HIST-JSON-001 | Deep nesting stack overflow | §2 | Hard depth limit, diagnostic not crash | passing (budget trips with span) → RB-010 |
 | HIST-JSON-002 | No internal exception types leak | §2 | Documented error classes only | pending |
-| HIST-JSON-003 | Fail fast before memory exhaustion | §2 | Reject long before RAM pressure | pending |
+| HIST-JSON-003 | Fail fast before memory exhaustion | §2 | Reject long before RAM pressure | passing → Batch 5 RB-044 |
 | HIST-JSON-004 | Large integer precision | §2 | E023 saturation path (exists); pin boundary | pending |
 | HIST-JSON-005 | Exponent under/overflow | §2 | IEEE 754 policy for f64 surface | pending |
 | HIST-TOML-001 | Inline nesting depth limit | §2 | Same limit as arrays | pending |
 | HIST-TOML-002 | No raw RangeError-class leaks | §2 | Documented classes only (Rust panics = bugs) | passing → Batch 4 RB-033 |
-| HIST-TOML-003 | Inline table nesting limit | §2 | Depth limit applies | pending |
+| HIST-TOML-003 | Inline table nesting limit | §2 | Depth limit applies | passing → Batch 5 RB-045 |
 | HIST-TOML-004 | Long dotted-key recursion | §2 | Graph build protected | passing → Batch 4 RB-034 |
 | HIST-TOML-005 | Comment-EOF infinite loop | §2 | Terminates (timeout/budget guard evidence) | passing → Batch 3 RB-022 |
-| HIST-TOML-006 | Stringifier cycle guard | §2 | Formatter terminates on cyclic IR | pending |
-| HIST-TOML-007 | Array-of-tables growth bound | §2 | Array size budget enforced | pending |
+| HIST-TOML-006 | Stringifier cycle guard | §2 | Formatter terminates on cyclic IR | passing → Batch 5 RB-043 |
+| HIST-TOML-007 | Array-of-tables growth bound | §2 | No `[[t]]` syntax: clean E001 reject; arrays of inline tables are the Active shape | passing → Batch 5 RB-046 |
 | HIST-TOML-008 | Non-UTC datetime offsets | §2 | N/A: no datetimes; importer stringifies + W008 | pending |
 | HIST-TOML-00B | Trailing comma policy | §2 | Same as HIST-YAML-022 | pending |
 | HIST-TOML-00C | Duplicate keys last-wins | §2 | Same as HIST-YAML-004 | pending |
-| HIST-TOML-00D | Non-string table key rejected | §2 | Keys are identifiers/strings only | pending |
-| HIST-TOML-00E | Unclosed string diagnostic | §2 | Clear unterminated-string error | pending |
-| HIST-TOML-00F | Bad escape rejected | §2 | Invalid-escape diagnostic | pending |
+| HIST-TOML-00D | Non-string table key rejected | §2 | Keys are identifiers/strings only | passing → Batch 5 RB-047 |
+| HIST-TOML-00E | Unclosed string diagnostic | §2 | H001 heal + span recorded (specified repair, not a failure) | passing → Batch 5 RB-049 |
+| HIST-TOML-00F | Bad escape rejected | §2 | Verbatim passthrough per grammar.md:64-66 (refusal pinned) | passing → Batch 5 RB-050 |
 | HIST-TOML-00K | Serializer cycle guard | §2 | Same as HIST-TOML-006 | pending |
 | HIST-TOML-00L | `__proto__` neutral key | §3 | Plain key, no special meaning | passing → Batch 3 RB-026 |
 | HIST-TOML-00M | Secrets absent from error output | §3 | Sanitized diagnostics (Vault CVE-2025-4166 class) | passing → Batch 3 RB-025 |
@@ -254,4 +254,5 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 | Batch 2 | RB-011…RB-020 (§A/§C rows marked) | done: all passing; RB-015 needed two expectation corrections from shipped syntax (plain-name rename targets) |
 | Batch 3 | RB-021…RB-030 (HIST-JSON-001, HIST-TOML-005, HIST-YAML-026/027/028/036, HIST-TOML-00L/00M, DERIVED-0003/0014, P1-SE-006/013) | done: 9 green first-try; RB-030 needed one test-side correction (lets don't export — read via key) |
 | Batch 4 | RB-031…RB-040 (HIST-YAML-007/009, HIST-TOML-002/004/00J, P0-007, P1-SE-009/010, DERIVED-0002/0004) | done: 8 green first-try; RB-031 control + RB-039/RB-040 corrections from shipped behavior |
-| Batch 5+ | Next 10 lowest pending rows by severity, per the loop prompt | pending |
+| Batch 5 | RB-041…RB-050 (HIST-YAML-008/010, HIST-TOML-003/006/007/00D/00E/00F, P0-014, HIST-JSON-003) | done: 9 green first-try; RB-049 corrected (H001 heals, doesn't fail) + RB-050 refusal-pinned (verbatim escapes per spec) |
+| Batch 6+ | Next 10 lowest pending rows by severity, per the loop prompt | pending |

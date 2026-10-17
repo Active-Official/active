@@ -1,0 +1,4 @@
+# RB-048 fixture: interpolated include paths must reject (P0-014).
+# The path below must never resolve, no matter what `dir` holds.
+let dir = "."
+include "${dir}/rb048_lib.active"

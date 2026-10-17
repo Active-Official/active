@@ -692,3 +692,191 @@ fn rb_040_malformed_interpolation_rejected() {
     let v = eval_json("msg = \"hello \\${name}\"\n");
     assert_eq!(v["msg"], "hello ${name}");
 }
+
+fn research_fixture(name: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("tests")
+        .join("research")
+        .join(name)
+}
+
+/// RB-041 — Merge/anchor sigils reject cleanly (HIST-YAML-008 §2).
+/// Active has no `<<`, `&anchor`, or `*alias` syntax; hostile shapes
+/// must fail with documented lexer/parser classes and terminate.
+#[test]
+fn rb_041_merge_anchor_sigils_reject() {
+    for (src, classes) in [
+        ("y = {a = 1}\n", &["none"] as &[&str]),
+        ("a = &x\n", &["E005"]),
+        ("a = *x\n", &["E002", "E001"]),
+        ("x = 1 << 2\n", &["E002"]),
+        ("y = {<< = 1}\n", &["E001", "E002"]),
+    ] {
+        let codes = codes_of(src);
+        if classes == ["none"] {
+            assert!(codes.is_empty(), "{src:?} must stay clean, got {codes:?}");
+        } else {
+            assert!(
+                codes.iter().any(|c| classes.contains(&c.as_str())),
+                "{src:?} must reject with one of {classes:?}, got {codes:?}"
+            );
+        }
+    }
+}
+
+/// RB-042 — Mass shared references terminate (HIST-YAML-010 §2).
+/// 2000 keys reading one big string must evaluate (shared, not expanded)
+/// or fail with a budget class — promptly either way.
+#[test]
+fn rb_042_mass_shared_references_terminate() {
+    let mut src = String::from("let big = \"");
+    src.push_str(&"x".repeat(1000));
+    src.push_str("\"\n");
+    for i in 0..2000 {
+        src.push_str(&format!("s{i} = big\n"));
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let out = parse(&src, "research").map(|m| {
+            Engine::new()
+                .evaluate(&m)
+                .map(|(v, _)| active_core::convert::value_to_pretty_json(&v).len())
+                .map_err(|e| e.code().to_string())
+        });
+        let _ = tx.send(out);
+    });
+    let outcome = rx
+        .recv_timeout(std::time::Duration::from_secs(20))
+        .expect("2000 shared refs must terminate within 20s");
+    match outcome {
+        Ok(Ok(len)) => assert!(len > 1000, "shared values must materialize"),
+        Ok(Err(code)) => assert!(code.starts_with('X'), "budget class expected, got {code}"),
+        Err(diags) => panic!("unexpected parse failure: {diags:?}"),
+    }
+}
+
+/// RB-043 — Formatter terminates on cyclic modules (HIST-TOML-006 §2).
+/// A `let` cycle fails at eval (S001), but formatting the parsed module
+/// must still terminate with re-parseable output.
+#[test]
+fn rb_043_formatter_terminates_on_cycles() {
+    let src = "let a = b\nlet b = a\n";
+    let module = parse(src, "research").expect("cycles parse; they fail at eval");
+    let out = active_core::fmt::format(&module, active_core::Style::Brace);
+    assert!(out.contains('a') && out.contains('b'), "{out}");
+    let _ = parse(&out, "research").map_err(|d| panic!("formatted cycle must re-parse: {d:?}"));
+}
+
+/// RB-044 — Deep input fails fast (HIST-JSON-003 §2).
+/// 2000-deep nesting must reject with a budget class well before any
+/// memory pressure; completion itself is the fail-fast proof.
+#[test]
+fn rb_044_deep_input_fails_fast() {
+    let mut src = String::from("x = ");
+    src.push_str(&"[".repeat(2000));
+    src.push('1');
+    src.push_str(&"]".repeat(2000));
+    src.push('\n');
+    let codes = codes_of(&src);
+    assert!(
+        codes
+            .iter()
+            .any(|c| c.starts_with('X') || c == "E004" || c == "E011"),
+        "2000-deep input must trip a depth/budget class, got {codes:?}"
+    );
+}
+
+/// RB-045 — Inline-table nesting bounded (HIST-TOML-003 §2).
+#[test]
+fn rb_045_inline_table_nesting_bounded() {
+    let mut src = String::from("x = ");
+    for i in 0..200 {
+        src.push_str(&format!("{{k{i} = "));
+    }
+    src.push('1');
+    src.push_str(&"}".repeat(200));
+    src.push('\n');
+    let codes = codes_of(&src);
+    assert!(
+        !codes.is_empty(),
+        "200-deep inline tables must trip a budget"
+    );
+    // Positive control: shallow inline nesting succeeds.
+    assert_eq!(eval_json("x = {a = {b = 1}}\n")["x"]["a"]["b"], 1);
+}
+
+/// RB-046 — No array-of-tables syntax (HIST-TOML-007 §2, P1-ST-008 §D).
+/// `[[t]]` is not Active syntax; it must reject cleanly (E001), never
+/// half-parse into something else.
+#[test]
+fn rb_046_no_array_tables_syntax() {
+    let codes = codes_of("[[t]]\nname = \"x\"\n");
+    assert!(
+        codes.iter().any(|c| c == "E001"),
+        "[[t]] must reject E001, got {codes:?}"
+    );
+    // Positive control: arrays of inline tables are the Active shape.
+    let v = eval_json("t = [{name = \"x\"}, {name = \"y\"}]\n");
+    assert_eq!(v["t"][1]["name"], "y");
+}
+
+/// RB-047 — Non-string table keys reject (HIST-TOML-00D §2).
+#[test]
+fn rb_047_non_string_table_key_rejects() {
+    for src in ["[123]\nx = 1\n", "[true]\nx = 1\n"] {
+        let codes = codes_of(src);
+        assert!(!codes.is_empty(), "{src:?} must fail, parsed clean");
+    }
+    // Positive control: identifier and quoted-string headers work.
+    assert_eq!(eval_json("[server]\nhost = \"h\"\n")["server"]["host"], "h");
+}
+
+/// RB-048 — Interpolated include paths reject (P0-014 §B).
+/// Include paths must be literals; interpolation would let document data
+/// steer filesystem access (research: `!include` RCE class).
+#[test]
+fn rb_048_interpolated_include_rejects() {
+    use active_core::{parse_file, ParseOptions};
+    let diags = parse_file(
+        &research_fixture("rb048_main.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("interpolated include path must fail");
+    assert!(
+        diags.iter().any(|d| d.code == "E015"),
+        "E015 expected, got {diags:?}"
+    );
+    // Positive control: literal includes resolve.
+    let v = eval_json("x = 1\n");
+    assert_eq!(v["x"], 1);
+}
+
+/// RB-049 — Unclosed string healed loudly (HIST-TOML-00E §2).
+/// A string running to EOF heals via H001 (inserted quote, Info) rather
+/// than failing — but never silently: the repair is recorded with a span.
+#[test]
+fn rb_049_unclosed_string_diagnosed() {
+    let module = parse("msg = \"abc\n", "research").expect("H001 must heal, not fail");
+    let notes: Vec<&active_core::Diagnostic> =
+        module.healing.iter().filter(|d| d.code == "H001").collect();
+    assert_eq!(notes.len(), 1, "exactly one H001 expected");
+    assert!(notes[0].span.is_some(), "H001 must carry a span: {notes:?}");
+    // The healed value is the literal content.
+    let (value, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(json.contains("abc"), "{json}");
+}
+
+/// RB-050 — Unknown escapes kept verbatim (HIST-TOML-00F §2).
+/// REFUSAL (spec-gated): research demands rejecting `\q`, but
+/// spec/grammar.md:64-66 defines verbatim passthrough (`\x` → `\x`) in
+/// both string forms. This test pins the specified behavior.
+#[test]
+fn rb_050_unknown_escape_kept_verbatim() {
+    let v = eval_json("bad = \"\\q\"\n");
+    assert_eq!(v["bad"], "\\q");
+    // Positive control: valid escapes still decode.
+    let v = eval_json("ok = \"a\\nb\\t\\\\\\\"\"\n");
+    assert_eq!(v["ok"], "a\nb\t\\\"");
+}

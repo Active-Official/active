@@ -1848,6 +1848,22 @@ fn normalize_quantity(v: &Value, unit: &Unit) -> Result<Value, String> {
         };
         return Ok(Value::Quantity((num * factor).max(0.0), canonical));
     }
+    // AI-age units: token counts, inference throughput, compute. Longest-match
+    // prefix composition is inherent (the lexer consumes the maximal run and
+    // the whitelist carries each spelling). Literal magnitudes clamp at zero.
+    let ai_factor = match unit {
+        Unit::Tokens => Some((1.0, Unit::Tokens)),
+        Unit::KiloTokens => Some((1_000.0, Unit::Tokens)),
+        Unit::MegaTokens => Some((1_000_000.0, Unit::Tokens)),
+        Unit::TokensPerSecond => Some((1.0, Unit::TokensPerSecond)),
+        Unit::Flops => Some((1.0, Unit::Flops)),
+        Unit::TeraFlops => Some((1_000_000_000_000.0, Unit::Flops)),
+        Unit::PetaFlops => Some((1_000_000_000_000_000.0, Unit::Flops)),
+        _ => None,
+    };
+    if let Some((factor, canonical)) = ai_factor {
+        return Ok(Value::Quantity((num * factor).max(0.0), canonical));
+    }
     Ok(Value::Quantity(num, unit.clone()))
 }
 

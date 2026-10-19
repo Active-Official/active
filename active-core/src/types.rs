@@ -50,6 +50,14 @@ pub enum Unit {
     MegabitsPerSecond,
     GigabitsPerSecond,
     MegabytesPerSecond,
+    // AI-age units: token counts, inference throughput, compute (FLOPS).
+    Tokens,
+    KiloTokens,
+    MegaTokens,
+    TokensPerSecond,
+    Flops,
+    TeraFlops,
+    PetaFlops,
     // Custom
     Custom(String),
 }
@@ -101,6 +109,13 @@ impl Unit {
             "Mbps" => Some(Unit::MegabitsPerSecond),
             "Gbps" => Some(Unit::GigabitsPerSecond),
             "MB/s" => Some(Unit::MegabytesPerSecond),
+            "tokens" => Some(Unit::Tokens),
+            "ktokens" => Some(Unit::KiloTokens),
+            "Mtokens" => Some(Unit::MegaTokens),
+            "tok/s" => Some(Unit::TokensPerSecond),
+            "FLOPS" => Some(Unit::Flops),
+            "TFLOPS" => Some(Unit::TeraFlops),
+            "PFLOPS" => Some(Unit::PetaFlops),
             "req/m" | "req_m" => Some(Unit::RequestsPerMinute),
             "req/h" | "req_h" => Some(Unit::RequestsPerHour),
 
@@ -150,6 +165,11 @@ impl Unit {
             | Unit::MegabitsPerSecond
             | Unit::GigabitsPerSecond
             | Unit::MegabytesPerSecond => "bps".into(),
+            // Token counts canonicalize to `tokens`; throughput to `tok/s`;
+            // compute to `FLOPS`.
+            Unit::Tokens | Unit::KiloTokens | Unit::MegaTokens => "tokens".into(),
+            Unit::TokensPerSecond => "tok/s".into(),
+            Unit::Flops | Unit::TeraFlops | Unit::PetaFlops => "FLOPS".into(),
             Unit::Custom(s) => s.clone(),
         }
     }

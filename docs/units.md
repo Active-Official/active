@@ -16,6 +16,9 @@ exhausted; new dimensions use long-form-first plus collision-free shorts.
 | `Hz kHz MHz GHz THz` | frequency | `Quantity` f64 hertz | full (add/sub, scalar, ratio, compare) | `{"Hz": N}` / `NHz` |
 | `b Kb Mb Gb` | bits (distinct from bytes) | `Quantity` f64 bits | full within dimension | `{"b": N}` / `Nb` |
 | `bps Kbps Mbps Gbps MB/s` | data rates | `Quantity` f64 bits/sec (`MB/s` ×8) | full within dimension | `{"bps": N}` / `Nbps` |
+| `tokens ktokens Mtokens` | token counts (AI) | `Quantity` f64 tokens | full within dimension | `{"tokens": N}` / `Ntokens` |
+| `tok/s` | inference throughput (AI) | `Quantity` f64 tok/s | full within dimension | `{"tok/s": N}` / `Ntok/s` |
+| `FLOPS TFLOPS PFLOPS` | compute accounting (AI) | `Quantity` f64 flop/s | full within dimension | `{"FLOPS": N}` / `NFLOPS` |
 
 ## Rejected near-misses (parse E002/E005, never silent)
 

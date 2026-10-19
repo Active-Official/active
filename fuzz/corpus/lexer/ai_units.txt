@@ -1,0 +1,10 @@
+c = 128ktokens
+d = 4ktokens
+e = 2Mtokens
+f = 512tokens
+g = 500tok/s
+h = 2TFLOPS
+i = 15PFLOPS
+j = 128k tokens
+k = 128ktokens + 4ktokens
+l = 2TFLOPS + 500TFLOPS

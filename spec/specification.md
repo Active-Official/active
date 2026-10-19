@@ -294,6 +294,9 @@ evaluation:
 | Frequency | `Quantity(f64, Hertz)` — canonical hertz, f64 (fractional Hz are real) | `1kHz` → `Quantity(1000.0, Hertz)` |
 | Bits | `Quantity(f64, Bits)` — canonical bits (distinct from bytes) | `8b` → `Quantity(8.0, Bits)` |
 | Data rates | `Quantity(f64, BitsPerSecond)` — canonical bits/sec | `1MB/s` → `Quantity(8000000.0, BitsPerSecond)` |
+| Tokens | `Quantity(f64, Tokens)` — canonical token count | `128ktokens` → `Quantity(128000.0, Tokens)` |
+| Token rates | `Quantity(f64, TokensPerSecond)` — canonical tokens/sec | `500tok/s` → `Quantity(500.0, TokensPerSecond)` |
+| Compute | `Quantity(f64, Flops)` — canonical flop/s | `2TFLOPS` → `Quantity(2000000000000.0, Flops)` |
 
 Time normalizations: ns/10⁶→ms, µs/10³→ms, s×10³, m×60000, h×3600000,
 d×86400000, week×604800000 (exact, no calendar dependence). `sec`/`min`
@@ -348,6 +351,23 @@ NIC rates, bandwidth contracts, memory-vs-link audits; collision = all
 clear and case-distinct from bytes (`b`≠`B`, `Mb`≠`MB`, `Kbps`≠`KB`);
 export = JSON `{"b": N}` / `{"bps": N}`, TOML-ish `Nb` / `Nbps`,
 interpolation same; schema kinds `quantity:b`, `quantity:bps`.
+
+Tokens (`tokens ktokens Mtokens`) canonicalize to f64 token counts
+(`128ktokens` → `Quantity(128000.0, Tokens)`). The spelling is always the
+adjacent glued form: `128k tokens` (spaced) is two tokens and fails,
+`tokens:128k` is the pair form (key `tokens`), `128k:tokens` cannot lex a
+leading-digit key — quantities measure, pairs assign, and the two never mix.
+Token rates (`tok/s`) canonicalize to f64 tokens/sec; compute
+(`FLOPS TFLOPS PFLOPS`, case-sensitive SI-style) to f64 flop/s. Full
+arithmetic within each: same-dimension `+ -`, scalar `* /`, same-dimension
+division to a bare ratio, all four comparisons, structural equality.
+Literal magnitudes clamp at zero. Admission record: corpus = agent context
+windows, max-output tokens, inference throughput SLOs, training/inference
+FLOPS accounting; collision = all clear (`tok`, `FLOPS` families touch no
+existing suffix, no SI symbol, no UCUM atom as-spelled); export = JSON
+`{"tokens"/"tok/s"/"FLOPS": N}`, TOML-ish canonical respell
+(`128000tokens`), interpolation same; schema kinds `quantity:tokens`,
+`quantity:tok/s`, `quantity:FLOPS`.
 
 ### 4.2 Serialization of quantities
 

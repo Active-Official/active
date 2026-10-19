@@ -45,6 +45,7 @@
 | Batch 196 | RB-1949...RB-1958 (SYN-0182-06...09, SYN-0183-01...06) | done: all 10 green first-try, no code changes; 182 completed (cycle/schema/env-cap); 183 opened as 165 twins |
 | Batch 197 | RB-1959...RB-1968 (SYN-0183-07...09, SYN-0184-01...07) | done: all 10 green first-try, no code changes; 183 completed as 165 twins; 184 opened as 165/183 twins |
 | Batch 198 | RB-1969...RB-1978 (SYN-0184-08...09, byte-class pins) | done: all 10 green first-try, no code changes; SYN space exhausted (1656/1656); byte classes pinned (VT/FF/2028/29/NBSP/DEL/C0/comment/ASCII-lines) |
+| Batch 199 | RB-1979...RB-1988 (byte-class pins) | done: 9 first-try + RB-1988 test-side control correction (CR-whitespace not LF-continue); bare controls/TAB/NBSP/2028/CRLF-fold/FEFF/lone-CR fixture |
  Research Test Index — YAML/TOML/JSON failure research → Active test backlog
 
 Source corpus: `C:\Users\Usuario\Downloads\Solid Tests Research Work` (read-only).

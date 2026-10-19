@@ -44505,3 +44505,201 @@ fn rb_1978_byte_linesep_never_breaks() {
     assert_eq!(v["a"], 1, "{v}");
     assert_eq!(v["b"], 2, "{v}");
 }
+
+/// RB-1979 — Byte twin: bare DEL gated (byte backlog §H, MEDIUM).
+/// Origin: `#{byte}` raw-byte edges (delete 0x7F, bare position).
+/// `v = \u{7f}` fails E005 Error at (1:5): control debris after `=` is
+/// loud, never skipped, never a value.
+/// CONVERGENCE: structural-debris verdict, bare-DEL angle.
+#[test]
+fn rb_1979_byte_bare_del_gated() {
+    let src = "v = \u{7f}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 5), "{span:?}");
+    // Positive control: DEL inside a string stays data (RB-1975).
+    let v = eval_json("v = \"a\u{7f}b\"\n");
+    assert_eq!(v["v"], "a\u{7f}b", "{v}");
+}
+
+/// RB-1980 — Byte twin: bare ESC gated (byte backlog §H, MEDIUM).
+/// Origin: `#{byte}` raw-byte edges (escape 0x1B, bare position).
+/// `v = \u{1b}` fails E005 Error at (1:5): no escape processing happens
+/// outside strings — ESC is debris, not an introducer.
+/// CONVERGENCE: structural-debris verdict, bare-ESC angle.
+#[test]
+fn rb_1980_byte_bare_esc_gated() {
+    let src = "v = \u{1b}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 5), "{span:?}");
+    // Positive control: ESC inside a string stays data (RB-1976).
+    let v = eval_json("v = \"a\u{1b}b\"\n");
+    assert_eq!(v["v"], "a\u{1b}b", "{v}");
+    assert_eq!(v["v"].as_str().map(|s| s.chars().count()), Some(3));
+}
+
+/// RB-1981 — Byte twin: bare 0x01 gated (byte backlog §H, MEDIUM).
+/// Origin: `#{byte}` raw-byte edges (0x01, bare position).
+/// `v = \u{1}` fails E005 Error at (1:5): the lowest control is debris
+/// outside strings, data inside.
+/// CONVERGENCE: structural-debris verdict, bare-0x01 angle.
+#[test]
+fn rb_1981_byte_bare_0x01_gated() {
+    let src = "v = \u{1}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 5), "{span:?}");
+    // Positive control: 0x01 inside a string stays data (RB-1976).
+    let v = eval_json("v = \"a\u{1}b\"\n");
+    assert_eq!(v["v"], "a\u{1}b", "{v}");
+    assert_eq!(v["v"].as_str().map(|s| s.chars().count()), Some(3));
+}
+
+/// RB-1982 — Byte twin: VT before equals gated (byte backlog §H, MEDIUM).
+/// Origin: `#{byte}` raw-byte edges (VT in key tail).
+/// `v\u{b}= 1` fails E005 Error at (1:2): a key ends where the identifier
+/// ends — VT cannot trail a key, join tokens, or separate them.
+/// CONVERGENCE: identifier-exactness verdict, VT-tail angle.
+#[test]
+fn rb_1982_byte_vt_key_tail_gated() {
+    let src = "v\u{b}= 1\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 2), "{span:?}");
+    // Positive control: the clean key binds silently.
+    assert_eq!(eval_json("v = 1\n")["v"], 1);
+}
+
+/// RB-1983 — Byte twin: TAB splits keys loudly (byte backlog §H, MEDIUM).
+/// Origin: `#{byte}` raw-byte edges (TAB inside key).
+/// `a\tb = 1` fails E002 Error at (1:1): TAB separates tokens but never
+/// belongs to a key — a split key is a grammar error at the key start,
+/// while TAB-separated `v\t=\t1` binds silently.
+/// CONVERGENCE: separator-vs-identifier verdict, TAB angle.
+#[test]
+fn rb_1983_byte_tab_splits_key() {
+    let src = "a\tb = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 1), "{span:?}");
+    // Positive control: TAB between tokens separates silently.
+    let v = eval_json("v\t=\t1\n");
+    assert_eq!(v["v"], 1, "{v}");
+    assert!(codes_of("v\t=\t1\n").is_empty());
+}
+
+/// RB-1984 — Byte twin: NBSP splits keys loudly (byte backlog §H, MEDIUM).
+/// Origin: `#{byte}` raw-byte edges (NBSP inside key).
+/// `a\u{a0}b = 1` fails with E005 FIRST (diags[0]) at (1:2): NBSP is
+/// debris AND key-breaking — first reported as debris at its position.
+/// CONVERGENCE: debris-first verdict, NBSP-key angle.
+#[test]
+fn rb_1984_byte_nbsp_key_first_diag() {
+    let src = "a b = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    assert_eq!(diags[0].code, "E005", "{diags:?}");
+    let span = diags[0].span.clone().expect("span");
+    assert_eq!((span.line, span.column), (1, 2), "{span:?}");
+    // Positive control: NBSP inside a string stays data (RB-1974).
+    let v = eval_json("v = \"a b\"\n");
+    assert_eq!(v["v"], "a b", "{v}");
+}
+
+/// RB-1985 — Byte twin: U+2028 joins nothing (byte backlog §H, MEDIUM).
+/// Origin: `#{byte}` raw-byte edges (separator as joiner).
+/// `a = 1\u{2028}b = 2` fails E005 at (1:6): the separator joins no
+/// statements — one line, one debris announcement, no second binding.
+/// CONVERGENCE: ASCII-lines verdict, joiner angle.
+#[test]
+fn rb_1985_syn199_linesep_joins_nothing() {
+    let src = "a = 1 b = 2\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 6), "{span:?}");
+    // Positive control: a real LF still separates statements (RB-1978).
+    let v = eval_json("a = 1\nb = 2\n");
+    assert_eq!(v["a"], 1, "{v}");
+    assert_eq!(v["b"], 2, "{v}");
+}
+
+/// RB-1986 — Byte twin: CRLF folds inside strings (byte backlog §H, MEDIUM).
+/// Origin: `#{byte}` raw-byte edges (CRLF normalization scope).
+/// `"a\r\nb"` evaluates to "a\nb" — ONE LF, silent: CRLF normalization
+/// (RB-079) applies inside strings too, deterministically.
+/// CONVERGENCE: normalization-scope verdict, fold angle.
+#[test]
+fn rb_1986_byte_crlf_folds_in_string() {
+    let src = "v = \"a\r\nb\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["v"], "a\nb", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the LF twin agrees exactly.
+    assert_eq!(eval_json("v = \"a\nb\"\n")["v"], "a\nb");
+}
+
+/// RB-1987 — Byte twin: FEFF rides strings silently (byte backlog §H, MEDIUM).
+/// Origin: `#{byte}` raw-byte edges (ZWNBSP in data).
+/// `"a﻿b"` keeps all 3 chars silent: mid-string U+FEFF is inert data —
+/// only a LEADING BOM is skipped (RB-003); elsewhere it rides along.
+/// CONVERGENCE: data-verdict, FEFF angle.
+#[test]
+fn rb_1987_byte_feff_string_data() {
+    let src = "v = \"a﻿b\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["v"], "a﻿b", "{v}");
+    assert_eq!(v["v"].as_str().map(|s| s.chars().count()), Some(3));
+    assert!(codes_of(src).is_empty());
+    // Positive control: a plain string agrees silently.
+    assert_eq!(eval_json("v = \"ab\"\n")["v"], "ab");
+}
+
+/// RB-1988 — Byte twin: lone CR continues lines (byte backlog §H, HIGH).
+/// Origin: SRC-TOML-0021 analogue (bare carriage return); byte fixture
+/// (python-written, od-verified — editors must never touch CR bytes).
+/// `v = 1\r+ 2` evaluates to 3, silent: lone CR folds as insignificant
+/// whitespace — the expression never sees a terminator — while LF
+/// terminates statements. Tolerant and deterministic: CR never splits,
+/// never debris.
+/// CONVERGENCE: CR-tolerance verdict, fixture-pinned.
+#[test]
+fn rb_1988_byte_lone_cr_continues() {
+    let text =
+        std::fs::read_to_string(research_fixture("syn_0199_08_lone_cr.active")).expect("fixture");
+    let v = eval_json(&text);
+    assert_eq!(v["v"], 3, "{v}");
+    assert!(codes_of(&text).is_empty());
+    // Positive control: the space twin agrees exactly (CR is whitespace).
+    let v = eval_json("v = 1 + 2\n");
+    assert_eq!(v["v"], 3, "{v}");
+}

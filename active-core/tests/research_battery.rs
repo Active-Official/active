@@ -33621,3 +33621,235 @@ fn rb_1518_syn134_trailing_comment_inert() {
     // Positive control: the comment-free twin agrees.
     assert_eq!(eval_json("probe_3134 = 1\n")["probe_3134"], 1);
 }
+
+/// RB-1519 — Merge-key variant: env lookup explicit with fallback (SYN-0134-06 §H, MEDIUM).
+/// Origin: synthetic variation of the "Add test for merge key" report
+/// (same shape as SYN-0131-06).
+/// Converges with RB-1492: injected var wins when set, `?:` default wins
+/// when absent — uniquely-named vars with save/restore (RB-125 pattern).
+#[test]
+fn rb_1519_syn134_env_fallback_explicit() {
+    let prior = std::env::var("ACTIVE_TEST_RB1519_V").ok();
+    std::env::set_var("ACTIVE_TEST_RB1519_V", "from-env");
+    let v = eval_json("case_0134_06 = 1\nprobe_3134 = env.ACTIVE_TEST_RB1519_V ?: 1\n");
+    assert_eq!(v["probe_3134"], "from-env", "{v}");
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_TEST_RB1519_V", val),
+        None => std::env::remove_var("ACTIVE_TEST_RB1519_V"),
+    }
+    // Positive control neighbour: the absent variable falls back to 1.
+    let prior2 = std::env::var("ACTIVE_TEST_RB1519_ABSENT_XYZ").ok();
+    std::env::remove_var("ACTIVE_TEST_RB1519_ABSENT_XYZ");
+    let v = eval_json("case_0134_06 = 1\nprobe_3134 = env.ACTIVE_TEST_RB1519_ABSENT_XYZ ?: 1\n");
+    assert_eq!(v["probe_3134"], 1, "{v}");
+    assert!(codes_of("probe_3134 = env.ACTIVE_TEST_RB1519_ABSENT_XYZ ?: 1\n").is_empty());
+    match prior2 {
+        Some(val) => std::env::set_var("ACTIVE_TEST_RB1519_ABSENT_XYZ", val),
+        None => std::env::remove_var("ACTIVE_TEST_RB1519_ABSENT_XYZ"),
+    }
+}
+
+/// RB-1520 — Merge-key variant: secret taint propagates and redacts (SYN-0134-07 §H, HIGH).
+/// Origin: synthetic variation of the "Add test for merge key" report
+/// (same shape as SYN-0131-07).
+/// Converges with RB-1493: the export carries `***SECRET***` and the unique
+/// marker is absent from value, JSON, and diagnostics.
+#[test]
+fn rb_1520_syn134_secret_taint_redacts() {
+    let src = "case_0134_07 = 1\nprobe_3134 = secret(\"RAW-RB1520-SE134\")\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0134_07"], 1, "{v}");
+    assert_eq!(v["probe_3134"], "***SECRET***", "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains("RAW-RB1520-SE134"), "{json}");
+    assert!(
+        !format!("{diags:?}").contains("RAW-RB1520-SE134"),
+        "{diags:?}"
+    );
+    // Positive control: a plain string beside it exports exactly.
+    let v = eval_json("case_0134_07 = 1\nprobe_3134 = \"plain\"\n");
+    assert_eq!(v["probe_3134"], "plain", "{v}");
+}
+
+/// RB-1521 — Merge-key variant: bare interpolation refused, references resolve (SYN-0134-08 §H, MEDIUM).
+/// Origin: synthetic variation of the "Add test for merge key" report
+/// (same shape as SYN-0131-08).
+/// Converges with RB-1494: `probe_3134 = ${base}` fails E005 Error at
+/// (3:14) — interpolation is string-only (spec/grammar.md:72-73). Name
+/// references and string interpolation resolve identically.
+#[test]
+fn rb_1521_syn134_bare_interp_refused() {
+    let src = "case_0134_08 = 1\nlet base = 1\nprobe_3134 = ${base}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (3, 14), "{span:?}");
+    // Positive control: a name reference resolves to the binding value.
+    let v = eval_json("let base = 1\nprobe_3134 = base\n");
+    assert_eq!(v["probe_3134"], 1, "{v}");
+    // Positive control: string interpolation resolves identically.
+    let v = eval_json("let base = 1\nprobe_3134 = \"${base}\"\n");
+    assert_eq!(v["probe_3134"], "1", "{v}");
+}
+
+/// RB-1522 — Merge-key variant: unit suffix consumes the full token (SYN-0134-09 §H, MEDIUM).
+/// Origin: synthetic variation of the "Add test for merge key" report
+/// (same shape as SYN-0131-09).
+/// Converges with RB-1495: `5s` normalizes to ms 5000, silently.
+#[test]
+fn rb_1522_syn134_unit_suffix_consumed() {
+    let src = "case_0134_09 = 1\nprobe_3134 = 5s\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0134_09"], 1, "{v}");
+    assert_eq!(v["probe_3134"]["ms"], 5000, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the bare scalar beside it stays a plain int.
+    let v = eval_json("probe_3134 = 5\n");
+    assert_eq!(v["probe_3134"], 5, "{v}");
+}
+
+/// RB-1523 — Duplicate-keys variant: flat dups warn, last wins (SYN-0135-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0020 (nst JSONTestSuite
+/// y_object_duplicated_key; same shape as SYN-0124-01).
+/// REFUSAL (spec-gated, P1-TI-012 §C, converges with RB-1424): the
+/// catalogue wants "reject: duplicate-key", but rejecting would break the
+/// locked last-wins behavior. `{ key = 1, key = 2 }` evaluates to 2 with
+/// W011 Warning at the winning value (1:33).
+#[test]
+fn rb_1523_syn135_flat_dup_warns() {
+    let src = "case_0135_01 = { key = 1, key = 2 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0135_01"]["key"], 2, "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (1, 33), "{span:?}");
+    // Positive control: distinct keys coexist silently.
+    let v = eval_json("case_0135_01 = { key = 1, other = 2 }\n");
+    assert_eq!(v["case_0135_01"]["other"], 2, "{v}");
+    assert!(codes_of("case_0135_01 = { key = 1, other = 2 }\n").is_empty());
+}
+
+/// RB-1524 — Duplicate-keys variant: nested dups warn with nested span (SYN-0135-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0020 (nst JSONTestSuite
+/// y_object_duplicated_key; same shape as SYN-0124-02).
+/// REFUSAL (spec-gated, P1-TI-012 §C, converges with RB-1425): the inner
+/// dup warns W011 Warning at its nested span (1:44), last-wins.
+#[test]
+fn rb_1524_syn135_nested_dup_warns() {
+    let src = "case_0135_02 = { nested = { key = 1, key = 2 } }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0135_02"]["nested"]["key"], 2, "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (1, 44), "{span:?}");
+    // Positive control: distinct nested keys coexist silently.
+    let v = eval_json("case_0135_02 = { nested = { key = 1, other = 2 } }\n");
+    assert_eq!(v["case_0135_02"]["nested"]["other"], 2, "{v}");
+    assert!(codes_of("case_0135_02 = { nested = { key = 1, other = 2 } }\n").is_empty());
+}
+
+/// RB-1525 — Duplicate-keys variant: quoted-vs-bare never merges (SYN-0135-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0020 (nst JSONTestSuite
+/// y_object_duplicated_key; same shape as SYN-0124-03).
+/// `{ "a" = 1, a = 2 }` fails E001 Error at (1:18) — keys are identifiers,
+/// so the quoted form is rejected before any canonicalization question.
+/// Converges with RB-1426.
+#[test]
+fn rb_1525_syn135_quoted_bare_never_merge() {
+    let src = "case_0135_03 = { \"a\" = 1, a = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: bare dups announce W011 last-wins instead.
+    let codes = codes_of("case_0135_03 = { a = 1, a = 2 }\n");
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}
+
+/// RB-1526 — Duplicate-keys variant: distinct keys accept (SYN-0135-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0020 (nst JSONTestSuite
+/// y_object_duplicated_key; same shape as SYN-0124-04).
+/// Converges with RB-1427: two distinct keys, both exact, zero diagnostics.
+#[test]
+fn rb_1526_syn135_distinct_keys_accept() {
+    let src = "case_0135_04 = { alpha = 1, beta = 2 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0135_04"]["alpha"], 1, "{v}");
+    assert_eq!(v["case_0135_04"]["beta"], 2, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the nested twin is equally silent.
+    let v = eval_json("case_0135_04 = { nested = { alpha = 1 } }\n");
+    assert_eq!(v["case_0135_04"]["nested"]["alpha"], 1, "{v}");
+}
+
+/// RB-1527 — Duplicate-keys variant: no implicit Unicode normalization (SYN-0135-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0020 (nst JSONTestSuite
+/// y_object_duplicated_key; same shape as SYN-0124-05).
+/// `{ "é" = 1, "é" = 2 }` (U+00E9 vs `e`+U+0301) fails E001 Error at
+/// (1:18) — quoted forms are never keys, so no normalization question
+/// arises. Converges with RB-1428.
+#[test]
+fn rb_1527_syn135_no_unicode_key_merge() {
+    let src = "case_0135_05 = { \"\u{e9}\" = 1, \"e\u{301}\" = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: as VALUES the two spellings stay distinct (no NFC).
+    let a = eval_json("case_0135_05 = \"\u{e9}\"\n");
+    let b = eval_json("case_0135_05 = \"e\u{301}\"\n");
+    assert_ne!(a["case_0135_05"], b["case_0135_05"], "{a} vs {b}");
+}
+
+/// RB-1528 — Duplicate-keys variant: distinct tables never collide (SYN-0135-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0020 (nst JSONTestSuite
+/// y_object_duplicated_key; same shape as SYN-0124-06).
+/// Converges with RB-1429: different top-level keys evaluate silently —
+/// no same-key write, no check to bypass.
+#[test]
+fn rb_1528_syn135_distinct_tables_accept() {
+    let src = "case_0135_06 = { a = 1 }\nvalue = { b = 2 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0135_06"]["a"], 1, "{v}");
+    assert_eq!(v["value"]["b"], 2, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a same-key repeat announces W011 (RB-1523).
+    let codes = codes_of("case_0135_06 = { a = 1, a = 2 }\n");
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}

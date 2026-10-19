@@ -38590,3 +38590,245 @@ fn rb_1748_syn160_scalar_escape_verbatim() {
     let v = eval_json("case_0160_03 = \"a\\nb\"\n");
     assert_eq!(v["case_0160_03"], "a\nb", "{v}");
 }
+
+/// RB-1749 — String twin: escaped newline stays data (SYN-0160-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0006 (TOML string grammar).
+/// `case_0160_04 = "line1\nline2"` evaluates to one string containing a
+/// single LF: the specified `\n` decodes (RB-309), and the parse stream
+/// never splits — still exactly one key, zero diagnostics.
+#[test]
+fn rb_1749_syn160_escaped_newline_is_data() {
+    let src = "case_0160_04 = \"line1\\nline2\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0160_04"], "line1\nline2", "{v}");
+    assert!(v["case_0160_04"].is_string());
+    assert_eq!(v.as_object().map(|o| o.len()), Some(1));
+    assert!(codes_of(src).is_empty());
+    // Positive control: a plain single-line string is equally exact.
+    assert_eq!(
+        eval_json("case_0160_04 = \"plain\"\n")["case_0160_04"],
+        "plain"
+    );
+}
+
+/// RB-1750 — String twin: literal newline is specified multiline (SYN-0160-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0006 (literal newline handling).
+/// A literal LF inside quotes evaluates to the same one-LF string as the
+/// escape: multiline quoted strings ARE explicitly specified (C-024), so
+/// the research "reject unless multiline specified" converges on accept —
+/// handled by grammar, never guessed.
+/// CONVERGENCE: C-024 multiline-string grammar.
+#[test]
+fn rb_1750_syn160_literal_newline_multiline() {
+    let src = "case_0160_05 = \"line1\nline2\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0160_05"], "line1\nline2", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the escaped twin agrees exactly (RB-1749).
+    assert_eq!(
+        eval_json("case_0160_05 = \"line1\\nline2\"\n")["case_0160_05"],
+        "line1\nline2"
+    );
+}
+
+/// RB-1751 — String twin: no escape-union borrowing (SYN-0160-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0006 (JSON/TOML/YAML unions).
+/// REFUSAL (spec-gated, escape alphabet RB-240/RB-309): `"\x41"` keeps its
+/// exact four characters silently — `\x` is not specified, so no host
+/// union is borrowed and "A" never appears. Strict where specified,
+/// verbatim otherwise.
+/// CONVERGENCE: verbatim rhythm of RB-1747/RB-1748.
+#[test]
+fn rb_1751_syn160_hex_escape_verbatim() {
+    let src = "case_0160_06 = \"\\x41\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0160_06"], "\\x41", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a specified escape still decodes beside it.
+    assert_eq!(
+        eval_json("case_0160_06 = \"a\\tb\"\n")["case_0160_06"],
+        "a\tb"
+    );
+}
+
+/// RB-1752 — String twin: Unicode passes through exact (SYN-0160-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0006 (supplementary/combining).
+/// `"😀é"` (U+1F600 + e + U+0301) evaluates to exactly 3 chars with zero
+/// diagnostics: no normalization, no folding, no loss — the scalar
+/// sequence is data, byte- and char-exact.
+/// CONVERGENCE: exactness guarantee, normalization refused by absence.
+#[test]
+fn rb_1752_syn160_unicode_exact_no_normalize() {
+    let src = "case_0160_07 = \"\u{1F600}e\u{301}\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0160_07"], "\u{1F600}e\u{301}", "{v}");
+    assert_eq!(
+        v["case_0160_07"].as_str().map(|s| s.chars().count()),
+        Some(3)
+    );
+    assert!(codes_of(src).is_empty());
+    // Positive control: a precomposed scalar is exactly 1 char.
+    let v = eval_json("case_0160_07 = \"\u{e9}\"\n");
+    assert_eq!(
+        v["case_0160_07"].as_str().map(|s| s.chars().count()),
+        Some(1)
+    );
+}
+
+/// RB-1753 — String twin: escaped vs raw NUL distinguished (SYN-0160-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0006 (escaped data vs encoding).
+/// Byte fixtures (python-written, od-verified): the escaped form stays 6
+/// verbatim chars; raw NUL INSIDE a string is inert 3-char data (`a\0b`,
+/// silent); raw NUL OUTSIDE a string is structural and fails E002-class
+/// E005 Error (batch 26: NUL-outside-string). Escaped data and invalid
+/// source positions are never confused.
+/// CONVERGENCE: scoped — data positions keep bytes, structural positions reject.
+#[test]
+fn rb_1753_syn160_nul_escaped_vs_raw() {
+    let src = "case_0160_08 = \"\\u0000\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0160_08"], "\\u0000", "{v}");
+    assert_eq!(v["case_0160_08"].as_str().map(|s| s.len()), Some(6));
+    assert!(codes_of(src).is_empty());
+    // Raw NUL inside a string is data: 3 chars, silent.
+    let v = eval_json(
+        &std::fs::read_to_string(research_fixture("syn_0160_08_raw_nul.active")).expect("fixture"),
+    );
+    assert_eq!(v["case_0160_08"], "a\0b", "{v}");
+    assert_eq!(
+        v["case_0160_08"].as_str().map(|s| s.chars().count()),
+        Some(3)
+    );
+    // Raw NUL in structural position rejects E005.
+    let diags = parse_file(
+        &research_fixture("syn_0160_08_raw_nul_structural.active"),
+        ParseOptions::default(),
+    )
+    .expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+}
+
+/// RB-1754 — String twin: undefined interpolation warns (SYN-0160-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0006 (interp vs literal rule).
+/// `case_0160_09 = "${literal}"` with no binding warns W001 Warning at the
+/// name span (1,19) and interpolates the string "null" (DERIVED-0002/RB-039:
+/// unresolved names become null; string-only interpolation stringifies):
+/// the documented rule is expansion-or-"null"-with-announcement — never a
+/// silent literal, never a silent empty.
+/// CONVERGENCE: W001+null contract, span-indexed.
+#[test]
+fn rb_1754_syn160_undefined_interp_warns() {
+    let src = "case_0160_09 = \"${literal}\"\n";
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 19), "{span:?}");
+    let json: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(json["case_0160_09"], "null", "{json}");
+    assert!(json["case_0160_09"].is_string());
+    // Positive control: a bound name expands (RB-1717 rhythm).
+    let v = eval_json("let literal = \"v\"\ncase_0160_09 = \"${literal}\"\n");
+    assert_eq!(v["case_0160_09"], "v", "{v}");
+}
+
+/// RB-1755 — Datetime twin: impossible bare date is arithmetic, 161 angle (SYN-0161-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0007 (offset date-time grammar).
+/// REFUSAL (spec-gated, spec/converters.md:75-76; RB-148/RB-182 lineage):
+/// `2024-02-30` is integer arithmetic 2024-2-30 = 1992 — evaluated twice
+/// with identical results, never normalized, never a date.
+/// CONVERGENCE: identical verdict to SYN-0155-01/RB-1701.
+#[test]
+fn rb_1755_syn161_impossible_date_is_arithmetic() {
+    let src = "case_0161_01 = 2024-02-30\n";
+    let first = eval_json(src);
+    assert_eq!(first["case_0161_01"], 1992, "{first}");
+    assert_eq!(first, eval_json(src));
+    assert!(codes_of(src).is_empty());
+    // Positive control: the quoted form stays an exact string.
+    assert_eq!(
+        eval_json("case_0161_01 = \"2024-02-30\"\n")["case_0161_01"],
+        "2024-02-30"
+    );
+}
+
+/// RB-1756 — Datetime twin: bad offset deterministic, key-count angle (SYN-0161-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0007 (offset range).
+/// REFUSAL (spec-gated, spec/converters.md:75-76; RB-187 lineage): no
+/// offset grammar exists to range-check. `2024-02-29T12:30:00+25:00`
+/// evaluates to exactly two keys — 2024-2-29 = 1993 with T12 = 30 — no
+/// date, no fallback object, nothing else materializes.
+/// CONVERGENCE: identical verdict to SYN-0155-02/RB-1702.
+#[test]
+fn rb_1756_syn161_bad_offset_two_keys() {
+    let src = "case_0161_02 = 2024-02-29T12:30:00+25:00\n";
+    let first = eval_json(src);
+    assert_eq!(first["case_0161_02"], 1993, "{first}");
+    assert_eq!(first["T12"], 30, "{first}");
+    assert_eq!(first.as_object().map(|o| o.len()), Some(2));
+    assert_eq!(first, eval_json(src));
+    // Positive control: the quoted form stays an exact string.
+    assert_eq!(
+        eval_json("case_0161_02 = \"2024-02-29T12:30:00+25:00\"\n")["case_0161_02"],
+        "2024-02-29T12:30:00+25:00"
+    );
+}
+
+/// RB-1757 — Datetime twin: Zulu tail rejects alone (SYN-0161-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0007 (timezone contract).
+/// `2024-01-01T12:30Z` fails with exactly one diagnostic — E002 Error at
+/// (1:32): one contract (the lexer's), one announcement, no pseudo-object.
+/// CONVERGENCE: identical verdict to SYN-0155-03/RB-1703.
+#[test]
+fn rb_1757_syn161_zulu_tail_single_e002() {
+    let src = "case_0161_03 = 2024-01-01T12:30Z\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 32), "{span:?}");
+    // Positive control: the quoted form stays an exact string.
+    assert_eq!(
+        eval_json("case_0161_03 = \"2024-01-01T12:30Z\"\n")["case_0161_03"],
+        "2024-01-01T12:30Z"
+    );
+}
+
+/// RB-1758 — Datetime twin: quoted date-shape inert, 161 angle (SYN-0161-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0007 (quoted exemption).
+/// `case_0161_04 = "2024-02-30"` is a plain string — impossible calendar
+/// text in quotes is inert data — while the bare neighbour one day earlier
+/// computes 2024-2-27 = 1995: quotes mark the type boundary.
+/// CONVERGENCE: identical verdict to SYN-0155-04/RB-1704.
+#[test]
+fn rb_1758_syn161_quoted_date_shape_is_string() {
+    let src = "case_0161_04 = \"2024-02-30\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0161_04"], "2024-02-30", "{v}");
+    assert!(v["case_0161_04"].is_string());
+    assert!(codes_of(src).is_empty());
+    // Positive control: a bare arithmetic neighbour still computes.
+    assert_eq!(
+        eval_json("case_0161_04 = 2024-02-27\n")["case_0161_04"],
+        1995
+    );
+}

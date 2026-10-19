@@ -38,6 +38,17 @@ pub enum Unit {
     Megahertz,
     Gigahertz,
     Terahertz,
+    // Bits (canonical bits; case-distinct from bytes: b≠B, Mb≠MB)
+    Bits,
+    Kilobits,
+    Megabits,
+    Gigabits,
+    // Data rates (canonical bits/sec; MB/s converts through megabytes)
+    BitsPerSecond,
+    KilobitsPerSecond,
+    MegabitsPerSecond,
+    GigabitsPerSecond,
+    MegabytesPerSecond,
     // Custom
     Custom(String),
 }
@@ -77,6 +88,15 @@ impl Unit {
             "MHz" => Some(Unit::Megahertz),
             "GHz" => Some(Unit::Gigahertz),
             "THz" => Some(Unit::Terahertz),
+            "b" => Some(Unit::Bits),
+            "Kb" => Some(Unit::Kilobits),
+            "Mb" => Some(Unit::Megabits),
+            "Gb" => Some(Unit::Gigabits),
+            "bps" => Some(Unit::BitsPerSecond),
+            "Kbps" => Some(Unit::KilobitsPerSecond),
+            "Mbps" => Some(Unit::MegabitsPerSecond),
+            "Gbps" => Some(Unit::GigabitsPerSecond),
+            "MB/s" => Some(Unit::MegabytesPerSecond),
             "req/m" | "req_m" => Some(Unit::RequestsPerMinute),
             "req/h" | "req_h" => Some(Unit::RequestsPerHour),
 
@@ -115,6 +135,14 @@ impl Unit {
             Unit::Hertz | Unit::Kilohertz | Unit::Megahertz | Unit::Gigahertz | Unit::Terahertz => {
                 "Hz".into()
             }
+            // Bits canonicalize to `b`; all data rates to `bps`
+            // (MB/s converts through megabytes at normalization).
+            Unit::Bits | Unit::Kilobits | Unit::Megabits | Unit::Gigabits => "b".into(),
+            Unit::BitsPerSecond
+            | Unit::KilobitsPerSecond
+            | Unit::MegabitsPerSecond
+            | Unit::GigabitsPerSecond
+            | Unit::MegabytesPerSecond => "bps".into(),
             Unit::Custom(s) => s.clone(),
         }
     }

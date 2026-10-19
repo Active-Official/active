@@ -13,6 +13,8 @@ exhausted; new dimensions use long-form-first plus collision-free shorts.
 | `/s /m /h per_s per_m per_h req/s req_s /req/s /req/m /req/h req/m req_m req/h req_h` | rate | retained `Quantity` | same-suffix add/sub/compare/scale | `{"<suffix>": N}` / `N<suffix>` |
 | `%` | percent (dimensionless) | `Quantity` ratio, 100% = 1.0 | same-dimension add/sub/compare/scale, no implicit base | `{"%": ratio}` / percent-form `25%` |
 | `Hz kHz MHz GHz THz` | frequency | `Quantity` f64 hertz | full (add/sub, scalar, ratio, compare) | `{"Hz": N}` / `NHz` |
+| `b Kb Mb Gb` | bits (distinct from bytes) | `Quantity` f64 bits | full within dimension | `{"b": N}` / `Nb` |
+| `bps Kbps Mbps Gbps MB/s` | data rates | `Quantity` f64 bits/sec (`MB/s` ×8) | full within dimension | `{"bps": N}` / `Nbps` |
 
 ## Rejected near-misses (parse E002/E005, never silent)
 

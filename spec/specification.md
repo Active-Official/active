@@ -292,6 +292,8 @@ evaluation:
 | Rates / custom | `Quantity(f64, Unit)` — original unit retained | `100/req/s` → `Quantity(100.0, RequestsPerSecond)` |
 | Percent | `Quantity(f64, Percent)` — canonical dimensionless ratio, 100% = 1.0 | `25%` → `Quantity(0.25, Percent)` |
 | Frequency | `Quantity(f64, Hertz)` — canonical hertz, f64 (fractional Hz are real) | `1kHz` → `Quantity(1000.0, Hertz)` |
+| Bits | `Quantity(f64, Bits)` — canonical bits (distinct from bytes) | `8b` → `Quantity(8.0, Bits)` |
+| Data rates | `Quantity(f64, BitsPerSecond)` — canonical bits/sec | `1MB/s` → `Quantity(8000000.0, BitsPerSecond)` |
 
 Time normalizations: ns/10⁶→ms, µs/10³→ms, s×10³, m×60000, h×3600000,
 d×86400000. Byte normalizations: KiB=2¹⁰, MiB=2²⁰, GiB=2³⁰, TiB=2⁴⁰;
@@ -327,6 +329,20 @@ clocks, refresh rates, PWM/ADC clocks, radio bands; collision = all five
 clear of existing suffixes and SI conflicts (case-sensitive SI spellings);
 export = JSON `{"Hz": N}`, TOML-ish `NHz`, interpolation `NHz`; schema kind
 `quantity:Hz` (canonical suffix, automatic via the kind rule).
+
+Bits (`b Kb Mb Gb`) canonicalize to f64 bits; data rates (`bps Kbps Mbps
+Gbps MB/s`) canonicalize to f64 bits/sec, with `MB/s` converting through
+megabytes (1 MB/s = 8,000,000 bps) so cross-spelled rates compare equal
+(`1MB/s == 8Mbps`). Full arithmetic within each: same-dimension `+ -`,
+scalar `* /`, same-dimension division to a bare ratio, all four
+comparisons, structural equality. Bits and bytes are DIFFERENT dimensions
+(`8b + 1B` is a TypeError — networks are sold in bits, storage in bytes,
+and the language refuses to confuse them). Literal magnitudes clamp at
+zero; explicit unary negation is preserved. Admission record: corpus =
+NIC rates, bandwidth contracts, memory-vs-link audits; collision = all
+clear and case-distinct from bytes (`b`≠`B`, `Mb`≠`MB`, `Kbps`≠`KB`);
+export = JSON `{"b": N}` / `{"bps": N}`, TOML-ish `Nb` / `Nbps`,
+interpolation same; schema kinds `quantity:b`, `quantity:bps`.
 
 ### 4.2 Serialization of quantities
 

@@ -1825,6 +1825,29 @@ fn normalize_quantity(v: &Value, unit: &Unit) -> Result<Value, String> {
     if let Some(factor) = hz_factor {
         return Ok(Value::Quantity((num * factor).max(0.0), Unit::Hertz));
     }
+    // Bits canonicalize to f64 bits; data rates to f64 bits/sec with MB/s
+    // converting through megabytes (1 MB/s = 8,000,000 bps), so cross-spelled
+    // rates compare equal. Literal magnitudes clamp at zero.
+    let bit_factor = match unit {
+        Unit::Bits => Some((1.0, false)),
+        Unit::Kilobits => Some((1_000.0, false)),
+        Unit::Megabits => Some((1_000_000.0, false)),
+        Unit::Gigabits => Some((1_000_000_000.0, false)),
+        Unit::BitsPerSecond => Some((1.0, true)),
+        Unit::KilobitsPerSecond => Some((1_000.0, true)),
+        Unit::MegabitsPerSecond => Some((1_000_000.0, true)),
+        Unit::GigabitsPerSecond => Some((1_000_000_000.0, true)),
+        Unit::MegabytesPerSecond => Some((8_000_000.0, true)),
+        _ => None,
+    };
+    if let Some((factor, is_rate)) = bit_factor {
+        let canonical = if is_rate {
+            Unit::BitsPerSecond
+        } else {
+            Unit::Bits
+        };
+        return Ok(Value::Quantity((num * factor).max(0.0), canonical));
+    }
     Ok(Value::Quantity(num, unit.clone()))
 }
 

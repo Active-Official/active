@@ -1,0 +1,12 @@
+b = 8b
+c = 1Kb
+d = 2Mb
+e = 1Gb
+f = 1bps
+g = 1Kbps
+h = 100Mbps
+i = 1Gbps
+j = 1MB/s
+k = 1KB
+l = 8b + 1B
+m = 1MB/s == 8Mbps

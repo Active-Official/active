@@ -1,0 +1,10 @@
+p = 101325Pa
+q = 1bar
+r = 14.7psi
+v = 12V
+i = 2A
+w = 60W
+e = 100J
+f = 1kWh
+g = 9.8N
+h = 12V + 2A

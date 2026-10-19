@@ -160,6 +160,8 @@ and `%` (percent is the only symbolic suffix; case-SENSITIVE always):
 | `week sec min` | week (exact 604800000ms); long aliases for `s` `m` | | | |
 | `tokens ktokens Mtokens` | tokens (count, longest-match prefix composition) | | `tok/s` | tokens per second (inference throughput) |
 | `FLOPS TFLOPS PFLOPS` | floating-point ops per second (compute accounting) | | | |
+| `Pa bar psi` | pressure (pascals canonical) | | `V A W` | electrical (volts/amps/watts canonical) |
+| `J kWh` | energy (joules canonical) | | `N` | force (newtons canonical) |
 
 Any other suffix rolls the lexer back (the characters are re-lexed as
 separate tokens). **[impl note]** The lexer's rollback means `5x` lexes as

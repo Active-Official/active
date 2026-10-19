@@ -19,6 +19,10 @@ exhausted; new dimensions use long-form-first plus collision-free shorts.
 | `tokens ktokens Mtokens` | token counts (AI) | `Quantity` f64 tokens | full within dimension | `{"tokens": N}` / `Ntokens` |
 | `tok/s` | inference throughput (AI) | `Quantity` f64 tok/s | full within dimension | `{"tok/s": N}` / `Ntok/s` |
 | `FLOPS TFLOPS PFLOPS` | compute accounting (AI) | `Quantity` f64 flop/s | full within dimension | `{"FLOPS": N}` / `NFLOPS` |
+| `Pa bar psi` | pressure | `Quantity` f64 Pa | full within dimension | `{"Pa": N}` / `NPa` |
+| `V A W` | electrical | `Quantity` f64 V/A/W | full within dimension (V+A refuses) | `{"V"/"A"/"W": N}` |
+| `J kWh` | energy | `Quantity` f64 J | full within dimension | `{"J": N}` / `NJ` |
+| `N` | force | `Quantity` f64 N | full within dimension | `{"N": N}` / `NN` |
 
 ## Rejected near-misses (parse E002/E005, never silent)
 

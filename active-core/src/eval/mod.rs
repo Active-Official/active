@@ -1864,6 +1864,24 @@ fn normalize_quantity(v: &Value, unit: &Unit) -> Result<Value, String> {
     if let Some((factor, canonical)) = ai_factor {
         return Ok(Value::Quantity((num * factor).max(0.0), canonical));
     }
+    // Domain SI units: pressure (Pa; bar = 1e5, psi = 6894.757293168),
+    // electrical (V/A/W), energy (J; kWh = 3.6e6), force (N). Each
+    // canonicalizes to its coherent SI value; literal magnitudes clamp.
+    let si_factor = match unit {
+        Unit::Pascal => Some((1.0, Unit::Pascal)),
+        Unit::Bar => Some((100_000.0, Unit::Pascal)),
+        Unit::Psi => Some((6_894.757_293_168, Unit::Pascal)),
+        Unit::Volts => Some((1.0, Unit::Volts)),
+        Unit::Amperes => Some((1.0, Unit::Amperes)),
+        Unit::Watts => Some((1.0, Unit::Watts)),
+        Unit::Joules => Some((1.0, Unit::Joules)),
+        Unit::KilowattHours => Some((3_600_000.0, Unit::Joules)),
+        Unit::Newtons => Some((1.0, Unit::Newtons)),
+        _ => None,
+    };
+    if let Some((factor, canonical)) = si_factor {
+        return Ok(Value::Quantity((num * factor).max(0.0), canonical));
+    }
     Ok(Value::Quantity(num, unit.clone()))
 }
 

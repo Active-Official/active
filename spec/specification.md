@@ -297,6 +297,10 @@ evaluation:
 | Tokens | `Quantity(f64, Tokens)` — canonical token count | `128ktokens` → `Quantity(128000.0, Tokens)` |
 | Token rates | `Quantity(f64, TokensPerSecond)` — canonical tokens/sec | `500tok/s` → `Quantity(500.0, TokensPerSecond)` |
 | Compute | `Quantity(f64, Flops)` — canonical flop/s | `2TFLOPS` → `Quantity(2000000000000.0, Flops)` |
+| Pressure | `Quantity(f64, Pascal)` — canonical pascals | `1bar` → `Quantity(100000.0, Pascal)` |
+| Electrical | `Quantity(f64, Volts/Amperes/Watts)` — canonical SI | `12V` / `2A` / `60W` |
+| Energy | `Quantity(f64, Joules)` — canonical joules | `1kWh` → `Quantity(3600000.0, Joules)` |
+| Force | `Quantity(f64, Newtons)` — canonical newtons | `9.8N` |
 
 Time normalizations: ns/10⁶→ms, µs/10³→ms, s×10³, m×60000, h×3600000,
 d×86400000, week×604800000 (exact, no calendar dependence). `sec`/`min`
@@ -368,6 +372,19 @@ existing suffix, no SI symbol, no UCUM atom as-spelled); export = JSON
 `{"tokens"/"tok/s"/"FLOPS": N}`, TOML-ish canonical respell
 (`128000tokens`), interpolation same; schema kinds `quantity:tokens`,
 `quantity:tok/s`, `quantity:FLOPS`.
+
+Pressure (`Pa bar psi`) canonicalizes to f64 pascals (bar = 100000,
+psi = 6894.757293168); electrical (`V A W`) to f64 volts/amps/watts;
+energy (`J kWh`) to f64 joules (1 kWh = 3,600,000 J); force (`N`) to f64
+newtons. Full arithmetic within each dimension, cross-dimension TypeErrors
+(`12V + 2A` refuses — volts and amps are different dimensions, the exact
+mistake that burns out hardware). Literal magnitudes clamp at zero.
+Admission record: corpus = sensor configs, PSU ratings, HVAC setpoints,
+structural loads; collision = all clear (`V A W J N` touch no existing
+suffix; `Pa bar psi` collision-free); export = JSON canonical-key objects,
+TOML-ish canonical respell, interpolation same; schema kinds
+`quantity:Pa`, `quantity:V`, `quantity:A`, `quantity:W`, `quantity:J`,
+`quantity:N`.
 
 ### 4.2 Serialization of quantities
 

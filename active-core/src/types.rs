@@ -58,6 +58,16 @@ pub enum Unit {
     Flops,
     TeraFlops,
     PetaFlops,
+    // Domain SI units (each canonicalizes to its coherent SI value).
+    Pascal,
+    Bar,
+    Psi,
+    Volts,
+    Amperes,
+    Watts,
+    Joules,
+    KilowattHours,
+    Newtons,
     // Custom
     Custom(String),
 }
@@ -116,6 +126,15 @@ impl Unit {
             "FLOPS" => Some(Unit::Flops),
             "TFLOPS" => Some(Unit::TeraFlops),
             "PFLOPS" => Some(Unit::PetaFlops),
+            "Pa" => Some(Unit::Pascal),
+            "bar" => Some(Unit::Bar),
+            "psi" => Some(Unit::Psi),
+            "V" => Some(Unit::Volts),
+            "A" => Some(Unit::Amperes),
+            "W" => Some(Unit::Watts),
+            "J" => Some(Unit::Joules),
+            "kWh" => Some(Unit::KilowattHours),
+            "N" => Some(Unit::Newtons),
             "req/m" | "req_m" => Some(Unit::RequestsPerMinute),
             "req/h" | "req_h" => Some(Unit::RequestsPerHour),
 
@@ -170,6 +189,13 @@ impl Unit {
             Unit::Tokens | Unit::KiloTokens | Unit::MegaTokens => "tokens".into(),
             Unit::TokensPerSecond => "tok/s".into(),
             Unit::Flops | Unit::TeraFlops | Unit::PetaFlops => "FLOPS".into(),
+            // Domain SI canonicals (each spells its coherent SI unit).
+            Unit::Pascal | Unit::Bar | Unit::Psi => "Pa".into(),
+            Unit::Volts => "V".into(),
+            Unit::Amperes => "A".into(),
+            Unit::Watts => "W".into(),
+            Unit::Joules | Unit::KilowattHours => "J".into(),
+            Unit::Newtons => "N".into(),
             Unit::Custom(s) => s.clone(),
         }
     }

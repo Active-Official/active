@@ -893,9 +893,28 @@ mod tests {
 
     #[test]
     fn version_constant_is_one() {
+        // SAFETY: no-deref entry point; always safe to call.
+        assert_eq!(unsafe { active_abi_version() }, 1);
+        assert_eq!(ACTIVE_ABI_VERSION, 1);
+    }
+
+    #[test]
+    fn huge_source_is_bounded_not_fatal() {
+        // H-001: a 2MB document must diagnose or evaluate, never hang or
+        // trap. Budgets bound the walk; the call returns either way.
+        let mut src = vec![b'x', b' ', b'=', b' '];
+        src.extend(std::iter::repeat_n(b'1', 2_000_000));
+        src.push(b'\n');
+        let module = unsafe { active_module_parse(src.as_ptr(), src.len(), std::ptr::null()) };
+        // Parse may succeed or fail; either way the call returned.
+        if module.is_null() {
+            return;
+        }
+        let set = unsafe { active_check(module, std::ptr::null()) };
+        assert!(!set.is_null());
         unsafe {
-            assert_eq!(active_abi_version(), 1);
-            assert_eq!(ACTIVE_ABI_VERSION, 1);
+            active_diagnostics_free(set);
+            active_module_free(module);
         }
     }
 
@@ -967,6 +986,13 @@ mod tests {
         }
     }
 
+    unsafe extern "C" fn garbage_host(
+        _path: *const std::os::raw::c_char,
+        _userdata: *mut std::ffi::c_void,
+    ) -> *mut std::os::raw::c_char {
+        malloc_str(&[0x66, 0x6f, 0x80, 0x6f])
+    }
+
     #[test]
     fn include_loader_called_during_check_and_resolves() {
         unsafe {
@@ -993,6 +1019,27 @@ mod tests {
                 INCLUDE_CALLS.load(std::sync::atomic::Ordering::SeqCst) >= 1,
                 "loader must run during check"
             );
+            active_diagnostics_free(set);
+            active_module_free(module);
+        }
+    }
+
+    #[test]
+    fn include_loader_garbage_bytes_refuse_loudly() {
+        // H-001: non-UTF8 loader output must diagnose (E017), never crash
+        // or smuggle bytes past decoding.
+        unsafe {
+            let src = b"include \"bin.active\"\n[out]\nval = 1\n";
+            let module = active_module_parse(src.as_ptr(), src.len(), std::ptr::null());
+            assert!(!module.is_null());
+            active_set_include_loader(module, Some(garbage_host), std::ptr::null_mut());
+            let set = active_check(module, std::ptr::null());
+            assert!(!set.is_null());
+            assert!(active_diagnostics_len(set) >= 1);
+            let code = std::ffi::CStr::from_ptr(active_diagnostic_code(set, 0))
+                .to_string_lossy()
+                .into_owned();
+            assert_eq!(code, "E017");
             active_diagnostics_free(set);
             active_module_free(module);
         }

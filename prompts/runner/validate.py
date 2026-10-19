@@ -377,7 +377,18 @@ def main():
         sys.exit(2)
     tasks = load_tasks(only)
     print(f"pack v{VERSION}: {len(tasks)} tasks x {backends}", flush=True)
-    report = {"pack": VERSION, "stamp": stamp, "backends": backends, "results": []}
+    report = {
+        "pack": VERSION,
+        "stamp": stamp,
+        "backends": backends,
+        # G-026 provenance: model IDs behind each backend rate, so rounds
+        # stay comparable when models change.
+        "models": {
+            "copilot": COPILOT_ENV["COPILOT_MODEL"],
+            "direct": DIRECT_MODEL,
+        },
+        "results": [],
+    }
     for task in tasks:
         for backend in backends:
             print(f"[{backend}] {task['id']} ...", flush=True)

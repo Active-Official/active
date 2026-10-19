@@ -119,3 +119,15 @@ cargo publish --dry-run -p active-core
   `cargo install active-lsp`; library via `active-core = "1"`.
 - Release archives for users without Rust; checksums +
   attestations (+ `.sig` sidecars when the release key is set).
+
+## 7. Release cadence (L-024)
+
+Patch releases ship on demand for correctness fixes (no behavior change
+beyond the fix, full gates, changelog entry). Minor
+releases bundle additive surface (new crates, bindings, schema domains)
+with conformance-plus-release notes. Majors only for breaking changes,
+which the 1.x line avoids by policy (codes additive, ABI versioned).
+Every release runs the release checklist (G-011a): conformance artifact,
+native matrix, wasm blob, checksums, changelog honesty. The cadence is
+demand-driven, never calendar-driven; a quiet month with green CI is a
+healthy month.

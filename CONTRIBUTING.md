@@ -49,3 +49,20 @@ The repository owner (see `.github/CODEOWNERS`) merges on green CI
 No Developer Certificate of Origin (DCO) sign-off is required:
 contributions land under the repository license
 (`MIT OR Apache-2.0`) via the GitHub Terms of Service.
+
+## Maintainer ladder (L-024)
+
+Contributor (docs, examples, schema entries, small fixes) to reviewer
+(sustained quality + independent reviews) to owner (architecture calls,
+releases). Each step is earned in public: merged work, review record,
+then nomination. No step is for sale, and no step lowers the gate.
+
+## Dogfood rule (L-022, standing)
+
+New internal configs default to Active: budgets presets, conformance
+manifests, repair benchmarks, tool parameters. When Active does not fit,
+record the exception with reason. Current exceptions: repair and
+conformance manifests stay TOML (consumed by Rust, Node, and Go runners
+that must all parse them without an Active parser); token-corpus fixtures
+stay multi-format by purpose; binding sources stay native to their
+language. Exceptions are reviewed, never silent.

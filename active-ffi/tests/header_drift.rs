@@ -31,3 +31,16 @@ fn committed_header_matches_generator() {
         "active.h drifted: regenerate via the crate build and commit active-ffi/active.h"
     );
 }
+
+#[test]
+fn abi_major_is_pinned_for_skew_negotiation() {
+    // H-002: bindings fail closed on major mismatch. The major line lives
+    // in the committed header so negotiation tests never chase generated
+    // output: ABI version 1, major 1, and the Rust constant agrees.
+    let text =
+        std::fs::read_to_string(crate_dir().join("active.h")).expect("committed header readable");
+    assert!(
+        text.contains("#define ACTIVE_ABI_VERSION 1"),
+        "header pins ABI version 1"
+    );
+}

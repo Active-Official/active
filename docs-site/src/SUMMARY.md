@@ -19,6 +19,7 @@
 - [12-factor application](cookbook/twelve-factor.md)
 - [Terraform variables](cookbook/terraform-vars.md)
 - [CI pipelines](cookbook/ci-pipeline.md)
+- [CI templates](cookbook/ci-templates.md)
 - [Agent loop](cookbook/agent-loop.md)
 
 # Migration

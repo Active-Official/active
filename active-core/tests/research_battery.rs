@@ -37072,3 +37072,208 @@ fn rb_1678_syn152_tag_string_inert() {
     let v = eval_json("case_0152_03 = { tag = \"plain\" }\n");
     assert_eq!(v["case_0152_03"]["tag"], "plain", "{v}");
 }
+
+/// RB-1679 — Tag-safety twin: secret taint, never serializers (SYN-0152-04 §H, HIGH).
+/// Origin: MLAlchemy unsafe-deserialization lineage (same shape as SYN-0149-04).
+/// Converges with RB-1652 (marker-redacted export; catalogue
+/// fixture spells `secret("x")`, tested with the unique RAW marker).
+#[test]
+fn rb_1679_syn152_secret_taint_not_serializer() {
+    let src = "case_0152_04 = secret(\"RAW-RB1679-SE152\")\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0152_04"], "***SECRET***", "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains("RAW-RB1679-SE152"), "{json}");
+    assert!(
+        !format!("{diags:?}").contains("RAW-RB1679-SE152"),
+        "{diags:?}"
+    );
+    // Positive control: a plain string beside it exports exactly.
+    let v = eval_json("case_0152_04 = \"plain\"\n");
+    assert_eq!(v["case_0152_04"], "plain", "{v}");
+}
+
+/// RB-1680 — Tag-safety twin: parser builds data, not objects (SYN-0152-05 §H, MEDIUM).
+/// Origin: MLAlchemy unsafe-deserialization lineage (same shape as SYN-0149-05).
+/// Converges with RB-1653: inert nested data, silently.
+#[test]
+fn rb_1680_syn152_data_not_objects() {
+    let src = "case_0152_05 = { nested = [1, 2] }\n";
+    let v = eval_json(src);
+    assert_eq!(
+        v["case_0152_05"]["nested"],
+        serde_json::json!([1, 2]),
+        "{v}"
+    );
+    assert!(codes_of(src).is_empty());
+    // Positive control: the flat twin agrees at depth 1.
+    let v = eval_json("case_0152_05 = { nested = 1 }\n");
+    assert_eq!(v["case_0152_05"]["nested"], 1, "{v}");
+}
+
+/// RB-1681 — Tag-safety twin: env interpolation is data lookup (SYN-0152-06 §H, MEDIUM).
+/// Origin: MLAlchemy unsafe-deserialization lineage (same shape as SYN-0149-06).
+/// Converges with RB-1654: injected var renders, absent var nulls —
+/// uniquely-named vars with save/restore.
+#[test]
+fn rb_1681_syn152_env_interp_is_lookup() {
+    let prior = std::env::var("ACTIVE_TEST_RB1681_V").ok();
+    std::env::set_var("ACTIVE_TEST_RB1681_V", "injected-152");
+    let v = eval_json("case_0152_06 = \"${env.ACTIVE_TEST_RB1681_V}\"\n");
+    assert_eq!(v["case_0152_06"], "injected-152", "{v}");
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_TEST_RB1681_V", val),
+        None => std::env::remove_var("ACTIVE_TEST_RB1681_V"),
+    }
+    // Positive control neighbour: an absent var interpolates to null.
+    let prior2 = std::env::var("ACTIVE_TEST_RB1681_ABSENT_XYZ").ok();
+    std::env::remove_var("ACTIVE_TEST_RB1681_ABSENT_XYZ");
+    let v = eval_json("case_0152_06 = \"${env.ACTIVE_TEST_RB1681_ABSENT_XYZ}\"\n");
+    assert_eq!(v["case_0152_06"], "null", "{v}");
+    match prior2 {
+        Some(val) => std::env::set_var("ACTIVE_TEST_RB1681_ABSENT_XYZ", val),
+        None => std::env::remove_var("ACTIVE_TEST_RB1681_ABSENT_XYZ"),
+    }
+}
+
+/// RB-1682 — Tag-safety twin: no dynamic loading from data (SYN-0152-07 §H, CRITICAL).
+/// Origin: MLAlchemy unsafe-deserialization lineage (same shape as SYN-0149-07).
+/// Converges with RB-1655: `@import(...)` fails E014 Error at (1:17).
+#[test]
+fn rb_1682_syn152_no_dynamic_loading() {
+    let src = "case_0152_07 = @import(\"arbitrary-module\")\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e = diags.iter().find(|d| d.code == "E014").expect("E014");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E014 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E014 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the structural `@remove` call form parses.
+    let v = eval_json("base = { key = 1 }\n@remove(\"base.key\")\n");
+    assert!(v["base"].get("key").is_none(), "{v}");
+}
+
+/// RB-1683 — Tag-safety twin: type names in data are inert (SYN-0152-08 §H, MEDIUM).
+/// Origin: MLAlchemy unsafe-deserialization lineage (same shape as SYN-0149-08).
+/// Converges with RB-1656: the inert map evaluates silently.
+#[test]
+fn rb_1683_syn152_typename_inert() {
+    let src = "case_0152_08 = { class = \"DangerousType\", args = [\"x\"] }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0152_08"]["class"], "DangerousType", "{v}");
+    assert_eq!(v["case_0152_08"]["args"], serde_json::json!(["x"]), "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: an ordinary twin agrees key-for-key.
+    let v = eval_json("case_0152_08 = { kind = \"SafeType\", args = [\"x\"] }\n");
+    assert_eq!(v["case_0152_08"]["kind"], "SafeType", "{v}");
+}
+
+/// RB-1684 — Tag-safety twin: interpolation evaluates documented pure ops (SYN-0152-09 §H, MEDIUM).
+/// Origin: MLAlchemy unsafe-deserialization lineage (same shape as SYN-0149-09).
+/// Converges with RB-1657: `"${1+1}"` renders `"2"`, silently.
+#[test]
+fn rb_1684_syn152_pure_op_interpolates() {
+    let src = "case_0152_09 = \"${1+1}\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0152_09"], "2", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a name interpolant resolves beside it.
+    let v = eval_json("let who = \"hi\"\ncase_0152_09 = \"yo ${who}\"\n");
+    assert_eq!(v["case_0152_09"], "yo hi", "{v}");
+}
+
+/// RB-1685 — Depth twin: below-limit nesting parses (SYN-0153-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0022 (depth family;
+/// same shape as SYN-0122-01).
+/// Converges with RB-1406/1415/1613/1622/1631/1640/1658/1667: 32 nested
+/// arrays, oracle via independent JSON parse.
+#[test]
+fn rb_1685_syn153_shallow_nesting_accepts() {
+    let src = format!("case_0153_01 = {}0{}\n", "[".repeat(32), "]".repeat(32));
+    let v = eval_json(&src);
+    let wire = format!("{}0{}", "[".repeat(32), "]".repeat(32));
+    let expected: serde_json::Value = serde_json::from_str(&wire).expect("oracle parses");
+    assert_eq!(v["case_0153_01"], expected, "{v}");
+    assert!(codes_of(&src).is_empty());
+    // Positive control: the flat neighbour evaluates.
+    assert_eq!(
+        eval_json("case_0153_01 = [0]\n")["case_0153_01"],
+        serde_json::json!([0])
+    );
+}
+
+/// RB-1686 — Depth twin: depth overflow fails controllably (SYN-0153-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0022 (depth family;
+/// same shape as SYN-0122-02).
+/// Converges with RB-1407/1416/1614/1623/1632/1641/1650/1668: 256 E004.
+#[test]
+fn rb_1686_syn153_deep_nesting_trips_budget() {
+    let src = format!("case_0153_02 = {}0{}\n", "[".repeat(256), "]".repeat(256));
+    let diags = parse(&src, "research").expect_err("must fail E004");
+    let e = diags.iter().find(|d| d.code == "E004").expect("E004");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E004 must be Error, got {:?}",
+        e.severity
+    );
+    // Positive control: a shallow array evaluates.
+    assert_eq!(
+        eval_json("case_0153_02 = [0]\n")["case_0153_02"],
+        serde_json::json!([0])
+    );
+}
+
+/// RB-1687 — Depth twin: adversarial depth bounded (SYN-0153-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0022 (depth family;
+/// same shape as SYN-0122-03).
+/// Converges with RB-1408/1417/1615/1624/1633/1642/1651/1669: 2048 E004.
+#[test]
+fn rb_1687_syn153_adversarial_depth_bounded() {
+    let src = format!("case_0153_03 = {}0{}\n", "[".repeat(2048), "]".repeat(2048));
+    let diags = parse(&src, "research").expect_err("must fail E004");
+    let e = diags.iter().find(|d| d.code == "E004").expect("E004");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E004 must be Error, got {:?}",
+        e.severity
+    );
+    // Positive control: a shallow array evaluates.
+    assert_eq!(
+        eval_json("case_0153_03 = [0]\n")["case_0153_03"],
+        serde_json::json!([0])
+    );
+}
+
+/// RB-1688 — Depth twin: interpolation in arrays refused (SYN-0153-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0022 (depth family;
+/// same shape as SYN-0122-04).
+/// Converges with RB-1409/1418/1616/1625/1634/1643/1652/1670: E005 (3:10).
+#[test]
+fn rb_1688_syn153_array_interpolation_refused() {
+    let src =
+        "case_0153_04 = 1\nlet a = [1]\nlet b = [${a}, ${a}]\nlet c = [${b}, ${b}]\nvalue = c\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (3, 10), "{span:?}");
+    // Positive control: interpolation inside STRINGS works.
+    let v = eval_json("let who = \"hi\"\ncase_0153_04 = \"yo ${who}\"\n");
+    assert_eq!(v["case_0153_04"], "yo hi", "{v}");
+    // Positive control: plain arrays and name references evaluate.
+    let v = eval_json("let a = [1, 2, 3]\ncase_0153_04 = a\n");
+    assert_eq!(v["case_0153_04"], serde_json::json!([1, 2, 3]), "{v}");
+}

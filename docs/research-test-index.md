@@ -38,6 +38,7 @@
 | Batch 189 | RB-1879...RB-1888 (SYN-0174-08...09, SYN-0175-01...08) | done: all 10 green first-try, no code changes; 174 completed (unit/comment effective); 175 opened as 174 twins |
 | Batch 190 | RB-1889...RB-1898 (SYN-0175-09, SYN-0176-01...09) | done: all 10 green first-try, no code changes; 175 completed; 176 opened as patch family (naive E019; set/delete/atomic/collision/order/W004/leaf/identity/taint-move) |
 | Batch 191 | RB-1899...RB-1908 (SYN-0177-01...09, SYN-0178-01) | done: all 10 green first-try, no code changes; 177 completed as 176 twins; 178 opened (whole-object equality) |
+| Batch 192 | RB-1909...RB-1918 (SYN-0178-02...09, SYN-0179-01...02) | done: all 10 green first-try, no code changes; 178 completed as patch twins; 179 opened (schema accept/T003-unclamped) |
  Research Test Index — YAML/TOML/JSON failure research → Active test backlog
 
 Source corpus: `C:\Users\Usuario\Downloads\Solid Tests Research Work` (read-only).

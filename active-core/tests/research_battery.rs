@@ -42737,3 +42737,242 @@ fn rb_1908_syn178_whole_object_equal() {
     assert_eq!(v["config"], serde_json::json!({"a": 3, "b": 2}), "{v}");
     assert!(codes_of(src2).is_empty());
 }
+
+/// RB-1909 — Patch twin: remove silent empty (SYN-0178-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0024 (remove semantics).
+/// The naive form fails E019 at (3:2) — while the explicit remove empties
+/// silently: zero keys, zero diagnostics, zero nulls.
+/// CONVERGENCE: twin verdict to SYN-0176-02/RB-1891 and SYN-0177-02/RB-1900.
+#[test]
+fn rb_1909_syn178_remove_silent() {
+    let src = "case_0178_02 = 1\nconfig = { a = 1 }\n@remove config.a\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    // Positive control: the explicit remove empties silently.
+    let src2 = "config = { a = 1 }\n@remove(\"config.a\")\n";
+    let v = eval_json(src2);
+    assert_eq!(v["config"].as_object().map(|o| o.len()), Some(0));
+    assert!(codes_of(src2).is_empty());
+}
+
+/// RB-1910 — Patch twin: rename run-stable (SYN-0178-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0024 (rename atomicity).
+/// The naive form fails E019 at (3:2) — while the explicit rename yields
+/// b=1/no-a identically on repeated runs.
+/// CONVERGENCE: twin verdict to SYN-0176-03/RB-1892 and SYN-0177-03/RB-1901.
+#[test]
+fn rb_1910_syn178_rename_stable() {
+    let src = "case_0178_03 = 1\nconfig = { a = 1 }\n@rename config.a to b\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    // Positive control: the explicit rename is run-stable.
+    let src2 = "config = { a = 1 }\n@rename(\"config.a\", \"b\")\n";
+    let first = eval_json(src2);
+    assert_eq!(first["config"]["b"], 1, "{first}");
+    assert_eq!(first, eval_json(src2));
+    assert!(first["config"].get("a").is_none(), "{first}");
+}
+
+/// RB-1911 — Patch twin: collision Error-severe (SYN-0178-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0024 (rename collisions).
+/// The naive form fails E019 at (3:2) — AND the explicit collision fails
+/// E019 at evaluation: existing targets refuse loudly, erasing nothing.
+/// CONVERGENCE: twin verdict to SYN-0176-04/RB-1893 and SYN-0177-04/RB-1902.
+#[test]
+fn rb_1911_syn178_collision_refuses() {
+    let src = "case_0178_04 = 1\nconfig = { a = 1, b = 2 }\n@rename config.a to b\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    // Positive control: the explicit collision fails E019, nothing erased.
+    let src2 = "config = { a = 1, b = 2 }\n@rename(\"config.a\", \"b\")\n";
+    let module = parse(src2, "research").expect("must parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail E019");
+    assert_eq!(err.code(), "E019", "{err}");
+}
+
+/// RB-1912 — Patch twin: naive quartet plus order (SYN-0178-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0024 (operation precedence).
+/// The naive pair fails with EXACTLY four diagnostics (E019 ×2 + E002 ×2)
+/// — while the explicit pair applies in source order to a-absent, and the
+/// reversed order keeps the patch: order is the plan, both directions.
+/// CONVERGENCE: twin verdict to SYN-0176-05/RB-1894 and SYN-0177-05/RB-1903.
+#[test]
+fn rb_1912_syn178_naive_quartet_ordered() {
+    let src = "case_0178_05 = 1\nconfig = { a = 1 }\n@patch config { a = 2 }\n@remove config.a\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    assert_eq!(diags.len(), 4, "{diags:?}");
+    assert_eq!(
+        diags.iter().filter(|d| d.code == "E019").count(),
+        2,
+        "{diags:?}"
+    );
+    // Positive control: explicit order — patched then removed, a absent.
+    let v = eval_json("config = { a = 1 }\n@patch(\"config.a\", 2)\n@remove(\"config.a\")\n");
+    assert!(v["config"].get("a").is_none(), "{v}");
+    // Positive control: reversed order keeps the patch (remove then set).
+    let v = eval_json("config = { a = 1 }\n@remove(\"config.a\")\n@patch(\"config.a\", 2)\n");
+    assert_eq!(v["config"]["a"], 2, "{v}");
+}
+
+/// RB-1913 — Patch twin: W004 int-typed survivor (SYN-0178-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0024 (absent paths).
+/// The naive form fails E019 at (3:2) — while the explicit missing-remove
+/// warns W004 with int `a` intact: the survivor keeps its type through the
+/// no-op.
+/// CONVERGENCE: twin verdict to SYN-0176-06/RB-1895 and SYN-0177-06/RB-1904.
+#[test]
+fn rb_1913_syn178_missing_typed_survivor() {
+    let src = "case_0178_06 = 1\nconfig = { a = 1 }\n@remove config.missing\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    // Positive control: explicit missing-remove warns, survivor int-typed.
+    let src2 = "config = { a = 1 }\n@remove(\"config.missing\")\n";
+    let module = parse(src2, "research").expect("must parse");
+    let (value, diags2) = Engine::new().evaluate(&module).expect("must evaluate");
+    assert!(diags2.iter().any(|d| d.code == "W004"), "{diags2:?}");
+    let json: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(json["config"]["a"], 1, "{json}");
+    assert!(json["config"]["a"].is_i64());
+}
+
+/// RB-1914 — Patch twin: leaf values exact pair (SYN-0178-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0024 (path traversal).
+/// The naive form fails E019 at (3:2) — while the explicit leaf patch
+/// yields EXACTLY b=2/c=9: traversal touches one leaf, values exact.
+/// CONVERGENCE: twin verdict to SYN-0176-07/RB-1896 and SYN-0177-07/RB-1905.
+#[test]
+fn rb_1914_syn178_leaf_pair_exact() {
+    let src = "case_0178_07 = 1\nconfig = { a = { b = 1 } }\n@patch config.a { b = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    // Positive control: the leaf pair is exactly b=2/c=9.
+    let v = eval_json("config = { a = { b = 1, c = 9 } }\n@patch(\"config.a.b\", 2)\n");
+    assert_eq!(v["config"]["a"]["b"], 2, "{v}");
+    assert_eq!(v["config"]["a"]["c"], 9, "{v}");
+    assert!(codes_of("config = { a = { b = 1, c = 9 } }\n@patch(\"config.a.b\", 2)\n").is_empty());
+}
+
+/// RB-1915 — Patch twin: naive quintet plus refusal (SYN-0178-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0024 (identity renames).
+/// The naive form fails with EXACTLY five diagnostics (E019 + E002 ×4) —
+/// while the explicit identity rename fails E019 at evaluation: no
+/// identity path, only errors, counted.
+/// CONVERGENCE: twin verdict to SYN-0176-08/RB-1897 and SYN-0177-08/RB-1906.
+#[test]
+fn rb_1915_syn178_naive_quintet_refusal() {
+    let src = "case_0178_08 = 1\nconfig = { a = 1 }\n@rename config.a to \"a\"\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    assert_eq!(diags.len(), 5, "{diags:?}");
+    assert_eq!(diags[0].code, "E019", "{diags:?}");
+    // Positive control: the explicit identity rename fails E019 too.
+    let src2 = "config = { a = 1 }\n@rename(\"config.a\", \"a\")\n";
+    let module = parse(src2, "research").expect("must parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail E019");
+    assert_eq!(err.code(), "E019", "{err}");
+}
+
+/// RB-1916 — Patch twin: move silent redacted (SYN-0178-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0024 (structural moves).
+/// The naive form fails E019 at (3:2) — while the explicit secret rename
+/// lands redacted with zero diagnostics and source gone: taint rides
+/// values, silently and safely.
+/// CONVERGENCE: twin verdict to SYN-0176-09/RB-1898 and SYN-0177-09/RB-1907.
+#[test]
+fn rb_1916_syn178_move_silent_redacted() {
+    let src = "case_0178_09 = 1\nconfig = { a = secret(\"x\") }\n@rename config.a to token\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    // Positive control: the explicit secret rename lands redacted, silent.
+    let raw = "RAW-1916-move-marker";
+    let src2 = format!("config = {{ a = secret(\"{raw}\") }}\n@rename(\"config.a\", \"token\")\n");
+    let module = parse(&src2, "research").expect("parses");
+    let (value, diags2) = Engine::new().evaluate(&module).expect("evaluates");
+    assert!(diags2.is_empty(), "{diags2:?}");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains(raw), "leak in JSON export: {json}");
+    let v: serde_json::Value = serde_json::from_str(&json).expect("json");
+    assert_eq!(v["config"]["token"], "***SECRET***", "{v}");
+    assert!(v["config"].get("a").is_none(), "{v}");
+}
+
+/// RB-1917 — Schema twin: in-range accepts (SYN-0179-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0025 (range boundary).
+/// The naive `@schema port: …` transliteration is rejected — E014 Error at
+/// (2:2) — while the REAL `schema = { port = Int(min = 1, max = 65535) }`
+/// accepts port=8080 silently: constraints run after evaluation against
+/// typed values (DERIVED-0015/RB-012), and 8080 is in range.
+/// CONVERGENCE: schema-table verdict, accept-angle.
+#[test]
+fn rb_1917_syn179_range_accepts() {
+    let src = "case_0179_01 = 8080\n@schema port: integer, min=1, max=65535\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e = diags.iter().find(|d| d.code == "E014").expect("E014");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E014 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E014 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the real schema accepts in-range silently.
+    let src2 = "schema = { port = Int(min = 1, max = 65535) }\nport = 8080\n";
+    let v = eval_json(src2);
+    assert_eq!(v["port"], 8080, "{v}");
+    assert!(codes_of(src2).is_empty());
+    // Positive control: the lower boundary accepts too (RB-012).
+    assert_eq!(
+        eval_json("schema = { port = Int(min = 1, max = 65535) }\nport = 1\n")["port"],
+        1
+    );
+}
+
+/// RB-1918 — Schema twin: out-of-range rejects unclamped (SYN-0179-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0025 (range limits).
+/// The naive form is rejected — E014 at (2:2) — while the real schema with
+/// port=70000 fails T003 Error at the value span (2:8): rejected at
+/// validation with path and bounds (docs/diagnostics.md:70 — values never
+/// echoed), never silently clamped. The value stays 70000 in the tree;
+/// only the verdict refuses.
+/// CONVERGENCE: T003 reject-verdict, span-indexed.
+#[test]
+fn rb_1918_syn179_range_rejects_unclamped() {
+    let src = "case_0179_02 = 70000\n@schema port: integer, min=1, max=65535\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e = diags.iter().find(|d| d.code == "E014").expect("E014");
+    let span = e.span.clone().expect("E014 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the real schema rejects 70000 with T003, unclamped.
+    let src2 = "schema = { port = Int(min = 1, max = 65535) }\nport = 70000\n";
+    let module = parse(src2, "research").expect("must parse");
+    let (value, diags2) = Engine::new().evaluate(&module).expect("must evaluate");
+    let t = diags2.iter().find(|d| d.code == "T003").expect("T003");
+    assert_eq!(
+        t.severity,
+        active_core::Severity::Error,
+        "T003 must be Error, got {:?}",
+        t.severity
+    );
+    let span = t.span.clone().expect("T003 carries a span");
+    assert_eq!((span.line, span.column), (2, 8), "{span:?}");
+    let json: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(json["port"], 70000, "{json}");
+}

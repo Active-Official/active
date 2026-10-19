@@ -1,0 +1,7 @@
+# Kit B before: production flags (invented for migration kit B).
+# Planted drift: dark_launch is true here but false in staging. Nothing
+# in YAML reports that the two files disagree; the guide uses active
+# impact plus profiles to show the single-source fix.
+flags:
+  dark_launch: true
+  rollout_pct: 10

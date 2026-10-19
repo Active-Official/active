@@ -1,0 +1,4 @@
+# Kit B before: staging flags (invented for migration kit B).
+flags:
+  dark_launch: false
+  rollout_pct: 100

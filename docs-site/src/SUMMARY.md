@@ -26,8 +26,8 @@
 - [From YAML](migration/yaml.md)
 - [From JSON](migration/json.md)
 - [Kit A: 12-factor service](migration/kit-a-12factor-service.md)
-- [Kit B outline: feature flags](migration/kit-b-outline.md)
-- [Kit C outline: agent config](migration/kit-c-outline.md)
+- [Kit B: feature flags](migration/kit-b-feature-flags.md)
+- [Kit C: agent config](migration/kit-c-agent-config.md)
 
 # Reference
 

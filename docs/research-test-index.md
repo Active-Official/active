@@ -30,6 +30,7 @@
 | Batch 181 | RB-1799...RB-1808 (SYN-0165-09, SYN-0166-01...09) | done: all 10 green first-try, no code changes; 165 completed (secret print refusal); 166 opened as let family (bare-E005 refusals + quoted S001/T001/W001/E012/E023 semantics) |
 | Batch 182 | RB-1809...RB-1818 (SYN-0167-01...09, SYN-0168-01) | done: all 10 green first-try, no code changes; 167 completed as 166 twins (count/position angles); 168 opened (interp determinism) |
 | Batch 183 | RB-1819...RB-1828 (SYN-0168-02...09, SYN-0169-01...02) | done: all 10 green first-try, no code changes; 168 completed as let twins; 169 opened (duration canonical triple; MiB/MB distinct; negative-edge E023) |
+| Batch 184 | RB-1829...RB-1838 (SYN-0169-03...09, SYN-0170-01...03) | done: all 10 green first-try, no code changes; 169 completed as units family (T001 refs; prefix equality/distinction; E002 giant/unknown); 170 opened (absent/set/empty env) |
  Research Test Index — YAML/TOML/JSON failure research → Active test backlog
 
 Source corpus: `C:\Users\Usuario\Downloads\Solid Tests Research Work` (read-only).

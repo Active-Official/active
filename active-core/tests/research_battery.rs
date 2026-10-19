@@ -40560,3 +40560,248 @@ fn rb_1828_syn169_binary_decimal_distinct() {
     assert_eq!(v["memory"], 512 * 1000 * 1000, "{v}");
     assert_ne!(512 * 1024 * 1024, 512 * 1000 * 1000);
 }
+
+/// RB-1829 — Units twin: sub-units keep precision (SYN-0169-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0015 (dimension mismatch).
+/// CONVERGENCE (dimension registry, docs/units.md): `5s` is {ms:5000} and
+/// `10ms` is {ms:10} — the lexer takes number-adjacent tokens whole, and
+/// milliseconds canonicalize without losing precision: compatible duration
+/// quantities, exact integers, zero diagnostics.
+#[test]
+fn rb_1829_syn169_subunits_exact() {
+    let src = "case_0169_03 = 5s\nretry = 10ms\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0169_03"], serde_json::json!({"ms": 5000}), "{v}");
+    assert_eq!(v["retry"], serde_json::json!({"ms": 10}), "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a plain millisecond count agrees.
+    assert_eq!(
+        eval_json("retry = 10ms\n")["retry"],
+        serde_json::json!({"ms": 10})
+    );
+}
+
+/// RB-1830 — Units twin: duration plus memory refuses (SYN-0169-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0015 (dimension mixing).
+/// The bare form fails E005 at (2:9) — while the named reference
+/// `value = timeout + 1MiB` fails evaluation with T001: durations and
+/// memory never combine, through literals or references. Units refuse to
+/// mix dimensions — the NORTH STAR, enforced, not documented.
+/// CONVERGENCE: DERIVED-0005/RB-011 contract, reference-angle (new data).
+#[test]
+fn rb_1830_syn169_duration_memory_t001() {
+    let src = "case_0169_04 = 5s\nvalue = ${timeout} + 1MiB\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (2, 9), "{span:?}");
+    // Positive control: the named reference refuses with T001.
+    let src2 = "timeout = 5s\nvalue = timeout + 1MiB\n";
+    let module = parse(src2, "research").expect("must parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail T001");
+    assert_eq!(err.code(), "T001", "{err}");
+    // Positive control: the literal twin refuses identically (RB-011).
+    let module = parse("value = 5s + 1MiB\n", "research").expect("parses");
+    let err = Engine::new().evaluate(&module).expect_err("T001");
+    assert_eq!(err.code(), "T001", "{err}");
+}
+
+/// RB-1831 — Units twin: binary prefixes equate exactly (SYN-0169-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0015 (rational conversion).
+/// CONVERGENCE (dimension registry, docs/units.md): `1MiB` and `1024KiB`
+/// canonicalize to the SAME integer 1048576 (1×1024×1024, computed here):
+/// conversion is integer arithmetic, never float rounding.
+/// CONVERGENCE: byte-dimension prefix transitivity.
+#[test]
+fn rb_1831_syn169_binary_prefixes_equal() {
+    let src = "memory = 1MiB\nother = 1024KiB\n";
+    let v = eval_json(src);
+    assert_eq!(v["memory"], 1 * 1024 * 1024, "{v}");
+    assert_eq!(v["other"], 1 * 1024 * 1024, "{v}");
+    assert_eq!(v["memory"], v["other"], "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a third spelling agrees.
+    assert_eq!(eval_json("other = 1048576\n")["other"], 1 * 1024 * 1024);
+}
+
+/// RB-1832 — Units twin: SI vs IEC never conflate (SYN-0169-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0015 (MB vs MiB).
+/// CONVERGENCE (dimension registry, docs/units.md): `1MB` is 1000000
+/// (1×1000×1000) while `1MiB` is 1048576 (1×1024×1024) — the values differ
+/// per SI/IEC definitions, so conflation is arithmetically impossible.
+/// CONVERGENCE: byte-dimension prefix distinction (twin of RB-1828).
+#[test]
+fn rb_1832_syn169_mb_mib_differ() {
+    let src = "memory = 1MB\nother = 1MiB\n";
+    let v = eval_json(src);
+    assert_eq!(v["memory"], 1 * 1000 * 1000, "{v}");
+    assert_eq!(v["other"], 1 * 1024 * 1024, "{v}");
+    assert_ne!(v["memory"], v["other"], "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: decimal megabytes agree on their side (batch 183 probe).
+    assert_eq!(eval_json("memory = 512MB\n")["memory"], 512 * 1000 * 1000);
+}
+
+/// RB-1833 — Units twin: giant exponent never reaches suffix (SYN-0169-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0015 (overflow bypass).
+/// `timeout = 1e100000s` fails E002 Error at (2:12): the exponent never
+/// lexes, so the `s` suffix has nothing to attach to — a unit suffix
+/// cannot bypass numeric overflow checks because the number dies first.
+/// CONVERGENCE: lexer-bound verdict, suffix-angle.
+#[test]
+fn rb_1833_syn169_giant_unit_rejects() {
+    let src = "case_0169_07 = 1\ntimeout = 1e100000s\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (2, 12), "{span:?}");
+    // Positive control: a big-but-plain duration evaluates exactly.
+    assert_eq!(
+        eval_json("timeout = 100000s\n")["timeout"],
+        serde_json::json!({"ms": 100_000_000})
+    );
+}
+
+/// RB-1834 — Units twin: unknown suffix is loud (SYN-0169-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0015 (suffix consumption).
+/// `timeout = 5xs` fails E002 Error at (2:12): the closed lexer whitelist
+/// admits no `xs` — recognition consumes the ENTIRE suffix or rejects it
+/// whole. No fallback, no truncation to `s`, no guess.
+/// CONVERGENCE: closed-whitelist verdict (frozen suffixes hold).
+#[test]
+fn rb_1834_syn169_unknown_suffix_rejects() {
+    let src = "case_0169_08 = 1\ntimeout = 5xs\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (2, 12), "{span:?}");
+    // Positive control: the whitelisted suffix accepts silently.
+    let v = eval_json("timeout = 5s\n");
+    assert_eq!(v["timeout"], serde_json::json!({"ms": 5000}), "{v}");
+}
+
+/// RB-1835 — Units twin: quotes suppress unit parsing (SYN-0169-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0015 (quoting suppression).
+/// `timeout = "5s"` is the STRING "5s": quotes commit the type (NORTH
+/// STAR), so no unit literal is parsed, no dimension attached — while the
+/// bare twin is a duration object, never a string.
+/// CONVERGENCE: quote-suppression, type-boundary angle.
+#[test]
+fn rb_1835_syn169_quoted_unit_is_string() {
+    let src = "case_0169_09 = 1\ntimeout = \"5s\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0169_09"], 1, "{v}");
+    assert_eq!(v["timeout"], "5s", "{v}");
+    assert!(v["timeout"].is_string());
+    assert!(codes_of(src).is_empty());
+    // Positive control: the bare twin is a duration object, not a string.
+    let v = eval_json("timeout = 5s\n");
+    assert!(v["timeout"].is_object(), "{v}");
+}
+
+/// RB-1836 — Env twin: absent default is int (SYN-0170-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0016 (absent fallback).
+/// `port = env.ACTIVE_RB1836_ENV ?: 8080` with the var absent yields int
+/// 8080, silent: the default is evaluated exactly when absent, per the
+/// declared contract — and a second absent var/default pair proves the
+/// lookup, not a hardcode. Parallel-safe: uniquely-named vars.
+/// CONVERGENCE: DERIVED-0006/RB-060 contract.
+#[test]
+fn rb_1836_syn170_absent_default_int() {
+    let prior = std::env::var("ACTIVE_RB1836_ENV").ok();
+    std::env::remove_var("ACTIVE_RB1836_ENV");
+    let v = eval_json("case_0170_01 = 1\nport = env.ACTIVE_RB1836_ENV ?: 8080\n");
+    assert_eq!(v["port"], 8080, "{v}");
+    assert!(v["port"].is_i64());
+    assert!(codes_of("case_0170_01 = 1\nport = env.ACTIVE_RB1836_ENV ?: 8080\n").is_empty());
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_RB1836_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1836_ENV"),
+    }
+    // Positive control: a second absent pair surfaces its own default.
+    let prior2 = std::env::var("ACTIVE_RB1836_X2").ok();
+    std::env::remove_var("ACTIVE_RB1836_X2");
+    assert_eq!(eval_json("port = env.ACTIVE_RB1836_X2 ?: 1\n")["port"], 1);
+    match prior2 {
+        Some(val) => std::env::set_var("ACTIVE_RB1836_X2", val),
+        None => std::env::remove_var("ACTIVE_RB1836_X2"),
+    }
+}
+
+/// RB-1837 — Env twin: set value stays string (SYN-0170-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0016 (env type conversion).
+/// With the var set to "9000", the lookup yields the STRING "9000" — env
+/// coercion is controlled: present-but-numeric text never becomes a number
+/// silently (NORTH STAR) — while absent yields int 8080.
+/// CONVERGENCE: explicit-coercion policy, type-boundary angle.
+#[test]
+fn rb_1837_syn170_set_value_stays_string() {
+    let prior = std::env::var("ACTIVE_RB1837_ENV").ok();
+    std::env::set_var("ACTIVE_RB1837_ENV", "9000");
+    let v = eval_json("case_0170_02 = 1\nport = env.ACTIVE_RB1837_ENV ?: 8080\n");
+    assert_eq!(v["port"], "9000", "{v}");
+    assert!(v["port"].is_string());
+    std::env::remove_var("ACTIVE_RB1837_ENV");
+    let v = eval_json("case_0170_02 = 1\nport = env.ACTIVE_RB1837_ENV ?: 8080\n");
+    assert_eq!(v["port"], 8080, "{v}");
+    assert!(v["port"].is_i64());
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_RB1837_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1837_ENV"),
+    }
+    // Positive control: absent with a string default stays a string.
+    let prior2 = std::env::var("ACTIVE_RB1837_ENV").ok();
+    std::env::remove_var("ACTIVE_RB1837_ENV");
+    let v = eval_json("name = env.ACTIVE_RB1837_ENV ?: \"dflt\"\n");
+    assert_eq!(v["name"], "dflt", "{v}");
+    assert!(v["name"].is_string());
+    match prior2 {
+        Some(val) => std::env::set_var("ACTIVE_RB1837_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1837_ENV"),
+    }
+}
+
+/// RB-1838 — Env twin: empty beats fallback (SYN-0170-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0016 (empty semantics).
+/// With the var set to "", the lookup yields "" — present-but-empty wins
+/// over the fallback (DERIVED-0007/RB-007) — while absent yields
+/// "fallback": empty and absent are distinct, explicitly, every run.
+/// CONVERGENCE: empty-vs-absent contract, both sides in one test.
+#[test]
+fn rb_1838_syn170_empty_beats_fallback() {
+    let prior = std::env::var("ACTIVE_RB1838_ENV").ok();
+    std::env::set_var("ACTIVE_RB1838_ENV", "");
+    let v = eval_json("case_0170_03 = 1\nname = env.ACTIVE_RB1838_ENV ?: \"fallback\"\n");
+    assert_eq!(v["name"], "", "{v}");
+    assert!(v["name"].is_string());
+    std::env::remove_var("ACTIVE_RB1838_ENV");
+    let v = eval_json("case_0170_03 = 1\nname = env.ACTIVE_RB1838_ENV ?: \"fallback\"\n");
+    assert_eq!(v["name"], "fallback", "{v}");
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_RB1838_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1838_ENV"),
+    }
+    // Positive control: both states re-read deterministically.
+    let prior2 = std::env::var("ACTIVE_RB1838_ENV").ok();
+    std::env::set_var("ACTIVE_RB1838_ENV", "");
+    assert_eq!(
+        eval_json("name = env.ACTIVE_RB1838_ENV ?: \"fallback\"\n")["name"],
+        ""
+    );
+    match prior2 {
+        Some(val) => std::env::set_var("ACTIVE_RB1838_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1838_ENV"),
+    }
+}

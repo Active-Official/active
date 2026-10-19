@@ -36855,3 +36855,220 @@ fn rb_1668_syn151_deep_nesting_trips_budget() {
         serde_json::json!([0])
     );
 }
+
+/// RB-1669 — Depth twin: adversarial depth bounded (SYN-0151-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0021 (Jackson TOML DoS;
+/// same shape as SYN-0122-03).
+/// Converges with RB-1408/1417/1615/1624/1633/1642/1660: 2048 E004 Error.
+#[test]
+fn rb_1669_syn151_adversarial_depth_bounded() {
+    let src = format!("case_0151_03 = {}0{}\n", "[".repeat(2048), "]".repeat(2048));
+    let diags = parse(&src, "research").expect_err("must fail E004");
+    let e = diags.iter().find(|d| d.code == "E004").expect("E004");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E004 must be Error, got {:?}",
+        e.severity
+    );
+    // Positive control: a shallow array evaluates.
+    assert_eq!(
+        eval_json("case_0151_03 = [0]\n")["case_0151_03"],
+        serde_json::json!([0])
+    );
+}
+
+/// RB-1670 — Depth twin: interpolation in arrays refused (SYN-0151-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0021 (Jackson TOML DoS;
+/// same shape as SYN-0122-04).
+/// Converges with RB-1409/1418/1616/1625/1634/1643/1661: E005 at (3:10).
+#[test]
+fn rb_1670_syn151_array_interpolation_refused() {
+    let src =
+        "case_0151_04 = 1\nlet a = [1]\nlet b = [${a}, ${a}]\nlet c = [${b}, ${b}]\nvalue = c\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (3, 10), "{span:?}");
+    // Positive control: interpolation inside STRINGS works.
+    let v = eval_json("let who = \"hi\"\ncase_0151_04 = \"yo ${who}\"\n");
+    assert_eq!(v["case_0151_04"], "yo hi", "{v}");
+    // Positive control: plain arrays and name references evaluate.
+    let v = eval_json("let a = [1, 2, 3]\ncase_0151_04 = a\n");
+    assert_eq!(v["case_0151_04"], serde_json::json!([1, 2, 3]), "{v}");
+}
+
+/// RB-1671 — Depth twin: `${}` cycles are inexpressible (SYN-0151-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0021 (Jackson TOML DoS;
+/// same shape as SYN-0122-05).
+/// Converges with RB-1410/1419/1617/1626/1635/1644/1662: E005 at (2:9);
+/// genuine `let` cycles stay S001.
+#[test]
+fn rb_1671_syn151_interp_cycle_inexpressible() {
+    let src = "case_0151_05 = 1\nlet a = ${b}\nlet b = ${a}\nvalue = ${a}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (2, 9), "{span:?}");
+    // Positive control: a real 2-node `let` cycle is S001 (RB-030).
+    let codes = codes_of("let a = b\nlet b = a\n");
+    assert!(codes.iter().any(|c| c == "S001"), "{codes:?}");
+    // Positive control: acyclic lets evaluate.
+    assert_eq!(eval_json("let a = 1\nlet b = a + 2\ny = b\n")["y"], 3);
+}
+
+/// RB-1672 — Depth twin: small collection accepts (SYN-0151-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0021 (Jackson TOML DoS;
+/// same shape as SYN-0122-06).
+/// Converges with RB-1411/1420/1618/1627/1636/1645/1663: five silent.
+#[test]
+fn rb_1672_syn151_small_array_accepts() {
+    let src = "case_0151_06 = [1, 2, 3, 4, 5]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0151_06"], serde_json::json!([1, 2, 3, 4, 5]), "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the empty neighbour evaluates too.
+    assert_eq!(
+        eval_json("case_0151_06 = []\n")["case_0151_06"],
+        serde_json::json!([])
+    );
+}
+
+/// RB-1673 — Depth twin: comment never bypasses depth accounting (SYN-0151-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0021 (Jackson TOML DoS;
+/// same shape as SYN-0122-07).
+/// Converges with RB-1412/1421/1619/1628/1637/1646/1664: 64-deep E004
+/// with and without comment; 32-deep accepts.
+#[test]
+fn rb_1673_syn151_comment_depth_counted() {
+    let src = "case_0151_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]] # bounded-depth control\n";
+    let diags = parse(src, "research").expect_err("must fail E004");
+    let e = diags.iter().find(|d| d.code == "E004").expect("E004");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E004 must be Error, got {:?}",
+        e.severity
+    );
+    // Positive control: the comment-free twin trips identically.
+    let bare = "case_0151_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n";
+    let diags = parse(bare, "research").expect_err("must fail E004");
+    assert!(diags.iter().any(|d| d.code == "E004"), "{diags:?}");
+    // Positive control: 32-deep stays below the bound and accepts.
+    let ok = format!("case_0151_07 = {}0{}\n", "[".repeat(32), "]".repeat(32));
+    assert!(codes_of(&ok).is_empty(), "{ok}");
+}
+
+/// RB-1674 — Depth twin: fan-out interpolation refused (SYN-0151-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0021 (Jackson TOML DoS;
+/// same shape as SYN-0122-08).
+/// Converges with RB-1413/1422/1620/1629/1638/1647/1665: E005 at (3:10).
+#[test]
+fn rb_1674_syn151_fanout_refused() {
+    let src = "case_0151_08 = 1\nlet a = [1,2,3]\nlet b = [${a}, ${a}, ${a}, ${a}]\nvalue = b\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (3, 10), "{span:?}");
+    // Positive control: the array itself reads fine through its name.
+    let v = eval_json("let a = [1, 2, 3]\ncase_0151_08 = a\n");
+    assert_eq!(v["case_0151_08"], serde_json::json!([1, 2, 3]), "{v}");
+}
+
+/// RB-1675 — Depth twin: 200KB scalar stays linear and exact (SYN-0151-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0021 (Jackson TOML DoS;
+/// same shape as SYN-0122-09).
+/// Converges with RB-1414/1423/1621/1630/1639/1648/1666: 200001
+/// scalars, silent, same OPEN SPEC QUESTION.
+#[test]
+fn rb_1675_syn151_long_scalar_linear() {
+    let half = "x".repeat(100000);
+    let src = format!("case_0151_09 = \"{half}\n{half}\"\n");
+    let v = eval_json(&src);
+    let s = v["case_0151_09"].as_str().expect("string");
+    assert_eq!(s.len(), 200001, "byte length");
+    assert_eq!(s.chars().count(), 200001, "scalar length");
+    assert_eq!(s.chars().nth(100000), Some('\n'), "embedded raw LF kept");
+    assert!(s
+        .chars()
+        .enumerate()
+        .all(|(i, c)| if i == 100000 { c == '\n' } else { c == 'x' }));
+    assert!(codes_of(&src).is_empty());
+    // Positive control: a small string is exact and silent.
+    assert_eq!(eval_json("case_0151_09 = \"xx\"\n")["case_0151_09"], "xx");
+}
+
+/// RB-1676 — Tag-safety twin: host constructors impossible (SYN-0152-01 §H, CRITICAL).
+/// Origin: LibYAML tag-URI lineage (same shape as SYN-0149-01).
+/// Converges with RB-1649: `!python/...` fails loudly — `!` is not a
+/// token, so no construction site exists.
+#[test]
+fn rb_1676_syn152_host_construct_impossible() {
+    let src = "case_0152_01 = !python/object/apply:os.system [\"echo forbidden\"]\n";
+    let diags = parse(src, "research").expect_err("must fail");
+    assert!(!diags.is_empty(), "must refuse loudly");
+    assert!(
+        diags
+            .iter()
+            .all(|d| d.severity == active_core::Severity::Error),
+        "{diags:?}"
+    );
+    // Positive control: a plain string assignment evaluates silently.
+    let v = eval_json("case_0152_01 = \"harmless\"\n");
+    assert_eq!(v["case_0152_01"], "harmless", "{v}");
+    assert!(codes_of("case_0152_01 = \"harmless\"\n").is_empty());
+}
+
+/// RB-1677 — Tag-safety twin: unknown tags never load extensions (SYN-0152-02 §H, CRITICAL).
+/// Origin: LibYAML tag-URI lineage (same shape as SYN-0149-02).
+/// Converges with RB-1650: E002 Error at (1:39).
+#[test]
+fn rb_1677_syn152_unknown_tag_rejects() {
+    let src = "case_0152_02 = !custom/tag { data = 1 }\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 39), "{span:?}");
+    // Positive control: the untagged table evaluates silently.
+    let v = eval_json("case_0152_02 = { data = 1 }\n");
+    assert_eq!(v["case_0152_02"]["data"], 1, "{v}");
+    assert!(codes_of("case_0152_02 = { data = 1 }\n").is_empty());
+}
+
+/// RB-1678 — Tag-safety twin: tag-looking strings stay data (SYN-0152-03 §H, HIGH).
+/// Origin: LibYAML tag-URI lineage (same shape as SYN-0149-03).
+/// Converges with RB-1651: `"!!python/object"` exact, silent.
+#[test]
+fn rb_1678_syn152_tag_string_inert() {
+    let src = "case_0152_03 = { tag = \"!!python/object\" }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0152_03"]["tag"], "!!python/object", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: an ordinary string twin agrees byte-for-byte.
+    let v = eval_json("case_0152_03 = { tag = \"plain\" }\n");
+    assert_eq!(v["case_0152_03"]["tag"], "plain", "{v}");
+}

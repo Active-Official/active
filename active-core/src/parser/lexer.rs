@@ -26,6 +26,18 @@ use crate::diag::{thresholds, Diagnostic, Repair, RepairKind, Severity, Span};
 /// re-emits it as `\$`, so it never reaches user data.
 pub const ESCAPED_DOLLAR: char = '\u{E000}';
 
+/// Position-map mark for a character that came from a `\$` escape.
+///
+/// The mark rides in the per-character position vector alongside
+/// `ESCAPED_DOLLAR`. A genuine U+E000 in source keeps its real position,
+/// so the parser can tell `\$` (marked) from user data (unmarked) and a
+/// literal U+E000 is never rewritten to `$` (spec/grammar.md §1.4: string
+/// content is preserved; only listed escapes decode). Real positions always
+/// have small components, so this value can never collide with one.
+/// Consumers that do position arithmetic must substitute marked entries
+/// (see `pos_entry` in the parser) instead of adding them.
+pub const SENTINEL_POS: (u32, u32) = (u32::MAX, u32::MAX);
+
 /// Result of tokenizing: the token stream, hard lexical errors, healing
 /// diagnostics, and the comments found along the way (trivia for the
 /// formatter).
@@ -279,7 +291,7 @@ impl Lexer {
                     }
                     '$' => {
                         s.push(ESCAPED_DOLLAR);
-                        pos.push(at);
+                        pos.push(SENTINEL_POS);
                     }
                     other => {
                         s.push('\\');
@@ -770,7 +782,7 @@ impl Lexer {
                                 // apart from a real backslash before `${`.
                                 '$' => {
                                     s.push(ESCAPED_DOLLAR);
-                                    pos.push(at);
+                                    pos.push(SENTINEL_POS);
                                 }
                                 other => {
                                     s.push('\\');

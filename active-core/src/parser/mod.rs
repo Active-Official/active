@@ -22,6 +22,7 @@
 mod lexer;
 
 use lexer::ESCAPED_DOLLAR;
+use lexer::SENTINEL_POS;
 pub use lexer::{Lexed, Lexer, Token, TokenKind};
 
 /// Extract the span of a token.
@@ -357,6 +358,25 @@ fn parse_recovering_impl(
     };
     parser.build_graph();
     (parser.module, parser.errors)
+}
+
+/// Position-vector read with sentinel substitution: marked entries inherit
+/// the nearest preceding real position, because marks must never reach
+/// line/column arithmetic. `fallback` covers missing entries, as before.
+fn pos_entry(pos: &[(u32, u32)], k: usize, fallback: (u32, u32)) -> (u32, u32) {
+    let mut j = k;
+    loop {
+        match pos.get(j) {
+            Some(&e) if e != SENTINEL_POS => return e,
+            Some(_) => {
+                if j == 0 {
+                    return fallback;
+                }
+                j -= 1;
+            }
+            None => return fallback,
+        }
+    }
 }
 
 /// Compute each comment's normative attachment (spec/dual-syntax.md §7.2)
@@ -1176,8 +1196,9 @@ impl Parser {
         // Normalize the name before anything else: it is a static label,
         // never interpolated, so an escaped dollar is a plain dollar here.
         // Normalizing first keeps duplicate detection sound (`"$"` vs
-        // `"\$"` collide instead of silently replacing).
-        let name = name.replace(ESCAPED_DOLLAR, "$");
+        // `"\$"` collide instead of silently replacing). Only marked
+        // sentinels convert; a literal U+E000 keeps its identity.
+        let name = Self::render_marked(&name, &Self::sentinel_marks(&name, &name_tok.kind));
         if self.module.profiles.contains_key(&name) {
             self.error_at("E018", format!("duplicate profile \"{name}\""), &name_tok);
             return;
@@ -1273,7 +1294,9 @@ impl Parser {
                 return;
             }
         };
-        if path.contains("${") || path.contains(ESCAPED_DOLLAR) {
+        if path.contains("${")
+            || Self::has_marked(&path, &Self::sentinel_marks(&path, &path_tok.kind))
+        {
             self.error_at(
                 "E015",
                 "interpolation in include paths is a hard error; paths must be static string literals",
@@ -3370,7 +3393,8 @@ impl Parser {
             TokenKind::String(src_pos) => {
                 self.bump();
                 let linemap = linemap_from_charmap(&tok.text, tok.line, src_pos);
-                self.parse_string_literal(&tok.text, &tok, Some(&linemap))
+                let marks = Self::sentinel_marks(&tok.text, &tok.kind);
+                self.parse_string_literal(&tok.text, &tok, Some(&linemap), &marks)
             }
 
             TokenKind::SingleString => {
@@ -3388,9 +3412,9 @@ impl Parser {
                 // positions after stripping; src_pos corrects for `\n`
                 // escapes decoded into newlines.
                 self.bump();
-                let (stripped, linemap) =
+                let (stripped, linemap, marks) =
                     strip_common_indent_mapped(&tok.text, tok.line, tok.col, 3, Some(src_pos));
-                self.parse_string_literal(&stripped, &tok, Some(&linemap))
+                self.parse_string_literal(&stripped, &tok, Some(&linemap), &marks)
             }
 
             TokenKind::MlSingleString => {
@@ -3602,14 +3626,14 @@ impl Parser {
         let inner = match &str_tok.kind {
             TokenKind::MlString(src_pos) => {
                 self.bump();
-                let (stripped, linemap) = strip_common_indent_mapped(
+                let (stripped, linemap, marks) = strip_common_indent_mapped(
                     &str_tok.text,
                     str_tok.line,
                     str_tok.col,
                     3,
                     Some(src_pos),
                 );
-                self.parse_string_literal(&stripped, &str_tok, Some(&linemap))
+                self.parse_string_literal(&stripped, &str_tok, Some(&linemap), &marks)
             }
             TokenKind::MlSingleString => {
                 self.bump();
@@ -3641,7 +3665,6 @@ impl Parser {
 fn strip_common_indent(raw: &str) -> String {
     strip_common_indent_mapped(raw, 1, 1, 0, None).0
 }
-
 /// Where one stripped line sits in the source: the source line number and
 /// the source column of every stripped character on that line.
 #[derive(Debug, Clone)]
@@ -3668,10 +3691,8 @@ fn linemap_from_charmap(text: &str, tok_line: u32, charmap: &[(u32, u32)]) -> Ve
     lines
         .iter()
         .map(|&(s, e)| {
-            let src_line = tok_line + charmap.get(s).map(|&(off, _)| off).unwrap_or(0);
-            let src_cols = (s..e)
-                .map(|k| charmap.get(k).map(|&(_, c)| c).unwrap_or(0))
-                .collect();
+            let src_line = tok_line + pos_entry(charmap, s, (0, 0)).0;
+            let src_cols = (s..e).map(|k| pos_entry(charmap, k, (0, 0)).1).collect();
             MlLineMap { src_line, src_cols }
         })
         .collect()
@@ -3681,14 +3702,15 @@ fn linemap_from_charmap(text: &str, tok_line: u32, charmap: &[(u32, u32)]) -> Ve
 /// position. `tok_line`/`tok_col` locate the opening delimiter;
 /// `src_pos` holds the source position (physical line offset, column) of
 /// every decoded character (`None` means decoded and physical positions
-/// coincide, as for verbatim strings).
+/// coincide, as for verbatim strings). Also returns sentinel marks parallel
+/// to the stripped text: `\$`-sentinels survive stripping and stay marked.
 fn strip_common_indent_mapped(
     raw: &str,
     tok_line: u32,
     tok_col: u32,
     delim_len: u32,
     src_pos: Option<&[(u32, u32)]>,
-) -> (String, Vec<MlLineMap>) {
+) -> (String, Vec<MlLineMap>, Vec<bool>) {
     let mut lines: Vec<&str> = raw.split('\n').collect();
     // Raw line indices that survive: drop a blank first line (the newline
     // after the delimiter) and a whitespace-only last line (indentation
@@ -3730,6 +3752,9 @@ fn strip_common_indent_mapped(
     }
     let mut out = Vec::with_capacity(lines.len());
     let mut map = Vec::with_capacity(lines.len());
+    // Sentinel marks parallel to the stripped text: `\$`-sentinels survive
+    // stripping (they are never whitespace), carried per kept character.
+    let mut out_marks: Vec<Vec<bool>> = Vec::with_capacity(lines.len());
     // Decoded character index of each surviving line's first character,
     // for looking up per-character source positions. Recomputed from the
     // original split (before blank-line removal): each line starts after
@@ -3747,10 +3772,15 @@ fn strip_common_indent_mapped(
         let raw_idx = kept[j];
         let decoded_start = line_start_for(raw_idx);
         let at = |k: usize| -> (u32, u32) {
-            src_pos
-                .and_then(|p| p.get(k).copied())
-                .unwrap_or((raw_idx as u32, k as u32))
+            match src_pos {
+                // Marked sentinel entries inherit a real position: marks
+                // must never reach line/column arithmetic.
+                Some(p) => pos_entry(p, k, (raw_idx as u32, k as u32)),
+                None => (raw_idx as u32, k as u32),
+            }
         };
+        let is_marked =
+            |k: usize| -> bool { src_pos.and_then(|p| p.get(k)).copied() == Some(SENTINEL_POS) };
         let shared = if l.trim().is_empty() {
             0
         } else {
@@ -3768,6 +3798,7 @@ fn strip_common_indent_mapped(
                 src_cols: Vec::new(),
             });
             out.push(String::new());
+            out_marks.push(Vec::new());
             continue;
         }
         let text: String = l.chars().skip(shared).collect();
@@ -3789,13 +3820,28 @@ fn strip_common_indent_mapped(
                 .map(|c| shared as u32 + 1 + c as u32)
                 .collect()
         };
+        // Marks for the kept characters: a kept `\$`-sentinel stays marked
+        // exactly when its source entry is marked.
+        let mline: Vec<bool> = text
+            .chars()
+            .enumerate()
+            .map(|(c, ch)| ch == ESCAPED_DOLLAR && is_marked(first_kept + c))
+            .collect();
         out.push(text);
+        out_marks.push(mline);
         map.push(MlLineMap {
             src_line,
             src_cols: cols,
         });
     }
-    (out.join("\n"), map)
+    let mut marks = Vec::new();
+    for (j, mline) in out_marks.iter().enumerate() {
+        if j > 0 {
+            marks.push(false);
+        }
+        marks.extend(mline.iter().copied());
+    }
+    (out.join("\n"), map, marks)
 }
 
 impl Parser {
@@ -3827,7 +3873,9 @@ impl Parser {
                 return;
             }
         };
-        if path.contains("${") || path.contains(ESCAPED_DOLLAR) {
+        if path.contains("${")
+            || Self::has_marked(&path, &Self::sentinel_marks(&path, &path_tok.kind))
+        {
             self.error_at(
                 "E019",
                 "interpolation in patch paths is a hard error; paths must be static",
@@ -3858,7 +3906,10 @@ impl Parser {
                 let new_name = match &new_tok.kind {
                     TokenKind::String(_) | TokenKind::SingleString => {
                         self.bump();
-                        new_tok.text.clone()
+                        Self::render_marked(
+                            &new_tok.text,
+                            &Self::sentinel_marks(&new_tok.text, &new_tok.kind),
+                        )
                     }
                     _ => {
                         self.error_at(
@@ -4133,7 +4184,10 @@ impl Parser {
                     }
                     TokenKind::String(_) | TokenKind::SingleString => {
                         let v = self.bump();
-                        values.push(v.text.clone());
+                        values.push(Self::render_marked(
+                            &v.text,
+                            &Self::sentinel_marks(&v.text, &v.kind),
+                        ));
                     }
                     TokenKind::Ident if self.peek().text == "deprecated" => {
                         // Trailing `deprecated = true | "msg"` inside
@@ -4149,7 +4203,11 @@ impl Parser {
                                 Some(String::new())
                             }
                             TokenKind::String(_) | TokenKind::SingleString => {
-                                Some(self.bump().text.clone())
+                                let v = self.bump();
+                                Some(Self::render_marked(
+                                    &v.text,
+                                    &Self::sentinel_marks(&v.text, &v.kind),
+                                ))
                             }
                             _ => {
                                 let bad = self.peek().clone();
@@ -4338,19 +4396,71 @@ impl Parser {
         }
         true
     }
+    /// Sentinel-mark helpers (spec/grammar.md §1.4 string fidelity).
+    ///
+    /// The lexer pushes SENTINEL_POS for characters decoded from a `\$` escape
+    /// and real positions otherwise. A genuine U+E000 in source keeps its real
+    /// position, so the parser can tell `\$` (marked) from user data (unmarked):
+    /// marked sentinels render as `$`, every other char — including a literal
+    /// U+E000 — is kept verbatim. Kinds without a position vector can never
+    /// carry a sentinel.
+    /// Per-character marks parallel to `text.chars()`: true where the char is a
+    /// `\$`-sentinel.
+    fn sentinel_marks(text: &str, kind: &TokenKind) -> Vec<bool> {
+        let pos = match kind {
+            TokenKind::String(p) | TokenKind::MlString(p) => p,
+            _ => return vec![false; text.chars().count()],
+        };
+        text.chars()
+            .enumerate()
+            .map(|(i, c)| c == ESCAPED_DOLLAR && pos.get(i) == Some(&SENTINEL_POS))
+            .collect()
+    }
+
+    /// Render string text: marked sentinels become `$`; everything else stays.
+    fn render_marked(text: &str, marks: &[bool]) -> String {
+        let mut out = String::with_capacity(text.len());
+        for (i, c) in text.chars().enumerate() {
+            if c == ESCAPED_DOLLAR && marks.get(i) == Some(&true) {
+                out.push('$');
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    /// Render one already-split char.
+    fn render_char(c: char, marked: bool) -> char {
+        if c == ESCAPED_DOLLAR && marked {
+            '$'
+        } else {
+            c
+        }
+    }
+
+    /// True if the text holds at least one `\$`-sentinel.
+    fn has_marked(text: &str, marks: &[bool]) -> bool {
+        text.chars()
+            .enumerate()
+            .any(|(i, c)| c == ESCAPED_DOLLAR && marks.get(i) == Some(&true))
+    }
+
     fn parse_string_literal(
         &mut self,
         raw: &str,
         tok: &Token,
         linemap: Option<&[MlLineMap]>,
+        marks: &[bool],
     ) -> NodeId {
-        // The lexer marks `\$` with a sentinel; un-sentinel the fast path too.
-        if !raw.contains("${") && !raw.contains(ESCAPED_DOLLAR) {
-            let text = raw.replace(ESCAPED_DOLLAR, "$");
-            return self.add_spanned(Node::Literal(Value::String(text)), tok);
+        // The lexer marks `\$` with a sentinel; convert only marked chars so
+        // a literal U+E000 in user data survives verbatim.
+        if !raw.contains("${") && !Self::has_marked(raw, marks) {
+            return self.add_spanned(Node::Literal(Value::String(raw.to_string())), tok);
         }
 
         let chars: Vec<char> = raw.chars().collect();
+        let marked = |i: usize| -> bool { marks.get(i) == Some(&true) };
         let mut parts: Vec<InterpPart> = Vec::new();
         let mut literal = String::new();
         let mut i = 0usize;
@@ -4359,7 +4469,7 @@ impl Parser {
             // An escaped dollar is literal text, never interpolation — and
             // because the lexer marked it, a real `\` before `${` stays a
             // backslash (parity is preserved).
-            if chars[i] == ESCAPED_DOLLAR {
+            if chars[i] == ESCAPED_DOLLAR && marked(i) {
                 literal.push('$');
                 i += 1;
                 continue;
@@ -4368,7 +4478,6 @@ impl Parser {
                 match self.find_interpolation_end(&chars, i + 2) {
                     Some(end) => {
                         if !literal.is_empty() {
-                            literal = literal.replace(ESCAPED_DOLLAR, "$");
                             parts.push(InterpPart::Literal(std::mem::take(&mut literal)));
                         }
                         let inner: String = chars[i + 2..end].iter().collect();
@@ -4382,23 +4491,25 @@ impl Parser {
                     }
                     None => {
                         // Unterminated interpolation: diagnose and treat the
-                        // remainder as literal text.
+                        // remainder as literal text (sentinels still render).
                         let span = self.interp_span(tok, raw, i, linemap);
                         self.error_at(
                             "E012",
                             "unterminated interpolation: `${` has no matching `}`",
                             &span,
                         );
-                        literal.push_str(&chars[i..].iter().collect::<String>());
+                        for (k, c) in chars[i..].iter().enumerate() {
+                            literal.push(Self::render_char(*c, marked(i + k)));
+                        }
                         break;
                     }
                 }
             }
-            literal.push(chars[i]);
+            literal.push(Self::render_char(chars[i], marked(i)));
             i += 1;
         }
         if !literal.is_empty() {
-            parts.push(InterpPart::Literal(literal.replace(ESCAPED_DOLLAR, "$")));
+            parts.push(InterpPart::Literal(literal));
         }
 
         self.add_spanned(Node::Interpolate { parts }, tok)

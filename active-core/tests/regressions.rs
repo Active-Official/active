@@ -187,3 +187,64 @@ fn huge_durations_evaluate_without_panic() {
         "saturates at u64::MAX ms, got: {json}"
     );
 }
+
+#[test]
+fn escaped_dollar_still_renders_dollar_control() {
+    // Positive control for the U+E000 tests below: `\$` must keep meaning
+    // `$` and must not open interpolation.
+    let json = eval_json("[t]\nv = \"a\\$b\"\nw = \"pre\\$${v}\"\n");
+    assert!(
+        json.contains("\"a$b\""),
+        "escaped dollar renders, got: {json}"
+    );
+    assert!(
+        json.contains("\"pre$a$b\""),
+        "escaped dollar stays literal before interpolation, got: {json}"
+    );
+}
+
+#[test]
+fn literal_u_e000_survives_double_quoted_string() {
+    // RED-003 (Test-Lab assault): the `\$` sentinel IS U+E000, so a genuine
+    // U+E000 in user data was rewritten to `$` — silent corruption.
+    // A literal U+E000 must survive exactly (spec/grammar.md §1.4: string
+    // content is preserved; only listed escapes decode).
+    let json = eval_json("[t]\nv = \"a\u{e000}b\"\n");
+    assert!(
+        json.contains("a\u{e000}b") && !json.contains("\"a$b\""),
+        "U+E000 must survive, got: {json}"
+    );
+}
+
+#[test]
+fn literal_u_e000_survives_single_quoted_string() {
+    // Single-quoted path: guard the value end to end.
+    let json = eval_json("[t]\nv = 'a\u{e000}b'\n");
+    assert!(
+        json.contains("a\u{e000}b") && !json.contains("\"a$b\""),
+        "U+E000 must survive single-quoted, got: {json}"
+    );
+}
+
+#[test]
+fn literal_u_e000_survives_ml_string() {
+    // Triple-double-quoted path shares the sentinel arms; guard it too.
+    let json = eval_json("[t]\nv = \"\"\"a\u{e000}b\"\"\"\n");
+    assert!(
+        json.contains("a\u{e000}b") && !json.contains("\"a$b\""),
+        "U+E000 must survive ml-string, got: {json}"
+    );
+}
+
+#[test]
+fn literal_u_e000_in_patch_path_is_not_interpolation() {
+    // A literal U+E000 in a patch path must not trip the interpolation guard
+    // (E019 "must be static"); it must fail as an ordinary bad target instead.
+    let diags = parse("@patch(\"a\u{e000}b\", 1)\n", "regression").expect_err("must fail");
+    assert!(
+        !diags
+            .iter()
+            .any(|d| d.code == "E019" && d.message.contains("interpolation")),
+        "no false interpolation guard, got: {diags:?}"
+    );
+}

@@ -21,6 +21,7 @@
 - [CI pipelines](cookbook/ci-pipeline.md)
 - [CI templates](cookbook/ci-templates.md)
 - [Agent loop](cookbook/agent-loop.md)
+- [Timestamps](cookbook/timestamps.md)
 
 # Migration
 
@@ -31,12 +32,14 @@
 - [Kit B: feature flags](migration/kit-b-feature-flags.md)
 - [Kit C: agent config](migration/kit-c-agent-config.md)
 - [Active vs YAML/TOML/JSON](migration/vs-comparison.md)
+- [Active vs CUE/Nickel/Pkl/Starlark](migration/vs-rivals.md)
 
 # Reference
 
 - [Syntax](reference/syntax.md)
 - [CLI](reference/cli.md)
 - [Diagnostics index](reference/diagnostics.md)
+- [Error catalog](reference/error-catalog.md)
 - [Schema library](reference/schema-library.md)
 - [Conformance](reference/conformance.md)
 

@@ -24,9 +24,11 @@ window.ActiveAPI = {
 
 ## Share links (G-019 decision)
 
-MVP links carry raw encoded source (`#s=...`) and stay under ~2KB. The WASM
-build adds lz-string-class compression; past URL length limits the page offers
-download plus file-drop instead of a link. No backend, no tracking.
+Links carry `#c=` deflate-raw-compressed source (platform
+CompressionStream, base64url) or `#s=` raw encoded source, whichever is
+shorter (compression overhead loses on tiny documents). Past ~8KB of hash
+the page offers download plus file-drop instead of any link. No backend,
+no tracking.
 
 ## Wall-clock on WASM (G-003 delta)
 

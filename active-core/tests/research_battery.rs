@@ -42273,3 +42273,240 @@ fn rb_1888_syn175_unit_merge_effective() {
     let v = eval_json("case_0175_08 = 1\nprofile \"prod\" { memory = 512MiB }\n");
     assert!(v.get("memory").is_none(), "{v}");
 }
+
+/// RB-1889 — Profile twin: comment ownership visible (SYN-0175-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0021 (comment ownership).
+/// The naive form is rejected — E014 Error at (2:2) — while the real
+/// comment-carrying profile merges retries=3 with `active_profile` visible:
+/// comments ride along, ownership never moves.
+/// CONVERGENCE: twin verdict to SYN-0174-09/RB-1880.
+#[test]
+fn rb_1889_syn175_comment_not_owner() {
+    let src = "case_0175_09 = 1\n@profile \"prod\" { retries = 3 } # comment\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e = diags.iter().find(|d| d.code == "E014").expect("E014");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E014 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E014 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the real merge resolves through the comment.
+    let src2 =
+        "case_0175_09 = 1\nprofile \"prod\" { retries = 3 } # comment\nactive_profile = \"prod\"\n";
+    let v = eval_json(src2);
+    assert_eq!(v["retries"], 3, "{v}");
+    assert_eq!(v["active_profile"], "prod", "{v}");
+    assert!(codes_of(src2).is_empty());
+}
+
+/// RB-1890 — Patch twin: update touches addressed path (SYN-0176-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0022 (patch scope).
+/// The naive `@patch config { a = 3 }` is rejected — E019 Error at (3:2),
+/// `(` required — while the explicit `@patch("config.a", 3)` sets a=3
+/// with b=2 intact and zero diagnostics: base mutation is explicit per
+/// path, never wholesale.
+/// CONVERGENCE: set-semantics verdict (spec/grammar.md:340).
+#[test]
+fn rb_1890_syn176_patch_addressed_path() {
+    let src = "case_0176_01 = 1\nconfig = { a = 1, b = 2 }\n@patch config { a = 3 }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    // Positive control: the explicit patch sets a=3, b intact.
+    let v = eval_json("config = { a = 1, b = 2 }\n@patch(\"config.a\", 3)\n");
+    assert_eq!(v["config"]["a"], 3, "{v}");
+    assert_eq!(v["config"]["b"], 2, "{v}");
+    assert!(codes_of("config = { a = 1, b = 2 }\n@patch(\"config.a\", 3)\n").is_empty());
+}
+
+/// RB-1891 — Patch twin: remove deletes structurally (SYN-0176-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0022 (remove semantics).
+/// The naive `@remove config.a` is rejected — E019 at (3:2) — while the
+/// explicit `@remove("config.a")` leaves config WITHOUT a: removal is
+/// structural deletion, never assignment-to-null (no null appears).
+/// CONVERGENCE: delete-semantics verdict, null-absence angle.
+#[test]
+fn rb_1891_syn176_remove_structural() {
+    let src = "case_0176_02 = 1\nconfig = { a = 1 }\n@remove config.a\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    // Positive control: the explicit remove deletes, null never appears.
+    let v = eval_json("config = { a = 1 }\n@remove(\"config.a\")\n");
+    assert!(v["config"].get("a").is_none(), "{v}");
+    assert!(v["config"].is_object(), "{v}");
+    assert!(!v["config"].to_string().contains("null"), "{v}");
+}
+
+/// RB-1892 — Patch twin: rename moves atomically (SYN-0176-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0022 (rename atomicity).
+/// The naive `@rename config.a to b` is rejected — E019 at (3:2) — while
+/// the explicit `@rename("config.a", "b")` yields b=1 with no a: one
+/// atomic move, value preserved, source gone.
+/// CONVERGENCE: atomic-move verdict.
+#[test]
+fn rb_1892_syn176_rename_atomic() {
+    let src = "case_0176_03 = 1\nconfig = { a = 1 }\n@rename config.a to b\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    // Positive control: the explicit rename moves atomically.
+    let v = eval_json("config = { a = 1 }\n@rename(\"config.a\", \"b\")\n");
+    assert_eq!(v["config"]["b"], 1, "{v}");
+    assert!(v["config"].get("a").is_none(), "{v}");
+}
+
+/// RB-1893 — Patch twin: rename collision refuses loudly (SYN-0176-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0022 (rename collisions).
+/// The naive form is rejected — E019 at (3:2) — AND the explicit
+/// `@rename("config.a", "b")` with b present fails evaluation with E019:
+/// an existing target is a hard error, never a silent erase
+/// (DERIVED-0013/RB-015; spec/grammar.md:348). Both syntaxes, same guard.
+/// CONVERGENCE: no-silent-erase verdict, both layers pinned.
+#[test]
+fn rb_1893_syn176_rename_collision_refuses() {
+    let src = "case_0176_04 = 1\nconfig = { a = 1, b = 2 }\n@rename config.a to b\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    // Positive control: the explicit collision fails E019, nothing erased.
+    let src2 = "config = { a = 1, b = 2 }\n@rename(\"config.a\", \"b\")\n";
+    let module = parse(src2, "research").expect("must parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail E019");
+    assert_eq!(err.code(), "E019", "{err}");
+}
+
+/// RB-1894 — Patch twin: patch-then-remove ordered (SYN-0176-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0022 (operation precedence).
+/// The naive pair is rejected — E019 at (3:2) AND (4:2), both gates —
+/// while the explicit pair applies in source order: patch sets a=2, then
+/// remove deletes it — final state has NO a. Order is the plan; the last
+/// writer that matters here is the deleter.
+/// CONVERGENCE: source-order verdict, both-gates angle.
+#[test]
+fn rb_1894_syn176_patch_remove_ordered() {
+    let src = "case_0176_05 = 1\nconfig = { a = 1 }\n@patch config { a = 2 }\n@remove config.a\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e019: Vec<_> = diags.iter().filter(|d| d.code == "E019").collect();
+    assert_eq!(e019.len(), 2, "{diags:?}");
+    // Positive control: explicit order — patched then removed, a absent.
+    let v = eval_json("config = { a = 1 }\n@patch(\"config.a\", 2)\n@remove(\"config.a\")\n");
+    assert!(v["config"].get("a").is_none(), "{v}");
+    // Positive control: reversed order keeps the patch (remove then set).
+    let v = eval_json("config = { a = 1 }\n@remove(\"config.a\")\n@patch(\"config.a\", 2)\n");
+    assert_eq!(v["config"]["a"], 2, "{v}");
+}
+
+/// RB-1895 — Patch twin: missing remove warns W004 (SYN-0176-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0022 (absent paths).
+/// The naive form is rejected — E019 at (3:2) — while the explicit
+/// `@remove("config.missing")` warns W004 Warning and SUCCEEDS
+/// idempotently with a intact: absent-path ops are deterministic no-ops,
+/// never runtime-dependent (DERIVED-0012).
+/// CONVERGENCE: W004 idempotent verdict, severity-pinned.
+#[test]
+fn rb_1895_syn176_missing_remove_warns() {
+    let src = "case_0176_06 = 1\nconfig = { a = 1 }\n@remove config.missing\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    // Positive control: explicit missing-remove warns W004, a intact.
+    let src2 = "config = { a = 1 }\n@remove(\"config.missing\")\n";
+    let module = parse(src2, "research").expect("must parse");
+    let (value, diags2) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags2.iter().find(|d| d.code == "W004").expect("W004");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W004 must be Warning, got {:?}",
+        w.severity
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(json["config"]["a"], 1, "{json}");
+}
+
+/// RB-1896 — Patch twin: nested path leaf-only (SYN-0176-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0022 (path traversal).
+/// The naive `@patch config.a { b = 2 }` is rejected — E019 at (3:2) with
+/// an E002 companion at (3:8) — while the explicit `@patch("config.a.b",
+/// 2)` changes ONLY the leaf: traversal respects node types, siblings and
+/// parents intact.
+/// CONVERGENCE: leaf-only verdict, companion angle.
+#[test]
+fn rb_1896_syn176_nested_path_leaf() {
+    let src = "case_0176_07 = 1\nconfig = { a = { b = 1 } }\n@patch config.a { b = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 companion expected, got {diags:?}"
+    );
+    // Positive control: the explicit leaf call changes only the leaf.
+    let v = eval_json("config = { a = { b = 1 } }\n@patch(\"config.a.b\", 2)\n");
+    assert_eq!(v["config"]["a"]["b"], 2, "{v}");
+}
+
+/// RB-1897 — Patch twin: self-rename refuses (SYN-0176-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0022 (identity renames).
+/// The naive form is rejected — E019 at (3:2) — AND the explicit
+/// `@rename("config.a", "a")` fails evaluation with E019: same-name
+/// renames refuse instead of no-op-ing, so map iteration can never
+/// corrupt — there is no identity path, only an error.
+/// CONVERGENCE: no-identity verdict, both layers pinned.
+#[test]
+fn rb_1897_syn176_self_rename_refuses() {
+    let src = "case_0176_08 = 1\nconfig = { a = 1 }\n@rename config.a to \"a\"\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    // Positive control: the explicit identity rename fails E019 too.
+    let src2 = "config = { a = 1 }\n@rename(\"config.a\", \"a\")\n";
+    let module = parse(src2, "research").expect("must parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail E019");
+    assert_eq!(err.code(), "E019", "{err}");
+}
+
+/// RB-1898 — Patch twin: rename moves taint (SYN-0176-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0022 (structural moves).
+/// The naive form is rejected — E019 at (3:2) — while the explicit
+/// `@rename("config.a", "token")` over a secret yields token redacted
+/// with source gone: structural moves preserve metadata because taint
+/// rides the VALUE, never the key name. The raw marker appears nowhere.
+/// CONVERGENCE: taint-preserving verdict, move-angle.
+#[test]
+fn rb_1898_syn176_rename_moves_taint() {
+    let src = "case_0176_09 = 1\nconfig = { a = secret(\"x\") }\n@rename config.a to token\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    // Positive control: the explicit secret rename lands redacted.
+    let raw = "RAW-1898-move-marker";
+    let src2 = format!("config = {{ a = secret(\"{raw}\") }}\n@rename(\"config.a\", \"token\")\n");
+    let module = parse(&src2, "research").expect("parses");
+    let (value, diags2) = Engine::new().evaluate(&module).expect("evaluates");
+    assert!(diags2.is_empty(), "{diags2:?}");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains(raw), "leak in JSON export: {json}");
+    let v: serde_json::Value = serde_json::from_str(&json).expect("json");
+    assert_eq!(v["config"]["token"], "***SECRET***", "{v}");
+    assert!(v["config"].get("a").is_none(), "{v}");
+}

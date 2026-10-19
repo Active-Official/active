@@ -43526,3 +43526,269 @@ fn rb_1938_syn181_chain_first_s001() {
     let err = Engine::new().evaluate(&module).expect_err("must fail S001");
     assert_eq!(err.code(), "S001", "{err}");
 }
+
+/// RB-1939 — Let twin: arith both positions (SYN-0181-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0027 (typed evaluation).
+/// The bare chain fails E005 at (3:12) AND (4:9) — while the quoted twin
+/// fails T001: strings never coerce for `+`.
+/// CONVERGENCE: twin verdict to SYN-0166-05/RB-1804 and kin.
+#[test]
+fn rb_1939_syn181_string_plus_int_t001() {
+    let src = "case_0181_05 = 1\nlet base = 2\nlet copy = ${base}\nvalue = ${copy} + 1\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e005: Vec<_> = diags.iter().filter(|d| d.code == "E005").collect();
+    assert_eq!(e005.len(), 2, "{diags:?}");
+    let spans: Vec<_> = e005
+        .iter()
+        .map(|d| {
+            let s = d.span.clone().expect("span");
+            (s.line, s.column)
+        })
+        .collect();
+    assert!(spans.contains(&(3, 12)), "{spans:?}");
+    assert!(spans.contains(&(4, 9)), "{spans:?}");
+    // Positive control: the quoted twin type-errors instead of coercing.
+    let src2 = "case_0181_05 = 1\nlet base = 2\nlet copy = \"${base}\"\nvalue = \"${copy}\" + 1\n";
+    let module = parse(src2, "research").expect("must parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail T001");
+    assert_eq!(err.code(), "T001", "{err}");
+}
+
+/// RB-1940 — Let twin: env second value (SYN-0181-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0027 (env repeatability).
+/// Absent yields "safe", present yields the injected value, repeat-stable.
+/// Parallel-safe: uniquely-named var, priors restored.
+/// CONVERGENCE: twin verdict to SYN-0166-06/RB-1805 and kin.
+#[test]
+fn rb_1940_syn181_env_through_let() {
+    let prior = std::env::var("ACTIVE_RB1940_ENV").ok();
+    std::env::remove_var("ACTIVE_RB1940_ENV");
+    let src = "case_0181_06 = 1\nlet a = env.ACTIVE_RB1940_ENV ?: \"safe\"\nvalue = \"${a}\"\n";
+    assert_eq!(eval_json(src)["value"], "safe");
+    std::env::set_var("ACTIVE_RB1940_ENV", "s2");
+    assert_eq!(eval_json(src)["value"], "s2");
+    assert_eq!(eval_json(src)["value"], "s2");
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_RB1940_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1940_ENV"),
+    }
+    // Positive control: absent with another default surfaces it.
+    let prior2 = std::env::var("ACTIVE_RB1940_ENV").ok();
+    std::env::remove_var("ACTIVE_RB1940_ENV");
+    assert_eq!(
+        eval_json("value = env.ACTIVE_RB1940_ENV ?: \"zz\"\n")["value"],
+        "zz"
+    );
+    match prior2 {
+        Some(val) => std::env::set_var("ACTIVE_RB1940_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1940_ENV"),
+    }
+}
+
+/// RB-1941 — Let twin: unused Warning-severe (SYN-0181-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0027 (lazy/eager policy).
+/// The bare form fails E005 at (2:14) — while the quoted twin warns W001
+/// Warning at (2:17) yet yields 1: announce-eagerly, evaluate-lazily.
+/// CONVERGENCE: twin verdict to SYN-0166-07/RB-1806 and kin.
+#[test]
+fn rb_1941_syn181_unused_warns_warning() {
+    let src = "case_0181_07 = 1\nlet unused = ${missing}\nvalue = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (2, 14), "{span:?}");
+    // Positive control: the quoted twin warns W001 Warning yet yields 1.
+    let src2 = "case_0181_07 = 1\nlet unused = \"${missing}\"\nvalue = 1\n";
+    let module = parse(src2, "research").expect("must parse");
+    let (value, diags2) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags2.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (2, 17), "{span:?}");
+    let json: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(json["value"], 1, "{json}");
+}
+
+/// RB-1942 — Let twin: unclosed third value (SYN-0181-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0027 (malformed syntax).
+/// `let a = "${b"` fails E012 Error at (2:10): bounded path, opening
+/// span, no EOF scan.
+/// CONVERGENCE: twin verdict to SYN-0166-08/RB-1807 and kin.
+#[test]
+fn rb_1942_syn181_unterminated_spans() {
+    let src = "case_0181_08 = 1\nlet a = \"${b\"\nvalue = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E012");
+    let e = diags.iter().find(|d| d.code == "E012").expect("E012");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E012 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E012 carries a span");
+    assert_eq!((span.line, span.column), (2, 10), "{span:?}");
+    // Positive control: the closed twin with a bound name expands.
+    let v = eval_json("let b = 3\nlet a = \"${b}\"\nvalue = \"${a}\"\n");
+    assert_eq!(v["value"], "3", "{v}");
+}
+
+/// RB-1943 — Let twin: giant Error-severe (SYN-0181-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0027 (host overflow).
+/// The 37-digit literal fails E023 Error at (2:9) — while i64::MAX
+/// accepts silently: the edge is exact, never wrapped.
+/// CONVERGENCE: twin verdict to SYN-0166-09/RB-1808 and kin.
+#[test]
+fn rb_1943_syn181_giant_int_e023() {
+    let src = "case_0181_09 = 1\nlet a = 1000000000000000000000000000000000000\nvalue = \"${a}\"\n";
+    let diags = parse(src, "research").expect_err("must fail E023");
+    let e = diags.iter().find(|d| d.code == "E023").expect("E023");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E023 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E023 carries a span");
+    assert_eq!((span.line, span.column), (2, 9), "{span:?}");
+    // Positive control: i64::MAX itself accepts silently.
+    let v = eval_json("value = 9223372036854775807\n");
+    assert_eq!(v["value"], 9223372036854775807i64, "{v}");
+    assert!(codes_of("value = 9223372036854775807\n").is_empty());
+}
+
+/// RB-1944 — Budget twin: kilobyte string exact (SYN-0182-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0028 (input limits).
+/// 1024 generated x's evaluate to a 1024-char string, silent: comfortably
+/// below every boundary — with the empty string agreeing silently beside
+/// it. Generation (not hand-typing) keeps bytes honest.
+/// CONVERGENCE: below-boundary control, length-pinned.
+#[test]
+fn rb_1944_syn182_small_string_accepts() {
+    let src = format!("case_0182_01 = \"{}\"\n", "x".repeat(1024));
+    let v = eval_json(&src);
+    assert_eq!(v["case_0182_01"].as_str().map(|s| s.len()), Some(1024));
+    assert!(codes_of(&src).is_empty());
+    // Positive control: the empty string is equally silent.
+    let v = eval_json("case_0182_01 = \"\"\n");
+    assert_eq!(v["case_0182_01"], "");
+    assert!(codes_of("case_0182_01 = \"\"\n").is_empty());
+}
+
+/// RB-1945 — Budget twin: megabyte string accepted (SYN-0182-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0028 (token byte budget).
+/// 1048576 generated x's evaluate to a 1048576-char string, SILENT: the
+/// explicit byte-budget verdict at 1MiB is accept — no scalar byte cap
+/// binds anywhere through a megabyte. Recorded as an open SPEC QUESTION
+/// (no cap specified; 200KB/1MB twins accept): a future cap would need a
+/// design authority, not a test change.
+/// CONVERGENCE: budget verdict is accept-without-crash; cap question open.
+#[test]
+fn rb_1945_syn182_megabyte_string_accepts() {
+    let src = format!("case_0182_02 = \"{}\"\n", "x".repeat(1024 * 1024));
+    let v = eval_json(&src);
+    assert_eq!(
+        v["case_0182_02"].as_str().map(|s| s.len()),
+        Some(1024 * 1024)
+    );
+    assert!(codes_of(&src).is_empty());
+    // Positive control: the kilobyte twin agrees silently (RB-1944).
+    let src2 = format!("case_0182_02 = \"{}\"\n", "x".repeat(1024));
+    assert_eq!(
+        eval_json(&src2)["case_0182_02"].as_str().map(|s| s.len()),
+        Some(1024)
+    );
+}
+
+/// RB-1946 — Budget twin: 63 accepts, 64 trips (SYN-0182-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0028 (depth boundary).
+/// 63 balanced brackets evaluate (nested arrays, silent) — 64 trips E004
+/// Error at (1:80): the known depth boundary is EXACT — 63 ok, 64 bound.
+/// Fixture-faithful key (`case_0182_03 = `); generation keeps brackets
+/// honest. Performance is linear; no hang at either depth.
+/// CONVERGENCE: 64-bound verdict, boundary-pinned both sides (new data).
+#[test]
+fn rb_1946_syn182_depth_boundary_exact() {
+    let accept = format!("case_0182_03 = {}0{}\n", "[".repeat(63), "]".repeat(63));
+    let v = eval_json(&accept);
+    assert!(codes_of(&accept).is_empty());
+    assert!(v["case_0182_03"].is_array(), "{v}");
+    // The 64-deep twin trips E004 at (1:80).
+    let src = format!("case_0182_03 = {}0{}\n", "[".repeat(64), "]".repeat(64));
+    let diags = parse(&src, "research").expect_err("must fail E004");
+    let e = diags.iter().find(|d| d.code == "E004").expect("E004");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E004 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E004 carries a span");
+    assert_eq!((span.line, span.column), (1, 80), "{span:?}");
+    // Positive control: shallow nesting evaluates exactly.
+    assert_eq!(eval_json("case_0182_03 = [[0]]\n")["case_0182_03"][0][0], 0);
+}
+
+/// RB-1947 — Budget twin: 4096-deep terminates loud (SYN-0182-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0028 (stack exhaustion).
+/// 4096 balanced brackets fail with E004 first at (1:80) — thousands of
+/// span-indexed announcements, zero recursion, zero hang: this test
+/// COMPLETING is the no-stack-exhaustion proof. Native stacks never
+/// unwind; budgets bind first, at every depth past 64.
+/// CONVERGENCE: budget-binds verdict, termination angle.
+#[test]
+fn rb_1947_syn182_deep_nesting_terminates() {
+    let src = format!("case_0182_04 = {}0{}\n", "[".repeat(4096), "]".repeat(4096));
+    let diags = parse(&src, "research").expect_err("must fail E004");
+    let e = diags.iter().find(|d| d.code == "E004").expect("E004");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E004 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E004 carries a span");
+    assert_eq!((span.line, span.column), (1, 80), "{span:?}");
+    assert!(
+        diags.iter().all(|d| d.code == "E004"),
+        "only E004 expected, got {} diags",
+        diags.len()
+    );
+    // Positive control: the 63-deep neighbour evaluates (RB-1946).
+    let ok = format!("case_0182_04 = {}0{}\n", "[".repeat(63), "]".repeat(63));
+    assert!(codes_of(&ok).is_empty());
+}
+
+/// RB-1948 — Budget twin: expansion never materializes (SYN-0182-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0028 (expansion charging).
+/// 128 bare `${a}` fail with EXACTLY 128 E005s — the parse gate counts
+/// every one — while the quoted 128-expansion fails T001 at first use:
+/// arrays never stringify, so the blowup never materializes and no
+/// expansion budget ever needs tripping. Minimal proof: one array interp
+/// is already T001.
+/// CONVERGENCE: no-materialization verdict, count-pinned.
+#[test]
+fn rb_1948_syn182_expansion_gated_counted() {
+    let big = "${a},".repeat(128);
+    let big = big.strip_suffix(',').unwrap();
+    let src = format!("case_0182_05 = 1\nlet a = [1,2,3]\nlet b = [{big}]\nvalue = b\n");
+    let diags = parse(&src, "research").expect_err("must fail E005");
+    let e005: Vec<_> = diags.iter().filter(|d| d.code == "E005").collect();
+    assert_eq!(e005.len(), 128, "one gate per use, got {}", diags.len());
+    // Positive control: the quoted expansion refuses T001 — no blowup.
+    let big = "\"${a}\",".repeat(128);
+    let big = big.strip_suffix(',').unwrap();
+    let src2 = format!("case_0182_05 = 1\nlet a = [1,2,3]\nlet b = [{big}]\nvalue = b\n");
+    let module = parse(&src2, "research").expect("must parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail T001");
+    assert_eq!(err.code(), "T001", "{err}");
+    // Positive control: one array interpolation is already T001.
+    let module = parse("let a = [1,2,3]\nvalue = \"${a}\"\n", "research").expect("parses");
+    let err = Engine::new().evaluate(&module).expect_err("T001");
+    assert_eq!(err.code(), "T001", "{err}");
+}

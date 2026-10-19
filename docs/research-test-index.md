@@ -41,6 +41,7 @@
 | Batch 192 | RB-1909...RB-1918 (SYN-0178-02...09, SYN-0179-01...02) | done: all 10 green first-try, no code changes; 178 completed as patch twins; 179 opened (schema accept/T003-unclamped) |
 | Batch 193 | RB-1919...RB-1928 (SYN-0179-03...09, SYN-0180-01...03) | done: all 10 green first-try, no code changes; 179 completed (Duration/H007/T002/no-minItems/T004/null); 180 opened as 179 twins |
 | Batch 194 | RB-1929...RB-1938 (SYN-0180-04...09, SYN-0181-01...04) | done: all 10 green first-try, no code changes; 180 completed as 179 twins (full-span angles); 181 opened as let twins |
+| Batch 195 | RB-1939...RB-1948 (SYN-0181-05...09, SYN-0182-01...05) | done: all 10 green first-try, no code changes; 181 completed as let twins; 182 opened (1KB/1MB accept; 63/64 boundary; 4096 loud; 128-gated/no-materialize) |
  Research Test Index — YAML/TOML/JSON failure research → Active test backlog
 
 Source corpus: `C:\Users\Usuario\Downloads\Solid Tests Research Work` (read-only).

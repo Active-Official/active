@@ -39272,3 +39272,247 @@ fn rb_1778_syn163_no_repeat_silent() {
     let codes = codes_of("case_0163_06 = { a = 1 }\ncase_0163_06 = { a = 2 }\n");
     assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
 }
+
+/// RB-1779 — Dup-patch twin: naive patch form rejects at line 3 (SYN-0163-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0009 (dup vs patch separation).
+/// `base = { key = 1 }` with `@patch base { key = 2 }` fails E019 Error at
+/// (3:2): ordinary declarations and intentional patches are separate
+/// operations — the naive transliteration is rejected, while the explicit
+/// `@patch("base.key", 2)` call overrides to exactly 2.
+/// CONVERGENCE: separation enforced by grammar (spec/grammar.md:320-350).
+#[test]
+fn rb_1779_syn163_naive_patch_rejects() {
+    let src = "case_0163_07 = 1\nbase = { key = 1 }\n@patch base { key = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    // Positive control: the explicit patch overrides to exactly 2.
+    let v = eval_json("base = { key = 1 }\n@patch(\"base.key\", 2)\n");
+    assert_eq!(v["base"]["key"], 2, "{v}");
+}
+
+/// RB-1780 — Dup-patch twin: repeated removal is explicit and idempotent (SYN-0163-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0009 (repeated structural ops).
+/// The naive double-remove is rejected — E019 Error at (3:2) — while the
+/// explicit double-remove is deterministic: first removes, second warns
+/// W004 Warning at (3:1) and succeeds idempotently (DERIVED-0012), key
+/// absent after. Reject-naive, no-op-explicit: both halves of the research
+/// disjunction hold, each on its own syntax.
+/// CONVERGENCE: W004 idempotent-success contract.
+#[test]
+fn rb_1780_syn163_double_remove_idempotent() {
+    let src = "case_0163_08 = 1\nbase = { key = 1 }\n@remove base.key\n@remove base.key\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    // Positive control: explicit double-remove — W004 no-op, key absent.
+    let src2 = "base = { key = 1 }\n@remove(\"base.key\")\n@remove(\"base.key\")\n";
+    let module = parse(src2, "research").expect("must parse");
+    let (value, diags2) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags2.iter().find(|d| d.code == "W004").expect("W004");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W004 must be Warning, got {:?}",
+        w.severity
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert!(json["base"].get("key").is_none(), "{json}");
+}
+
+/// RB-1781 — Dup-key twin: dotted quoted key never aliases (SYN-0163-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0009 (dotted-key aliasing).
+/// `{ "a.b" = 1, a = { b = 2 } }` fails E001 Error at (1:18): quoted keys
+/// are ungrammatical (keys-are-identifiers), so a dotted string can never
+/// alias — or collide with — a nested path. The surprise class is
+/// unrepresentable, not merely handled.
+/// CONVERGENCE: rejects; aliasing impossible by grammar.
+#[test]
+fn rb_1781_syn163_dotted_key_no_alias() {
+    let src = "case_0163_09 = { \"a.b\" = 1, a = { b = 2 } }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the nested path alone evaluates exactly.
+    let v = eval_json("case_0163_09 = { a = { b = 2 } }\n");
+    assert_eq!(v["case_0163_09"]["a"]["b"], 2, "{v}");
+}
+
+/// RB-1782 — Spec-matrix twin: baseline scalar, 3164 angle (SYN-0164-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0010 (JSONTestSuite README).
+/// Two plain integer assignments evaluate silently to exactly 1 and 1 —
+/// the anchor proving ordinary scalars parse with zero diagnostics under
+/// the 3164 probe key.
+/// CONVERGENCE: identical verdict to SYN-0156-01/RB-1710.
+#[test]
+fn rb_1782_syn164_baseline_scalar_accepts() {
+    let src = "case_0164_01 = 1\nprobe_3164 = 1\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0164_01"], 1, "{v}");
+    assert_eq!(v["probe_3164"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: mixed scalar kinds evaluate side by side.
+    let v = eval_json("case_0164_01 = \"x\"\nprobe_3164 = 1\n");
+    assert_eq!(v["case_0164_01"], "x", "{v}");
+    assert_eq!(v["probe_3164"], 1, "{v}");
+}
+
+/// RB-1783 — Spec-matrix twin: nested map, deep angle (SYN-0164-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0010 (nested scopes).
+/// `probe_3164 = { nested = 1 }` keeps the inner key inside its map — and a
+/// three-deep nest scopes every level: each value visible only where bound.
+/// CONVERGENCE: identical verdict to SYN-0156-02/RB-1711.
+#[test]
+fn rb_1783_syn164_nested_map_scopes() {
+    let src = "case_0164_02 = 1\nprobe_3164 = { nested = 1 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0164_02"], 1, "{v}");
+    assert_eq!(v["probe_3164"]["nested"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: three-deep nesting scopes every level.
+    let v = eval_json("probe_3164 = { n = { m = { x = 9 } } }\n");
+    assert_eq!(v["probe_3164"]["n"]["m"]["x"], 9, "{v}");
+    assert!(codes_of("probe_3164 = { n = { m = { x = 9 } } }\n").is_empty());
+}
+
+/// RB-1784 — Spec-matrix twin: array commas, triple angle (SYN-0164-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0010 (array commas).
+/// `probe_3164 = [1, 2]` is exactly [1, 2] — and the three-comma neighbour
+/// `[1, 2, 3]` is exactly itself: commas separate, never confuse, at any
+/// count.
+/// CONVERGENCE: identical verdict to SYN-0156-03/RB-1712.
+#[test]
+fn rb_1784_syn164_two_element_array_accepts() {
+    let src = "case_0164_03 = 1\nprobe_3164 = [1, 2]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0164_03"], 1, "{v}");
+    assert_eq!(v["probe_3164"], serde_json::json!([1, 2]), "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the three-element array is equally exact (RB-1699).
+    assert_eq!(
+        eval_json("probe_3164 = [1, 2, 3]\n")["probe_3164"],
+        serde_json::json!([1, 2, 3])
+    );
+}
+
+/// RB-1785 — Spec-matrix twin: quoted scalar, fraction-string angle (SYN-0164-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0010 (no coercion).
+/// `probe_3164 = "1"` stays the string "1" next to int 1 — and `"1.5"`
+/// stays a string too: quotes commit the type for every numeric shape, and
+/// the boundary holds across integers and fractions alike.
+/// CONVERGENCE: identical verdict to SYN-0156-04/RB-1713.
+#[test]
+fn rb_1785_syn164_quoted_scalar_no_coerce() {
+    let src = "case_0164_04 = 1\nprobe_3164 = \"1\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0164_04"], 1, "{v}");
+    assert_eq!(v["probe_3164"], "1", "{v}");
+    assert!(v["probe_3164"].is_string());
+    assert!(codes_of(src).is_empty());
+    // Positive control: a fraction-looking string never coerces either.
+    let v = eval_json("probe_3164 = \"1.5\"\n");
+    assert_eq!(v["probe_3164"], "1.5", "{v}");
+    assert!(v["probe_3164"].is_string());
+}
+
+/// RB-1786 — Spec-matrix twin: trailing comment, full-line angle (SYN-0164-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0010 (comment inertness).
+/// `probe_3164 = 1 # comment` is exactly 1 — and a full-line comment above
+/// an assignment is equally inert: `#` opens a comment everywhere except
+/// inside strings, and comments never enter token values.
+/// CONVERGENCE: identical verdict to SYN-0156-05/RB-1714.
+#[test]
+fn rb_1786_syn164_trailing_comment_inert() {
+    let src = "case_0164_05 = 1\nprobe_3164 = 1 # comment\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0164_05"], 1, "{v}");
+    assert_eq!(v["probe_3164"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a full-line comment is equally inert.
+    let v = eval_json("# leading comment\nprobe_3164 = 2\n");
+    assert_eq!(v["probe_3164"], 2, "{v}");
+}
+
+/// RB-1787 — Spec-matrix twin: env lookup, set-value angle (SYN-0164-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0010 (DERIVED-0006 hermetic env).
+/// `env.ACTIVE_RB1787_ENV ?: <default>` reads only the named var: absent
+/// yields the default, present yields the value — never ambient.
+/// Parallel-safe: uniquely-named var, priors restored.
+/// CONVERGENCE: identical verdict to SYN-0156-06/RB-1715.
+#[test]
+fn rb_1787_syn164_env_lookup_explicit() {
+    let prior = std::env::var("ACTIVE_RB1787_ENV").ok();
+    std::env::remove_var("ACTIVE_RB1787_ENV");
+    let v = eval_json("case_0164_06 = 1\nprobe_3164 = env.ACTIVE_RB1787_ENV ?: 10\n");
+    assert_eq!(v["case_0164_06"], 1, "{v}");
+    assert_eq!(v["probe_3164"], 10, "{v}");
+    std::env::set_var("ACTIVE_RB1787_ENV", "up");
+    let v = eval_json("probe_3164 = env.ACTIVE_RB1787_ENV ?: 10\n");
+    assert_eq!(v["probe_3164"], "up", "{v}");
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_RB1787_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1787_ENV"),
+    }
+    // Positive control: empty-but-present wins over the default (RB-007).
+    let prior2 = std::env::var("ACTIVE_RB1787_ENV").ok();
+    std::env::set_var("ACTIVE_RB1787_ENV", "");
+    assert_eq!(
+        eval_json("probe_3164 = env.ACTIVE_RB1787_ENV ?: 10\n")["probe_3164"],
+        ""
+    );
+    match prior2 {
+        Some(val) => std::env::set_var("ACTIVE_RB1787_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1787_ENV"),
+    }
+}
+
+/// RB-1788 — Spec-matrix twin: secret taint, export-scan angle (SYN-0164-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0010 (NORTH STAR taint+redact).
+/// `probe_3164 = secret("RAW-1788-…")` evaluates beside plain scalar 1; the
+/// full pretty-JSON export carries only the redaction marker — scanning the
+/// whole export finds no raw marker bytes, and the evaluating diagnostics
+/// carry none either.
+/// CONVERGENCE: identical verdict to SYN-0156-07/RB-1716.
+#[test]
+fn rb_1788_syn164_secret_export_clean() {
+    let raw = "RAW-1788-k4m9-secret";
+    let src = format!("case_0164_07 = 1\nprobe_3164 = secret(\"{raw}\")\n");
+    let module = parse(&src, "research").expect("parses");
+    let (value, diags) = Engine::new().evaluate(&module).expect("evaluates");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&active_core::convert::value_to_pretty_json(
+            &value
+        ))
+        .expect("json")["case_0164_07"],
+        1
+    );
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains(raw), "leak in JSON export: {json}");
+    assert!(json.contains("***SECRET***"), "redaction missing: {json}");
+    let diag_text = format!("{diags:?}");
+    assert!(!diag_text.contains(raw), "leak in diagnostics: {diag_text}");
+    // Positive control: the plain scalar beside the secret is untouched.
+    assert_eq!(eval_json("case_0164_07 = 1\n")["case_0164_07"], 1);
+}

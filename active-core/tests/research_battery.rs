@@ -42051,3 +42051,225 @@ fn rb_1878_syn174_selection_keeps_taint() {
     let v = eval_json("case_0174_07 = 1\nprofile \"prod\" { token = secret(\"x\") }\n");
     assert!(v.get("token").is_none(), "{v}");
 }
+
+/// RB-1879 — Profile twin: unit merge effective (SYN-0174-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0020 (unit-aware profiles).
+/// The naive `@profile` transliteration is rejected — E014 Error at (2:2)
+/// — while the REAL `profile "prod" { memory = 512MiB }` merges memory as
+/// exactly 536870912 bytes: unit-aware constraints see the EFFECTIVE
+/// post-merge configuration, canonical integers, zero diagnostics.
+/// CONVERGENCE: merge-then-validate verdict (spec/grammar.md:310-315).
+#[test]
+fn rb_1879_syn174_unit_merge_effective() {
+    let src = "case_0174_08 = 1\n@profile \"prod\" { memory = 512MiB }\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e = diags.iter().find(|d| d.code == "E014").expect("E014");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E014 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E014 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the real merge resolves the canonical integer.
+    let src2 =
+        "case_0174_08 = 1\nprofile \"prod\" { memory = 512MiB }\nactive_profile = \"prod\"\n";
+    let v = eval_json(src2);
+    assert_eq!(v["memory"], 512 * 1024 * 1024, "{v}");
+    assert_eq!(v["active_profile"], "prod", "{v}");
+    assert!(codes_of(src2).is_empty());
+}
+
+/// RB-1880 — Profile twin: comment cannot move ownership (SYN-0174-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0020 (comment ownership).
+/// The naive form is rejected — E014 at (2:2) — while the real
+/// `profile "prod" { retries = 3 } # comment` merges retries=3 with the
+/// trailing comment inert: comments never alter block ownership, selection,
+/// or values — same resolved profile as the comment-free form.
+/// CONVERGENCE: comment-inert verdict, ownership angle.
+#[test]
+fn rb_1880_syn174_comment_not_owner() {
+    let src = "case_0174_09 = 1\n@profile \"prod\" { retries = 3 } # comment\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e = diags.iter().find(|d| d.code == "E014").expect("E014");
+    let span = e.span.clone().expect("E014 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the real merge resolves through the comment.
+    let src2 =
+        "case_0174_09 = 1\nprofile \"prod\" { retries = 3 } # comment\nactive_profile = \"prod\"\n";
+    let v = eval_json(src2);
+    assert_eq!(v["retries"], 3, "{v}");
+    assert!(codes_of(src2).is_empty());
+    // Positive control: comment-free resolves identically.
+    assert_eq!(
+        eval_json("profile \"prod\" { retries = 3 }\nactive_profile = \"prod\"\n")["retries"],
+        3
+    );
+}
+
+/// RB-1881 — Profile twin: merge deterministic double-run (SYN-0175-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0021 (profile precedence).
+/// Selected profile merges root retries=5 while base.retries stays 2 —
+/// identically on repeated runs, with no profile block exported:
+/// precedence without mutation, deterministically.
+/// CONVERGENCE: twin verdict to SYN-0174-01/RB-1872.
+#[test]
+fn rb_1881_syn175_profile_merges_base_kept() {
+    let src = "case_0175_01 = 1\nbase = { retries = 2 }\nprofile \"prod\" { retries = 5 }\nactive_profile = \"prod\"\n";
+    let first = eval_json(src);
+    assert_eq!(first["retries"], 5, "{first}");
+    assert_eq!(first["base"]["retries"], 2, "{first}");
+    assert_eq!(first, eval_json(src));
+    assert!(first.get("profile").is_none(), "{first}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a sibling profile selects independently.
+    let v = eval_json(
+        "base = { retries = 2 }\nprofile \"x\" { retries = 9 }\nactive_profile = \"x\"\n",
+    );
+    assert_eq!(v["retries"], 9, "{v}");
+    assert_eq!(v["base"]["retries"], 2, "{v}");
+}
+
+/// RB-1882 — Profile twin: zero int-typed (SYN-0175-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0021 (falsy handling).
+/// Selected `{ retries = 0 }` resolves int 0 — explicit zero, never base 2
+/// by truthiness — with the base untouched and the announcement silent.
+/// CONVERGENCE: twin verdict to SYN-0174-02/RB-1873.
+#[test]
+fn rb_1882_syn175_zero_respected() {
+    let src = "case_0175_02 = 1\nbase = { retries = 2 }\nprofile \"test\" { retries = 0 }\nactive_profile = \"test\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["retries"], 0, "{v}");
+    assert!(v["retries"].is_i64());
+    assert_eq!(v["base"]["retries"], 2, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: unselected merges nothing — no retries key.
+    let v =
+        eval_json("case_0175_02 = 1\nbase = { retries = 2 }\nprofile \"test\" { retries = 0 }\n");
+    assert!(v.get("retries").is_none(), "{v}");
+}
+
+/// RB-1883 — Profile twin: duplicate Error-severe (SYN-0175-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0021 (duplicate profiles).
+/// Two `profile "prod"` blocks fail E018 Error at (2:9): one name, one
+/// block, or an error — the deterministic semantics.
+/// CONVERGENCE: twin verdict to SYN-0174-03/RB-1874.
+#[test]
+fn rb_1883_syn175_dup_name_rejects() {
+    let src = "profile \"prod\" { timeout = 5s }\nprofile \"prod\" { timeout = 8s }\n";
+    let diags = parse(src, "research").expect_err("must fail E018");
+    let e = diags.iter().find(|d| d.code == "E018").expect("E018");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E018 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E018 carries a span");
+    assert_eq!((span.line, span.column), (2, 9), "{span:?}");
+    // Positive control: distinctly-named profiles coexist silently.
+    let src2 = "profile \"c\" { x = 1 }\nprofile \"d\" { x = 2 }\n";
+    assert!(codes_of(src2).is_empty());
+}
+
+/// RB-1884 — Profile twin: split carries companion (SYN-0175-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0021 (composition order).
+/// REFUSAL (spec-gated, spec/grammar.md:303): same-named split blocks fail
+/// E018 at (2:9) with an E002 companion — composition is not specified, so
+/// there is no order to stabilize.
+/// CONVERGENCE: twin verdict to SYN-0174-04/RB-1875.
+#[test]
+fn rb_1884_syn175_split_name_rejects() {
+    let src = "profile \"prod\" { a = 1 }\nprofile \"prod\" { b = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E018");
+    let e = diags.iter().find(|d| d.code == "E018").expect("E018");
+    let span = e.span.clone().expect("E018 carries a span");
+    assert_eq!((span.line, span.column), (2, 9), "{span:?}");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 companion expected, got {diags:?}"
+    );
+    // Positive control: one block with both keys merges silently.
+    let v = eval_json("profile \"prod\" { a = 1 }\nactive_profile = \"prod\"\n");
+    assert_eq!(v["a"], 1, "{v}");
+}
+
+/// RB-1885 — Profile twin: parent string-typed (SYN-0175-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0021 (unknown references).
+/// REFUSAL (spec-gated, DERIVED-0011/RB-065): `parent = "missing"` merges
+/// as a STRING — no reference, no unknown-profile error, silent.
+/// CONVERGENCE: twin verdict to SYN-0174-05/RB-1876.
+#[test]
+fn rb_1885_syn175_parent_is_data() {
+    let src =
+        "case_0175_05 = 1\nprofile \"prod\" { parent = \"missing\" }\nactive_profile = \"prod\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["parent"], "missing", "{v}");
+    assert!(v["parent"].is_string());
+    assert!(codes_of(src).is_empty());
+    // Positive control: unselected merges nothing — no parent key.
+    let v = eval_json("case_0175_05 = 1\nprofile \"prod\" { parent = \"missing\" }\n");
+    assert!(v.get("parent").is_none(), "{v}");
+}
+
+/// RB-1886 — Profile twin: cycle silent empty (SYN-0175-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0021 (profile cycles).
+/// REFUSAL (spec-gated, DERIVED-0011/RB-065): mutual `parent` strings
+/// evaluate to {} silently — strings, not edges; nothing to cycle.
+/// CONVERGENCE: twin verdict to SYN-0174-06/RB-1877.
+#[test]
+fn rb_1886_syn175_parent_cycle_is_data() {
+    let src = "profile \"a\" { parent = \"b\" }\nprofile \"b\" { parent = \"a\" }\n";
+    let v = eval_json(src);
+    assert_eq!(v.as_object().map(|o| o.len()), Some(0));
+    assert!(codes_of(src).is_empty());
+    // Positive control: selecting one merges its data parent silently.
+    let src2 = "profile \"b\" { parent = \"a\" }\nactive_profile = \"b\"\n";
+    let v = eval_json(src2);
+    assert_eq!(v["parent"], "a", "{v}");
+    assert!(codes_of(src2).is_empty());
+}
+
+/// RB-1887 — Profile twin: taint string-marker (SYN-0175-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0021 (taint through profiles).
+/// Selected secret merges as the STRING `***SECRET***` — redaction is a
+/// string downstream code can compare — with the raw marker nowhere and
+/// zero diagnostics.
+/// CONVERGENCE: twin verdict to SYN-0174-07/RB-1878.
+#[test]
+fn rb_1887_syn175_selection_keeps_taint() {
+    let raw = "RAW-1887-twin-marker";
+    let src = format!(
+        "case_0175_07 = 1\nprofile \"prod\" {{ token = secret(\"{raw}\") }}\nactive_profile = \"prod\"\n"
+    );
+    let module = parse(&src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    assert!(diags.is_empty(), "{diags:?}");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains(raw), "leak in JSON export: {json}");
+    let v: serde_json::Value = serde_json::from_str(&json).expect("json");
+    assert_eq!(v["token"], "***SECRET***", "{v}");
+    assert!(v["token"].is_string());
+    // Positive control: unselected keeps no token key at all.
+    let v = eval_json("case_0175_07 = 1\nprofile \"prod\" { token = secret(\"x\") }\n");
+    assert!(v.get("token").is_none(), "{v}");
+}
+
+/// RB-1888 — Profile twin: unit arithmetic-oracle (SYN-0175-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0021 (unit-aware profiles).
+/// Selected `memory = 512MiB` merges as 512×1024×1024 (computed here) —
+/// and unselected merges nothing: effective configuration, canonical
+/// integers, ownership explicit.
+/// CONVERGENCE: twin verdict to SYN-0174-08/RB-1879.
+#[test]
+fn rb_1888_syn175_unit_merge_effective() {
+    let src = "case_0175_08 = 1\nprofile \"prod\" { memory = 512MiB }\nactive_profile = \"prod\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["memory"], 512 * 1024 * 1024, "{v}");
+    assert_eq!(v["active_profile"], "prod", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: unselected merges nothing — no memory key.
+    let v = eval_json("case_0175_08 = 1\nprofile \"prod\" { memory = 512MiB }\n");
+    assert!(v.get("memory").is_none(), "{v}");
+}

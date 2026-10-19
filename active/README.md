@@ -1,6 +1,6 @@
 # Active
 
-**A modern configuration and data language — safer than YAML, more expressive than TOML, more human-friendly than JSON, and built for both humans and AI agents.**
+**A modern configuration and data language: safer than YAML, more expressive than TOML, more human-friendly than JSON, and built for both humans and AI agents.**
 
 Active is a configuration and data language with first-class units, string
 interpolation, lexical bindings, redacted secrets, a dependency graph and

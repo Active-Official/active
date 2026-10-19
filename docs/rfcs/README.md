@@ -1,7 +1,7 @@
 # RFC process (C-064)
 
 Post-1.0 language changes go through Request For Comments. No RFC,
-no language change — the process is the ratchet that keeps 1.0
+no language change: the process is the ratchet that keeps 1.0
 stable while letting the language grow.
 
 ## When an RFC is required
@@ -14,16 +14,16 @@ docs, tests, tooling internals.
 
 ## Lifecycle
 
-1. **Draft** — copy `docs/rfcs/0000-template.md` to
+1. **Draft**: copy `docs/rfcs/0000-template.md` to
    `docs/rfcs/<nnnn>-<slug>.md` and open a pull request marked
    `rfc-draft`. Any community member may draft.
-2. **Discussion** — at least 14 days of public review on the PR.
+2. **Discussion**: at least 14 days of public review on the PR.
    Maintainers summarize objections; the draft evolves in place.
    **Fast-track lane:** small, compatible, or urgent fixes (typo-grade
    spec corrections, crash fixes with no surface change, security
    patches) may proceed on 72-hour lazy consensus with a single
    maintainer approval, documented in the PR.
-3. **Decision** — the repository owner (see `.github/CODEOWNERS`)
+3. **Decision**: the repository owner (see `.github/CODEOWNERS`)
    accepts, rejects, or requests changes, with written rationale
    addressing every raised objection.
    Accepted RFCs get a number, a target release, and checklist

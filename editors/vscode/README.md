@@ -14,7 +14,7 @@ inlay hints, code actions) over stdio.
   (`cursor --install-extension …` / VSCodium equivalent).
 - **From source**: `cargo install active-lsp`, then in `editors/vscode`
   run `npm install && npx vsce package`, and install the vsix above.
-- **Marketplace**: `vsce publish` (maintainer step — needs a
+- **Marketplace**: `vsce publish` (maintainer step, needs a
   marketplace token; see spec/packaging.md §5).
 
 ## Settings
@@ -26,5 +26,5 @@ inlay hints, code actions) over stdio.
 
 ## Requirements
 
-`active-lsp` on PATH (or configured above). No Bundled server: the
-extension never downloads binaries — supply-chain stays auditable.
+`active-lsp` on PATH (or configured above). No bundled server: the
+extension never downloads binaries, so the supply chain stays auditable.

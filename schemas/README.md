@@ -6,7 +6,7 @@ with a descriptive comment on every field, closed tables, and
 defaults where a universal value exists.
 
 Consume by vendoring this directory next to your documents and
-including downward — no flags, no escapes:
+including downward (no flags, no escapes):
 
 ```active
 include "schemas/http-server.active"

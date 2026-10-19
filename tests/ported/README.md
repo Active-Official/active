@@ -3,12 +3,12 @@
 External TOML / YAML / JSON test suites, adapted for Active. Every case
 drives the SHIPPED importer (`toml_text_to_active`, `json_text_to_active`,
 `yaml_text_to_active`) plus the real parser and evaluator through
-`active-core/tests/ported.rs` — no re-implemented logic. Each case has one
+`active-core/tests/ported.rs`: no re-implemented logic. Each case has one
 expectation sidecar: `<stem>.expected.json` (Active canonical value tree)
 or `<stem>.expected-diag.txt` (the exact pipeline stage that rejects it:
 `IMPORT_HARD_ERROR`, `PARSE_ERROR`, `EVAL_ERROR`). Cases whose documented
 behavior includes eval warnings carry `<stem>.expected-warnings.json`
-(the exact eval-diag code multiset; absent means clean — e.g. W011 on
+(the exact eval-diag code multiset; absent means clean, e.g. W011 on
 sanitization collisions).
 
 ## Suites
@@ -30,26 +30,26 @@ origin headers.
 - `exact` (175 TOML, 93 JSON): Active agrees with the external oracle
   byte-for-byte after canonicalization.
 - `adapted` / `adapted-active-semantics` (79 TOML, 2 JSON): Active semantics
-  differ by design — W007 key sanitization (`-` → `_`, leading digits gain
+  differ by design: W007 key sanitization (`-` → `_`, leading digits gain
   `_`, empty keys become `key`), W008 datetime stringification, W010
   non-finite→null. The committed `.expected.json` is the shipped pipeline's
   output, reviewed against the external oracle during porting.
 - `active-import-semantics-pinned` (227 YAML): YAML document bodies with
   committed Active outputs (anchors/aliases resolve, timestamps stringify).
 - `impl-defined-behavior-pinned` / `impl-defined-rejection-pinned` (5 + 17
-  JSON `i_*`): JSONTestSuite's implementation-defined cases — Active's
+  JSON `i_*`): JSONTestSuite's implementation-defined cases. Active's
   deterministic choice, pinned (huge exponents reject, underflows become
   `0.0`, lone surrogates hard-error, 500-deep nesting hits the recursion
   limit, BOM-prefixed docs reject).
 - `reject-invalid-json-hard-error` (176 JSON `n_*`): malformed JSON the
   importer must refuse.
 - `rejected-with-diagnostic` (12 TOML, 179 YAML): valid-in-source documents
-  Active rejects with a recorded stage — TOML 1.1 features the vendored
+  Active rejects with a recorded stage. TOML 1.1 features the vendored
   parser lacks (inline-table newlines), over-long integers (`E023`), YAML
   tags/directives serde_yaml refuses. Each names its stage.
 - `skip-non-utf8-bytes-unrepresentable-as-str` (25 JSON): files that are not
   valid UTF-8. Rust `&str` is UTF-8 by construction, so these bytes cannot
-  reach the converter through any public API — a principled skip, not a gap.
+  reach the converter through any public API. A principled skip, not a gap.
 
 ## Findings the ports already paid for
 

@@ -6,32 +6,32 @@ constraints, and prefer patches over whole-file rewrites.
 
 ## Contents
 
-- `VERSION` — pack version (`1.0.0`); every prompt file carries
+- `VERSION`: pack version (`1.0.0`); every prompt file carries
   the same version in its header comment.
-- `v1/system-generator.md` — write new ACTIVE from requirements.
-- `v1/system-editor.md` — edit documents (minimal diffs, patch
+- `v1/system-generator.md`: write new ACTIVE from requirements.
+- `v1/system-editor.md`: edit documents (minimal diffs, patch
   answers, immutable refusal).
-- `v1/system-explainer.md` — answer language questions with exact
+- `v1/system-explainer.md`: answer language questions with exact
   diagnostic codes.
-- `tasks/` — the fixed validation suite (`t1`–`t8`, TOML:
+- `tasks/`: the fixed validation suite (`t1`–`t8`, TOML:
   system, user, optional document, machine-readable checks).
-- `runner/validate.py` — first-attempt harness (no retries):
+- `runner/validate.py`: first-attempt harness (no retries):
   sends each task to each backend, extracts the fenced document,
   checks it with the real `ACTIVE` binary, writes
   `results/round-<stamp>.json`.
-- `results/` — measured runs (committed evidence).
+- `results/`: measured runs (committed evidence).
 
 ## Validation bar (C-054)
 
 ≥80% first-attempt success on each of two backends:
 
-- `copilot` — GitHub Copilot CLI (agentic framework) via BYOK.
-- `direct` — raw OpenAI-compatible chat API (embedded-agent
+- `copilot`: GitHub Copilot CLI (agentic framework) via BYOK.
+- `direct`: raw OpenAI-compatible chat API (embedded-agent
   integration shape).
 
 Backends used here are local and free; the model is disclosed in
 each results file. A third-party hosted framework needs API keys
-absent from this machine — that limitation is recorded, not
+absent from this machine. That limitation is recorded, not
 hidden. Re-run with `python3 prompts/runner/validate.py`.
 
 ## Evidence policy
@@ -39,10 +39,10 @@ hidden. Re-run with `python3 prompts/runner/validate.py`.
 Results JSON commits model responses verbatim for audit. Tasks
 use fake credentials only (vault paths like `prod/db/password`,
 never real secrets), so committed outputs carry no live secrets
-by construction — keep it that way when adding tasks.
+by construction. Keep it that way when adding tasks.
 
 ## Use
 
 Paste a system file plus your request into any agent, or point an
 agent framework at it. Demand the ```active fence contract in your
-own wrapper prompts — every check in `tasks/` assumes it.
+own wrapper prompts. Every check in `tasks/` assumes it.

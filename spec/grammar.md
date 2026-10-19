@@ -164,6 +164,7 @@ and `%` (percent is the only symbolic suffix; case-SENSITIVE always):
 | `J kWh` | energy (joules canonical) | | `N` | force (newtons canonical) |
 | `deg rad` | angle (radians canonical) | | `rpm` | rotation rate (retained) |
 | `meter km` | length (meters canonical, long-form only) | | `kg g` | mass (kilograms canonical) |
+| `PiB EiB` | binary bytes (saturating u64) | | | |
 
 Any other suffix rolls the lexer back (the characters are re-lexed as
 separate tokens). **[impl note]** The lexer's rollback means `5x` lexes as

@@ -289,6 +289,7 @@ evaluation:
 |---|---|---|
 | Time | `DurationMs(u64)` milliseconds | `5s` → `5000ms`, `15m` → `900000ms` |
 | Bytes | `Int(i64)` bytes | `512MiB` → `536870912`, `100MB` → `100000000` |
+| Large bytes | `Int(i64)` bytes, saturating | `1PiB` → `1125899906842624`, `1EiB` → `1152921504606846976` |
 | Rates / custom | `Quantity(f64, Unit)` — original unit retained | `100/req/s` → `Quantity(100.0, RequestsPerSecond)` |
 | Percent | `Quantity(f64, Percent)` — canonical dimensionless ratio, 100% = 1.0 | `25%` → `Quantity(0.25, Percent)` |
 | Frequency | `Quantity(f64, Hertz)` — canonical hertz, f64 (fractional Hz are real) | `1kHz` → `Quantity(1000.0, Hertz)` |
@@ -312,9 +313,11 @@ are long aliases for `s`/`m` (canonical respell stays `s`/`m`). All results
 clamp at zero and round to the nearest integer. Plural spellings
 (`weeks`, `secs`, `mins`) are NOT admitted — no unit in the language has a
 plural, and guessing them would be silent coercion (E002).
-Byte normalizations: KiB=2¹⁰, MiB=2²⁰, GiB=2³⁰, TiB=2⁴⁰;
+Byte normalizations: KiB=2¹⁰, MiB=2²⁰, GiB=2³⁰, TiB=2⁴⁰, PiB=2⁵⁰, EiB=2⁶⁰;
 KB/MB/GB/TB are decimal (10³ … 10¹²). All results clamp at zero and round to
-the nearest integer.
+the nearest integer. Past i64::MAX the value saturates (never wraps):
+`16EiB` evaluates to `9223372036854775807` with zero diagnostics — the same
+saturation the audit proved for `20000000TiB`.
 
 Rates are **not** cross-normalized: `50/m` stays `50 per minute`. Rate units
 are dimension-bearing values, not scalars.

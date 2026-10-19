@@ -1,4 +1,5 @@
-# Research Test Index — YAML/TOML/JSON failure research → Active test backlog
+#| Batch 152 | RB-1509…RB-1518 (SYN-0133-05…09, SYN-0134-01…05) | done: all 10 green first-try, no code changes; 133 continued (brace-dup W011 2:29; TAB E006 2:1; LF escape; mismatch E001 2:24; comment inert); 134 opened as 131 twins |
+ Research Test Index — YAML/TOML/JSON failure research → Active test backlog
 
 Source corpus: `C:\Users\Usuario\Downloads\Solid Tests Research Work` (read-only).
 Status legend: `pending` → `created` → `passing` / `fixed` (code changed to pass).

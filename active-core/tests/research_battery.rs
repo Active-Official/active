@@ -33430,3 +33430,194 @@ fn rb_1508_syn133_nested_indent_refused() {
     assert_eq!(brace, indent, "{brace} vs {indent}");
     assert!(codes_of("root:\n  child:\n    grandchild = 1\n").is_empty());
 }
+
+/// RB-1509 — Dual-syntax variant: duplicate handling identical across surfaces (SYN-0133-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0004 (colon question).
+/// REFUSAL (spec-gated, P1-TI-012 §C): `root = { child = 1, child = 2 }`
+/// warns W011 Warning at (2:29) and keeps last-wins — brace and block
+/// surfaces share one duplicate policy: announce, never silence, never reject.
+#[test]
+fn rb_1509_syn133_brace_dup_warns() {
+    let src = "case_0133_05 = 1\nroot = { child = 1, child = 2 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["root"]["child"], 2, "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (2, 29), "{span:?}");
+    // Positive control: the block-form twin warns identically (same policy).
+    let codes = codes_of("[root]\nchild = 1\nchild = 2\n");
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}
+
+/// RB-1510 — Dual-syntax variant: TAB indent refused even with equals header (SYN-0133-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0004 (colon question).
+/// `root =\n\tchild = 1` fails E006 Error at (2:1) — structural TABs
+/// reject first, before the bodiless-`=` E002 and E010 even matter.
+/// Converges with RB-1401 (TAB-indent E006).
+#[test]
+fn rb_1510_syn133_tab_indent_refused() {
+    let src = "root =\n\tchild = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E006");
+    let e = diags.iter().find(|d| d.code == "E006").expect("E006");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E006 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E006 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: TAB inside string content decodes (RB-1405).
+    let v = eval_json("root = \"a\\tb\"\n");
+    assert_eq!(v["root"], "a\tb", "{v}");
+    // Positive control: space indentation under a colon header evaluates.
+    assert_eq!(eval_json("root:\n  child = 1\n")["root"]["child"], 1);
+}
+
+/// RB-1511 — Dual-syntax variant: quoted escapes span lines (SYN-0133-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0004 (colon question).
+/// `text = "line one\nline two"` evaluates silently to the two-line value —
+/// quoted escapes are the syntax-defined alternative to YAML block scalars.
+/// Converges with RB-1355.
+#[test]
+fn rb_1511_syn133_escaped_newline_decodes() {
+    let src = "case_0133_07 = 1\ntext = \"line one\\nline two\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["text"], "line one\nline two", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the sibling specified escape `\t` decodes to TAB.
+    let v = eval_json("text = \"a\\tb\"\n");
+    assert_eq!(v["text"], "a\tb", "{v}");
+}
+
+/// RB-1512 — Dual-syntax variant: mismatched delimiter is stable (SYN-0133-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0004 (colon question).
+/// `root = { child = [1, 2 }` fails E001 Error at (2:24): one stable,
+/// spanned diagnostic, never a hang or a guess.
+#[test]
+fn rb_1512_syn133_mismatched_delimiter_rejects() {
+    let src = "case_0133_08 = 1\nroot = { child = [1, 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (2, 24), "{span:?}");
+    // Positive control: the matched delimiters evaluate silently.
+    let v = eval_json("root = { child = [1, 2] }\n");
+    assert_eq!(v["root"]["child"], serde_json::json!([1, 2]), "{v}");
+    assert!(codes_of("root = { child = [1, 2] }\n").is_empty());
+}
+
+/// RB-1513 — Dual-syntax variant: comment never changes string tokenization (SYN-0133-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0004 (colon question).
+/// `root = { child = 1 } # trailing comment` evaluates silently — a `#`
+/// outside strings is inert, while `#` inside quotes is content.
+#[test]
+fn rb_1513_syn133_comment_outside_string_inert() {
+    let src = "case_0133_09 = 1\nroot = { child = 1 } # trailing comment\n";
+    let v = eval_json(src);
+    assert_eq!(v["root"]["child"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: `#` inside a string is kept content, silently.
+    let v = eval_json("root = \"a#b\"\n");
+    assert_eq!(v["root"], "a#b", "{v}");
+    assert!(codes_of("root = \"a#b\"\n").is_empty());
+}
+
+/// RB-1514 — Merge-key variant: baseline scalar parses (SYN-0134-01 §H, MEDIUM).
+/// Origin: synthetic variation of the "Add test for merge key" report
+/// (same shape as SYN-0131-01).
+/// Two plain assignments evaluate silently — the baseline the merge-key
+/// family measures against. (Active has no `<<` merge operator: hostile
+/// merge shapes reject per HIST-YAML-008/RB-041; ordinary scalars evaluate.)
+#[test]
+fn rb_1514_syn134_baseline_scalars_accept() {
+    let src = "case_0134_01 = 1\nprobe_3134 = 1\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0134_01"], 1, "{v}");
+    assert_eq!(v["probe_3134"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a second pair coexists silently.
+    let v = eval_json("case_0134_01 = 1\nprobe_3134 = 1\nextra = 2\n");
+    assert_eq!(v["extra"], 2, "{v}");
+}
+
+/// RB-1515 — Merge-key variant: nested values keep independent scopes (SYN-0134-02 §H, MEDIUM).
+/// Origin: synthetic variation of the "Add test for merge key" report
+/// (same shape as SYN-0131-02).
+/// Converges with RB-1488: the nested table evaluates silently.
+#[test]
+fn rb_1515_syn134_nested_scopes_accept() {
+    let src = "case_0134_02 = 1\nprobe_3134 = { nested = 1 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0134_02"], 1, "{v}");
+    assert_eq!(v["probe_3134"]["nested"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the flat twin agrees at depth 1.
+    let v = eval_json("case_0134_02 = 1\nprobe_3134 = 1\n");
+    assert_eq!(v["probe_3134"], 1, "{v}");
+}
+
+/// RB-1516 — Merge-key variant: array commas unambiguous (SYN-0134-03 §H, MEDIUM).
+/// Origin: synthetic variation of the "Add test for merge key" report
+/// (same shape as SYN-0131-03).
+/// Converges with RB-1489: the exact two-element array, silently.
+#[test]
+fn rb_1516_syn134_array_commas_exact() {
+    let src = "case_0134_03 = 1\nprobe_3134 = [1, 2]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0134_03"], 1, "{v}");
+    assert_eq!(v["probe_3134"], serde_json::json!([1, 2]), "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the single-element twin agrees at index 0.
+    assert_eq!(
+        eval_json("probe_3134 = [1]\n")["probe_3134"],
+        serde_json::json!([1])
+    );
+}
+
+/// RB-1517 — Merge-key variant: quoted scalar never coerces (SYN-0134-04 §H, MEDIUM).
+/// Origin: synthetic variation of the "Add test for merge key" report
+/// (same shape as SYN-0131-04).
+/// Converges with RB-1490: `"1"` is the exact string, bare `1` the int.
+#[test]
+fn rb_1517_syn134_quoted_scalar_exact() {
+    let src = "case_0134_04 = 1\nprobe_3134 = \"1\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0134_04"], 1, "{v}");
+    assert_eq!(v["probe_3134"], "1", "{v}");
+    assert!(!v["probe_3134"].is_i64(), "must stay string, got {v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the bare twin stays int.
+    let v = eval_json("probe_3134 = 1\n");
+    assert_eq!(v["probe_3134"], 1, "{v}");
+    assert!(v["probe_3134"].is_i64(), "must stay int, got {v}");
+}
+
+/// RB-1518 — Merge-key variant: trailing comment never enters the value (SYN-0134-05 §H, MEDIUM).
+/// Origin: synthetic variation of the "Add test for merge key" report
+/// (same shape as SYN-0131-05).
+/// Converges with RB-1491: integer 1, comment inert, zero diagnostics.
+#[test]
+fn rb_1518_syn134_trailing_comment_inert() {
+    let src = "case_0134_05 = 1\nprobe_3134 = 1 # comment\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0134_05"], 1, "{v}");
+    assert_eq!(v["probe_3134"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the comment-free twin agrees.
+    assert_eq!(eval_json("probe_3134 = 1\n")["probe_3134"], 1);
+}

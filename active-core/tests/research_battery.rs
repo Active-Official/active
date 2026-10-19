@@ -38379,3 +38379,214 @@ fn rb_1738_syn159_trailing_dot_keeps_int() {
     assert_eq!(v["case_0159_02"], 1.5, "{v}");
     assert!(v["case_0159_02"].is_f64());
 }
+
+/// RB-1739 — Number twin: bare exponent marker rejects (SYN-0159-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0005 (TOML numeric grammar).
+/// `case_0159_03 = 1e` fails E002 Error at (1:17): Active has no exponents
+/// (batch 26), so the marker dangles with no grammar to complete it — the
+/// research demand "reject: invalid-number" converges on the shipped class.
+/// CONVERGENCE: same verdict family as SYN-0154-02/RB-1693 (giant exponent E002).
+#[test]
+fn rb_1739_syn159_bare_exponent_rejects() {
+    let src = "case_0159_03 = 1e\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the exponent-free integer evaluates silently.
+    let v = eval_json("case_0159_03 = 1\n");
+    assert_eq!(v["case_0159_03"], 1, "{v}");
+}
+
+/// RB-1740 — Number twin: signed exponent without digits rejects (SYN-0159-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0005 (signed exponent digits).
+/// `case_0159_04 = 1e+` fails E002 Error at (1:17): the sign saves nothing —
+/// with no exponent grammar, `e+` is two stray tokens, never a number.
+/// CONVERGENCE: twin of RB-1739, one controlled dimension apart.
+#[test]
+fn rb_1740_syn159_signed_exponent_rejects() {
+    let src = "case_0159_04 = 1e+\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: explicit signed arithmetic still computes.
+    assert_eq!(eval_json("case_0159_04 = 1 + 1\n")["case_0159_04"], 2);
+}
+
+/// RB-1741 — Number twin: base prefix is not borrowed (SYN-0159-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0005 (host-parser borrowing).
+/// `case_0159_05 = 0x10` fails E002 Error at (1:17): base prefixes are
+/// absent (batch 22) — Active never borrows a host integer grammar, so the
+/// `x10` tail is loud, never hex, never decimal-fallback.
+/// CONVERGENCE: same verdict family as SRC-TOML-0070/RB-219 lineage.
+#[test]
+fn rb_1741_syn159_base_prefix_absent() {
+    let src = "case_0159_05 = 0x10\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the plain decimal neighbour evaluates.
+    assert_eq!(eval_json("case_0159_05 = 16\n")["case_0159_05"], 16);
+}
+
+/// RB-1742 — Number twin: separator normalizes canonically (SYN-0159-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0005 (separator grammar).
+/// `case_0159_06 = 1_000` evaluates to exactly int 1000 with zero
+/// diagnostics: the declared separator grammar accepts and normalizes —
+/// the research "canonical value is 1000" converges exactly.
+/// CONVERGENCE: separator acceptance pinned at the value level.
+#[test]
+fn rb_1742_syn159_separator_canonical() {
+    let src = "case_0159_06 = 1_000\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0159_06"], 1000, "{v}");
+    assert!(v["case_0159_06"].is_i64());
+    assert!(codes_of(src).is_empty());
+    // Positive control: the separator-free neighbour agrees.
+    assert_eq!(eval_json("case_0159_06 = 1000\n")["case_0159_06"], 1000);
+}
+
+/// RB-1743 — Number twin: overflow exponent never goes infinite (SYN-0159-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0005 (overflow bounds).
+/// `case_0159_07 = 1e1000000` fails E002 Error at (1:17): overflow cannot
+/// become silent infinity because the exponent never lexes at all —
+/// bounded at the lexer, seven orders past any float range.
+/// CONVERGENCE: same verdict as SYN-0154-02/RB-1693 (`1e100000` E002 1:17).
+#[test]
+fn rb_1743_syn159_overflow_exponent_rejects() {
+    let src = "case_0159_07 = 1e1000000\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: a big-but-plain integer evaluates exactly.
+    assert_eq!(
+        eval_json("case_0159_07 = 1000000\n")["case_0159_07"],
+        1000000
+    );
+}
+
+/// RB-1744 — Number twin: quoted digits never coerce (SYN-0159-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0005 (quoting vs coercion).
+/// `case_0159_08 = "01"` is the string "01" — leading zero, both digits,
+/// exact: quotes are a type commitment (NORTH STAR), so digit-looking text
+/// never becomes a number.
+/// CONVERGENCE: same verdict family as SYN-0156-04/RB-1713 (quoted "1").
+#[test]
+fn rb_1744_syn159_quoted_digits_no_coerce() {
+    let src = "case_0159_08 = \"01\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0159_08"], "01", "{v}");
+    assert!(v["case_0159_08"].is_string());
+    assert!(codes_of(src).is_empty());
+    // Positive control: the bare twin computes as decimal 1 (RB-1737).
+    let v = eval_json("case_0159_08 = 01\n");
+    assert_eq!(v["case_0159_08"], 1, "{v}");
+    assert!(v["case_0159_08"].is_i64());
+}
+
+/// RB-1745 — Number twin: canonical zero is int (SYN-0159-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0005 (zero control case).
+/// `case_0159_09 = 0` evaluates to exactly int 0 with zero diagnostics —
+/// the anchor every number edge is measured against: zero is ordinary.
+/// CONVERGENCE: zero-case of the RB-104 decimal policy.
+#[test]
+fn rb_1745_syn159_zero_control_accepts() {
+    let src = "case_0159_09 = 0\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0159_09"], 0, "{v}");
+    assert!(v["case_0159_09"].is_i64());
+    assert!(codes_of(src).is_empty());
+    // Positive control: the doubled-zero neighbour agrees (RB-253).
+    let v = eval_json("case_0159_09 = 00\n");
+    assert_eq!(v["case_0159_09"], 0, "{v}");
+}
+
+/// RB-1746 — String twin: dangling backslash heals aloud (SYN-0160-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0006 (TOML string grammar).
+/// `case_0160_01 = "dangling\"` does not terminate the literal — `\"` is a
+/// specified escaped quote (RB-309) — so the resilient parser heals with
+/// H001 (C-016 three-phase healer; H001 heals, never fails per RB-049):
+/// announced, never silent, never a terminator.
+/// CONVERGENCE: healer intent, not a rejection grammar.
+#[test]
+fn rb_1746_syn160_dangling_backslash_heals() {
+    let src = "case_0160_01 = \"dangling\\\"\n";
+    let module = parse(src, "research").expect("healer parses");
+    let (value, diags) = Engine::new().evaluate(&module).expect("evaluates");
+    assert!(
+        diags.iter().any(|d| d.code == "H001"),
+        "H001 heal expected, got {diags:?}"
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(json["case_0160_01"], "dangling\"\n", "{json}");
+    // Positive control: a closed escaped-quote string needs no healing.
+    let src2 = "case_0160_01 = \"a\\\"b\"\n";
+    assert_eq!(eval_json(src2)["case_0160_01"], "a\"b");
+    assert!(codes_of(src2).is_empty());
+}
+
+/// RB-1747 — String twin: lone surrogate stays verbatim (SYN-0160-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0006 (lone-surrogate handling).
+/// REFUSAL (spec-gated, spec/grammar.md:62-66, RB-050): `"\uD800"` keeps
+/// its exact characters silently — no UTF-16 decoding exists, so no scalar
+/// check can or must run. Research demanding rejection contradicts the
+/// verbatim-unknown-escape alphabet.
+/// CONVERGENCE: identical verdict to SYN-0154-03/RB-1694.
+#[test]
+fn rb_1747_syn160_lone_surrogate_verbatim() {
+    let src = "case_0160_02 = \"\\uD800\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0160_02"], "\\uD800", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a plain ASCII string is exact and silent too.
+    let v = eval_json("case_0160_02 = \"plain\"\n");
+    assert_eq!(v["case_0160_02"], "plain", "{v}");
+}
+
+/// RB-1748 — String twin: scalar-looking escape stays verbatim (SYN-0160-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0006 (valid scalar decode).
+/// REFUSAL (spec-gated, escape alphabet RB-240/RB-309): `"\u0061"` keeps
+/// its exact characters — `\u` is not a specified escape, so even a
+/// well-formed scalar-looking sequence never decodes to "a". The alphabet
+/// is exactly the specified table: strict where specified, verbatim
+/// otherwise — no half-adopted UTF-16.
+/// CONVERGENCE: verbatim twin of RB-1747, one controlled dimension apart.
+#[test]
+fn rb_1748_syn160_scalar_escape_verbatim() {
+    let src = "case_0160_03 = \"\\u0061\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0160_03"], "\\u0061", "{v}");
+    assert!(v["case_0160_03"].is_string());
+    assert!(codes_of(src).is_empty());
+    // Positive control: a specified escape still decodes (RB-309).
+    let v = eval_json("case_0160_03 = \"a\\nb\"\n");
+    assert_eq!(v["case_0160_03"], "a\nb", "{v}");
+}

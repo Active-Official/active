@@ -119,6 +119,13 @@ replaces them, because continuing would defeat the protection.
 
 ## 6. What budgets do NOT do
 
+- They do not cap scalar or environment string length separately:
+  strings charge bytes against `max_value_size` / `max_total_value_size`
+  (§2b), so length is governed proportionally and linearly — a separate
+  length knob would duplicate that dimension. 200KB–1MB scalars and 100KB
+  environment values are ordinary within-budget inputs (decision memo
+  2026-10-19: no amplification mechanism exists for strings, and the
+  environment operator is a trusted actor per spec/threat-model.md §2).
 - They do not replace the parser caps (different half, different
   codes, recover-vs-abort semantics).
 - They do not make validation cheaper than linear (validation walks

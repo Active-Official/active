@@ -39516,3 +39516,264 @@ fn rb_1788_syn164_secret_export_clean() {
     // Positive control: the plain scalar beside the secret is untouched.
     assert_eq!(eval_json("case_0164_07 = 1\n")["case_0164_07"], 1);
 }
+
+/// RB-1789 — Spec-matrix twin: let-binding, export-count angle (SYN-0164-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0010 (dependency resolution).
+/// `let base = 1` then `probe_3164 = "${base}"` is the string "1" — and the
+/// export holds exactly two keys: lets never export (RB-030), so the
+/// binding resolves without appearing.
+/// CONVERGENCE: identical verdict to SYN-0156-08/RB-1717.
+#[test]
+fn rb_1789_syn164_let_binding_two_keys() {
+    let src = "case_0164_08 = 1\nlet base = 1\nprobe_3164 = \"${base}\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0164_08"], 1, "{v}");
+    assert_eq!(v["probe_3164"], "1", "{v}");
+    assert!(v["probe_3164"].is_string());
+    assert_eq!(v.as_object().map(|o| o.len()), Some(2));
+    assert!(codes_of(src).is_empty());
+    // Positive control: a second interpolation from the same base agrees.
+    let v = eval_json("let base = 1\nprobe_3164 = \"${base}${base}\"\n");
+    assert_eq!(v["probe_3164"], "11", "{v}");
+}
+
+/// RB-1790 — Spec-matrix twin: duration suffix, scale angle (SYN-0164-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0010 (unit recognition).
+/// CONVERGENCE (dimension registry, docs/units.md): `5s` is {"ms": 5000}
+/// and `10s` is {"ms": 10000} — the duration dimension scales linearly
+/// through the closed whitelist, ten seconds exactly twice five.
+/// CONVERGENCE: identical verdict to SYN-0156-09/RB-1718.
+#[test]
+fn rb_1790_syn164_duration_scales() {
+    let src = "case_0164_09 = 1\nprobe_3164 = 5s\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0164_09"], 1, "{v}");
+    assert_eq!(v["probe_3164"], serde_json::json!({"ms": 5000}), "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: ten seconds is exactly twice five.
+    assert_eq!(
+        eval_json("probe_3164 = 10s\n")["probe_3164"],
+        serde_json::json!({"ms": 10000})
+    );
+}
+
+/// RB-1791 — Dialect twin: indent block shares brace semantics (SYN-0165-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0011 (assignment separation).
+/// Surface adaptation (catalogue-sanctioned): the indent dialect attaches
+/// with the `value:` header — `value =` takes no blocks (E002 at 1:8).
+/// `value:\n  a = 1\n  b = "x"` evaluates IDENTICALLY to
+/// `value = { a = 1, b = "x" }`: both dialects, one AST semantics (RB-102).
+#[test]
+fn rb_1791_syn165_dialects_share_ast() {
+    let indent = "value:\n  a = 1\n  b = \"x\"\n";
+    let brace = "value = { a = 1, b = \"x\" }\n";
+    let vi = eval_json(indent);
+    let vb = eval_json(brace);
+    assert_eq!(vi, vb, "{vi} vs {vb}");
+    assert_eq!(vi["value"]["a"], 1, "{vi}");
+    assert_eq!(vi["value"]["b"], "x", "{vi}");
+    assert!(codes_of(indent).is_empty());
+    // The `=`-with-block spelling is rejected: dialects stay separate.
+    let diags = parse("value =\n  a = 1\n  b = \"x\"\n", "research").expect_err("E002");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 expected, got {diags:?}"
+    );
+}
+
+/// RB-1792 — Round-trip twin: brace table survives print (SYN-0165-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0011 (semantic round trip).
+/// `case_0165_01 = { a = 1, b = "x" }` formats (indent style), reparses,
+/// and evaluates to a structurally EQUAL value — and formatting the
+/// reparse is byte-stable: parse -> print -> parse is a fixed point.
+/// Structural assertions only (RB-148 rhythm); no shipped text is hardcoded.
+#[test]
+fn rb_1792_syn165_brace_round_trip_stable() {
+    use active_core::fmt::format;
+    use active_core::Style;
+    let src = "case_0165_01 = { a = 1, b = \"x\" }\n";
+    let module = parse(src, "research").expect("must parse");
+    let out = format(&module, Style::Indent);
+    let module2 =
+        parse(&out, "research").unwrap_or_else(|d| panic!("reparse failed: {d:?}\n{out}"));
+    let (first, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    let (second, _) = Engine::new().evaluate(&module2).expect("must evaluate");
+    assert_eq!(
+        active_core::convert::value_to_pretty_json(&first),
+        active_core::convert::value_to_pretty_json(&second)
+    );
+    assert_eq!(format(&module2, Style::Indent), out);
+    // Positive control: the indent spelling round-trips identically.
+    let module3 = parse("case_0165_01:\n  a = 1\n  b = \"x\"\n", "research").expect("parses");
+    let (third, _) = Engine::new().evaluate(&module3).expect("evaluates");
+    assert_eq!(
+        active_core::convert::value_to_pretty_json(&first),
+        active_core::convert::value_to_pretty_json(&third)
+    );
+}
+
+/// RB-1793 — Comment twin: hash in string stays data (SYN-0165-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0011 (quote-aware comments).
+/// `{ text = "# not comment", n = 1 }` keeps the hash text byte-exact: the
+/// comment recognizer is quote-aware — `#` opens a comment everywhere
+/// EXCEPT inside strings — with zero diagnostics.
+/// CONVERGENCE: quote-awareness, value level.
+#[test]
+fn rb_1793_syn165_hash_in_string_is_data() {
+    let src = "case_0165_03 = { text = \"# not comment\", n = 1 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0165_03"]["text"], "# not comment", "{v}");
+    assert_eq!(v["case_0165_03"]["n"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a real trailing comment still stays out (RB-1714).
+    assert_eq!(eval_json("case_0165_03 = 1 # c\n")["case_0165_03"], 1);
+}
+
+/// RB-1794 — Comment twin: slashes in string stay data (SYN-0165-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0011 (comment corruption).
+/// `{ text = "// not comment", n = 1 }` keeps the slashes byte-exact:
+/// Active has no `//` comment form to confuse, and strings are opaque to
+/// every comment rule — syntax cannot corrupt strings it cannot see into.
+#[test]
+fn rb_1794_syn165_slashes_in_string_are_data() {
+    let src = "case_0165_04 = { text = \"// not comment\", n = 1 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0165_04"]["text"], "// not comment", "{v}");
+    assert_eq!(v["case_0165_04"]["n"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a second slash-pair string is equally exact.
+    let v = eval_json("case_0165_04 = \"a//b\"\n");
+    assert_eq!(v["case_0165_04"], "a//b", "{v}");
+}
+
+/// RB-1795 — Round-trip twin: trailing comment drops, value holds (SYN-0165-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0011 (comment round-trip policy).
+/// `case_0165_05 = { a = 1 } # trailing comment` round-trips to an equal
+/// semantic value with a byte-stable format: comments are trivia the
+/// printer may relocate, but the VALUE is invariant — the policy is
+/// explicit: trivia moves, semantics never do.
+/// Structural assertions only; no shipped text hardcoded.
+#[test]
+fn rb_1795_syn165_comment_round_trip_value_equal() {
+    use active_core::fmt::format;
+    use active_core::Style;
+    let src = "case_0165_05 = { a = 1 } # trailing comment\n";
+    assert_eq!(eval_json(src)["case_0165_05"]["a"], 1);
+    let module = parse(src, "research").expect("must parse");
+    let out = format(&module, Style::Indent);
+    let module2 =
+        parse(&out, "research").unwrap_or_else(|d| panic!("reparse failed: {d:?}\n{out}"));
+    let (first, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    let (second, _) = Engine::new().evaluate(&module2).expect("must evaluate");
+    assert_eq!(
+        active_core::convert::value_to_pretty_json(&first),
+        active_core::convert::value_to_pretty_json(&second)
+    );
+    assert_eq!(format(&module2, Style::Indent), out);
+    // Positive control: the comment-free twin formats identically in value.
+    assert_eq!(
+        eval_json("case_0165_05 = { a = 1 }\n")["case_0165_05"]["a"],
+        1
+    );
+}
+
+/// RB-1796 — Round-trip twin: key order prints deterministically (SYN-0165-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0011 (iteration-order policy).
+/// `{ z = 1, a = 2 }` formats byte-identically on every pass and reparses
+/// to an equal value: canonical printing never depends on hash-map
+/// iteration order — determinism is structural (P0-019 family), and source
+/// order is preserved through the round trip.
+/// Structural assertions only; no shipped text hardcoded.
+#[test]
+fn rb_1796_syn165_key_order_deterministic() {
+    use active_core::fmt::format;
+    use active_core::Style;
+    let src = "case_0165_06 = { z = 1, a = 2 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0165_06"]["z"], 1, "{v}");
+    assert_eq!(v["case_0165_06"]["a"], 2, "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let out = format(&module, Style::Indent);
+    let module2 =
+        parse(&out, "research").unwrap_or_else(|d| panic!("reparse failed: {d:?}\n{out}"));
+    assert_eq!(format(&module2, Style::Indent), out);
+    let (first, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    let (second, _) = Engine::new().evaluate(&module2).expect("must evaluate");
+    assert_eq!(
+        active_core::convert::value_to_pretty_json(&first),
+        active_core::convert::value_to_pretty_json(&second)
+    );
+    // Positive control: a second ordering round-trips just as stably.
+    let src2 = "case_0165_06 = { m = 1, b = 2 }\n";
+    let m = parse(src2, "research").expect("parses");
+    let o = format(&m, Style::Indent);
+    let m2 = parse(&o, "research").expect("reparses");
+    assert_eq!(format(&m2, Style::Indent), o);
+}
+
+/// RB-1797 — Round-trip twin: escape survives print exactly (SYN-0165-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0011 (escape round trip).
+/// `"line1\nline2"` evaluates to the one-LF string AND round-trips through
+/// print/reparse to the identical code point — the newline is a string
+/// datum, never line structure, on every pass.
+/// Structural round-trip plus the specified-decode value (RB-309).
+#[test]
+fn rb_1797_syn165_escape_round_trip_exact() {
+    use active_core::fmt::format;
+    use active_core::Style;
+    let src = "case_0165_07 = \"line1\\nline2\"\n";
+    assert_eq!(eval_json(src)["case_0165_07"], "line1\nline2");
+    let module = parse(src, "research").expect("must parse");
+    let out = format(&module, Style::Indent);
+    let module2 =
+        parse(&out, "research").unwrap_or_else(|d| panic!("reparse failed: {d:?}\n{out}"));
+    let (first, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    let (second, _) = Engine::new().evaluate(&module2).expect("must evaluate");
+    assert_eq!(
+        active_core::convert::value_to_pretty_json(&first),
+        active_core::convert::value_to_pretty_json(&second)
+    );
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&active_core::convert::value_to_pretty_json(
+            &second
+        ))
+        .expect("json")["case_0165_07"],
+        "line1\nline2",
+        "escape must survive print"
+    );
+    // Positive control: the literal-multiline twin agrees (RB-1750).
+    assert_eq!(
+        eval_json("case_0165_07 = \"line1\nline2\"\n")["case_0165_07"],
+        "line1\nline2"
+    );
+}
+
+/// RB-1798 — Round-trip twin: memory unit never drifts (SYN-0165-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0011 (unit formatting).
+/// CONVERGENCE (dimension registry, docs/units.md; DERIVED-0019 rhythm):
+/// `512MiB` formats, reparses, and evaluates to the identical dimensional
+/// value with a byte-stable print — units do not drift through formatting.
+/// Structural assertions only; no shipped text hardcoded.
+#[test]
+fn rb_1798_syn165_unit_round_trip_stable() {
+    use active_core::fmt::format;
+    use active_core::Style;
+    let src = "case_0165_08 = 512MiB\n";
+    assert!(codes_of(src).is_empty());
+    let module = parse(src, "research").expect("must parse");
+    let out = format(&module, Style::Indent);
+    let module2 =
+        parse(&out, "research").unwrap_or_else(|d| panic!("reparse failed: {d:?}\n{out}"));
+    let (first, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    let (second, _) = Engine::new().evaluate(&module2).expect("must evaluate");
+    assert_eq!(
+        active_core::convert::value_to_pretty_json(&first),
+        active_core::convert::value_to_pretty_json(&second)
+    );
+    assert_eq!(format(&module2, Style::Indent), out);
+    // Positive control: the duration twin round-trips identically (RB-1790).
+    let m = parse("case_0165_08 = 5s\n", "research").expect("parses");
+    let o = format(&m, Style::Indent);
+    let m2 = parse(&o, "research").expect("reparses");
+    assert_eq!(format(&m2, Style::Indent), o);
+}

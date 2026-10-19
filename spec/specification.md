@@ -291,6 +291,7 @@ evaluation:
 | Bytes | `Int(i64)` bytes | `512MiB` → `536870912`, `100MB` → `100000000` |
 | Rates / custom | `Quantity(f64, Unit)` — original unit retained | `100/req/s` → `Quantity(100.0, RequestsPerSecond)` |
 | Percent | `Quantity(f64, Percent)` — canonical dimensionless ratio, 100% = 1.0 | `25%` → `Quantity(0.25, Percent)` |
+| Frequency | `Quantity(f64, Hertz)` — canonical hertz, f64 (fractional Hz are real) | `1kHz` → `Quantity(1000.0, Hertz)` |
 
 Time normalizations: ns/10⁶→ms, µs/10³→ms, s×10³, m×60000, h×3600000,
 d×86400000. Byte normalizations: KiB=2¹⁰, MiB=2²⁰, GiB=2³⁰, TiB=2⁴⁰;
@@ -312,6 +313,20 @@ percentages/thresholds ubiquitous in configs (cookbook `rollout_pct`);
 collision = `%` conflicts with nothing (not an SI symbol; UCUM defines %
 as 10⁻²); export = JSON `{"%": ratio}`, TOML-ish percent-form (`25%`),
 interpolation percent-form; schema kind `quantity:percent`.
+
+Frequency (`Hz kHz MHz GHz THz`) canonicalizes to f64 hertz
+(`1kHz` → `Quantity(1000.0, Hertz)`; `0.5Hz` stays fractional). Full
+arithmetic: same-dimension `+ -`, scalar `* /`, same-dimension division to
+a bare ratio, all four comparisons, structural equality. Literal magnitudes
+clamp at zero (mirroring time canonicalization — negative frequencies are
+physically meaningless); an explicit unary minus is preserved as written
+(`-5Hz` → -5.0), exactly as `-5` is allowed for ints. Suffix spellings
+`kHz MHz GHz THz` normalize to the canonical `Hz` form on export
+(`suffix()` = `"Hz"`, always re-parseable). Admission record: corpus = CPU
+clocks, refresh rates, PWM/ADC clocks, radio bands; collision = all five
+clear of existing suffixes and SI conflicts (case-sensitive SI spellings);
+export = JSON `{"Hz": N}`, TOML-ish `NHz`, interpolation `NHz`; schema kind
+`quantity:Hz` (canonical suffix, automatic via the kind rule).
 
 ### 4.2 Serialization of quantities
 

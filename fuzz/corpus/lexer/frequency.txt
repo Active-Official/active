@@ -1,0 +1,12 @@
+f = 60Hz
+g = 1kHz
+h = 2.4GHz
+i = 1MHz
+j = 1THz
+k = 0.5Hz
+l = 1KHZ
+m = 1hz
+n = 1kHz + 500Hz
+o = 2kHz / 1kHz
+p = 1kHz + 1s
+q = -5Hz

@@ -94,3 +94,28 @@ fn time_and_byte_units_round_trip_through_export() {
         );
     }
 }
+
+#[test]
+fn frequency_round_trips_through_export() {
+    // All spellings canonicalize to Hz-form; export re-parses to the same
+    // canonical value (fixed point of export o parse o evaluate).
+    let sources = [
+        "x = 60Hz",
+        "x = 1kHz",
+        "x = 2.4GHz",
+        "x = 1MHz",
+        "x = 1THz",
+        "x = 0.5Hz",
+    ];
+    for src in sources {
+        let first = eval_json(src);
+        let module = parse(src, "roundtrip").expect("must parse");
+        let (value, _) = Engine::new().evaluate(&module).expect("must evaluate");
+        let exported = value_to_simple_toml(&value, "");
+        let second = eval_json(&exported);
+        assert_eq!(
+            first, second,
+            "round-trip failed for {src}: exported as {exported:?}"
+        );
+    }
+}

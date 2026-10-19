@@ -12,6 +12,7 @@ exhausted; new dimensions use long-form-first plus collision-free shorts.
 | `B KiB MiB GiB TiB KB MB GB TB` | bytes | `Int` bytes saturating | plain-int ops | bare int |
 | `/s /m /h per_s per_m per_h req/s req_s /req/s /req/m /req/h req/m req_m req/h req_h` | rate | retained `Quantity` | same-suffix add/sub/compare/scale | `{"<suffix>": N}` / `N<suffix>` |
 | `%` | percent (dimensionless) | `Quantity` ratio, 100% = 1.0 | same-dimension add/sub/compare/scale, no implicit base | `{"%": ratio}` / percent-form `25%` |
+| `Hz kHz MHz GHz THz` | frequency | `Quantity` f64 hertz | full (add/sub, scalar, ratio, compare) | `{"Hz": N}` / `NHz` |
 
 ## Rejected near-misses (parse E002/E005, never silent)
 

@@ -1811,6 +1811,20 @@ fn normalize_quantity(v: &Value, unit: &Unit) -> Result<Value, String> {
     if *unit == Unit::Percent {
         return Ok(Value::Quantity(num / 100.0, Unit::Percent));
     }
+    // Frequency canonicalizes to f64 hertz (fractional Hz are real).
+    // Negative frequencies clamp at zero, mirroring time canonicalization
+    // (spec Ch. 4 §4.1).
+    let hz_factor = match unit {
+        Unit::Hertz => Some(1.0),
+        Unit::Kilohertz => Some(1_000.0),
+        Unit::Megahertz => Some(1_000_000.0),
+        Unit::Gigahertz => Some(1_000_000_000.0),
+        Unit::Terahertz => Some(1_000_000_000_000.0),
+        _ => None,
+    };
+    if let Some(factor) = hz_factor {
+        return Ok(Value::Quantity((num * factor).max(0.0), Unit::Hertz));
+    }
     Ok(Value::Quantity(num, unit.clone()))
 }
 

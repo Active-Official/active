@@ -32,6 +32,12 @@ pub enum Unit {
     RequestsPerHour,
     // Percent (dimensionless ratio, 100% = 1.0)
     Percent,
+    // Frequency (canonical hertz; SI spellings, case-sensitive)
+    Hertz,
+    Kilohertz,
+    Megahertz,
+    Gigahertz,
+    Terahertz,
     // Custom
     Custom(String),
 }
@@ -66,6 +72,11 @@ impl Unit {
             "/req/m" => Some(Unit::RequestsPerMinute),
             "/req/h" => Some(Unit::RequestsPerHour),
             "%" => Some(Unit::Percent),
+            "Hz" => Some(Unit::Hertz),
+            "kHz" => Some(Unit::Kilohertz),
+            "MHz" => Some(Unit::Megahertz),
+            "GHz" => Some(Unit::Gigahertz),
+            "THz" => Some(Unit::Terahertz),
             "req/m" | "req_m" => Some(Unit::RequestsPerMinute),
             "req/h" | "req_h" => Some(Unit::RequestsPerHour),
 
@@ -99,6 +110,11 @@ impl Unit {
             Unit::RequestsPerMinute => "req/m".into(),
             Unit::RequestsPerHour => "req/h".into(),
             Unit::Percent => "%".into(),
+            // All frequency spellings canonicalize to Hz (mirrors us->µs:
+            // one canonical spelling, always re-parseable).
+            Unit::Hertz | Unit::Kilohertz | Unit::Megahertz | Unit::Gigahertz | Unit::Terahertz => {
+                "Hz".into()
+            }
             Unit::Custom(s) => s.clone(),
         }
     }

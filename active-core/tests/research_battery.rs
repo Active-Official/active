@@ -33853,3 +33853,220 @@ fn rb_1528_syn135_distinct_tables_accept() {
     let codes = codes_of("case_0135_06 = { a = 1, a = 2 }\n");
     assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
 }
+
+/// RB-1529 — Duplicate-keys variant: naive patch form rejects (SYN-0135-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0006 (symfony duplicate keys;
+/// same shape as SYN-0124-07).
+/// Converges with RB-1430: `@patch base { key = 2 }` fails E019 Error at
+/// (3:2); only the explicit call form overrides.
+#[test]
+fn rb_1529_syn135_naive_patch_rejects() {
+    let src = "case_0135_07 = 1\nbase = { key = 1 }\n@patch base { key = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    // Positive control: the explicit call form overrides silently.
+    let v = eval_json("base = { key = 1 }\n@patch(\"base.key\", 2)\n");
+    assert_eq!(v["base"]["key"], 2, "{v}");
+}
+
+/// RB-1530 — Duplicate-keys variant: naive remove form rejects (SYN-0135-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0006 (symfony duplicate keys;
+/// same shape as SYN-0124-08).
+/// Converges with RB-1431: `@remove base.key` fails E019 Error at (3:2);
+/// the explicit call form removes silently.
+#[test]
+fn rb_1530_syn135_naive_remove_rejects() {
+    let src = "case_0135_08 = 1\nbase = { key = 1 }\n@remove base.key\n@remove base.key\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    // Positive control: the explicit call form removes an existing key.
+    let v = eval_json("base = { key = 1 }\n@remove(\"base.key\")\n");
+    assert!(v["base"].get("key").is_none(), "{v}");
+}
+
+/// RB-1531 — Duplicate-keys variant: dotted quoted key never aliases (SYN-0135-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0006 (symfony duplicate keys;
+/// same shape as SYN-0124-09).
+/// Converges with RB-1432: `{ "a.b" = 1, a = { b = 2 } }` fails E001 Error
+/// at (1:18) — TOML-style aliasing impossible by construction.
+#[test]
+fn rb_1531_syn135_dotted_quoted_rejects() {
+    let src = "case_0135_09 = { \"a.b\" = 1, a = { b = 2 } }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the bare nested path evaluates silently.
+    let v = eval_json("case_0135_09 = { a = { b = 2 } }\n");
+    assert_eq!(v["case_0135_09"]["a"]["b"], 2, "{v}");
+    assert!(codes_of("case_0135_09 = { a = { b = 2 } }\n").is_empty());
+}
+
+/// RB-1532 — Flow-collection variant: brace-style baseline parses (SYN-0136-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0007 (flow indentation VJP3;
+/// same shape as SYN-0133-01).
+/// Converges with RB-1505: `root = { child = 1 }` evaluates silently.
+#[test]
+fn rb_1532_syn136_brace_baseline_accepts() {
+    let src = "case_0136_01 = 1\nroot = { child = 1 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0136_01"], 1, "{v}");
+    assert_eq!(v["root"]["child"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the flat twin agrees at depth 1.
+    let v = eval_json("root = { child = 1 }\n");
+    assert_eq!(v["root"]["child"], 1, "{v}");
+}
+
+/// RB-1533 — Flow-collection variant: bodiless `=` never opens an indent block (SYN-0136-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0007 (flow indentation VJP3;
+/// same shape as SYN-0133-02).
+/// Converges with RB-1506: `root =\n  child = 1` fails E002 Error at
+/// (1:7); the colon-header twin equals the brace form, silently.
+#[test]
+fn rb_1533_syn136_equals_indent_refused() {
+    let src = "root =\n  child = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 7), "{span:?}");
+    // Normative proof: colon-header indent equals the brace form, silently.
+    let brace = eval_json("root = { child = 1 }\n");
+    let indent = eval_json("root:\n  child = 1\n");
+    assert_eq!(brace, indent, "{brace} vs {indent}");
+    assert!(codes_of("root:\n  child = 1\n").is_empty());
+}
+
+/// RB-1534 — Flow-collection variant: nested braces close at matching levels (SYN-0136-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0007 (flow indentation VJP3;
+/// same shape as SYN-0133-03).
+/// Converges with RB-1507: nested braces evaluate silently.
+#[test]
+fn rb_1534_syn136_nested_brace_accepts() {
+    let src = "case_0136_03 = 1\nroot = { child = { grandchild = 1 } }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0136_03"], 1, "{v}");
+    assert_eq!(v["root"]["child"]["grandchild"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the two-level twin agrees one level down.
+    let v = eval_json("root = { child = 1 }\n");
+    assert_eq!(v["root"]["child"], 1, "{v}");
+}
+
+/// RB-1535 — Flow-collection variant: indentation stack matches brace semantics (SYN-0136-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0007 (flow indentation VJP3;
+/// same shape as SYN-0133-04).
+/// Converges with RB-1508: equals-nesting fails E002 at (1:7); colon-header
+/// nesting equals nested braces, silently.
+#[test]
+fn rb_1535_syn136_nested_indent_refused() {
+    let src = "root =\n  child =\n    grandchild = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 7), "{span:?}");
+    // Normative proof: colon-header nesting equals nested braces, silently.
+    let brace = eval_json("root = { child = { grandchild = 1 } }\n");
+    let indent = eval_json("root:\n  child:\n    grandchild = 1\n");
+    assert_eq!(brace, indent, "{brace} vs {indent}");
+    assert!(codes_of("root:\n  child:\n    grandchild = 1\n").is_empty());
+}
+
+/// RB-1536 — Flow-collection variant: duplicate handling identical across surfaces (SYN-0136-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0007 (flow indentation VJP3;
+/// same shape as SYN-0133-05).
+/// Converges with RB-1509: brace dups warn W011 at (2:29), last-wins.
+#[test]
+fn rb_1536_syn136_brace_dup_warns() {
+    let src = "case_0136_05 = 1\nroot = { child = 1, child = 2 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["root"]["child"], 2, "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (2, 29), "{span:?}");
+    // Positive control: the block-form twin warns identically (same policy).
+    let codes = codes_of("[root]\nchild = 1\nchild = 2\n");
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}
+
+/// RB-1537 — Flow-collection variant: TAB indent refused even with equals header (SYN-0136-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0007 (flow indentation VJP3;
+/// same shape as SYN-0133-06).
+/// Converges with RB-1510: TAB-indent fails E006 Error at (2:1).
+#[test]
+fn rb_1537_syn136_tab_indent_refused() {
+    let src = "root =\n\tchild = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E006");
+    let e = diags.iter().find(|d| d.code == "E006").expect("E006");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E006 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E006 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: TAB inside string content decodes.
+    let v = eval_json("root = \"a\\tb\"\n");
+    assert_eq!(v["root"], "a\tb", "{v}");
+    // Positive control: space indentation under a colon header evaluates.
+    assert_eq!(eval_json("root:\n  child = 1\n")["root"]["child"], 1);
+}
+
+/// RB-1538 — Flow-collection variant: quoted escapes span lines (SYN-0136-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0007 (flow indentation VJP3;
+/// same shape as SYN-0133-07).
+/// Converges with RB-1511: the two-line value evaluates silently.
+#[test]
+fn rb_1538_syn136_escaped_newline_decodes() {
+    let src = "case_0136_07 = 1\ntext = \"line one\\nline two\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0136_07"], 1, "{v}");
+    assert_eq!(v["text"], "line one\nline two", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the sibling specified escape `\t` decodes to TAB.
+    let v = eval_json("text = \"a\\tb\"\n");
+    assert_eq!(v["text"], "a\tb", "{v}");
+}

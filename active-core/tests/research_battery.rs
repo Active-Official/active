@@ -36418,3 +36418,216 @@ fn rb_1648_syn148_long_scalar_linear() {
     // Positive control: a small string is exact and silent.
     assert_eq!(eval_json("case_0148_09 = \"xx\"\n")["case_0148_09"], "xx");
 }
+
+/// RB-1649 — Tag-safety variant: host constructors impossible (SYN-0149-01 §H, CRITICAL).
+/// Origin: LibYAML tag-URI heap overflow lineage.
+/// `case_0149_01 = !python/object/apply:os.system [...]` fails loudly
+/// (E002/E001 cascade) — `!` is not a token in Active, so no tag syntax
+/// exists to smuggle host construction through. Configuration parsing can
+/// never invoke host constructors because the grammar has no construction
+/// site. The catalogue's "reject: unsupported-tag-or-construction" holds
+/// at lex time.
+#[test]
+fn rb_1649_syn149_host_construct_impossible() {
+    let src = "case_0149_01 = !python/object/apply:os.system [\"echo forbidden\"]\n";
+    let diags = parse(src, "research").expect_err("must fail");
+    assert!(!diags.is_empty(), "must refuse loudly");
+    assert!(
+        diags
+            .iter()
+            .all(|d| d.severity == active_core::Severity::Error),
+        "{diags:?}"
+    );
+    // Positive control: a plain string assignment evaluates silently.
+    let v = eval_json("case_0149_01 = \"harmless\"\n");
+    assert_eq!(v["case_0149_01"], "harmless", "{v}");
+    assert!(codes_of("case_0149_01 = \"harmless\"\n").is_empty());
+}
+
+/// RB-1650 — Tag-safety variant: unknown tags never load extensions (SYN-0149-02 §H, CRITICAL).
+/// Origin: LibYAML tag-URI heap overflow lineage.
+/// `case_0149_02 = !custom/tag { data = 1 }` fails E002 Error at (1:39) —
+/// there is no extension registry for input data to trigger, so unknown
+/// tags cannot load anything. Active's extension surface (schemas, imports)
+/// is declared by the host program, never by the document.
+#[test]
+fn rb_1650_syn149_unknown_tag_rejects() {
+    let src = "case_0149_02 = !custom/tag { data = 1 }\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 39), "{span:?}");
+    // Positive control: the untagged table evaluates silently.
+    let v = eval_json("case_0149_02 = { data = 1 }\n");
+    assert_eq!(v["case_0149_02"]["data"], 1, "{v}");
+    assert!(codes_of("case_0149_02 = { data = 1 }\n").is_empty());
+}
+
+/// RB-1651 — Tag-safety variant: tag-looking strings stay data (SYN-0149-03 §H, HIGH).
+/// Origin: LibYAML tag-URI heap overflow lineage.
+/// `{ tag = "!!python/object" }` evaluates to the exact string silently —
+/// quoted text is never a deserialization instruction in Active. There is
+/// no unquoted-tag position for it to occupy.
+#[test]
+fn rb_1651_syn149_tag_string_inert() {
+    let src = "case_0149_03 = { tag = \"!!python/object\" }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0149_03"]["tag"], "!!python/object", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: an ordinary string twin agrees byte-for-byte.
+    let v = eval_json("case_0149_03 = { tag = \"plain\" }\n");
+    assert_eq!(v["case_0149_03"]["tag"], "plain", "{v}");
+}
+
+/// RB-1652 — Tag-safety variant: secret taint, never serializers (SYN-0149-04 §H, HIGH).
+/// Origin: LibYAML tag-URI heap overflow lineage.
+/// `secret("sensitive")` evaluates with taint and redacts on export —
+/// the call form constructs a tainted secret, never an arbitrary
+/// serializer. Converges with the secret lineage (RB-1493/1520/1583);
+/// catalogue fixture spells `secret("x")`, tested here with the
+/// goal-mandated unique RAW marker on the identical production.
+#[test]
+fn rb_1652_syn149_secret_taint_not_serializer() {
+    let src = "case_0149_04 = secret(\"RAW-RB1652-SE149\")\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0149_04"], "***SECRET***", "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains("RAW-RB1652-SE149"), "{json}");
+    assert!(
+        !format!("{diags:?}").contains("RAW-RB1652-SE149"),
+        "{diags:?}"
+    );
+    // Positive control: a plain string beside it exports exactly.
+    let v = eval_json("case_0149_04 = \"plain\"\n");
+    assert_eq!(v["case_0149_04"], "plain", "{v}");
+}
+
+/// RB-1653 — Tag-safety variant: parser builds data, not objects (SYN-0149-05 §H, MEDIUM).
+/// Origin: LibYAML tag-URI heap overflow lineage.
+/// `{ nested = [1, 2] }` evaluates silently to inert data — maps and arrays
+/// are values, never instantiations. Nothing in the grammar names a class.
+#[test]
+fn rb_1653_syn149_data_not_objects() {
+    let src = "case_0149_05 = { nested = [1, 2] }\n";
+    let v = eval_json(src);
+    assert_eq!(
+        v["case_0149_05"]["nested"],
+        serde_json::json!([1, 2]),
+        "{v}"
+    );
+    assert!(codes_of(src).is_empty());
+    // Positive control: the flat twin agrees at depth 1.
+    let v = eval_json("case_0149_05 = { nested = 1 }\n");
+    assert_eq!(v["case_0149_05"]["nested"], 1, "{v}");
+}
+
+/// RB-1654 — Tag-safety variant: env interpolation is data lookup (SYN-0149-06 §H, MEDIUM).
+/// Origin: LibYAML tag-URI heap overflow lineage.
+/// `"${env.VAR}"` interpolates the environment value (or null when absent)
+/// through the single documented interpolation primitive — never evaluates
+/// embedded code. Uniquely-named vars with save/restore (RB-125 pattern).
+#[test]
+fn rb_1654_syn149_env_interp_is_lookup() {
+    let prior = std::env::var("ACTIVE_TEST_RB1654_V").ok();
+    std::env::set_var("ACTIVE_TEST_RB1654_V", "injected-166");
+    let v = eval_json("case_0149_06 = \"${env.ACTIVE_TEST_RB1654_V}\"\n");
+    assert_eq!(v["case_0149_06"], "injected-166", "{v}");
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_TEST_RB1654_V", val),
+        None => std::env::remove_var("ACTIVE_TEST_RB1654_V"),
+    }
+    // Positive control neighbour: an absent var interpolates to null.
+    let prior2 = std::env::var("ACTIVE_TEST_RB1654_ABSENT_XYZ").ok();
+    std::env::remove_var("ACTIVE_TEST_RB1654_ABSENT_XYZ");
+    let v = eval_json("case_0149_06 = \"${env.ACTIVE_TEST_RB1654_ABSENT_XYZ}\"\n");
+    assert_eq!(v["case_0149_06"], "null", "{v}");
+    match prior2 {
+        Some(val) => std::env::set_var("ACTIVE_TEST_RB1654_ABSENT_XYZ", val),
+        None => std::env::remove_var("ACTIVE_TEST_RB1654_ABSENT_XYZ"),
+    }
+}
+
+/// RB-1655 — Tag-safety variant: no dynamic loading from data (SYN-0149-07 §H, CRITICAL).
+/// Origin: LibYAML tag-URI heap overflow lineage.
+/// `@import("arbitrary-module")` fails E014 Error — `@`-forms are the
+/// closed structural set (patch/remove), never a loader. Input data cannot
+/// name a module into existence.
+#[test]
+fn rb_1655_syn149_no_dynamic_loading() {
+    let src = "case_0149_07 = @import(\"arbitrary-module\")\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e = diags.iter().find(|d| d.code == "E014").expect("E014");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E014 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E014 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the structural `@remove` call form parses.
+    let v = eval_json("base = { key = 1 }\n@remove(\"base.key\")\n");
+    assert!(v["base"].get("key").is_none(), "{v}");
+}
+
+/// RB-1656 — Tag-safety variant: type names in data are inert (SYN-0149-08 §H, MEDIUM).
+/// Origin: LibYAML tag-URI heap overflow lineage.
+/// `{ class = "DangerousType", args = ["x"] }` evaluates silently to the
+/// inert map — a `class` key is a string like any other; no capability
+/// consumes it, so nothing instantiates.
+#[test]
+fn rb_1656_syn149_typename_inert() {
+    let src = "case_0149_08 = { class = \"DangerousType\", args = [\"x\"] }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0149_08"]["class"], "DangerousType", "{v}");
+    assert_eq!(v["case_0149_08"]["args"], serde_json::json!(["x"]), "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: an ordinary twin agrees key-for-key.
+    let v = eval_json("case_0149_08 = { kind = \"SafeType\", args = [\"x\"] }\n");
+    assert_eq!(v["case_0149_08"]["kind"], "SafeType", "{v}");
+}
+
+/// RB-1657 — Tag-safety variant: interpolation evaluates documented pure ops (SYN-0149-09 §H, MEDIUM).
+/// Origin: LibYAML tag-URI heap overflow lineage.
+/// `"${1+1}"` evaluates to `"2"` — the interpolation grammar explicitly
+/// supports pure arithmetic, and only that: names resolve or warn
+/// (RB-1360), env lookups read (RB-1654), arithmetic computes. No statements,
+/// no calls, no attribute access exist to smuggle in.
+#[test]
+fn rb_1657_syn149_pure_op_interpolates() {
+    let src = "case_0149_09 = \"${1+1}\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0149_09"], "2", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a name interpolant resolves beside it.
+    let v = eval_json("let who = \"hi\"\ncase_0149_09 = \"yo ${who}\"\n");
+    assert_eq!(v["case_0149_09"], "yo hi", "{v}");
+}
+
+/// RB-1658 — Stack-overflow twin: below-limit nesting parses (SYN-0150-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0019 (depth family;
+/// same shape as SYN-0122-01).
+/// Converges with RB-1406/1415/1613/1622/1631/1640: 32 nested arrays,
+/// oracle via independent JSON parse.
+#[test]
+fn rb_1658_syn150_shallow_nesting_accepts() {
+    let src = format!("case_0150_01 = {}0{}\n", "[".repeat(32), "]".repeat(32));
+    let v = eval_json(&src);
+    let wire = format!("{}0{}", "[".repeat(32), "]".repeat(32));
+    let expected: serde_json::Value = serde_json::from_str(&wire).expect("oracle parses");
+    assert_eq!(v["case_0150_01"], expected, "{v}");
+    assert!(codes_of(&src).is_empty());
+    // Positive control: the flat neighbour evaluates.
+    assert_eq!(
+        eval_json("case_0150_01 = [0]\n")["case_0150_01"],
+        serde_json::json!([0])
+    );
+}

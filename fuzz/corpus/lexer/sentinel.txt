@@ -1,0 +1,6 @@
+[t]
+esc = "a\$b"
+interp = "pre\$${esc}"
+raw = "ab"
+lit = 'xy'
+ml = """mn"""

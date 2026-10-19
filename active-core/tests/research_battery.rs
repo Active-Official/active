@@ -44703,3 +44703,218 @@ fn rb_1988_byte_lone_cr_continues() {
     let v = eval_json("v = 1 + 2\n");
     assert_eq!(v["v"], 3, "{v}");
 }
+
+/// RB-1989 — Byte twin: VT splits keys (byte backlog §H, MEDIUM).
+/// Origin: `#{byte}` raw-byte edges (VT inside key).
+/// `a\u{b}b = 1` fails E005 FIRST (diags[0]) at (1:2): VT breaks the key
+/// and reports as debris at its position.
+/// CONVERGENCE: debris-first verdict, VT-key angle.
+#[test]
+fn rb_1989_byte_vt_key_first_diag() {
+    let src = "a\u{b}b = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    assert_eq!(diags[0].code, "E005", "{diags:?}");
+    let span = diags[0].span.clone().expect("span");
+    assert_eq!((span.line, span.column), (1, 2), "{span:?}");
+    // Positive control: the clean key binds silently.
+    assert_eq!(eval_json("v = 1\n")["v"], 1);
+}
+
+/// RB-1990 — Byte twin: FF splits keys plus companion (SYN-0199-02 §H, MEDIUM).
+/// Origin: `#{byte}` raw-byte edges (FF inside key).
+/// `a\u{c}b = 1` fails E005 at (1:2) with an E002 companion: FF breaks the
+/// key AND the fragments reparse as grammar errors — both announcements.
+/// CONVERGENCE: debris-plus-grammar verdict, FF-key angle.
+#[test]
+fn rb_1990_byte_ff_key_companion() {
+    let src = "a\u{c}b = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 2), "{span:?}");
+    assert!(
+        diags.iter().any(|d| d.code == "E002"),
+        "E002 companion expected, got {diags:?}"
+    );
+    // Positive control: the clean key binds silently.
+    assert_eq!(eval_json("v = 1\n")["v"], 1);
+}
+
+/// RB-1991 — Byte twin: ESC splits keys pair-count (byte backlog §H, MEDIUM).
+/// Origin: `#{byte}` raw-byte edges (ESC inside key).
+/// `a\u{1b}b = 1` fails with EXACTLY two diagnostics (E005 + E001/E002):
+/// bounded announcements, no scan past the debris.
+/// CONVERGENCE: bounded-diags verdict, ESC-key angle.
+#[test]
+fn rb_1991_byte_esc_key_pair() {
+    let src = "a\u{1b}b = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    assert_eq!(diags.len(), 2, "{diags:?}");
+    assert!(diags.iter().any(|d| d.code == "E005"), "{diags:?}");
+    // Positive control: ESC inside a string stays data (RB-1976).
+    let v = eval_json("v = \"a\u{1b}b\"\n");
+    assert_eq!(v["v"], "a\u{1b}b", "{v}");
+}
+
+/// RB-1992 — Byte twin: comment splits key from equals (byte backlog §H, MEDIUM).
+/// Origin: `#{byte}` comment-placement edges.
+/// `v # c⏎= 1` fails E002 at (1:1): the comment ends the line, leaving a
+/// bare key — comments split statements, never join them.
+/// CONVERGENCE: comment-terminates verdict, key-side angle.
+#[test]
+fn rb_1992_byte_comment_splits_key() {
+    let src = "v # c\n= 1\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 1), "{span:?}");
+    // Positive control: the uncommented assignment binds silently.
+    assert_eq!(eval_json("v = 1\n")["v"], 1);
+}
+
+/// RB-1993 — Byte twin: comment splits equals from value (byte backlog §H, MEDIUM).
+/// Origin: `#{byte}` comment-placement edges.
+/// `v = # c⏎1` fails E002 at (1:8) AND (2:1): missing value plus stray
+/// `1` — comments hide nothing, join nothing; both halves reported.
+/// CONVERGENCE: comment-terminates verdict, value-side angle.
+#[test]
+fn rb_1993_byte_comment_splits_value() {
+    let src = "v = # c\n1\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e002: Vec<_> = diags.iter().filter(|d| d.code == "E002").collect();
+    assert_eq!(e002.len(), 2, "{diags:?}");
+    let spans: Vec<_> = e002
+        .iter()
+        .map(|d| {
+            let s = d.span.clone().expect("span");
+            (s.line, s.column)
+        })
+        .collect();
+    assert!(spans.contains(&(1, 8)), "{spans:?}");
+    assert!(spans.contains(&(2, 1)), "{spans:?}");
+    // Positive control: the uncommented assignment binds silently.
+    assert_eq!(eval_json("v = 1\n")["v"], 1);
+}
+
+/// RB-1994 — Byte twin: whitespace-only is empty (byte backlog §H, MEDIUM).
+/// Origin: `#{byte}` document-shape edges.
+/// `"   \n  \n"` evaluates to {} silent: whitespace-only documents are
+/// empty documents — no statements, no diagnostics, no husk.
+/// CONVERGENCE: empty-shape verdict.
+#[test]
+fn rb_1994_byte_whitespace_only_empty() {
+    let src = "   \n  \n";
+    let v = eval_json(src);
+    assert_eq!(v.as_object().map(|o| o.len()), Some(0));
+    assert!(codes_of(src).is_empty());
+    // Positive control: a lone newline is equally empty.
+    let v = eval_json("\n");
+    assert_eq!(v.as_object().map(|o| o.len()), Some(0));
+}
+
+/// RB-1995 — Budget twin: 10KB comment inert (byte backlog §H, MEDIUM).
+/// Origin: `#{byte}` comment-scale edges.
+/// 10240 generated z's in a comment leave v=1 silent: comments scale
+/// without evaluation cost and terminate — trivia at any size.
+/// CONVERGENCE: trivia-scales verdict, termination angle.
+#[test]
+fn rb_1995_byte_big_comment_inert() {
+    let src = format!("# {}\nv = 1\n", "z".repeat(10 * 1024));
+    let v = eval_json(&src);
+    assert_eq!(v["v"], 1, "{v}");
+    assert!(codes_of(&src).is_empty());
+    // Positive control: the comment-free twin agrees.
+    assert_eq!(eval_json("v = 1\n")["v"], 1);
+}
+
+/// RB-1996 — Budget twin: table nesting bound (byte backlog §H, HIGH).
+/// Origin: `#{byte}` depth-dimension edges (inline tables).
+/// 100 nested `{ a = … }` fail with E004 FIRST (diags[0]): the depth
+/// budget binds tables exactly as it binds arrays (RB-1946/1947) —
+/// nesting is nesting, whatever the brackets look like.
+/// CONVERGENCE: depth-binds verdict, table-dimension angle (new data).
+#[test]
+fn rb_1996_byte_table_depth_bound() {
+    let mut src = String::from("t = ");
+    for _ in 0..100 {
+        src.push_str("{ a = ");
+    }
+    src.push('1');
+    for _ in 0..100 {
+        src.push_str(" }");
+    }
+    src.push('\n');
+    let diags = parse(&src, "research").expect_err("must fail E004");
+    assert_eq!(diags[0].code, "E004", "{diags:?}");
+    let e = diags.iter().find(|d| d.code == "E004").expect("E004");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E004 must be Error, got {:?}",
+        e.severity
+    );
+    // Positive control: shallow tables evaluate exactly.
+    let v = eval_json("t = { a = { b = 1 } }\n");
+    assert_eq!(v["t"]["a"]["b"], 1, "{v}");
+}
+
+/// RB-1997 — Budget twin: 2000-char key binds (byte backlog §H, MEDIUM).
+/// Origin: `#{byte}` identifier-scale edges.
+/// A generated 2000-char key binds silently with its value intact: no
+/// identifier length cap binds through two thousand — evidence for the
+/// length-policy record, alongside the byte-cap question.
+/// CONVERGENCE: no-length-cap verdict, length-pinned.
+#[test]
+fn rb_1997_byte_long_key_binds() {
+    let key = "k".repeat(2000);
+    let src = format!("{key} = 1\n");
+    let v = eval_json(&src);
+    assert_eq!(v[&key], 1, "{v}");
+    assert!(codes_of(&src).is_empty());
+    // Positive control: the 1-char key agrees silently.
+    assert_eq!(eval_json("k = 1\n")["k"], 1);
+}
+
+/// RB-1998 — NORTH STAR capstone: one document, every guarantee (goal §H, HIGH).
+/// Origin: the whole battery — secrets that taint+redact, units that
+/// refuse dimensions, budgets that hold, diagnostics announced, runs
+/// deterministic.
+/// One document: a duration, a secret, a taint-flow copy, a duplicate.
+/// Verdicts together: W011 Warning at (5,1); timeout {ms:5000}; password
+/// AND password2 redacted; retries last-wins 4; NO raw marker anywhere;
+/// identical re-run. If Active ever stops being Active, THIS test names it.
+/// CONVERGENCE: the language, pinned whole.
+#[test]
+fn rb_1998_north_star_capstone() {
+    let raw = "RAW-1998-capstone-marker";
+    let src = format!(
+        "timeout = 5s\npassword = secret(\"{raw}\")\npassword2 = password\nretries = 3\nretries = 4\n"
+    );
+    let module = parse(&src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (5, 1), "{span:?}");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains(raw), "leak in JSON export: {json}");
+    let v: serde_json::Value = serde_json::from_str(&json).expect("json");
+    assert_eq!(v["timeout"], serde_json::json!({"ms": 5000}), "{v}");
+    assert_eq!(v["password"], "***SECRET***", "{v}");
+    assert_eq!(v["password2"], "***SECRET***", "{v}");
+    assert_eq!(v["retries"], 4, "{v}");
+    assert!(!format!("{diags:?}").contains(raw), "leak in diags");
+    // Positive control: the whole is deterministic — re-run identical.
+    let (value2, _) = Engine::new()
+        .evaluate(&parse(&src, "research").expect("parses"))
+        .expect("evaluates");
+    assert_eq!(
+        active_core::convert::value_to_pretty_json(&value),
+        active_core::convert::value_to_pretty_json(&value2)
+    );
+}

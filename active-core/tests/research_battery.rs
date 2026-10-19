@@ -34913,3 +34913,204 @@ fn rb_1578_syn141_nested_scopes_accept() {
     let v = eval_json("case_0141_02 = 1\nprobe_3141 = 1\n");
     assert_eq!(v["probe_3141"], 1, "{v}");
 }
+
+/// RB-1579 — Anchor variant: array commas unambiguous (SYN-0141-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0012 (anchors and aliases;
+/// same shape as SYN-0131-03).
+/// Converges with RB-1489/1516: the exact two-element array, silently.
+#[test]
+fn rb_1579_syn141_array_commas_exact() {
+    let src = "case_0141_03 = 1\nprobe_3141 = [1, 2]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0141_03"], 1, "{v}");
+    assert_eq!(v["probe_3141"], serde_json::json!([1, 2]), "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the single-element twin agrees at index 0.
+    assert_eq!(
+        eval_json("probe_3141 = [1]\n")["probe_3141"],
+        serde_json::json!([1])
+    );
+}
+
+/// RB-1580 — Anchor variant: quoted scalar never coerces (SYN-0141-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0012 (anchors and aliases;
+/// same shape as SYN-0131-04).
+/// Converges with RB-1490/1517: `"1"` exact string, bare `1` int.
+#[test]
+fn rb_1580_syn141_quoted_scalar_exact() {
+    let src = "case_0141_04 = 1\nprobe_3141 = \"1\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0141_04"], 1, "{v}");
+    assert_eq!(v["probe_3141"], "1", "{v}");
+    assert!(!v["probe_3141"].is_i64(), "must stay string, got {v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the bare twin stays int.
+    let v = eval_json("probe_3141 = 1\n");
+    assert_eq!(v["probe_3141"], 1, "{v}");
+    assert!(v["probe_3141"].is_i64(), "must stay int, got {v}");
+}
+
+/// RB-1581 — Anchor variant: trailing comment never enters the value (SYN-0141-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0012 (anchors and aliases;
+/// same shape as SYN-0131-05).
+/// Converges with RB-1491/1518: integer 1, comment inert.
+#[test]
+fn rb_1581_syn141_trailing_comment_inert() {
+    let src = "case_0141_05 = 1\nprobe_3141 = 1 # comment\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0141_05"], 1, "{v}");
+    assert_eq!(v["probe_3141"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the comment-free twin agrees.
+    assert_eq!(eval_json("probe_3141 = 1\n")["probe_3141"], 1);
+}
+
+/// RB-1582 — Anchor variant: env lookup explicit with fallback (SYN-0141-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0012 (anchors and aliases;
+/// same shape as SYN-0131-06).
+/// Converges with RB-1492/1519: injected var wins when set, default when
+/// absent — uniquely-named vars with save/restore.
+#[test]
+fn rb_1582_syn141_env_fallback_explicit() {
+    let prior = std::env::var("ACTIVE_TEST_RB1582_V").ok();
+    std::env::set_var("ACTIVE_TEST_RB1582_V", "from-env");
+    let v = eval_json("case_0141_06 = 1\nprobe_3141 = env.ACTIVE_TEST_RB1582_V ?: 1\n");
+    assert_eq!(v["probe_3141"], "from-env", "{v}");
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_TEST_RB1582_V", val),
+        None => std::env::remove_var("ACTIVE_TEST_RB1582_V"),
+    }
+    // Positive control neighbour: the absent variable falls back to 1.
+    let prior2 = std::env::var("ACTIVE_TEST_RB1582_ABSENT_XYZ").ok();
+    std::env::remove_var("ACTIVE_TEST_RB1582_ABSENT_XYZ");
+    let v = eval_json("case_0141_06 = 1\nprobe_3141 = env.ACTIVE_TEST_RB1582_ABSENT_XYZ ?: 1\n");
+    assert_eq!(v["probe_3141"], 1, "{v}");
+    assert!(codes_of("probe_3141 = env.ACTIVE_TEST_RB1582_ABSENT_XYZ ?: 1\n").is_empty());
+    match prior2 {
+        Some(val) => std::env::set_var("ACTIVE_TEST_RB1582_ABSENT_XYZ", val),
+        None => std::env::remove_var("ACTIVE_TEST_RB1582_ABSENT_XYZ"),
+    }
+}
+
+/// RB-1583 — Anchor variant: secret taint propagates and redacts (SYN-0141-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0012 (anchors and aliases;
+/// same shape as SYN-0131-07).
+/// Converges with RB-1493/1520: `***SECRET***` export, marker absent
+/// from value, JSON, and diagnostics.
+#[test]
+fn rb_1583_syn141_secret_taint_redacts() {
+    let src = "case_0141_07 = 1\nprobe_3141 = secret(\"RAW-RB1583-SE141\")\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0141_07"], 1, "{v}");
+    assert_eq!(v["probe_3141"], "***SECRET***", "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains("RAW-RB1583-SE141"), "{json}");
+    assert!(
+        !format!("{diags:?}").contains("RAW-RB1583-SE141"),
+        "{diags:?}"
+    );
+    // Positive control: a plain string beside it exports exactly.
+    let v = eval_json("case_0141_07 = 1\nprobe_3141 = \"plain\"\n");
+    assert_eq!(v["probe_3141"], "plain", "{v}");
+}
+
+/// RB-1584 — Anchor variant: bare interpolation refused, references resolve (SYN-0141-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0012 (anchors and aliases;
+/// same shape as SYN-0131-08).
+/// Converges with RB-1494/1521: E005 Error at (3:14); name references and
+/// string interpolation resolve identically.
+#[test]
+fn rb_1584_syn141_bare_interp_refused() {
+    let src = "case_0141_08 = 1\nlet base = 1\nprobe_3141 = ${base}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (3, 14), "{span:?}");
+    // Positive control: a name reference resolves to the binding value.
+    let v = eval_json("let base = 1\nprobe_3141 = base\n");
+    assert_eq!(v["probe_3141"], 1, "{v}");
+    // Positive control: string interpolation resolves identically.
+    let v = eval_json("let base = 1\nprobe_3141 = \"${base}\"\n");
+    assert_eq!(v["probe_3141"], "1", "{v}");
+}
+
+/// RB-1585 — Anchor variant: unit suffix consumes the full token (SYN-0141-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0012 (anchors and aliases;
+/// same shape as SYN-0131-09).
+/// Converges with RB-1495/1522: `5s` normalizes to ms 5000, silently.
+#[test]
+fn rb_1585_syn141_unit_suffix_consumed() {
+    let src = "case_0141_09 = 1\nprobe_3141 = 5s\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0141_09"], 1, "{v}");
+    assert_eq!(v["probe_3141"]["ms"], 5000, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the bare scalar beside it stays a plain int.
+    let v = eval_json("probe_3141 = 5\n");
+    assert_eq!(v["probe_3141"], 5, "{v}");
+}
+
+/// RB-1586 — Block-scalar twin: brace-style baseline parses (SYN-0142-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0013 (block scalar Z69R;
+/// same shape as SYN-0133-01).
+/// Converges with RB-1505/1532/1541/1550/1568: `root = { child = 1 }`.
+#[test]
+fn rb_1586_syn142_brace_baseline_accepts() {
+    let src = "case_0142_01 = 1\nroot = { child = 1 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0142_01"], 1, "{v}");
+    assert_eq!(v["root"]["child"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the flat twin agrees at depth 1.
+    let v = eval_json("root = { child = 1 }\n");
+    assert_eq!(v["root"]["child"], 1, "{v}");
+}
+
+/// RB-1587 — Block-scalar twin: bodiless `=` never opens an indent block (SYN-0142-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0013 (block scalar Z69R;
+/// same shape as SYN-0133-02).
+/// Converges with RB-1506/1533/1542/1551/1569: E002 at (1:7); colon twin
+/// equals brace form.
+#[test]
+fn rb_1587_syn142_equals_indent_refused() {
+    let src = "root =\n  child = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 7), "{span:?}");
+    // Normative proof: colon-header indent equals the brace form, silently.
+    let brace = eval_json("root = { child = 1 }\n");
+    let indent = eval_json("root:\n  child = 1\n");
+    assert_eq!(brace, indent, "{brace} vs {indent}");
+    assert!(codes_of("root:\n  child = 1\n").is_empty());
+}
+
+/// RB-1588 — Block-scalar twin: nested braces close at matching levels (SYN-0142-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0013 (block scalar Z69R;
+/// same shape as SYN-0133-03).
+/// Converges with RB-1507/1534/1543/1552/1570: nested braces silent.
+#[test]
+fn rb_1588_syn142_nested_brace_accepts() {
+    let src = "case_0142_03 = 1\nroot = { child = { grandchild = 1 } }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0142_03"], 1, "{v}");
+    assert_eq!(v["root"]["child"]["grandchild"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the two-level twin agrees one level down.
+    let v = eval_json("root = { child = 1 }\n");
+    assert_eq!(v["root"]["child"], 1, "{v}");
+}

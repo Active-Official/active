@@ -43792,3 +43792,252 @@ fn rb_1948_syn182_expansion_gated_counted() {
     let err = Engine::new().evaluate(&module).expect_err("T001");
     assert_eq!(err.code(), "T001", "{err}");
 }
+
+/// RB-1949 — Budget twin: cycle beats budget (SYN-0182-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0028 (cycle vs budget).
+/// The bare chain fails E005 at (2:9), (3:9), AND (4:9) — three gates —
+/// while the quoted x→y→x twin fails S001: cycle detection terminates
+/// promptly by graph analysis, before ANY expansion budget could matter.
+/// CONVERGENCE: cycle-first verdict, count-pinned.
+#[test]
+fn rb_1949_syn182_cycle_before_budget() {
+    let src = "case_0182_06 = 1\nlet x = ${y}\nlet y = ${x}\nvalue = ${x}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e005: Vec<_> = diags.iter().filter(|d| d.code == "E005").collect();
+    assert_eq!(e005.len(), 3, "{diags:?}");
+    let spans: Vec<_> = e005
+        .iter()
+        .map(|d| {
+            let s = d.span.clone().expect("span");
+            (s.line, s.column)
+        })
+        .collect();
+    assert!(spans.contains(&(2, 9)), "{spans:?}");
+    assert!(spans.contains(&(3, 9)), "{spans:?}");
+    assert!(spans.contains(&(4, 9)), "{spans:?}");
+    // Positive control: the quoted twin fails S001 promptly, not a hang.
+    let src2 = "case_0182_06 = 1\nlet x = \"${y}\"\nlet y = \"${x}\"\nvalue = \"${x}\"\n";
+    let module = parse(src2, "research").expect("must parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail S001");
+    assert_eq!(err.code(), "S001", "{err}");
+}
+
+/// RB-1950 — Budget twin: comment-only line weightless (SYN-0182-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0028 (budget identity).
+/// `case_0182_07 = 1` beside `# step budget = 1` evaluates silently to 1:
+/// minimal input under every budget — comments consume no evaluation
+/// steps, trip no limit, need no identification.
+/// CONVERGENCE: weightless-comment verdict.
+#[test]
+fn rb_1950_syn182_comment_weightless() {
+    let src = "case_0182_07 = 1\n# step budget = 1\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0182_07"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a comment-only line leaves values alone.
+    let v = eval_json("# only comment\ncase_0182_07 = 2\n");
+    assert_eq!(v["case_0182_07"], 2, "{v}");
+    assert!(codes_of("# only comment\ncase_0182_07 = 2\n").is_empty());
+}
+
+/// RB-1951 — Budget twin: schema adds no recursion (SYN-0182-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0028 (schema envelope).
+/// The naive `@schema` transliteration is rejected — E014 at (2:2) —
+/// while the real `schema = { value = Int }` with value=3 validates
+/// silently: schema work joins the same single evaluation pass, no extra
+/// recursion, no envelope to charge.
+/// CONVERGENCE: single-pass verdict.
+#[test]
+fn rb_1951_syn182_schema_single_pass() {
+    let src = "case_0182_08 = 1\n@schema value: integer\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e = diags.iter().find(|d| d.code == "E014").expect("E014");
+    let span = e.span.clone().expect("E014 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the real schema validates in one silent pass.
+    let src2 = "schema = { value = Int }\nvalue = 3\n";
+    let v = eval_json(src2);
+    assert_eq!(v["value"], 3, "{v}");
+    assert!(codes_of(src2).is_empty());
+    // Positive control: a second conforming value agrees silently.
+    assert_eq!(
+        eval_json("schema = { value = Int }\nvalue = 7\n")["value"],
+        7
+    );
+}
+
+/// RB-1952 — Budget twin: 100KB env accepted (SYN-0182-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0028 (env budgeting).
+/// Absent yields "" — and a 102400-char env value arrives WHOLE and
+/// silent: no env byte cap binds through 100KB. Recorded as an open SPEC
+/// QUESTION (like the scalar cap): a cap would need design authority.
+/// Parallel-safe: uniquely-named var, priors restored.
+/// CONVERGENCE: accept verdict; cap question open, evidence extended.
+#[test]
+fn rb_1952_syn182_env_100k_accepts() {
+    let prior = std::env::var("ACTIVE_RB1952_ENV").ok();
+    std::env::remove_var("ACTIVE_RB1952_ENV");
+    let src = "case_0182_09 = env.ACTIVE_RB1952_ENV ?: \"\"\n";
+    assert_eq!(eval_json(src)["case_0182_09"], "");
+    assert!(codes_of(src).is_empty());
+    let big = "x".repeat(100 * 1024);
+    std::env::set_var("ACTIVE_RB1952_ENV", &big);
+    let v = eval_json(src);
+    assert_eq!(
+        v["case_0182_09"].as_str().map(|s| s.len()),
+        Some(100 * 1024)
+    );
+    assert!(codes_of(src).is_empty());
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_RB1952_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1952_ENV"),
+    }
+    // Positive control: a small value arrives identically.
+    let prior2 = std::env::var("ACTIVE_RB1952_ENV").ok();
+    std::env::set_var("ACTIVE_RB1952_ENV", "sm");
+    assert_eq!(eval_json(src)["case_0182_09"], "sm");
+    match prior2 {
+        Some(val) => std::env::set_var("ACTIVE_RB1952_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1952_ENV"),
+    }
+}
+
+/// RB-1953 — Round-trip twin: brace fixed point (SYN-0183-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0029 (round-trip stability).
+/// `{ a = 1, b = "x" }` formats, reparses, and evaluates structurally
+/// EQUAL with byte-stable print: parse→print→parse is a fixed point.
+/// Structural assertions only; no shipped text hardcoded.
+/// CONVERGENCE: twin verdict to SYN-0165-01/RB-1792.
+#[test]
+fn rb_1953_syn183_brace_round_trip_stable() {
+    use active_core::fmt::format;
+    use active_core::Style;
+    let src = "case_0183_01 = { a = 1, b = \"x\" }\n";
+    let module = parse(src, "research").expect("must parse");
+    let out = format(&module, Style::Indent);
+    let module2 =
+        parse(&out, "research").unwrap_or_else(|d| panic!("reparse failed: {d:?}\n{out}"));
+    let (first, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    let (second, _) = Engine::new().evaluate(&module2).expect("must evaluate");
+    assert_eq!(
+        active_core::convert::value_to_pretty_json(&first),
+        active_core::convert::value_to_pretty_json(&second)
+    );
+    assert_eq!(format(&module2, Style::Indent), out);
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&first)).expect("json");
+    assert_eq!(v["case_0183_01"]["a"], 1, "{v}");
+    assert_eq!(v["case_0183_01"]["b"], "x", "{v}");
+}
+
+/// RB-1954 — Dialect twin: block-form span-indexed (SYN-0183-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0029 (dialect semantics).
+/// `value:`-header indent evaluates identically to the brace form — while
+/// the `value =`-with-block spelling fails E002 at (1:8): dialects share
+/// semantics through PROPER headers, never through `=`.
+/// CONVERGENCE: twin verdict to SYN-0165-02/RB-1791, span angle.
+#[test]
+fn rb_1954_syn183_dialects_share_ast() {
+    let indent = "value:\n  a = 1\n  b = \"x\"\n";
+    let brace = "value = { a = 1, b = \"x\" }\n";
+    let vi = eval_json(indent);
+    let vb = eval_json(brace);
+    assert_eq!(vi, vb, "{vi} vs {vb}");
+    assert_eq!(vi["value"]["a"], 1, "{vi}");
+    assert_eq!(vi["value"]["b"], "x", "{vi}");
+    assert!(codes_of(indent).is_empty());
+    // The `=`-with-block spelling is rejected at (1:8).
+    let diags = parse("value =\n  a = 1\n  b = \"x\"\n", "research").expect_err("E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 8), "{span:?}");
+}
+
+/// RB-1955 — Comment twin: hash typed string (SYN-0183-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0029 (quote-awareness).
+/// `"# not comment"` stays a STRING beside int 1: quote-awareness is
+/// type-deep, silent.
+/// CONVERGENCE: twin verdict to SYN-0165-03/RB-1793.
+#[test]
+fn rb_1955_syn183_hash_in_string_is_data() {
+    let src = "case_0183_03 = { text = \"# not comment\", n = 1 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0183_03"]["text"], "# not comment", "{v}");
+    assert!(v["case_0183_03"]["text"].is_string());
+    assert_eq!(v["case_0183_03"]["n"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a real trailing comment still stays out.
+    assert_eq!(eval_json("case_0183_03 = 1 # c\n")["case_0183_03"], 1);
+}
+
+/// RB-1956 — Comment twin: slashes second string (SYN-0183-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0029 (comment corruption).
+/// `"// not comment"` stays byte-exact beside int 1 — with a second
+/// slash-pair string equally exact: strings are opaque to comment rules.
+/// CONVERGENCE: twin verdict to SYN-0165-04/RB-1794.
+#[test]
+fn rb_1956_syn183_slashes_in_string_are_data() {
+    let src = "case_0183_04 = { text = \"// not comment\", n = 1 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0183_04"]["text"], "// not comment", "{v}");
+    assert_eq!(v["case_0183_04"]["n"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a second slash-pair string is equally exact.
+    let v = eval_json("case_0183_04 = \"x//y\"\n");
+    assert_eq!(v["case_0183_04"], "x//y", "{v}");
+}
+
+/// RB-1957 — Round-trip twin: comment value post-print (SYN-0183-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0029 (comment round-trip).
+/// Trailing-comment tables round-trip value-equal AND print-stable — with
+/// the post-print value asserted field-level: trivia moves, semantics
+/// never do.
+/// CONVERGENCE: twin verdict to SYN-0165-05/RB-1795.
+#[test]
+fn rb_1957_syn183_comment_round_trip_value_equal() {
+    use active_core::fmt::format;
+    use active_core::Style;
+    let src = "case_0183_05 = { a = 1 } # trailing comment\n";
+    let module = parse(src, "research").expect("must parse");
+    let out = format(&module, Style::Indent);
+    let module2 =
+        parse(&out, "research").unwrap_or_else(|d| panic!("reparse failed: {d:?}\n{out}"));
+    let (first, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    let (second, _) = Engine::new().evaluate(&module2).expect("must evaluate");
+    assert_eq!(
+        active_core::convert::value_to_pretty_json(&first),
+        active_core::convert::value_to_pretty_json(&second)
+    );
+    assert_eq!(format(&module2, Style::Indent), out);
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&second)).expect("json");
+    assert_eq!(v["case_0183_05"]["a"], 1, "{v}");
+}
+
+/// RB-1958 — Round-trip twin: order fields post-print (SYN-0183-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0029 (iteration order).
+/// `{ z = 1, a = 2 }` prints byte-identically every pass and reparses
+/// value-equal — with post-print fields asserted: determinism structural,
+/// order preserved.
+/// CONVERGENCE: twin verdict to SYN-0165-06/RB-1796.
+#[test]
+fn rb_1958_syn183_key_order_deterministic() {
+    use active_core::fmt::format;
+    use active_core::Style;
+    let src = "case_0183_06 = { z = 1, a = 2 }\n";
+    let module = parse(src, "research").expect("must parse");
+    let out = format(&module, Style::Indent);
+    let module2 =
+        parse(&out, "research").unwrap_or_else(|d| panic!("reparse failed: {d:?}\n{out}"));
+    assert_eq!(format(&module2, Style::Indent), out);
+    let (first, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    let (second, _) = Engine::new().evaluate(&module2).expect("must evaluate");
+    assert_eq!(
+        active_core::convert::value_to_pretty_json(&first),
+        active_core::convert::value_to_pretty_json(&second)
+    );
+    let v: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&second)).expect("json");
+    assert_eq!(v["case_0183_06"]["z"], 1, "{v}");
+    assert_eq!(v["case_0183_06"]["a"], 2, "{v}");
+}

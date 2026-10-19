@@ -1,0 +1,9 @@
+a = 180deg
+b = 1rad
+c = 60rpm
+d = 1km
+e = 500meter
+f = 1kg
+g = 500g
+h = 90deg + 90deg
+i = 1km + 500meter

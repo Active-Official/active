@@ -301,6 +301,10 @@ evaluation:
 | Electrical | `Quantity(f64, Volts/Amperes/Watts)` — canonical SI | `12V` / `2A` / `60W` |
 | Energy | `Quantity(f64, Joules)` — canonical joules | `1kWh` → `Quantity(3600000.0, Joules)` |
 | Force | `Quantity(f64, Newtons)` — canonical newtons | `9.8N` |
+| Angle | `Quantity(f64, Radians)` — canonical radians | `180deg` → `Quantity(π, Radians)` |
+| Rotation | `Quantity(f64, Rpm)` — retained revolutions/minute | `60rpm` |
+| Length | `Quantity(f64, Meters)` — canonical meters, long-form only | `1km` → `Quantity(1000.0, Meters)` |
+| Mass | `Quantity(f64, Kilograms)` — canonical kilograms | `500g` → `Quantity(0.5, Kilograms)` |
 
 Time normalizations: ns/10⁶→ms, µs/10³→ms, s×10³, m×60000, h×3600000,
 d×86400000, week×604800000 (exact, no calendar dependence). `sec`/`min`
@@ -385,6 +389,19 @@ suffix; `Pa bar psi` collision-free); export = JSON canonical-key objects,
 TOML-ish canonical respell, interpolation same; schema kinds
 `quantity:Pa`, `quantity:V`, `quantity:A`, `quantity:W`, `quantity:J`,
 `quantity:N`.
+
+Angles (`deg rad`) canonicalize to f64 radians (`180deg` → π); rotation
+(`rpm`) is a RATE dimension, retained as revolutions/minute — `60rpm + 1deg`
+is a TypeError, rates and angles never mix. Length (`meter km`) canonicalizes
+to f64 meters; mass (`kg g`) to f64 kilograms. `meter` is long-form ONLY:
+`m` stays minutes forever (frozen oracle, refusal catalog R-J3). Full
+arithmetic within each dimension; cross-dimension TypeErrors. Literal
+magnitudes clamp at zero. Admission record: corpus = robotics joints, CNC
+dimensions, shipping weights, motor speeds; collision = `deg rad rpm meter
+km kg g` all clear of existing suffixes and SI conflicts (`m` untouched);
+export = JSON canonical-key objects, TOML-ish canonical respell,
+interpolation same; schema kinds `quantity:rad`, `quantity:rpm`,
+`quantity:meter`, `quantity:kg`.
 
 ### 4.2 Serialization of quantities
 

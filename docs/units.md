@@ -23,6 +23,10 @@ exhausted; new dimensions use long-form-first plus collision-free shorts.
 | `V A W` | electrical | `Quantity` f64 V/A/W | full within dimension (V+A refuses) | `{"V"/"A"/"W": N}` |
 | `J kWh` | energy | `Quantity` f64 J | full within dimension | `{"J": N}` / `NJ` |
 | `N` | force | `Quantity` f64 N | full within dimension | `{"N": N}` / `NN` |
+| `deg rad` | angle | `Quantity` f64 rad | full within dimension | `{"rad": N}` / `Nrad` |
+| `rpm` | rotation rate | `Quantity` f64 rpm (retained) | full within dimension | `{"rpm": N}` / `Nrpm` |
+| `meter km` | length (long-form only) | `Quantity` f64 m | full within dimension | `{"meter": N}` / `Nmeter` |
+| `kg g` | mass | `Quantity` f64 kg | full within dimension | `{"kg": N}` / `Nkg` |
 
 ## Rejected near-misses (parse E002/E005, never silent)
 

@@ -162,6 +162,8 @@ and `%` (percent is the only symbolic suffix; case-SENSITIVE always):
 | `FLOPS TFLOPS PFLOPS` | floating-point ops per second (compute accounting) | | | |
 | `Pa bar psi` | pressure (pascals canonical) | | `V A W` | electrical (volts/amps/watts canonical) |
 | `J kWh` | energy (joules canonical) | | `N` | force (newtons canonical) |
+| `deg rad` | angle (radians canonical) | | `rpm` | rotation rate (retained) |
+| `meter km` | length (meters canonical, long-form only) | | `kg g` | mass (kilograms canonical) |
 
 Any other suffix rolls the lexer back (the characters are re-lexed as
 separate tokens). **[impl note]** The lexer's rollback means `5x` lexes as

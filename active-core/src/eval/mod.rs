@@ -1882,6 +1882,20 @@ fn normalize_quantity(v: &Value, unit: &Unit) -> Result<Value, String> {
     if let Some((factor, canonical)) = si_factor {
         return Ok(Value::Quantity((num * factor).max(0.0), canonical));
     }
+    // Angles (deg→rad), rotation (retained rpm), length (m), mass (kg).
+    let mech_factor = match unit {
+        Unit::Degrees => Some((std::f64::consts::PI / 180.0, Unit::Radians)),
+        Unit::Radians => Some((1.0, Unit::Radians)),
+        Unit::Rpm => Some((1.0, Unit::Rpm)),
+        Unit::Meters => Some((1.0, Unit::Meters)),
+        Unit::Kilometers => Some((1_000.0, Unit::Meters)),
+        Unit::Kilograms => Some((1.0, Unit::Kilograms)),
+        Unit::Grams => Some((0.001, Unit::Kilograms)),
+        _ => None,
+    };
+    if let Some((factor, canonical)) = mech_factor {
+        return Ok(Value::Quantity((num * factor).max(0.0), canonical));
+    }
     Ok(Value::Quantity(num, unit.clone()))
 }
 

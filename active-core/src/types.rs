@@ -68,6 +68,15 @@ pub enum Unit {
     Joules,
     KilowattHours,
     Newtons,
+    // Angle (canonical radians), rotation rate (retained rpm),
+    // length (canonical meters, long-form only), mass (canonical kg).
+    Degrees,
+    Radians,
+    Rpm,
+    Meters,
+    Kilometers,
+    Kilograms,
+    Grams,
     // Custom
     Custom(String),
 }
@@ -135,6 +144,13 @@ impl Unit {
             "J" => Some(Unit::Joules),
             "kWh" => Some(Unit::KilowattHours),
             "N" => Some(Unit::Newtons),
+            "deg" => Some(Unit::Degrees),
+            "rad" => Some(Unit::Radians),
+            "rpm" => Some(Unit::Rpm),
+            "meter" => Some(Unit::Meters),
+            "km" => Some(Unit::Kilometers),
+            "kg" => Some(Unit::Kilograms),
+            "g" => Some(Unit::Grams),
             "req/m" | "req_m" => Some(Unit::RequestsPerMinute),
             "req/h" | "req_h" => Some(Unit::RequestsPerHour),
 
@@ -196,6 +212,12 @@ impl Unit {
             Unit::Watts => "W".into(),
             Unit::Joules | Unit::KilowattHours => "J".into(),
             Unit::Newtons => "N".into(),
+            // Angles canonicalize to `rad`; rpm is its own retained dimension.
+            Unit::Degrees | Unit::Radians => "rad".into(),
+            Unit::Rpm => "rpm".into(),
+            // Length canonicalizes to `meter` (never `m`); mass to `kg`.
+            Unit::Meters | Unit::Kilometers => "meter".into(),
+            Unit::Kilograms | Unit::Grams => "kg".into(),
             Unit::Custom(s) => s.clone(),
         }
     }

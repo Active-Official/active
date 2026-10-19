@@ -104,6 +104,8 @@ fn publish_metadata_is_complete() {
         ("active-fmt", "active-fmt"),
         ("active-lsp", "active-lsp"),
         ("active-infinity", "active-infinity"),
+        ("active-ffi", "active-ffi"),
+        ("active-wasm", "active-wasm"),
     ];
     for (dir, package) in expectations {
         let manifest = read_toml(dir);

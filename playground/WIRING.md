@@ -27,3 +27,12 @@ window.ActiveAPI = {
 MVP links carry raw encoded source (`#s=...`) and stay under ~2KB. The WASM
 build adds lz-string-class compression; past URL length limits the page offers
 download plus file-drop instead of a link. No backend, no tracking.
+
+## Wall-clock on WASM (G-003 delta)
+
+`Instant` aborts on wasm32-unknown-unknown, so in-module wall-clock budgets
+degrade to disabled there (`Budget::wall_supported()` is false; count,
+depth, array, key, and value-size budgets still bound execution, and regex
+matching is linear-time). Hosts must not promise in-module wall-clock
+enforcement: run evaluation in a Worker and terminate on timeout. Never
+`await` an unbounded eval on the UI thread.

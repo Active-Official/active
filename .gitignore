@@ -59,3 +59,8 @@ fuzz/artifacts/
 
 # Agent goal prompts (private working prompts, never committed)
 goal-prompts/
+
+# Generated wasm-bindgen glue (regenerated in CI and releases via
+# `wasm-bindgen`; never committed, always rebuilt from the .wasm)
+active-wasm/pkg-nodejs/
+active-wasm/pkg-web/

@@ -117,15 +117,38 @@ replaces them, because continuing would defeat the protection.
   never hunches: if the 10k-node benchmark regresses, the limits
   move only with a recorded rationale.
 
+### Named presets (G-010)
+
+Hosts must never invent unsafe limits: start from one of these rows
+(multipliers on the shipped profile) and tune with measurements.
+
+| Preset | Nodes | Depth | Array / Keys | Wall ms | Value / Total | Use |
+|---|---|---|---|---|---|---|
+| `ci` | 1x | 1x | 1x / 1x | 1x | 1x / 1x | The reference: CI and serverless loops |
+| `agent` | 0.5x | 1x | 0.5x / 0.5x | 30000 | 0.5x / 0.5x | Many workers, fail fast on bad generations |
+| `interactive` | 2x | 1x | 2x / 2x | 5000 | 2x / 2x | Human present, bigger local files |
+
+Depth never scales (shape protection is not negotiable); wall-clock on
+`agent` is generous because workers share machines, while `interactive`
+stays short because a human is waiting. wasm32 hosts use these rows with
+the §6 wall-clock delta in force.
+
 ## 6. What budgets do NOT do
 
 - They do not cap scalar or environment string length separately:
   strings charge bytes against `max_value_size` / `max_total_value_size`
-  (§2b), so length is governed proportionally and linearly — a separate
+  (§2b), so length is governed proportionally and linearly, and a separate
   length knob would duplicate that dimension. 200KB–1MB scalars and 100KB
   environment values are ordinary within-budget inputs (decision memo
   2026-10-19: no amplification mechanism exists for strings, and the
   environment operator is a trusted actor per spec/threat-model.md §2).
+- Platform delta (wasm32-unknown-unknown): `Instant` aborts on that target,
+  so `max_wall_ms` degrades to disabled there (`Budget::wall_supported()`
+  returns false). Termination still holds without it: count, depth, array,
+  key, and value-size budgets bound the walk, and the `regex` crate matches
+  in linear time, so no wall-clock backstop is needed for termination.
+  Hosts on that target enforce their own timeouts (Worker terminate
+  pattern) and must not promise in-module wall-clock enforcement.
 - They do not replace the parser caps (different half, different
   codes, recover-vs-abort semantics).
 - They do not make validation cheaper than linear (validation walks

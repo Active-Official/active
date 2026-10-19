@@ -8,6 +8,7 @@ members = [
     "active-lsp",
     "active-infinity",
     "active-ffi",
+    "active-wasm",
 ]
 
 [workspace.package]

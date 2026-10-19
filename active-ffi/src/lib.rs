@@ -315,10 +315,11 @@ pub struct ActiveBudget {
 }
 
 fn hermetic_engine() -> Engine {
-    // Empty environment snapshot: the host process ambient must never leak
-    // across the ABI (docs/FFI.md section 7). Host env arrives only through
-    // the F-016 lookup callback.
-    Engine::new().with_env(std::collections::HashMap::new())
+    // Hermetic construction (never snapshot-then-discard): on platforms
+    // without a process environment the ambient snapshot aborts, and the
+    // host ambient must never leak across the ABI regardless. Host env
+    // arrives only through the F-016 lookup callback.
+    Engine::hermetic()
 }
 
 fn apply_budget(engine: &mut Engine, budget: *const ActiveBudget) -> Result<(), i32> {

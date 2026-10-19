@@ -24,6 +24,18 @@ Everything runs locally in WebAssembly; nothing leaves your browser.</p>
 <div id="value">(engine loading)</div>
 <h2>Diagnostics</h2>
 <div id="diags">(engine loading)</div>
+<script src="../active-wasm/js/active-shim.js"></script>
+<script>
+window.addEventListener("DOMContentLoaded", function () {
+  if (!window.ActiveShim) return;
+  window.ActiveShim.load("../target/wasm32-unknown-unknown/release/active_wasm.wasm").then(function (api) {
+    window.ActiveAPI = api;
+    document.getElementById("value").textContent = "(engine ready: pick an example, then Evaluate)";
+  }).catch(function (e) {
+    document.getElementById("value").textContent = "Engine failed to load: " + e.message;
+  });
+});
+</script>
 <script src="playground.js"></script>
 </body>
 </html>

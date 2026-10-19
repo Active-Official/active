@@ -1,0 +1,28 @@
+[package]
+name = "active-wasm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Active WebAssembly embedding: the same evaluator for browsers, Node, Deno, Bun, Workers, and wazero hosts."
+documentation = "https://docs.rs/active-wasm"
+readme = "README.md"
+keywords = ["configuration", "config", "wasm", "embedding"]
+categories = ["config", "development-tools", "wasm"]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+active-core = { workspace = true }
+serde_json = { workspace = true }
+
+# WASM randomness (G-003 decision): no JS-bindgen entropy backend. The
+# custom getrandom implementation below fails loud, and the core degrades
+# gracefully (memo fallback, honest keygen error). Key generation belongs
+# on CLI/hosts, never in the browser module. Zero JS imports as a result.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["custom"] }

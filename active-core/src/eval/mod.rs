@@ -149,11 +149,33 @@ impl Budget {
     /// budget is disabled (`max_wall_ms == 0`). Saturating: absurd
     /// configured durations degrade to no deadline instead of
     /// panicking on `Instant` overflow.
+    ///
+    /// Platform delta (G-003): `Instant` aborts on
+    /// wasm32-unknown-unknown, so wall-clock degrades to disabled there
+    /// (this function returns None). Count, depth, array, key, and
+    /// value-size budgets still bound execution, and the `regex` crate
+    /// guarantees linear-time matching, so no wall-clock backstop is
+    /// needed for termination on that target; hosts enforce their own
+    /// timeouts (Worker terminate pattern). See `wall_supported`.
     pub fn wall_deadline(&self) -> Option<Instant> {
-        if self.max_wall_ms == 0 {
+        if self.max_wall_ms == 0 || !Self::wall_supported() {
             None
         } else {
             Instant::now().checked_add(std::time::Duration::from_millis(self.max_wall_ms))
+        }
+    }
+
+    /// False on targets without a monotonic clock (wasm32-unknown-unknown):
+    /// `wall_deadline` degrades to None there. Hosts must check this when
+    /// they promise wall-clock enforcement to their own callers.
+    pub fn wall_supported() -> bool {
+        #[cfg(target_arch = "wasm32")]
+        {
+            false
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            true
         }
     }
 }
@@ -852,19 +874,30 @@ fn fingerprint_one(
 
 impl Engine {
     pub fn new() -> Self {
+        let mut engine = Self::hermetic();
+        // Undecodable entries cannot enter the snapshot (keys
+        // and values must be Unicode to be referenceable);
+        // skipping them is deterministic per machine, unlike a
+        // `vars()` panic on exotic ambients.
+        engine.env = std::env::vars_os()
+            .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
+            .collect();
+        engine
+    }
+
+    /// Hermetic engine: identical to `new()` except the environment starts
+    /// empty instead of snapshotting the process ambient. Embeddings (FFI,
+    /// WASM) use this so host ambient can never leak across the boundary;
+    /// host values arrive only through explicit maps or lookup callbacks.
+    /// Required on platforms without a process environment
+    /// (wasm32-unknown-unknown aborts on ambient access): construct here,
+    /// never snapshot-then-discard.
+    pub fn hermetic() -> Self {
         Self {
             resilient: true,
             profile_override: None,
             budget: Budget::default(),
-            // Undecodable entries cannot enter the snapshot (keys
-            // and values must be Unicode to be referenceable);
-            // skipping them is deterministic per machine, unlike a
-            // `vars()` panic on exotic ambients.
-            env: std::env::vars_os()
-                .filter_map(|(key, value)| {
-                    Some((key.into_string().ok()?, value.into_string().ok()?))
-                })
-                .collect(),
+            env: std::collections::HashMap::new(),
             env_fallback: None,
         }
     }

@@ -38142,3 +38142,240 @@ fn rb_1728_syn158_redefinition_announced() {
     let codes = codes_of("x = {a = 1, a = 2}\n");
     assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
 }
+
+/// RB-1729 — Patch twin: index path type-checks first, ordering angle (SYN-0158-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0002 (array-of-tables ordering).
+/// The naive index-patch transliteration is rejected — E019 Error at
+/// (2,2): `(` is required, so paths type-check before any value is
+/// touched and an empty array never sprouts an element implicitly.
+/// CONVERGENCE: identical input to SYN-0157-02/RB-1720 (twin of SYN-0003-02/RB-338).
+#[test]
+fn rb_1729_syn158_patch_typechecks_first() {
+    let src = "items = []\n@patch items[0] { name = \"x\" }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the array alone evaluates; nothing sprouted.
+    assert_eq!(eval_json("items = []\n")["items"], serde_json::json!([]));
+}
+
+/// RB-1730 — Patch twin: array identity is explicit, ordering angle (SYN-0158-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0002 (element vs key identity).
+/// The naive index-patch transliteration is rejected — E019 Error at
+/// (2,2): array elements are not addressable that way, so element identity
+/// can never be confused with a map key.
+/// CONVERGENCE: identical input to SYN-0157-03/RB-1721 (twin of SYN-0003-03/RB-339).
+#[test]
+fn rb_1730_syn158_array_identity_explicit() {
+    let src = "items = [{ name = \"apple\" }]\n@patch items[0] { color = \"red\" }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the source array evaluates untouched.
+    let v = eval_json("items = [{ name = \"apple\" }]\n");
+    assert_eq!(v["items"][0]["name"], "apple", "{v}");
+}
+
+/// RB-1731 — Patch twin: map/scalar conflict impossible, ordering angle (SYN-0158-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0002 (path-kind conflict).
+/// Dotted assignment has no grammar: E002 Error at (2,1) — a path can
+/// never be map and scalar at once, so the ordering question (which write
+/// wins) cannot even arise.
+/// CONVERGENCE: identical input to SYN-0157-04/RB-1722 (twin of SYN-0003-04/RB-340).
+#[test]
+fn rb_1731_syn158_path_conflict_error() {
+    let src = "fruit = { apple = { color = \"red\" } }\nfruit.apple = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: the nested table alone evaluates.
+    let v = eval_json("fruit = { apple = { color = \"red\" } }\n");
+    assert_eq!(v["fruit"]["apple"]["color"], "red", "{v}");
+}
+
+/// RB-1732 — Patch twin: update distinct from duplicate, ordering angle (SYN-0158-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0002 (explicit update op).
+/// The naive update transliteration is rejected — E019 Error at (2,2) —
+/// while the explicit call updates to exactly 2 with zero diagnostics,
+/// deterministically across runs: an update is an operation, a duplicate
+/// is an announcement (W011), never the same thing.
+/// CONVERGENCE: identical input to SYN-0157-05/RB-1723 (twin of SYN-0003-05/RB-341).
+#[test]
+fn rb_1732_syn158_update_distinct_deterministic() {
+    let src = "fruit = { apple = 1 }\n@patch fruit { apple = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    let good = "fruit = { apple = 1 }\n@patch(\"fruit.apple\", 2)\n";
+    assert_eq!(eval_json(good)["fruit"]["apple"], 2);
+    assert_eq!(eval_json(good)["fruit"]["apple"], 2);
+    assert!(codes_of(good).is_empty());
+}
+
+/// RB-1733 — Patch twin: removal is structural, ordering angle (SYN-0158-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0002 (removal semantics).
+/// The naive removal transliteration is rejected — E019 Error at (2,2) —
+/// while the explicit call removes structurally and stays removed across
+/// runs: key absent after, no resurrection.
+/// CONVERGENCE: identical input to SYN-0157-06/RB-1724 (twin of SYN-0003-06/RB-342).
+#[test]
+fn rb_1733_syn158_removal_structural_stable() {
+    let src = "fruit = { apple = 1 }\n@remove fruit.apple\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    let good = "fruit = { apple = 1, pear = 2 }\n@remove(\"fruit.apple\")\n";
+    let v = eval_json(good);
+    assert!(v["fruit"].get("apple").is_none(), "{v}");
+    assert_eq!(v["fruit"]["pear"], 2, "{v}");
+    assert_eq!(eval_json(good)["fruit"]["pear"], 2);
+}
+
+/// RB-1734 — Patch twin: rename preserves node, ordering angle (SYN-0158-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0002 (rename identity).
+/// The naive rename transliteration is rejected — E019 Error at (2,2) —
+/// while the explicit call renames with value intact across runs: pear=1,
+/// apple absent, never a copy, never a loss.
+/// CONVERGENCE: identical input to SYN-0157-07/RB-1725 (twin of SYN-0003-07/RB-343).
+#[test]
+fn rb_1734_syn158_rename_preserves_stable() {
+    let src = "fruit = { apple = 1 }\n@rename fruit.apple to pear\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    let good = "fruit = { apple = 1 }\n@rename(\"fruit.apple\", \"pear\")\n";
+    assert_eq!(eval_json(good)["fruit"]["pear"], 1);
+    assert!(eval_json(good)["fruit"].get("apple").is_none());
+}
+
+/// RB-1735 — Patch twin: ordered plan is stable, second angle (SYN-0158-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0002 (ordered patch plan).
+/// The naive double-rename is rejected — E019 Error at (2,2) — while two
+/// explicit patches apply in source order with the last write winning (3),
+/// identically on every run: order is the plan.
+/// CONVERGENCE: identical input to SYN-0157-08/RB-1726 (twin of SYN-0003-08/RB-344).
+#[test]
+fn rb_1735_syn158_ordered_plan_stable() {
+    let src = "fruit = { apple = 1 }\n@rename fruit.apple to pear\n@rename fruit.pear to apple\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    let src = "fruit = { apple = 1 }\n@patch(\"fruit.apple\", 2)\n@patch(\"fruit.apple\", 3)\n";
+    assert_eq!(eval_json(src)["fruit"]["apple"], 3);
+    assert_eq!(eval_json(src)["fruit"]["apple"], 3);
+}
+
+/// RB-1736 — Patch twin: nested replace contained, ordering angle (SYN-0158-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0002 (nested containment).
+/// The naive nested-patch transliteration is rejected — E019 Error at
+/// (2,2) — while the explicit nested-path call changes only the leaf
+/// across runs: color flips, size and parent intact.
+/// CONVERGENCE: identical input to SYN-0157-09/RB-1727 (twin of SYN-0003-09/RB-345).
+#[test]
+fn rb_1736_syn158_nested_contained_stable() {
+    let src = "fruit = { apple = { color = \"red\" } }\n@patch fruit.apple { color = \"green\" }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E019 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    let good =
+        "fruit = { apple = { color = \"red\", size = 1 } }\n@patch(\"fruit.apple.color\", \"green\")\n";
+    let v = eval_json(good);
+    assert_eq!(v["fruit"]["apple"]["color"], "green", "{v}");
+    assert_eq!(v["fruit"]["apple"]["size"], 1, "{v}");
+    assert_eq!(eval_json(good)["fruit"]["apple"]["color"], "green");
+}
+
+/// RB-1737 — Number twin: leading zero stays decimal (SYN-0159-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0005-adjacent number edges.
+/// REFUSAL (spec-gated): leading zeros are plain decimals (RB-104;
+/// SRC-TOML-0073/RB-222; SRC-JSON-0016/RB-260) — `case_0159_01 = 01` is
+/// exactly int 1, loudly not octal, loudly not rejected, zero diagnostics.
+/// CONVERGENCE: identical verdict to SYN-0073/RB-222 lineage.
+#[test]
+fn rb_1737_syn159_leading_zero_decimal() {
+    let src = "case_0159_01 = 01\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0159_01"], 1, "{v}");
+    assert!(v["case_0159_01"].is_i64());
+    assert!(codes_of(src).is_empty());
+    // Positive control: multi-zero neighbour agrees on the policy.
+    let v = eval_json("case_0159_01 = 007\n");
+    assert_eq!(v["case_0159_01"], 7, "{v}");
+    assert!(v["case_0159_01"].is_i64());
+}
+
+/// RB-1738 — Number twin: trailing dot keeps int (SYN-0159-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0005-adjacent number edges.
+/// REFUSAL (spec-gated): `case_0159_02 = 1.` is not an invalid number —
+/// the trailing dot falls under the int-keeping quirk (RB-207;
+/// SRC-SPEC-0005/RB-308 pins `01.` as int 1): exactly int 1, no host
+/// fallback, zero diagnostics.
+/// CONVERGENCE: identical verdict to SYN-SPEC-0005/RB-308 lineage.
+#[test]
+fn rb_1738_syn159_trailing_dot_keeps_int() {
+    let src = "case_0159_02 = 1.\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0159_02"], 1, "{v}");
+    assert!(v["case_0159_02"].is_i64());
+    assert!(codes_of(src).is_empty());
+    // Positive control: a real fraction stays float beside it.
+    let v = eval_json("case_0159_02 = 1.5\n");
+    assert_eq!(v["case_0159_02"], 1.5, "{v}");
+    assert!(v["case_0159_02"].is_f64());
+}

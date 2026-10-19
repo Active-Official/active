@@ -41788,3 +41788,266 @@ fn rb_1868_syn173_schema_fails_closed() {
     assert!(!json.contains(raw), "leak in JSON export: {json}");
     assert!(json.contains("***SECRET***"), "redaction missing: {json}");
 }
+
+/// RB-1869 — Taint twin: serialize call doubly ungrammatical (SYN-0173-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0019 (serialization boundary).
+/// `serialize(value)` fails E002 at (2:1) AND (2:11) — neither the call
+/// nor its argument is grammatical — while the real emission path redacts:
+/// no sink, no authorization dance, no leak.
+/// CONVERGENCE: twin verdict to SYN-0172-07/RB-1860.
+#[test]
+fn rb_1869_syn173_no_serialize_sink() {
+    let src = "case_0173_07 = secret(\"x\")\nserialize(value)\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e002: Vec<_> = diags.iter().filter(|d| d.code == "E002").collect();
+    assert_eq!(e002.len(), 2, "{diags:?}");
+    let spans: Vec<_> = e002
+        .iter()
+        .map(|d| {
+            let s = d.span.clone().expect("span");
+            (s.line, s.column)
+        })
+        .collect();
+    assert!(spans.contains(&(2, 1)), "{spans:?}");
+    assert!(spans.contains(&(2, 11)), "{spans:?}");
+    // Positive control: the real emission path redacts.
+    let raw = "RAW-1869-export-marker";
+    let src2 = format!("case_0173_07 = secret(\"{raw}\")\n");
+    let module = parse(&src2, "research").expect("parses");
+    let (value, _) = Engine::new().evaluate(&module).expect("evaluates");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains(raw), "leak in JSON export: {json}");
+    assert!(json.contains("***SECRET***"), "redaction missing: {json}");
+}
+
+/// RB-1870 — Taint twin: null-concat warns Warning-severe (SYN-0173-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0019 (concat taint).
+/// The bare form fails E005 at (3:10) — while `"prefix-${value}"`
+/// (undefined) warns W001 Warning at (2:26) and yields "prefix-null":
+/// open concat, tainting nothing.
+/// CONVERGENCE: twin verdict to SYN-0172-08/RB-1861.
+#[test]
+fn rb_1870_syn173_concat_warns_warning() {
+    let src =
+        "case_0173_08 = secret(\"x\")\nlet combined = \"prefix-${value}\"\nresult = ${combined}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (3, 10), "{span:?}");
+    // Positive control: undefined concatenates with W001 Warning.
+    let src2 = "case_0173_08 = secret(\"x\")\nlet combined = \"prefix-${value}\"\nresult = \"${combined}\"\n";
+    let module = parse(src2, "research").expect("must parse");
+    let (value, diags2) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags2.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (2, 26), "{span:?}");
+    let json: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(json["result"], "prefix-null", "{json}");
+}
+
+/// RB-1871 — Taint twin: naive patch triple-diag (SYN-0173-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0019 (patch taint).
+/// The naive `@patch config { token = ${value} }` fails E019 at (2:2)
+/// with E005/E001 companions — three truthful announcements — while the
+/// explicit secret patch lands redacted with siblings intact.
+/// CONVERGENCE: twin verdict to SYN-0172-09/RB-1862.
+#[test]
+fn rb_1871_syn173_patch_keeps_taint() {
+    let src = "case_0173_09 = secret(\"x\")\n@patch config { token = ${value} }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    assert!(
+        diags.iter().any(|d| d.code == "E005"),
+        "E005 companion expected, got {diags:?}"
+    );
+    // Positive control: the explicit secret patch lands redacted.
+    let raw = "RAW-1871-patch-marker";
+    let src2 = format!("config = {{ a = 1 }}\n@patch(\"config.token\", secret(\"{raw}\"))\n");
+    let module = parse(&src2, "research").expect("parses");
+    let (value, diags2) = Engine::new().evaluate(&module).expect("evaluates");
+    assert!(diags2.is_empty(), "{diags2:?}");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains(raw), "leak in JSON export: {json}");
+    let v: serde_json::Value = serde_json::from_str(&json).expect("json");
+    assert_eq!(v["config"]["token"], "***SECRET***", "{v}");
+    assert_eq!(v["config"]["a"], 1, "{v}");
+}
+
+/// RB-1872 — Profile twin: selection merges, base untouched (SYN-0174-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0020 (profile precedence).
+/// The naive `@profile` transliteration is rejected — E014 Error at (3:2),
+/// `profile` is a contextual keyword, never `@` — while the REAL
+/// `profile "prod" { retries = 5 }` with `active_profile = "prod"` merges
+/// root retries=5, leaves base.retries=2, keeps `active_profile` visible,
+/// and exports NO profile block: precedence without mutation
+/// (spec/grammar.md:293-315).
+#[test]
+fn rb_1872_syn174_profile_merges_base_kept() {
+    let src = "case_0174_01 = 1\nbase = { retries = 2 }\n@profile \"prod\" { retries = 5 }\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e = diags.iter().find(|d| d.code == "E014").expect("E014");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E014 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E014 carries a span");
+    assert_eq!((span.line, span.column), (3, 2), "{span:?}");
+    // Positive control: the real profile merges, base untouched.
+    let src2 = "case_0174_01 = 1\nbase = { retries = 2 }\nprofile \"prod\" { retries = 5 }\nactive_profile = \"prod\"\n";
+    let v = eval_json(src2);
+    assert_eq!(v["retries"], 5, "{v}");
+    assert_eq!(v["base"]["retries"], 2, "{v}");
+    assert_eq!(v["active_profile"], "prod", "{v}");
+    assert!(v.get("profile").is_none(), "{v}");
+    assert!(codes_of(src2).is_empty());
+}
+
+/// RB-1873 — Profile twin: zero wins over absent (SYN-0174-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0020 (falsy handling).
+/// Selected profile `{ retries = 0 }` resolves EXACTLY 0 — never falls
+/// back to base 2 by truthiness: absent and zero are distinct (P1-DS
+/// lineage), and explicit zero is a value, not a gap. Unselected, no
+/// profile merges at all.
+/// CONVERGENCE: falsy-respect verdict, both selection states pinned.
+#[test]
+fn rb_1873_syn174_zero_respected() {
+    let src = "case_0174_02 = 1\nbase = { retries = 2 }\nprofile \"test\" { retries = 0 }\nactive_profile = \"test\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["retries"], 0, "{v}");
+    assert!(v["retries"].is_i64());
+    assert_eq!(v["base"]["retries"], 2, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: unselected merges nothing — no retries key.
+    let v =
+        eval_json("case_0174_02 = 1\nbase = { retries = 2 }\nprofile \"test\" { retries = 0 }\n");
+    assert!(v.get("retries").is_none(), "{v}");
+    assert_eq!(v["base"]["retries"], 2, "{v}");
+}
+
+/// RB-1874 — Profile twin: duplicate name rejects (SYN-0174-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0020 (duplicate profiles).
+/// Two `profile "prod"` blocks fail E018 Error at (2:9): duplicate names
+/// have ONE deterministic semantics — rejection (spec/grammar.md:303).
+/// No merge rule to document because redefinition is not allowed.
+/// CONVERGENCE: E018 determinism verdict.
+#[test]
+fn rb_1874_syn174_dup_name_rejects() {
+    let src = "profile \"prod\" { timeout = 5s }\nprofile \"prod\" { timeout = 8s }\n";
+    let diags = parse(src, "research").expect_err("must fail E018");
+    let e = diags.iter().find(|d| d.code == "E018").expect("E018");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E018 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E018 carries a span");
+    assert_eq!((span.line, span.column), (2, 9), "{span:?}");
+    // Positive control: distinctly-named profiles coexist silently.
+    let src2 = "profile \"a\" { x = 1 }\nprofile \"b\" { x = 2 }\n";
+    let v = eval_json(src2);
+    assert_eq!(v.as_object().map(|o| o.len()), Some(0));
+    assert!(codes_of(src2).is_empty());
+}
+
+/// RB-1875 — Profile twin: same-name split rejects (SYN-0174-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0020 (composition order).
+/// REFUSAL (spec-gated, spec/grammar.md:303): two `profile "prod"` blocks
+/// with DIFFERENT keys still fail E018 at (2:9) — composition across
+/// same-named blocks is not specified, so there is no order to stabilize:
+/// one name, one block, or an error.
+/// CONVERGENCE: rejection verdict, split-definition angle.
+#[test]
+fn rb_1875_syn174_split_name_rejects() {
+    let src = "profile \"prod\" { a = 1 }\nprofile \"prod\" { b = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E018");
+    let e = diags.iter().find(|d| d.code == "E018").expect("E018");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E018 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E018 carries a span");
+    assert_eq!((span.line, span.column), (2, 9), "{span:?}");
+    // Positive control: one block with both keys merges silently.
+    let v = eval_json("profile \"prod\" { a = 1 }\nactive_profile = \"prod\"\n");
+    assert_eq!(v["a"], 1, "{v}");
+    assert!(codes_of("profile \"prod\" { a = 1 }\nactive_profile = \"prod\"\n").is_empty());
+}
+
+/// RB-1876 — Profile twin: parent is data (SYN-0174-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0020 (unknown references).
+/// REFUSAL (spec-gated, DERIVED-0011/RB-065 — no inheritance feature):
+/// `profile "prod" { parent = "missing" }` merges `parent` as PLAIN DATA
+/// "missing", silent — there is no unknown-profile error because there is
+/// no reference to resolve. Unselected, nothing merges.
+/// CONVERGENCE: data-verdict, selection-gated.
+#[test]
+fn rb_1876_syn174_parent_is_data() {
+    let src =
+        "case_0174_05 = 1\nprofile \"prod\" { parent = \"missing\" }\nactive_profile = \"prod\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["parent"], "missing", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: unselected merges nothing — no parent key.
+    let v = eval_json("case_0174_05 = 1\nprofile \"prod\" { parent = \"missing\" }\n");
+    assert!(v.get("parent").is_none(), "{v}");
+}
+
+/// RB-1877 — Profile twin: parent cycle is data (SYN-0174-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0020 (profile cycles).
+/// REFUSAL (spec-gated, DERIVED-0011/RB-065): `parent = "b"` / `parent =
+/// "a"` across two profiles evaluates silently to {} — parent keys are
+/// strings, not edges, so no cycle can form and none is detected. A
+/// profile-cycle error would require an inheritance feature that does not
+/// exist; inventing detection would invent semantics.
+/// CONVERGENCE: data-verdict, cycle-angle.
+#[test]
+fn rb_1877_syn174_parent_cycle_is_data() {
+    let src = "profile \"a\" { parent = \"b\" }\nprofile \"b\" { parent = \"a\" }\n";
+    let v = eval_json(src);
+    assert_eq!(v.as_object().map(|o| o.len()), Some(0));
+    assert!(codes_of(src).is_empty());
+    // Positive control: selecting one merges its data parent silently.
+    let v = eval_json("profile \"a\" { parent = \"b\" }\nactive_profile = \"a\"\n");
+    assert_eq!(v["parent"], "b", "{v}");
+    assert!(codes_of("profile \"a\" { parent = \"b\" }\nactive_profile = \"a\"\n").is_empty());
+}
+
+/// RB-1878 — Profile twin: selection keeps taint (SYN-0174-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0020 (taint through profiles).
+/// Selected `profile "prod" { token = secret("RAW-1878-…") }` merges token
+/// as `***SECRET***` with zero diagnostics: profile selection cannot strip
+/// taint metadata — values carry taint through merge untouched. The raw
+/// marker appears nowhere outside the source line.
+/// CONVERGENCE: taint-preserving verdict, selection-angle.
+#[test]
+fn rb_1878_syn174_selection_keeps_taint() {
+    let raw = "RAW-1878-prof-marker";
+    let src = format!(
+        "case_0174_07 = 1\nprofile \"prod\" {{ token = secret(\"{raw}\") }}\nactive_profile = \"prod\"\n"
+    );
+    let module = parse(&src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    assert!(diags.is_empty(), "{diags:?}");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains(raw), "leak in JSON export: {json}");
+    let v: serde_json::Value = serde_json::from_str(&json).expect("json");
+    assert_eq!(v["token"], "***SECRET***", "{v}");
+    assert_eq!(v["case_0174_07"], 1, "{v}");
+    // Positive control: unselected keeps no token key at all.
+    let v = eval_json("case_0174_07 = 1\nprofile \"prod\" { token = secret(\"x\") }\n");
+    assert!(v.get("token").is_none(), "{v}");
+}

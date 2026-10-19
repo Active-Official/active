@@ -96,6 +96,7 @@ parses leave it unset and tools fall back to the input filename.
 | W009 | `top-level <kind> wrapped as 'value'` | none (import-time) | A scalar/array document root becomes `value = …`, which is valid ACTIVE (C-046) |
 | W010 | `integer <n> exceeds i64 range; emitted as float` / `non-finite <format> number at '<path>' converted to null` | none (import-time) | Unrepresentable numbers on import (C-046): u64 past i64::MAX loses precision as f64; NaN/inf (YAML `.nan`/`.inf`, TOML `nan`/`inf`) cannot survive the JSON model and become null — announced, never silent |
 | W011 | `duplicate key '<key>'; last wins` | overwriting statement | Same-scope key, table-header, inline-table, or `let` redefinition keeps the last value (long-standing behavior) and now warns instead of staying silent (research P1-TI-012/HIST-YAML-004). Include-merge paths never warn (cross-file composition is designed). |
+| W012 | `JSON Schema '<construct>' at '<path>' has no Active counterpart; skipped` (plus tightening notes for optional-without-default, exclusive bounds, non-string enums/const) | none (import-time) | JSON Schema import (L-021, spec/converters.md §4): combinators, references, conditionals, per-item counts, and non-string const/enum have no Active shape; every skip is announced with its path, never silent |
 
 ### H0xx — Healing (implemented in C-016)
 

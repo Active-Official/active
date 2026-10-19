@@ -1,0 +1,27 @@
+# Repair benchmarks (G-009): fixed broken fixtures plus required codes.
+# Agents and humans repair each file until `active check` is clean; the
+# scorer (tools/score-repair.py) awards a point per fixture whose required
+# codes appear on the broken input (proving the benchmark bites) and,
+# after repair, per clean check. Scores track over time, never gate releases.
+
+version = 1
+
+[[repairs]]
+id = "repair-01-units"
+file = "repair-01-units.active"
+codes = ["T001"]
+
+[[repairs]]
+id = "repair-02-schema"
+file = "repair-02-schema.active"
+codes = ["T003"]
+
+[[repairs]]
+id = "repair-03-cycle"
+file = "repair-03-cycle.active"
+codes = ["S001"]
+
+[[repairs]]
+id = "repair-04-secret"
+file = "repair-04-secret.active"
+codes = ["S004"]

@@ -1,0 +1,4 @@
+schema = { srv = Table { host = String, closed = true } }
+[srv]
+host = "h"
+extra = 1

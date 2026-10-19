@@ -6,8 +6,8 @@
 //! lossy corner and its code, and the JSON round-trip fixed point.
 
 use active_core::convert::{
-    json_text_to_active, json_value_to_active, toml_text_to_active, value_to_pretty_json,
-    value_to_toml_string, value_to_yaml_string, yaml_text_to_active,
+    json_text_to_active, json_value_to_active, jsonschema_to_active, toml_text_to_active,
+    value_to_pretty_json, value_to_toml_string, value_to_yaml_string, yaml_text_to_active,
 };
 use active_core::{parse, Engine};
 
@@ -382,4 +382,124 @@ fn inline_objects_report_key_notes() {
     assert!(codes(&diags).contains(&"W007"), "{diags:?}");
     assert!(source.contains("a_b = 1"), "{source:?}");
     parse(&source, "convert").expect("must parse");
+}
+
+// ------------------------------------------------------------------
+// JSON Schema import (L-021, spec/converters.md §4).
+// ------------------------------------------------------------------
+
+const SERVICE_SCHEMA: &str = r##"{
+  "title": "Service config",
+  "type": "object",
+  "properties": {
+    "host": { "type": "string" },
+    "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+    "timeout": { "type": "string", "pattern": "^[0-9]+(ms|s|m)$" },
+    "mode": { "type": "string", "enum": ["dev", "prod"], "default": "dev" },
+    "ratio": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "debug": { "type": "boolean" },
+    "nested": {
+      "type": "object",
+      "properties": { "x": { "type": "integer" } },
+      "required": ["x"],
+      "additionalProperties": false
+    },
+    "tags": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "weird-key": { "type": "integer" },
+    "anything": {},
+    "combo": { "allOf": [{ "type": "string" }] },
+    "refed": { "$ref": "#/$defs/x" },
+    "count": { "type": "integer", "multipleOf": 5 },
+    "when": { "type": "string", "const": "now" }
+  },
+  "required": ["host", "port"],
+  "additionalProperties": false
+}"##;
+
+#[test]
+fn jsonschema_maps_types_ranges_and_closed_tables() {
+    let (source, diags) = jsonschema_to_active(SERVICE_SCHEMA).expect("import");
+    for fragment in [
+        "host = String",
+        "port = Int(min = 1, max = 65535)",
+        "ratio = Float(min = 0, max = 1)",
+        "debug = Bool",
+        "nested = Table { x = Int, closed = true }",
+        "tags = Array<String>",
+        "weird_key = Int",
+        "anything = Any",
+        "combo = Any",
+        "refed = Any",
+        "count = Int",
+        "when = String",
+        "closed = true",
+    ] {
+        assert!(
+            source.contains(fragment),
+            "{fragment} missing in:\n{source}"
+        );
+    }
+    // Unmappable constructs are loud W012, key renames stay W007.
+    assert!(codes(&diags).contains(&"W012"), "{diags:?}");
+    assert!(codes(&diags).contains(&"W007"), "{diags:?}");
+    // The emitted source is itself valid Active: it parses, and evaluating
+    // the bare schema yields only T004 missing-value diagnostics (values
+    // absent by construction), never malformed-schema E-codes.
+    let module = parse(&source, "convert").expect("must parse");
+    match Engine::new().evaluate(&module) {
+        Ok((_, diags)) => assert!(
+            diags.iter().all(|d| d.code == "T004"),
+            "only missing-value T004s allowed: {diags:?}"
+        ),
+        Err(e) => panic!("bare schema must not hard-fail: {}", e.code()),
+    }
+}
+
+#[test]
+fn jsonschema_pattern_keeps_regex_anchors_byte_identical() {
+    // L-021 probe find: blanket `\$` escaping corrupted `^[0-9]+$` into
+    // `^[0-9]+\$` (literal dollar instead of end anchor). Bare `$` is
+    // already literal in Active strings; only `${` needs the escape.
+    let (source, _) = jsonschema_to_active(
+        r#"{"type": "object", "properties": {"t": {"type": "string", "pattern": "^[0-9]+$"}}}"#,
+    )
+    .expect("import");
+    assert!(source.contains(r#"pattern = "^[0-9]+$""#), "{source}");
+    assert!(!source.contains(r"\$"), "{source}");
+}
+
+#[test]
+fn jsonschema_imported_schema_constrains_values() {
+    // Round-trip proof: the imported schema accepts good values and
+    // refuses bad ones with schema codes.
+    let (source, _) = jsonschema_to_active(SERVICE_SCHEMA).expect("import");
+    let good = format!(
+        "{source}\nhost = \"h\"\nport = 1\nmode = \"dev\"\nratio = 0.5\ndebug = false\nnested = {{ x = 1 }}\ntags = [\"a\"]\nweird_key = 2\nanything = 1\ncombo = \"s\"\nrefed = 1\ncount = 10\nwhen = \"w\"\ntimeout = \"30s\"\n"
+    );
+    let module = parse(&good, "convert").expect("good doc parses");
+    let (_, diags) = Engine::new().evaluate(&module).expect("good doc evaluates");
+    assert!(diags.is_empty(), "{diags:?}");
+    let bad = format!("{source}\nhost = \"h\"\nport = 0\n");
+    let module = parse(&bad, "convert").expect("bad doc parses");
+    match Engine::new().evaluate(&module) {
+        Ok((_, diags)) => assert!(
+            codes(&diags).iter().any(|c| c.starts_with('T')),
+            "bad doc must carry schema codes: {diags:?}"
+        ),
+        Err(e) => assert!(
+            e.code().starts_with('T'),
+            "bad doc must fail with schema code: {}",
+            e.code()
+        ),
+    }
+}
+
+#[test]
+fn jsonschema_boolean_and_garbage_shapes() {
+    let (open, _) = jsonschema_to_active("true").expect("true imports");
+    assert!(open.contains("schema = {}"), "{open}");
+    let (refused, diags) = jsonschema_to_active("false").expect("false imports");
+    assert!(refused.contains("schema = {}"), "{refused}");
+    assert!(codes(&diags).contains(&"W012"), "{diags:?}");
+    assert!(jsonschema_to_active("{oops").is_err(), "garbage must fail");
 }

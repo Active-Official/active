@@ -1,0 +1,87 @@
+# Conformance manifest v1 (C-001): the universal contract for every Active
+# embedding (reference core, active-ffi hosts, active-wasm hosts, bindings).
+# Kinds mirror engine semantics, not CLI exit codes: clean (value, no
+# diagnostics), diagnosed (value plus code set: recovery and warning cases),
+# refused (no value, code set). Spans are advisory (G-017): runners compare
+# codes strictly and report span drift without failing. Secrets in expected
+# files are always redacted; a raw secret in any output fails the run.
+
+version = 1
+
+[[cases]]
+id = "0001-service-happy"
+file = "cases/0001-service-happy.active"
+kind = "clean"
+
+[[cases]]
+id = "0002-norway"
+file = "cases/0002-norway.active"
+kind = "diagnosed"
+
+[[cases]]
+id = "0003-units-mismatch"
+file = "cases/0003-units-mismatch.active"
+kind = "refused"
+
+[[cases]]
+id = "0004-secret-redaction"
+file = "cases/0004-secret-redaction.active"
+kind = "clean"
+
+[[cases]]
+id = "0005-cycle"
+file = "cases/0005-cycle.active"
+kind = "refused"
+
+[[cases]]
+id = "0006-budget-depth"
+file = "cases/0006-budget-depth.active"
+kind = "refused"
+
+[[cases]]
+id = "0007-schema-failure"
+file = "cases/0007-schema-failure.active"
+kind = "refused"
+
+[[cases]]
+id = "0008-include"
+file = "cases/0008-include.active"
+kind = "clean"
+
+[[cases]]
+id = "0009-env-fallback"
+file = "cases/0009-env-fallback.active"
+kind = "clean"
+
+[[cases]]
+id = "0010-closed-table"
+file = "cases/0010-closed-table.active"
+kind = "refused"
+
+[[cases]]
+id = "0011-profile"
+file = "cases/0011-profile.active"
+kind = "clean"
+profile = "staging"
+
+[[cases]]
+id = "0012-integer-min"
+file = "cases/0012-integer-min.active"
+kind = "refused"
+
+[[cases]]
+id = "0013-profile-inline"
+file = "cases/0013-profile-inline.active"
+kind = "clean"
+
+# Host-feature pins (G-017 spirit): cases needing capabilities a v1 host
+# shim does not expose. Runners record these as pins with reason, never as
+# failures and never silently. Removing a pin means the host grew the
+# capability plus a passing run to prove it.
+[[pins]]
+id = "0008-include"
+reason = "include-loader callback absent from shim v1 (F-016 native only)"
+
+[[pins]]
+id = "0011-profile"
+reason = "CLI --profile override absent from shim v1 (in-doc selection covered by 0013-profile-inline)"

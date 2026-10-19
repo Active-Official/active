@@ -97,6 +97,11 @@ to the same IR).
   a malformed line may contain a secret, which must never reach
   diagnostics or logs (security invariant, tested).
 - W006–W010 are registered in `docs/diagnostics.md`.
+- JSON Schema import (`active import -f jsonschema`, L-021) maps types,
+  ranges, lengths, patterns, enums, defaults, required keys, and closed
+  tables; combinators, references, conditionals, per-item counts, and
+  non-string const/enum skip loudly with W012 (spec §4); optional
+  properties without defaults tighten to required with W012.
 
 Round-trip contract (tested): JSON → ACTIVE → evaluate → JSON is
 fixed-point for the canonical mapping, except datetimes, secret

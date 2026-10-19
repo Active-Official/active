@@ -1,8 +1,8 @@
 use active_core::convert::{
-    collect_items, doc_to_html, doc_to_man, doc_to_markdown, json_text_to_active, schema_to_go,
-    schema_to_json_schema, schema_to_openapi, schema_to_rust, schema_to_typescript,
-    toml_text_to_active, value_to_pretty_json, value_to_toml_string, value_to_yaml_string,
-    yaml_text_to_active,
+    collect_items, doc_to_html, doc_to_man, doc_to_markdown, json_text_to_active,
+    jsonschema_to_active, schema_to_go, schema_to_json_schema, schema_to_openapi, schema_to_rust,
+    schema_to_typescript, toml_text_to_active, value_to_pretty_json, value_to_toml_string,
+    value_to_yaml_string, yaml_text_to_active,
 };
 use active_core::diag::{Diagnostic, Severity};
 use active_core::{parse_file, Budget, Engine, EvalError, ParseOptions, Style};
@@ -637,6 +637,7 @@ fn main() -> anyhow::Result<()> {
                 "json" => json_text_to_active(&text).map_err(|e| anyhow::anyhow!("{e}"))?,
                 "yaml" | "yml" => yaml_text_to_active(&text).map_err(|e| anyhow::anyhow!("{e}"))?,
                 "toml" => toml_text_to_active(&text).map_err(|e| anyhow::anyhow!("{e}"))?,
+                "jsonschema" => jsonschema_to_active(&text).map_err(|e| anyhow::anyhow!("{e}"))?,
                 other => anyhow::bail!("unsupported source: {}", other),
             };
             for d in &notes {

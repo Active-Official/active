@@ -504,6 +504,34 @@ fn convert_subcommand_serves_yaml_and_toml() {
 }
 
 #[test]
+fn import_jsonschema_emits_checked_schema() {
+    let f = fixture(
+        "conv_schema.json",
+        r#"{"type": "object", "properties": {"port": {"type": "integer", "minimum": 1}}, "required": ["port"]}"#,
+    );
+    let out = active()
+        .args(["import", "--from", "jsonschema"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let source = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(source.contains("port = Int(min = 1)"), "{source}");
+    // Garbage schema fails loud.
+    let g = fixture("conv_schema_bad.json", "{oops");
+    let out = active()
+        .args(["import", "--from", "jsonschema"])
+        .arg(&g)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success(), "garbage schema must fail");
+}
+
+#[test]
 fn import_round_trips_json_through_active() {
     let f = fixture(
         "conv_import.json",

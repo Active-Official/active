@@ -1,0 +1,11 @@
+{
+  "pool": 5,
+  "timeout": {
+    "ms": 30000
+  },
+  "db_password": "***SECRET***",
+  "server": {
+    "host": "example.com",
+    "port": 8080
+  }
+}

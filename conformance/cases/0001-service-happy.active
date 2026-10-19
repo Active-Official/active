@@ -1,0 +1,13 @@
+schema = {
+  pool = Int(min = 1),
+  timeout = Duration(min = 1s),
+  db_password = Secret,
+  server = Table { host = String, port = Int(min = 1) },
+}
+
+pool = env.POOL ?: 5
+timeout = 30s
+db_password = secret("s3cr3t")
+[server]
+host = "example.com"
+port = 8080

@@ -1,0 +1,8 @@
+active_profile = "staging"
+[flags]
+dark_launch = false
+rollout_pct = 25
+profile "staging" {
+[flags]
+rollout_pct = 100
+}

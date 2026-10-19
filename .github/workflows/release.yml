@@ -84,6 +84,43 @@ jobs:
           name: active-${{ matrix.target }}
           path: active-${{ matrix.target }}.*
 
+  wasm:
+    name: Build WASM bundle + conformance archive (C-004)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Install wasm-bindgen (pinned to lockfile)
+        run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
+      - name: Build wasm release
+        run: cargo build --locked -p active-wasm --target wasm32-unknown-unknown --release
+      - name: Generate browser + node glue
+        run: |
+          wasm-bindgen --target web --out-dir active-wasm/pkg-web target/wasm32-unknown-unknown/release/active_wasm.wasm
+          wasm-bindgen --target nodejs --out-dir active-wasm/pkg-nodejs target/wasm32-unknown-unknown/release/active_wasm.wasm
+      - name: Setup node for conformance run
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Conformance against released-shape wasm
+        shell: bash
+        run: node active-wasm/run-conformance.js target/wasm32-unknown-unknown/release/active_wasm.wasm
+      - name: Stage dist bundle
+        shell: bash
+        run: |
+          mkdir -p dist-wasm
+          cp active-wasm/pkg-web/active_wasm.wasm active-wasm/pkg-web/active_wasm.js active-wasm/js/active-shim.js active-wasm/js/active-shim.d.ts dist-wasm/
+          tar czf dist-wasm/active-conformance.tar.gz conformance
+          ls dist-wasm
+      - name: Upload wasm bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: active-wasm
+          path: dist-wasm/*
+
   vsix:
     name: Package VS Code extension
     runs-on: ubuntu-latest
@@ -110,7 +147,7 @@ jobs:
 
   release:
     name: Publish release
-    needs: [build, vsix]
+    needs: [build, vsix, wasm]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -132,7 +169,7 @@ jobs:
         shell: bash
         run: |
           cd dist
-          sha256sum active-*.tar.gz active-*.zip active-lang-*.vsix > SHA256SUMS
+          sha256sum active-*.tar.gz active-*.zip active-lang-*.vsix active_wasm.wasm active-conformance.tar.gz > SHA256SUMS
           cat SHA256SUMS
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
@@ -141,6 +178,8 @@ jobs:
             dist/active-*.tar.gz
             dist/active-*.zip
             dist/active-lang-*.vsix
+            dist/active_wasm.wasm
+            dist/active-conformance.tar.gz
       - name: Optional active-sign sidecars
         # RELEASE_SIGNING_KEY holds the `.secret` file text from
         # `active keygen` (written to a file: --key takes a path, not
@@ -183,8 +222,9 @@ jobs:
           cargo login "$CARGO_REGISTRY_TOKEN"
           # Registry index lag breaks dependents published back to
           # back: lock files, publish in dependency order, pause
-          # between crates.
-          for p in active-core active-fmt active-lsp active-cli; do
+          # between crates. active-ffi and active-wasm ride the unified
+          # track; active-infinity stays manual (independent 1.0.0 track).
+          for p in active-core active-fmt active-lsp active-cli active-ffi active-wasm; do
             cargo publish --locked -p "$p"
             sleep 60
           done

@@ -18,6 +18,18 @@ use crate::ir::*;
 use crate::parser::{validate_patch_path, PathSeg};
 use crate::types::Unit;
 
+/// Host-provided environment lookup (F-016): consulted on map miss before
+/// defaults apply. Mirrors the map-hit charging exactly (bytes as delta),
+/// so lazy host values cost what eager values cost. `None` preserves all
+/// legacy behavior (map, then default, then null).
+///
+/// The `arc_with_non_send_sync` lint is allowed here with justification:
+/// the evaluator is single-threaded by construction and the FFI contract
+/// confines modules to the calling thread, so this Arc is never shared
+/// across threads; it exists so handles can cheaply hand the lookup down.
+#[allow(clippy::arc_with_non_send_sync)]
+pub type EnvLookup = std::sync::Arc<dyn Fn(&str) -> Option<String>>;
+
 #[derive(Debug, Error)]
 pub enum EvalError {
     #[error("cycle detected in dependency graph")]
@@ -259,6 +271,9 @@ pub struct Engine {
     /// `new()` snapshots the process environment (CLI-compatible);
     /// `with_env` injects a fixed map (tests, agents, replays).
     pub env: std::collections::HashMap<String, String>,
+    /// Lazy host lookup consulted on snapshot miss, before defaults
+    /// (F-016). `None` preserves legacy behavior exactly.
+    pub env_fallback: Option<EnvLookup>,
 }
 
 impl Default for Engine {
@@ -850,12 +865,19 @@ impl Engine {
                     Some((key.into_string().ok()?, value.into_string().ok()?))
                 })
                 .collect(),
+            env_fallback: None,
         }
     }
 
     /// Fixed environment snapshot instead of the process ambient.
     pub fn with_env(mut self, env: std::collections::HashMap<String, String>) -> Self {
         self.env = env;
+        self
+    }
+
+    /// Lazy host lookup consulted on snapshot miss (F-016).
+    pub fn with_env_fallback(mut self, lookup: EnvLookup) -> Self {
+        self.env_fallback = Some(lookup);
         self
     }
 
@@ -1028,7 +1050,21 @@ impl Engine {
                         Value::String(s.clone())
                     }
                     None => {
-                        if let Some(def) = default {
+                        // Lazy host lookup (F-016): same charging as a
+                        // snapshot hit, so lazy values cost eager values.
+                        // A consulted miss falls through to defaults, so a
+                        // callback that knows nothing changes nothing.
+                        if let Some(lookup) = self.env_fallback.clone() {
+                            if let Some(s) = lookup(name) {
+                                actuals.insert(node_id, 1u64.saturating_add(s.len() as u64));
+                                account.charge(module, Some(node_id), s.len() as u64)?;
+                                Value::String(s)
+                            } else if let Some(def) = default {
+                                values.get(def).cloned().unwrap_or(Value::Null)
+                            } else {
+                                Value::Null
+                            }
+                        } else if let Some(def) = default {
                             values.get(def).cloned().unwrap_or(Value::Null)
                         } else {
                             Value::Null

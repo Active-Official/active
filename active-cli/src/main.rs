@@ -839,7 +839,7 @@ fn main() -> anyhow::Result<()> {
             let mut dirty = false;
             for file in &files {
                 let name = file.to_string_lossy().to_string();
-                let module = parse_file(file, options).map_err(|diags| {
+                let module = parse_file(file, options.clone()).map_err(|diags| {
                     for d in &diags {
                         report(d, &name);
                     }

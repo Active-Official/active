@@ -102,8 +102,21 @@ use crate::ir::{NodeId, SchemaField, SemanticTag, *};
 use crate::types::{ActiveType, Unit};
 use indexmap::IndexMap;
 
+/// Host-provided include source resolver (F-016): maps a canonical path
+/// string to file content. Replaces ONLY the filesystem read; path
+/// canonicalization, parent-escape policy, and trust verification around
+/// the read are unchanged. `Err` surfaces exactly like a read failure.
+///
+/// The `arc_with_non_send_sync` lint is allowed here with justification:
+/// the parser is single-threaded by construction and the FFI contract
+/// confines modules to the calling thread, so this Arc is intra-thread
+/// shared ownership (cheap cloning into sub-parsers), never cross-thread
+/// sharing.
+#[allow(clippy::arc_with_non_send_sync)]
+pub type IncludeLoader = std::sync::Arc<dyn Fn(&str) -> Result<String, String>>;
+
 /// Options controlling parsing and healing behavior.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone)]
 pub struct ParseOptions {
     /// When true, medium-confidence repairs (0.70–0.94) are applied and
     /// reported as warnings. When false (strict, the default), they are
@@ -120,6 +133,9 @@ pub struct ParseOptions {
     /// When true, include paths may be absolute or escape the including
     /// directory via `..`. False by default (E015 otherwise).
     pub allow_parent_escapes: bool,
+    /// Host-provided source resolver consulted INSTEAD of the filesystem
+    /// read when set (F-016). `None` preserves all legacy behavior.
+    pub include_loader: Option<IncludeLoader>,
 }
 
 impl Default for ParseOptions {
@@ -129,6 +145,7 @@ impl Default for ParseOptions {
             enable_includes: false,
             resolve_includes: true,
             allow_parent_escapes: false,
+            include_loader: None,
         }
     }
 }
@@ -141,6 +158,7 @@ impl ParseOptions {
             enable_includes: false,
             resolve_includes: true,
             allow_parent_escapes: false,
+            include_loader: None,
         }
     }
 
@@ -151,6 +169,7 @@ impl ParseOptions {
             enable_includes: false,
             resolve_includes: true,
             allow_parent_escapes: false,
+            include_loader: None,
         }
     }
 }
@@ -1388,20 +1407,54 @@ impl Parser {
             .and_then(|f| f.parent().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| PathBuf::from("."));
         let joined = base_dir.join(raw);
-        let canonical = match joined.canonicalize() {
-            Ok(p) => p,
-            Err(e) => {
-                return fail(
-                    self,
-                    "E017",
-                    format!("cannot read include file `{}`: {e}", joined.display()),
-                );
+        // Canonicalization splits by source (F-016): the filesystem path
+        // needs existence, so a host loader (virtual FS: browser blobs,
+        // archives, test fixtures) takes the lexical branch, which never
+        // touches the disk. `..`/absolute were already gated above (or
+        // explicitly allowed); symlinks do not resolve on the lexical
+        // branch, a documented delta the parent-escape check below covers
+        // by comparing normalized stems on both sides.
+        fn lexical_join(base: &std::path::Path, raw: &std::path::Path) -> PathBuf {
+            let mut out = base.to_path_buf();
+            for c in raw.components() {
+                match c {
+                    Component::CurDir => {}
+                    Component::ParentDir => {
+                        out.pop();
+                    }
+                    Component::Normal(s) => out.push(s),
+                    Component::RootDir | Component::Prefix(_) => {
+                        out = PathBuf::from(c.as_os_str());
+                    }
+                }
+            }
+            out
+        }
+        let has_loader = self.options.include_loader.is_some();
+        let canonical = if has_loader {
+            lexical_join(&base_dir, raw)
+        } else {
+            match joined.canonicalize() {
+                Ok(p) => p,
+                Err(e) => {
+                    return fail(
+                        self,
+                        "E017",
+                        format!("cannot read include file `{}`: {e}", joined.display()),
+                    );
+                }
             }
         };
         if !self.options.allow_parent_escapes {
-            if let Ok(base_canon) = base_dir.canonicalize() {
-                if !canonical.starts_with(&base_canon) {
-                    return fail(
+            let contained = if has_loader {
+                canonical.starts_with(lexical_join(&base_dir, std::path::Path::new("")))
+            } else if let Ok(base_canon) = base_dir.canonicalize() {
+                canonical.starts_with(&base_canon)
+            } else {
+                true
+            };
+            if !contained {
+                return fail(
                         self,
                         "E015",
                         format!(
@@ -1409,7 +1462,6 @@ impl Parser {
                             canonical.display()
                         ),
                     );
-                }
             }
         }
         if self.include_stack.contains(&canonical) {
@@ -1445,15 +1497,30 @@ impl Parser {
         // unverified content past the check. (Cloned: the failure
         // path needs `self` mutably.)
         let trust = self.trust.clone();
-        let src = match std::fs::read_to_string(&canonical) {
-            Ok(s) => s,
-            Err(e) => {
-                return fail(
-                    self,
-                    "E017",
-                    format!("cannot read include file `{}`: {e}", canonical.display()),
-                );
-            }
+        // Host loader hook (F-016): replaces ONLY the filesystem read.
+        // Canonicalization, depth, and trust verification around it are
+        // unchanged; a hook failure surfaces exactly like a read failure.
+        let src = match self.options.include_loader.clone() {
+            Some(loader) => match loader(&canonical.to_string_lossy()) {
+                Ok(s) => s,
+                Err(e) => {
+                    return fail(
+                        self,
+                        "E017",
+                        format!("include loader refused `{}`: {e}", canonical.display()),
+                    );
+                }
+            },
+            None => match std::fs::read_to_string(&canonical) {
+                Ok(s) => s,
+                Err(e) => {
+                    return fail(
+                        self,
+                        "E017",
+                        format!("cannot read include file `{}`: {e}", canonical.display()),
+                    );
+                }
+            },
         };
         if let Some(keys) = &trust {
             let label = canonical.to_string_lossy().into_owned();
@@ -3066,7 +3133,7 @@ impl Parser {
             errors: Vec::new(),
             ident_scopes: self.ident_scopes.clone(),
             depth: self.depth,
-            options: self.options,
+            options: self.options.clone(),
             block_depth: 0,
             schema_depth: self.schema_depth,
             array_depth: self.array_depth,
@@ -4681,7 +4748,7 @@ impl Parser {
             errors: Vec::new(),
             ident_scopes: self.ident_scopes.clone(),
             depth: self.depth,
-            options: self.options,
+            options: self.options.clone(),
             block_depth: 0,
             schema_depth: self.schema_depth,
             comments: Vec::new(),

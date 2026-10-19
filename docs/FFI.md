@@ -28,13 +28,15 @@ Evaluate: `active_eval(module, budget: *const ActiveBudget) ->
 defaults; a non-null budget tightens them (hosts can only tighten critical
 limits; disabling requires the documented trusted-mode flag).
 
-Validate against a schema document without full eval (G-015):
-`active_validate(module, schema: *const ActiveModule) ->
-*mut ActiveDiagnosticSet`.
+Validate against the in-file schema without returning values (G-015):
+`active_validate(module, budget) -> *mut ActiveDiagnosticSet`. Runs the single shipped validator and keeps
+T002-T006; a fatal evaluation failure surfaces with its true code instead
+of a lying empty set.
 
 Format and convert (G-015): `active_format(module, style: u32) ->
-*mut ActiveString` (0 = canonical dual-syntax-preserving; the playground
-brace/indent toggle calls this, never a host reimplementation).
+*mut ActiveString` with style 0 brace, 1 indent, 2 preserve (other values
+fail closed with BAD_ARGUMENT; the playground brace/indent toggle calls
+this, never a host reimplementation).
 
 Inspection: `active_value_to_json(value) -> *mut ActiveString` (secrets
 always redacted; provenance of this guarantee: core taint rules, H-001
@@ -52,7 +54,7 @@ hang the call.
 Stable `ACTIVE_ERR_*` integers: OK(0), PARSE(1), UNRESOLVED_REF(2),
 CYCLE(3), UNIT_MISMATCH(4), SECRET_REFUSAL(5), BUDGET_EXCEEDED(6),
 INCLUDE_FAIL(7), SCHEMA_FAIL(8), NULL_HANDLE(9), PANIC_CAUGHT(10),
-ABI_MISMATCH(11), BAD_BUDGET(12), UTF8(13). Codes map from internal
+ABI_MISMATCH(11), BAD_BUDGET(12), UTF8(13), BAD_ARGUMENT(14). Codes map from internal
 diagnostic classes (E/W/H/T/S/X plus budgets); codes are never reused and
 change only additively within 1.x. Diagnostics export stable code, span
 (path or index, line, column, end line, end column), severity, and optional

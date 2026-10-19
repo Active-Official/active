@@ -16,6 +16,21 @@ and fixtures: crates `active`, `active-core`, `active-cli`,
 follow. GitHub URLs and prior release notes keep their original
 names (redirects/history).
 
+## [1.3.0] — 2026-10-18
+
+Units Phases B+C (AI-age trio + domain SI): token counts
+(`tokens ktokens Mtokens`, glued spelling only), inference throughput
+(`tok/s`), compute (`FLOPS TFLOPS PFLOPS`); pressure (`Pa bar psi`),
+electrical (`V A W`, cross-dimension refuses), energy (`J kWh`),
+force (`N`); angles (`deg rad`, radians canonical), rotation (`rpm`
+retained); length (`meter km`, long-form only — `m` stays minutes);
+mass (`kg g`); large bytes (`PiB EiB`, saturating); temperature
+(`K Cel Fahr`, affine kelvin canonical, parser folds unary minus into
+affine literals so the -40 crossover holds) and decibels (`dB`,
+ordering-only — affine/log arithmetic refused). Same-suffix arithmetic
+for all retained quantities. No changes to any previously-parseable
+source (full suite green throughout).
+
 ## [1.2.0] — 2026-10-18
 
 Units Phase A (Tier 0 gaps): percent `%` (dimensionless ratio, 100% = 1.0,

@@ -1,0 +1,10 @@
+# Kit A before: typical 12-factor service YAML (invented for migration kit A).
+# Three silent lies hide here: NO becomes false, the timeout has no unit,
+# and the password travels in cleartext through every log and export.
+server:
+  host: localhost
+  port: 8080
+country_enabled: NO
+pool: 5
+timeout: 30
+db_password: change-me-in-production

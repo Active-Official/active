@@ -1,0 +1,20 @@
+# Kit A after: 12-factor service in Active (invented for migration kit A).
+# Every previously silent decision is explicit: host/port/pool fall back
+# with ?:, the timeout carries its unit, the password is a secret, and the
+# schema below rejects violations with spans instead of shipping them.
+# (Root keys come before [server]: keys after a table header belong to
+# that table, exactly like TOML scoping.)
+schema = {
+  pool = Int(min = 1),
+  timeout = Duration(min = 1s),
+  db_password = Secret,
+  server = Table { host = String, port = Int(min = 1) },
+}
+
+pool = env.POOL ?: 5
+timeout = 30s
+db_password = secret("change-me-in-production")
+
+[server]
+host = env.HOST ?: "localhost"
+port = env.PORT ?: 8080

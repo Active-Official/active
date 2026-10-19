@@ -35114,3 +35114,215 @@ fn rb_1588_syn142_nested_brace_accepts() {
     let v = eval_json("root = { child = 1 }\n");
     assert_eq!(v["root"]["child"], 1, "{v}");
 }
+
+/// RB-1589 — Block-scalar twin: indentation stack matches brace semantics (SYN-0142-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0013 (block scalar Z69R;
+/// same shape as SYN-0133-04).
+/// Converges with RB-1508/1535/1544/1553/1571: equals-nesting fails E002
+/// at (1:7); colon-header nesting equals nested braces, silently.
+#[test]
+fn rb_1589_syn142_nested_indent_refused() {
+    let src = "root =\n  child =\n    grandchild = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 7), "{span:?}");
+    // Normative proof: colon-header nesting equals nested braces, silently.
+    let brace = eval_json("root = { child = { grandchild = 1 } }\n");
+    let indent = eval_json("root:\n  child:\n    grandchild = 1\n");
+    assert_eq!(brace, indent, "{brace} vs {indent}");
+    assert!(codes_of("root:\n  child:\n    grandchild = 1\n").is_empty());
+}
+
+/// RB-1590 — Block-scalar twin: duplicate handling identical across surfaces (SYN-0142-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0013 (block scalar Z69R;
+/// same shape as SYN-0133-05).
+/// Converges with RB-1509/1536/1545/1554/1572: brace dups W011 (2:29).
+#[test]
+fn rb_1590_syn142_brace_dup_warns() {
+    let src = "case_0142_05 = 1\nroot = { child = 1, child = 2 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["root"]["child"], 2, "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (2, 29), "{span:?}");
+    // Positive control: the block-form twin warns identically (same policy).
+    let codes = codes_of("[root]\nchild = 1\nchild = 2\n");
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}
+
+/// RB-1591 — Block-scalar twin: TAB indent refused even with equals header (SYN-0142-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0013 (block scalar Z69R;
+/// same shape as SYN-0133-06).
+/// Converges with RB-1510/1537/1546/1555/1573: TAB-indent E006 (2:1).
+#[test]
+fn rb_1591_syn142_tab_indent_refused() {
+    let src = "root =\n\tchild = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E006");
+    let e = diags.iter().find(|d| d.code == "E006").expect("E006");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E006 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E006 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: TAB inside string content decodes.
+    let v = eval_json("root = \"a\\tb\"\n");
+    assert_eq!(v["root"], "a\tb", "{v}");
+    // Positive control: space indentation under a colon header evaluates.
+    assert_eq!(eval_json("root:\n  child = 1\n")["root"]["child"], 1);
+}
+
+/// RB-1592 — Block-scalar twin: quoted escapes span lines (SYN-0142-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0013 (block scalar Z69R;
+/// same shape as SYN-0133-07).
+/// Converges with RB-1511/1538/1547/1556/1574: two-line value silent.
+#[test]
+fn rb_1592_syn142_escaped_newline_decodes() {
+    let src = "case_0142_07 = 1\ntext = \"line one\\nline two\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0142_07"], 1, "{v}");
+    assert_eq!(v["text"], "line one\nline two", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the sibling specified escape `\t` decodes to TAB.
+    let v = eval_json("text = \"a\\tb\"\n");
+    assert_eq!(v["text"], "a\tb", "{v}");
+}
+
+/// RB-1593 — Block-scalar twin: mismatched delimiter is stable (SYN-0142-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0013 (block scalar Z69R;
+/// same shape as SYN-0133-08).
+/// Converges with RB-1512/1539/1548/1557/1575: E001 at (2:24).
+#[test]
+fn rb_1593_syn142_mismatched_delimiter_rejects() {
+    let src = "case_0142_08 = 1\nroot = { child = [1, 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (2, 24), "{span:?}");
+    // Positive control: the matched delimiters evaluate silently.
+    let v = eval_json("root = { child = [1, 2] }\n");
+    assert_eq!(v["root"]["child"], serde_json::json!([1, 2]), "{v}");
+    assert!(codes_of("root = { child = [1, 2] }\n").is_empty());
+}
+
+/// RB-1594 — Block-scalar twin: comment never changes string tokenization (SYN-0142-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0013 (block scalar Z69R;
+/// same shape as SYN-0133-09).
+/// Converges with RB-1513/1540/1549/1558/1576: trailing comment inert.
+#[test]
+fn rb_1594_syn142_comment_outside_string_inert() {
+    let src = "case_0142_09 = 1\nroot = { child = 1 } # trailing comment\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0142_09"], 1, "{v}");
+    assert_eq!(v["root"]["child"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: `#` inside a string is kept content, silently.
+    let v = eval_json("root = \"a#b\"\n");
+    assert_eq!(v["root"], "a#b", "{v}");
+    assert!(codes_of("root = \"a#b\"\n").is_empty());
+}
+
+/// RB-1595 — Block-scalar twin: brace-style baseline parses (SYN-0143-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0014 (block scalar Z70R;
+/// same shape as SYN-0133-01).
+/// Converges with RB-1505/1532/1541/1550/1568/1586: silent.
+#[test]
+fn rb_1595_syn143_brace_baseline_accepts() {
+    let src = "case_0143_01 = 1\nroot = { child = 1 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0143_01"], 1, "{v}");
+    assert_eq!(v["root"]["child"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the flat twin agrees at depth 1.
+    let v = eval_json("root = { child = 1 }\n");
+    assert_eq!(v["root"]["child"], 1, "{v}");
+}
+
+/// RB-1596 — Block-scalar twin: bodiless `=` never opens an indent block (SYN-0143-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0014 (block scalar Z70R;
+/// same shape as SYN-0133-02).
+/// Converges with RB-1506/1533/1542/1551/1569/1587: E002 at (1:7);
+/// colon twin equals brace form.
+#[test]
+fn rb_1596_syn143_equals_indent_refused() {
+    let src = "root =\n  child = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 7), "{span:?}");
+    // Normative proof: colon-header indent equals the brace form, silently.
+    let brace = eval_json("root = { child = 1 }\n");
+    let indent = eval_json("root:\n  child = 1\n");
+    assert_eq!(brace, indent, "{brace} vs {indent}");
+    assert!(codes_of("root:\n  child = 1\n").is_empty());
+}
+
+/// RB-1597 — Block-scalar twin: nested braces close at matching levels (SYN-0143-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0014 (block scalar Z70R;
+/// same shape as SYN-0133-03).
+/// Converges with RB-1507/1534/1543/1552/1570/1588: nested silent.
+#[test]
+fn rb_1597_syn143_nested_brace_accepts() {
+    let src = "case_0143_03 = 1\nroot = { child = { grandchild = 1 } }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0143_03"], 1, "{v}");
+    assert_eq!(v["root"]["child"]["grandchild"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the two-level twin agrees one level down.
+    let v = eval_json("root = { child = 1 }\n");
+    assert_eq!(v["root"]["child"], 1, "{v}");
+}
+
+/// RB-1598 — Block-scalar twin: indentation stack matches brace semantics (SYN-0143-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0014 (block scalar Z70R;
+/// same shape as SYN-0133-04).
+/// Converges with RB-1508/1535/1544/1553/1571/1589: E002 at (1:7);
+/// colon nesting equals nested braces.
+#[test]
+fn rb_1598_syn143_nested_indent_refused() {
+    let src = "root =\n  child =\n    grandchild = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 7), "{span:?}");
+    // Normative proof: colon-header nesting equals nested braces, silently.
+    let brace = eval_json("root = { child = { grandchild = 1 } }\n");
+    let indent = eval_json("root:\n  child:\n    grandchild = 1\n");
+    assert_eq!(brace, indent, "{brace} vs {indent}");
+    assert!(codes_of("root:\n  child:\n    grandchild = 1\n").is_empty());
+}

@@ -38832,3 +38832,226 @@ fn rb_1758_syn161_quoted_date_shape_is_string() {
         1995
     );
 }
+
+/// RB-1759 — Datetime twin: nanosecond fraction loud alone (SYN-0161-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0007 (fractional precision).
+/// `2024-01-01T12:30:00.123456789Z` fails with exactly one diagnostic —
+/// E002 Error at (1:45): no precision grammar exists to truncate under, so
+/// determinism is total — one input, one loud refusal, every run.
+/// CONVERGENCE: identical verdict to SYN-0155-05/RB-1705.
+#[test]
+fn rb_1759_syn161_fraction_tail_single_e002() {
+    let src = "case_0161_05 = 2024-01-01T12:30:00.123456789Z\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 45), "{span:?}");
+    // Positive control: the quoted form stays an exact string.
+    assert_eq!(
+        eval_json("case_0161_05 = \"2024-01-01T12:30:00.123456789Z\"\n")["case_0161_05"],
+        "2024-01-01T12:30:00.123456789Z"
+    );
+}
+
+/// RB-1760 — Datetime twin: non-UTC offset flat arithmetic (SYN-0161-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0007 (offset fallback).
+/// REFUSAL (spec-gated, spec/converters.md:75-76; RB-187 lineage):
+/// `2024-01-01T12:30:00-07:00` is 2024-1-1 = 2022 with T12 = 30 — flat
+/// integer arithmetic plus a specified colon pair (RB-001), evaluated twice
+/// identically, never an opaque fallback object.
+/// CONVERGENCE: identical verdict to SYN-0155-06/RB-1706.
+#[test]
+fn rb_1760_syn161_nonutc_offset_flat() {
+    let src = "case_0161_06 = 2024-01-01T12:30:00-07:00\n";
+    let first = eval_json(src);
+    assert_eq!(first["case_0161_06"], 2022, "{first}");
+    assert_eq!(first["T12"], 30, "{first}");
+    assert_eq!(first, eval_json(src));
+    // Positive control: the dateless prefix alone computes the same head.
+    assert_eq!(
+        eval_json("case_0161_06 = 2024-01-01\n")["case_0161_06"],
+        2022
+    );
+}
+
+/// RB-1761 — Datetime twin: leading-zero date arithmetic, int-typed (SYN-0161-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0007 (leading-zero tokens).
+/// REFUSAL (spec-gated, RB-104/RB-184): `0001-01-01` = 1-1-1 = -1, kept as
+/// int — leading zeros are plain decimals, and there is no date token to
+/// confuse with a numeric one.
+/// CONVERGENCE: identical verdict to SYN-0155-07/RB-1707.
+#[test]
+fn rb_1761_syn161_leading_zero_int() {
+    let src = "case_0161_07 = 0001-01-01\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0161_07"], -1, "{v}");
+    assert!(v["case_0161_07"].is_i64());
+    assert!(codes_of(src).is_empty());
+    // Positive control: a second leading-zero date computes likewise.
+    let v = eval_json("case_0161_07 = 0002-01-01\n");
+    assert_eq!(v["case_0161_07"], 0, "{v}");
+    assert!(v["case_0161_07"].is_i64());
+}
+
+/// RB-1762 — Datetime twin: quoted datetime-shape byte-stable (SYN-0161-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0007 (quoted exemption).
+/// `case_0161_08 = "1979-05-27T07:32:00Z"` is a 20-char string, silent —
+/// T, Z, and colons in quotes are inert text (HIST-TOML-00O/RB-148),
+/// stable across evaluation and export.
+/// CONVERGENCE: identical verdict to SYN-0155-08/RB-1708.
+#[test]
+fn rb_1762_syn161_quoted_datetime_len20() {
+    let src = "case_0161_08 = \"1979-05-27T07:32:00Z\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0161_08"], "1979-05-27T07:32:00Z", "{v}");
+    assert_eq!(v["case_0161_08"].as_str().map(|s| s.len()), Some(20));
+    assert!(codes_of(src).is_empty());
+    // Positive control: a second quoted datetime-shape is equally exact.
+    assert_eq!(
+        eval_json("case_0161_08 = \"2024-02-29T00:00:00Z\"\n")["case_0161_08"],
+        "2024-02-29T00:00:00Z"
+    );
+}
+
+/// RB-1763 — Datetime twin: minute-60 tail Error-severity (SYN-0161-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0007 (range before construction).
+/// `2024-01-01T12:60:00Z` fails E002 at (1:35) with Error severity: no
+/// clock exists to range-check and no type to construct — the `T60` tail
+/// matches no grammar sequence, louder than any calendar check.
+/// CONVERGENCE: identical verdict to SYN-0155-09/RB-1709.
+#[test]
+fn rb_1763_syn161_minute60_error_severity() {
+    let src = "case_0161_09 = 2024-01-01T12:60:00Z\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 35), "{span:?}");
+    // Positive control: the quoted form stays an exact string.
+    assert_eq!(
+        eval_json("case_0161_09 = \"2024-01-01T12:60:00Z\"\n")["case_0161_09"],
+        "2024-01-01T12:60:00Z"
+    );
+}
+
+/// RB-1764 — Number twin: leading zero decimal, array angle (SYN-0162-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0008 (RFC 8259 numbers).
+/// REFUSAL (spec-gated, RB-104/RB-222/RB-260): `case_0162_01 = 01` is
+/// exactly int 1, silent — and inside arrays too: `[01, 02]` is `[1, 2]`.
+/// Never octal, never rejected.
+/// CONVERGENCE: identical verdict to SYN-0159-01/RB-1737.
+#[test]
+fn rb_1764_syn162_leading_zero_array() {
+    let src = "case_0162_01 = 01\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0162_01"], 1, "{v}");
+    assert!(v["case_0162_01"].is_i64());
+    assert!(codes_of(src).is_empty());
+    // Positive control: the array twin agrees (RB-260).
+    assert_eq!(
+        eval_json("case_0162_01 = [01, 02]\n")["case_0162_01"],
+        serde_json::json!([1, 2])
+    );
+}
+
+/// RB-1765 — Number twin: trailing dot int, float-neighbour angle (SYN-0162-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0008 (fraction digits).
+/// REFUSAL (spec-gated, RB-207/RB-308): `case_0162_02 = 1.` is exactly int
+/// 1, silent — while `1.0` beside it stays float 1.0 (RB-462): the dot
+/// keeps int only when no fraction follows; a real fraction is float.
+/// CONVERGENCE: identical verdict to SYN-0159-02/RB-1738.
+#[test]
+fn rb_1765_syn162_trailing_dot_vs_float() {
+    let src = "case_0162_02 = 1.\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0162_02"], 1, "{v}");
+    assert!(v["case_0162_02"].is_i64());
+    assert!(codes_of(src).is_empty());
+    // Positive control: a real fraction stays float beside it.
+    let v = eval_json("case_0162_02 = 1.0\n");
+    assert_eq!(v["case_0162_02"], 1.0, "{v}");
+    assert!(v["case_0162_02"].is_f64());
+}
+
+/// RB-1766 — Number twin: bare exponent single-diag (SYN-0162-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0008 (exponent digits).
+/// `case_0162_03 = 1e` fails with exactly one diagnostic — E002 Error at
+/// (1:17): no exponent grammar exists to complete, so the marker dangles
+/// loudly, identically on every run.
+/// CONVERGENCE: identical verdict to SYN-0159-03/RB-1739.
+#[test]
+fn rb_1766_syn162_bare_exponent_single() {
+    let src = "case_0162_03 = 1e\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the exponent-free integer evaluates silently.
+    assert_eq!(eval_json("case_0162_03 = 1\n")["case_0162_03"], 1);
+}
+
+/// RB-1767 — Number twin: signed exponent arithmetic-neighbour (SYN-0162-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0008 (signed exponents).
+/// `case_0162_04 = 1e+` fails E002 Error at (1:17): the sign saves nothing
+/// with no exponent grammar — two stray tokens, never a number.
+/// CONVERGENCE: identical verdict to SYN-0159-04/RB-1740.
+#[test]
+fn rb_1767_syn162_signed_exponent_rejects() {
+    let src = "case_0162_04 = 1e+\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: explicit signed arithmetic still computes.
+    assert_eq!(eval_json("case_0162_04 = 2 + 3\n")["case_0162_04"], 5);
+}
+
+/// RB-1768 — Number twin: base prefix loud, zero-neighbour (SYN-0162-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0008 (host-grammar borrowing).
+/// `case_0162_05 = 0x10` fails E002 Error at (1:17): base prefixes are
+/// absent — Active never borrows a host integer grammar, so the `x10` tail
+/// is loud, never hex, never decimal-fallback.
+/// CONVERGENCE: identical verdict to SYN-0159-05/RB-1741.
+#[test]
+fn rb_1768_syn162_base_prefix_absent() {
+    let src = "case_0162_05 = 0x10\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: the plain zero neighbour evaluates.
+    let v = eval_json("case_0162_05 = 0\n");
+    assert_eq!(v["case_0162_05"], 0, "{v}");
+    assert!(v["case_0162_05"].is_i64());
+}

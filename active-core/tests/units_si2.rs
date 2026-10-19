@@ -41,11 +41,11 @@ fn angle_canonical_radians() {
 fn angle_arithmetic() {
     assert_eq!(
         eval_json("a = 90deg + 90deg\n")["a"]["rad"],
-        serde_json::json!(3.141592653589793)
+        serde_json::json!(std::f64::consts::PI)
     );
     assert_eq!(
         eval_json("a = 180deg - 90deg\n")["a"]["rad"],
-        serde_json::json!(1.5707963267948966)
+        serde_json::json!(std::f64::consts::FRAC_PI_2)
     );
     assert_eq!(eval_json("a = 90deg < 180deg\n")["a"], true);
 }

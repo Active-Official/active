@@ -31314,10 +31314,10 @@ fn rb_1413_syn122_fanout_refused() {
 /// byte budget — spec/budgets.md:16-17,33-36 cap nesting, nodes, array
 /// length, keys, and wall-clock, never scalar length): 100000 `x` + raw LF
 /// + 100000 `x` evaluates silently to the exact 200001-scalar value, in one
-/// pass. Completion of this very test is the linearity proof; the embedded
-/// raw newline is kept per the §1.4 char class (RB-1356). If a scalar cap is
-/// ever specified, this test must be revisited — until then the value is
-/// exact and the processing linear.
+///   pass. Completion of this very test is the linearity proof; the embedded
+///   raw newline is kept per the §1.4 char class (RB-1356). If a scalar cap is
+///   ever specified, this test must be revisited — until then the value is
+///   exact and the processing linear.
 #[test]
 fn rb_1414_syn122_long_scalar_linear() {
     let half = "x".repeat(100000);
@@ -33259,7 +33259,7 @@ fn rb_1501_syn132_hex_escape_verbatim() {
 /// "Escaped characters coverage gap"; same shape as SYN-0116-07).
 /// Converges with RB-1358/RB-1367/RB-1376/RB-1385/RB-1394/RB-1439: U+1F600
 /// + `e` + U+0301, three scalars, seven bytes, silent; precomposed U+00E9
-/// stays different (no NFC).
+///   stays different (no NFC).
 #[test]
 fn rb_1502_syn132_emoji_combining_exact() {
     let src = "case_0132_07 = \"\u{1F600}e\u{301}\"\n";
@@ -40616,12 +40616,12 @@ fn rb_1830_syn169_duration_memory_t001() {
 fn rb_1831_syn169_binary_prefixes_equal() {
     let src = "memory = 1MiB\nother = 1024KiB\n";
     let v = eval_json(src);
-    assert_eq!(v["memory"], 1 * 1024 * 1024, "{v}");
-    assert_eq!(v["other"], 1 * 1024 * 1024, "{v}");
+    assert_eq!(v["memory"], 1048576, "{v}");
+    assert_eq!(v["other"], 1048576, "{v}");
     assert_eq!(v["memory"], v["other"], "{v}");
     assert!(codes_of(src).is_empty());
     // Positive control: a third spelling agrees.
-    assert_eq!(eval_json("other = 1048576\n")["other"], 1 * 1024 * 1024);
+    assert_eq!(eval_json("other = 1048576\n")["other"], 1048576);
 }
 
 /// RB-1832 — Units twin: SI vs IEC never conflate (SYN-0169-06 §H, HIGH).
@@ -40634,8 +40634,8 @@ fn rb_1831_syn169_binary_prefixes_equal() {
 fn rb_1832_syn169_mb_mib_differ() {
     let src = "memory = 1MB\nother = 1MiB\n";
     let v = eval_json(src);
-    assert_eq!(v["memory"], 1 * 1000 * 1000, "{v}");
-    assert_eq!(v["other"], 1 * 1024 * 1024, "{v}");
+    assert_eq!(v["memory"], 1000000, "{v}");
+    assert_eq!(v["other"], 1048576, "{v}");
     assert_ne!(v["memory"], v["other"], "{v}");
     assert!(codes_of(src).is_empty());
     // Positive control: decimal megabytes agree on their side (batch 183 probe).

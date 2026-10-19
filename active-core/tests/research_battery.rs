@@ -41453,3 +41453,338 @@ fn rb_1858_syn172_redaction_everywhere() {
     assert!(!msg.contains(raw), "leak in T001 message: {msg}");
     assert!(msg.contains("***"), "redaction missing: {msg}");
 }
+
+/// RB-1859 — Taint twin: schema fails closed on secrets (SYN-0172-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0018 (schema safety).
+/// The naive `@schema` transliteration is rejected — E014 Error at (2:2)
+/// — while the REAL schema path (`schema = { token = String }` + a secret
+/// value) fails T002 Error at the value span (2:9) with the export still
+/// redacted: validation types without unwrapping, prints no payload.
+/// CONVERGENCE: fail-closed verdict, both syntaxes pinned.
+#[test]
+fn rb_1859_syn172_schema_fails_closed() {
+    let src = "case_0172_06 = secret(\"x\")\n@schema value = string\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e = diags.iter().find(|d| d.code == "E014").expect("E014");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E014 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E014 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the real schema path fails T002, redacted.
+    let raw = "RAW-1859-schema-marker";
+    let src2 = format!("schema = {{ token = String }}\ntoken = secret(\"{raw}\")\n");
+    let module = parse(&src2, "research").expect("must parse");
+    let (value, diags2) = Engine::new().evaluate(&module).expect("must evaluate");
+    let t = diags2.iter().find(|d| d.code == "T002").expect("T002");
+    assert_eq!(
+        t.severity,
+        active_core::Severity::Error,
+        "T002 must be Error, got {:?}",
+        t.severity
+    );
+    let span = t.span.clone().expect("T002 carries a span");
+    assert_eq!((span.line, span.column), (2, 9), "{span:?}");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains(raw), "leak in JSON export: {json}");
+    assert!(json.contains("***SECRET***"), "redaction missing: {json}");
+    // Positive control: a conforming schema stays silent.
+    let src3 = "schema = { port = Int(min = 1, max = 10) }\nport = 5\n";
+    assert_eq!(eval_json(src3)["port"], 5);
+    assert!(codes_of(src3).is_empty());
+}
+
+/// RB-1860 — Taint twin: no serialize() sink exists (SYN-0172-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0018 (serialization boundary).
+/// `serialize(value)` fails E002 Error at (2:1): there IS no serialize
+/// function to authorize — emission happens only through the exporters,
+/// which redact by construction. The boundary is architectural: no sink,
+/// no authorization dance, no leak path.
+/// CONVERGENCE: no-sink verdict + redacting exporter, both pinned.
+#[test]
+fn rb_1860_syn172_no_serialize_sink() {
+    let src = "case_0172_07 = secret(\"x\")\nserialize(value)\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: the real emission path redacts.
+    let raw = "RAW-1860-export-marker";
+    let src2 = format!("case_0172_07 = secret(\"{raw}\")\n");
+    let module = parse(&src2, "research").expect("parses");
+    let (value, _) = Engine::new().evaluate(&module).expect("evaluates");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains(raw), "leak in JSON export: {json}");
+    assert!(json.contains("***SECRET***"), "redaction missing: {json}");
+}
+
+/// RB-1861 — Taint twin: concat cannot clear, undefined cannot taint (SYN-0172-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0018 (concat taint).
+/// The bare form fails E005 at (3:10) — the quoted
+/// `"prefix-${value}"` (value UNDEFINED) warns W001 at (2:26) and yields
+/// "prefix-null": undefined concatenates openly, tainting nothing — while
+/// concatenating a REAL secret refuses S004: taint can never be silently
+/// cleared because the concat never completes.
+/// CONVERGENCE: null-concat openly, secret-concat refused.
+#[test]
+fn rb_1861_syn172_concat_never_clears() {
+    let src =
+        "case_0172_08 = secret(\"x\")\nlet combined = \"prefix-${value}\"\nresult = ${combined}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (3, 10), "{span:?}");
+    // Positive control: undefined concatenates to "prefix-null" with W001.
+    let src2 = "case_0172_08 = secret(\"x\")\nlet combined = \"prefix-${value}\"\nresult = \"${combined}\"\n";
+    let module = parse(src2, "research").expect("must parse");
+    let (value, diags2) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags2.iter().find(|d| d.code == "W001").expect("W001");
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (2, 26), "{span:?}");
+    let json: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(json["result"], "prefix-null", "{json}");
+    // Positive control: a real secret in concat refuses S004.
+    let raw = "RAW-1861-concat-marker";
+    let src3 =
+        format!("let s = secret(\"{raw}\")\nlet c = \"prefix-${{s}}\"\nvalue = \"${{c}}\"\n");
+    let module = parse(&src3, "research").expect("parses");
+    let err = Engine::new().evaluate(&module).expect_err("S004");
+    assert_eq!(err.code(), "S004", "{err}");
+    assert!(!err.to_string().contains(raw), "leak: {err}");
+}
+
+/// RB-1862 — Taint twin: patch preserves taint explicitly (SYN-0172-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0018 (patch taint).
+/// The naive `@patch config { … }` is rejected — E019 at (2:2) — while the
+/// explicit `@patch("config.token", secret(…))` lands redacted with zero
+/// diagnostics: taint metadata survives application because values, not
+/// syntax, carry it (DERIVED-0014/RB-029).
+/// CONVERGENCE: taint-preserving verdict, explicit-call angle.
+#[test]
+fn rb_1862_syn172_patch_keeps_taint() {
+    let src = "case_0172_09 = secret(\"x\")\n@patch config { token = ${value} }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the explicit secret patch lands redacted.
+    let raw = "RAW-1862-patch-marker";
+    let src2 = format!("config = {{ a = 1 }}\n@patch(\"config.token\", secret(\"{raw}\"))\n");
+    let module = parse(&src2, "research").expect("parses");
+    let (value, diags2) = Engine::new().evaluate(&module).expect("evaluates");
+    assert!(diags2.is_empty(), "{diags2:?}");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains(raw), "leak in JSON export: {json}");
+    let v: serde_json::Value = serde_json::from_str(&json).expect("json");
+    assert_eq!(v["config"]["token"], "***SECRET***", "{v}");
+    assert_eq!(v["config"]["a"], 1, "{v}");
+}
+
+/// RB-1863 — Taint twin: redaction is a string (SYN-0173-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0019 (redaction in diagnostics).
+/// `password = secret("RAW-1863-…")` exports `***SECRET***` as a STRING
+/// beside int 1, with zero diagnostics: taint accompanies every path, and
+/// the marker is a string value downstream code can compare without ever
+/// seeing bytes.
+/// CONVERGENCE: twin verdict to SYN-0172-01/RB-1854.
+#[test]
+fn rb_1863_syn173_secret_marks_redacts() {
+    let raw = "RAW-1863-twin-marker";
+    let src = format!("case_0173_01 = 1\npassword = secret(\"{raw}\")\n");
+    let module = parse(&src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    assert!(diags.is_empty(), "{diags:?}");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains(raw), "leak in JSON export: {json}");
+    let v: serde_json::Value = serde_json::from_str(&json).expect("json");
+    assert_eq!(v["case_0173_01"], 1, "{v}");
+    assert_eq!(v["password"], "***SECRET***", "{v}");
+    assert!(v["password"].is_string());
+    // Positive control: the plain scalar beside the secret is untouched.
+    assert_eq!(eval_json("case_0173_01 = 1\n")["case_0173_01"], 1);
+}
+
+/// RB-1864 — Taint twin: fallback taint, diag-scoped (SYN-0173-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0019 (fallback taint).
+/// `secret(env.V ?: "")` redacts absent AND present — with the evaluation
+/// diagnostics asserted EMPTY in both states: taint needs no announcement
+/// because nothing leaks at any step.
+/// CONVERGENCE: twin verdict to SYN-0172-02/RB-1855.
+#[test]
+fn rb_1864_syn173_secret_env_both_tainted() {
+    let raw = "RAW-1864-present-marker";
+    let prior = std::env::var("ACTIVE_RB1864_ENV").ok();
+    std::env::remove_var("ACTIVE_RB1864_ENV");
+    let src = "case_0173_02 = 1\npassword = secret(env.ACTIVE_RB1864_ENV ?: \"\")\n";
+    let (value, diags) = Engine::new()
+        .evaluate(&parse(src, "research").expect("parses"))
+        .expect("evaluates");
+    assert!(diags.is_empty(), "{diags:?}");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(json.contains("***SECRET***"), "redaction missing: {json}");
+    std::env::set_var("ACTIVE_RB1864_ENV", raw);
+    let (value, diags) = Engine::new()
+        .evaluate(&parse(src, "research").expect("parses"))
+        .expect("evaluates");
+    assert!(diags.is_empty(), "{diags:?}");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains(raw), "leak when present: {json}");
+    assert!(json.contains("***SECRET***"), "redaction missing: {json}");
+    std::env::remove_var("ACTIVE_RB1864_ENV");
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_RB1864_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1864_ENV"),
+    }
+    // Positive control: the bare env twin stays untainted.
+    let prior2 = std::env::var("ACTIVE_RB1864_ENV").ok();
+    std::env::set_var("ACTIVE_RB1864_ENV", "plain");
+    assert_eq!(
+        eval_json("x = env.ACTIVE_RB1864_ENV ?: \"\"\n")["x"],
+        "plain"
+    );
+    match prior2 {
+        Some(val) => std::env::set_var("ACTIVE_RB1864_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1864_ENV"),
+    }
+}
+
+/// RB-1865 — Taint twin: sink refusal byte-free (SYN-0173-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0019 (transitive taint).
+/// Secret-in-interpolation refuses S004 with a byte-free message — and the
+/// SAME shape with the var UNSET refuses identically: the sink is unsafe
+/// regardless of what the env holds, because the constructor taints the
+/// expression, not the data.
+/// CONVERGENCE: twin verdict to SYN-0172-03/RB-1856.
+#[test]
+fn rb_1865_syn173_interp_secret_refuses() {
+    let raw = "RAW-1865-sink-marker";
+    let prior = std::env::var("ACTIVE_RB1865_ENV").ok();
+    std::env::set_var("ACTIVE_RB1865_ENV", raw);
+    let src = "case_0173_03 = 1\nurl = \"https://user:${secret(env.ACTIVE_RB1865_ENV)}@host\"\n";
+    let module = parse(src, "research").expect("must parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail S004");
+    assert_eq!(err.code(), "S004", "{err}");
+    assert!(!err.to_string().contains(raw), "leak: {err}");
+    // Positive control: unset refuses identically — taint is structural.
+    std::env::remove_var("ACTIVE_RB1865_ENV");
+    let module = parse(src, "research").expect("parses");
+    let err = Engine::new().evaluate(&module).expect_err("S004");
+    assert_eq!(err.code(), "S004", "{err}");
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_RB1865_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1865_ENV"),
+    }
+    // Positive control: secret-free interpolation expands.
+    let v = eval_json("let h = \"example\"\nurl = \"https://user@${h}\"\n");
+    assert_eq!(v["url"], "https://user@example", "{v}");
+}
+
+/// RB-1866 — Taint twin: both bare gates plus S004 (SYN-0173-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0019 (dependency taint).
+/// The bare chain fails E005 at (3:9) AND (4:9) — while the quoted
+/// secret-let chain refuses S004 with a byte-free message: labels ride
+/// every binding, refusal fires at use.
+/// CONVERGENCE: twin verdict to SYN-0172-04/RB-1857.
+#[test]
+fn rb_1866_syn173_taint_crosses_lets() {
+    let src = "case_0173_04 = 1\nlet a = secret(\"x\")\nlet b = ${a}\nvalue = ${b}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e005: Vec<_> = diags.iter().filter(|d| d.code == "E005").collect();
+    assert_eq!(e005.len(), 2, "{diags:?}");
+    let spans: Vec<_> = e005
+        .iter()
+        .map(|d| {
+            let s = d.span.clone().expect("span");
+            (s.line, s.column)
+        })
+        .collect();
+    assert!(spans.contains(&(3, 9)), "{spans:?}");
+    assert!(spans.contains(&(4, 9)), "{spans:?}");
+    // Positive control: the quoted chain refuses S004 at use.
+    let raw = "RAW-1866-let-marker";
+    let src2 = format!(
+        "case_0173_04 = 1\nlet a = secret(\"{raw}\")\nlet b = \"${{a}}\"\nvalue = \"${{b}}\"\n"
+    );
+    let module = parse(&src2, "research").expect("must parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail S004");
+    assert_eq!(err.code(), "S004", "{err}");
+    assert!(!err.to_string().contains(raw), "leak: {err}");
+    // Positive control: a secret-free let chain expands end to end.
+    let v = eval_json("let a = 2\nlet b = \"${a}\"\nvalue = \"${b}\"\n");
+    assert_eq!(v["value"], "2", "{v}");
+}
+
+/// RB-1867 — Taint twin: export redacted, error redacted (SYN-0173-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0019 (redaction coverage).
+/// The secret alone exports redacted with empty diagnostics — and forced
+/// into arithmetic the T001 shows only `Secret(***)`: same marker, both
+/// paths, zero plaintext anywhere.
+/// CONVERGENCE: twin verdict to SYN-0172-05/RB-1858.
+#[test]
+fn rb_1867_syn173_redaction_everywhere() {
+    let raw = "RAW-1867-redact-marker";
+    let src = format!("case_0173_05 = secret(\"{raw}\")\n");
+    let module = parse(&src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    assert!(diags.is_empty(), "{diags:?}");
+    assert!(!format!("{diags:?}").contains(raw), "leak in diags");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains(raw), "leak in JSON export: {json}");
+    assert!(json.contains("***SECRET***"), "redaction missing: {json}");
+    // Positive control: forcing the value into an error still redacts.
+    let src2 = format!("case_0173_05 = secret(\"{raw}\")\nbad = case_0173_05 + 1\n");
+    let module = parse(&src2, "research").expect("parses");
+    let err = Engine::new().evaluate(&module).expect_err("T001");
+    assert_eq!(err.code(), "T001", "{err}");
+    let msg = err.to_string();
+    assert!(!msg.contains(raw), "leak in T001 message: {msg}");
+    assert!(msg.contains("***"), "redaction missing: {msg}");
+}
+
+/// RB-1868 — Taint twin: schema E014 plus T002 (SYN-0173-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0019 (schema safety).
+/// The naive `@schema` fails E014 at (2:2) AND (2:9) — the whole directive
+/// is ungrammatical, not one token of it — while the real schema path
+/// fails T002 at the value span with the export redacted.
+/// CONVERGENCE: twin verdict to SYN-0172-06/RB-1859.
+#[test]
+fn rb_1868_syn173_schema_fails_closed() {
+    let src = "case_0173_06 = secret(\"x\")\n@schema value = string\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e014: Vec<_> = diags.iter().filter(|d| d.code == "E014").collect();
+    assert_eq!(e014.len(), 2, "{diags:?}");
+    let spans: Vec<_> = e014
+        .iter()
+        .map(|d| {
+            let s = d.span.clone().expect("span");
+            (s.line, s.column)
+        })
+        .collect();
+    assert!(spans.contains(&(2, 2)), "{spans:?}");
+    assert!(spans.contains(&(2, 9)), "{spans:?}");
+    // Positive control: the real schema path fails T002, redacted.
+    let raw = "RAW-1868-schema-marker";
+    let src2 = format!("schema = {{ token = String }}\ntoken = secret(\"{raw}\")\n");
+    let module = parse(&src2, "research").expect("parses");
+    let (value, diags2) = Engine::new().evaluate(&module).expect("evaluates");
+    let t = diags2.iter().find(|d| d.code == "T002").expect("T002");
+    assert_eq!(
+        t.severity,
+        active_core::Severity::Error,
+        "T002 must be Error, got {:?}",
+        t.severity
+    );
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains(raw), "leak in JSON export: {json}");
+    assert!(json.contains("***SECRET***"), "redaction missing: {json}");
+}

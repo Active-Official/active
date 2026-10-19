@@ -33,6 +33,7 @@
 | Batch 184 | RB-1829...RB-1838 (SYN-0169-03...09, SYN-0170-01...03) | done: all 10 green first-try, no code changes; 169 completed as units family (T001 refs; prefix equality/distinction; E002 giant/unknown); 170 opened (absent/set/empty env) |
 | Batch 185 | RB-1839...RB-1848 (SYN-0170-04...09, SYN-0171-01...04) | done: 9 first-try + RB-1839 test-side correction (T001-redacted not S004); 170 completed (diag-scoped env; presence-typed; E001 computed; untainted); 171 opened as 170 twins |
 | Batch 186 | RB-1849...RB-1858 (SYN-0171-05...09, SYN-0172-01...05) | done: all 10 green first-try, no code changes; 171 completed as 170 twins; 172 opened as taint family (marks/redacts; both-branch; S004 sink/chain; everywhere) |
+| Batch 187 | RB-1859...RB-1868 (SYN-0172-06...09, SYN-0173-01...06) | done: all 10 green first-try, no code changes; 172 completed (T002 closed; no-sink; concat/patch taint); 173 opened as 172 twins |
  Research Test Index — YAML/TOML/JSON failure research → Active test backlog
 
 Source corpus: `C:\Users\Usuario\Downloads\Solid Tests Research Work` (read-only).

@@ -36193,3 +36193,228 @@ fn rb_1638_syn147_fanout_refused() {
     let v = eval_json("let a = [1, 2, 3]\ncase_0147_08 = a\n");
     assert_eq!(v["case_0147_08"], serde_json::json!([1, 2, 3]), "{v}");
 }
+
+/// RB-1639 — Stack-overflow twin: 200KB scalar stays linear and exact (SYN-0147-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0017 (stack overflow advisory;
+/// same shape as SYN-0122-09).
+/// Converges with RB-1414/1423/1621/1630: 200001-scalar value, silent,
+/// plus the same OPEN SPEC QUESTION (no scalar byte cap in spec/budgets.md).
+#[test]
+fn rb_1639_syn147_long_scalar_linear() {
+    let half = "x".repeat(100000);
+    let src = format!("case_0147_09 = \"{half}\n{half}\"\n");
+    let v = eval_json(&src);
+    let s = v["case_0147_09"].as_str().expect("string");
+    assert_eq!(s.len(), 200001, "byte length");
+    assert_eq!(s.chars().count(), 200001, "scalar length");
+    assert_eq!(s.chars().nth(100000), Some('\n'), "embedded raw LF kept");
+    assert!(s
+        .chars()
+        .enumerate()
+        .all(|(i, c)| if i == 100000 { c == '\n' } else { c == 'x' }));
+    assert!(codes_of(&src).is_empty());
+    // Positive control: a small string is exact and silent.
+    assert_eq!(eval_json("case_0147_09 = \"xx\"\n")["case_0147_09"], "xx");
+}
+
+/// RB-1640 — Alias-chasing twin: below-limit nesting parses (SYN-0148-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0018 (Go alias chasing;
+/// same shape as SYN-0122-01).
+/// Converges with RB-1406/1415/1613/1622/1631: 32 nested arrays, oracle
+/// via independent JSON parse.
+#[test]
+fn rb_1640_syn148_shallow_nesting_accepts() {
+    let src = format!("case_0148_01 = {}0{}\n", "[".repeat(32), "]".repeat(32));
+    let v = eval_json(&src);
+    let wire = format!("{}0{}", "[".repeat(32), "]".repeat(32));
+    let expected: serde_json::Value = serde_json::from_str(&wire).expect("oracle parses");
+    assert_eq!(v["case_0148_01"], expected, "{v}");
+    assert!(codes_of(&src).is_empty());
+    // Positive control: the flat neighbour evaluates.
+    assert_eq!(
+        eval_json("case_0148_01 = [0]\n")["case_0148_01"],
+        serde_json::json!([0])
+    );
+}
+
+/// RB-1641 — Alias-chasing twin: depth overflow fails controllably (SYN-0148-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0018 (Go alias chasing;
+/// same shape as SYN-0122-02).
+/// Converges with RB-1407/1416/1614/1623/1632: 256 brackets E004 Error.
+#[test]
+fn rb_1641_syn148_deep_nesting_trips_budget() {
+    let src = format!("case_0148_02 = {}0{}\n", "[".repeat(256), "]".repeat(256));
+    let diags = parse(&src, "research").expect_err("must fail E004");
+    let e = diags.iter().find(|d| d.code == "E004").expect("E004");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E004 must be Error, got {:?}",
+        e.severity
+    );
+    // Positive control: a shallow array evaluates.
+    assert_eq!(
+        eval_json("case_0148_02 = [0]\n")["case_0148_02"],
+        serde_json::json!([0])
+    );
+}
+
+/// RB-1642 — Alias-chasing twin: adversarial depth bounded (SYN-0148-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0018 (Go alias chasing;
+/// same shape as SYN-0122-03).
+/// Converges with RB-1408/1417/1615/1624/1633: 2048 brackets E004 Error.
+#[test]
+fn rb_1642_syn148_adversarial_depth_bounded() {
+    let src = format!("case_0148_03 = {}0{}\n", "[".repeat(2048), "]".repeat(2048));
+    let diags = parse(&src, "research").expect_err("must fail E004");
+    let e = diags.iter().find(|d| d.code == "E004").expect("E004");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E004 must be Error, got {:?}",
+        e.severity
+    );
+    // Positive control: a shallow array evaluates.
+    assert_eq!(
+        eval_json("case_0148_03 = [0]\n")["case_0148_03"],
+        serde_json::json!([0])
+    );
+}
+
+/// RB-1643 — Alias-chasing twin: interpolation in arrays refused (SYN-0148-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0018 (Go alias chasing;
+/// same shape as SYN-0122-04).
+/// Converges with RB-1409/1418/1616/1625/1634: E005 Error at (3:10).
+#[test]
+fn rb_1643_syn148_array_interpolation_refused() {
+    let src =
+        "case_0148_04 = 1\nlet a = [1]\nlet b = [${a}, ${a}]\nlet c = [${b}, ${b}]\nvalue = c\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (3, 10), "{span:?}");
+    // Positive control: interpolation inside STRINGS works.
+    let v = eval_json("let who = \"hi\"\ncase_0148_04 = \"yo ${who}\"\n");
+    assert_eq!(v["case_0148_04"], "yo hi", "{v}");
+    // Positive control: plain arrays and name references evaluate.
+    let v = eval_json("let a = [1, 2, 3]\ncase_0148_04 = a\n");
+    assert_eq!(v["case_0148_04"], serde_json::json!([1, 2, 3]), "{v}");
+}
+
+/// RB-1644 — Alias-chasing twin: `${}` cycles are inexpressible (SYN-0148-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0018 (Go alias chasing;
+/// same shape as SYN-0122-05).
+/// Converges with RB-1410/1419/1617/1626/1635: E005 first at (2:9);
+/// genuine `let` cycles stay S001.
+#[test]
+fn rb_1644_syn148_interp_cycle_inexpressible() {
+    let src = "case_0148_05 = 1\nlet a = ${b}\nlet b = ${a}\nvalue = ${a}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (2, 9), "{span:?}");
+    // Positive control: a real 2-node `let` cycle is S001 (RB-030).
+    let codes = codes_of("let a = b\nlet b = a\n");
+    assert!(codes.iter().any(|c| c == "S001"), "{codes:?}");
+    // Positive control: acyclic lets evaluate.
+    assert_eq!(eval_json("let a = 1\nlet b = a + 2\ny = b\n")["y"], 3);
+}
+
+/// RB-1645 — Alias-chasing twin: small collection accepts (SYN-0148-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0018 (Go alias chasing;
+/// same shape as SYN-0122-06).
+/// Converges with RB-1411/1420/1618/1627/1636: five elements, silent.
+#[test]
+fn rb_1645_syn148_small_array_accepts() {
+    let src = "case_0148_06 = [1, 2, 3, 4, 5]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0148_06"], serde_json::json!([1, 2, 3, 4, 5]), "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the empty neighbour evaluates too.
+    assert_eq!(
+        eval_json("case_0148_06 = []\n")["case_0148_06"],
+        serde_json::json!([])
+    );
+}
+
+/// RB-1646 — Alias-chasing twin: comment never bypasses depth accounting (SYN-0148-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0018 (Go alias chasing;
+/// same shape as SYN-0122-07).
+/// Converges with RB-1412/1421/1619/1628/1637: 64-deep trips E004 with
+/// and without the comment; 32-deep accepts.
+#[test]
+fn rb_1646_syn148_comment_depth_counted() {
+    let src = "case_0148_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]] # bounded-depth control\n";
+    let diags = parse(src, "research").expect_err("must fail E004");
+    let e = diags.iter().find(|d| d.code == "E004").expect("E004");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E004 must be Error, got {:?}",
+        e.severity
+    );
+    // Positive control: the comment-free twin trips identically.
+    let bare = "case_0148_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n";
+    let diags = parse(bare, "research").expect_err("must fail E004");
+    assert!(diags.iter().any(|d| d.code == "E004"), "{diags:?}");
+    // Positive control: 32-deep stays below the bound and accepts.
+    let ok = format!("case_0148_07 = {}0{}\n", "[".repeat(32), "]".repeat(32));
+    assert!(codes_of(&ok).is_empty(), "{ok}");
+}
+
+/// RB-1647 — Alias-chasing twin: fan-out interpolation refused (SYN-0148-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0018 (Go alias chasing;
+/// same shape as SYN-0122-08).
+/// Converges with RB-1413/1422/1620/1629/1638: E005 Error at (3:10).
+#[test]
+fn rb_1647_syn148_fanout_refused() {
+    let src = "case_0148_08 = 1\nlet a = [1,2,3]\nlet b = [${a}, ${a}, ${a}, ${a}]\nvalue = b\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (3, 10), "{span:?}");
+    // Positive control: the array itself reads fine through its name.
+    let v = eval_json("let a = [1, 2, 3]\ncase_0148_08 = a\n");
+    assert_eq!(v["case_0148_08"], serde_json::json!([1, 2, 3]), "{v}");
+}
+
+/// RB-1648 — Alias-chasing twin: 200KB scalar stays linear and exact (SYN-0148-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0018 (Go alias chasing;
+/// same shape as SYN-0122-09).
+/// Converges with RB-1414/1423/1621/1630/1639: 200001-scalar value,
+/// silent, plus the same OPEN SPEC QUESTION.
+#[test]
+fn rb_1648_syn148_long_scalar_linear() {
+    let half = "x".repeat(100000);
+    let src = format!("case_0148_09 = \"{half}\n{half}\"\n");
+    let v = eval_json(&src);
+    let s = v["case_0148_09"].as_str().expect("string");
+    assert_eq!(s.len(), 200001, "byte length");
+    assert_eq!(s.chars().count(), 200001, "scalar length");
+    assert_eq!(s.chars().nth(100000), Some('\n'), "embedded raw LF kept");
+    assert!(s
+        .chars()
+        .enumerate()
+        .all(|(i, c)| if i == 100000 { c == '\n' } else { c == 'x' }));
+    assert!(codes_of(&src).is_empty());
+    // Positive control: a small string is exact and silent.
+    assert_eq!(eval_json("case_0148_09 = \"xx\"\n")["case_0148_09"], "xx");
+}

@@ -37708,3 +37708,217 @@ fn rb_1708_syn155_quoted_datetime_preserved() {
         "2024-01-01T00:00:00Z"
     );
 }
+
+/// RB-1709 — Datetime twin: minute-60 tail rejects loudly (SYN-0155-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0001 (range validation before type construction).
+/// `2024-01-01T12:60:00Z` fails E002 Error at (1:35): there is no clock to
+/// range-check and no type to construct — the `T60` tail matches no grammar
+/// sequence (SRC-TOML-0040/RB-189 rhythm), so the research demand "reject:
+/// minute-range" converges on the shipped rejection, only earlier and
+/// louder than a calendar check could ever be.
+#[test]
+fn rb_1709_syn155_minute60_tail_rejects() {
+    let src = "case_0155_09 = 2024-01-01T12:60:00Z\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 35), "{span:?}");
+    // Positive control: the quoted form stays an exact string.
+    assert_eq!(
+        eval_json("case_0155_09 = \"2024-01-01T12:60:00Z\"\n")["case_0155_09"],
+        "2024-01-01T12:60:00Z"
+    );
+}
+
+/// RB-1710 — Spec-matrix twin: baseline scalar parses (SYN-0156-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0002 (TOML valid/invalid suite).
+/// Two plain integer assignments evaluate silently to exactly 1 and 1 —
+/// the anchor proving the parser accepts ordinary scalars with zero
+/// diagnostics before any edge is probed.
+#[test]
+fn rb_1710_syn156_baseline_scalar_accepts() {
+    let src = "case_0156_01 = 1\nprobe_3156 = 1\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0156_01"], 1, "{v}");
+    assert_eq!(v["probe_3156"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: distinct scalars evaluate distinctly.
+    let v = eval_json("case_0156_01 = 2\nprobe_3156 = 3\n");
+    assert_eq!(v["case_0156_01"], 2, "{v}");
+    assert_eq!(v["probe_3156"], 3, "{v}");
+}
+
+/// RB-1711 — Spec-matrix twin: nested map keeps scope (SYN-0156-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0002 (nested scope independence).
+/// `probe_3156 = { nested = 1 }` evaluates with the inner key visible only
+/// inside its map: the outer scalar stays 1 and no scope leaks either way.
+#[test]
+fn rb_1711_syn156_nested_map_scopes() {
+    let src = "case_0156_02 = 1\nprobe_3156 = { nested = 1 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0156_02"], 1, "{v}");
+    assert_eq!(v["probe_3156"]["nested"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a two-key nested map is equally silent.
+    let v = eval_json("probe_3156 = { a = 1, b = 2 }\n");
+    assert_eq!(v["probe_3156"]["a"], 1, "{v}");
+    assert_eq!(v["probe_3156"]["b"], 2, "{v}");
+}
+
+/// RB-1712 — Spec-matrix twin: array commas unambiguous (SYN-0156-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0002 (two-element array).
+/// `probe_3156 = [1, 2]` evaluates to exactly [1, 2] — one comma, two
+/// elements, no ambiguity, zero diagnostics.
+#[test]
+fn rb_1712_syn156_two_element_array_accepts() {
+    let src = "case_0156_03 = 1\nprobe_3156 = [1, 2]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0156_03"], 1, "{v}");
+    assert_eq!(v["probe_3156"], serde_json::json!([1, 2]), "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the single-element array is equally exact.
+    let v = eval_json("probe_3156 = [7]\n");
+    assert_eq!(v["probe_3156"], serde_json::json!([7]), "{v}");
+}
+
+/// RB-1713 — Spec-matrix twin: quoted scalar never coerces (SYN-0156-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0002 (explicit typing over inference).
+/// `probe_3156 = "1"` stays the string "1" next to the integer 1: quotes
+/// are a type commitment, and the NORTH STAR forbids silent coercions, so
+/// the two values compare unequal across the type boundary.
+#[test]
+fn rb_1713_syn156_quoted_scalar_no_coerce() {
+    let src = "case_0156_04 = 1\nprobe_3156 = \"1\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0156_04"], 1, "{v}");
+    assert_eq!(v["probe_3156"], "1", "{v}");
+    assert!(v["probe_3156"].is_string());
+    assert!(v["case_0156_04"].is_i64());
+    assert!(codes_of(src).is_empty());
+    // Positive control: arithmetic still sees the bare integer as a number.
+    assert_eq!(eval_json("probe_3156 = 1 + 1\n")["probe_3156"], 2);
+}
+
+/// RB-1714 — Spec-matrix twin: trailing comment stays out (SYN-0156-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0002 (comment inertness).
+/// `probe_3156 = 1 # comment` evaluates to exactly 1: the `#` opens a
+/// comment that never enters the token value, and nothing warns.
+#[test]
+fn rb_1714_syn156_trailing_comment_inert() {
+    let src = "case_0156_05 = 1\nprobe_3156 = 1 # comment\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0156_05"], 1, "{v}");
+    assert_eq!(v["probe_3156"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: `#` inside a string stays data, not a comment.
+    assert_eq!(eval_json("probe_3156 = \"a#b\"\n")["probe_3156"], "a#b");
+}
+
+/// RB-1715 — Spec-matrix twin: env lookup explicit with default (SYN-0156-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0002 (DERIVED-0006 hermetic env).
+/// `env.ACTIVE_RB1715_ENV ?: <default>` is the only env read form: absent
+/// yields the default, present yields the value — never an ambient leak.
+/// Parallel-safe: uniquely-named var, priors restored.
+#[test]
+fn rb_1715_syn156_env_lookup_explicit() {
+    let prior = std::env::var("ACTIVE_RB1715_ENV").ok();
+    std::env::remove_var("ACTIVE_RB1715_ENV");
+    let v = eval_json("case_0156_06 = 1\nprobe_3156 = env.ACTIVE_RB1715_ENV ?: 1\n");
+    assert_eq!(v["probe_3156"], 1, "{v}");
+    std::env::set_var("ACTIVE_RB1715_ENV", "hi");
+    let v = eval_json("probe_3156 = env.ACTIVE_RB1715_ENV ?: 1\n");
+    assert_eq!(v["probe_3156"], "hi", "{v}");
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_RB1715_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1715_ENV"),
+    }
+    // Positive control: a different default surfaces when absent.
+    let prior2 = std::env::var("ACTIVE_RB1715_ENV").ok();
+    std::env::remove_var("ACTIVE_RB1715_ENV");
+    assert_eq!(
+        eval_json("probe_3156 = env.ACTIVE_RB1715_ENV ?: 2\n")["probe_3156"],
+        2
+    );
+    match prior2 {
+        Some(val) => std::env::set_var("ACTIVE_RB1715_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1715_ENV"),
+    }
+}
+
+/// RB-1716 — Spec-matrix twin: secret taint propagates and redacts (SYN-0156-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0002 (NORTH STAR taint+redact).
+/// `probe_3156 = secret("RAW-1716-…")` evaluates beside the plain scalar 1;
+/// the export carries only the redaction marker — the raw marker bytes
+/// appear nowhere: not in the value, not in JSON, not in diagnostics.
+#[test]
+fn rb_1716_syn156_secret_taint_redacts() {
+    let raw = "RAW-1716-t7q2-secret";
+    let src = format!("case_0156_07 = 1\nprobe_3156 = secret(\"{raw}\")\n");
+    let v = eval_json(&src);
+    assert_eq!(v["case_0156_07"], 1, "{v}");
+    let json = active_core::convert::value_to_pretty_json(
+        &active_core::Engine::new()
+            .evaluate(&parse(&src, "research").expect("parses"))
+            .expect("evaluates")
+            .0,
+    );
+    assert!(!json.contains(raw), "leak in JSON export: {json}");
+    assert!(
+        json.contains("***SECRET***"),
+        "redaction marker missing: {json}"
+    );
+    let diag_text = match parse(&src, "research") {
+        Ok(m) => match active_core::Engine::new().evaluate(&m) {
+            Ok((_, ds)) => format!("{ds:?}"),
+            Err(e) => e.to_string(),
+        },
+        Err(ds) => format!("{ds:?}"),
+    };
+    assert!(!diag_text.contains(raw), "leak in diagnostics: {diag_text}");
+    // Positive control: the plain scalar beside the secret is untouched.
+    assert_eq!(eval_json("case_0156_07 = 1\n")["case_0156_07"], 1);
+}
+
+/// RB-1717 — Spec-matrix twin: let-binding interpolates (SYN-0156-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0002 (dependency resolution).
+/// `let base = 1` then `probe_3156 = "${base}"` evaluates to the string
+/// "1": the dependency resolves consistently through string-only
+/// interpolation (lets never export — read via the probe key, RB-030).
+#[test]
+fn rb_1717_syn156_let_binding_resolves() {
+    let src = "case_0156_08 = 1\nlet base = 1\nprobe_3156 = \"${base}\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0156_08"], 1, "{v}");
+    assert_eq!(v["probe_3156"], "1", "{v}");
+    assert!(v["probe_3156"].is_string());
+    assert!(codes_of(src).is_empty());
+    // Positive control: doubled interpolation concatenates deterministically.
+    let v = eval_json("let base = 1\nprobe_3156 = \"${base}${base}\"\n");
+    assert_eq!(v["probe_3156"], "11", "{v}");
+}
+
+/// RB-1718 — Spec-matrix twin: duration suffix consumes token (SYN-0156-09 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0002 (unit recognition).
+/// CONVERGENCE (dimension registry, docs/units.md): `probe_3156 = 5s`
+/// evaluates to the shipped duration value ({"ms": 5000}) — the lexer
+/// consumes the full `5s` token through the closed unit whitelist, and the
+/// value beside it stays a plain integer 1.
+#[test]
+fn rb_1718_syn156_duration_suffix_converges() {
+    let src = "case_0156_09 = 1\nprobe_3156 = 5s\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0156_09"], 1, "{v}");
+    assert_eq!(v["probe_3156"], serde_json::json!({"ms": 5000}), "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the 1-second neighbour scales exactly.
+    assert_eq!(
+        eval_json("probe_3156 = 1s\n")["probe_3156"],
+        serde_json::json!({"ms": 1000})
+    );
+}

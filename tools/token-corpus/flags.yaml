@@ -1,0 +1,11 @@
+flags:
+  dark_launch: false
+  rollout_pct: 25
+  effective: 25
+profiles:
+  staging:
+    flags:
+      rollout_pct: 100
+  prod:
+    flags:
+      rollout_pct: 10

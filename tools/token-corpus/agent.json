@@ -1,0 +1,9 @@
+{
+  "model_pin": "acme-4",
+  "agent": {
+    "model": "acme-4",
+    "temperature": 0.7,
+    "api_key": "sk-live-001",
+    "tools": ["search", "exec"]
+  }
+}

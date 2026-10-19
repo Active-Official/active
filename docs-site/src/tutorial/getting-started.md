@@ -31,3 +31,17 @@ ACTIVE eval hello.active
 Every command below works on the files in this book — each cookbook
 and migration sample is executed by the test suite, so nothing here
 rots.
+
+## First-run checklist (under 10 minutes)
+
+```bash
+active check examples/complete.active   # expect: OK, exit 0
+active eval examples/complete.active    # expect: JSON value tree
+```
+
+Then open `examples/complete.active` in your editor with the Active
+extension: hover a unit, a secret, and a `let` binding. Finally, break
+something on purpose: change a duration to a bare number, or reference a
+name that does not exist, and read the diagnostic. It names the exact line
+and column plus a code you can look up. That loop (write, check, read,
+fix) is the whole workflow.

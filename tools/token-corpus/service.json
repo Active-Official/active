@@ -1,0 +1,6 @@
+{
+  "server": { "host": "localhost", "port": 8080 },
+  "pool": 5,
+  "timeout": "30s",
+  "db_password": "change-me-in-production"
+}

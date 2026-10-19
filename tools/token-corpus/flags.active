@@ -1,0 +1,21 @@
+# Kit B after: feature flags, single source of truth (invented for kit B).
+# One file replaces a YAML per environment. Profiles override per
+# environment; effective derives from rollout so impact analysis sees it.
+schema = {
+  flags = Table { dark_launch = Bool, rollout_pct = Int(min = 0) },
+}
+
+[flags]
+dark_launch = false
+rollout_pct = 25
+effective = rollout_pct
+
+profile "staging" {
+[flags]
+rollout_pct = 100
+}
+
+profile "prod" {
+[flags]
+rollout_pct = 10
+}

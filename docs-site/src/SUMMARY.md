@@ -19,6 +19,7 @@
 - [12-factor application](cookbook/twelve-factor.md)
 - [Terraform variables](cookbook/terraform-vars.md)
 - [CI pipelines](cookbook/ci-pipeline.md)
+- [Agent loop](cookbook/agent-loop.md)
 
 # Migration
 
@@ -28,6 +29,7 @@
 - [Kit A: 12-factor service](migration/kit-a-12factor-service.md)
 - [Kit B: feature flags](migration/kit-b-feature-flags.md)
 - [Kit C: agent config](migration/kit-c-agent-config.md)
+- [Active vs YAML/TOML/JSON](migration/vs-comparison.md)
 
 # Reference
 

@@ -1,0 +1,22 @@
+# Kit C after: agent runtime config (invented for migration kit C).
+# The schema bounds temperature, the model pin is immutable, tools are an
+# enum-closed array, and the key is a secret: redacted everywhere by
+# construction. Evaluates clean with an empty environment.
+schema = {
+  agent = Table {
+    model = String,
+    temperature = Float(min = 0.0, max = 2.0),
+    api_key = Secret,
+    tools = Array<String>,
+  },
+}
+
+# @intent: "Pinned model for the release assistant; do not retarget"
+# @ai_immutable: true
+model_pin = "acme-4"
+
+[agent]
+model = "acme-4"
+temperature = 0.7
+api_key = secret("sk-live-001")
+tools = ["search", "exec"]

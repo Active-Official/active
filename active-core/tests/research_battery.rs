@@ -39777,3 +39777,273 @@ fn rb_1798_syn165_unit_round_trip_stable() {
     let m2 = parse(&o, "research").expect("reparses");
     assert_eq!(format(&m2, Style::Indent), o);
 }
+
+/// RB-1799 — Secret twin: printer preserves the call, export redacts (SYN-0165-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0011 (pretty-print leakage).
+/// REFUSAL (spec-gated, spec/secrets.md:48-49; Batch 15/RB-143): the
+/// formatter re-emits the `secret("RAW-1799-…")` call byte-identically —
+/// taint markers survive print BY DESIGN, because the call form IS the
+/// marker. Redaction applies at evaluation/export, never by rewriting the
+/// user's own source: the JSON export carries only `***SECRET***`, and the
+/// raw marker appears in no value, no JSON, no diagnostic.
+#[test]
+fn rb_1799_syn165_secret_print_preserves_call() {
+    use active_core::fmt::format;
+    use active_core::Style;
+    let raw = "RAW-1799-q8z3-secret";
+    let src = format!("case_0165_09 = secret(\"{raw}\")\n");
+    let module = parse(&src, "research").expect("must parse");
+    assert_eq!(format(&module, Style::Indent), src);
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains(raw), "leak in JSON export: {json}");
+    assert!(json.contains("***SECRET***"), "redaction missing: {json}");
+    let diag_text = format!("{diags:?}");
+    assert!(!diag_text.contains(raw), "leak in diagnostics: {diag_text}");
+    // Positive control: a plain scalar beside the secret prints too.
+    let v = eval_json("case_0165_09 = 1\n");
+    assert_eq!(v["case_0165_09"], 1, "{v}");
+}
+
+/// RB-1800 — Let twin: bare interpolation is not a value (SYN-0166-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0012 (undefined references).
+/// REFUSAL (spec-gated, string-only interpolation; batch 30 bare-interp
+/// E005): `value = ${a}` fails E005 Error at (3:9) — `$` opens
+/// interpolation ONLY inside strings, so the bare form never becomes a
+/// value, numeric or otherwise. The quoted twin `value = "${a}"` is the
+/// string "1", silent: interpolation stringifies, always.
+/// CONVERGENCE: E005 grammar gate; refusal of bare-value semantics.
+#[test]
+fn rb_1800_syn166_bare_interp_rejects() {
+    let src = "case_0166_01 = 1\nlet a = 1\nvalue = ${a}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (3, 9), "{span:?}");
+    // Positive control: the quoted twin expands to the string "1".
+    let src2 = "case_0166_01 = 1\nlet a = 1\nvalue = \"${a}\"\n";
+    let v = eval_json(src2);
+    assert_eq!(v["value"], "1", "{v}");
+    assert!(v["value"].is_string());
+    assert!(codes_of(src2).is_empty());
+}
+
+/// RB-1801 — Let twin: forward reference resolves quoted (SYN-0166-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0012 (reference order).
+/// The bare form fails E005 at (2:9) — while the quoted twin resolves
+/// FORWARD: `let a = "${b}"` before `let b = 2` still yields "2", silent.
+/// Reference order is file-order independent: resolution is by name, never
+/// by position.
+/// CONVERGENCE: order-independence pinned at the value level.
+#[test]
+fn rb_1801_syn166_forward_ref_resolves() {
+    let src = "case_0166_02 = 1\nlet a = ${b}\nlet b = 2\nvalue = ${a}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (2, 9), "{span:?}");
+    // Positive control: the quoted twin resolves forward to "2".
+    let src2 = "case_0166_02 = 1\nlet a = \"${b}\"\nlet b = 2\nvalue = \"${a}\"\n";
+    let v = eval_json(src2);
+    assert_eq!(v["value"], "2", "{v}");
+    assert!(codes_of(src2).is_empty());
+}
+
+/// RB-1802 — Let twin: self-cycle fails S001 quoted (SYN-0166-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0012 (self cycles).
+/// The bare form fails E005 at (2:9) — while the quoted twin
+/// `let a = "${a}"` fails evaluation with S001 (dependency cycle):
+/// detected by graph analysis, never by recursion overflow, never a hang.
+/// CONVERGENCE: DERIVED-0003/RB-030 cycle contract, self-angle.
+#[test]
+fn rb_1802_syn166_self_cycle_s001() {
+    let src = "case_0166_03 = 1\nlet a = ${a}\nvalue = ${a}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    assert!(
+        diags.iter().any(|d| d.code == "E005"),
+        "E005 expected, got {diags:?}"
+    );
+    // Positive control: the quoted twin fails S001, not a hang.
+    let src2 = "case_0166_03 = 1\nlet a = \"${a}\"\nvalue = \"${a}\"\n";
+    let module = parse(src2, "research").expect("must parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail S001");
+    assert_eq!(err.code(), "S001", "{err}");
+}
+
+/// RB-1803 — Let twin: three-cycle fails S001 quoted (SYN-0166-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0012 (multi-node cycles).
+/// The bare chain fails E005 at (2:9) — while the quoted
+/// a→b→c→a chain fails evaluation with S001: multi-node cycles report the
+/// same cycle class, deterministically, with no overflow and no partial
+/// values escaping.
+/// CONVERGENCE: DERIVED-0003/RB-030 cycle contract, chain-angle.
+#[test]
+fn rb_1803_syn166_chain_cycle_s001() {
+    let src = "case_0166_04 = 1\nlet a = ${b}\nlet b = ${c}\nlet c = ${a}\nvalue = ${a}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (2, 9), "{span:?}");
+    // Positive control: the quoted chain fails S001, not a hang.
+    let src2 = "case_0166_04 = 1\nlet a = \"${b}\"\nlet b = \"${c}\"\nlet c = \"${a}\"\nvalue = \"${a}\"\n";
+    let module = parse(src2, "research").expect("must parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail S001");
+    assert_eq!(err.code(), "S001", "{err}");
+}
+
+/// RB-1804 — Let twin: interpolated arithmetic refuses coercion (SYN-0166-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0012 (non-Turing evaluation).
+/// The bare chain fails E005 at (3:12) — while the quoted twin
+/// `value = "${copy}" + 1` fails evaluation with T001: the string "2"
+/// never coerces for `+` (NORTH STAR: no silent coercions). Arithmetic is
+/// in-spec AND type-checked — both halves hold at once.
+/// CONVERGENCE: T001 dimensional/contract refusal, string-angle.
+#[test]
+fn rb_1804_syn166_string_plus_int_t001() {
+    let src = "case_0166_05 = 1\nlet base = 2\nlet copy = ${base}\nvalue = ${copy} + 1\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (3, 12), "{span:?}");
+    // Positive control: the quoted twin type-errors instead of coercing.
+    let src2 = "case_0166_05 = 1\nlet base = 2\nlet copy = \"${base}\"\nvalue = \"${copy}\" + 1\n";
+    let module = parse(src2, "research").expect("must parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail T001");
+    assert_eq!(err.code(), "T001", "{err}");
+}
+
+/// RB-1805 — Let twin: env through binding is snapshot-explicit (SYN-0166-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0012 (env repeatability).
+/// `let a = env.ACTIVE_RB1805_ENV ?: "safe"` then `value = "${a}"`:
+/// absent yields "safe", present yields the injected value — repeatable for
+/// a fixed process environment, explicit nowhere else. Parallel-safe:
+/// uniquely-named var, priors restored (never the real PATH: machine
+/// values must not enter oracles).
+#[test]
+fn rb_1805_syn166_env_through_let() {
+    let prior = std::env::var("ACTIVE_RB1805_ENV").ok();
+    std::env::remove_var("ACTIVE_RB1805_ENV");
+    let v = eval_json(
+        "case_0166_06 = 1\nlet a = env.ACTIVE_RB1805_ENV ?: \"safe\"\nvalue = \"${a}\"\n",
+    );
+    assert_eq!(v["value"], "safe", "{v}");
+    std::env::set_var("ACTIVE_RB1805_ENV", "snap1");
+    let v = eval_json(
+        "case_0166_06 = 1\nlet a = env.ACTIVE_RB1805_ENV ?: \"safe\"\nvalue = \"${a}\"\n",
+    );
+    assert_eq!(v["value"], "snap1", "{v}");
+    assert_eq!(
+        eval_json(
+            "case_0166_06 = 1\nlet a = env.ACTIVE_RB1805_ENV ?: \"safe\"\nvalue = \"${a}\"\n"
+        )["value"],
+        "snap1"
+    );
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_RB1805_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1805_ENV"),
+    }
+    // Positive control: a second default surfaces when absent.
+    let prior2 = std::env::var("ACTIVE_RB1805_ENV").ok();
+    std::env::remove_var("ACTIVE_RB1805_ENV");
+    assert_eq!(
+        eval_json("value = env.ACTIVE_RB1805_ENV ?: \"other\"\n")["value"],
+        "other"
+    );
+    match prior2 {
+        Some(val) => std::env::set_var("ACTIVE_RB1805_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1805_ENV"),
+    }
+}
+
+/// RB-1806 — Let twin: unused invalid binding announces, never blocks (SYN-0166-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0012 (lazy/eager policy).
+/// The bare form fails E005 at (2:14) — while the quoted twin evaluates
+/// `value = 1` WITH a W001 Warning at (2:17): the eager validator
+/// announces the bad unused binding, and the lazy evaluator leaves it
+/// unevaluated. Policy explicit on both sides: announce-eagerly,
+/// evaluate-lazily, block-never.
+/// CONVERGENCE: W001+value contract, unused-angle.
+#[test]
+fn rb_1806_syn166_unused_invalid_announces() {
+    let src = "case_0166_07 = 1\nlet unused = ${missing}\nvalue = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (2, 14), "{span:?}");
+    // Positive control: the quoted twin warns W001 yet yields value 1.
+    let src2 = "case_0166_07 = 1\nlet unused = \"${missing}\"\nvalue = 1\n";
+    let module = parse(src2, "research").expect("must parse");
+    let (value, diags2) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags2.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (2, 17), "{span:?}");
+    let json: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(json["value"], 1, "{json}");
+}
+
+/// RB-1807 — Let twin: unterminated interpolation spans (SYN-0166-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0012 (malformed syntax).
+/// `let a = "${b"` fails E012 Error at (2:10): the unclosed delimiter is
+/// caught at parse with the opening span — bounded path, no scan to EOF,
+/// no hang, no guess.
+/// CONVERGENCE: DERIVED-0004/RB-040 unclosed-delimiter contract.
+#[test]
+fn rb_1807_syn166_unterminated_interp_spans() {
+    let src = "case_0166_08 = 1\nlet a = \"${b\"\nvalue = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E012");
+    let e = diags.iter().find(|d| d.code == "E012").expect("E012");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E012 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E012 carries a span");
+    assert_eq!((span.line, span.column), (2, 10), "{span:?}");
+    // Positive control: the closed twin with a bound name expands.
+    let v = eval_json("let b = 1\nlet a = \"${b}\"\nvalue = \"${a}\"\n");
+    assert_eq!(v["value"], "1", "{v}");
+}
+
+/// RB-1808 — Let twin: giant integer rejects at i64 edge (SYN-0166-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0012 (host overflow).
+/// `let a = 1000000000…` (37 digits) fails E023 Error at (2:9): literals
+/// past i64::MAX reject per spec/specification.md §1.3 (catalog
+/// docs/diagnostics.md:52) — never wrap, never truncate. The edge is
+/// exact: MAX accepts silently, MAX+1 rejects.
+/// CONVERGENCE: bounded-numeric contract, boundary-pinned both sides.
+#[test]
+fn rb_1808_syn166_giant_int_e023() {
+    let src = "case_0166_09 = 1\nlet a = 1000000000000000000000000000000000000\nvalue = \"${a}\"\n";
+    let diags = parse(src, "research").expect_err("must fail E023");
+    let e = diags.iter().find(|d| d.code == "E023").expect("E023");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E023 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E023 carries a span");
+    assert_eq!((span.line, span.column), (2, 9), "{span:?}");
+    // Positive control: i64::MAX accepts; MAX+1 rejects — exact edge.
+    let v = eval_json("value = 9223372036854775807\n");
+    assert_eq!(v["value"], 9223372036854775807i64, "{v}");
+    let diags = parse("value = 9223372036854775808\n", "research").expect_err("E023");
+    assert!(
+        diags.iter().any(|d| d.code == "E023"),
+        "E023 expected, got {diags:?}"
+    );
+}

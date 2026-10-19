@@ -79,6 +79,12 @@ pub enum Unit {
     Kilometers,
     Kilograms,
     Grams,
+    // Temperature (canonical kelvin, affine) and decibels (log special):
+    // equality-and-ordering-only (see Unit::is_non_arithmetic).
+    Kelvin,
+    Celsius,
+    Fahrenheit,
+    Decibel,
     // Custom
     Custom(String),
 }
@@ -155,6 +161,10 @@ impl Unit {
             "km" => Some(Unit::Kilometers),
             "kg" => Some(Unit::Kilograms),
             "g" => Some(Unit::Grams),
+            "K" => Some(Unit::Kelvin),
+            "Cel" => Some(Unit::Celsius),
+            "Fahr" => Some(Unit::Fahrenheit),
+            "dB" => Some(Unit::Decibel),
             "req/m" | "req_m" => Some(Unit::RequestsPerMinute),
             "req/h" | "req_h" => Some(Unit::RequestsPerHour),
 
@@ -224,12 +234,25 @@ impl Unit {
             // Length canonicalizes to `meter` (never `m`); mass to `kg`.
             Unit::Meters | Unit::Kilometers => "meter".into(),
             Unit::Kilograms | Unit::Grams => "kg".into(),
+            // Temperature canonicalizes to `K`; decibels stay `dB`.
+            Unit::Kelvin | Unit::Celsius | Unit::Fahrenheit => "K".into(),
+            Unit::Decibel => "dB".into(),
             Unit::Custom(s) => s.clone(),
         }
     }
 
-    /// Render a quantity amount in source spelling. Percent is special:
-    /// the canonical value is the ratio (100% = 1.0) but the spelled form
+    /// Absolute temperatures and decibels admit equality and ordering
+    /// through their canonical forms, but never arithmetic: affine and
+    /// logarithmic values do not add (`20Cel + 20Cel` and `3dB + 3dB`
+    /// are dimensional TypeErrors, spec Ch. 4 §4.1).
+    pub fn is_non_arithmetic(&self) -> bool {
+        matches!(
+            self,
+            Unit::Kelvin | Unit::Celsius | Unit::Fahrenheit | Unit::Decibel
+        )
+    }
+
+    /// Render a quantity amount in source spelling. Percent is special:    /// the canonical value is the ratio (100% = 1.0) but the spelled form
     /// is percent-form (`25%`, never `0.25%`), so this multiplies back.
     /// Every other unit renders `{amount}{suffix}` (spec Ch. 4 §4.2).
     pub fn format_amount(&self, amount: f64) -> String {

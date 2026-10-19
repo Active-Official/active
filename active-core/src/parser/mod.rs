@@ -3317,10 +3317,47 @@ impl Parser {
                 self.bump();
                 let expr = self.parse_unary();
                 self.depth -= 1;
+                // Affine units are order-sensitive: `-40Fahr` must negate the
+                // literal BEFORE the Fahrenheit→kelvin transform, otherwise
+                // the famous crossover silently breaks (spec Ch. 4 §4.1).
+                // Linear units are unaffected (negation commutes with scaling
+                // and clamps), so only Celsius/Fahrenheit fold here.
+                if op == UnOp::Neg {
+                    if let Some(folded) = self.fold_affine_negation(expr) {
+                        return folded;
+                    }
+                }
                 self.add_spanned(Node::Unary { op, expr }, &op_tok)
             }
             _ => self.parse_primary(),
         }
+    }
+
+    /// Fold unary minus into an affine-unit quantity literal.
+    ///
+    /// `-40Fahr` must mean negative-forty-Fahrenheit (233.15 K), not the
+    /// negation of positive-forty-Fahrenheit in kelvin: affine transforms
+    /// do not commute with negation (spec Ch. 4 §4.1). Linear units are
+    /// unaffected (negation commutes with scaling), so only
+    /// Celsius/Fahrenheit fold here. Returns None for any other operand.
+    fn fold_affine_negation(&mut self, expr: NodeId) -> Option<NodeId> {
+        let value_id = match self.module.get(expr) {
+            Some(Node::Quantity {
+                value,
+                unit: Unit::Celsius | Unit::Fahrenheit,
+            }) => *value,
+            _ => return None,
+        };
+        match self.module.get_mut(value_id) {
+            Some(Node::Literal(Value::Int(n))) => {
+                *n = n.saturating_neg();
+            }
+            Some(Node::Literal(Value::Float(f))) => {
+                *f = -*f;
+            }
+            _ => return None,
+        }
+        Some(expr)
     }
 
     // ------------------------------------------------------------------

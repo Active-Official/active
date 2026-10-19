@@ -1,0 +1,7 @@
+t = 20Cel
+u = 68Fahr
+v = 273.15K
+w = 3dB
+x = -40Fahr
+y = 20Cel + 20Cel
+z = 3dB + 3dB

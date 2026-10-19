@@ -1896,6 +1896,21 @@ fn normalize_quantity(v: &Value, unit: &Unit) -> Result<Value, String> {
     if let Some((factor, canonical)) = mech_factor {
         return Ok(Value::Quantity((num * factor).max(0.0), canonical));
     }
+    // Temperature canonicalizes to kelvin through affine transforms;
+    // below-absolute-zero literals clamp at 0 K. Decibels are retained
+    // (log scale, no conversion). Both are ordering-only (spec Ch. 4 §4.1).
+    match unit {
+        Unit::Kelvin => return Ok(Value::Quantity(num.max(0.0), Unit::Kelvin)),
+        Unit::Celsius => return Ok(Value::Quantity((num + 273.15).max(0.0), Unit::Kelvin)),
+        Unit::Fahrenheit => {
+            return Ok(Value::Quantity(
+                ((num - 32.0) * 5.0 / 9.0 + 273.15).max(0.0),
+                Unit::Kelvin,
+            ))
+        }
+        Unit::Decibel => return Ok(Value::Quantity(num, Unit::Decibel)),
+        _ => {}
+    }
     Ok(Value::Quantity(num, unit.clone()))
 }
 
@@ -1968,23 +1983,34 @@ pub(crate) fn eval_binary(op: BinOp, lhs: &Value, rhs: &Value) -> Result<Value, 
         // same-dimension add/sub/compare, scalar mul/div, same-dimension
         // division yields a bare ratio. Cross-suffix operations fall through
         // to the dimensional TypeError below (spec Ch. 4 §4.1/§4.3).
-        (Add, Value::Quantity(a, ua), Value::Quantity(b, ub)) if ua == ub => {
+        // Absolute temperatures and decibels are excluded from arithmetic
+        // (affine/log values do not add); their comparisons below still
+        // apply (Unit::is_non_arithmetic).
+        (Add, Value::Quantity(a, ua), Value::Quantity(b, ub))
+            if ua == ub && !ua.is_non_arithmetic() =>
+        {
             Ok(Value::Quantity(a + b, ua.clone()))
         }
-        (Sub, Value::Quantity(a, ua), Value::Quantity(b, ub)) if ua == ub => {
+        (Sub, Value::Quantity(a, ua), Value::Quantity(b, ub))
+            if ua == ub && !ua.is_non_arithmetic() =>
+        {
             Ok(Value::Quantity(a - b, ua.clone()))
         }
-        (Mul, Value::Quantity(a, u), Value::Int(n)) => {
+        (Mul, Value::Quantity(a, u), Value::Int(n)) if !u.is_non_arithmetic() => {
             Ok(Value::Quantity(a * *n as f64, u.clone()))
         }
-        (Mul, Value::Quantity(a, u), Value::Float(f)) => Ok(Value::Quantity(a * f, u.clone())),
-        (Div, Value::Quantity(a, u), Value::Int(n)) if *n != 0 => {
+        (Mul, Value::Quantity(a, u), Value::Float(f)) if !u.is_non_arithmetic() => {
+            Ok(Value::Quantity(a * f, u.clone()))
+        }
+        (Div, Value::Quantity(a, u), Value::Int(n)) if *n != 0 && !u.is_non_arithmetic() => {
             Ok(Value::Quantity(a / *n as f64, u.clone()))
         }
-        (Div, Value::Quantity(a, u), Value::Float(f)) if *f != 0.0 => {
+        (Div, Value::Quantity(a, u), Value::Float(f)) if *f != 0.0 && !u.is_non_arithmetic() => {
             Ok(Value::Quantity(a / f, u.clone()))
         }
-        (Div, Value::Quantity(a, ua), Value::Quantity(b, ub)) if ua == ub && *b != 0.0 => {
+        (Div, Value::Quantity(a, ua), Value::Quantity(b, ub))
+            if ua == ub && *b != 0.0 && !ua.is_non_arithmetic() =>
+        {
             Ok(Value::Float(a / b))
         }
         (Lt, Value::Quantity(a, ua), Value::Quantity(b, ub)) if ua == ub => Ok(Value::Bool(a < b)),

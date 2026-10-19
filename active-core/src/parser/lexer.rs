@@ -1017,7 +1017,7 @@ impl Lexer {
             "MHz", "GHz", "THz", "b", "Kb", "Mb", "Gb", "bps", "Kbps", "Mbps", "Gbps", "MB/s",
             "week", "sec", "min", "tokens", "ktokens", "Mtokens", "tok/s", "FLOPS", "TFLOPS",
             "PFLOPS", "Pa", "bar", "psi", "V", "A", "W", "J", "kWh", "N", "deg", "rad", "rpm",
-            "meter", "km", "kg", "g", "PiB", "EiB",
+            "meter", "km", "kg", "g", "PiB", "EiB", "K", "Cel", "Fahr", "dB",
         ];
 
         if KNOWN.contains(&s.as_str()) {

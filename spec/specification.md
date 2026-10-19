@@ -306,6 +306,8 @@ evaluation:
 | Rotation | `Quantity(f64, Rpm)` — retained revolutions/minute | `60rpm` |
 | Length | `Quantity(f64, Meters)` — canonical meters, long-form only | `1km` → `Quantity(1000.0, Meters)` |
 | Mass | `Quantity(f64, Kilograms)` — canonical kilograms | `500g` → `Quantity(0.5, Kilograms)` |
+| Temperature | `Quantity(f64, Kelvin)` — canonical kelvin, affine | `20Cel` → `Quantity(293.15, Kelvin)` |
+| Decibels | `Quantity(f64, Decibel)` — retained, log scale | `3dB` (ordering only) |
 
 Time normalizations: ns/10⁶→ms, µs/10³→ms, s×10³, m×60000, h×3600000,
 d×86400000, week×604800000 (exact, no calendar dependence). `sec`/`min`
@@ -405,6 +407,24 @@ km kg g` all clear of existing suffixes and SI conflicts (`m` untouched);
 export = JSON canonical-key objects, TOML-ish canonical respell,
 interpolation same; schema kinds `quantity:rad`, `quantity:rpm`,
 `quantity:meter`, `quantity:kg`.
+
+Temperature (`K Cel Fahr`) canonicalizes to f64 kelvin through affine
+transforms (`20Cel` → 293.15 K; `68Fahr` → 293.15 K); literal magnitudes
+clamp at 0 K (defensive: source literals are non-negative). Unary minus on
+affine literals folds BEFORE the transform (`-40Fahr` → 233.15 K, so the
+famous -40 crossover holds; `-300Cel` → 0 K by the clamp) — affine
+transforms do not commute with negation, and the parser honors that order.
+On linear dimensions explicit negation is preserved as written (`-5Hz` →
+-5.0), consistent with `-5` ints. Decibels (`dB`, logarithmic) are retained with no
+conversion. Both are equality-and-ordering-only specials: `== != < <= > >=`
+work through the canonical form, but `+ - * /` on absolute temps or dB
+values are dimensional TypeErrors (`20Cel + 20Cel ≠ 40Cel`;
+`3dB + 3dB ≠ 6dB` — affine and log values do not add). Admission record:
+corpus = sensor configs, HVAC setpoints, audio/RF levels; collision = `K
+Cel Fahr dB` all clear (case-sensitive; `K`≠kilo-prefix-by-position,
+`dB`≠`d`+`B` by longest match); export = JSON canonical-key objects,
+TOML-ish canonical respell, interpolation same; schema kinds
+`quantity:K`, `quantity:dB`.
 
 ### 4.2 Serialization of quantities
 

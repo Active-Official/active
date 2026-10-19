@@ -28,6 +28,8 @@ exhausted; new dimensions use long-form-first plus collision-free shorts.
 | `rpm` | rotation rate | `Quantity` f64 rpm (retained) | full within dimension | `{"rpm": N}` / `Nrpm` |
 | `meter km` | length (long-form only) | `Quantity` f64 m | full within dimension | `{"meter": N}` / `Nmeter` |
 | `kg g` | mass | `Quantity` f64 kg | full within dimension | `{"kg": N}` / `Nkg` |
+| `K Cel Fahr` | temperature (affine special) | `Quantity` f64 K | equality + ordering ONLY | `{"K": N}` / `NK` |
+| `dB` | decibels (log special) | `Quantity` f64 dB retained | equality + ordering ONLY | `{"dB": N}` / `NdB` |
 
 ## Rejected near-misses (parse E002/E005, never silent)
 

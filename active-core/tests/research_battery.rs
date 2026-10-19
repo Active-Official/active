@@ -37922,3 +37922,223 @@ fn rb_1718_syn156_duration_suffix_converges() {
         serde_json::json!({"ms": 1000})
     );
 }
+
+/// RB-1719 — Redefinition twin: structural node redefines aloud (SYN-0157-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0002 (TOML v1.0 redefinition rules).
+/// REFUSAL (spec-gated, locked P1-TI-012/RB-002/RB-346 policy): Active
+/// announces redefinition with W011 and keeps last-wins — `fruit` becomes
+/// banana, never silently and never a conflict error. Research demanding
+/// rejection contradicts the documented intent.
+/// CONVERGENCE: identical input to SYN-0004-01/RB-346, same verdict.
+#[test]
+fn rb_1719_syn157_redefinition_announced() {
+    let src = "fruit = { name = \"apple\" }\nfruit = { name = \"banana\" }\n";
+    let first = eval_json(src);
+    assert_eq!(first["fruit"]["name"], "banana", "{first}");
+    assert_eq!(first, eval_json(src));
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: distinct keys stay silent.
+    let src2 = "fruit = { name = \"apple\" }\nveg = { name = \"pea\" }\n";
+    assert_eq!(eval_json(src2)["veg"]["name"], "pea");
+    assert!(codes_of(src2).is_empty());
+}
+
+/// RB-1720 — Patch twin: index path type-checks first (SYN-0157-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0002 (patch path typing).
+/// The naive index-patch transliteration is rejected (E019: `(` required)
+/// — paths type-check before any value is touched, so an empty array can
+/// never sprout an element implicitly.
+/// CONVERGENCE: identical input to SYN-0003-02/RB-338, same verdict.
+#[test]
+fn rb_1720_syn157_patch_typechecks_first() {
+    let src = "items = []\n@patch items[0] { name = \"x\" }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    assert!(
+        diags.iter().any(|d| d.code == "E019"),
+        "E019 expected, got {diags:?}"
+    );
+    // Positive control: the array alone evaluates; nothing sprouted.
+    assert_eq!(eval_json("items = []\n")["items"], serde_json::json!([]));
+}
+
+/// RB-1721 — Patch twin: array identity is explicit (SYN-0157-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0002 (element vs key identity).
+/// The naive index-patch transliteration is rejected (E019) — array
+/// elements are not addressable that way — while the explicit table-path
+/// call overlays deterministically (control).
+/// CONVERGENCE: identical input to SYN-0003-03/RB-339, same verdict.
+#[test]
+fn rb_1721_syn157_array_identity_explicit() {
+    let src = "items = [{ name = \"apple\" }]\n@patch items[0] { color = \"red\" }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    assert!(
+        diags.iter().any(|d| d.code == "E019"),
+        "E019 expected, got {diags:?}"
+    );
+    // Positive control: the explicit table-path call overlays.
+    let v = eval_json("t = { a = 1 }\n@patch(\"t.b\", 2)\n");
+    assert_eq!(v["t"]["b"], 2);
+    assert_eq!(v["t"]["a"], 1);
+}
+
+/// RB-1722 — Patch twin: map/scalar conflict impossible (SYN-0157-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0002 (path-kind conflict).
+/// Dotted assignment has no grammar (RB-306): E002 Error at (2,1) — a path
+/// can never be map and scalar at once, so the conflict is unrepresentable.
+/// CONVERGENCE: identical input to SYN-0003-04/RB-340, same verdict.
+#[test]
+fn rb_1722_syn157_path_conflict_error() {
+    let src = "fruit = { apple = { color = \"red\" } }\nfruit.apple = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: the table alone evaluates.
+    let v = eval_json("fruit = { apple = { color = \"red\" } }\n");
+    assert_eq!(v["fruit"]["apple"]["color"], "red");
+}
+
+/// RB-1723 — Patch twin: update distinct from duplicate (SYN-0157-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0002 (explicit update op).
+/// The naive update transliteration is rejected (E019) — while the explicit
+/// call updates to exactly 2 with zero diagnostics, visibly distinct from
+/// a duplicate declaration (W011).
+/// CONVERGENCE: identical input to SYN-0003-05/RB-341, same verdict.
+#[test]
+fn rb_1723_syn157_update_distinct_silent() {
+    let src = "fruit = { apple = 1 }\n@patch fruit { apple = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    assert!(
+        diags.iter().any(|d| d.code == "E019"),
+        "E019 expected, got {diags:?}"
+    );
+    let v = eval_json("fruit = { apple = 1 }\n@patch(\"fruit.apple\", 2)\n");
+    assert_eq!(v["fruit"]["apple"], 2);
+    let module = parse(
+        "fruit = { apple = 1 }\n@patch(\"fruit.apple\", 2)\n",
+        "research",
+    )
+    .expect("must parse");
+    let (_, d) = Engine::new().evaluate(&module).expect("must evaluate");
+    assert!(d.is_empty(), "{d:?}");
+}
+
+/// RB-1724 — Patch twin: removal is structural (SYN-0157-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0002 (removal semantics).
+/// The naive removal transliteration is rejected (E019 at 2:2) — while the
+/// explicit call removes structurally: key absent after.
+/// CONVERGENCE: identical input to SYN-0003-06/RB-342, same verdict.
+#[test]
+fn rb_1724_syn157_removal_structural() {
+    let src = "fruit = { apple = 1 }\n@remove fruit.apple\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the explicit call removes the key.
+    let v = eval_json("fruit = { apple = 1 }\n@remove(\"fruit.apple\")\n");
+    assert!(v["fruit"].get("apple").is_none(), "{v}");
+}
+
+/// RB-1725 — Patch twin: rename preserves node (SYN-0157-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0002 (rename identity).
+/// The naive rename transliteration is rejected (E019 at 2:2) — while the
+/// explicit call renames with value intact: pear=1, apple absent.
+/// CONVERGENCE: identical input to SYN-0003-07/RB-343, same verdict.
+#[test]
+fn rb_1725_syn157_rename_preserves() {
+    let src = "fruit = { apple = 1 }\n@rename fruit.apple to pear\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    let e = diags.iter().find(|d| d.code == "E019").expect("E019");
+    let span = e.span.clone().expect("E019 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the explicit call renames, value intact.
+    let v = eval_json("fruit = { apple = 1 }\n@rename(\"fruit.apple\", \"pear\")\n");
+    assert_eq!(v["fruit"]["pear"], 1);
+    assert!(v["fruit"].get("apple").is_none(), "{v}");
+}
+
+/// RB-1726 — Patch twin: ordered plan is stable (SYN-0157-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0002 (ordered patch plan).
+/// The naive double-rename is rejected (E019) — while two explicit patches
+/// apply in source order: last write (3) wins, stable across runs.
+/// CONVERGENCE: identical input to SYN-0003-08/RB-344, same verdict.
+#[test]
+fn rb_1726_syn157_ordered_plan_stable() {
+    let src = "fruit = { apple = 1 }\n@rename fruit.apple to pear\n@rename fruit.pear to apple\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    assert!(
+        diags.iter().any(|d| d.code == "E019"),
+        "E019 expected, got {diags:?}"
+    );
+    let src = "fruit = { apple = 1 }\n@patch(\"fruit.apple\", 2)\n@patch(\"fruit.apple\", 3)\n";
+    assert_eq!(eval_json(src)["fruit"]["apple"], 3);
+    assert_eq!(eval_json(src)["fruit"]["apple"], 3);
+}
+
+/// RB-1727 — Patch twin: nested replace contained (SYN-0157-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0002 (nested containment).
+/// The naive nested-patch transliteration is rejected (E019) — while the
+/// explicit nested-path call changes only the leaf: siblings and parents
+/// intact.
+/// CONVERGENCE: identical input to SYN-0003-09/RB-345, same verdict.
+#[test]
+fn rb_1727_syn157_nested_contained() {
+    let src = "fruit = { apple = { color = \"red\" } }\n@patch fruit.apple { color = \"green\" }\n";
+    let diags = parse(src, "research").expect_err("must fail E019");
+    assert!(
+        diags.iter().any(|d| d.code == "E019"),
+        "E019 expected, got {diags:?}"
+    );
+    // Positive control: the explicit leaf call changes only the leaf.
+    let v = eval_json(
+        "fruit = { apple = { color = \"red\", size = 1 } }\n@patch(\"fruit.apple.color\", \"green\")\n",
+    );
+    assert_eq!(v["fruit"]["apple"]["color"], "green");
+    assert_eq!(v["fruit"]["apple"]["size"], 1);
+}
+
+/// RB-1728 — Redefinition twin: array-of-tables ordering anchor (SYN-0158-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0002 (ordering; same fixture as SYN-0157-01).
+/// REFUSAL (spec-gated, locked P1-TI-012/RB-002/RB-346 policy): same input
+/// as RB-1719, same verdict — W011 Warning at (2,1), banana wins. Low
+/// severity-critical ordering risk cannot move Active off last-wins: the
+/// announcement is the ordering guarantee.
+/// CONVERGENCE: identical input to SYN-0157-01/RB-1719, same verdict.
+#[test]
+fn rb_1728_syn158_redefinition_announced() {
+    let src = "fruit = { name = \"apple\" }\nfruit = { name = \"banana\" }\n";
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let json: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(json["fruit"]["name"], "banana", "{json}");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (2, 1), "{span:?}");
+    // Positive control: an inline-table dup warns identically (RB-002).
+    let codes = codes_of("x = {a = 1, a = 2}\n");
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}

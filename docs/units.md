@@ -9,6 +9,7 @@ exhausted; new dimensions use long-form-first plus collision-free shorts.
 | Suffix | Dimension | Canonical | Arithmetic | Export |
 |---|---|---|---|---|
 | `ns us µs ms s m h d` | time | `DurationMs` ms | full (add/sub, scalar, ratio, compare) | `{"ms": N}` / `Nms` |
+| `week sec min` | time aliases (`week` exact 604800000ms; plurals refused) | `DurationMs` ms | full (inherited) | `{"ms": N}` / `Nms` |
 | `B KiB MiB GiB TiB KB MB GB TB` | bytes | `Int` bytes saturating | plain-int ops | bare int |
 | `/s /m /h per_s per_m per_h req/s req_s /req/s /req/m /req/h req/m req_m req/h req_h` | rate | retained `Quantity` | same-suffix add/sub/compare/scale | `{"<suffix>": N}` / `N<suffix>` |
 | `%` | percent (dimensionless) | `Quantity` ratio, 100% = 1.0 | same-dimension add/sub/compare/scale, no implicit base | `{"%": ratio}` / percent-form `25%` |

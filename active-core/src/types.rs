@@ -12,6 +12,7 @@ pub enum Unit {
     Minutes,
     Hours,
     Days,
+    Weeks,
     // Bytes (binary)
     Bytes,
     Kibibytes,
@@ -63,6 +64,9 @@ impl Unit {
             "m" => Some(Unit::Minutes),
             "h" => Some(Unit::Hours),
             "d" => Some(Unit::Days),
+            "week" => Some(Unit::Weeks),
+            "sec" => Some(Unit::Seconds),
+            "min" => Some(Unit::Minutes),
 
             "B" => Some(Unit::Bytes),
             "KiB" => Some(Unit::Kibibytes),
@@ -114,6 +118,9 @@ impl Unit {
             Unit::Minutes => "m".into(),
             Unit::Hours => "h".into(),
             Unit::Days => "d".into(),
+            // `week` respells to canonical `ms` form via DurationMs values;
+            // the suffix itself stays re-parseable for round-trips.
+            Unit::Weeks => "week".into(),
             Unit::Bytes => "B".into(),
             Unit::Kibibytes => "KiB".into(),
             Unit::Mebibytes => "MiB".into(),
@@ -168,6 +175,7 @@ impl Unit {
             Unit::Minutes => value * 60_000.0,
             Unit::Hours => value * 3_600_000.0,
             Unit::Days => value * 86_400_000.0,
+            Unit::Weeks => value * 604_800_000.0,
             _ => return None,
         };
         Some(ms.round().max(0.0) as u64)

@@ -1,0 +1,7 @@
+t = 1week
+u = 2week
+v = 90sec
+w = 5min
+x = 1week + 1d
+y = 2weeks
+z = 90secs

@@ -296,7 +296,12 @@ evaluation:
 | Data rates | `Quantity(f64, BitsPerSecond)` — canonical bits/sec | `1MB/s` → `Quantity(8000000.0, BitsPerSecond)` |
 
 Time normalizations: ns/10⁶→ms, µs/10³→ms, s×10³, m×60000, h×3600000,
-d×86400000. Byte normalizations: KiB=2¹⁰, MiB=2²⁰, GiB=2³⁰, TiB=2⁴⁰;
+d×86400000, week×604800000 (exact, no calendar dependence). `sec`/`min`
+are long aliases for `s`/`m` (canonical respell stays `s`/`m`). All results
+clamp at zero and round to the nearest integer. Plural spellings
+(`weeks`, `secs`, `mins`) are NOT admitted — no unit in the language has a
+plural, and guessing them would be silent coercion (E002).
+Byte normalizations: KiB=2¹⁰, MiB=2²⁰, GiB=2³⁰, TiB=2⁴⁰;
 KB/MB/GB/TB are decimal (10³ … 10¹²). All results clamp at zero and round to
 the nearest integer.
 

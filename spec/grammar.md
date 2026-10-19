@@ -157,6 +157,7 @@ and `%` (percent is the only symbolic suffix; case-SENSITIVE always):
 | `B` | bytes | | `req/h` `req_h` `/req/h` | requests per hour |
 | `%` | percent (dimensionless ratio, 100% = 1.0) | | `Hz kHz MHz GHz THz` | frequency (hertz, SI) |
 | `b Kb Mb Gb` | bits (binary magnitude, distinct from bytes) | | `bps Kbps Mbps Gbps MB/s` | data rates (bits/sec canonical) |
+| `week sec min` | week (exact 604800000ms); long aliases for `s` `m` | | | |
 
 Any other suffix rolls the lexer back (the characters are re-lexed as
 separate tokens). **[impl note]** The lexer's rollback means `5x` lexes as

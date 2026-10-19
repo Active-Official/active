@@ -1015,6 +1015,7 @@ impl Lexer {
             "MB", "GB", "TB", "/s", "/m", "/h", "per_s", "per_m", "per_h", "req/s", "req_s",
             "/req/s", "/req/m", "/req/h", "req/m", "req_m", "req/h", "req_h", "%", "Hz", "kHz",
             "MHz", "GHz", "THz", "b", "Kb", "Mb", "Gb", "bps", "Kbps", "Mbps", "Gbps", "MB/s",
+            "week", "sec", "min",
         ];
 
         if KNOWN.contains(&s.as_str()) {

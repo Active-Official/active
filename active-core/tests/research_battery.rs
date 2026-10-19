@@ -34486,3 +34486,227 @@ fn rb_1558_syn138_comment_outside_string_inert() {
     assert_eq!(v["root"], "a#b", "{v}");
     assert!(codes_of("root = \"a#b\"\n").is_empty());
 }
+
+/// RB-1559 — Core-schema twin: bare `yes` never becomes bool (SYN-0139-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0010 (YAML 1.2.2 core schema;
+/// same shape as SYN-0130-01).
+/// REFUSAL (spec-gated, P1-TI-002 §C, converges with RB-1478): bare `yes`
+/// warns W001 Warning at (1:16) and reads null — never bool, never the
+/// string. Only the quoted spelling is `"yes"`.
+#[test]
+fn rb_1559_syn139_bare_yes_never_bool() {
+    let src = "case_0139_01 = yes\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0139_01"], serde_json::Value::Null, "{v}");
+    assert!(!v["case_0139_01"].is_boolean(), "must never be bool: {v}");
+    assert_ne!(v["case_0139_01"], "yes", "bare yes is not the string: {v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: the quoted spelling IS the exact string, silently.
+    let v = eval_json("case_0139_01 = \"yes\"\n");
+    assert_eq!(v["case_0139_01"], "yes", "{v}");
+    assert!(codes_of("case_0139_01 = \"yes\"\n").is_empty());
+    // Positive control: reserved `true` stays bool (exact-token policy).
+    assert_eq!(eval_json("case_0139_01 = true\n")["case_0139_01"], true);
+}
+
+/// RB-1560 — Core-schema twin: bare `no` never becomes bool (SYN-0139-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0010 (YAML 1.2.2 core schema;
+/// same shape as SYN-0130-02).
+/// REFUSAL (spec-gated, P1-TI-002 §C, converges with RB-1479): W001 at
+/// (1:16) + null.
+#[test]
+fn rb_1560_syn139_bare_no_never_bool() {
+    let src = "case_0139_02 = no\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0139_02"], serde_json::Value::Null, "{v}");
+    assert!(!v["case_0139_02"].is_boolean(), "must never be bool: {v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: the quoted spelling IS the exact string, silently.
+    let v = eval_json("case_0139_02 = \"no\"\n");
+    assert_eq!(v["case_0139_02"], "no", "{v}");
+    assert!(codes_of("case_0139_02 = \"no\"\n").is_empty());
+}
+
+/// RB-1561 — Core-schema twin: bare `on` never becomes bool (SYN-0139-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0010 (YAML 1.2.2 core schema;
+/// same shape as SYN-0130-03).
+/// REFUSAL (spec-gated, P1-TI-002 §C, converges with RB-1480): W001 at
+/// (1:16) + null.
+#[test]
+fn rb_1561_syn139_bare_on_never_bool() {
+    let src = "case_0139_03 = on\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0139_03"], serde_json::Value::Null, "{v}");
+    assert!(!v["case_0139_03"].is_boolean(), "must never be bool: {v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: the quoted spelling IS the exact string, silently.
+    let v = eval_json("case_0139_03 = \"on\"\n");
+    assert_eq!(v["case_0139_03"], "on", "{v}");
+    assert!(codes_of("case_0139_03 = \"on\"\n").is_empty());
+}
+
+/// RB-1562 — Core-schema twin: bare `off` never becomes bool (SYN-0139-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0010 (YAML 1.2.2 core schema;
+/// same shape as SYN-0130-04).
+/// REFUSAL (spec-gated, P1-TI-002 §C, converges with RB-1481): W001 at
+/// (1:16) + null.
+#[test]
+fn rb_1562_syn139_bare_off_never_bool() {
+    let src = "case_0139_04 = off\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0139_04"], serde_json::Value::Null, "{v}");
+    assert!(!v["case_0139_04"].is_boolean(), "must never be bool: {v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: the quoted spelling IS the exact string, silently.
+    let v = eval_json("case_0139_04 = \"off\"\n");
+    assert_eq!(v["case_0139_04"], "off", "{v}");
+    assert!(codes_of("case_0139_04 = \"off\"\n").is_empty());
+}
+
+/// RB-1563 — Core-schema twin: reserved `true` stays bool (SYN-0139-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0010 (YAML 1.2.2 core schema;
+/// same shape as SYN-0130-05).
+/// Converges with RB-1482: boolean true, silently.
+#[test]
+fn rb_1563_syn139_reserved_true_bool() {
+    let src = "case_0139_05 = true\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0139_05"], true, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: reserved `false` is bool false, silently.
+    assert_eq!(eval_json("case_0139_05 = false\n")["case_0139_05"], false);
+}
+
+/// RB-1564 — Core-schema twin: noncanonical `FALSE` is unresolved (SYN-0139-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0010 (YAML 1.2.2 core schema;
+/// same shape as SYN-0130-06).
+/// Converges with RB-1483: W001 Warning at (1:16) + null (exact-token
+/// policy P1-TI-006 §C).
+#[test]
+fn rb_1564_syn139_uppercase_false_unresolved() {
+    let src = "case_0139_06 = FALSE\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0139_06"], serde_json::Value::Null, "{v}");
+    assert!(!v["case_0139_06"].is_boolean(), "must never be bool: {v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (1, 16), "{span:?}");
+    // Positive control: lowercase `false` is bool, silently.
+    assert_eq!(eval_json("case_0139_06 = false\n")["case_0139_06"], false);
+}
+
+/// RB-1565 — Core-schema twin: reserved `null` is null (SYN-0139-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0010 (YAML 1.2.2 core schema;
+/// same shape as SYN-0130-07).
+/// Converges with RB-1484: null, silently.
+#[test]
+fn rb_1565_syn139_reserved_null() {
+    let src = "case_0139_07 = null\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0139_07"], serde_json::Value::Null, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the quoted spelling is a two-sided string.
+    assert_eq!(
+        eval_json("case_0139_07 = \"null\"\n")["case_0139_07"],
+        "null"
+    );
+}
+
+/// RB-1566 — Core-schema twin: quoting preserves literal text (SYN-0139-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0010 (YAML 1.2.2 core schema;
+/// same shape as SYN-0130-08).
+/// Converges with RB-1485: `"no"` exact, silently.
+#[test]
+fn rb_1566_syn139_quoted_no_exact() {
+    let src = "case_0139_08 = \"no\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0139_08"], "no", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the bare twin is null, never the string.
+    assert_eq!(
+        eval_json("case_0139_08 = no\n")["case_0139_08"],
+        serde_json::Value::Null
+    );
+}
+
+/// RB-1567 — Core-schema twin: numbers are never booleans (SYN-0139-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0010 (YAML 1.2.2 core schema;
+/// same shape as SYN-0130-09).
+/// Converges with RB-1486: `1.0` stays float, never bool (P1-TI-008 §C).
+#[test]
+fn rb_1567_syn139_float_never_bool() {
+    let src = "case_0139_09 = 1.0\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0139_09"], 1.0, "{v}");
+    assert!(v["case_0139_09"].is_f64(), "must stay float, got {v}");
+    assert!(!v["case_0139_09"].is_boolean(), "must never be bool: {v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: int 1 beside it stays int.
+    let v = eval_json("case_0139_09 = 1\n");
+    assert_eq!(v["case_0139_09"], 1, "{v}");
+    assert!(!v["case_0139_09"].is_f64(), "must stay int, got {v}");
+}
+
+/// RB-1568 — Block-scalar twin: brace-style baseline parses (SYN-0140-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-YAML-0011 (block scalar Z68Q;
+/// same shape as SYN-0133-01).
+/// Converges with RB-1505/1532/1541/1550: `root = { child = 1 }` silent.
+#[test]
+fn rb_1568_syn140_brace_baseline_accepts() {
+    let src = "case_0140_01 = 1\nroot = { child = 1 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0140_01"], 1, "{v}");
+    assert_eq!(v["root"]["child"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the flat twin agrees at depth 1.
+    let v = eval_json("root = { child = 1 }\n");
+    assert_eq!(v["root"]["child"], 1, "{v}");
+}

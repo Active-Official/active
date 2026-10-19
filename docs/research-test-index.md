@@ -3,6 +3,7 @@
 | Batch 154 | RB-1529…RB-1538 (SYN-0135-07…09, SYN-0136-01…07) | done: all 10 green first-try, no code changes; 135 completed (patch/remove E019 3:2; dotted E001 1:18); 136 opened as 133 twins (colon-twin equality; dup W011; TAB E006; LF) |
 | Batch 155 | RB-1539…RB-1548 (SYN-0136-08…09, SYN-0137-01…08) | done: all 10 green first-try, no code changes; 136 completed (mismatch E001 2:24; comment inert); 137 opened as 133 twins (colon-twin equality; dup W011; TAB E006; LF; mismatch) |
 | Batch 156 | RB-1549…RB-1558 (SYN-0137-09, SYN-0138-01…09) | done: all 10 green first-try, no code changes; 137 completed (comment inert); 138 opened as 133 twins (colon-twin equality; dup W011; TAB E006; LF; mismatch; comment) |
+| Batch 157 | RB-1559…RB-1568 (SYN-0139-01…09, SYN-0140-01) | done: all 10 green first-try, no code changes; 139 opened as Norway twins (yes/no/on/off W001 1:16 refusals; true/false; FALSE W001; null; quoted-no; 1.0 float); 140 opened |
  Research Test Index — YAML/TOML/JSON failure research → Active test backlog
 
 Source corpus: `C:\Users\Usuario\Downloads\Solid Tests Research Work` (read-only).

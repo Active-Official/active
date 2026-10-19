@@ -39055,3 +39055,220 @@ fn rb_1768_syn162_base_prefix_absent() {
     assert_eq!(v["case_0162_05"], 0, "{v}");
     assert!(v["case_0162_05"].is_i64());
 }
+
+/// RB-1769 — Number twin: separator canonical, underscore angle (SYN-0162-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0008 (RFC 8259 numbers).
+/// `case_0162_06 = 1_000` is exactly int 1000, silent: the declared
+/// separator grammar accepts and normalizes — canonical value 1000 on the
+/// nose, no diagnostics to prohibit.
+/// CONVERGENCE: identical verdict to SYN-0159-06/RB-1742.
+#[test]
+fn rb_1769_syn162_separator_canonical() {
+    let src = "case_0162_06 = 1_000\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0162_06"], 1000, "{v}");
+    assert!(v["case_0162_06"].is_i64());
+    assert!(codes_of(src).is_empty());
+    // Positive control: grouped and ungrouped spellings agree.
+    assert_eq!(eval_json("case_0162_06 = 10_00\n")["case_0162_06"], 1000);
+}
+
+/// RB-1770 — Number twin: overflow loud, seven-zero angle (SYN-0162-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0008 (overflow bounds).
+/// `case_0162_07 = 1e1000000` fails E002 Error at (1:17): with no exponent
+/// grammar, overflow cannot even reach a float — bounded at the lexer,
+/// never infinity, silently or otherwise.
+/// CONVERGENCE: identical verdict to SYN-0159-07/RB-1743.
+#[test]
+fn rb_1770_syn162_overflow_exponent_rejects() {
+    let src = "case_0162_07 = 1e1000000\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: seven zeros without the marker are exact.
+    assert_eq!(
+        eval_json("case_0162_07 = 1000000\n")["case_0162_07"],
+        1000000
+    );
+}
+
+/// RB-1771 — Number twin: quoted digits inert, zero-one angle (SYN-0162-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0008 (quoting vs coercion).
+/// `case_0162_08 = "01"` is the string "01", silent: quotes commit the
+/// type, and the NORTH STAR forbids the coercion the research fears.
+/// CONVERGENCE: identical verdict to SYN-0159-08/RB-1744.
+#[test]
+fn rb_1771_syn162_quoted_digits_no_coerce() {
+    let src = "case_0162_08 = \"01\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0162_08"], "01", "{v}");
+    assert!(v["case_0162_08"].is_string());
+    assert!(codes_of(src).is_empty());
+    // Positive control: the bare twin computes as decimal 1 (RB-1764).
+    assert_eq!(eval_json("case_0162_08 = 01\n")["case_0162_08"], 1);
+}
+
+/// RB-1772 — Number twin: zero anchor, double-key angle (SYN-0162-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0008 (zero control).
+/// `case_0162_09 = 0` is exactly int 0, silent — the anchor every number
+/// edge is measured against, re-pinned under the 162 key.
+/// CONVERGENCE: identical verdict to SYN-0159-09/RB-1745.
+#[test]
+fn rb_1772_syn162_zero_control_accepts() {
+    let src = "case_0162_09 = 0\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0162_09"], 0, "{v}");
+    assert!(v["case_0162_09"].is_i64());
+    assert!(codes_of(src).is_empty());
+    // Positive control: zero beside a sibling key stays zero.
+    let v = eval_json("case_0162_09 = 0\nother = 1\n");
+    assert_eq!(v["case_0162_09"], 0, "{v}");
+    assert_eq!(v["other"], 1, "{v}");
+}
+
+/// RB-1773 — Dup-key twin: inline dup announces at value (SYN-0163-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0009 (RFC 7493 I-JSON).
+/// REFUSAL (spec-gated, locked P1-TI-012/RB-002): `{ key = 1, key = 2 }`
+/// warns W011 Warning at (1,33) — the winning value's span — and keeps 2.
+/// Neither first-wins-silently nor rejection: last-wins-announced.
+/// CONVERGENCE: inline rhythm of RB-002 (span marks the winner).
+#[test]
+fn rb_1773_syn163_inline_dup_announces() {
+    let src = "case_0163_01 = { key = 1, key = 2 }\n";
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (1, 33), "{span:?}");
+    let json: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(json["case_0163_01"]["key"], 2, "{json}");
+    // Positive control: distinct inline keys stay silent.
+    let src2 = "case_0163_01 = { a = 1, b = 2 }\n";
+    assert!(codes_of(src2).is_empty());
+}
+
+/// RB-1774 — Dup-key twin: nested dup announces nested (SYN-0163-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0009 (nested recursion).
+/// REFUSAL (spec-gated, locked P1-TI-012): the nested dup warns W011
+/// Warning at (1,44) — detection DOES recurse into nested maps, with the
+/// nested span to prove it — and keeps 2. Announced, never rejected.
+/// CONVERGENCE: recursion converges (nested span), verdict refuses.
+#[test]
+fn rb_1774_syn163_nested_dup_announces() {
+    let src = "case_0163_02 = { nested = { key = 1, key = 2 } }\n";
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (1, 44), "{span:?}");
+    let json: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(json["case_0163_02"]["nested"]["key"], 2, "{json}");
+    // Positive control: nested distinct keys stay silent.
+    let src2 = "case_0163_02 = { nested = { a = 1, b = 2 } }\n";
+    assert!(codes_of(src2).is_empty());
+}
+
+/// RB-1775 — Dup-key twin: quoted key never reaches dup-check (SYN-0163-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0009 (canonicalization).
+/// `{ "a" = 1, a = 2 }` fails E001 Error at (1,18): keys are identifiers
+/// (spec/grammar.md; batch 6 quoted-key fix) — a quoted key is ungrammatical
+/// before canonicalization could even ask whether it equals `a`. The
+/// research "reject if same key" converges on rejection, one layer earlier.
+/// CONVERGENCE: rejects; refusal only of the mechanism (grammar, not dup-check).
+#[test]
+fn rb_1775_syn163_quoted_key_ungrammatical() {
+    let src = "case_0163_03 = { \"a\" = 1, a = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: the bare twin reaches the W011 announcement instead.
+    let codes = codes_of("case_0163_03 = { a = 1, a = 2 }\n");
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}
+
+/// RB-1776 — Dup-key twin: distinct keys silent guard (SYN-0163-04 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0009 (false-positive guard).
+/// `{ alpha = 1, beta = 2 }` evaluates silently with both values intact —
+/// the guard against false duplicate positives for the whole 163 family:
+/// distinct keys are never flagged, never warned, never touched.
+#[test]
+fn rb_1776_syn163_distinct_keys_silent() {
+    let src = "case_0163_04 = { alpha = 1, beta = 2 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0163_04"]["alpha"], 1, "{v}");
+    assert_eq!(v["case_0163_04"]["beta"], 2, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a single-key map is equally silent.
+    assert!(codes_of("case_0163_04 = { alpha = 1 }\n").is_empty());
+}
+
+/// RB-1777 — Dup-key twin: Unicode keys need no normalization question (SYN-0163-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0009 (normalization policy).
+/// REFUSAL (spec-gated, keys-are-identifiers): `{ "é" = 1, "é" = 2 }`
+/// fails E001 Error at (1,18) — quoted keys are ungrammatical regardless of
+/// code points, so no normalization policy is consulted, implicitly or
+/// otherwise. Nothing normalizes because nothing gets that far.
+/// CONVERGENCE: twin mechanism to RB-1775, combining-char dimension apart.
+#[test]
+fn rb_1777_syn163_unicode_quoted_key_ungrammatical() {
+    let src = "case_0163_05 = { \"\u{e9}\" = 1, \"e\u{301}\" = 2 }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: Unicode VALUES stay exact and silent (RB-1752).
+    let v = eval_json("case_0163_05 = \"\u{e9}\"\n");
+    assert_eq!(v["case_0163_05"], "\u{e9}", "{v}");
+}
+
+/// RB-1778 — Dup-key twin: no repeat means nothing to announce (SYN-0163-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0009 (last-wins bypass).
+/// `case_0163_06 = { a = 1 }` beside `value = { b = 2 }` evaluates silently:
+/// the fixture repeats NOTHING at any scope — different keys, different
+/// maps — so there is no write to order and no check to bypass. Silence is
+/// correct, and a true repeat still announces (control).
+#[test]
+fn rb_1778_syn163_no_repeat_silent() {
+    let src = "case_0163_06 = { a = 1 }\nvalue = { b = 2 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0163_06"]["a"], 1, "{v}");
+    assert_eq!(v["value"]["b"], 2, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a true same-key repeat announces W011 (RB-1719).
+    let codes = codes_of("case_0163_06 = { a = 1 }\ncase_0163_06 = { a = 2 }\n");
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+}

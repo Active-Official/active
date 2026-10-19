@@ -24,6 +24,7 @@
 | Batch 175 | RB-1739...RB-1748 (SYN-0159-03...09, SYN-0160-01...03) | done: all 10 green first-try, no code changes; 159 completed (exponent/base E002 1:17; separator canonical; quoted-01; zero); 160 opened (H001 heal; verbatim uD800/u0061 refusals) |
 | Batch 176 | RB-1749...RB-1758 (SYN-0160-04...09, SYN-0161-01...04) | done: 9 first-try + RB-1754 test-side oracle correction (null-stringifies); 160 completed (multiline convergence; x41/u0000 verbatim; NUL fixtures); 161 opened as 155 twins |
 | Batch 177 | RB-1759...RB-1768 (SYN-0161-05...09, SYN-0162-01...05) | done: all 10 green first-try, no code changes; 161 completed as 155 twins; 162 opened as 159 twins (decimals/exponents/base) |
+| Batch 178 | RB-1769...RB-1778 (SYN-0162-06...09, SYN-0163-01...06) | done: all 10 green first-try, no code changes; 162 completed as 159 twins; 163 opened as I-JSON dup family (W011 winner/nested spans; E001 quoted-key; silent guards) |
  Research Test Index — YAML/TOML/JSON failure research → Active test backlog
 
 Source corpus: `C:\Users\Usuario\Downloads\Solid Tests Research Work` (read-only).

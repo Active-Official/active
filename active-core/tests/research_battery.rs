@@ -41148,3 +41148,308 @@ fn rb_1848_syn171_diag_has_no_values() {
         None => std::env::remove_var("ACTIVE_RB1848_ENV"),
     }
 }
+
+/// RB-1849 — Env twin: absent zero stable, second default angle (SYN-0171-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0017 (default stability).
+/// Absent var yields int 0 on repeated runs, silent — with a second
+/// absent pair (default 7) proving the lookup.
+/// CONVERGENCE: identical verdict to SYN-0170-05/RB-1840.
+#[test]
+fn rb_1849_syn171_absent_default_stable() {
+    let prior = std::env::var("ACTIVE_RB1849_ENV").ok();
+    std::env::remove_var("ACTIVE_RB1849_ENV");
+    let src = "case_0171_05 = 1\nx = env.ACTIVE_RB1849_ENV ?: 0\n";
+    let first = eval_json(src);
+    assert_eq!(first["x"], 0, "{first}");
+    assert!(first["x"].is_i64());
+    assert_eq!(first, eval_json(src));
+    assert!(codes_of(src).is_empty());
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_RB1849_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1849_ENV"),
+    }
+    // Positive control: a second absent pair surfaces its own default.
+    let prior2 = std::env::var("ACTIVE_RB1849_X2").ok();
+    std::env::remove_var("ACTIVE_RB1849_X2");
+    assert_eq!(eval_json("x = env.ACTIVE_RB1849_X2 ?: 7\n")["x"], 7);
+    match prior2 {
+        Some(val) => std::env::set_var("ACTIVE_RB1849_X2", val),
+        None => std::env::remove_var("ACTIVE_RB1849_X2"),
+    }
+}
+
+/// RB-1850 — Env twin: presence branches silent (SYN-0171-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0017 (env/unit mismatch).
+/// REFUSAL (spec-gated, no-coercion NORTH STAR): absent yields the
+/// duration {ms:5000}, present yields the env string — both branches
+/// silent, neither coerced, no schema diagnostic owed.
+/// CONVERGENCE: identical verdict to SYN-0170-06/RB-1841.
+#[test]
+fn rb_1850_syn171_presence_types_branch() {
+    let prior = std::env::var("ACTIVE_RB1850_ENV").ok();
+    std::env::remove_var("ACTIVE_RB1850_ENV");
+    let src = "case_0171_06 = 1\nx = env.ACTIVE_RB1850_ENV ?: 5s\n";
+    let v = eval_json(src);
+    assert_eq!(v["x"], serde_json::json!({"ms": 5000}), "{v}");
+    assert!(codes_of(src).is_empty());
+    std::env::set_var("ACTIVE_RB1850_ENV", "9");
+    let v = eval_json("case_0171_06 = 1\nx = env.ACTIVE_RB1850_ENV ?: 5s\n");
+    assert_eq!(v["x"], "9", "{v}");
+    assert!(v["x"].is_string());
+    assert!(codes_of("case_0171_06 = 1\nx = env.ACTIVE_RB1850_ENV ?: 5s\n").is_empty());
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_RB1850_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1850_ENV"),
+    }
+    // Positive control: the duration default round-trips identically.
+    assert_eq!(
+        eval_json("x = env.ACTIVE_RB1850_ENV ?: 5s\n")["x"],
+        serde_json::json!({"ms": 5000})
+    );
+}
+
+/// RB-1851 — Env twin: let-env red color (SYN-0171-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0017 (mid-graph reads).
+/// The bare form fails E005 at (3:9) — while the quoted read is snapshot
+/// stable: set yields "red", absent yields "blue", identically on repeat.
+/// CONVERGENCE: identical verdict to SYN-0170-07/RB-1842.
+#[test]
+fn rb_1851_syn171_let_env_snapshot() {
+    let src = "case_0171_07 = 1\nlet a = env.ACTIVE_RB1851_ENV ?: \"blue\"\nvalue = ${a}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (3, 9), "{span:?}");
+    let prior = std::env::var("ACTIVE_RB1851_ENV").ok();
+    std::env::set_var("ACTIVE_RB1851_ENV", "red");
+    let src2 = "case_0171_07 = 1\nlet a = env.ACTIVE_RB1851_ENV ?: \"blue\"\nvalue = \"${a}\"\n";
+    assert_eq!(eval_json(src2)["value"], "red");
+    assert_eq!(eval_json(src2)["value"], "red");
+    std::env::remove_var("ACTIVE_RB1851_ENV");
+    assert_eq!(eval_json(src2)["value"], "blue");
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_RB1851_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1851_ENV"),
+    }
+}
+
+/// RB-1852 — Env twin: computed name first-diag (SYN-0171-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0017 (hermetic allowlist).
+/// `env["…"]` fails with E001 FIRST (diags[0]) at (2:8): static dotted
+/// paths are the only env syntax — computed names cannot bypass the
+/// readable set because no such syntax exists.
+/// CONVERGENCE: identical verdict to SYN-0170-08/RB-1843.
+#[test]
+fn rb_1852_syn171_computed_name_first_diag() {
+    let src = "case_0171_08 = 1\nx = env[\"ACTIVE_RB1852_ENV\"] ?: \"none\"\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    assert_eq!(diags[0].code, "E001", "{diags:?}");
+    let span = diags[0].span.clone().expect("span");
+    assert_eq!((span.line, span.column), (2, 8), "{span:?}");
+    // Positive control: the static dotted form reads explicitly.
+    let prior = std::env::var("ACTIVE_RB1852_ENV").ok();
+    std::env::remove_var("ACTIVE_RB1852_ENV");
+    assert_eq!(
+        eval_json("x = env.ACTIVE_RB1852_ENV ?: \"none\"\n")["x"],
+        "none"
+    );
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_RB1852_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1852_ENV"),
+    }
+}
+
+/// RB-1853 — Env twin: untainted interpolation exact (SYN-0171-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0017 (taint by origin).
+/// REFUSAL (spec-gated, spec/secrets.md): env interpolates visibly —
+/// `log` is exactly "token=…" with the raw value, no marker anywhere —
+/// because taint is a constructor property of `secret()`, never inferred
+/// from a name like SECRET.
+/// CONVERGENCE: identical verdict to SYN-0170-09/RB-1844.
+#[test]
+fn rb_1853_syn171_env_untainted_exact() {
+    let raw = "RAW-1853-plain-env";
+    let prior = std::env::var("ACTIVE_RB1853_ENV").ok();
+    std::env::set_var("ACTIVE_RB1853_ENV", raw);
+    let src = "x = env.ACTIVE_RB1853_ENV ?: \"fallback\"\nlog = \"token=${x}\"\n";
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    assert!(diags.is_empty(), "{diags:?}");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains("***SECRET***"), "must not taint: {json}");
+    let v: serde_json::Value = serde_json::from_str(&json).expect("json");
+    assert_eq!(v["log"], format!("token={raw}"), "{v}");
+    assert_eq!(v["x"], raw, "{v}");
+    std::env::remove_var("ACTIVE_RB1853_ENV");
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_RB1853_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1853_ENV"),
+    }
+    // Positive control: absent yields the fallback, still untainted.
+    let prior2 = std::env::var("ACTIVE_RB1853_ENV").ok();
+    std::env::remove_var("ACTIVE_RB1853_ENV");
+    let v = eval_json("x = env.ACTIVE_RB1853_ENV ?: \"fallback\"\nlog = \"token=${x}\"\n");
+    assert_eq!(v["log"], "token=fallback", "{v}");
+    match prior2 {
+        Some(val) => std::env::set_var("ACTIVE_RB1853_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1853_ENV"),
+    }
+}
+
+/// RB-1854 — Taint twin: secret marks and redacts (SYN-0172-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0018 (taint bit paths).
+/// `password = secret("RAW-1854-…")` evaluates silently with the export
+/// carrying ONLY `***SECRET***`: the taint bit accompanies the value
+/// through evaluation, and every default printer redacts. The raw marker
+/// appears in no value, no JSON, no diagnostic.
+/// CONVERGENCE: NORTH STAR taint+redact, constructor angle.
+#[test]
+fn rb_1854_syn172_secret_marks_redacts() {
+    let raw = "RAW-1854-horse-marker";
+    let src = format!("case_0172_01 = 1\npassword = secret(\"{raw}\")\n");
+    let module = parse(&src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    assert!(diags.is_empty(), "{diags:?}");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains(raw), "leak in JSON export: {json}");
+    assert!(json.contains("***SECRET***"), "redaction missing: {json}");
+    let v: serde_json::Value = serde_json::from_str(&json).expect("json");
+    assert_eq!(v["case_0172_01"], 1, "{v}");
+    assert_eq!(v["password"], "***SECRET***", "{v}");
+    // Positive control: the plain scalar beside the secret is untouched.
+    assert_eq!(eval_json("case_0172_01 = 1\n")["case_0172_01"], 1);
+}
+
+/// RB-1855 — Taint twin: secret(env) taints both branches (SYN-0172-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0018 (fallback taint policy).
+/// `password = secret(env.V ?: "")` is `***SECRET***` whether the var is
+/// absent or set: the `secret()` constructor taints BOTH paths —
+/// fallback and present value share one consistent policy, so defaulting
+/// can never wash taint.
+/// CONVERGENCE: taint-dominance over defaulting, both branches pinned.
+#[test]
+fn rb_1855_syn172_secret_env_both_tainted() {
+    let raw = "RAW-1855-present-marker";
+    let prior = std::env::var("ACTIVE_RB1855_ENV").ok();
+    std::env::remove_var("ACTIVE_RB1855_ENV");
+    let src = "case_0172_02 = 1\npassword = secret(env.ACTIVE_RB1855_ENV ?: \"\")\n";
+    let json = active_core::convert::value_to_pretty_json(
+        &Engine::new()
+            .evaluate(&parse(src, "research").expect("parses"))
+            .expect("evaluates")
+            .0,
+    );
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&json).expect("json")["password"],
+        "***SECRET***"
+    );
+    std::env::set_var("ACTIVE_RB1855_ENV", raw);
+    let (value, diags) = Engine::new()
+        .evaluate(&parse(src, "research").expect("parses"))
+        .expect("evaluates");
+    assert!(diags.is_empty(), "{diags:?}");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains(raw), "leak when present: {json}");
+    assert!(json.contains("***SECRET***"), "redaction missing: {json}");
+    std::env::remove_var("ACTIVE_RB1855_ENV");
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_RB1855_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1855_ENV"),
+    }
+    // Positive control: the bare env twin stays untainted (RB-1844).
+    let prior2 = std::env::var("ACTIVE_RB1855_ENV").ok();
+    std::env::set_var("ACTIVE_RB1855_ENV", "plain");
+    let v = eval_json("x = env.ACTIVE_RB1855_ENV ?: \"\"\n");
+    assert_eq!(v["x"], "plain", "{v}");
+    match prior2 {
+        Some(val) => std::env::set_var("ACTIVE_RB1855_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1855_ENV"),
+    }
+}
+
+/// RB-1856 — Taint twin: secret in interpolation refuses (SYN-0172-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0018 (transitive taint).
+/// `"https://user:${secret(env.V)}@host"` fails evaluation with S004
+/// ("secret used in unsafe context"): interpolation PROPAGATES taint by
+/// refusing the sink — a derived string can never carry a secret into an
+/// untrusted position, not even partially constructed.
+/// CONVERGENCE: RB-005 S004 contract, sink-angle (message carries no bytes).
+#[test]
+fn rb_1856_syn172_interp_secret_refuses() {
+    let raw = "RAW-1856-sink-marker";
+    let prior = std::env::var("ACTIVE_RB1856_ENV").ok();
+    std::env::set_var("ACTIVE_RB1856_ENV", raw);
+    let src = "case_0172_03 = 1\nurl = \"https://user:${secret(env.ACTIVE_RB1856_ENV)}@host\"\n";
+    let module = parse(src, "research").expect("must parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail S004");
+    assert_eq!(err.code(), "S004", "{err}");
+    let msg = err.to_string();
+    assert!(!msg.contains(raw), "leak in S004 message: {msg}");
+    std::env::remove_var("ACTIVE_RB1856_ENV");
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_RB1856_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1856_ENV"),
+    }
+    // Positive control: secret-free interpolation expands (RB-1717).
+    let v = eval_json("let h = \"host\"\nurl = \"https://user@${h}\"\n");
+    assert_eq!(v["url"], "https://user@host", "{v}");
+}
+
+/// RB-1857 — Taint twin: taint crosses lets, refused at use (SYN-0172-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0018 (dependency taint labels).
+/// The bare chain fails E005 at (3:9) — while the quoted
+/// `let a = secret(…)` → `let b = "${a}"` → `value = "${b}"` chain fails
+/// S004: taint labels ride the dependency graph transitively, and the
+/// refusal fires AT USE — no laundering through bindings, however many.
+/// CONVERGENCE: transitive-taint verdict, chain-angle.
+#[test]
+fn rb_1857_syn172_taint_crosses_lets() {
+    let src = "case_0172_04 = 1\nlet a = secret(\"x\")\nlet b = ${a}\nvalue = ${b}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (3, 9), "{span:?}");
+    // Positive control: the quoted chain refuses S004 at use.
+    let raw = "RAW-1857-let-marker";
+    let src2 = format!(
+        "case_0172_04 = 1\nlet a = secret(\"{raw}\")\nlet b = \"${{a}}\"\nvalue = \"${{b}}\"\n"
+    );
+    let module = parse(&src2, "research").expect("must parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail S004");
+    assert_eq!(err.code(), "S004", "{err}");
+    let msg = err.to_string();
+    assert!(!msg.contains(raw), "leak in S004 message: {msg}");
+    // Positive control: a secret-free let chain expands end to end.
+    let v = eval_json("let a = 1\nlet b = \"${a}\"\nvalue = \"${b}\"\n");
+    assert_eq!(v["value"], "1", "{v}");
+}
+
+/// RB-1858 — Taint twin: errors redact, exports redact (SYN-0172-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0018 (redaction coverage).
+/// `case_0172_05 = secret("RAW-1858-…")` alone: JSON export redacted,
+/// diagnostics empty, marker nowhere. Asked to show the value
+/// (`bad = case_0172_05 + 1`), the error is T001 showing only the
+/// redacted `Secret(***)` placeholder (batch 185 finding): errors,
+/// tracing, debug dumps, and snapshots all redact — coverage total.
+/// CONVERGENCE: redaction-everywhere verdict, both paths in one test.
+#[test]
+fn rb_1858_syn172_redaction_everywhere() {
+    let raw = "RAW-1858-redact-marker";
+    let src = format!("case_0172_05 = secret(\"{raw}\")\n");
+    let module = parse(&src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    assert!(diags.is_empty(), "{diags:?}");
+    let diag_text = format!("{diags:?}");
+    assert!(!diag_text.contains(raw), "leak in diagnostics: {diag_text}");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains(raw), "leak in JSON export: {json}");
+    assert!(json.contains("***SECRET***"), "redaction missing: {json}");
+    // Positive control: forcing the value into an error still redacts.
+    let src2 = format!("case_0172_05 = secret(\"{raw}\")\nbad = case_0172_05 + 1\n");
+    let module = parse(&src2, "research").expect("parses");
+    let err = Engine::new().evaluate(&module).expect_err("T001");
+    assert_eq!(err.code(), "T001", "{err}");
+    let msg = err.to_string();
+    assert!(!msg.contains(raw), "leak in T001 message: {msg}");
+    assert!(msg.contains("***"), "redaction missing: {msg}");
+}

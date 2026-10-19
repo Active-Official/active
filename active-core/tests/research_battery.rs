@@ -40309,3 +40309,254 @@ fn rb_1818_syn168_interp_deterministic() {
     assert_eq!(eval_json(src2)["value"], "1");
     assert!(codes_of(src2).is_empty());
 }
+
+/// RB-1819 — Let twin: forward gate Error-severe (SYN-0168-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0014 (reference order).
+/// The bare form fails E005 Error at (2:9) — while the quoted twin
+/// resolves forward to "2" with zero diagnostics: by-name resolution,
+/// file-order independent.
+/// CONVERGENCE: identical verdict to SYN-0166-02/RB-1801 and SYN-0167-02/RB-1810.
+#[test]
+fn rb_1819_syn168_forward_ref_resolves() {
+    let src = "case_0168_02 = 1\nlet a = ${b}\nlet b = 2\nvalue = ${a}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (2, 9), "{span:?}");
+    // Positive control: the quoted twin resolves forward to "2".
+    let src2 = "case_0168_02 = 1\nlet a = \"${b}\"\nlet b = 2\nvalue = \"${a}\"\n";
+    let v = eval_json(src2);
+    assert_eq!(v["value"], "2", "{v}");
+    assert!(codes_of(src2).is_empty());
+}
+
+/// RB-1820 — Let twin: self-cycle two gates (SYN-0168-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0014 (self cycles).
+/// The bare self-reference fails E005 twice — while the quoted twin
+/// `let a = "${a}"` fails evaluation with S001: graph-detected, never
+/// overflowed.
+/// CONVERGENCE: identical verdict to SYN-0166-03/RB-1802 and SYN-0167-03/RB-1811.
+#[test]
+fn rb_1820_syn168_self_cycle_s001() {
+    let src = "case_0168_03 = 1\nlet a = ${a}\nvalue = ${a}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e005: Vec<_> = diags.iter().filter(|d| d.code == "E005").collect();
+    assert_eq!(e005.len(), 2, "{diags:?}");
+    // Positive control: the quoted twin fails S001, not a hang.
+    let src2 = "case_0168_03 = 1\nlet a = \"${a}\"\nvalue = \"${a}\"\n";
+    let module = parse(src2, "research").expect("must parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail S001");
+    assert_eq!(err.code(), "S001", "{err}");
+}
+
+/// RB-1821 — Let twin: chain first-gate (SYN-0168-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0014 (multi-node cycles).
+/// The bare chain fails with E005 FIRST (diags[0]) at (2:9) — while the
+/// quoted a→b→c→a chain fails S001: four gates bare, one class quoted.
+/// CONVERGENCE: identical verdict to SYN-0166-04/RB-1803 and SYN-0167-04/RB-1812.
+#[test]
+fn rb_1821_syn168_chain_first_gate() {
+    let src = "case_0168_04 = 1\nlet a = ${b}\nlet b = ${c}\nlet c = ${a}\nvalue = ${a}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    assert_eq!(diags[0].code, "E005", "{diags:?}");
+    let span = diags[0].span.clone().expect("span");
+    assert_eq!((span.line, span.column), (2, 9), "{span:?}");
+    // Positive control: the quoted chain fails S001, not a hang.
+    let src2 = "case_0168_04 = 1\nlet a = \"${b}\"\nlet b = \"${c}\"\nlet c = \"${a}\"\nvalue = \"${a}\"\n";
+    let module = parse(src2, "research").expect("must parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail S001");
+    assert_eq!(err.code(), "S001", "{err}");
+}
+
+/// RB-1822 — Let twin: arith gates plus type error (SYN-0168-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0014 (typed evaluation).
+/// The bare chain fails E005 at (3:12) — while the quoted twin
+/// `value = "${copy}" + 1` fails T001: strings never coerce for `+`.
+/// CONVERGENCE: identical verdict to SYN-0166-05/RB-1804 and SYN-0167-05/RB-1813.
+#[test]
+fn rb_1822_syn168_string_plus_int_t001() {
+    let src = "case_0168_05 = 1\nlet base = 2\nlet copy = ${base}\nvalue = ${copy} + 1\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (3, 12), "{span:?}");
+    // Positive control: the quoted twin type-errors instead of coercing.
+    let src2 = "case_0168_05 = 1\nlet base = 2\nlet copy = \"${base}\"\nvalue = \"${copy}\" + 1\n";
+    let module = parse(src2, "research").expect("must parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail T001");
+    assert_eq!(err.code(), "T001", "{err}");
+}
+
+/// RB-1823 — Let twin: env snapshot third value (SYN-0168-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0014 (env repeatability).
+/// `let a = env.ACTIVE_RB1823_ENV ?: "safe"` then `value = "${a}"`:
+/// absent yields "safe", present yields the injected value, identically on
+/// repeat reads. Parallel-safe: uniquely-named var, priors restored.
+/// CONVERGENCE: identical verdict to SYN-0166-06/RB-1805 and SYN-0167-06/RB-1814.
+#[test]
+fn rb_1823_syn168_env_through_let() {
+    let prior = std::env::var("ACTIVE_RB1823_ENV").ok();
+    std::env::remove_var("ACTIVE_RB1823_ENV");
+    let src = "case_0168_06 = 1\nlet a = env.ACTIVE_RB1823_ENV ?: \"safe\"\nvalue = \"${a}\"\n";
+    assert_eq!(eval_json(src)["value"], "safe");
+    std::env::set_var("ACTIVE_RB1823_ENV", "r3");
+    assert_eq!(eval_json(src)["value"], "r3");
+    assert_eq!(eval_json(src)["value"], "r3");
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_RB1823_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1823_ENV"),
+    }
+    // Positive control: absent var with another default surfaces it.
+    let prior2 = std::env::var("ACTIVE_RB1823_ENV").ok();
+    std::env::remove_var("ACTIVE_RB1823_ENV");
+    assert_eq!(
+        eval_json("value = env.ACTIVE_RB1823_ENV ?: \"fb\"\n")["value"],
+        "fb"
+    );
+    match prior2 {
+        Some(val) => std::env::set_var("ACTIVE_RB1823_ENV", val),
+        None => std::env::remove_var("ACTIVE_RB1823_ENV"),
+    }
+}
+
+/// RB-1824 — Let twin: unused warns Warning-severe (SYN-0168-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0014 (lazy/eager policy).
+/// The bare form fails E005 at (2:14) — while the quoted twin warns W001
+/// Warning at (2:17) yet yields value 1: announce-eagerly,
+/// evaluate-lazily, block-never.
+/// CONVERGENCE: identical verdict to SYN-0166-07/RB-1806 and SYN-0167-07/RB-1815.
+#[test]
+fn rb_1824_syn168_unused_warns_warning() {
+    let src = "case_0168_07 = 1\nlet unused = ${missing}\nvalue = 1\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (2, 14), "{span:?}");
+    // Positive control: the quoted twin warns W001 Warning yet yields 1.
+    let src2 = "case_0168_07 = 1\nlet unused = \"${missing}\"\nvalue = 1\n";
+    let module = parse(src2, "research").expect("must parse");
+    let (value, diags2) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags2.iter().find(|d| d.code == "W001").expect("W001");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W001 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W001 carries a span");
+    assert_eq!((span.line, span.column), (2, 17), "{span:?}");
+    let json: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(json["value"], 1, "{json}");
+}
+
+/// RB-1825 — Let twin: fixture-faithful E012 plus companion (SYN-0168-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0014 (malformed syntax).
+/// The ACTUAL fixture (`value = ${a}` bare on line 3) fails E012 Error at
+/// (2:10) WITH an E005 companion at (3:9): the unclosed delimiter is
+/// located exactly, and the downstream bare use is gated too — one cause,
+/// two truthful announcements, no guess.
+/// CONVERGENCE: same E012 as RB-1807/RB-1816, fixture-faithful angle.
+#[test]
+fn rb_1825_syn168_fixture_e012_plus_gate() {
+    let src = "case_0168_08 = 1\nlet a = \"${b\"\nvalue = ${a}\n";
+    let diags = parse(src, "research").expect_err("must fail E012");
+    let e = diags.iter().find(|d| d.code == "E012").expect("E012");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E012 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E012 carries a span");
+    assert_eq!((span.line, span.column), (2, 10), "{span:?}");
+    assert!(
+        diags.iter().any(|d| d.code == "E005"),
+        "E005 companion expected, got {diags:?}"
+    );
+    // Positive control: the closed twin with a bound name expands.
+    let v = eval_json("let b = 3\nlet a = \"${b}\"\nvalue = \"${a}\"\n");
+    assert_eq!(v["value"], "3", "{v}");
+}
+
+/// RB-1826 — Let twin: negation cannot smuggle overflow (SYN-0168-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0014 (host overflow).
+/// The 37-digit let literal fails E023 Error at (2:9) — and even
+/// `-9223372036854775808` fails E023 at (1:10): negation applies AFTER
+/// lexing, so the positive literal must fit i64 first. No wrapping, no
+/// smuggling, either side of zero.
+/// CONVERGENCE: same E023 as RB-1808/RB-1817, negative-edge angle (new data).
+#[test]
+fn rb_1826_syn168_negative_edge_e023() {
+    let src = "case_0168_09 = 1\nlet a = 1000000000000000000000000000000000000\nvalue = \"${a}\"\n";
+    let diags = parse(src, "research").expect_err("must fail E023");
+    let e = diags.iter().find(|d| d.code == "E023").expect("E023");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E023 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E023 carries a span");
+    assert_eq!((span.line, span.column), (2, 9), "{span:?}");
+    // Positive control: the MIN-magnitude literal rejects at (1:10).
+    let diags = parse("value = -9223372036854775808\n", "research").expect_err("E023");
+    let e = diags.iter().find(|d| d.code == "E023").expect("E023");
+    let span = e.span.clone().expect("E023 carries a span");
+    assert_eq!((span.line, span.column), (1, 10), "{span:?}");
+    // Positive control: i64::MAX itself accepts silently.
+    let v = eval_json("value = 9223372036854775807\n");
+    assert_eq!(v["value"], 9223372036854775807i64, "{v}");
+}
+
+/// RB-1827 — Units twin: duration canonicalizes across spellings (SYN-0169-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0015 (dimension mismatch).
+/// CONVERGENCE (dimension registry, docs/units.md): `timeout = 5s` is
+/// {"ms": 5000}, `60s` is {"ms": 60000}, and `1min` is {"ms": 60000} —
+/// minutes and seconds canonicalize to the SAME base-unit value: one
+/// dimensional type, stable across spellings, never mixed, never stringly.
+/// CONVERGENCE: duration-dimension canonicalization.
+#[test]
+fn rb_1827_syn169_duration_canonical() {
+    let src = "case_0169_01 = 1\ntimeout = 5s\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0169_01"], 1, "{v}");
+    assert_eq!(v["timeout"], serde_json::json!({"ms": 5000}), "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: seconds and minutes agree canonically.
+    assert_eq!(
+        eval_json("timeout = 60s\n")["timeout"],
+        serde_json::json!({"ms": 60_000})
+    );
+    assert_eq!(
+        eval_json("timeout = 1min\n")["timeout"],
+        serde_json::json!({"ms": 60_000})
+    );
+}
+
+/// RB-1828 — Units twin: binary vs decimal stay distinct (SYN-0169-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0015 (prefix distinction).
+/// CONVERGENCE (dimension registry, docs/units.md): `memory = 512MiB` is
+/// exactly 512×1024×1024 bytes while `512MB` is exactly 512×1000×1000 —
+/// binary and decimal prefixes canonicalize to DIFFERENT integers, so the
+/// distinction survives evaluation. Oracles computed by arithmetic here,
+/// never copied.
+/// CONVERGENCE: byte-dimension prefix distinction.
+#[test]
+fn rb_1828_syn169_binary_decimal_distinct() {
+    let src = "case_0169_02 = 1\nmemory = 512MiB\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0169_02"], 1, "{v}");
+    assert_eq!(v["memory"], 512 * 1024 * 1024, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: decimal megabytes differ exactly.
+    let v = eval_json("memory = 512MB\n");
+    assert_eq!(v["memory"], 512 * 1000 * 1000, "{v}");
+    assert_ne!(512 * 1024 * 1024, 512 * 1000 * 1000);
+}

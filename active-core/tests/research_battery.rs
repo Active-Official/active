@@ -44300,3 +44300,208 @@ fn rb_1968_syn184_escape_round_trip_exact() {
         "x\ty"
     );
 }
+
+/// RB-1969 — Units twin: mebibyte integer-typed (SYN-0184-08 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0030 (unit formatting).
+/// `512MiB` evaluates to int 536870912 (512×1024×1024, computed here),
+/// silent — with `1MiB` agreeing at 1048576: dimensional values are exact
+/// integers, never floats, never drifted.
+/// CONVERGENCE: twin verdict to SYN-0165-08/RB-1798 and kin.
+#[test]
+fn rb_1969_syn184_unit_integer_typed() {
+    let src = "case_0184_08 = 512MiB\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0184_08"], 512 * 1024 * 1024, "{v}");
+    assert!(v["case_0184_08"].is_i64());
+    assert!(codes_of(src).is_empty());
+    // Positive control: the mebibyte unit agrees at its scale.
+    let v = eval_json("case_0184_08 = 1MiB\n");
+    assert_eq!(v["case_0184_08"], 1048576, "{v}");
+}
+
+/// RB-1970 — Secret twin: print preserves, export redacts (SYN-0184-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0030 (print leakage).
+/// REFUSAL (spec-gated, spec/secrets.md:48-49; RB-143): the formatter
+/// re-emits the secret call byte-identically while JSON carries only the
+/// marker.
+/// CONVERGENCE: twin verdict to SYN-0165-09/RB-1799 and kin.
+#[test]
+fn rb_1970_syn184_secret_print_preserves_call() {
+    use active_core::fmt::format;
+    use active_core::Style;
+    let raw = "RAW-1970-twin-marker";
+    let src = format!("case_0184_09 = secret(\"{raw}\")\n");
+    let module = parse(&src, "research").expect("must parse");
+    assert_eq!(format(&module, Style::Indent), src);
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    assert!(diags.is_empty(), "{diags:?}");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains(raw), "leak in JSON export: {json}");
+    assert!(json.contains("***SECRET***"), "redaction missing: {json}");
+    // Positive control: a plain scalar beside the secret prints too.
+    let v = eval_json("case_0184_09 = 1\n");
+    assert_eq!(v["case_0184_09"], 1, "{v}");
+}
+
+/// RB-1971 — Byte twin: VT data in strings, gated bare (byte backlog §H, MEDIUM).
+/// Origin: `#{byte}` raw-byte edges (vertical tab 0x0B); RB-092 smokes it,
+/// this pins the CLASS.
+/// `"a\u{b}b"` is inert 3-char data, silent — while bare VT fails E005 at
+/// (1:5): strings accept every scalar, structure accepts none.
+/// CONVERGENCE: data-vs-structure verdict, VT angle.
+#[test]
+fn rb_1971_byte_vt_string_data_bare_gated() {
+    let src = "v = \"a\u{b}b\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["v"], "a\u{b}b", "{v}");
+    assert_eq!(v["v"].as_str().map(|s| s.chars().count()), Some(3));
+    assert!(codes_of(src).is_empty());
+    // Positive control: bare VT is structural-debris E005 at (1:5).
+    let src2 = "v = \u{b}\n";
+    let diags = parse(src2, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 5), "{span:?}");
+}
+
+/// RB-1972 — Byte twin: FF data in strings, gated bare (byte backlog §H, MEDIUM).
+/// Origin: `#{byte}` raw-byte edges (form feed 0x0C); RB-092 smokes it.
+/// `"a\u{c}b"` is inert data, silent — while bare FF fails E005 at (1:5):
+/// same policy as VT, one code point apart.
+/// CONVERGENCE: data-vs-structure verdict, FF angle.
+#[test]
+fn rb_1972_byte_ff_string_data_bare_gated() {
+    let src = "v = \"a\u{c}b\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["v"], "a\u{c}b", "{v}");
+    assert_eq!(v["v"].as_str().map(|s| s.chars().count()), Some(3));
+    assert!(codes_of(src).is_empty());
+    // Positive control: bare FF is structural-debris E005 at (1:5).
+    let src2 = "v = \u{c}\n";
+    let diags = parse(src2, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 5), "{span:?}");
+}
+
+/// RB-1973 — Byte twin: line seps inert in strings (byte backlog §H, MEDIUM).
+/// Origin: `#{byte}` raw-byte edges (U+2028/U+2029); RB-092 smokes NUL/CR.
+/// Both separators stay 3-char string data, silent: no normalization, no
+/// line-splitting, no special meaning — Unicode line bounds do not bind
+/// Active lines.
+/// CONVERGENCE: inert-separator verdict, both code points pinned.
+#[test]
+fn rb_1973_byte_linesep_string_data() {
+    let v = eval_json("v = \"a b\"\n");
+    assert_eq!(v["v"], "a b", "{v}");
+    assert_eq!(v["v"].as_str().map(|s| s.chars().count()), Some(3));
+    assert!(codes_of("v = \"a b\"\n").is_empty());
+    // Positive control: the paragraph separator agrees exactly.
+    let v = eval_json("v = \"a b\"\n");
+    assert_eq!(v["v"], "a b", "{v}");
+    assert_eq!(v["v"].as_str().map(|s| s.chars().count()), Some(3));
+    assert!(codes_of("v = \"a b\"\n").is_empty());
+}
+
+/// RB-1974 — Byte twin: NBSP is not whitespace (byte backlog §H, MEDIUM).
+/// Origin: `#{byte}` raw-byte edges (no-break space U+00A0).
+/// `"a b"` keeps NBSP as data, silent — but `v = 1 + 2` fails E005 at
+/// (1:6): NBSP separates NOTHING — only ASCII space/tab/newline split
+/// tokens. Lookalike spacing never lexes.
+/// CONVERGENCE: separator-exactness verdict.
+#[test]
+fn rb_1974_byte_nbsp_not_whitespace() {
+    let src = "v = \"a b\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["v"], "a b", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: NBSP between tokens is debris E005 at (1:6).
+    let src2 = "v = 1 + 2\n";
+    let diags = parse(src2, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 6), "{span:?}");
+}
+
+/// RB-1975 — Byte twin: DEL data vs identifier rule (byte backlog §H, MEDIUM).
+/// Origin: `#{byte}` raw-byte edges (delete 0x7F); RB-092 smokes it.
+/// `"a\u{7f}b"` is inert data, silent — while `k\u{7f} = 1` fails E005 at
+/// (1:2): keys are ASCII identifiers, and DEL is not one — data anywhere,
+/// identifiers only where specified.
+/// CONVERGENCE: identifier-exactness verdict, DEL angle.
+#[test]
+fn rb_1975_byte_del_data_vs_key() {
+    let src = "v = \"a\u{7f}b\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["v"], "a\u{7f}b", "{v}");
+    assert_eq!(v["v"].as_str().map(|s| s.chars().count()), Some(3));
+    assert!(codes_of(src).is_empty());
+    // Positive control: DEL in a key fails E005 at (1:2).
+    let src2 = "k\u{7f} = 1\n";
+    let diags = parse(src2, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 2), "{span:?}");
+}
+
+/// RB-1976 — Byte twin: C0 controls inert in strings (byte backlog §H, MEDIUM).
+/// Origin: `#{byte}` raw-byte edges (ESC 0x1B, 0x01); RB-092 smokes 0x1F.
+/// Both stay 3-char string data, silent: C0 controls are data in strings,
+/// gated only in structure — the full low range behaves one way.
+/// CONVERGENCE: inert-C0 verdict, ESC/0x01 pair pinned.
+#[test]
+fn rb_1976_byte_c0_string_data() {
+    let v = eval_json("v = \"a\u{1b}b\"\n");
+    assert_eq!(v["v"], "a\u{1b}b", "{v}");
+    assert_eq!(v["v"].as_str().map(|s| s.chars().count()), Some(3));
+    assert!(codes_of("v = \"a\u{1b}b\"\n").is_empty());
+    // Positive control: 0x01 agrees exactly.
+    let v = eval_json("v = \"a\u{1}b\"\n");
+    assert_eq!(v["v"], "a\u{1}b", "{v}");
+    assert_eq!(v["v"].as_str().map(|s| s.chars().count()), Some(3));
+}
+
+/// RB-1977 — Byte twin: comment swallows VT, FF splits tokens (byte backlog §H, MEDIUM).
+/// Origin: `#{byte}` raw-byte edges (comment/whitespace interaction).
+/// `# only\u{b}comment` leaves v=1 silent — comments swallow VT — while
+/// `v = 1\u{c}+ 2` fails E005 at (1:6): FF never separates tokens.
+/// Comments opaque, separators exact: both rules in one test.
+/// CONVERGENCE: comment-opacity + separator-exactness verdicts.
+#[test]
+fn rb_1977_byte_comment_vt_token_ff() {
+    let src = "# only\u{b}comment\nv = 1\n";
+    let v = eval_json(src);
+    assert_eq!(v["v"], 1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: FF between tokens is debris E005 at (1:6).
+    let src2 = "v = 1\u{c}+ 2\n";
+    let diags = parse(src2, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 6), "{span:?}");
+}
+
+/// RB-1978 — Byte twin: U+2028 never breaks lines (byte backlog §H, MEDIUM).
+/// Origin: `#{byte}` raw-byte edges (Unicode line separator, bare).
+/// Bare U+2028 fails E005 — at (1:6) between tokens, at (1:2) in key
+/// position: it is NOT a newline, NOT whitespace, NOT an identifier char.
+/// Only LF (and CRLF folded to LF) breaks lines — the line rule is ASCII.
+/// CONVERGENCE: ASCII-lines verdict, both positions pinned.
+#[test]
+fn rb_1978_byte_linesep_never_breaks() {
+    let src = "v = 1 + 2\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 6), "{span:?}");
+    // Positive control: U+2028 in key position fails E005 at (1:2).
+    let src2 = "a = 1\n";
+    let diags = parse(src2, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (1, 2), "{span:?}");
+    // Positive control: a real LF still separates statements.
+    let v = eval_json("a = 1\nb = 2\n");
+    assert_eq!(v["a"], 1, "{v}");
+    assert_eq!(v["b"], 2, "{v}");
+}

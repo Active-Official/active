@@ -841,7 +841,7 @@ fn render_literal(v: &Value) -> String {
             }
         }
         Value::DurationMs(ms) => format!("{ms}ms"),
-        Value::Quantity(n, unit) => format!("{n}{}", unit.suffix()),
+        Value::Quantity(n, unit) => unit.format_amount(*n),
         Value::Array(a) => {
             let parts: Vec<String> = a.iter().map(render_literal).collect();
             format!("[{}]", parts.join(", "))

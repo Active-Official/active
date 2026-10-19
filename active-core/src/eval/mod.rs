@@ -1104,7 +1104,7 @@ impl Engine {
                                         Value::Bool(b) => out.push_str(&b.to_string()),
                                         Value::DurationMs(ms) => out.push_str(&format!("{}ms", ms)),
                                         Value::Quantity(n, unit) => {
-                                            out.push_str(&format!("{}{}", n, unit.suffix()))
+                                            out.push_str(&unit.format_amount(*n))
                                         }
                                         Value::Secret(_) => {
                                             return Err(EvalError::secret_leak(module, node_id));
@@ -1805,6 +1805,12 @@ fn normalize_quantity(v: &Value, unit: &Unit) -> Result<Value, String> {
         return Ok(Value::Int(i64::try_from(bytes).unwrap_or(i64::MAX)));
     }
     // Rates and custom units retain their dimension (e.g. 100/req/s).
+    // Percent canonicalizes to the dimensionless ratio (100% = 1.0);
+    // values are NOT clamped: negative and over-100 percents are meaningful
+    // (spec Ch. 4 §4.1).
+    if *unit == Unit::Percent {
+        return Ok(Value::Quantity(num / 100.0, Unit::Percent));
+    }
     Ok(Value::Quantity(num, unit.clone()))
 }
 
@@ -1873,6 +1879,34 @@ pub(crate) fn eval_binary(op: BinOp, lhs: &Value, rhs: &Value) -> Result<Value, 
         (Gt, Value::DurationMs(a), Value::DurationMs(b)) => Ok(Value::Bool(a > b)),
         (Ge, Value::DurationMs(a), Value::DurationMs(b)) => Ok(Value::Bool(a >= b)),
 
+        // Same-suffix quantity arithmetic (percent, rates, custom):
+        // same-dimension add/sub/compare, scalar mul/div, same-dimension
+        // division yields a bare ratio. Cross-suffix operations fall through
+        // to the dimensional TypeError below (spec Ch. 4 §4.1/§4.3).
+        (Add, Value::Quantity(a, ua), Value::Quantity(b, ub)) if ua == ub => {
+            Ok(Value::Quantity(a + b, ua.clone()))
+        }
+        (Sub, Value::Quantity(a, ua), Value::Quantity(b, ub)) if ua == ub => {
+            Ok(Value::Quantity(a - b, ua.clone()))
+        }
+        (Mul, Value::Quantity(a, u), Value::Int(n)) => {
+            Ok(Value::Quantity(a * *n as f64, u.clone()))
+        }
+        (Mul, Value::Quantity(a, u), Value::Float(f)) => Ok(Value::Quantity(a * f, u.clone())),
+        (Div, Value::Quantity(a, u), Value::Int(n)) if *n != 0 => {
+            Ok(Value::Quantity(a / *n as f64, u.clone()))
+        }
+        (Div, Value::Quantity(a, u), Value::Float(f)) if *f != 0.0 => {
+            Ok(Value::Quantity(a / f, u.clone()))
+        }
+        (Div, Value::Quantity(a, ua), Value::Quantity(b, ub)) if ua == ub && *b != 0.0 => {
+            Ok(Value::Float(a / b))
+        }
+        (Lt, Value::Quantity(a, ua), Value::Quantity(b, ub)) if ua == ub => Ok(Value::Bool(a < b)),
+        (Le, Value::Quantity(a, ua), Value::Quantity(b, ub)) if ua == ub => Ok(Value::Bool(a <= b)),
+        (Gt, Value::Quantity(a, ua), Value::Quantity(b, ub)) if ua == ub => Ok(Value::Bool(a > b)),
+        (Ge, Value::Quantity(a, ua), Value::Quantity(b, ub)) if ua == ub => Ok(Value::Bool(a >= b)),
+
         (And, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(*a && *b)),
         (Or, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(*a || *b)),
 
@@ -1891,6 +1925,10 @@ pub(crate) fn eval_unary(op: UnOp, v: &Value) -> Result<Value, String> {
     match (op, v) {
         (UnOp::Neg, Value::Int(n)) => Ok(Value::Int(n.saturating_neg())),
         (UnOp::Neg, Value::Float(f)) => Ok(Value::Float(-f)),
+        // Quantities negate by amount, keeping the unit: discounts, deltas
+        // and signed rates are meaningful, and nothing here clamps
+        // (spec Ch. 4 §4.1). Durations intentionally do NOT get this arm.
+        (UnOp::Neg, Value::Quantity(a, u)) => Ok(Value::Quantity(-a, u.clone())),
         (UnOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
         _ => Err(format!("unsupported unary op {op:?} on {v:?}")),
     }

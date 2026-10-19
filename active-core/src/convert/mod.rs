@@ -79,7 +79,7 @@ fn value_to_toml_literal(v: &Value) -> String {
         Value::Float(f) => f.to_string(),
         Value::String(s) => format!("\"{}\"", s.replace('"', "\\\"")),
         Value::DurationMs(ms) => format!("{}ms", ms),
-        Value::Quantity(n, unit) => format!("{}{}", n, unit.suffix()),
+        Value::Quantity(n, unit) => unit.format_amount(*n),
         Value::Secret(_) => "\"***SECRET***\"".into(),
         Value::Array(arr) => {
             let parts: Vec<String> = arr.iter().map(value_to_toml_literal).collect();

@@ -290,6 +290,7 @@ evaluation:
 | Time | `DurationMs(u64)` milliseconds | `5s` → `5000ms`, `15m` → `900000ms` |
 | Bytes | `Int(i64)` bytes | `512MiB` → `536870912`, `100MB` → `100000000` |
 | Rates / custom | `Quantity(f64, Unit)` — original unit retained | `100/req/s` → `Quantity(100.0, RequestsPerSecond)` |
+| Percent | `Quantity(f64, Percent)` — canonical dimensionless ratio, 100% = 1.0 | `25%` → `Quantity(0.25, Percent)` |
 
 Time normalizations: ns/10⁶→ms, µs/10³→ms, s×10³, m×60000, h×3600000,
 d×86400000. Byte normalizations: KiB=2¹⁰, MiB=2²⁰, GiB=2³⁰, TiB=2⁴⁰;
@@ -299,11 +300,26 @@ the nearest integer.
 Rates are **not** cross-normalized: `50/m` stays `50 per minute`. Rate units
 are dimension-bearing values, not scalars.
 
+Percent (`%`) is a dimensionless ratio with canonical f64 value where
+100% = 1.0 (`25%` → `Quantity(0.25, Percent)`). Percents support
+same-dimension `+ -`, scalar `* /`, all four comparisons, and structural
+equality; cross-dimension operations are `TypeError`s. There is no implicit
+base ("percent of what" is refused — the base must be explicit in the
+surrounding expression). Percent values are NOT clamped: negative and
+over-100 percents are meaningful (discounts, deltas, growth) and clamping
+either would be silent coercion. Admission record: corpus = rollout
+percentages/thresholds ubiquitous in configs (cookbook `rollout_pct`);
+collision = `%` conflicts with nothing (not an SI symbol; UCUM defines %
+as 10⁻²); export = JSON `{"%": ratio}`, TOML-ish percent-form (`25%`),
+interpolation percent-form; schema kind `quantity:percent`.
+
 ### 4.2 Serialization of quantities
 
 - `DurationMs` → JSON `{"ms": N}`; TOML-ish `Nms`.
-- `Quantity` → JSON `{"<suffix>": N}` (e.g. `{"req/s": 100.0}`); TOML-ish
-  `N<suffix>` (e.g. `100req/s`); interpolation `N<suffix>`.
+- `Quantity` → JSON `{"<suffix>": N}` (e.g. `{"req/s": 100.0}`,
+  `{"%": 0.25}` for percent ratio); TOML-ish `N<suffix>` (e.g. `100req/s`),
+  except percent which respells in percent-form (`25%`); interpolation
+  follows the same rule (`25%`, never `0.25%`).
 - `Unit::suffix()` is the canonical spelling and is always re-parseable
   (round-trip property-tested in `active-core/tests/unit_roundtrip.rs`).
 

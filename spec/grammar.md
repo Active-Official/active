@@ -142,7 +142,8 @@ unit         = unit-char { unit-char }
 ```
 
 A unit attaches to a number with **no intervening whitespace** and must be in
-the known table:
+the known table. Unit characters are identifier characters plus `/`, `_`,
+and `%` (percent is the only symbolic suffix; case-SENSITIVE always):
 
 | Suffix | Unit | | Suffix | Unit |
 |---|---|---|---|---|
@@ -154,6 +155,7 @@ the known table:
 | `h` | hours | | `req/s` `req_s` `/req/s` | requests per second |
 | `d` | days | | `req/m` `req_m` `/req/m` | requests per minute |
 | `B` | bytes | | `req/h` `req_h` `/req/h` | requests per hour |
+| `%` | percent (dimensionless ratio, 100% = 1.0) | | | |
 
 Any other suffix rolls the lexer back (the characters are re-lexed as
 separate tokens). **[impl note]** The lexer's rollback means `5x` lexes as

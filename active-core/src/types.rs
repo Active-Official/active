@@ -30,6 +30,8 @@ pub enum Unit {
     RequestsPerSecond,
     RequestsPerMinute,
     RequestsPerHour,
+    // Percent (dimensionless ratio, 100% = 1.0)
+    Percent,
     // Custom
     Custom(String),
 }
@@ -63,6 +65,7 @@ impl Unit {
             "/req/s" => Some(Unit::RequestsPerSecond),
             "/req/m" => Some(Unit::RequestsPerMinute),
             "/req/h" => Some(Unit::RequestsPerHour),
+            "%" => Some(Unit::Percent),
             "req/m" | "req_m" => Some(Unit::RequestsPerMinute),
             "req/h" | "req_h" => Some(Unit::RequestsPerHour),
 
@@ -95,7 +98,19 @@ impl Unit {
             Unit::RequestsPerSecond => "req/s".into(),
             Unit::RequestsPerMinute => "req/m".into(),
             Unit::RequestsPerHour => "req/h".into(),
+            Unit::Percent => "%".into(),
             Unit::Custom(s) => s.clone(),
+        }
+    }
+
+    /// Render a quantity amount in source spelling. Percent is special:
+    /// the canonical value is the ratio (100% = 1.0) but the spelled form
+    /// is percent-form (`25%`, never `0.25%`), so this multiplies back.
+    /// Every other unit renders `{amount}{suffix}` (spec Ch. 4 §4.2).
+    pub fn format_amount(&self, amount: f64) -> String {
+        match self {
+            Unit::Percent => format!("{}%", amount * 100.0),
+            _ => format!("{}{}", amount, self.suffix()),
         }
     }
 

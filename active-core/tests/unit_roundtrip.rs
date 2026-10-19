@@ -45,6 +45,32 @@ fn rate_unit_suffixes_round_trip_through_export() {
 }
 
 #[test]
+fn percent_round_trips_through_export() {
+    // Percent canonicalizes to the ratio (100% = 1.0) but respells in
+    // percent-form, so export → parse → evaluate is a fixed point.
+    let sources = [
+        "x = 25%",
+        "x = 50%",
+        "x = 12.5%",
+        "x = 150%",
+        "x = -5%",
+        "x = 0.1%",
+    ];
+    for src in sources {
+        let first = eval_json(src);
+        let module = parse(src, "roundtrip").expect("must parse");
+        let (value, _) = Engine::new().evaluate(&module).expect("must evaluate");
+        let exported = value_to_simple_toml(&value, "");
+        let second = eval_json(&exported);
+        assert_eq!(
+            first, second,
+            "round-trip failed for {src}: exported as {exported:?}"
+        );
+    }
+}
+
+/// Round-trip for time and byte units (pre-existing coverage, untouched).
+#[test]
 fn time_and_byte_units_round_trip_through_export() {
     let sources = [
         "x = 5s",

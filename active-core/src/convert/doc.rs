@@ -3,7 +3,7 @@
 //! Secret values render redacted in every format (C-036).
 
 use crate::ir::{AnnotationKind, Attachment, Module, Node, NodeId, Value};
-use crate::types::ActiveType;
+use crate::types::{ActiveType, Unit};
 use std::collections::HashMap;
 
 /// One documented configuration item: a dotted value path with its
@@ -307,7 +307,10 @@ fn render_value(val: &Value) -> String {
         Value::Bool(b) => b.to_string(),
         Value::Null => "null".to_string(),
         Value::DurationMs(ms) => format!("{ms} ms"),
-        Value::Quantity(n, unit) => format!("{n} {}", unit.suffix()),
+        Value::Quantity(n, unit) => match unit {
+            Unit::Percent => format!("{}%", n * 100.0),
+            _ => format!("{n} {}", unit.suffix()),
+        },
         Value::Array(items) => format!("array[{}]", items.len()),
         Value::Table(map) => format!("table{{{}}}", map.len()),
     }

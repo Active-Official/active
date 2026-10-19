@@ -1512,7 +1512,7 @@ fn render_constrained(value: &Value) -> String {
         Value::Bool(b) => b.to_string(),
         Value::Null => "null".to_string(),
         Value::DurationMs(ms) => format!("{ms}ms"),
-        Value::Quantity(n, unit) => format!("{n}{}", unit.suffix()),
+        Value::Quantity(n, unit) => unit.format_amount(*n),
         Value::Array(_) => "array".to_string(),
         Value::Table(_) => "table".to_string(),
     };

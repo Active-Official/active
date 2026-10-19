@@ -112,7 +112,7 @@ fn build_toml_value(v: &Value, path: &str, diags: &mut Vec<Diagnostic>) -> Optio
         // magnitude strings (the original unit is already lost at
         // evaluation — spec/converters.md §3).
         Value::DurationMs(ms) => Some(toml::Value::String(format!("{ms}ms"))),
-        Value::Quantity(n, unit) => Some(toml::Value::String(format!("{n}{}", unit.suffix()))),
+        Value::Quantity(n, unit) => Some(toml::Value::String(unit.format_amount(*n))),
         Value::Secret(_) => Some(toml::Value::String("***SECRET***".to_string())),
         Value::Array(items) => {
             let mut out = Vec::with_capacity(items.len());

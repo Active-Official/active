@@ -16,6 +16,19 @@ and fixtures: crates `active`, `active-core`, `active-cli`,
 follow. GitHub URLs and prior release notes keep their original
 names (redirects/history).
 
+## [1.2.0] — 2026-10-18
+
+Units Phase A (Tier 0 gaps): percent `%` (dimensionless ratio, 100% = 1.0,
+percent-form export, no implicit base, no clamping); frequency
+`Hz kHz MHz GHz THz` (f64 hertz canonical, full arithmetic, case-sensitive
+SI spellings); bits + data rates `b Kb Mb Gb bps Kbps Mbps Gbps MB/s`
+(canonical bits / bits-sec, `MB/s` converts through megabytes, bits-bytes
+mixing refused); `week` (exact 604800000ms) + `sec`/`min` long aliases
+(canonical `s`/`m` respell; plurals refused); same-suffix arithmetic for
+all retained quantities (rates included), cross-suffix stays dimensional
+TypeError; explicit unary negation preserved on quantities. No changes to
+any previously-parseable source (full suite green throughout).
+
 ## [1.1.0] — 2026-10-17
 
 Hardening release, published to crates.io (`active`, `active-core`,

@@ -9,7 +9,7 @@ members = [
 ]
 
 [workspace.package]
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
@@ -30,4 +30,4 @@ petgraph = "0.6"
 clap = { version = "4.5", features = ["derive"] }
 # Version is duplicated from [workspace.package] (cargo forbids
 # version.workspace here): keep in sync — the packaging test pins it.
-active-core = { version = "1.1.0", path = "active-core" }
+active-core = { version = "1.2.0", path = "active-core" }

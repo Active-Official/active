@@ -42976,3 +42976,295 @@ fn rb_1918_syn179_range_rejects_unclamped() {
         serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
     assert_eq!(json["port"], 70000, "{json}");
 }
+
+/// RB-1919 — Schema twin: duration validates (SYN-0179-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0025 (unit validation).
+/// The naive `@schema timeout: duration` transliteration is rejected —
+/// E014 Error at (2:2) — while the REAL `schema = { … = Duration }`
+/// accepts 5s silently as {ms:5000}: unit types validate dimensioned
+/// values post-evaluation (spec/grammar.md:359-376).
+/// CONVERGENCE: dimensioned-validation verdict.
+#[test]
+fn rb_1919_syn179_duration_validates() {
+    let src = "case_0179_03 = 5s\n@schema timeout: duration\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e = diags.iter().find(|d| d.code == "E014").expect("E014");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E014 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E014 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the real Duration schema accepts 5s silently.
+    let src2 = "schema = { case_0179_03 = Duration }\ncase_0179_03 = 5s\n";
+    let v = eval_json(src2);
+    assert_eq!(v["case_0179_03"], serde_json::json!({"ms": 5000}), "{v}");
+    assert!(codes_of(src2).is_empty());
+}
+
+/// RB-1920 — Schema twin: string-to-duration coerces announced (SYN-0179-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0025 (quoted units).
+/// The naive form is rejected — E014 at (2:2) — while the real schema
+/// heals `"5s"` to {ms:5000} with H007 Warning at the value span (2:16):
+/// resilient-mode string→Kind coercion, ANNOUNCED (docs/diagnostics.md:109;
+/// strict mode would T002). Never silent, never a wrong-type error here.
+/// CONVERGENCE: healer verdict, announced-coercion angle.
+#[test]
+fn rb_1920_syn179_quoted_unit_coerces_announced() {
+    let src = "case_0179_04 = \"5s\"\n@schema timeout: duration\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e = diags.iter().find(|d| d.code == "E014").expect("E014");
+    let span = e.span.clone().expect("E014 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the real schema coerces with H007, never silently.
+    let src2 = "schema = { case_0179_04 = Duration }\ncase_0179_04 = \"5s\"\n";
+    let module = parse(src2, "research").expect("must parse");
+    let (value, diags2) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags2.iter().find(|d| d.code == "H007").expect("H007");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Warning,
+        "H007 must be Warning, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H007 carries a span");
+    assert_eq!((span.line, span.column), (2, 16), "{span:?}");
+    let json: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(
+        json["case_0179_04"],
+        serde_json::json!({"ms": 5000}),
+        "{json}"
+    );
+}
+
+/// RB-1921 — Schema twin: bool is not int (SYN-0179-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0025 (host subtype accidents).
+/// The naive form is rejected — E014 at (2:2) — while the real schema
+/// fails `true` vs Int with T002 Error at the value span (2:16), value
+/// retained: booleans never subtype integers, no host accident possible.
+/// CONVERGENCE: strict-type verdict, span-indexed.
+#[test]
+fn rb_1921_syn179_bool_not_int() {
+    let src = "case_0179_05 = true\n@schema port: integer\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e = diags.iter().find(|d| d.code == "E014").expect("E014");
+    let span = e.span.clone().expect("E014 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the real schema fails bool-vs-Int with T002.
+    let src2 = "schema = { case_0179_05 = Int }\ncase_0179_05 = true\n";
+    let module = parse(src2, "research").expect("must parse");
+    let (value, diags2) = Engine::new().evaluate(&module).expect("must evaluate");
+    let t = diags2.iter().find(|d| d.code == "T002").expect("T002");
+    assert_eq!(
+        t.severity,
+        active_core::Severity::Error,
+        "T002 must be Error, got {:?}",
+        t.severity
+    );
+    let span = t.span.clone().expect("T002 carries a span");
+    assert_eq!((span.line, span.column), (2, 16), "{span:?}");
+    let json: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(json["case_0179_05"], true, "{json}");
+}
+
+/// RB-1922 — Schema twin: empty array validates (SYN-0179-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0025 (collection constraints).
+/// The naive form is rejected — E014 at (2:2) — while the real
+/// `Array<Int>` schema ACCEPTS `[]` silently: shipped Arrays take only
+/// `<T>` (spec/grammar.md:373-376) — no minItems constraint exists to
+/// violate.
+/// REFUSAL (spec-gated): min-items cannot reject what the grammar never
+/// constrains; adding it would invent semantics.
+/// CONVERGENCE: grammar-bound verdict.
+#[test]
+fn rb_1922_syn179_empty_array_valid() {
+    let src = "items = []\n@schema items: array, minItems=1\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e = diags.iter().find(|d| d.code == "E014").expect("E014");
+    let span = e.span.clone().expect("E014 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the real schema accepts the empty array silently.
+    let src2 = "schema = { items = Array<Int> }\nitems = []\n";
+    let v = eval_json(src2);
+    assert_eq!(v["items"], serde_json::json!([]), "{v}");
+    assert!(codes_of(src2).is_empty());
+    // Positive control: the populated twin agrees silently.
+    assert_eq!(
+        eval_json("schema = { items = Array<Int> }\nitems = [1, 2]\n")["items"],
+        serde_json::json!([1, 2])
+    );
+}
+
+/// RB-1923 — Schema twin: secret fails String closed (SYN-0179-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0025 (secret validation).
+/// The naive form is rejected — E014 at (2:2) — while the real schema
+/// fails a secret vs String with T002 at the value span, export redacted:
+/// validation types without unwrapping, prints no payload (batch 187).
+/// CONVERGENCE: fail-closed verdict, fresh marker.
+#[test]
+fn rb_1923_syn179_secret_fails_closed() {
+    let src = "case_0179_07 = secret(\"x\")\n@schema value: string\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e = diags.iter().find(|d| d.code == "E014").expect("E014");
+    let span = e.span.clone().expect("E014 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the real schema fails T002, redacted.
+    let raw = "RAW-1923-secret-marker";
+    let src2 = format!("schema = {{ case_0179_07 = String }}\ncase_0179_07 = secret(\"{raw}\")\n");
+    let module = parse(&src2, "research").expect("must parse");
+    let (value, diags2) = Engine::new().evaluate(&module).expect("must evaluate");
+    let t = diags2.iter().find(|d| d.code == "T002").expect("T002");
+    assert_eq!(
+        t.severity,
+        active_core::Severity::Error,
+        "T002 must be Error, got {:?}",
+        t.severity
+    );
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains(raw), "leak in JSON export: {json}");
+    assert!(json.contains("***SECRET***"), "redaction missing: {json}");
+}
+
+/// RB-1924 — Schema twin: missing field T004-indexed (SYN-0179-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0025 (missing fields).
+/// The naive form is rejected — E014 at (2:2) — while the real schema
+/// fails the missing key with T004 Error at the schema span (1:21):
+/// missing ≠ null ≠ defaulted (DERIVED-0016/RB-013), each with its code.
+/// CONVERGENCE: missing-field verdict, schema-span angle.
+#[test]
+fn rb_1924_syn179_missing_t004() {
+    let src = "a = 1\n@schema absent: integer\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e = diags.iter().find(|d| d.code == "E014").expect("E014");
+    let span = e.span.clone().expect("E014 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the real schema fails T004 at the schema span.
+    let src2 = "schema = { absent = Int }\na = 1\n";
+    let module = parse(src2, "research").expect("must parse");
+    let (_, diags2) = Engine::new().evaluate(&module).expect("must evaluate");
+    let t = diags2.iter().find(|d| d.code == "T004").expect("T004");
+    assert_eq!(
+        t.severity,
+        active_core::Severity::Error,
+        "T004 must be Error, got {:?}",
+        t.severity
+    );
+    let span = t.span.clone().expect("T004 carries a span");
+    assert_eq!((span.line, span.column), (1, 21), "{span:?}");
+    // Positive control: the present twin passes silently.
+    let src3 = "schema = { absent = Int }\nabsent = 3\n";
+    assert_eq!(eval_json(src3)["absent"], 3);
+    assert!(codes_of(src3).is_empty());
+}
+
+/// RB-1925 — Schema twin: null not broadened (SYN-0179-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0025 (nullability).
+/// The naive form is rejected — E014 at (2:2) — while the real schema
+/// fails `null` vs String with T002 Error at the value span (2:5), value
+/// retained as null: nullability is never implicitly broadened.
+/// CONVERGENCE: strict-null verdict, span-indexed.
+#[test]
+fn rb_1925_syn179_null_not_broadened() {
+    let src = "a = null\n@schema a: string\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e = diags.iter().find(|d| d.code == "E014").expect("E014");
+    let span = e.span.clone().expect("E014 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the real schema fails null-vs-String with T002.
+    let src2 = "schema = { a = String }\na = null\n";
+    let module = parse(src2, "research").expect("must parse");
+    let (value, diags2) = Engine::new().evaluate(&module).expect("must evaluate");
+    let t = diags2.iter().find(|d| d.code == "T002").expect("T002");
+    assert_eq!(
+        t.severity,
+        active_core::Severity::Error,
+        "T002 must be Error, got {:?}",
+        t.severity
+    );
+    let span = t.span.clone().expect("T002 carries a span");
+    assert_eq!((span.line, span.column), (2, 5), "{span:?}");
+    let json: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert!(json["a"].is_null(), "{json}");
+}
+
+/// RB-1926 — Schema twin: range accepts upper edge (SYN-0180-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0026 (range boundary).
+/// The naive form is rejected — E014 at (2:2) — while the real schema
+/// accepts 8080 silently AND accepts the upper edge 65535: boundaries are
+/// inclusive, evaluated post-typing (DERIVED-0015/RB-012).
+/// CONVERGENCE: twin verdict to SYN-0179-01/RB-1917.
+#[test]
+fn rb_1926_syn180_range_accepts() {
+    let src = "case_0180_01 = 8080\n@schema port: integer, min=1, max=65535\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e = diags.iter().find(|d| d.code == "E014").expect("E014");
+    let span = e.span.clone().expect("E014 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the real schema accepts in-range silently.
+    let src2 = "schema = { port = Int(min = 1, max = 65535) }\nport = 8080\n";
+    let v = eval_json(src2);
+    assert_eq!(v["port"], 8080, "{v}");
+    assert!(codes_of(src2).is_empty());
+    // Positive control: the upper edge accepts too.
+    assert_eq!(
+        eval_json("schema = { port = Int(min = 1, max = 65535) }\nport = 65535\n")["port"],
+        65535
+    );
+}
+
+/// RB-1927 — Schema twin: range rejects retained (SYN-0180-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0026 (range limits).
+/// The naive form is rejected — E014 at (2:2) — while the real schema
+/// fails 70000 with T003 Error at (2:8), value retained unclamped:
+/// rejected at validation with path and bounds, never clamped.
+/// CONVERGENCE: twin verdict to SYN-0179-02/RB-1918.
+#[test]
+fn rb_1927_syn180_range_rejects_unclamped() {
+    let src = "case_0180_02 = 70000\n@schema port: integer, min=1, max=65535\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e = diags.iter().find(|d| d.code == "E014").expect("E014");
+    let span = e.span.clone().expect("E014 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the real schema rejects 70000 with T003, unclamped.
+    let src2 = "schema = { port = Int(min = 1, max = 65535) }\nport = 70000\n";
+    let module = parse(src2, "research").expect("must parse");
+    let (value, diags2) = Engine::new().evaluate(&module).expect("must evaluate");
+    let t = diags2.iter().find(|d| d.code == "T003").expect("T003");
+    assert_eq!(
+        t.severity,
+        active_core::Severity::Error,
+        "T003 must be Error, got {:?}",
+        t.severity
+    );
+    let span = t.span.clone().expect("T003 carries a span");
+    assert_eq!((span.line, span.column), (2, 8), "{span:?}");
+    let json: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(json["port"], 70000, "{json}");
+}
+
+/// RB-1928 — Schema twin: duration object-typed (SYN-0180-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0026 (unit validation).
+/// The naive form is rejected — E014 at (2:2) — while the real Duration
+/// schema accepts 5s as the OBJECT {ms:5000}: unit types validate
+/// dimensioned values, objects not strings.
+/// CONVERGENCE: twin verdict to SYN-0179-03/RB-1919.
+#[test]
+fn rb_1928_syn180_duration_validates() {
+    let src = "case_0180_03 = 5s\n@schema timeout: duration\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e = diags.iter().find(|d| d.code == "E014").expect("E014");
+    let span = e.span.clone().expect("E014 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the real Duration schema accepts the object.
+    let src2 = "schema = { case_0180_03 = Duration }\ncase_0180_03 = 5s\n";
+    let v = eval_json(src2);
+    assert_eq!(v["case_0180_03"], serde_json::json!({"ms": 5000}), "{v}");
+    assert!(v["case_0180_03"].is_object());
+    assert!(codes_of(src2).is_empty());
+}

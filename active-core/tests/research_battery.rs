@@ -35741,3 +35741,231 @@ fn rb_1618_syn145_small_array_accepts() {
         serde_json::json!([])
     );
 }
+
+/// RB-1619 — Depth variant: comment never bypasses depth accounting (SYN-0145-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0015 (depth/DoS family;
+/// same shape as SYN-0122-07).
+/// Converges with RB-1412/1421: 64-deep trips E004 Error with the trailing
+/// comment, trips identically without it, and 32-deep accepts.
+#[test]
+fn rb_1619_syn145_comment_depth_counted() {
+    let src = "case_0145_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]] # bounded-depth control\n";
+    let diags = parse(src, "research").expect_err("must fail E004");
+    let e = diags.iter().find(|d| d.code == "E004").expect("E004");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E004 must be Error, got {:?}",
+        e.severity
+    );
+    // Positive control: the comment-free twin trips identically.
+    let bare = "case_0145_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n";
+    let diags = parse(bare, "research").expect_err("must fail E004");
+    assert!(diags.iter().any(|d| d.code == "E004"), "{diags:?}");
+    // Positive control: 32-deep stays below the bound and accepts.
+    let ok = format!("case_0145_07 = {}0{}\n", "[".repeat(32), "]".repeat(32));
+    assert!(codes_of(&ok).is_empty(), "{ok}");
+}
+
+/// RB-1620 — Depth variant: fan-out interpolation refused (SYN-0145-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0015 (depth/DoS family;
+/// same shape as SYN-0122-08).
+/// Converges with RB-1413/1422: E005 Error at the first `$` (3:10).
+#[test]
+fn rb_1620_syn145_fanout_refused() {
+    let src = "case_0145_08 = 1\nlet a = [1,2,3]\nlet b = [${a}, ${a}, ${a}, ${a}]\nvalue = b\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (3, 10), "{span:?}");
+    // Positive control: the array itself reads fine through its name.
+    let v = eval_json("let a = [1, 2, 3]\ncase_0145_08 = a\n");
+    assert_eq!(v["case_0145_08"], serde_json::json!([1, 2, 3]), "{v}");
+}
+
+/// RB-1621 — Depth variant: 200KB scalar stays linear and exact (SYN-0145-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0015 (depth/DoS family;
+/// same shape as SYN-0122-09).
+/// Converges with RB-1414/1423: 100000 `x` + raw LF + 100000 `x`
+/// evaluates silently to the exact 200001-scalar value. Pinned behavior +
+/// the same OPEN SPEC QUESTION (no scalar byte cap in spec/budgets.md).
+#[test]
+fn rb_1621_syn145_long_scalar_linear() {
+    let half = "x".repeat(100000);
+    let src = format!("case_0145_09 = \"{half}\n{half}\"\n");
+    let v = eval_json(&src);
+    let s = v["case_0145_09"].as_str().expect("string");
+    assert_eq!(s.len(), 200001, "byte length");
+    assert_eq!(s.chars().count(), 200001, "scalar length");
+    assert_eq!(s.chars().nth(100000), Some('\n'), "embedded raw LF kept");
+    assert!(s
+        .chars()
+        .enumerate()
+        .all(|(i, c)| if i == 100000 { c == '\n' } else { c == 'x' }));
+    assert!(codes_of(&src).is_empty());
+    // Positive control: a small string is exact and silent.
+    assert_eq!(eval_json("case_0145_09 = \"xx\"\n")["case_0145_09"], "xx");
+}
+
+/// RB-1622 — Stack-overflow twin: below-limit nesting parses (SYN-0146-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0016 (stack overflow;
+/// same shape as SYN-0122-01).
+/// Converges with RB-1406/1415/1613: 32 balanced brackets evaluate
+/// silently; oracle via independent JSON parse.
+#[test]
+fn rb_1622_syn146_shallow_nesting_accepts() {
+    let src = format!("case_0146_01 = {}0{}\n", "[".repeat(32), "]".repeat(32));
+    let v = eval_json(&src);
+    let wire = format!("{}0{}", "[".repeat(32), "]".repeat(32));
+    let expected: serde_json::Value = serde_json::from_str(&wire).expect("oracle parses");
+    assert_eq!(v["case_0146_01"], expected, "{v}");
+    assert!(codes_of(&src).is_empty());
+    // Positive control: the flat neighbour evaluates.
+    assert_eq!(
+        eval_json("case_0146_01 = [0]\n")["case_0146_01"],
+        serde_json::json!([0])
+    );
+}
+
+/// RB-1623 — Stack-overflow twin: depth overflow fails controllably (SYN-0146-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0016 (stack overflow;
+/// same shape as SYN-0122-02).
+/// Converges with RB-1407/1416/1614: 256 brackets trip E004 Error.
+#[test]
+fn rb_1623_syn146_deep_nesting_trips_budget() {
+    let src = format!("case_0146_02 = {}0{}\n", "[".repeat(256), "]".repeat(256));
+    let diags = parse(&src, "research").expect_err("must fail E004");
+    let e = diags.iter().find(|d| d.code == "E004").expect("E004");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E004 must be Error, got {:?}",
+        e.severity
+    );
+    // Positive control: a shallow array evaluates.
+    assert_eq!(
+        eval_json("case_0146_02 = [0]\n")["case_0146_02"],
+        serde_json::json!([0])
+    );
+}
+
+/// RB-1624 — Stack-overflow twin: adversarial depth bounded (SYN-0146-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0016 (stack overflow;
+/// same shape as SYN-0122-03).
+/// Converges with RB-1408/1417/1615: 2048 brackets trip E004 Error.
+#[test]
+fn rb_1624_syn146_adversarial_depth_bounded() {
+    let src = format!("case_0146_03 = {}0{}\n", "[".repeat(2048), "]".repeat(2048));
+    let diags = parse(&src, "research").expect_err("must fail E004");
+    let e = diags.iter().find(|d| d.code == "E004").expect("E004");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E004 must be Error, got {:?}",
+        e.severity
+    );
+    // Positive control: a shallow array evaluates.
+    assert_eq!(
+        eval_json("case_0146_03 = [0]\n")["case_0146_03"],
+        serde_json::json!([0])
+    );
+}
+
+/// RB-1625 — Stack-overflow twin: interpolation in arrays refused (SYN-0146-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0016 (stack overflow;
+/// same shape as SYN-0122-04).
+/// Converges with RB-1409/1418/1616: E005 Error at (3:10).
+#[test]
+fn rb_1625_syn146_array_interpolation_refused() {
+    let src =
+        "case_0146_04 = 1\nlet a = [1]\nlet b = [${a}, ${a}]\nlet c = [${b}, ${b}]\nvalue = c\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (3, 10), "{span:?}");
+    // Positive control: interpolation inside STRINGS works.
+    let v = eval_json("let who = \"hi\"\ncase_0146_04 = \"yo ${who}\"\n");
+    assert_eq!(v["case_0146_04"], "yo hi", "{v}");
+    // Positive control: plain arrays and name references evaluate.
+    let v = eval_json("let a = [1, 2, 3]\ncase_0146_04 = a\n");
+    assert_eq!(v["case_0146_04"], serde_json::json!([1, 2, 3]), "{v}");
+}
+
+/// RB-1626 — Stack-overflow twin: `${}` cycles are inexpressible (SYN-0146-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0016 (stack overflow;
+/// same shape as SYN-0122-05).
+/// Converges with RB-1410/1419/1617: E005 first at (2:9); genuine `let`
+/// cycles stay S001.
+#[test]
+fn rb_1626_syn146_interp_cycle_inexpressible() {
+    let src = "case_0146_05 = 1\nlet a = ${b}\nlet b = ${a}\nvalue = ${a}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (2, 9), "{span:?}");
+    // Positive control: a real 2-node `let` cycle is S001 (RB-030).
+    let codes = codes_of("let a = b\nlet b = a\n");
+    assert!(codes.iter().any(|c| c == "S001"), "{codes:?}");
+    // Positive control: acyclic lets evaluate.
+    assert_eq!(eval_json("let a = 1\nlet b = a + 2\ny = b\n")["y"], 3);
+}
+
+/// RB-1627 — Stack-overflow twin: small collection accepts (SYN-0146-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0016 (stack overflow;
+/// same shape as SYN-0122-06).
+/// Converges with RB-1411/1420/1618: five elements, zero diagnostics.
+#[test]
+fn rb_1627_syn146_small_array_accepts() {
+    let src = "case_0146_06 = [1, 2, 3, 4, 5]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0146_06"], serde_json::json!([1, 2, 3, 4, 5]), "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the empty neighbour evaluates too.
+    assert_eq!(
+        eval_json("case_0146_06 = []\n")["case_0146_06"],
+        serde_json::json!([])
+    );
+}
+
+/// RB-1628 — Stack-overflow twin: comment never bypasses depth accounting (SYN-0146-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0016 (stack overflow;
+/// same shape as SYN-0122-07).
+/// Converges with RB-1412/1421/1619: 64-deep trips E004 with and without
+/// the comment; 32-deep accepts.
+#[test]
+fn rb_1628_syn146_comment_depth_counted() {
+    let src = "case_0146_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]] # bounded-depth control\n";
+    let diags = parse(src, "research").expect_err("must fail E004");
+    let e = diags.iter().find(|d| d.code == "E004").expect("E004");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E004 must be Error, got {:?}",
+        e.severity
+    );
+    // Positive control: the comment-free twin trips identically.
+    let bare = "case_0146_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n";
+    let diags = parse(bare, "research").expect_err("must fail E004");
+    assert!(diags.iter().any(|d| d.code == "E004"), "{diags:?}");
+    // Positive control: 32-deep stays below the bound and accepts.
+    let ok = format!("case_0146_07 = {}0{}\n", "[".repeat(32), "]".repeat(32));
+    assert!(codes_of(&ok).is_empty(), "{ok}");
+}

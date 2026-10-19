@@ -17,6 +17,7 @@
 | Batch 168 | RB-1669…RB-1678 (SYN-0151-03…09, SYN-0152-01…03) | done: all 10 green first-try, no code changes; 151 continued as 122 twins; 152 opened as 149 twins (host-construct impossible; unknown tag E002; tag-strings inert) |
 | Batch 169 | RB-1679…RB-1688 (SYN-0152-04…09, SYN-0153-01…04) | done: all 10 green first-try, no code changes; 152 continued as 149 twins; 153 opened (32/256/2048-depth; geometric interp) |
 | Batch 170 | RB-1689…RB-1698 (SYN-0153-07…09, SYN-0154-01…07) | done: all 10 green first-try, no code changes; 153 completed; 154 opened (dup W011 1:29; giant E002 1:17; verbatim uD800; 1024-deep E004; role-quoted E001 1:18; trailing E002 1:23; ordinary silent) |
+| Batch 171 | RB-1699...RB-1708 (SYN-0154-08...09, SYN-0155-01...08) | done: all 10 green first-try, no code changes; 154 completed (bounded array; escaped LF data); 155 opened as no-date-type twins (bare-date arithmetic refusals; T-tail E002 1:32/1:45; quoted strings inert) |
  Research Test Index — YAML/TOML/JSON failure research → Active test backlog
 
 Source corpus: `C:\Users\Usuario\Downloads\Solid Tests Research Work` (read-only).

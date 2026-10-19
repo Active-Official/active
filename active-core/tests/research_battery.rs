@@ -37505,3 +37505,206 @@ fn rb_1698_syn154_ordinary_input_accepts() {
     let v = eval_json("case_0154_07 = { nested = { body = \"x\" } }\n");
     assert_eq!(v["case_0154_07"]["nested"]["body"], "x", "{v}");
 }
+
+/// RB-1699 — Collision twin: bounded array accepts (SYN-0154-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-CVE-0010 (RFC 8259 security; valid
+/// syntax works under default budget).
+/// `case_0154_08 = [1, 2, 3]` evaluates silently to exactly [1, 2, 3] —
+/// the positive anchor for the whole collision family: ordinary bounded
+/// data is never budget-flagged, never warned, never touched.
+#[test]
+fn rb_1699_syn154_bounded_array_accepts() {
+    let src = "case_0154_08 = [1, 2, 3]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0154_08"], serde_json::json!([1, 2, 3]), "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the empty array is equally silent.
+    let v = eval_json("case_0154_08 = []\n");
+    assert_eq!(v["case_0154_08"], serde_json::json!([]), "{v}");
+    assert!(codes_of("case_0154_08 = []\n").is_empty());
+}
+
+/// RB-1700 — Collision twin: escaped LF stays data (SYN-0154-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-CVE-0010 (escape vs line structure).
+/// `case_0154_09 = "\n"` evaluates to a single LF character — escape
+/// semantics never leak into line structure: still exactly one key.
+#[test]
+fn rb_1700_syn154_escaped_lf_is_data() {
+    let src = "case_0154_09 = \"\\n\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0154_09"], "\n", "{v}");
+    assert_eq!(v.as_object().map(|o| o.len()), Some(1));
+    assert!(codes_of(src).is_empty());
+    // Positive control: a following assignment still yields a second key —
+    // the escaped LF never acts as a line break.
+    let v = eval_json("case_0154_09 = \"\\n\"\nother = 1\n");
+    assert_eq!(v["case_0154_09"], "\n", "{v}");
+    assert_eq!(v["other"], 1, "{v}");
+}
+
+/// RB-1701 — Datetime twin: impossible bare date is arithmetic (SYN-0155-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0001 (TOML offset-datetime mismatch).
+/// REFUSAL (spec-gated): Active has no date type (spec/converters.md:75-76;
+/// HIST-TOML-00O/RB-148; SRC-TOML-0033/RB-182), so no calendar validation
+/// can or must run. `2024-02-30` is integer arithmetic 2024-2-30 = 1992,
+/// never normalized, never a date.
+#[test]
+fn rb_1701_syn155_impossible_date_is_arithmetic() {
+    let src = "case_0155_01 = 2024-02-30\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0155_01"], 1992, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the quoted form stays an exact string.
+    assert_eq!(
+        eval_json("case_0155_01 = \"2024-02-30\"\n")["case_0155_01"],
+        "2024-02-30"
+    );
+}
+
+/// RB-1702 — Datetime twin: bad UTC offset stays deterministic (SYN-0155-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0001 (offset +25:00 out of range).
+/// REFUSAL (spec-gated): no offset grammar exists to range-check
+/// (spec/converters.md:75-76; SRC-TOML-0038/RB-187). The input evaluates by
+/// shipped rules (integer arithmetic + the specified same-line colon pair,
+/// RB-001): 2024-2-29 = 1993 with T12 = 30 — no date, no fallback object,
+/// no crash — and repeated runs agree exactly.
+#[test]
+fn rb_1702_syn155_bad_offset_deterministic() {
+    let src = "case_0155_02 = 2024-02-29T12:30:00+25:00\n";
+    let first = eval_json(src);
+    assert_eq!(first["case_0155_02"], 1993, "{first}");
+    assert_eq!(first["T12"], 30, "{first}");
+    assert_eq!(first, eval_json(src));
+    // Positive control: the quoted form stays an exact string.
+    assert_eq!(
+        eval_json("case_0155_02 = \"2024-02-29T12:30:00+25:00\"\n")["case_0155_02"],
+        "2024-02-29T12:30:00+25:00"
+    );
+}
+
+/// RB-1703 — Datetime twin: Zulu tail without seconds rejects (SYN-0155-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0001 (one timezone-syntax contract).
+/// `2024-01-01T12:30Z` fails E002 Error at (1:32): the `T12` tail matches no
+/// grammar sequence, so there is exactly one contract — the lexer's — and a
+/// malformed pseudo-object can never come back.
+#[test]
+fn rb_1703_syn155_zulu_tail_rejects() {
+    let src = "case_0155_03 = 2024-01-01T12:30Z\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 32), "{span:?}");
+    // Positive control: the quoted form stays an exact string.
+    assert_eq!(
+        eval_json("case_0155_03 = \"2024-01-01T12:30Z\"\n")["case_0155_03"],
+        "2024-01-01T12:30Z"
+    );
+}
+
+/// RB-1704 — Datetime twin: quoted date-shape is never validated (SYN-0155-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0001 (quoted content not calendar-checked).
+/// `case_0155_04 = "2024-02-30"` accepts as a plain string: impossible
+/// calendar text inside quotes is inert data, never parsed, never warned.
+#[test]
+fn rb_1704_syn155_quoted_date_shape_is_string() {
+    let src = "case_0155_04 = \"2024-02-30\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0155_04"], "2024-02-30", "{v}");
+    assert!(v["case_0155_04"].is_string());
+    assert!(codes_of(src).is_empty());
+    // Positive control: a bare arithmetic neighbour still computes.
+    assert_eq!(
+        eval_json("case_0155_04 = 2024-02-28\n")["case_0155_04"],
+        1994
+    );
+}
+
+/// RB-1705 — Datetime twin: nanosecond fraction rejects loudly (SYN-0155-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0001 (precision must be deterministic).
+/// `2024-01-01T12:30:00.123456789Z` fails E002 Error at (1:45): no
+/// fractional-precision grammar exists to truncate under, so silence is
+/// impossible — the input is loud, never lossy.
+#[test]
+fn rb_1705_syn155_fraction_tail_rejects() {
+    let src = "case_0155_05 = 2024-01-01T12:30:00.123456789Z\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 45), "{span:?}");
+    // Positive control: the quoted form stays an exact string.
+    assert_eq!(
+        eval_json("case_0155_05 = \"2024-01-01T12:30:00.123456789Z\"\n")["case_0155_05"],
+        "2024-01-01T12:30:00.123456789Z"
+    );
+}
+
+/// RB-1706 — Datetime twin: non-UTC offset never becomes an object (SYN-0155-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0001 (offset -07:00 handling).
+/// REFUSAL (spec-gated): no offset grammar exists to normalize through
+/// (spec/converters.md:75-76; SRC-TOML-0038/RB-187). The input evaluates by
+/// shipped rules: 2024-1-1 = 2022 with T12 = 30 — a flat integer plus a
+/// colon pair (RB-001), never an opaque fallback object — and repeated runs
+/// agree exactly.
+#[test]
+fn rb_1706_syn155_nonutc_offset_deterministic() {
+    let src = "case_0155_06 = 2024-01-01T12:30:00-07:00\n";
+    let first = eval_json(src);
+    assert_eq!(first["case_0155_06"], 2022, "{first}");
+    assert_eq!(first["T12"], 30, "{first}");
+    assert_eq!(first, eval_json(src));
+    // Positive control: the quoted form stays an exact string.
+    assert_eq!(
+        eval_json("case_0155_06 = \"2024-01-01T12:30:00-07:00\"\n")["case_0155_06"],
+        "2024-01-01T12:30:00-07:00"
+    );
+}
+
+/// RB-1707 — Datetime twin: leading-zero date is arithmetic (SYN-0155-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0001 (leading zeros vs numeric tokens).
+/// REFUSAL (spec-gated): leading zeros are plain decimals (RB-104;
+/// SRC-TOML-0035/RB-184): 0001-01-01 = 1-1-1 = -1. No numeric-token accident
+/// is possible because there is no date token to confuse it with — the
+/// lexical grammar admits only numbers here.
+#[test]
+fn rb_1707_syn155_leading_zero_date_is_arithmetic() {
+    let src = "case_0155_07 = 0001-01-01\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0155_07"], -1, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the quoted form stays an exact string.
+    assert_eq!(
+        eval_json("case_0155_07 = \"0001-01-01\"\n")["case_0155_07"],
+        "0001-01-01"
+    );
+}
+
+/// RB-1708 — Datetime twin: quoted datetime-shape is preserved (SYN-0155-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0001 (quoted datetimes preserved).
+/// `case_0155_08 = "1979-05-27T07:32:00Z"` accepts byte-exact: T, Z, and
+/// colons inside quotes are inert text (HIST-TOML-00O/RB-148), evaluable
+/// and exportable with zero diagnostics.
+#[test]
+fn rb_1708_syn155_quoted_datetime_preserved() {
+    let src = "case_0155_08 = \"1979-05-27T07:32:00Z\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0155_08"], "1979-05-27T07:32:00Z", "{v}");
+    assert!(v["case_0155_08"].is_string());
+    assert!(codes_of(src).is_empty());
+    // Positive control: a second quoted datetime-shape is equally exact.
+    assert_eq!(
+        eval_json("case_0155_08 = \"2024-01-01T00:00:00Z\"\n")["case_0155_08"],
+        "2024-01-01T00:00:00Z"
+    );
+}

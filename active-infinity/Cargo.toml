@@ -1,0 +1,20 @@
+[package]
+name = "active-infinity"
+# Independent version track: placeholder reserves the name at 1.0.0 and
+# converges to the workspace version when the real crate lands.
+version = "1.0.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Active ecosystem reservation crate: future home of Active's unbounded and streaming evaluation surface."
+documentation = "https://docs.rs/active-infinity"
+readme = "README.md"
+keywords = ["configuration", "config", "active", "ecosystem"]
+categories = ["config", "parser-implementations", "development-tools"]
+
+[lib]
+name = "active_infinity"
+path = "src/lib.rs"

@@ -1,7 +1,7 @@
 //! Packaging metadata tests (C-056, spec/packaging.md).
 //!
 //! Guards the crates.io surface on the real shipped path: parses the
-//! four workspace manifests (plus the VS Code extension manifest and
+//! six workspace manifests (plus the VS Code extension manifest and
 //! TextMate grammar) and pins every field publication needs. Positive
 //! only by design — malformed manifests are cargo's own rejection
 //! domain (`cargo package` in CI proves the negative continuously).
@@ -80,6 +80,16 @@ fn workspace_version_is_single_sourced() {
             "{name}: version must be workspace-inherited"
         );
     }
+    // Exception: active-infinity reserves its name on an independent 1.0.0
+    // placeholder track and converges to the workspace version when the real
+    // crate lands (owner decision; see active-infinity/Cargo.toml).
+    let manifest = read_toml("active-infinity");
+    let table = package_table(&manifest, "active-infinity");
+    assert_eq!(
+        table.get("version").and_then(|v| v.as_str()),
+        Some("1.0.0"),
+        "active-infinity: placeholder version must stay 1.0.0"
+    );
 }
 
 #[test]
@@ -93,6 +103,7 @@ fn publish_metadata_is_complete() {
         ("active-cli", "active-cli"),
         ("active-fmt", "active-fmt"),
         ("active-lsp", "active-lsp"),
+        ("active-infinity", "active-infinity"),
     ];
     for (dir, package) in expectations {
         let manifest = read_toml(dir);

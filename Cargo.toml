@@ -6,6 +6,7 @@ members = [
     "active-cli",
     "active-fmt",
     "active-lsp",
+    "active-infinity",
 ]
 
 [workspace.package]

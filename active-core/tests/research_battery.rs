@@ -43268,3 +43268,261 @@ fn rb_1928_syn180_duration_validates() {
     assert!(v["case_0180_03"].is_object());
     assert!(codes_of(src2).is_empty());
 }
+
+/// RB-1929 — Schema twin: coercion full-span (SYN-0180-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0026 (quoted units).
+/// The naive form is rejected — E014 at (2:2) — while the real schema
+/// heals `"5s"` with H007 Warning spanning (2,16)-(2,20), the full quoted
+/// literal: announced coercion covers the whole token, never a slice.
+/// CONVERGENCE: twin verdict to SYN-0179-04/RB-1920, full-span angle.
+#[test]
+fn rb_1929_syn180_coercion_full_span() {
+    let src = "case_0180_04 = \"5s\"\n@schema timeout: duration\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e = diags.iter().find(|d| d.code == "E014").expect("E014");
+    let span = e.span.clone().expect("E014 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the real schema coerces across the full span.
+    let src2 = "schema = { case_0180_04 = Duration }\ncase_0180_04 = \"5s\"\n";
+    let module = parse(src2, "research").expect("must parse");
+    let (value, diags2) = Engine::new().evaluate(&module).expect("must evaluate");
+    let h = diags2.iter().find(|d| d.code == "H007").expect("H007");
+    assert_eq!(
+        h.severity,
+        active_core::Severity::Warning,
+        "H007 must be Warning, got {:?}",
+        h.severity
+    );
+    let span = h.span.clone().expect("H007 carries a span");
+    assert_eq!((span.line, span.column), (2, 16), "{span:?}");
+    assert_eq!((span.end_line, span.end_column), (2, 20), "{span:?}");
+    let json: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(
+        json["case_0180_04"],
+        serde_json::json!({"ms": 5000}),
+        "{json}"
+    );
+}
+
+/// RB-1930 — Schema twin: bool refusal full-span (SYN-0180-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0026 (host subtypes).
+/// The naive form is rejected — E014 at (2:2) — while the real schema
+/// fails `true` with T002 Error spanning (2,16)-(2,20): the whole literal
+/// refused, value retained.
+/// CONVERGENCE: twin verdict to SYN-0179-05/RB-1921, full-span angle.
+#[test]
+fn rb_1930_syn180_bool_full_span() {
+    let src = "case_0180_05 = true\n@schema port: integer\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e = diags.iter().find(|d| d.code == "E014").expect("E014");
+    let span = e.span.clone().expect("E014 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the real schema fails T002 across the full span.
+    let src2 = "schema = { case_0180_05 = Int }\ncase_0180_05 = true\n";
+    let module = parse(src2, "research").expect("must parse");
+    let (value, diags2) = Engine::new().evaluate(&module).expect("must evaluate");
+    let t = diags2.iter().find(|d| d.code == "T002").expect("T002");
+    assert_eq!(
+        t.severity,
+        active_core::Severity::Error,
+        "T002 must be Error, got {:?}",
+        t.severity
+    );
+    let span = t.span.clone().expect("T002 carries a span");
+    assert_eq!((span.line, span.column), (2, 16), "{span:?}");
+    assert_eq!((span.end_line, span.end_column), (2, 20), "{span:?}");
+    let json: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(json["case_0180_05"], true, "{json}");
+}
+
+/// RB-1931 — Schema twin: empty array shape-exact (SYN-0180-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0026 (collection constraints).
+/// The naive form is rejected — E014 at (2:2) — while the real schema
+/// accepts `[]` as an empty ARRAY (is_array, len 0), silent: shape
+/// checked, length unconstrained by design.
+/// CONVERGENCE: twin verdict to SYN-0179-06/RB-1922, shape angle.
+#[test]
+fn rb_1931_syn180_empty_array_shape() {
+    let src = "items = []\n@schema items: array, minItems=1\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e = diags.iter().find(|d| d.code == "E014").expect("E014");
+    let span = e.span.clone().expect("E014 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the real schema accepts the empty array shape.
+    let src2 = "schema = { items = Array<Int> }\nitems = []\n";
+    let v = eval_json(src2);
+    assert!(v["items"].is_array());
+    assert_eq!(v["items"].as_array().map(|a| a.len()), Some(0));
+    assert!(codes_of(src2).is_empty());
+    // Positive control: the populated twin agrees silently.
+    assert_eq!(
+        eval_json("schema = { items = Array<Int> }\nitems = [1, 2]\n")["items"],
+        serde_json::json!([1, 2])
+    );
+}
+
+/// RB-1932 — Schema twin: secret span full-token (SYN-0180-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0026 (secret validation).
+/// The naive form is rejected — E014 at (2:2) — while the real schema
+/// fails the secret with T002 Error spanning (2,16)-(2,22), export
+/// redacted: the whole secret CALL is the span, never the payload.
+/// CONVERGENCE: twin verdict to SYN-0179-07/RB-1923, full-span angle.
+#[test]
+fn rb_1932_syn180_secret_full_span() {
+    let src = "case_0180_07 = secret(\"x\")\n@schema value: string\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e = diags.iter().find(|d| d.code == "E014").expect("E014");
+    let span = e.span.clone().expect("E014 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the real schema fails T002 redacted, full span.
+    let raw = "RAW-1932-secret-marker";
+    let src2 = format!("schema = {{ case_0180_07 = String }}\ncase_0180_07 = secret(\"{raw}\")\n");
+    let module = parse(&src2, "research").expect("must parse");
+    let (value, diags2) = Engine::new().evaluate(&module).expect("must evaluate");
+    let t = diags2.iter().find(|d| d.code == "T002").expect("T002");
+    let span = t.span.clone().expect("T002 carries a span");
+    assert_eq!((span.line, span.column), (2, 16), "{span:?}");
+    assert_eq!((span.end_line, span.end_column), (2, 22), "{span:?}");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains(raw), "leak in JSON export: {json}");
+    assert!(json.contains("***SECRET***"), "redaction missing: {json}");
+}
+
+/// RB-1933 — Schema twin: missing schema-span full (SYN-0180-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0026 (missing fields).
+/// The naive form is rejected — E014 at (2:2) — while the real schema
+/// fails T004 Error spanning (1,21)-(1,24), the schema field itself:
+/// missing points at the CONTRACT, never at innocent code.
+/// CONVERGENCE: twin verdict to SYN-0179-08/RB-1924, full-span angle.
+#[test]
+fn rb_1933_syn180_missing_full_span() {
+    let src = "a = 1\n@schema absent: integer\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e = diags.iter().find(|d| d.code == "E014").expect("E014");
+    let span = e.span.clone().expect("E014 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the real schema fails T004 across the field span.
+    let src2 = "schema = { absent = Int }\na = 1\n";
+    let module = parse(src2, "research").expect("must parse");
+    let (_, diags2) = Engine::new().evaluate(&module).expect("must evaluate");
+    let t = diags2.iter().find(|d| d.code == "T004").expect("T004");
+    assert_eq!(
+        t.severity,
+        active_core::Severity::Error,
+        "T004 must be Error, got {:?}",
+        t.severity
+    );
+    let span = t.span.clone().expect("T004 carries a span");
+    assert_eq!((span.line, span.column), (1, 21), "{span:?}");
+    assert_eq!((span.end_line, span.end_column), (1, 24), "{span:?}");
+    // Positive control: the present twin passes silently.
+    let src3 = "schema = { absent = Int }\nabsent = 3\n";
+    assert_eq!(eval_json(src3)["absent"], 3);
+    assert!(codes_of(src3).is_empty());
+}
+
+/// RB-1934 — Schema twin: null span full-token (SYN-0180-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0026 (nullability).
+/// The naive form is rejected — E014 at (2:2) — while the real schema
+/// fails `null` with T002 Error spanning (2,5)-(2,9), the whole token:
+/// nullability unbroadened, value retained as null.
+/// CONVERGENCE: twin verdict to SYN-0179-09/RB-1925, full-span angle.
+#[test]
+fn rb_1934_syn180_null_full_span() {
+    let src = "a = null\n@schema a: string\n";
+    let diags = parse(src, "research").expect_err("must fail E014");
+    let e = diags.iter().find(|d| d.code == "E014").expect("E014");
+    let span = e.span.clone().expect("E014 carries a span");
+    assert_eq!((span.line, span.column), (2, 2), "{span:?}");
+    // Positive control: the real schema fails T002 across the token.
+    let src2 = "schema = { a = String }\na = null\n";
+    let module = parse(src2, "research").expect("must parse");
+    let (value, diags2) = Engine::new().evaluate(&module).expect("must evaluate");
+    let t = diags2.iter().find(|d| d.code == "T002").expect("T002");
+    let span = t.span.clone().expect("T002 carries a span");
+    assert_eq!((span.line, span.column), (2, 5), "{span:?}");
+    assert_eq!((span.end_line, span.end_column), (2, 9), "{span:?}");
+    let json: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert!(json["a"].is_null(), "{json}");
+}
+
+/// RB-1935 — Let twin: bare pair plus string (SYN-0181-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0027 (hermetic bindings).
+/// The bare form fails with EXACTLY two diagnostics (E005 + E001) — while
+/// the quoted twin is the string "1": hermetic evaluation needs no
+/// network, no ambient reads — just a binding and a string.
+/// CONVERGENCE: twin verdict to SYN-0166-01/RB-1800 and kin.
+#[test]
+fn rb_1935_syn181_bare_pair_string() {
+    let src = "case_0181_01 = 1\nlet a = 1\nvalue = ${a}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    assert_eq!(diags.len(), 2, "{diags:?}");
+    assert!(diags.iter().any(|d| d.code == "E005"), "{diags:?}");
+    // Positive control: the quoted twin is the string "1", silent.
+    let src2 = "case_0181_01 = 1\nlet a = 1\nvalue = \"${a}\"\n";
+    let v = eval_json(src2);
+    assert_eq!(v["value"], "1", "{v}");
+    assert!(v["value"].is_string());
+    assert!(codes_of(src2).is_empty());
+}
+
+/// RB-1936 — Let twin: forward deterministic double (SYN-0181-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-SPEC-0027 (reference order).
+/// The bare form fails E005 at (2:9) and (4:9) — while the quoted twin
+/// resolves forward to "2" identically on repeated runs: order-free,
+/// deterministic, hermetic.
+/// CONVERGENCE: twin verdict to SYN-0166-02/RB-1801 and kin.
+#[test]
+fn rb_1936_syn181_forward_deterministic() {
+    let src = "case_0181_02 = 1\nlet a = ${b}\nlet b = 2\nvalue = ${a}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (2, 9), "{span:?}");
+    // Positive control: the quoted twin resolves forward, run-stable.
+    let src2 = "case_0181_02 = 1\nlet a = \"${b}\"\nlet b = 2\nvalue = \"${a}\"\n";
+    let first = eval_json(src2);
+    assert_eq!(first["value"], "2", "{first}");
+    assert_eq!(first, eval_json(src2));
+    assert!(codes_of(src2).is_empty());
+}
+
+/// RB-1937 — Let twin: self-cycle count plus S001 (SYN-0181-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0027 (self cycles).
+/// The bare self-reference fails E005 twice — while the quoted twin fails
+/// S001: graph-detected, never overflowed, never ambient.
+/// CONVERGENCE: twin verdict to SYN-0166-03/RB-1802 and kin.
+#[test]
+fn rb_1937_syn181_self_cycle_s001() {
+    let src = "case_0181_03 = 1\nlet a = ${a}\nvalue = ${a}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e005: Vec<_> = diags.iter().filter(|d| d.code == "E005").collect();
+    assert_eq!(e005.len(), 2, "{diags:?}");
+    // Positive control: the quoted twin fails S001, not a hang.
+    let src2 = "case_0181_03 = 1\nlet a = \"${a}\"\nvalue = \"${a}\"\n";
+    let module = parse(src2, "research").expect("must parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail S001");
+    assert_eq!(err.code(), "S001", "{err}");
+}
+
+/// RB-1938 — Let twin: chain first-gate plus S001 (SYN-0181-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-SPEC-0027 (multi-node cycles).
+/// The bare chain fails with E005 FIRST at (2:9) — while the quoted chain
+/// fails S001: four gates bare, one class quoted, zero hangs.
+/// CONVERGENCE: twin verdict to SYN-0166-04/RB-1803 and kin.
+#[test]
+fn rb_1938_syn181_chain_first_s001() {
+    let src = "case_0181_04 = 1\nlet a = ${b}\nlet b = ${c}\nlet c = ${a}\nvalue = ${a}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    assert_eq!(diags[0].code, "E005", "{diags:?}");
+    let span = diags[0].span.clone().expect("span");
+    assert_eq!((span.line, span.column), (2, 9), "{span:?}");
+    // Positive control: the quoted chain fails S001, not a hang.
+    let src2 = "case_0181_04 = 1\nlet a = \"${b}\"\nlet b = \"${c}\"\nlet c = \"${a}\"\nvalue = \"${a}\"\n";
+    let module = parse(src2, "research").expect("must parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail S001");
+    assert_eq!(err.code(), "S001", "{err}");
+}

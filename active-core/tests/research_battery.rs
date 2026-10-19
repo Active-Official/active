@@ -37277,3 +37277,231 @@ fn rb_1688_syn153_array_interpolation_refused() {
     let v = eval_json("let a = [1, 2, 3]\ncase_0153_04 = a\n");
     assert_eq!(v["case_0153_04"], serde_json::json!([1, 2, 3]), "{v}");
 }
+
+/// RB-1689 — Depth twin: comment never bypasses depth accounting (SYN-0153-07 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0023 (kaml DoS;
+/// same shape as SYN-0122-07).
+/// Converges with RB-1412/1421/1619/1628/1637/1646/1664/1673: 64-deep
+/// trips E004 with and without the comment; 32-deep accepts.
+#[test]
+fn rb_1689_syn153_comment_depth_counted() {
+    let src = "case_0153_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]] # bounded-depth control\n";
+    let diags = parse(src, "research").expect_err("must fail E004");
+    let e = diags.iter().find(|d| d.code == "E004").expect("E004");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E004 must be Error, got {:?}",
+        e.severity
+    );
+    // Positive control: the comment-free twin trips identically.
+    let bare = "case_0153_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n";
+    let diags = parse(bare, "research").expect_err("must fail E004");
+    assert!(diags.iter().any(|d| d.code == "E004"), "{diags:?}");
+    // Positive control: 32-deep stays below the bound and accepts.
+    let ok = format!("case_0153_07 = {}0{}\n", "[".repeat(32), "]".repeat(32));
+    assert!(codes_of(&ok).is_empty(), "{ok}");
+}
+
+/// RB-1690 — Depth twin: fan-out interpolation refused (SYN-0153-08 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0023 (kaml DoS;
+/// same shape as SYN-0122-08).
+/// Converges with RB-1413/1422/1620/1629/1638/1647/1656/1674: E005 (3:10).
+#[test]
+fn rb_1690_syn153_fanout_refused() {
+    let src = "case_0153_08 = 1\nlet a = [1,2,3]\nlet b = [${a}, ${a}, ${a}, ${a}]\nvalue = b\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (3, 10), "{span:?}");
+    // Positive control: the array itself reads fine through its name.
+    let v = eval_json("let a = [1, 2, 3]\ncase_0153_08 = a\n");
+    assert_eq!(v["case_0153_08"], serde_json::json!([1, 2, 3]), "{v}");
+}
+
+/// RB-1691 — Depth twin: 200KB scalar stays linear and exact (SYN-0153-09 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0023 (kaml DoS;
+/// same shape as SYN-0122-09).
+/// Converges with RB-1414/1423/1621/1630/1639/1648/1657/1666/1675: 200001
+/// scalars, silent, same OPEN SPEC QUESTION.
+#[test]
+fn rb_1691_syn153_long_scalar_linear() {
+    let half = "x".repeat(100000);
+    let src = format!("case_0153_09 = \"{half}\n{half}\"\n");
+    let v = eval_json(&src);
+    let s = v["case_0153_09"].as_str().expect("string");
+    assert_eq!(s.len(), 200001, "byte length");
+    assert_eq!(s.chars().count(), 200001, "scalar length");
+    assert_eq!(s.chars().nth(100000), Some('\n'), "embedded raw LF kept");
+    assert!(s
+        .chars()
+        .enumerate()
+        .all(|(i, c)| if i == 100000 { c == '\n' } else { c == 'x' }));
+    assert!(codes_of(&src).is_empty());
+    // Positive control: a small string is exact and silent.
+    assert_eq!(eval_json("case_0153_09 = \"xx\"\n")["case_0153_09"], "xx");
+}
+
+/// RB-1692 — Collision twin: flat dups warn, last wins (SYN-0154-01 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0033 (key collision;
+/// same shape as SYN-0124-01).
+/// REFUSAL (spec-gated, P1-TI-012 §C, converges with RB-1424/1523):
+/// `{ a = 1, a = 2 }` evaluates to 2 with W011 Warning at (1:29).
+#[test]
+fn rb_1692_syn154_flat_dup_warns() {
+    let src = "case_0154_01 = { a = 1, a = 2 }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0154_01"]["a"], 2, "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let w = diags.iter().find(|d| d.code == "W011").expect("W011");
+    assert_eq!(
+        w.severity,
+        active_core::Severity::Warning,
+        "W011 must be Warning, got {:?}",
+        w.severity
+    );
+    let span = w.span.clone().expect("W011 carries a span");
+    assert_eq!((span.line, span.column), (1, 29), "{span:?}");
+    // Positive control: distinct keys coexist silently.
+    let v = eval_json("case_0154_01 = { a = 1, b = 2 }\n");
+    assert_eq!(v["case_0154_01"]["b"], 2, "{v}");
+    assert!(codes_of("case_0154_01 = { a = 1, b = 2 }\n").is_empty());
+}
+
+/// RB-1693 — Collision twin: giant exponent rejects, never infinity (SYN-0154-02 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0033 (key collision;
+/// same shape as SYN-0126-07).
+/// Converges with RB-1448/1457: `1e100000` fails E002 Error at (1:17) —
+/// no exponent production, no overflow path, no silent infinity.
+#[test]
+fn rb_1693_syn154_giant_exponent_rejects() {
+    let src = "case_0154_02 = 1e100000\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 17), "{span:?}");
+    // Positive control: a big plain int evaluates exactly.
+    assert_eq!(eval_json("case_0154_02 = 100000\n")["case_0154_02"], 100000);
+}
+
+/// RB-1694 — Collision twin: lone-surrogate escape stays verbatim (SYN-0154-03 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0033 (key collision;
+/// same shape as SYN-0116-02).
+/// REFUSAL (spec-gated, spec/grammar.md:62-66, RB-050): `"\uD800"` keeps
+/// its exact six characters silently — no UTF-16 decoding exists.
+#[test]
+fn rb_1694_syn154_lone_surrogate_verbatim() {
+    let src = "case_0154_03 = \"\\uD800\"\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0154_03"], "\\uD800", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: a plain ASCII string is exact and silent too.
+    let v = eval_json("case_0154_03 = \"plain\"\n");
+    assert_eq!(v["case_0154_03"], "plain", "{v}");
+}
+
+/// RB-1695 — Collision twin: adversarial depth bounded (SYN-0154-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-JSON-0033 (key collision; 1024-deep
+/// input — a new depth between the 256 and 2048 twins).
+/// 1024 balanced brackets trip E004 Error — the budget binds at every
+/// depth past 64, not just at the previously-pinned ones.
+#[test]
+fn rb_1695_syn154_mid_depth_bounded() {
+    let src = format!("case_0154_04 = {}0{}\n", "[".repeat(1024), "]".repeat(1024));
+    let diags = parse(&src, "research").expect_err("must fail E004");
+    let e = diags.iter().find(|d| d.code == "E004").expect("E004");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E004 must be Error, got {:?}",
+        e.severity
+    );
+    // Positive control: a shallow array evaluates.
+    assert_eq!(
+        eval_json("case_0154_04 = [0]\n")["case_0154_04"],
+        serde_json::json!([0])
+    );
+}
+
+/// RB-1696 — Collision twin: quoted dups reject before colliding (SYN-0154-05 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0033 (key collision; security
+/// angle: duplicate map data cannot change security interpretation).
+/// `{ "role" = "user", "role" = "admin" }` fails E001 Error at (1:18) —
+/// the FIRST quoted form is rejected before any duplicate question arises,
+/// so a colliding admin role can never slip through. Converges with
+/// RB-1347/1464/1473 at equal key width.
+#[test]
+fn rb_1696_syn154_role_dup_rejects() {
+    let src = "case_0154_05 = { \"role\" = \"user\", \"role\" = \"admin\" }\n";
+    let diags = parse(src, "research").expect_err("must fail E001");
+    let e = diags.iter().find(|d| d.code == "E001").expect("E001");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E001 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E001 carries a span");
+    assert_eq!((span.line, span.column), (1, 18), "{span:?}");
+    // Positive control: bare dups announce W011 last-wins instead — and the
+    // announcement means the admin value never slides by silently.
+    let codes = codes_of("case_0154_05 = { role = \"user\", role = \"admin\" }\n");
+    assert!(codes.iter().any(|c| c == "W011"), "{codes:?}");
+    let v = eval_json("case_0154_05 = { role = \"user\", role = \"admin\" }\n");
+    assert_eq!(v["case_0154_05"]["role"], "admin", "{v}");
+}
+
+/// RB-1697 — Collision twin: trailing garbage after a string rejects (SYN-0154-06 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0033 (key collision; complete-value check).
+/// `case_0154_06 = "safe" trailing` fails E002 Error at (1:23) — a complete
+/// string followed by a stray token is loud, never truncated. The value is
+/// complete AND the stream continues: both facts are reported, neither is
+/// guessed between.
+#[test]
+fn rb_1697_syn154_string_trailing_rejects() {
+    let src = "case_0154_06 = \"safe\" trailing\n";
+    let diags = parse(src, "research").expect_err("must fail E002");
+    let e = diags.iter().find(|d| d.code == "E002").expect("E002");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E002 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E002 carries a span");
+    assert_eq!((span.line, span.column), (1, 23), "{span:?}");
+    // Positive control: the garbage-free string evaluates silently.
+    let v = eval_json("case_0154_06 = \"safe\"\n");
+    assert_eq!(v["case_0154_06"], "safe", "{v}");
+    assert!(codes_of("case_0154_06 = \"safe\"\n").is_empty());
+}
+
+/// RB-1698 — Collision twin: ordinary input stays ordinary (SYN-0154-07 §H, MEDIUM).
+/// Origin: synthetic variation of SRC-JSON-0033 (key collision; positive
+/// control for ordinary input).
+/// `{ body = "x" }` evaluates silently — the guard against false positives
+/// from the whole collision family: ordinary tables with string values are
+/// never flagged, never warned, never touched.
+#[test]
+fn rb_1698_syn154_ordinary_input_accepts() {
+    let src = "case_0154_07 = { body = \"x\" }\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0154_07"]["body"], "x", "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the nested twin is equally silent.
+    let v = eval_json("case_0154_07 = { nested = { body = \"x\" } }\n");
+    assert_eq!(v["case_0154_07"]["nested"]["body"], "x", "{v}");
+}

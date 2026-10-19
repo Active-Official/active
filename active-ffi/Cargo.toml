@@ -1,0 +1,23 @@
+[package]
+name = "active-ffi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Active C ABI for embedding: opaque handles, structured diagnostics, budgets, secret discipline."
+documentation = "https://docs.rs/active-ffi"
+readme = "README.md"
+keywords = ["configuration", "config", "ffi", "embedding"]
+categories = ["config", "development-tools", "external-ffi-bindings"]
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+active-core = { workspace = true }
+
+[build-dependencies]
+cbindgen = "0.29"

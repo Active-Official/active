@@ -11,6 +11,8 @@ Your config files are lying to you. YAML once turned an entire country into `fal
 
 Active ends that. It runs on one rule that changes everything: **nothing is ever implicit.** What you write is exactly what runs: for a human reading it at 2am, and for an AI agent generating it at machine speed.
 
+**Active is the configuration language that refuses to lie.** What you write is what runs. Units have dimensions; secrets have taint; budgets always hold.
+
 ## What is Active?
 
 Active is a configuration language (the files that tell your software what to do: ports, keys, limits, feature flags, secrets). It replaces YAML, TOML, and JSON with something safer than YAML, more explicit than TOML, and more human than JSON. Underneath it's a real language implementation (lexer, parser, IR, dependency graph, evaluator), not a pile of regexes. You never have to think about that to use it.

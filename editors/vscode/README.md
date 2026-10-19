@@ -5,6 +5,10 @@ One vsix serves every VS Code-compatible editor. Syntax highlighting
 language server (hover, go-to-definition, completions, diagnostics,
 inlay hints, code actions) over stdio.
 
+**Active is the configuration language that refuses to lie.** What you
+write is what runs. Units have dimensions; secrets have taint; budgets
+always hold.
+
 ## Install
 
 - **Release vsix** (no Rust needed): download

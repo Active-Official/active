@@ -1,0 +1,5 @@
+# Playground example: Norway contrast (invented here, no upstream).
+# YAML would read NO as false. Active refuses: W001 unresolved identifier.
+# Expected: check exits 1 with [Warning] W001 on line 5.
+[country]
+name = NO

@@ -5,6 +5,10 @@ syntax highlighting, and `:help active` docs. The language server is
 `active-lsp` over stdio (hover, go-to-definition, completions,
 diagnostics, inlay hints, code actions).
 
+**Active is the configuration language that refuses to lie.** What you
+write is what runs. Units have dimensions; secrets have taint; budgets
+always hold.
+
 ## Install
 
 vim-plug (subdirectory plugin): >

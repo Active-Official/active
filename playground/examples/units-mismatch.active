@@ -1,0 +1,4 @@
+# Playground example: units mismatch (invented here, no upstream).
+# 5s and 512MiB are different dimensions; Active refuses to confuse them.
+# Expected: check exits 1 with [Error] T001 on line 4.
+timeout = 5s + 512MiB

@@ -1,0 +1,5 @@
+# Playground example: schema failure (invented here, no upstream).
+# The schema is a contract: port 0 violates min 1 with an exact span.
+# Expected: check exits 1 with [Error] T003 on line 5.
+schema = { port = Int(min = 1) }
+port = 0

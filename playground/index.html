@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Active Playground: the configuration language that refuses to lie</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0 auto; max-width: 70rem; padding: 1rem; }
+  #source { width: 100%; min-height: 14rem; font-family: monospace; }
+  #value, #diags { white-space: pre-wrap; border: 1px solid #999; padding: 0.5rem; min-height: 4rem; }
+  .err { color: #a00; } .ok { color: #070; }
+</style>
+</head>
+<body>
+<h1>Active Playground</h1>
+<p>What you write is what runs. Pick an example or type Active, then Evaluate.
+Everything runs locally in WebAssembly; nothing leaves your browser.</p>
+<label for="examples">Example:</label>
+<select id="examples"></select>
+<button id="eval">Evaluate</button>
+<h2>Source</h2>
+<textarea id="source" spellcheck="false"></textarea>
+<h2>Value tree</h2>
+<div id="value">(engine loading)</div>
+<h2>Diagnostics</h2>
+<div id="diags">(engine loading)</div>
+<script src="playground.js"></script>
+</body>
+</html>

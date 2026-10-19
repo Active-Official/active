@@ -2,6 +2,10 @@
 
 **Symmetric · Overlay-ready · Loop-proof · Intent-driven · Deterministic**
 
+**Active is the configuration language that refuses to lie.** What you
+write is what runs. Units have dimensions; secrets have taint; budgets
+always hold.
+
 ACTIVE is a configuration and data language in the TOML/YAML/JSON class,
 built for humans and AI agents alike: safer than YAML, more expressive
 than TOML, more human-friendly than JSON.

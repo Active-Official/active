@@ -8,6 +8,7 @@
 | Batch 159 | RB-1579…RB-1588 (SYN-0141-03…09, SYN-0142-01…03) | done: all 10 green first-try, no code changes; 141 continued as 131 twins; 142 opened (brace/equals-refusal/nested) |
 | Batch 160 | RB-1589…RB-1598 (SYN-0142-04…09, SYN-0143-01…04) | done: all 10 green first-try, no code changes; 142 continued as 133 twins; 143 opened (brace/equals-refusal/nested/nested-refusal) |
 | Batch 161 | RB-1599…RB-1608 (SYN-0143-05…09, SYN-0144-01…05) | done: all 10 green first-try, no code changes; 143 continued as 133 twins; 144 opened (baseline/nested/array/string/comment); one transient rb_086 flake, green on re-run (2234) |
+| Batch 162 | RB-1609…RB-1618 (SYN-0144-06…09, SYN-0145-01…06) | done: all 10 green first-try, no code changes; 144 completed as 131 twins; 145 opened as 122 twins (32 accept; 256/2048 E004; geometric/cycle E005; small array) |
  Research Test Index — YAML/TOML/JSON failure research → Active test backlog
 
 Source corpus: `C:\Users\Usuario\Downloads\Solid Tests Research Work` (read-only).

@@ -35515,3 +35515,229 @@ fn rb_1608_syn144_trailing_comment_inert() {
     // Positive control: the comment-free twin agrees.
     assert_eq!(eval_json("probe_3144 = 1\n")["probe_3144"], 1);
 }
+
+/// RB-1609 — Merge-key variant: env lookup explicit with fallback (SYN-0144-06 §H, MEDIUM).
+/// Origin: synthetic variation of the merge-semantics report
+/// (same shape as SYN-0131-06).
+/// Converges with RB-1492/1519/1582: injected var wins when set, default
+/// when absent — uniquely-named vars with save/restore.
+#[test]
+fn rb_1609_syn144_env_fallback_explicit() {
+    let prior = std::env::var("ACTIVE_TEST_RB1609_V").ok();
+    std::env::set_var("ACTIVE_TEST_RB1609_V", "from-env");
+    let v = eval_json("case_0144_06 = 1\nprobe_3144 = env.ACTIVE_TEST_RB1609_V ?: 1\n");
+    assert_eq!(v["probe_3144"], "from-env", "{v}");
+    match prior {
+        Some(val) => std::env::set_var("ACTIVE_TEST_RB1609_V", val),
+        None => std::env::remove_var("ACTIVE_TEST_RB1609_V"),
+    }
+    // Positive control neighbour: the absent variable falls back to 1.
+    let prior2 = std::env::var("ACTIVE_TEST_RB1609_ABSENT_XYZ").ok();
+    std::env::remove_var("ACTIVE_TEST_RB1609_ABSENT_XYZ");
+    let v = eval_json("case_0144_06 = 1\nprobe_3144 = env.ACTIVE_TEST_RB1609_ABSENT_XYZ ?: 1\n");
+    assert_eq!(v["probe_3144"], 1, "{v}");
+    assert!(codes_of("probe_3144 = env.ACTIVE_TEST_RB1609_ABSENT_XYZ ?: 1\n").is_empty());
+    match prior2 {
+        Some(val) => std::env::set_var("ACTIVE_TEST_RB1609_ABSENT_XYZ", val),
+        None => std::env::remove_var("ACTIVE_TEST_RB1609_ABSENT_XYZ"),
+    }
+}
+
+/// RB-1610 — Merge-key variant: secret taint propagates and redacts (SYN-0144-07 §H, HIGH).
+/// Origin: synthetic variation of the merge-semantics report
+/// (same shape as SYN-0131-07).
+/// Converges with RB-1493/1520/1583: `***SECRET***` export, marker absent
+/// from value, JSON, and diagnostics.
+#[test]
+fn rb_1610_syn144_secret_taint_redacts() {
+    let src = "case_0144_07 = 1\nprobe_3144 = secret(\"RAW-RB1610-SE144\")\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0144_07"], 1, "{v}");
+    assert_eq!(v["probe_3144"], "***SECRET***", "{v}");
+    let module = parse(src, "research").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(!json.contains("RAW-RB1610-SE144"), "{json}");
+    assert!(
+        !format!("{diags:?}").contains("RAW-RB1610-SE144"),
+        "{diags:?}"
+    );
+    // Positive control: a plain string beside it exports exactly.
+    let v = eval_json("case_0144_07 = 1\nprobe_3144 = \"plain\"\n");
+    assert_eq!(v["probe_3144"], "plain", "{v}");
+}
+
+/// RB-1611 — Merge-key variant: bare interpolation refused, references resolve (SYN-0144-08 §H, MEDIUM).
+/// Origin: synthetic variation of the merge-semantics report
+/// (same shape as SYN-0131-08).
+/// Converges with RB-1494/1521/1584: E005 Error at (3:14); name references
+/// and string interpolation resolve identically.
+#[test]
+fn rb_1611_syn144_bare_interp_refused() {
+    let src = "case_0144_08 = 1\nlet base = 1\nprobe_3144 = ${base}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (3, 14), "{span:?}");
+    // Positive control: a name reference resolves to the binding value.
+    let v = eval_json("let base = 1\nprobe_3144 = base\n");
+    assert_eq!(v["probe_3144"], 1, "{v}");
+    // Positive control: string interpolation resolves identically.
+    let v = eval_json("let base = 1\nprobe_3144 = \"${base}\"\n");
+    assert_eq!(v["probe_3144"], "1", "{v}");
+}
+
+/// RB-1612 — Merge-key variant: unit suffix consumes the full token (SYN-0144-09 §H, MEDIUM).
+/// Origin: synthetic variation of the merge-semantics report
+/// (same shape as SYN-0131-09).
+/// Converges with RB-1495/1522/1585: `5s` normalizes to ms 5000, silently.
+#[test]
+fn rb_1612_syn144_unit_suffix_consumed() {
+    let src = "case_0144_09 = 1\nprobe_3144 = 5s\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0144_09"], 1, "{v}");
+    assert_eq!(v["probe_3144"]["ms"], 5000, "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the bare scalar beside it stays a plain int.
+    let v = eval_json("probe_3144 = 5\n");
+    assert_eq!(v["probe_3144"], 5, "{v}");
+}
+
+/// RB-1613 — Depth variant: below-limit nesting parses (SYN-0145-01 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0015 (depth/DoS family;
+/// same shape as SYN-0122-01).
+/// Converges with RB-1406/1415: 32 balanced brackets evaluate silently to
+/// 32 nested arrays around 0; oracle via independent JSON parse.
+#[test]
+fn rb_1613_syn145_shallow_nesting_accepts() {
+    let src = format!("case_0145_01 = {}0{}\n", "[".repeat(32), "]".repeat(32));
+    let v = eval_json(&src);
+    let wire = format!("{}0{}", "[".repeat(32), "]".repeat(32));
+    let expected: serde_json::Value = serde_json::from_str(&wire).expect("oracle parses");
+    assert_eq!(v["case_0145_01"], expected, "{v}");
+    assert!(codes_of(&src).is_empty());
+    // Positive control: the flat neighbour evaluates.
+    assert_eq!(
+        eval_json("case_0145_01 = [0]\n")["case_0145_01"],
+        serde_json::json!([0])
+    );
+}
+
+/// RB-1614 — Depth variant: depth overflow fails controllably (SYN-0145-02 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0015 (depth/DoS family;
+/// same shape as SYN-0122-02).
+/// Converges with RB-1407/1416: 256 balanced brackets trip E004 Error.
+#[test]
+fn rb_1614_syn145_deep_nesting_trips_budget() {
+    let src = format!("case_0145_02 = {}0{}\n", "[".repeat(256), "]".repeat(256));
+    let diags = parse(&src, "research").expect_err("must fail E004");
+    let e = diags.iter().find(|d| d.code == "E004").expect("E004");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E004 must be Error, got {:?}",
+        e.severity
+    );
+    // Positive control: a shallow array evaluates.
+    assert_eq!(
+        eval_json("case_0145_02 = [0]\n")["case_0145_02"],
+        serde_json::json!([0])
+    );
+}
+
+/// RB-1615 — Depth variant: adversarial depth bounded (SYN-0145-03 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0015 (depth/DoS family;
+/// same shape as SYN-0122-03).
+/// Converges with RB-1408/1417: 2048 balanced brackets trip E004 Error.
+#[test]
+fn rb_1615_syn145_adversarial_depth_bounded() {
+    let src = format!("case_0145_03 = {}0{}\n", "[".repeat(2048), "]".repeat(2048));
+    let diags = parse(&src, "research").expect_err("must fail E004");
+    let e = diags.iter().find(|d| d.code == "E004").expect("E004");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E004 must be Error, got {:?}",
+        e.severity
+    );
+    // Positive control: a shallow array evaluates.
+    assert_eq!(
+        eval_json("case_0145_03 = [0]\n")["case_0145_03"],
+        serde_json::json!([0])
+    );
+}
+
+/// RB-1616 — Depth variant: interpolation in arrays refused (SYN-0145-04 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0015 (depth/DoS family;
+/// same shape as SYN-0122-04).
+/// Converges with RB-1409/1418: E005 Error at the first `$` (3:10) —
+/// interpolation is string-only, so exponential copying is inexpressible.
+#[test]
+fn rb_1616_syn145_array_interpolation_refused() {
+    let src =
+        "case_0145_04 = 1\nlet a = [1]\nlet b = [${a}, ${a}]\nlet c = [${b}, ${b}]\nvalue = c\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (3, 10), "{span:?}");
+    // Positive control: interpolation inside STRINGS works.
+    let v = eval_json("let who = \"hi\"\ncase_0145_04 = \"yo ${who}\"\n");
+    assert_eq!(v["case_0145_04"], "yo hi", "{v}");
+    // Positive control: plain arrays and name references evaluate.
+    let v = eval_json("let a = [1, 2, 3]\ncase_0145_04 = a\n");
+    assert_eq!(v["case_0145_04"], serde_json::json!([1, 2, 3]), "{v}");
+}
+
+/// RB-1617 — Depth variant: `${}` cycles are inexpressible (SYN-0145-05 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0015 (depth/DoS family;
+/// same shape as SYN-0122-05).
+/// Converges with RB-1410/1419: both `${` sites fail E005 first (2:9);
+/// genuine `let` cycles stay S001.
+#[test]
+fn rb_1617_syn145_interp_cycle_inexpressible() {
+    let src = "case_0145_05 = 1\nlet a = ${b}\nlet b = ${a}\nvalue = ${a}\n";
+    let diags = parse(src, "research").expect_err("must fail E005");
+    let e = diags.iter().find(|d| d.code == "E005").expect("E005");
+    assert_eq!(
+        e.severity,
+        active_core::Severity::Error,
+        "E005 must be Error, got {:?}",
+        e.severity
+    );
+    let span = e.span.clone().expect("E005 carries a span");
+    assert_eq!((span.line, span.column), (2, 9), "{span:?}");
+    // Positive control: a real 2-node `let` cycle is S001 (RB-030).
+    let codes = codes_of("let a = b\nlet b = a\n");
+    assert!(codes.iter().any(|c| c == "S001"), "{codes:?}");
+    // Positive control: acyclic lets evaluate.
+    assert_eq!(eval_json("let a = 1\nlet b = a + 2\ny = b\n")["y"], 3);
+}
+
+/// RB-1618 — Depth variant: small collection accepts (SYN-0145-06 §H, HIGH).
+/// Origin: synthetic variation of SRC-YAML-0015 (depth/DoS family;
+/// same shape as SYN-0122-06).
+/// Converges with RB-1411/1420: five elements, zero diagnostics.
+#[test]
+fn rb_1618_syn145_small_array_accepts() {
+    let src = "case_0145_06 = [1, 2, 3, 4, 5]\n";
+    let v = eval_json(src);
+    assert_eq!(v["case_0145_06"], serde_json::json!([1, 2, 3, 4, 5]), "{v}");
+    assert!(codes_of(src).is_empty());
+    // Positive control: the empty neighbour evaluates too.
+    assert_eq!(
+        eval_json("case_0145_06 = []\n")["case_0145_06"],
+        serde_json::json!([])
+    );
+}

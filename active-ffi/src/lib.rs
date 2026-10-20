@@ -1153,17 +1153,22 @@ mod tests {
             let src = b"[server]\nport = 8080\n";
             let module = active_module_parse(src.as_ptr(), src.len(), std::ptr::null());
             assert!(!module.is_null());
-            let brace = std::ffi::CStr::from_ptr(active_format(module, 0))
+            // Single ownership: each returned string is freed exactly once
+            // (Model A); calling the getter again would leak the earlier copy.
+            let brace_ptr = active_format(module, 0);
+            let brace = std::ffi::CStr::from_ptr(brace_ptr)
                 .to_string_lossy()
                 .into_owned();
             assert!(brace.contains("[server]"), "{brace}");
-            let indent = std::ffi::CStr::from_ptr(active_format(module, 1))
+            let indent_ptr = active_format(module, 1);
+            let indent = std::ffi::CStr::from_ptr(indent_ptr)
                 .to_string_lossy()
                 .into_owned();
             assert!(indent.contains("server:"), "{indent}");
             assert!(active_format(module, 99).is_null());
             assert_eq!(active_last_error(), ACTIVE_ERR_BAD_ARGUMENT);
-            active_string_free(active_format(module, 0));
+            active_string_free(brace_ptr);
+            active_string_free(indent_ptr);
             active_module_free(module);
         }
     }

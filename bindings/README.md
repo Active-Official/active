@@ -42,4 +42,8 @@
 | V                     | 2    | Planned    | CHECKLIST 2.015 |
 | Lua / LuaJIT          | 2    | Planned    | CHECKLIST 2.016 |
 
-Update this matrix on every binding status change.
+Update this matrix on every binding status change. Statuses above were
+verified against the live repo on 2026-10-20 by running the shared harness
+(`python conformance/harness/run.py`: reference, C ABI, WASM, and Go smoke
+all pass) and reading the in-tree shims; nothing here is claimed from
+memory.

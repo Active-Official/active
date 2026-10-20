@@ -8,7 +8,13 @@ python conformance/harness/run.py [--out report.json]
 ```
 
 Exit code is 0 only when every implemented path passes. Placeholder paths
-report `not-implemented` and never count as passes.
+report `not-implemented` and never count as passes. Paths that time out
+(900s per path) or whose binary is missing report `fail` with details.
+
+Prerequisites: Rust toolchain with the `wasm32-unknown-unknown` target for
+reference and C ABI paths, Node 20+ for the WASM path, Go toolchain for the
+wazero smoke path. Run `python conformance/harness/run.py --self-check`
+first to validate the tally parser itself.
 
 ## Normalization rules
 

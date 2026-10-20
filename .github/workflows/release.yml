@@ -89,8 +89,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      # Pinned below stable: stable rustc 1.99 emits `clone_ref`
+      # externref intrinsics that wasm-bindgen-cli 0.2.129 (lockfile)
+      # does not understand, so the glue step fails. 1.89.0 predates
+      # the breakage and stays above MSRV 1.85.
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.89.0
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - name: Install wasm-bindgen (pinned to lockfile)
@@ -224,7 +229,7 @@ jobs:
           # back: lock files, publish in dependency order, pause
           # between crates. active-ffi and active-wasm ride the unified
           # track; active-infinity stays manual (independent 1.0.0 track).
-          for p in active-core active-fmt active-lsp active-cli active-ffi active-wasm; do
+          for p in active-core active active-fmt active-lsp active-cli active-ffi active-wasm; do
             cargo publish --locked -p "$p"
             sleep 60
           done

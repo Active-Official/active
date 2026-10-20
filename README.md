@@ -300,7 +300,7 @@ String interpolation: any `"…${ident}…"` becomes an `Interpolate` node.
 
 ## Status
 
-1.3.0 is the current release ([crates.io](https://crates.io/crates/active-core)).
+1.4.0 is the current release ([crates.io](https://crates.io/crates/active-core)).
 Beyond the 1.0 conformance suite, every release since has been tested
 brutally: a fuzz harness over lexer and parser (`active-fuzz`: no panics,
 no hangs), property test invariants (determinism, cycle detection,

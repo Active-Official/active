@@ -16,6 +16,23 @@ and fixtures: crates `active`, `active-core`, `active-cli`,
 follow. GitHub URLs and prior release notes keep their original
 names (redirects/history).
 
+## [1.4.0] — 2026-10-20
+
+Embedding release, published to crates.io (`active`, `active-core`,
+`active-cli`, `active-fmt`, `active-lsp`, plus first publishes of
+`active-ffi` and `active-wasm`). New public crates are new
+functionality, backward compatible: the frozen C ABI (opaque handles,
+structured diagnostics, budgets, secret discipline, cbindgen header
+with CI drift check) and the zero-import WebAssembly module (browsers,
+Node, Deno, Bun via the JS/TS shim; Go over wazero with no cgo),
+both running the same conformance manifest as the reference
+implementation. Also aboard: the Miri-hardened wall-clock gate and
+single-ownership FFI test host (full Miri 21 of 21 clean, zero
+findings), the WASM-powered playground with headless-browser proof,
+the enterprise README rewrite with Figma-composed banner and graphics,
+and the secret taint plus dependency graph documentation. No language
+changes: the 1.0 surface stays frozen.
+
 ## [1.3.0] — 2026-10-18
 
 Units Phases B+C (AI-age trio + domain SI): token counts

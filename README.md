@@ -87,6 +87,8 @@ password = secret("prod/db/password")
 
 The secret value never appears in evaluated output, JSON exports, diagnostics, spans, or logs. You cannot leak it by accident because the taint tracker marks it once and every output path redacts it.
 
+That redaction is not a filter applied at the end. The value is tainted the moment `secret()` runs, and the marker sticks to it through evaluation, interpolation, exports, diagnostics, and logs. Every output path checks the marker, and the suite asserts the raw bytes appear on none of them, so a future change that adds an output path and forgets to redact fails the build instead of leaking your password. The usual setup makes a secret a plain string and begs every tool in the chain to remember not to print it. One debug log or verbose flag later, it lives in your aggregator forever.
+
 Environment integration stays honest too. `env.DB_HOST ?: "localhost"` means exactly what it reads as: use the environment variable, fall back to localhost, and record which one won. String interpolation is scoped to strings, so `"https://${region}.example.com"` composes safely while exponential expansion stays inexpressible rather than merely budgeted.
 
 And when you do make a mistake, the diagnostic points at the exact line and column instead of failing three services downstream. Duplicate keys warn instead of silently letting the last one win. Unknown names resolve to announced nulls instead of coercing into whatever is convenient. A three phase healer even proposes fixes for common breakage, and the CLI runs in strict mode for pipelines or resilient mode for interactive repair.
@@ -112,6 +114,49 @@ And it is all verified, not claimed. A 1500+ case research battery turns real YA
 Explicitness all the way down, including in the error taxonomy.
 
 ![Four guarantees with zero asterisks](docs/assets/readme-pillars.png)
+
+## The graph knows
+
+Most config formats parse into a tree and hope for the best. Active builds a dependency graph first and evaluates it in topological order, and that single architectural choice pays off everywhere.
+
+Declaration order stops mattering. Reference a value defined fifty lines below or in another table and it resolves, because evaluation follows dependencies, not file order. You write in the order humans prefer; the machine evaluates in the order logic requires.
+
+Cycles become errors instead of hangs:
+
+```
+[Error] S001: cycle detected in dependency graph
+```
+
+No recursion until the stack blows, no deploy timing out. Cycle detection is proven on generated graphs, not just handpicked examples.
+
+And the graph is queryable, which answers the two questions every engineer asks before touching shared config. What breaks if I change this:
+
+```
+$ active impact api_base examples/complete.active
+node27
+node29
+node31
+services.auth_url
+services.billing_url
+services.users_url
+```
+
+What is this built from:
+
+```
+$ active why services.auth_url examples/complete.active
+api_base
+base_domain
+node0
+node27
+node3
+node4
+region
+```
+
+No grep and prayer. The actual dependency closure, in both directions.
+
+Determinism falls out of the same design: same graph, same walk, same result, every machine. Provenance hashes attach to graph nodes so the lockfile records how each value was derived, not just what it is. Budgets bound the walk itself, so a pathological file fails closed instead of spinning. Diagnostics point at causes instead of symptoms because the evaluator knows exactly what depends on what.
 
 ## The whole project, one tour
 

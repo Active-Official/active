@@ -1,8 +1,6 @@
 # ACTIVE
 
-<p align="center">
-  <img src="docs/assets/active-icon.png" width="160" alt="Active logo">
-</p>
+![Active banner: the configuration language that refuses to lie](docs/assets/readme-banner.png)
 
 **Symmetric · Overlay-ready · Loop-proof · Intent-driven · Deterministic**
 
@@ -22,6 +20,8 @@ Your config files are lying to you. YAML once turned an entire country into `fal
 Active ends that. It runs on one rule that changes everything: **nothing is ever implicit.** What you write is exactly what runs: for a human reading it at 2am, and for an AI agent generating it at machine speed.
 
 **Active is the configuration language that refuses to lie.**
+
+![YAML versus Active on the same inputs](docs/assets/readme-compare.png)
 
 ## What Active is
 
@@ -110,6 +110,8 @@ Because the strictness is load bearing, not cosmetic. The type system tracks dim
 And it is all verified, not claimed. A 1500+ case research battery turns real YAML, TOML, and JSON failure lineages into pinned diagnostics. Property tests prove determinism, cycle detection, and secret non leakage on generated inputs. A fuzz harness pounds the lexer and parser with no panics and no hangs. The C ABI surface passed a full Miri run: 21 of 21 clean with zero undefined behavior findings and zero leaks. Miri needed a mock clock disclaimer and the test host needed single ownership discipline, both documented in the budget spec, because this project writes down its deltas instead of hiding them.
 
 Explicitness all the way down, including in the error taxonomy.
+
+![Four guarantees with zero asterisks](docs/assets/readme-pillars.png)
 
 ## The whole project, one tour
 

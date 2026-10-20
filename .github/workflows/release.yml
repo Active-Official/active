@@ -89,23 +89,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      # Pinned below stable: stable rustc 1.99 emits `clone_ref`
-      # externref intrinsics that wasm-bindgen-cli 0.2.129 (lockfile)
-      # does not understand, so the glue step fails. 1.89.0 predates
-      # the breakage and stays above MSRV 1.85.
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.89.0
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - name: Install wasm-bindgen (pinned to lockfile)
-        run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
       - name: Build wasm release
         run: cargo build --locked -p active-wasm --target wasm32-unknown-unknown --release
-      - name: Generate browser + node glue
-        run: |
-          wasm-bindgen --target web --out-dir active-wasm/pkg-web target/wasm32-unknown-unknown/release/active_wasm.wasm
-          wasm-bindgen --target nodejs --out-dir active-wasm/pkg-nodejs target/wasm32-unknown-unknown/release/active_wasm.wasm
       - name: Setup node for conformance run
         uses: actions/setup-node@v4
         with:
@@ -114,10 +103,15 @@ jobs:
         shell: bash
         run: node active-wasm/run-conformance.js target/wasm32-unknown-unknown/release/active_wasm.wasm
       - name: Stage dist bundle
+        # Zero-import module (G-003): ship the raw .wasm plus the
+        # hand-written JS/TS shim. No wasm-bindgen glue exists or is
+        # needed: plain WebAssembly.instantiate suffices, and the
+        # pinned CLI rejects non-bindgen modules.
         shell: bash
         run: |
           mkdir -p dist-wasm
-          cp active-wasm/pkg-web/active_wasm.wasm active-wasm/pkg-web/active_wasm.js active-wasm/js/active-shim.js active-wasm/js/active-shim.d.ts dist-wasm/
+          cp target/wasm32-unknown-unknown/release/active_wasm.wasm dist-wasm/
+          cp active-wasm/js/active-shim.js active-wasm/js/active-shim.d.ts dist-wasm/
           tar czf dist-wasm/active-conformance.tar.gz conformance
           ls dist-wasm
       - name: Upload wasm bundle

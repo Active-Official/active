@@ -932,11 +932,14 @@ mod tests {
             assert_eq!(active_diagnostics_len(set), 0);
             let value = active_eval(module, std::ptr::null());
             assert!(!value.is_null());
-            let json = std::ffi::CStr::from_ptr(active_value_to_json(value))
+            // Single ownership: the returned string is freed exactly once
+            // (Model A); calling the getter twice would leak the first copy.
+            let json_ptr = active_value_to_json(value);
+            let json = std::ffi::CStr::from_ptr(json_ptr)
                 .to_string_lossy()
                 .into_owned();
             assert!(json.contains("8080"), "{json}");
-            active_string_free(active_value_to_json(value));
+            active_string_free(json_ptr);
             active_value_free(value);
             active_diagnostics_free(set);
             active_module_free(module);
@@ -1088,7 +1091,10 @@ mod tests {
             active_set_env_lookup(module, Some(env_host), std::ptr::null_mut());
             let value = active_eval(module, std::ptr::null());
             assert!(!value.is_null());
-            let json = std::ffi::CStr::from_ptr(active_value_to_json(value))
+            // Single ownership: the returned string is freed exactly once
+            // (Model A); calling the getter twice would leak the first copy.
+            let json_ptr = active_value_to_json(value);
+            let json = std::ffi::CStr::from_ptr(json_ptr)
                 .to_string_lossy()
                 .into_owned();
             assert!(json.contains("9090"), "{json}");
@@ -1097,7 +1103,7 @@ mod tests {
                 ENV_CALLS.load(std::sync::atomic::Ordering::SeqCst) >= 2,
                 "lookup must run during eval, including for the miss"
             );
-            active_string_free(active_value_to_json(value));
+            active_string_free(json_ptr);
             active_value_free(value);
             active_module_free(module);
         }
@@ -1209,13 +1215,16 @@ mod tests {
             let value = active_eval(module, std::ptr::null());
             assert!(!value.is_null());
             assert_eq!(active_value_type(value), 8);
-            let json = std::ffi::CStr::from_ptr(active_value_to_json(value))
+            // Single ownership: the returned string is freed exactly once
+            // (Model A); calling the getter twice would leak the first copy.
+            let json_ptr = active_value_to_json(value);
+            let json = std::ffi::CStr::from_ptr(json_ptr)
                 .to_string_lossy()
                 .into_owned();
             assert!(json.contains("***SECRET***"), "{json}");
             assert!(!json.contains("hunter2"), "{json}");
             assert!(!active_value_is_secret(value));
-            active_string_free(active_value_to_json(value));
+            active_string_free(json_ptr);
             active_value_free(value);
             active_module_free(module);
         }
@@ -1232,12 +1241,15 @@ mod tests {
             assert!(!value.is_null());
             assert!(!active_value_is_secret(value));
             assert_eq!(active_value_type(value), 8);
-            let json = std::ffi::CStr::from_ptr(active_value_to_json(value))
+            // Single ownership: the returned string is freed exactly once
+            // (Model A); calling the getter twice would leak the first copy.
+            let json_ptr = active_value_to_json(value);
+            let json = std::ffi::CStr::from_ptr(json_ptr)
                 .to_string_lossy()
                 .into_owned();
             assert!(json.contains("***SECRET***"), "{json}");
             assert!(!json.contains("hunter2"), "{json}");
-            active_string_free(active_value_to_json(value));
+            active_string_free(json_ptr);
             active_value_free(value);
             active_module_free(module);
         }

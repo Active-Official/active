@@ -165,15 +165,18 @@ impl Budget {
         }
     }
 
-    /// False on targets without a monotonic clock (wasm32-unknown-unknown):
-    /// `wall_deadline` degrades to None there. Hosts must check this when
-    /// they promise wall-clock enforcement to their own callers.
+    /// False on targets without a monotonic clock (wasm32-unknown-unknown)
+    /// and under Miri (its mock clock advances with interpreted work, so
+    /// any wall budget would trip spuriously while count, depth, array,
+    /// key, and value-size budgets still bind execution there):
+    /// `wall_deadline` degrades to None in both cases. Hosts must check
+    /// this when they promise wall-clock enforcement to their own callers.
     pub fn wall_supported() -> bool {
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(any(target_arch = "wasm32", miri))]
         {
             false
         }
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(any(target_arch = "wasm32", miri)))]
         {
             true
         }

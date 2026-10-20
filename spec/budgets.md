@@ -149,6 +149,11 @@ the §6 wall-clock delta in force.
   in linear time, so no wall-clock backstop is needed for termination.
   Hosts on that target enforce their own timeouts (Worker terminate
   pattern) and must not promise in-module wall-clock enforcement.
+- Platform delta (Miri): the interpreter's mock clock advances with
+  interpreted work rather than real time, so any wall budget would trip
+  spuriously; `Budget::wall_supported()` returns false under `cfg(miri)`
+  and the remaining budgets still bind execution. Wall-clock enforcement
+  is a host-time property and is covered natively, never under Miri.
 - They do not replace the parser caps (different half, different
   codes, recover-vs-abort semantics).
 - They do not make validation cheaper than linear (validation walks

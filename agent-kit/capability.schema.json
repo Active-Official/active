@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Active agent capability descriptor",
+  "description": "Machine-readable manifest of the tools an agent may call against Active (CHECKLIST Step 0.006, PROPOSAL section 4.1 item 6). Versioned with the workspace; consumers must reject unknown major versions.",
+  "version": "1.4.0",
+  "tools": [
+    {
+      "name": "check",
+      "entry": "active check <file>",
+      "description": "Parse a file and report errors, cycles, and unresolved names with stable diagnostic codes and spans. Zero exit means clean.",
+      "input": { "file": "path to a .active source file" },
+      "output": { "diagnostics": "list of {code, severity, message, span}" }
+    },
+    {
+      "name": "eval",
+      "entry": "active eval <file>",
+      "description": "Evaluate a file and print redacted JSON. Secrets always render as ***SECRET***; a raw secret in output is a defect, never data.",
+      "input": { "file": "path to a .active source file" },
+      "output": { "value": "redacted JSON document" }
+    },
+    {
+      "name": "format",
+      "entry": "active fmt <file>",
+      "description": "Format a file in the canonical style without changing its meaning.",
+      "input": { "file": "path to a .active source file" },
+      "output": { "file": "formatted source, or a patch" }
+    },
+    {
+      "name": "convert",
+      "entry": "active convert <file> --to json|yaml|toml",
+      "description": "Convert an evaluated result to another format with redaction preserved.",
+      "input": { "file": "path to a .active source file", "to": "target format" },
+      "output": { "document": "converted text" }
+    },
+    {
+      "name": "graph",
+      "entry": "active graph|impact|why <file> [key]",
+      "description": "Query the dependency graph: render it, list what breaks if a key changes, or list what a key is built from.",
+      "input": { "file": "path to a .active source file", "key": "optional dotted key" },
+      "output": { "graph": "text, Mermaid, DOT, or JSON per flags" }
+    },
+    {
+      "name": "generate",
+      "entry": "active generate --target <t> <schema>",
+      "description": "Emit typed artifacts from an Active schema for the listed codegen targets.",
+      "input": { "schema": "path to a schema file", "target": "jsonschema|typescript|go|python" },
+      "output": { "artifact": "generated source text" }
+    },
+    {
+      "name": "schema-introspect",
+      "status": "planned",
+      "description": "List a schema's fields, constraints, defaults, and discriminators for agents. Not yet implemented; tracked by CHECKLIST 4.002."
+    }
+  ]
+}

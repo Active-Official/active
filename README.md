@@ -1,5 +1,9 @@
 # ACTIVE
 
+<p align="center">
+  <img src="docs/assets/active-icon.png" width="160" alt="Active logo">
+</p>
+
 **Symmetric · Overlay-ready · Loop-proof · Intent-driven · Deterministic**
 
 [![crates.io](https://img.shields.io/crates/v/active-core)](https://crates.io/crates/active-core)

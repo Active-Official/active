@@ -94,6 +94,12 @@ PATHS: list[tuple[str, list[str], Path, str]] = [
         ROOT,
         r"^js-ok$",
     ),
+    (
+        "zig",
+        ["python", "bindings/zig/run-smoke.py"],
+        ROOT,
+        r"^SMOKE-OK$",
+    ),
 ]
 
 PLACEHOLDERS = ["go-native"]
@@ -123,6 +129,8 @@ def self_check() -> int:
         ("OK", r"^OK$", True),
         ("FAILED (failures=1)", r"^OK$", False),
         ("js-ok", r"^js-ok$", True),
+        ("SMOKE-OK", r"^SMOKE-OK$", True),
+        ("SMOKE-FAIL", r"^SMOKE-OK$", False),
         ("js-FAIL: refused", r"^js-ok$", False),
     ]
     bad = 0

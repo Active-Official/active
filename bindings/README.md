@@ -28,7 +28,7 @@
 | Java                  | 2    | Planned    | CHECKLIST 2.001 |
 | C#                    | 2    | Planned    | CHECKLIST 2.002 |
 | C++                   | 2    | Planned    | CHECKLIST 2.003 |
-| Zig                   | 2    | Planned    | CHECKLIST 2.004 |
+| Zig                   | 2    | Smoke green | `bindings/zig/smoke.zig` drives the frozen C ABI directly (ABI gate, T001 refusal, redaction) via `run-smoke.py`; harness path `zig` green; SPEC.md maps ownership rules |
 | Ruby                  | 2    | Planned    | CHECKLIST 2.005 |
 | PHP                   | 2    | Planned    | CHECKLIST 2.006 |
 | Swift                 | 2    | Planned    | CHECKLIST 2.007 |

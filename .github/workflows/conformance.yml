@@ -78,16 +78,12 @@ jobs:
       - name: Install Erlang NIF headers (Linux only)
         if: runner.os == 'Linux'
         run: sudo apt-get install -y -qq erlang-dev
-      - name: Install V (Linux only)
-        if: runner.os == 'Linux'
-        # No version pin: upstream has no stable release tags, so this
-        # tracks the default branch, exactly like the proof container did
-        # (V 0.5.2 built from source on 2026-10-21). The smoke drives the
-        # frozen C ABI, which does not move with V releases.
-        run: git clone --depth 1 https://github.com/vlang/v /tmp/v && cd /tmp/v && sudo make && echo "/tmp/v" >> "$GITHUB_PATH"
-      # Swift is container-proven only: the 1 GB toolchain download is not
-      # worth every CI run. bindings/swift/run-smoke.py skips openly
-      # without swiftc; proof lives in the Tier-2 container logs.
+      # Swift and V are container-proven only. Swift's 1 GB download is not
+      # worth every CI run, and V builds from source upstream (no stable
+      # tags; the CI smoke compile stalled the step past 900s while the
+      # identical proof passes in seconds in the Tier-2 container).
+      # bindings/swift and bindings/vlang run-smoke.py skip openly without
+      # swiftc/v; proof lives in the Tier-2 container logs.
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"

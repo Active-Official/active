@@ -7,6 +7,7 @@ pub mod doc;
 pub mod export;
 pub mod gen;
 pub mod import;
+pub mod inspect;
 
 pub use doc::{collect_items, doc_to_html, doc_to_man, doc_to_markdown, DocItem};
 
@@ -19,6 +20,7 @@ pub use import::{
     json_text_to_active, json_value_to_active, jsonschema_to_active, toml_text_to_active,
     yaml_text_to_active,
 };
+pub use inspect::{schema_inspect, INSPECT_VERSION};
 
 pub fn value_to_json(v: &Value) -> JsonValue {
     match v {

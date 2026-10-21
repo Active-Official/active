@@ -97,7 +97,7 @@ fn enum_descriptions_text(module: &Module, field: &SchemaField) -> Option<String
 
 /// Static literal default as JSON (any literal kind, redacted like
 /// every export — secrets never leak through generated defaults).
-fn literal_default(module: &Module, field: &SchemaField) -> Option<JsonValue> {
+pub(crate) fn literal_default(module: &Module, field: &SchemaField) -> Option<JsonValue> {
     match field.default.and_then(|node| module.get(node)) {
         Some(Node::Literal(value)) => Some(super::value_to_json(value)),
         _ => None,

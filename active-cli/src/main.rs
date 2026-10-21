@@ -1,8 +1,8 @@
 use active_core::convert::{
     collect_items, doc_to_html, doc_to_man, doc_to_markdown, json_text_to_active,
-    jsonschema_to_active, schema_to_go, schema_to_json_schema, schema_to_openapi, schema_to_python,
-    schema_to_rust, schema_to_typescript, toml_text_to_active, value_to_pretty_json,
-    value_to_toml_string, value_to_yaml_string, yaml_text_to_active,
+    jsonschema_to_active, schema_inspect, schema_to_go, schema_to_json_schema, schema_to_openapi,
+    schema_to_python, schema_to_rust, schema_to_typescript, toml_text_to_active,
+    value_to_pretty_json, value_to_toml_string, value_to_yaml_string, yaml_text_to_active,
 };
 use active_core::diag::{Diagnostic, Severity};
 use active_core::{parse_file, Budget, Engine, EvalError, ParseOptions, Style};
@@ -205,6 +205,16 @@ enum Commands {
         /// Root type name
         #[arg(long, default_value = "Config")]
         name: String,
+        /// Require sibling signatures on includes (C-052)
+        #[arg(long)]
+        trust_keys: Option<PathBuf>,
+    },
+    /// Inspect a schema block as queryable JSON (fields, types,
+    /// constraints, defaults, descriptions) for agents
+    Inspect {
+        /// Input .active file (must contain a schema block)
+        #[arg(short, long)]
+        from: PathBuf,
         /// Require sibling signatures on includes (C-052)
         #[arg(long)]
         trust_keys: Option<PathBuf>,
@@ -712,6 +722,15 @@ fn main() -> anyhow::Result<()> {
             // already end with `\n`, and `println!` would append a
             // second one (a blank line that `gofmt` rejects).
             println!("{}", output.trim_end_matches('\n'));
+        }
+        Commands::Inspect { from, trust_keys } => {
+            let trust = load_trust(&trust_keys)?;
+            let module = parse_input(&from, false, false, &trust)?;
+            let inspected = schema_inspect(&module).map_err(|e| anyhow::anyhow!("{e}"))?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&inspected).map_err(|e| anyhow::anyhow!("{e}"))?
+            );
         }
         Commands::Doc {
             from,

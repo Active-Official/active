@@ -61,6 +61,12 @@ def find_staticlib() -> Path | None:
 
 
 def main() -> int:
+    if sys.platform == "win32":
+        # MSVC-built objects carry MSVC CRT helpers that MinGW gcc
+        # cannot resolve; proven in the Linux container instead
+        # (see bindings/java/README.md).
+        print("SKIP: MSVC toolchain required on Windows")
+        return 0
     javac = shutil.which("javac")
     java = shutil.which("java")
     gcc = shutil.which("gcc") or shutil.which("cc")

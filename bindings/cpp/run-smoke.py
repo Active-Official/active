@@ -50,6 +50,12 @@ def find_staticlib() -> Path | None:
 
 
 def main() -> int:
+    if sys.platform == "win32":
+        # MSVC-built objects carry MSVC CRT helpers (e.g. __chkstk)
+        # that MinGW ld cannot resolve; proven in the Linux container
+        # instead (see bindings/cpp/README.md).
+        print("SKIP: MSVC toolchain required on Windows")
+        return 0
     if shutil.which("g++") is None and shutil.which("c++") is None:
         print("SKIP: no C++ compiler installed")
         return 0

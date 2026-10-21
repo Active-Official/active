@@ -59,7 +59,7 @@ public final class Active implements AutoCloseable {
     }
 
     @Override
-    public void close() {
+    public synchronized void close() {
         if (!closed) {
             closed = true;
             cleanable.clean();

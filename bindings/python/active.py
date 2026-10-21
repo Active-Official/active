@@ -113,9 +113,9 @@ class Module:
         try:
             res = self._eval(self._store, sptr, sn, slot)
             env_len = self._u32(slot)
-            env = json.loads(self._read(res, env_len))
+            raw = self._read(res, env_len)
             self._free(self._store, res, env_len)
-            return env
+            return json.loads(raw)
         finally:
             self._free(self._store, sptr, sn)
             self._free(self._store, slot, 4)

@@ -41,6 +41,10 @@ class BindingTest(unittest.TestCase):
         value = self.mod.eval('token = secret("hunter2")\n[out]\npass = token\n')
         self.assertEqual(value, {"token": "***SECRET***", "out": {"pass": None}})
         self.assertNotIn("hunter2", json.dumps(value))
+        diags = self.mod.check('token = secret("hunter2")\n[out]\nv = token + 1\n')
+        self.assertTrue(diags, "expected a diagnostic")
+        for d in diags:
+            self.assertNotIn("hunter2", d.message)
 
     def test_deterministic(self) -> None:
         src = "let x = 1 + 2\n[out]\nv = x * 3\n"

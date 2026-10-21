@@ -64,3 +64,8 @@ goal-prompts/
 # `wasm-bindgen`; never committed, always rebuilt from the .wasm)
 active-wasm/pkg-nodejs/
 active-wasm/pkg-web/
+
+# C# build outputs
+bindings/csharp/**/bin/
+bindings/csharp/**/obj/
+bindings/csharp/**/*.dll

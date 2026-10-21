@@ -172,6 +172,8 @@ def main() -> int:
         }
         if timed_out:
             entry["timed_out"] = True
+        if not passed:
+            entry["output_tail"] = output[-2000:]
         report["paths"][name] = entry
     for name in PLACEHOLDERS:
         report["paths"][name] = {"status": "not-implemented"}

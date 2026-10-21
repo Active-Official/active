@@ -36,10 +36,14 @@ def main() -> int:
         print("BUILD FAILED:\n" + (b.stderr or b.stdout)[-2000:])
         return 1
     dll = ROOT / "target" / "debug" / "active_ffi.dll"
+    solib = ROOT / "target" / "debug" / "libactive_ffi.so"
     outdir = PROJ / "bin" / "Debug"
     tfm = sorted([d for d in outdir.iterdir() if d.is_dir()], key=lambda d: d.name)
-    if dll.is_file() and tfm:
-        shutil.copy(dll, tfm[0] / "active_ffi.dll")
+    if tfm:
+        if dll.is_file():
+            shutil.copy(dll, tfm[0] / "active_ffi.dll")
+        if solib.is_file():
+            shutil.copy(solib, tfm[0] / "libactive_ffi.so")
     r = run(["dotnet", "run", "--project", str(PROJ), "--no-build"], ROOT)
     print(r.stdout + r.stderr)
     if r.returncode != 0 or "SMOKE-OK" not in (r.stdout + r.stderr):

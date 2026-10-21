@@ -35,6 +35,18 @@ def main() -> int:
         return 0
     tmp = Path(tempfile.mkdtemp(prefix="active-zig-"))
     exe = tmp / ("smoke.exe" if sys.platform == "win32" else "smoke")
+    # Windows links the import library (proven green) with the DLL staged
+    # beside the exe. Linux/macOS link the static archive directly so no
+    # runtime loader path is needed.
+    link: list[str] = []
+    if sys.platform == "win32":
+        link = ["-L", "target/debug", "-l", "active_ffi"]
+    else:
+        staticlib = ROOT / "target" / "debug" / "libactive_ffi.a"
+        if not staticlib.is_file():
+            print(f"BUILD FAILED: missing static archive: {staticlib}")
+            return 1
+        link = [str(staticlib)]
     b = run(
         [
             "zig",
@@ -42,10 +54,7 @@ def main() -> int:
             "bindings/zig/smoke.zig",
             "-I",
             "active-ffi",
-            "-L",
-            "target/debug",
-            "-l",
-            "active_ffi",
+            *link,
             "-lc",
             "-femit-bin=" + str(exe),
         ],

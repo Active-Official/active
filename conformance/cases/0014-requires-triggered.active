@@ -1,0 +1,2 @@
+schema = { mode = String, replicas = Int(requires = "mode") }
+mode = "prod"

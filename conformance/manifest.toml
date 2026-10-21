@@ -81,6 +81,21 @@ id = "0013-profile-inline"
 file = "cases/0013-profile-inline.active"
 kind = "clean"
 
+[[cases]]
+id = "0014-requires-triggered"
+file = "cases/0014-requires-triggered.active"
+kind = "refused"
+
+[[cases]]
+id = "0015-unknown-format"
+file = "cases/0015-unknown-format.active"
+kind = "refused"
+
+[[cases]]
+id = "0016-enum-descriptions"
+file = "cases/0016-enum-descriptions.active"
+kind = "clean"
+
 # Host-feature pins (G-017 spirit): cases needing capabilities a v1 host
 # shim does not expose. Runners record these as pins with reason, never as
 # failures and never silently. Removing a pin means the host grew the

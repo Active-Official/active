@@ -40,7 +40,7 @@ fn literal_float(module: &Module, id: Option<NodeId>) -> Option<f64> {
 }
 
 /// Static literal string bound.
-fn literal_string(module: &Module, id: Option<NodeId>) -> Option<String> {
+pub(crate) fn literal_string(module: &Module, id: Option<NodeId>) -> Option<String> {
     match id.and_then(|node| module.get(node)) {
         Some(Node::Literal(crate::ir::Value::String(s))) => Some(s.clone()),
         _ => None,

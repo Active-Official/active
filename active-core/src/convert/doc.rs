@@ -2,6 +2,7 @@
 //! Markdown, searchable HTML, and man pages (C-048, spec/docgen.md).
 //! Secret values render redacted in every format (C-036).
 
+use super::gen::literal_string;
 use crate::ir::{AnnotationKind, Attachment, Module, Node, NodeId, Value};
 use crate::types::{ActiveType, Unit};
 use std::collections::HashMap;
@@ -94,6 +95,12 @@ fn walk_value(
     let (type_text, required, default_text, constraints, deprecated) =
         describe_schema(module, schema, val);
     let mut description_parts: Vec<String> = Vec::new();
+    // Schema `description` metadata leads: the contract prose lives with
+    // the contract, and docgen is its renderer (spec/schema-extensions
+    // §2). Validation never reads it; rendering always surfaces it.
+    if let Some(text) = schema_description(module, schema) {
+        description_parts.push(text);
+    }
     if let Some(id) = node {
         if let Some(anns) = module.annotations.get(&id) {
             for ann in anns {
@@ -160,6 +167,16 @@ fn walk_value(
     }
 }
 
+/// Schema `description` metadata for an item, if the schema node is a
+/// field carrying one. Tables and arrays carry no description slot;
+/// their prose comes from comments and annotations as before.
+fn schema_description(module: &Module, schema: Option<NodeId>) -> Option<String> {
+    match module.get(schema?) {
+        Some(Node::SchemaField { field }) => literal_string(module, field.description),
+        _ => None,
+    }
+}
+
 /// Schema data for an item: (type text, required, default,
 /// constraints, deprecated). Falls back to the value kind without a
 /// schema; dynamic constraint expressions are skipped (validation
@@ -208,7 +225,7 @@ fn describe_schema(
                 ActiveType::String => {
                     push_bound(module, field.min_len, "min_len", &mut constraints);
                     push_bound(module, field.max_len, "max_len", &mut constraints);
-                    if let Some(pattern) = static_string(module, field.pattern) {
+                    if let Some(pattern) = literal_string(module, field.pattern) {
                         constraints.push(format!("pattern `{pattern}`"));
                     }
                 }
@@ -271,13 +288,6 @@ fn push_bound(module: &Module, bound: Option<NodeId>, name: &str, constraints: &
     };
     if let Some(text) = rendered {
         constraints.push(format!("{name} {text}"));
-    }
-}
-
-fn static_string(module: &Module, id: Option<NodeId>) -> Option<String> {
-    match id.and_then(|node| module.get(node)) {
-        Some(Node::Literal(crate::ir::Value::String(s))) => Some(s.clone()),
-        _ => None,
     }
 }
 

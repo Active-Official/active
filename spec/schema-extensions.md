@@ -32,7 +32,9 @@ total and deterministic.
 
 `description = "<text>"` accepted on any field type and on schema tables.
 Stored on the field, ignored by validation, surfaced by `docgen` and the
-future introspection API. `deprecated = "<reason>"` already exists on
+future introspection API. Table-typed *fields* (including nested
+`Table { ... }` fields) carry descriptions like any field; the schema
+block root itself carries prose via comments. `deprecated = "<reason>"` already exists on
 fields; this RFC standardizes its message (`deprecated: <reason>`) and
 requires docgen to render it. Non-string `description` is E020 at parse.
 Rationale: contracts need prose where the contract lives; metadata must

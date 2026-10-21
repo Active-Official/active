@@ -143,3 +143,26 @@ fn items_cover_nested_and_array_paths() {
         assert!(paths.contains(&expected), "{paths:?}");
     }
 }
+
+#[test]
+fn markdown_surfaces_schema_description_and_deprecated() {
+    // spec/schema-extensions.md §2: description metadata and the
+    // standardized deprecated message must render in docgen output.
+    let module = parse(
+        "schema = {\n  host = String(description = \"DNS name.\", deprecated = \"use fqdn\"),\n}\nhost = \"x\"\n",
+        "doc",
+    )
+    .expect("must parse");
+    let (value, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    let md = doc_to_markdown("Net", &collect_items(&module, &value));
+    assert!(md.contains("DNS name."), "{md}");
+    assert!(md.contains("use fqdn"), "{md}");
+    // Same DocItem feeds every format: pin HTML and man too.
+    let items = collect_items(&module, &value);
+    let html = doc_to_html("Net", &items);
+    assert!(html.contains("DNS name."), "{html}");
+    assert!(html.contains("use fqdn"), "{html}");
+    let man = doc_to_man("Net", &items);
+    assert!(man.contains("DNS name."), "{man}");
+    assert!(man.contains("use fqdn"), "{man}");
+}

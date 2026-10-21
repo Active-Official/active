@@ -6,8 +6,9 @@ surface with opaque handles, an ABI major gate, and Allocator Model A
 (the module's ``active_free`` frees everything the module allocated).
 
 Ownership rules: a ``Module`` owns one instantiated evaluator confined to
-the thread that uses it. Use it as a context manager or call ``close()``
-explicitly. Never share a module across threads without external locking.
+the creating thread. One module per thread; never share a module across
+threads, locking or not — the engine state is thread-confined by
+construction. Use it as a context manager or call ``close()`` explicitly.
 """
 
 from __future__ import annotations
@@ -55,10 +56,16 @@ class Diagnostic:
         return f"Diagnostic({self.code}: {self.message[:80]})"
 
     def span(self) -> tuple[int, int, int, int] | None:
-        """Structured span tuple, or None when the core left it spanless."""
-        if self.line is None:
+        """Structured span tuple, or None when the core left it spanless.
+
+        Only complete spans are returned: a partial span (any slot
+        missing) degrades to None rather than a tuple containing None,
+        which callers treat identically to spanless.
+        """
+        parts = (self.line, self.column, self.end_line, self.end_column)
+        if any(p is None for p in parts):
             return None
-        return (self.line, self.column, self.end_line, self.end_column)
+        return (self.line, self.column, self.end_line, self.end_column)  # type: ignore[return-value]
 
 
 def _repo_root() -> Path:
@@ -78,8 +85,8 @@ def default_wasm_path() -> Path:
 class Module:
     """One instantiated Active evaluator (opaque handle, do not share threads)."""
 
-    def __init__(self, wasm_path: Path | None = None) -> None:
-        path = wasm_path or default_wasm_path()
+    def __init__(self, wasm_path: Path | str | None = None) -> None:
+        path = Path(wasm_path) if wasm_path is not None else default_wasm_path()
         if not path.is_file():
             raise ActiveError(f"wasm module not found: {path}")
         self._store = wasmtime.Store()
@@ -124,27 +131,57 @@ class Module:
 
     def _read(self, ptr: int, size: int) -> bytes:
         # wasmtime read(store, start, stop) returns the byte range.
-        return bytes(self._mem.read(self._store, ptr, ptr + size))
+        try:
+            return bytes(self._mem.read(self._store, ptr, ptr + size))
+        except Exception as e:
+            raise ActiveError(f"memory read failed: {e}") from e
 
     def _u32(self, ptr: int) -> int:
-        return int.from_bytes(self._read(ptr, 4), "little")
+        try:
+            return int.from_bytes(self._read(ptr, 4), "little")
+        except ActiveError:
+            raise
+        except Exception as e:
+            raise ActiveError(f"length slot unreadable: {e}") from e
 
     def _call_eval(self, source: str) -> dict:
         src = source.encode("utf-8")
-        sptr, sn = self._write(src)
-        slot, _ = self._write(b"\x00" * 4)
+        # Pointers start null so the finally below frees exactly what was
+        # allocated: if _write raises (closed module), there is no module
+        # allocation to free and no UnboundLocalError masks the real error.
+        sptr: int | None = None
+        sn: int = 0
+        slot: int | None = None
+        res: int = 0
+        env_len: int = 0
         try:
-            res = self._eval(self._store, sptr, sn, slot)
-            env_len = 0
+            sptr, sn = self._write(src)
+            slot, _ = self._write(b"\x00" * 4)
+            try:
+                res = self._eval(self._store, sptr, sn, slot)
+            except Exception as e:
+                # wasmtime traps (OOM, stack exhaustion) surface as the
+                # binding's own error type, never a bare host exception.
+                raise ActiveError(f"evaluation trapped: {e}") from e
             try:
                 env_len = self._u32(slot)
                 raw = self._read(res, env_len)
             finally:
+                # Registry-backed free is size-agnostic; a zero length
+                # here only means the length slot itself was unreadable.
                 self._free(self._store, res, env_len)
-            return json.loads(raw)
+            try:
+                env = json.loads(raw)
+            except Exception as e:
+                raise ActiveError(f"envelope is not JSON: {e}") from e
+            if not isinstance(env, dict):
+                raise ActiveError("envelope is not an object")
+            return env
         finally:
-            self._free(self._store, sptr, sn)
-            self._free(self._store, slot, 4)
+            if sptr is not None:
+                self._free(self._store, sptr, sn)
+            if slot is not None:
+                self._free(self._store, slot, 4)
 
     def check(self, source: str) -> list[Diagnostic]:
         """Parse and evaluate; return structured diagnostics (empty if clean).
@@ -161,12 +198,19 @@ class Module:
             raise ActiveError("envelope without items: rebuild active_wasm.wasm")
         text = env.get("diagnostics", "") or ""
         out = []
-        for item in env.get("items", []) or []:
-            span = item.get("span") or {}
+        for item in env["items"]:
+            if not isinstance(item, dict) or not item.get("code"):
+                # A code-less item is envelope corruption, not a clean
+                # diagnostic: fail closed instead of emitting an empty code.
+                raise ActiveError("envelope item without code")
+            span = item.get("span")
+            if span is not None and not isinstance(span, dict):
+                raise ActiveError("envelope item with bad span")
+            span = span or {}
             out.append(
                 Diagnostic(
-                    item.get("code", ""),
-                    text,
+                    item["code"],
+                    item.get("message") or text,
                     line=span.get("line"),
                     column=span.get("column"),
                     end_line=span.get("end_line"),
@@ -176,9 +220,38 @@ class Module:
             )
         return out
 
+    def validate(self, source: str) -> list[Diagnostic]:
+        """Validation step of the agent loop: the hermetic verdict.
+
+        Returns the same structured diagnostics as check(): on this
+        embedding the hermetic engine validates during evaluation, so
+        check (diagnose) and validate (verify) share one verdict path
+        and must always agree — the differential harness pins that.
+
+        Budgets, three layers, all fail-closed:
+        * iteration budget: enforced by the caller (reference loops pass
+          max_iters and stop on stuck codes);
+        * engine budgets: the hermetic engine ships hard defaults
+          (nodes, depth, array length, wall clock); exceeding them
+          refuses instead of truncating;
+        * custom per-call budgets: not a parameter here by design. The
+          zero-import WASM module runs fixed hermetic defaults so every
+          host sees identical verdicts. Hosts that need custom budgets
+          drive the C ABI surface (active_check with ActiveBudget),
+          which is the same core with a budget pointer.
+        """
+        return self.check(source)
+
     def eval(self, source: str) -> dict:
-        """Evaluate and return the redacted JSON value (raises on refusal)."""
+        """Evaluate and return the redacted JSON value (raises on refusal).
+
+        A malformed ok:true envelope (missing or non-dict value) raises
+        instead of returning a plausible-looking empty dict.
+        """
         env = self._call_eval(source)
         if not env.get("ok", False):
             raise ActiveError(f"refused: {env.get('diagnostics', '')[:200]}")
-        return env.get("json", {})
+        value = env.get("json")
+        if not isinstance(value, dict):
+            raise ActiveError("envelope ok without a JSON object value")
+        return value

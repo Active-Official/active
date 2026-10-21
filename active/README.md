@@ -26,6 +26,31 @@ use active::VERSION;
 println!("Active {VERSION}");
 ```
 
+## Non-monorepo consumption (external dependents)
+
+Add the published crate — no monorepo checkout needed:
+
+```toml
+[dependencies]
+active = "1"
+```
+
+```rust
+let module = active::parser::parse("port = 8080\n", "demo").unwrap();
+let engine = active::Engine::new();
+let (value, diags) = engine.evaluate(&module).unwrap();
+assert!(diags.is_empty());
+```
+
+This exact flow is a doctest on `src/lib.rs`, so it stays compiling and
+green on every CI run. Everything under `active_core::` is re-exported,
+so `use active::...` paths stay stable across releases.
+
+Non-Rust hosts do not use this crate: they link the frozen C ABI
+(`active-ffi`, same version line) with the ownership rules from
+`docs/FFI.md` — opaque handles, host frees only through the official
+`active_*_free` family, ABI major check at load.
+
 ## Minimum supported Rust version
 
 Rust 1.85 or newer.

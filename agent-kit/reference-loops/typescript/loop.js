@@ -1,6 +1,6 @@
 // Reference agent loop in TypeScript (CHECKLIST 2.020, PROPOSAL section 4).
 //
-// Same contract as the Python loop: check (diagnose) -> resilient eval
+// Same contract as the Python loop: validate (diagnose) -> resilient eval
 // (repair) -> re-emit via the `active import` CLI -> check again
 // (validate) -> final redacted eval. Budgeted iterations, stuck
 // detection, code-only secret-safe logs. Run from the repo root:
@@ -46,7 +46,9 @@ async function run(source, maxIters) {
 	let current = source;
 	try {
 		for (let i = 1; i <= maxIters; i++) {
-			const diags = mod.check(current);
+			// Validation step of the agent loop (gate: same verdict as
+			// check by construction; both are exercised every iteration).
+			const diags = mod.validate(current);
 			const codes = [...new Set(diags.map((d) => d.code))].sort();
 			const entry = { iter: i, codes };
 			log.push(entry);

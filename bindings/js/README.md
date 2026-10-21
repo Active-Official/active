@@ -6,9 +6,11 @@ Allocator Model A. Zero dependencies; runs on Node 20+, Deno, Bun, browsers.
 
 ## Decision (DERIVED, owner authority)
 
-WASM-first. No N-API addon until profiling justifies one. The npm name
-`@active-lang/active` is reserved for the Phase 3 packaging step (3.004)
-and is not claimed now.
+WASM-first. No N-API addon until profiling justifies one. The npm name is
+**decided: `@active-lang/active`** (scope and name verified free on the
+public registry 2026-10-21; package itself stays publish-ready until an
+owner token is available). TypeScript types ship in `active.d.ts`,
+mirroring `active.js` exactly.
 
 ## API
 
@@ -23,5 +25,33 @@ m.close();
 ## Tests
 
 `test_active.js` drives the shipped module: eval value, clean check,
-units refusal with T001, secret redaction with no raw leak, determinism.
+units refusal with T001, structured spans plus severity on diagnostics,
+`validate`/`check` agreement (codes, spans, severity, message), secret
+redaction with no raw leak, determinism.
 Run from the repo root: `node bindings/js/test_active.js` (prints `js-ok`).
+
+Type shape is gated by `tsc --noEmit` against the committed config
+(`bindings/js/tsconfig.json`, which typechecks `active.d.ts` plus the
+`active-types.test.ts` shape test that binds every exported member):
+
+```bash
+npx --yes -p typescript@5.6 tsc --noEmit -p bindings/js/tsconfig.json
+```
+
+Keep `active.d.ts` mirroring `active.js` exactly; the shape test fails the
+moment they drift.
+
+## Load-once guidance
+
+Load the WASM module **once per process** and reuse the module across
+calls: `load()` instantiates the linear-memory evaluator, and repeated
+loads pay the full instantiation cost with no benefit. Pass an explicit
+path only to pin a different build (e.g. a locally built `active_wasm.wasm`).
+
+## Ownership and lifetime (normative for this binding)
+
+- **Opaque handles:** a loaded module owns exactly one WASM instance. One module per task; do not share a module across concurrent async work that interleaves calls without external ordering. Close it when done; using a closed module throws.
+- **Allocator Model A:** every allocation the module makes is freed inside the module through the official `active_free` export (handled by the shim). Host code never frees module memory.
+- **ABI gate:** `load()` reads the module's ABI version and rejects a stale or foreign `.wasm` before returning.
+- **Error mapping:** evaluation refusal throws (never a bare null or an empty object); a missing module or malformed envelope throws instead of returning plausible data.
+- **Close discipline:** call `m.close()` when finished; the guard throws on any later use.

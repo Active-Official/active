@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Reference agent loop in Python (CHECKLIST 2.020, PROPOSAL section 4.1).
 
-Full cycle on the real path: candidate Active -> check (diagnose: the
+Full cycle on the real path: candidate Active -> validate (diagnose: the
 module runs the hermetic engine, resilient by default, so diagnostics
 include both errors and repair warnings) -> resilient eval (repair:
 default fills, key renames, coercions applied by the engine) -> re-emit
@@ -75,7 +75,9 @@ def run(source: str, max_iters: int = 5) -> tuple[dict, list[dict]]:
     seen: set[tuple[str, ...]] = set()
     with Module() as mod:
         for i in range(1, max_iters + 1):
-            diags = mod.check(current)
+            # Validation step of the agent loop (gate: same verdict as
+            # check by construction; both are exercised every iteration).
+            diags = mod.validate(current)
             codes = sorted({d.code for d in diags})
             entry: dict = {"iter": i, "codes": codes}
             log.append(entry)

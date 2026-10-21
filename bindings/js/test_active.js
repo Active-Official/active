@@ -15,11 +15,24 @@ const { load } = require("./active.js");
 		"T001 expected",
 	);
 	assert.strictEqual(diags.length, 1);
-	assert.strictEqual(diags[0].severity, "error");
 	assert.deepStrictEqual(
 		[diags[0].line, diags[0].column, diags[0].end_line, diags[0].end_column],
 		[1, 14, 1, 15],
 	);
+	assert.strictEqual(diags[0].severity, "error");
+
+	// validate() is the loop's validation entry point: same verdict as
+	// check() on every input, clean or not.
+	for (const src of [
+		"port = 8080\n",
+		"timeout = 5s + 512MiB\n",
+		'token = secret("hunter2")\n[out]\npass = token\n',
+	]) {
+		const shape = (d) => [d.code, d.line, d.column, d.end_line, d.end_column, d.severity, d.message];
+		const a = m.check(src).map(shape);
+		const b = m.validate(src).map(shape);
+		assert.deepStrictEqual(b, a, `validate/check diverge on ${JSON.stringify(src)}`);
+	}
 	assert.throws(() => m.evaluate("timeout = 5s + 512MiB\n"), /refused/);
 	const v = m.evaluate('token = secret("hunter2")\n[out]\npass = token\n');
 	assert.deepStrictEqual(v, { token: "***SECRET***", out: { pass: null } });

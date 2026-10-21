@@ -154,6 +154,9 @@ the §6 wall-clock delta in force.
   spuriously; `Budget::wall_supported()` returns false under `cfg(miri)`
   and the remaining budgets still bind execution. Wall-clock enforcement
   is a host-time property and is covered natively, never under Miri.
+  Stress inputs are scaled down under `cfg(miri)` (same code paths,
+  smaller documents) because per-byte shadow-memory cost turns linear
+  scans into multi-hour runs; native runs keep full sizes.
 - They do not replace the parser caps (different half, different
   codes, recover-vs-abort semantics).
 - They do not make validation cheaper than linear (validation walks

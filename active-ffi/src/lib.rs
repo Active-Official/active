@@ -902,8 +902,17 @@ mod tests {
     fn huge_source_is_bounded_not_fatal() {
         // H-001: a 2MB document must diagnose or evaluate, never hang or
         // trap. Budgets bound the walk; the call returns either way.
+        // Miri executes every byte with shadow-memory instrumentation, so
+        // the same linear scan costs ~10,000x wall time there; the
+        // property under test is boundedness, not size, so Miri runs the
+        // identical path on a 20KB document (native scaling is linear:
+        // 20KB/200KB/2MB take 0.03/0.06/0.25s outside Miri).
+        #[cfg(miri)]
+        let digits = 20_000;
+        #[cfg(not(miri))]
+        let digits = 2_000_000;
         let mut src = vec![b'x', b' ', b'=', b' '];
-        src.extend(std::iter::repeat_n(b'1', 2_000_000));
+        src.extend(std::iter::repeat_n(b'1', digits));
         src.push(b'\n');
         let module = unsafe { active_module_parse(src.as_ptr(), src.len(), std::ptr::null()) };
         // Parse may succeed or fail; either way the call returned.

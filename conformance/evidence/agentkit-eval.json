@@ -1,0 +1,95 @@
+{
+  "loops": {
+    "python": {
+      "tasks": {
+        "repair-fill.active": {
+          "clean": true,
+          "iters": 2,
+          "codes": [
+            "W005"
+          ],
+          "baseline_first_attempt_clean": false,
+          "improved_over_baseline": true
+        },
+        "clean-pass.active": {
+          "clean": true,
+          "iters": 1,
+          "codes": [],
+          "baseline_first_attempt_clean": true,
+          "improved_over_baseline": false
+        },
+        "broken-parse.active": {
+          "clean": false,
+          "iters": null,
+          "codes": [],
+          "baseline_first_attempt_clean": false,
+          "improved_over_baseline": false
+        }
+      },
+      "mean_iters_to_clean": 1.5,
+      "tasks_improved": 1,
+      "status": "pass"
+    },
+    "typescript": {
+      "tasks": {
+        "repair-fill.active": {
+          "clean": true,
+          "iters": 2,
+          "codes": [
+            "W005"
+          ],
+          "baseline_first_attempt_clean": false,
+          "improved_over_baseline": true
+        },
+        "clean-pass.active": {
+          "clean": true,
+          "iters": 1,
+          "codes": [],
+          "baseline_first_attempt_clean": true,
+          "improved_over_baseline": false
+        },
+        "broken-parse.active": {
+          "clean": false,
+          "iters": null,
+          "codes": [],
+          "baseline_first_attempt_clean": false,
+          "improved_over_baseline": false
+        }
+      },
+      "mean_iters_to_clean": 1.5,
+      "tasks_improved": 1,
+      "status": "pass"
+    },
+    "go": {
+      "tasks": {
+        "repair-fill.active": {
+          "clean": true,
+          "iters": 2,
+          "codes": [
+            "W005"
+          ],
+          "baseline_first_attempt_clean": false,
+          "improved_over_baseline": true
+        },
+        "clean-pass.active": {
+          "clean": true,
+          "iters": 1,
+          "codes": [],
+          "baseline_first_attempt_clean": true,
+          "improved_over_baseline": false
+        },
+        "broken-parse.active": {
+          "clean": false,
+          "iters": null,
+          "codes": [],
+          "baseline_first_attempt_clean": false,
+          "improved_over_baseline": false
+        }
+      },
+      "mean_iters_to_clean": 1.5,
+      "tasks_improved": 1,
+      "status": "pass"
+    }
+  },
+  "ok": true
+}

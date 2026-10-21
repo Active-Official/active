@@ -1,0 +1,175 @@
+{
+  "paths": {
+    "reference": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "test result: ok.",
+      "secret_clean": true
+    },
+    "c_abi": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "test result: ok.",
+      "secret_clean": true
+    },
+    "wasm": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "11/13 pass, 2 pinned",
+      "secret_clean": true
+    },
+    "go": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "eval port=8080 ok",
+      "secret_clean": true
+    },
+    "python": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "OK",
+      "secret_clean": true
+    },
+    "js-native": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "js-ok",
+      "secret_clean": true
+    },
+    "zig": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "SMOKE-OK",
+      "secret_clean": true
+    },
+    "csharp": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "SMOKE-OK",
+      "secret_clean": true
+    },
+    "cpp": {
+      "status": "skipped",
+      "exit": 0,
+      "tally": null,
+      "secret_clean": true
+    },
+    "java": {
+      "status": "skipped",
+      "exit": 0,
+      "tally": null,
+      "secret_clean": true
+    },
+    "lua": {
+      "status": "skipped",
+      "exit": 0,
+      "tally": null,
+      "secret_clean": true
+    },
+    "ruby": {
+      "status": "skipped",
+      "exit": 0,
+      "tally": null,
+      "secret_clean": true
+    },
+    "php": {
+      "status": "skipped",
+      "exit": 0,
+      "tally": null,
+      "secret_clean": true
+    },
+    "fortran": {
+      "status": "skipped",
+      "exit": 0,
+      "tally": null,
+      "secret_clean": true
+    },
+    "go-native": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "TEST-OK",
+      "secret_clean": true
+    },
+    "differential": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "DIFFERENTIAL-OK",
+      "secret_clean": true
+    },
+    "haskell": {
+      "status": "skipped",
+      "exit": 0,
+      "tally": null,
+      "secret_clean": true
+    },
+    "julia": {
+      "status": "skipped",
+      "exit": 0,
+      "tally": null,
+      "secret_clean": true
+    },
+    "nim": {
+      "status": "skipped",
+      "exit": 0,
+      "tally": null,
+      "secret_clean": true
+    },
+    "perl": {
+      "status": "skipped",
+      "exit": 0,
+      "tally": null,
+      "secret_clean": true
+    },
+    "r": {
+      "status": "skipped",
+      "exit": 0,
+      "tally": null,
+      "secret_clean": true
+    },
+    "ocaml": {
+      "status": "skipped",
+      "exit": 0,
+      "tally": null,
+      "secret_clean": true
+    },
+    "crystal": {
+      "status": "skipped",
+      "exit": 0,
+      "tally": null,
+      "secret_clean": true
+    },
+    "elixir": {
+      "status": "skipped",
+      "exit": 0,
+      "tally": null,
+      "secret_clean": true
+    },
+    "dart": {
+      "status": "skipped",
+      "exit": 0,
+      "tally": null,
+      "secret_clean": true
+    },
+    "vlang": {
+      "status": "skipped",
+      "exit": 0,
+      "tally": null,
+      "secret_clean": true
+    },
+    "kotlin": {
+      "status": "skipped",
+      "exit": 0,
+      "tally": null,
+      "secret_clean": true
+    },
+    "swift": {
+      "status": "skipped",
+      "exit": 0,
+      "tally": null,
+      "secret_clean": true
+    }
+  },
+  "secret_leak": false,
+  "ok": true,
+  "parity": []
+}

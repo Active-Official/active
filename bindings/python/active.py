@@ -112,9 +112,12 @@ class Module:
         slot, _ = self._write(b"\x00" * 4)
         try:
             res = self._eval(self._store, sptr, sn, slot)
-            env_len = self._u32(slot)
-            raw = self._read(res, env_len)
-            self._free(self._store, res, env_len)
+            env_len = 0
+            try:
+                env_len = self._u32(slot)
+                raw = self._read(res, env_len)
+            finally:
+                self._free(self._store, res, env_len)
             return json.loads(raw)
         finally:
             self._free(self._store, sptr, sn)

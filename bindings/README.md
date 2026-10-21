@@ -23,8 +23,8 @@
 |-----------------------|------|------------|-----------------|
 | Go                    | 1    | In progress | External wazero binding repo plus in-tree `active-wasm/smoke-go` (green); conformance wiring pending CHECKLIST 1.001-1.003 |
 | Python                | 1    | Complete (gate pending) | WASM-first via wasmtime in `bindings/python` (`active.py`, 5/5 tests, harness path `python` green); CHECKLIST 1.004-1.006 done, Phase 1 gate pending |
-| JavaScript/TypeScript | 1    | In progress | Hand-written `active-wasm/js` shim plus browser playground live; N-API path decision pending CHECKLIST 1.007 |
-| Rust (external crate) | 1    | Planned    | In-workspace `active` facade exists; external re-export story pending CHECKLIST 1.009 |
+| JavaScript/TypeScript | 1    | Complete (gate pending) | WASM-first via hand-written shim plus `bindings/js` wrapper (agent-loop + codes, tests green, harness path `js-native`); N-API deferred; npm name reserved; CHECKLIST 1.007-1.008 done, Phase 1 gate pending |
+| Rust (external crate) | 1    | Complete (gate pending) | Published `active` facade re-exports `active_core`; crate doctest proves external parse plus eval; raw ABI via published `active-ffi`; CHECKLIST 1.009 done, Phase 1 gate pending |
 | Java                  | 2    | Planned    | CHECKLIST 2.001 |
 | C#                    | 2    | Planned    | CHECKLIST 2.002 |
 | C++                   | 2    | Planned    | CHECKLIST 2.003 |

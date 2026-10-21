@@ -88,9 +88,15 @@ PATHS: list[tuple[str, list[str], Path, str]] = [
         ROOT,
         r"^OK$",
     ),
+    (
+        "js-native",
+        ["node", "bindings/js/test_active.js"],
+        ROOT,
+        r"^js-ok$",
+    ),
 ]
 
-PLACEHOLDERS = ["js-native", "go-native"]
+PLACEHOLDERS = ["go-native"]
 
 
 def self_check() -> int:
@@ -116,6 +122,8 @@ def self_check() -> int:
         ("eval port=8080 FAILED", r"^eval port=8080 ok$", False),
         ("OK", r"^OK$", True),
         ("FAILED (failures=1)", r"^OK$", False),
+        ("js-ok", r"^js-ok$", True),
+        ("js-FAIL: refused", r"^js-ok$", False),
     ]
     bad = 0
     for sample, pattern, want in cases:

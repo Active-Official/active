@@ -828,3 +828,148 @@ impl RustGen<'_> {
         }
     }
 }
+
+// ------------------------------------------------------------------
+// Python TypedDicts (stdlib typing only; floor Python 3.11 for
+// Required/NotRequired). Descriptions render as comments, formats
+// and defaults as comments, requires as a comment: the types carry
+// shape, Active carries verdicts.
+// ----------------------------------------------------------------
+
+/// The schema tree as Python `TypedDict` classes: nested tables become
+/// nested classes, enums become `Literal`, optional fields use
+/// `NotRequired`. Descriptions, formats, defaults, and `requires`
+/// render as comments above each field.
+pub fn schema_to_python(module: &Module, root_name: &str) -> Result<String, String> {
+    let root = schema_root(module)?;
+    if !matches!(module.get(root), Some(Node::SchemaTable { .. })) {
+        return Err("schema block must be a table for code generation".to_string());
+    }
+    let mut gen = PythonGen {
+        module,
+        out: String::from("from typing import Any, Literal, NotRequired, TypedDict\n\n\n"),
+        names: HashMap::new(),
+        taken: HashSet::new(),
+    };
+    let root_name = gen.type_name(root, pascal_case(&sanitize_ident(root_name, "Config")));
+    gen.emit_table(&root_name, root);
+    Ok(gen.out)
+}
+
+struct PythonGen<'a> {
+    module: &'a Module,
+    out: String,
+    names: HashMap<NodeId, String>,
+    taken: HashSet<String>,
+}
+
+impl PythonGen<'_> {
+    fn type_name(&mut self, id: NodeId, base: String) -> String {
+        if let Some(name) = self.names.get(&id) {
+            return name.clone();
+        }
+        let mut name = base;
+        while !self.taken.insert(name.clone()) {
+            name.push('_');
+        }
+        self.names.insert(id, name.clone());
+        name
+    }
+
+    fn emit_table(&mut self, name: &str, id: NodeId) {
+        let Some(Node::SchemaTable { fields, .. }) = self.module.get(id) else {
+            return;
+        };
+        let fields: Vec<(String, NodeId)> = fields.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        self.out.push_str(&format!("class {name}(TypedDict):\n"));
+        if fields.is_empty() {
+            self.out.push_str("    pass\n");
+        }
+        for (key, field) in &fields {
+            let field_name = sanitize_ident(&key.to_lowercase(), "field");
+            if field_name != *key {
+                self.out.push_str(&format!("    # key: {key}\n"));
+            }
+            if let Some(doc) = field_description(self.module, *field) {
+                self.out.push_str(&format!("    # {doc}\n"));
+            }
+            if let Some(crate::ir::Node::SchemaField { field: f }) = self.module.get(*field) {
+                if let Some(format) = literal_string(self.module, f.format) {
+                    self.out.push_str(&format!("    # format: {format}\n"));
+                }
+                if let Some(default) = literal_default(self.module, f) {
+                    self.out.push_str(&format!("    # default: {default}\n"));
+                }
+                if let Some(target) = literal_string(self.module, f.requires) {
+                    self.out.push_str(&format!("    # requires: {target}\n"));
+                }
+                if let Some(reason) = f.deprecated.clone() {
+                    if reason.is_empty() {
+                        self.out.push_str("    # Deprecated\n");
+                    } else {
+                        self.out.push_str(&format!("    # Deprecated: {reason}\n"));
+                    }
+                }
+            }
+            let nominal = nominal_id(self.module, *field);
+            let tname = self.type_name(nominal, format!("{name}{}", pascal_case(key)));
+            let mut typ = self.py_type(&tname, *field);
+            if !is_required(self.module, *field) {
+                typ = format!("NotRequired[{typ}]");
+            }
+            self.out.push_str(&format!("    {field_name}: {typ}\n"));
+        }
+        self.out.push('\n');
+        for (key, field) in &fields {
+            let nominal = nominal_id(self.module, *field);
+            let tname = self.type_name(nominal, format!("{name}{}", pascal_case(key)));
+            self.emit_nested(&tname, *field);
+        }
+    }
+
+    fn emit_nested(&mut self, name: &str, id: NodeId) {
+        match self.module.get(id) {
+            Some(Node::SchemaTable { .. }) => self.emit_table(name, id),
+            Some(Node::SchemaArray { element }) => self.emit_nested(name, *element),
+            _ => {}
+        }
+    }
+
+    fn py_type(&mut self, hint: &str, id: NodeId) -> String {
+        match self.module.get(id) {
+            Some(Node::SchemaTable { .. }) => format!("\"{hint}\""),
+            Some(Node::SchemaArray { element }) => {
+                format!("list[{}]", self.py_inline(hint, *element))
+            }
+            Some(Node::SchemaField { field }) => self.py_field(field),
+            _ => "Any".to_string(),
+        }
+    }
+
+    fn py_inline(&mut self, hint: &str, id: NodeId) -> String {
+        match self.module.get(id) {
+            Some(Node::SchemaTable { .. }) => format!("\"{hint}\""),
+            Some(Node::SchemaArray { element }) => {
+                format!("list[{}]", self.py_inline(hint, *element))
+            }
+            Some(Node::SchemaField { field }) => self.py_field(field),
+            _ => "Any".to_string(),
+        }
+    }
+
+    fn py_field(&self, field: &SchemaField) -> String {
+        match &field.typ {
+            ActiveType::Null => "None".to_string(),
+            ActiveType::Bool => "bool".to_string(),
+            ActiveType::Int | ActiveType::Duration | ActiveType::Bytes => "int".to_string(),
+            ActiveType::Float => "float".to_string(),
+            ActiveType::String | ActiveType::Secret => "str".to_string(),
+            ActiveType::Enum(members) => {
+                let quoted: Vec<String> = members.iter().map(|m| format!("\"{m}\"")).collect();
+                format!("Literal[{}]", quoted.join(", "))
+            }
+            ActiveType::Table { .. } => "dict[str, Any]".to_string(),
+            ActiveType::Any => "Any".to_string(),
+        }
+    }
+}

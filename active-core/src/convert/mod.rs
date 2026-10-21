@@ -12,7 +12,8 @@ pub use doc::{collect_items, doc_to_html, doc_to_man, doc_to_markdown, DocItem};
 
 pub use export::{value_to_toml_string, value_to_yaml_string};
 pub use gen::{
-    schema_to_go, schema_to_json_schema, schema_to_openapi, schema_to_rust, schema_to_typescript,
+    schema_to_go, schema_to_json_schema, schema_to_openapi, schema_to_python, schema_to_rust,
+    schema_to_typescript,
 };
 pub use import::{
     json_text_to_active, json_value_to_active, jsonschema_to_active, toml_text_to_active,

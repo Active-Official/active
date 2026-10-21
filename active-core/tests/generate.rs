@@ -205,3 +205,22 @@ fn codegen_carries_new_schema_metadata() {
     let go = schema_to_go(&module, "Config").expect("go");
     assert!(go.contains("// Team inbox."), "{go}");
 }
+
+#[test]
+fn python_target_emits_typed_dicts() {
+    use active_core::convert::schema_to_python;
+    let module = parse(EXT_SCHEMA_DOC, "generate").expect("schema must parse");
+    let py = schema_to_python(&module, "Config").expect("python");
+    for probe in [
+        "from typing import Any, Literal, NotRequired, TypedDict",
+        "class Config(TypedDict):",
+        "contact: str",
+        "# format: email",
+        "# Team inbox.",
+        "color: Literal[\"red\", \"green\"]",
+        "cert: str",
+        "# requires: tls",
+    ] {
+        assert!(py.contains(probe), "missing {probe}:\n{py}");
+    }
+}

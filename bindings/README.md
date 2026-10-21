@@ -21,7 +21,7 @@
 
 | Language              | Tier | Status     | Notes / Tracker |
 |-----------------------|------|------------|-----------------|
-| Go                    | 1    | Complete (gate pending) | External wazero repo (conformance CI) plus in-tree smoke and reference loop (`agent-kit/reference-loops/go`); CHECKLIST 1.001-1.003, 2.020 (Go) done, Phase 1 gate pending |
+| Go                    | 1    | Complete | External wazero repo (conformance CI) plus in-tree smoke, reference loop, and harness `go-native` path running the external suite; CHECKLIST 1.001-1.003, 2.020 (Go) done |
 | Python                | 1    | Complete (gate pending) | WASM-first via wasmtime in `bindings/python` (`active.py`, 5/5 tests, harness path `python` green); CHECKLIST 1.004-1.006 done, Phase 1 gate pending |
 | JavaScript/TypeScript | 1    | Complete (gate pending) | WASM-first via hand-written shim plus `bindings/js` wrapper (agent-loop + codes, tests green, harness path `js-native`); N-API deferred; npm name reserved; CHECKLIST 1.007-1.008 done, Phase 1 gate pending |
 | Rust (external crate) | 1    | Complete (gate pending) | Published `active` facade re-exports `active_core`; crate doctest proves external parse plus eval; raw ABI via published `active-ffi`; CHECKLIST 1.009 done, Phase 1 gate pending |

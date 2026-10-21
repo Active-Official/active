@@ -152,9 +152,15 @@ PATHS: list[tuple[str, list[str], Path, str]] = [
         ROOT,
         r"^SMOKE-OK$",
     ),
+    (
+        "go-native",
+        ["python", "bindings/go/run-tests.py"],
+        ROOT,
+        r"^TEST-OK$",
+    ),
 ]
 
-PLACEHOLDERS = ["go-native"]
+PLACEHOLDERS = []
 
 
 def self_check() -> int:

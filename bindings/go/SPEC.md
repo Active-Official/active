@@ -22,9 +22,11 @@ oracle and double the maintenance tail for zero user benefit.
 - `active-wasm/smoke-go/main.go` drives the same wazero mechanism (ABI check,
   eval, refusal assert) and is wired into the shared harness
   (`conformance/harness/run.py`, path `go`).
-- Full manifest parity for Go is proven by the external repo's CI, cited from
-  the matrix; the harness `go-native` placeholder reserves direct in-tree
-  invocation if the binding ever moves into this repo.
+- Full manifest parity for Go is proven two ways: the external repo's CI on
+  every change, and the shared harness `go-native` path, which
+  shallow-clones `Active-Official/active-go` and runs its full `go test`
+  suite (see `bindings/go/run-tests.py`; SKIP when git/go or network is
+  unavailable, never a silent pass).
 
 ## Appendix B status
 

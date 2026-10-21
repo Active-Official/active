@@ -13,9 +13,16 @@ Paths run today:
 Placeholders (status "not-implemented") reserve slots for language
 bindings as they land; a placeholder never counts as a pass.
 
-Normalization rules (PROPOSAL section 5.1, tier G-017):
+Normalization rules (PROPOSAL section 5.1, tier G-017, strict parity gate):
   codes      diagnostic codes compare strictly; any mismatch fails the path.
-  spans      advisory only; drift is reported, never failing.
+  spans      compared STRICTLY by the `differential` gate, which drives
+             every hermetic manifest case through three independent
+             embeddings (C ABI via ctypes with structured spans, Python
+             and JS via envelope items) and asserts identical ordered
+             code lists, span tuples, severities, refused flags, and
+             redacted JSON. Span drift fails the whole run; per-path
+             suites that cannot surface spans (Tier-2 smoke runners
+             assert codes+values+redaction) never count as span proof.
   secrets    any raw secret marker in any output fails the whole run.
   json       objects compare key-order-insensitively after parsing.
 
@@ -290,6 +297,103 @@ def self_check() -> int:
     return 1 if bad else 0
 
 
+def classify(
+    code: int, output: str, tally: str, timed_out: bool = False
+) -> tuple[str, str | None, bool]:
+    """Classify one path run as pass / skipped / fail.
+
+    Split out of main() so the rule itself is unit-testable: weakening
+    any branch here must turn a test red. Returns (status, tally, clean).
+    A timeout always fails, even when the partial output happens to
+    contain a SKIP line.
+    """
+    if timed_out:
+        return "fail", parse_tally(scrub(output), tally), RAW_SECRET not in output
+    clean = RAW_SECRET not in output
+    output = scrub(output)
+    tally_line = parse_tally(output, tally)
+    skip_line = parse_tally(output, r"^SKIP.*$") is not None
+    if code == 127 and not skip_line:
+        # Missing toolchain binary (cargo/node/go): skip openly.
+        return "skipped", tally_line, clean
+    if skip_line:
+        # A SKIP line skips only on a clean exit: a runner that
+        # prints SKIP and then fails (nonzero code) fails the run,
+        # never passes silently (review P3-2).
+        if code == 0 and clean:
+            return "skipped", tally_line, clean
+        return "fail", tally_line, clean
+    if code == 0 and tally_line is not None and clean:
+        return "pass", tally_line, clean
+    return "fail", tally_line, clean
+
+
+# Tier-1 paths must PASS for the run to pass: these embeddings carry
+# the cross-implementation contract (reference, C ABI, WASM, every
+# Tier-1 binding, and the differential proof itself). Tier-2 smoke paths
+# may skip openly when their toolchain is absent. Deleting or renaming a
+# Tier-1 entry must fail the run, never silently shrink the gate.
+TIER1 = frozenset(
+    {
+        "reference",
+        "c_abi",
+        "wasm",
+        "go",
+        "python",
+        "js-native",
+        "go-native",
+        "differential",
+    }
+)
+
+
+def verify_parity(report: dict) -> list[str]:
+    """Cross-implementation parity gate (Phase-2 criterion 1).
+
+    The per-path tallies prove each embedding runs its own suite; this
+    gate proves the embeddings AGREE: identical codes, spans, and
+    redacted JSON. It fails the whole run when the differential proof
+    is missing, red, or leaking — so deleting or weakening the gate
+    cannot silently pass. Returns the violation list (empty = hold).
+    """
+    violations: list[str] = []
+    paths = report.get("paths", {})
+    diff = paths.get("differential")
+    if diff is None:
+        violations.append("differential parity gate missing from report")
+    elif diff.get("status") != "pass":
+        violations.append(f"differential parity gate not passing: {diff.get('status')}")
+    elif not diff.get("secret_clean", False):
+        violations.append("differential parity gate not secret-clean")
+    for name in sorted(TIER1 - {"differential"}):
+        entry = paths.get(name)
+        if entry is None:
+            violations.append(f"Tier-1 path {name} missing from report")
+        elif entry.get("status") != "pass":
+            violations.append(f"Tier-1 path {name} not passing: {entry.get('status')}")
+        elif not entry.get("secret_clean", False):
+            violations.append(f"Tier-1 path {name} not secret-clean")
+    for name, entry in paths.items():
+        if name in PLACEHOLDERS or name in TIER1:
+            continue
+        if entry.get("status") not in ("pass", "skipped"):
+            violations.append(f"path {name} not passing: {entry.get('status')}")
+        if not entry.get("secret_clean", False):
+            violations.append(f"path {name} not secret-clean")
+    if report.get("secret_leak"):
+        violations.append("raw secret marker leaked in captured output")
+    return violations
+
+
+def finalize_ok(failed: bool, parity: list[str]) -> bool:
+    """Overall verdict from the path failures plus the parity gate.
+
+    Split out of main() so the wiring itself is unit-testable: bypassing
+    verify_parity in main() must turn the finalize tests red.
+    """
+    return not failed and not parity
+
+
 def main() -> int:
     if "--self-check" in sys.argv:
         return self_check()
@@ -298,55 +402,44 @@ def main() -> int:
     failed = False
     for name, argv, cwd, tally in PATHS:
         code, output, timed_out = sh(argv, cwd)
-        # Leak gate reads the RAW output: scrub() redacts the marker, so
-        # checking after scrubbing would pass every run by construction
-        # (review P3-1: the old order made secret_leak dead code).
-        clean = RAW_SECRET not in output
-        if not clean:
+        if RAW_SECRET in output:
             report["secret_leak"] = True
             # A raw secret in any path's output fails the whole run,
-            # even a path that otherwise counts as skipped.
+            # even a path that otherwise counts as skipped. The clean
+            # flag below is read from the raw output for the same
+            # reason: scrub() redacts the marker, so checking after
+            # scrubbing would pass every run by construction.
             failed = True
-        output = scrub(output)
-        tally_line = parse_tally(output, tally)
-        skip_line = parse_tally(output, r"^SKIP.*$") is not None
-        missing_binary = code == 127 and not skip_line
-        if missing_binary:
-            # Missing toolchain binary (cargo/node/go): skip openly.
-            skipped = True
-        elif skip_line:
-            # A SKIP line skips only on a clean exit: a runner that
-            # prints SKIP and then fails (nonzero code) must fail the
-            # run, never pass silently (review P3-2).
-            skipped = code == 0 and clean
-        else:
-            skipped = False
-        passed = code == 0 and tally_line is not None and clean and not timed_out
-        if skipped:
-            entry = {
+        status, tally_line, clean = classify(code, output, tally, timed_out)
+        if status == "skipped":
+            report["paths"][name] = {
                 "status": "skipped",
                 "exit": code,
                 "tally": tally_line,
                 "secret_clean": clean,
             }
-            report["paths"][name] = entry
             continue
-        if not passed:
+        if status != "pass":
             failed = True
         entry = {
-            "status": "pass" if passed else "fail",
+            "status": status,
             "exit": code,
             "tally": tally_line,
             "secret_clean": clean,
         }
         if timed_out:
             entry["timed_out"] = True
-        if not passed:
-            entry["output_tail"] = output[-2000:]
+        if status != "pass":
+            entry["output_tail"] = scrub(output)[-2000:]
         report["paths"][name] = entry
     for name in PLACEHOLDERS:
         report["paths"][name] = {"status": "not-implemented"}
-    report["ok"] = not failed
+    # Cross-implementation parity: identical codes, spans, and redacted
+    # JSON across embeddings. This is the Phase-2 criterion 1 gate; it
+    # runs inside run.py (not beside it) so no report can pass without it.
+    parity = verify_parity(report)
+    report["parity"] = parity
+    report["ok"] = finalize_ok(failed, parity)
     text = json.dumps(report, indent=2)
     print(text)
     if out:

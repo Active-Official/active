@@ -17,6 +17,10 @@ import tempfile
 from pathlib import Path
 
 REPO = "https://github.com/Active-Official/active-go"
+# Pinned upstream commit (verified green in CI): the external suite must
+# be deterministic, not tracking a moving HEAD. Bump deliberately with
+# a green harness run, never implicitly.
+REPO_REF = "f5bd6e223dde0a0fd47ef3aa241f45443e9de1e4"
 
 
 def run(argv, cwd):
@@ -37,12 +41,33 @@ def main():
         return 0
     tmp = Path(tempfile.mkdtemp(prefix="active-go-native-"))
     try:
+        p = run(["git", "init", "-q", str(tmp / "active-go")], Path.cwd())
+        if p.returncode != 0:
+            print("SKIP: cannot init git repo")
+            return 0
         p = run(
-            ["git", "clone", "--quiet", "--depth", "1", REPO, str(tmp / "active-go")],
+            [
+                "git",
+                "-C",
+                str(tmp / "active-go"),
+                "fetch",
+                "--quiet",
+                "--depth",
+                "1",
+                REPO,
+                REPO_REF,
+            ],
             Path.cwd(),
         )
         if p.returncode != 0:
-            print("SKIP: cannot clone active-go (offline?)")
+            print("SKIP: cannot fetch active-go (offline?)")
+            return 0
+        p = run(
+            ["git", "-C", str(tmp / "active-go"), "checkout", "-q", "FETCH_HEAD"],
+            Path.cwd(),
+        )
+        if p.returncode != 0:
+            print("SKIP: cannot checkout active-go")
             return 0
         t = run(["go", "test", "./..."], tmp / "active-go")
         combined = t.stdout + t.stderr

@@ -2,10 +2,12 @@ name: Conformance
 
 # Shared cross-implementation conformance (CHECKLIST Step 3.001,
 # PROPOSAL section 5.1). Runs the harness over Rust, the C ABI, WASM,
-# Go, Python, JS, Zig, and C# on every push and PR. Any divergence in
-# diagnostic codes or redacted JSON fails the gate; spans stay advisory
-# per tier G-017. Tier-2 paths that cannot run here report
-# not-implemented/skip explicitly instead of passing silently.
+# Go, Python, JS, Zig, and C# on every push and PR, plus Tier-2 smoke
+# paths where toolchains exist. Codes AND spans compare strictly through
+# the differential gate (identical ordered codes, span tuples,
+# severities, refused flags, redacted JSON across embeddings); the gate
+# itself must pass for the run to pass, and any leak fails the run.
+# Tier-2 paths that cannot run here skip openly, never silently.
 
 on:
   push:
@@ -98,6 +100,11 @@ jobs:
       - name: Build WASM module and FFI libraries
         run: cargo build -p active-wasm --target wasm32-unknown-unknown --release --locked
       - run: cargo build -p active-ffi --locked
+      - name: Run harness unit tests (gate enforcement)
+        # test_run.py pins the parity rules inside run.py: weakening
+        # classify()/verify_parity() must turn these red. Runs before the
+        # shared harness so a weakened gate never reports green.
+        run: python conformance/harness/test_run.py
       - name: Run shared harness
         run: python conformance/harness/run.py --out harness.json
       - name: Upload harness report

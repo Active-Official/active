@@ -82,9 +82,15 @@ PATHS: list[tuple[str, list[str], Path, str]] = [
         ROOT / "active-wasm" / "smoke-go",
         r"^eval port=8080 ok$",
     ),
+    (
+        "python",
+        ["python", "bindings/python/test_active.py"],
+        ROOT,
+        r"^OK$",
+    ),
 ]
 
-PLACEHOLDERS = ["python", "js-native", "go-native"]
+PLACEHOLDERS = ["js-native", "go-native"]
 
 
 def self_check() -> int:
@@ -108,6 +114,8 @@ def self_check() -> int:
         ("11/13 pass, 2 pinned (extra)", r"^\d+/\d+ pass, \d+ pinned$", False),
         ("eval port=8080 ok", r"^eval port=8080 ok$", True),
         ("eval port=8080 FAILED", r"^eval port=8080 ok$", False),
+        ("OK", r"^OK$", True),
+        ("FAILED (failures=1)", r"^OK$", False),
     ]
     bad = 0
     for sample, pattern, want in cases:

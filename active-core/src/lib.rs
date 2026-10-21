@@ -14,6 +14,7 @@ pub mod lint;
 pub mod parser;
 pub mod provenance;
 pub mod sign;
+pub mod trace;
 pub mod types;
 pub mod validate;
 

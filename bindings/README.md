@@ -40,7 +40,7 @@
 | Nim                   | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.013) |
 | Crystal               | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.014) |
 | V                     | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.015) |
-| Lua / LuaJIT          | 2    | Planned    | CHECKLIST 2.016 |
+| Lua / LuaJIT          | 2    | Planned | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.016) |
 
 Update this matrix on every binding status change. Statuses above were
 verified against the live repo on 2026-10-20 by running the shared harness

@@ -82,6 +82,10 @@ enum Commands {
         /// Select a profile by name, overriding the active_profile key
         #[arg(long)]
         profile: Option<String>,
+        /// Emit opt-in evaluation trace (counts and diagnostic codes
+        /// only, never values, sources, or secrets) as JSONL on stderr
+        #[arg(long)]
+        trace: bool,
         #[command(flatten)]
         budget: BudgetArgs,
     },
@@ -100,6 +104,10 @@ enum Commands {
         /// Select a profile by name, overriding the active_profile key
         #[arg(long)]
         profile: Option<String>,
+        /// Emit opt-in evaluation trace (counts and diagnostic codes
+        /// only, never values, sources, or secrets) as JSONL on stderr
+        #[arg(long)]
+        trace: bool,
         #[command(flatten)]
         budget: BudgetArgs,
     },
@@ -372,6 +380,26 @@ fn had_failure(diags: &[Diagnostic], resilient: bool) -> bool {
         .any(|d| d.severity == Severity::Error || (!resilient && d.severity == Severity::Warning))
 }
 
+/// Dump the opt-in evaluation trail as JSONL on stderr. Events carry
+/// counts and diagnostic codes only, never values, sources, or secrets
+/// (enforced by construction in active_core::trace).
+fn dump_trail(enabled: bool) {
+    if !enabled {
+        return;
+    }
+    for event in active_core::trace::take_trail() {
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "phase": event.phase,
+                "nodes": event.nodes,
+                "diags": event.diags,
+                "codes": event.codes,
+            })
+        );
+    }
+}
+
 /// Print a diagnostic with its file and span when available. Multi-file
 /// documents (includes) attribute each diagnostic to its own file.
 fn report(d: &Diagnostic, fallback_file: &str) {
@@ -418,6 +446,7 @@ fn main() -> anyhow::Result<()> {
             allow_parent_escapes,
             trust_keys,
             profile,
+            trace,
             budget,
         } => {
             let name = file.to_string_lossy().to_string();
@@ -425,9 +454,18 @@ fn main() -> anyhow::Result<()> {
             let module = parse_input(&file, resilient, allow_parent_escapes, &trust)?;
 
             let engine = engine(resilient, &profile, budget.budget());
-            let (value, diags) = engine
-                .evaluate(&module)
-                .inspect_err(|e| report_eval_error(e, &name))?;
+            active_core::trace::set_tracing(trace);
+            let (value, diags) = match engine.evaluate(&module) {
+                Ok(out) => {
+                    dump_trail(trace);
+                    out
+                }
+                Err(e) => {
+                    dump_trail(trace);
+                    report_eval_error(&e, &name);
+                    return Err(anyhow::anyhow!("evaluation failed"));
+                }
+            };
             for d in &diags {
                 report(d, &name);
             }
@@ -459,6 +497,7 @@ fn main() -> anyhow::Result<()> {
             allow_parent_escapes,
             trust_keys,
             profile,
+            trace,
             budget,
         } => {
             let name = file.to_string_lossy().to_string();
@@ -466,8 +505,10 @@ fn main() -> anyhow::Result<()> {
             match parse_input(&file, resilient, allow_parent_escapes, &trust) {
                 Ok(module) => {
                     let engine = engine(resilient, &profile, budget.budget());
+                    active_core::trace::set_tracing(trace);
                     match engine.evaluate(&module) {
                         Ok((_, diags)) => {
+                            dump_trail(trace);
                             if diags.is_empty() {
                                 println!("OK");
                             } else {
@@ -480,6 +521,7 @@ fn main() -> anyhow::Result<()> {
                             }
                         }
                         Err(e) => {
+                            dump_trail(trace);
                             report_eval_error(&e, &name);
                             std::process::exit(1);
                         }

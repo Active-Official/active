@@ -969,6 +969,7 @@ impl Engine {
         // §2): static scans, cycle check, sort, walk, transforms, and
         // validation share one clock.
         let deadline = self.budget.wall_deadline();
+        crate::trace::record("eval_start", module.arena.len() as u64, &module.diagnostics);
         // Budgets first: fail fast on monsters before any real work.
         check_static_budgets(module, &self.budget)?;
         if is_cyclic_directed(&module.graph) {
@@ -1308,6 +1309,11 @@ impl Engine {
                 ));
             }
         }
+        crate::trace::record(
+            "eval_done",
+            crate::trace::count_nodes(&result),
+            &diagnostics,
+        );
         Ok((result, diagnostics))
     }
 

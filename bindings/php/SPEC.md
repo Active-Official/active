@@ -1,9 +1,13 @@
-# Php Binding SPEC (CHECKLIST Phase 2, PROPOSAL section 2.1)
+# PHP Binding SPEC (CHECKLIST 2.006, PROPOSAL section 2.1)
 
-Status: Planned (no toolchain on this machine; design recorded, implementation deferred until a toolchain is available for proof).
+Status: smoke-proven in a Linux container (PHP 8.3 FFI over the Linux
+shared library, ext-ffi enabled); run-smoke.py reproduces the proof,
+skipping without PHP or a native shared library.
 
-Mechanism: PHP FFI extension.
+Mechanism: ext-ffi `FFI::cdef` over the frozen C ABI (opaque struct
+types only). Input strings cross as explicit `uint8_t[]` buffers via
+`FFI::memcpy` (PHP strings do not coerce to C pointers); output strings
+are read with explicit lengths (no `FFI::string` before PHP 8.4).
+Allocator Model A with try/finally on every path.
 
-PHP 7.4+ FFI cdef over docs/FFI.md header text; owned handles wrapped in objects with __destruct calling the matching free; ABI gate at module load. No PHP toolchain on this machine: SPEC only.
-
-Ownership mapping: every active_* owned return is freed exactly once with its matching free function; diagnostic codes are borrowed and never freed; modules stay thread-confined per docs/FFI.md. Agent-loop surface (check, eval, diagnostics with codes) mirrors bindings/python/active.py one to one. Full manifest wiring follows the Go smoke pattern once implemented.
+Agent-loop surface mirrors bindings/python/active.py one to one.

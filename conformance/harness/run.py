@@ -38,6 +38,10 @@ REDACTED = "***SECRET***"
 
 
 def sh(argv: list[str], cwd: Path) -> tuple[int, str, bool]:
+    # `python` is not on PATH everywhere (Debian ships `python3` only);
+    # always run the current interpreter.
+    if argv and argv[0] == "python":
+        argv = [sys.executable, *argv[1:]]
     try:
         p = subprocess.run(
             argv,
@@ -130,6 +134,18 @@ PATHS: list[tuple[str, list[str], Path, str]] = [
         ROOT,
         r"^SMOKE-OK$",
     ),
+    (
+        "ruby",
+        ["python", "bindings/ruby/run-smoke.py"],
+        ROOT,
+        r"^SMOKE-OK$",
+    ),
+    (
+        "php",
+        ["python", "bindings/php/run-smoke.py"],
+        ROOT,
+        r"^SMOKE-OK$",
+    ),
 ]
 
 PLACEHOLDERS = ["go-native"]
@@ -188,6 +204,9 @@ def main() -> int:
             report["secret_leak"] = True
         tally_line = parse_tally(output, tally)
         skipped = parse_tally(output, r"^SKIP.*$") is not None
+        if code == 127 and not skipped:
+            # Missing toolchain binary (cargo/node/go): skip openly.
+            skipped = True
         passed = code == 0 and tally_line is not None and clean and not timed_out
         if skipped:
             entry = {

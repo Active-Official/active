@@ -29,8 +29,8 @@
 | C#                   | 2    | Smoke green | `bindings/csharp` P/Invoke smoke over the frozen C ABI (ABI gate, T001 refusal, redaction); harness path `csharp` green; SPEC.md maps ownership rules |
 | C++                   | 2    | Smoke green | RAII smoke over the frozen C ABI (ABI gate, T001 refusal, redaction); harness path cpp green in Linux container, SKIP without g++ or Linux staticlib; SPEC.md maps ownership rules |
 | Zig                   | 2    | Smoke green | `bindings/zig/smoke.zig` drives the frozen C ABI directly (ABI gate, T001 refusal, redaction) via `run-smoke.py`; harness path `zig` green; SPEC.md maps ownership rules |
-| Ruby                  | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.005) |
-| PHP                   | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.006) |
+| Ruby                    | 2    | Smoke green | Fiddle over the frozen C ABI (ABI gate, T001 refusal, redaction); harness path ruby green in Linux container, SKIP without ruby; SPEC.md maps ownership rules |
+| PHP                       | 2    | Smoke green | FFI over the frozen C ABI (ABI gate, T001 refusal, redaction); harness path php green in Linux container (ext-ffi), SKIP without php; SPEC.md maps ownership rules |
 | Swift                 | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.007) |
 | Kotlin                | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.008) |
 | Dart                  | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.009) |

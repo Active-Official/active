@@ -1,9 +1,15 @@
-# Ruby Binding SPEC (CHECKLIST Phase 2, PROPOSAL section 2.1)
+# Ruby Binding SPEC (CHECKLIST 2.005, PROPOSAL section 2.1)
 
-Status: Planned (no toolchain on this machine; design recorded, implementation deferred until a toolchain is available for proof).
+Status: smoke-proven in a Linux container (Ruby Fiddle over the Linux
+shared library); run-smoke.py reproduces the proof, skipping without
+Ruby or a native shared library.
 
-Mechanism: Ruby FFI gem.
+Mechanism: Fiddle. Opaque handles as integers, ABI gate at load,
+Allocator Model A (owned pointers freed exactly once; `ensure` blocks
+keep frees on the happy path, aborts end the process). Note: Fiddle
+returns Integer 0 (not nil) for NULL pointers; always test truthiness
+with an explicit zero check.
 
-FFI bindings over the cdylib: opaque pointers as FFI::AutoPointer with releasers wired to the matching free; ABI gate at require time; errors raise typed Ruby errors. No Ruby toolchain on this machine: SPEC only.
-
-Ownership mapping: every active_* owned return is freed exactly once with its matching free function; diagnostic codes are borrowed and never freed; modules stay thread-confined per docs/FFI.md. Agent-loop surface (check, eval, diagnostics with codes) mirrors bindings/python/active.py one to one. Full manifest wiring follows the Go smoke pattern once implemented.
+Agent-loop surface mirrors bindings/python/active.py one to one: check
+returns diagnostic codes, eval returns the redacted value or nil on
+refusal, secrets never leak.

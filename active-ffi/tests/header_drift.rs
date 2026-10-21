@@ -15,6 +15,10 @@ fn committed_header_matches_generator() {
         .with_crate(crate_dir())
         .with_language(cbindgen::Language::C)
         .with_include_guard("ACTIVE_H")
+        // Must match build.rs exactly: C++ consumers include this
+        // header directly, so declarations stay inside extern "C".
+        .with_header("#ifdef __cplusplus\nextern \"C\" {\n#endif")
+        .with_trailer("#ifdef __cplusplus\n}\n#endif")
         .generate()
         .expect("cbindgen generates");
     let mut fresh = Vec::new();

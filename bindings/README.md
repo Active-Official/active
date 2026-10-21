@@ -25,9 +25,9 @@
 | Python                | 1    | Complete (gate pending) | WASM-first via wasmtime in `bindings/python` (`active.py`, 5/5 tests, harness path `python` green); CHECKLIST 1.004-1.006 done, Phase 1 gate pending |
 | JavaScript/TypeScript | 1    | Complete (gate pending) | WASM-first via hand-written shim plus `bindings/js` wrapper (agent-loop + codes, tests green, harness path `js-native`); N-API deferred; npm name reserved; CHECKLIST 1.007-1.008 done, Phase 1 gate pending |
 | Rust (external crate) | 1    | Complete (gate pending) | Published `active` facade re-exports `active_core`; crate doctest proves external parse plus eval; raw ABI via published `active-ffi`; CHECKLIST 1.009 done, Phase 1 gate pending |
-| Java                  | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.001) |
+| Java                  | 2    | Smoke green | JNI binding over the frozen C ABI (ABI gate, T001 refusal, redaction); harness path java green in Linux container, SKIP without JDK; SPEC.md maps ownership rules |
 | C#                   | 2    | Smoke green | `bindings/csharp` P/Invoke smoke over the frozen C ABI (ABI gate, T001 refusal, redaction); harness path `csharp` green; SPEC.md maps ownership rules |
-| C++                   | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.003) |
+| C++                   | 2    | Smoke green | RAII smoke over the frozen C ABI (ABI gate, T001 refusal, redaction); harness path cpp green in Linux container, SKIP without g++ or Linux staticlib; SPEC.md maps ownership rules |
 | Zig                   | 2    | Smoke green | `bindings/zig/smoke.zig` drives the frozen C ABI directly (ABI gate, T001 refusal, redaction) via `run-smoke.py`; harness path `zig` green; SPEC.md maps ownership rules |
 | Ruby                  | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.005) |
 | PHP                   | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.006) |
@@ -40,7 +40,7 @@
 | Nim                   | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.013) |
 | Crystal               | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.014) |
 | V                     | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.015) |
-| Lua / LuaJIT          | 2    | Planned | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.016) |
+| Lua / LuaJIT          | 2    | Smoke green | LuaJIT FFI over the frozen C ABI (ABI gate, T001 refusal, redaction); harness path lua green in Linux container, SKIP without luajit; SPEC.md maps ownership rules |
 
 Update this matrix on every binding status change. Statuses above were
 verified against the live repo on 2026-10-20 by running the shared harness

@@ -11,6 +11,11 @@ fn main() {
         .with_crate(&crate_dir)
         .with_language(cbindgen::Language::C)
         .with_include_guard("ACTIVE_H")
+        // C++ consumers include this header directly: wrap the
+        // declarations so C++ name mangling cannot break linking.
+        // Keep in sync with tests/header_drift.rs (same settings).
+        .with_header("#ifdef __cplusplus\nextern \"C\" {\n#endif")
+        .with_trailer("#ifdef __cplusplus\n}\n#endif")
         .generate()
         .expect("cbindgen generates active.h");
     let out = PathBuf::from(env::var("OUT_DIR").expect("out dir")).join("active.h");

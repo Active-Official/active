@@ -112,6 +112,24 @@ PATHS: list[tuple[str, list[str], Path, str]] = [
         ROOT,
         r"^SMOKE-OK$",
     ),
+    (
+        "cpp",
+        ["python", "bindings/cpp/run-smoke.py"],
+        ROOT,
+        r"^SMOKE-OK$",
+    ),
+    (
+        "java",
+        ["python", "bindings/java/run-smoke.py"],
+        ROOT,
+        r"^SMOKE-OK$",
+    ),
+    (
+        "lua",
+        ["python", "bindings/lua/run-smoke.py"],
+        ROOT,
+        r"^SMOKE-OK$",
+    ),
 ]
 
 PLACEHOLDERS = ["go-native"]

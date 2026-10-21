@@ -69,3 +69,13 @@ active-wasm/pkg-web/
 bindings/csharp/**/bin/
 bindings/csharp/**/obj/
 bindings/csharp/**/*.dll
+
+# Java binding build outputs
+bindings/java/classes/
+bindings/java/jni/
+bindings/java/*.so
+bindings/java/*.dll
+bindings/java/*.class
+# C++ smoke outputs
+bindings/cpp/smoke.exe
+bindings/cpp/smoke

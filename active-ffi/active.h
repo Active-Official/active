@@ -1,3 +1,7 @@
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #ifndef ACTIVE_H
 #define ACTIVE_H
 
@@ -305,3 +309,7 @@ char *active_format(const struct ActiveModule *module, uint32_t style);
 void active_string_free(char *s);
 
 #endif  /* ACTIVE_H */
+
+#ifdef __cplusplus
+}
+#endif

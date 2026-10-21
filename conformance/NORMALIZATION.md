@@ -1,10 +1,13 @@
 # Conformance Normalization Rules (normative, versioned)
 
-**Version:** 1.0
+**Version:** 1.1
 **Back-reference:** PROPOSAL §2.3; CHECKLIST Step B.001
 **Enforced by:** `conformance/harness/diff_vectors.py` (differential gate),
 `conformance/harness/run.py` (`verify_parity`, `classify`, `finalize_ok`),
-and `conformance/harness/test_run.py` (23 unit tests pinning the rules).
+`conformance/harness/test_run.py` (pins the run.py wiring plus the
+committed-expectation file conventions), and
+`conformance/harness/test_diff_vectors.py` (pins the differential
+comparison helpers: sorted-set view, scrubbing, pin loading).
 
 Two reports match if and only if they agree under every rule below. Any
 divergence fails the gate; the harness exits nonzero and CI fails the PR.
@@ -40,6 +43,14 @@ as a pass: where spans are surfaced they must match exactly.
 - Spans compare **tuple-for-tuple, in order**, across all embeddings.
   `null` equals only `null`; a span never equals `null`.
 - Spanless-vs-spanned drift is a failure, not an advisory note.
+- Parse-null carve-out: when the source fails at parse time, the frozen
+  C ABI v1 surfaces parse detail as a numeric thread code only
+  (`active_last_error`); there is no string-code path without a module.
+  On such cases strict string-code, span, and severity equality holds
+  between the two WASM-backed embeddings (Python, JS) and the committed
+  expectation, while the C ABI side records its numeric code for the
+  record. The carve-out applies only when every embedding agrees the
+  case is parse-refused with no value.
 
 ## 3. Severities
 
@@ -62,24 +73,40 @@ as a pass: where spans are surfaced they must match exactly.
   in `conformance/expected/<id>.json`. Missing expectation files mean
   "no codes" and "no value" respectively — never a free pass on values
   the embeddings disagree about.
+- Fail-closed on missing values: a case whose embeddings yield a value
+  without its `expected/<id>.json` file fails the differential gate even
+  when all embeddings agree, so a dropped expectation file can never
+  hide a wrong value. This holds even for manifest kind `"refused"`:
+  strict violations (T003/T005/E023) surface at the embedding layer as
+  Ok-plus-diagnostics (codes plus a value, refusal flag false), exactly
+  as the reference core suite blesses; only truly value-free refusals
+  need no file.
 - `[[pins]]` in `conformance/manifest.toml` lists cases no shipped
   binding surface can exercise (include-loader registration, CLI
   `--profile` override). Pinned cases run in the reference suite only;
   the differential logs the pin with its reason instead of comparing.
+- A run that exercises zero hermetic cases never passes: the
+  differential prints `DIFFERENTIAL-OK` only when its checked-case count
+  is positive.
 
 ## 6. Secrets (fail-closed)
 
 - The raw fixture marker must appear in **no** captured output on any
-  path. The scan runs on raw output *before* redaction-scrubbing, so a
-  scrubbed log cannot hide a leak. Any hit fails the whole run,
-  including on paths that would otherwise count as skipped.
+  path. `run.py` scans each path's raw output *before*
+  redaction-scrubbing, so a scrubbed log cannot hide a leak.
+  `diff_vectors.py` additionally scans the live structured payloads it
+  compares (values plus the compared code lists) before printing them.
+  Any hit fails the whole run, including on paths that would otherwise
+  count as skipped.
 
 ## 7. SKIP, timeouts, missing binaries
 
 - `SKIP` counts as skipped only on a clean (exit 0) run with no leak.
   A SKIP line plus a nonzero exit is a failure, never a silent pass.
 - A missing toolchain binary (exit 127, no SKIP line) counts as skipped
-  openly; Tier-1 paths must still pass (see §8).
+  openly; Tier-1 paths must still pass (see §8). An exit-127 run that
+  also prints a SKIP line fails: only a truly absent binary (no SKIP
+  line of its own) earns the openly-skipped reading.
 - Any timeout is a failure, even when the partial output happens to
   match a tally. Outer path invocations budget 900 s in the harness
   runner; the differential gate's inner Node probe budgets 300 s.

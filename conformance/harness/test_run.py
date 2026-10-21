@@ -14,6 +14,7 @@ CI runs this file before the shared harness (see conformance.yml).
 
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -234,6 +235,43 @@ class RegistryTest(unittest.TestCase):
         self.assertTrue(
             TIER1 <= wired, f"Tier-1 paths missing from PATHS: {TIER1 - wired}"
         )
+
+
+class ExpectationFilesTest(unittest.TestCase):
+    def test_error_files_stored_sorted_set(self) -> None:
+        # NORMALIZATION.md section 1 claims committed expectations are
+        # stored sorted by convention; enforce it so the live comparison
+        # and the stored files cannot drift apart silently.
+        root = Path(__file__).resolve().parents[2]
+        files = sorted((root / "conformance" / "errors").glob("*.json"))
+        self.assertTrue(files, "no committed expectation files found")
+        for f in files:
+            codes = json.loads(f.read_text(encoding="utf-8"))["codes"]
+            self.assertEqual(codes, sorted(set(codes)), f.name)
+
+    def test_non_refused_cases_have_expected_values(self) -> None:
+        # Static half of the missing-value fail-closed rule: every
+        # clean/diagnosed non-pinned case must ship its committed value
+        # file. Manifest kind "refused" is checked live instead of here:
+        # strict violations (T003/T005/E023) surface as
+        # Ok-plus-diagnostics with a value (see 0007/0010), and the live
+        # gate fails any value-yielding case without its file
+        # (check_values, pinned by test_diff_vectors.py).
+        import tomllib
+
+        root = Path(__file__).resolve().parents[2]
+        manifest = tomllib.loads(
+            (root / "conformance" / "manifest.toml").read_text(encoding="utf-8")
+        )
+        pins = {p["id"] for p in manifest.get("pins", [])}
+        for case in manifest.get("cases", []):
+            cid = case["id"]
+            if cid in pins or case.get("kind") == "refused":
+                continue
+            self.assertTrue(
+                (root / "conformance" / "expected" / f"{cid}.json").is_file(),
+                f"non-refused case {cid} lacks expected value file",
+            )
 
 
 if __name__ == "__main__":

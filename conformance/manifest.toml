@@ -2,8 +2,15 @@
 # embedding (reference core, active-ffi hosts, active-wasm hosts, bindings).
 # Kinds mirror engine semantics, not CLI exit codes: clean (value, no
 # diagnostics), diagnosed (value plus code set: recovery and warning cases),
-# refused (no value, code set). Spans are advisory (G-017): runners compare
-# codes strictly and report span drift without failing. Secrets in expected
+# refused (code set; no value at the CLI layer). Refused-kind cases with
+# strict violations (T003/T005/E023) still surface Ok-plus-diagnostics
+# (codes plus a value) at the embedding layer, exactly as the reference
+# core suite blesses; their committed expected values are required, not
+# optional. Spans are advisory (G-017) in the reference core suite (codes
+# strict, span drift reported without failing). The stricter cross-embedding proof lives in
+# conformance/NORMALIZATION.md and conformance/harness/diff_vectors.py,
+# which require identical ordered codes, span tuples, severities, refused
+# flags, and redacted JSON across embeddings. Secrets in expected
 # files are always redacted; a raw secret in any output fails the run.
 
 version = 1

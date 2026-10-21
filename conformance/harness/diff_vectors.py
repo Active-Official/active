@@ -53,9 +53,51 @@ def scrub(text: str) -> str:
     return text.replace(RAW_SECRET, "***SECRET***")
 
 
+def norm_codes(codes: list[str]) -> list[str]:
+    """Committed-expectation view: sorted, deduplicated.
+
+    Recovery can legitimately emit one code twice (e.g. depth on
+    open+close brackets). Cross-embedding equality stays per-item and
+    ordered; comparison against committed files uses this set view,
+    matching the reference core suite. Extracted so unit tests pin it.
+    """
+    return sorted(set(codes))
+
+
 def fail(msg: str) -> int:
     print(scrub(f"DIFFERENTIAL-FAIL: {msg}"))
     return 1
+
+
+def check_values(
+    refused: bool,
+    values: tuple[object, object, object],
+    want_missing: bool,
+    want_value: object,
+) -> list[str]:
+    """Fail-closed value rules for one non-parse-null case.
+
+    `refused` and `values` are the cross-embedding-agreed shape (agreement
+    itself is checked by the caller): when every embedding refuses, no
+    value may come back; when any embedding yields a value, a committed
+    expectation file must exist and match — even for manifest kind
+    "refused", whose strict violations (T003/T005/E023) surface as
+    Ok-plus-diagnostics with a value, exactly as the reference core
+    suite blesses. Extracted so unit tests pin the rule.
+    """
+    got_value, py_value, js_value = values
+    problems = []
+    if refused:
+        if got_value is not None or py_value is not None or js_value is not None:
+            problems.append("refused but a value came back")
+        return problems
+    if want_missing:
+        problems.append("non-refused case without committed expected value")
+    if not (got_value == py_value == js_value):
+        problems.append("values diverge across embeddings")
+    if not want_missing and got_value != want_value:
+        problems.append("value != committed expectation")
+    return problems
 
 
 def find_cdylib() -> Path | None:
@@ -134,8 +176,11 @@ class CAbi:
             # only (active_last_error); there is no string-code path without
             # a module. The caller compares the WASM-backed embeddings
             # against the committed expectation instead, and logs the
-            # numeric here for the record.
-            return [], [], True, {"__parse_null__": lib.active_last_error()}, []
+            # numeric here for the record. The marker is a tuple, which a
+            # parsed Active value (always JSON-shaped) can never collide
+            # with, so a legitimate value cannot misroute into the
+            # parse-null branch.
+            return [], [], True, ("active_parse_null", lib.active_last_error()), []
         try:
             sev: list[str] = []
             val = lib.active_eval(mod, None)
@@ -208,7 +253,7 @@ def run_node(src_file: Path) -> tuple[list[str], list, bool, object, list]:
         timeout=300,
     )
     if p.returncode != 0 or not p.stdout.strip():
-        raise RuntimeError(f"node probe failed: {(p.stderr or p.stdout)[-500:]}")
+        raise RuntimeError(scrub(f"node probe failed: {(p.stderr or p.stdout)[-500:]}"))
     env = json.loads(p.stdout.strip().splitlines()[-1])
     items = [
         (
@@ -256,7 +301,8 @@ def main() -> int:
         if errors_file.is_file():
             want_codes = json.loads(errors_file.read_text())["codes"]
         want_value = None
-        if expected_file.is_file():
+        want_value_missing = not expected_file.is_file()
+        if not want_value_missing:
             want_value = json.loads(expected_file.read_text())
 
         got_codes, got_spans, got_refused, got_value, got_sev = abi.run(source)
@@ -264,12 +310,15 @@ def main() -> int:
         js_codes, js_spans, js_refused, js_value, js_sev = run_node(src_file)
 
         problems = []
-        parse_null = isinstance(got_value, dict) and "__parse_null__" in got_value
+        parse_null = (
+            isinstance(got_value, tuple)
+            and len(got_value) == 2
+            and got_value[0] == "active_parse_null"
+        )
         # Committed expectations store the SET view (sorted, deduped), same
         # normalization the reference core suite applies: recovery can
         # legitimately emit one code twice (e.g. 0006 depth on open+close).
         # Cross-embedding equality stays per-item and ordered.
-        norm = lambda codes: sorted(set(codes))
         if parse_null:
             # C ABI parse refusal: numeric detail only, by frozen contract.
             # Strict string-code equality still holds between the two
@@ -278,8 +327,12 @@ def main() -> int:
                 problems.append(
                     f"parse-refused codes diverge: python={py_codes} js={js_codes}"
                 )
-            if norm(py_codes) != want_codes:
-                problems.append(f"codes {norm(py_codes)} != expected {want_codes}")
+            if kind != "refused":
+                problems.append(f"kind={kind} but embeddings parse-refused (no value)")
+            if norm_codes(py_codes) != want_codes:
+                problems.append(
+                    f"codes {norm_codes(py_codes)} != expected {want_codes}"
+                )
             if not (py_spans == js_spans):
                 problems.append("parse-refused spans diverge")
             if not (py_sev == js_sev):
@@ -292,7 +345,11 @@ def main() -> int:
                 problems.append("kind=refused but no codes surfaced")
             if kind == "clean" and py_codes:
                 problems.append(f"kind=clean but codes surfaced: {py_codes}")
-            if RAW_SECRET in json.dumps({"py": py_value, "js": js_value}):
+            if kind == "clean" and (py_refused or js_refused):
+                problems.append("kind=clean but an embedding refused")
+            if RAW_SECRET in json.dumps(
+                {"py": py_value, "js": js_value, "codes": py_codes + js_codes}
+            ):
                 problems.append("raw secret marker in captured output")
             if problems:
                 return fail(f"{cid}: " + "; ".join(problems))
@@ -300,7 +357,7 @@ def main() -> int:
             print(
                 scrub(
                     f"DIFF {cid} ok kind={kind} codes={py_codes} "
-                    f"(c_abi parse-null numeric={got_value['__parse_null__']})"
+                    f"(c_abi parse-null numeric={got_value[1]})"
                 )
             )
             continue
@@ -308,8 +365,8 @@ def main() -> int:
             problems.append(
                 f"codes diverge: c_abi={got_codes} python={py_codes} js={js_codes}"
             )
-        if norm(got_codes) != want_codes:
-            problems.append(f"codes {norm(got_codes)} != expected {want_codes}")
+        if norm_codes(got_codes) != want_codes:
+            problems.append(f"codes {norm_codes(got_codes)} != expected {want_codes}")
         if not (got_spans == py_spans == js_spans):
             problems.append(
                 f"spans diverge: c_abi={got_spans} python={py_spans} js={js_spans}"
@@ -326,14 +383,16 @@ def main() -> int:
             problems.append("kind=refused but no codes surfaced")
         if kind == "clean" and got_codes:
             problems.append(f"kind=clean but codes surfaced: {got_codes}")
-        if got_refused:
-            if got_value is not None or py_value is not None or js_value is not None:
-                problems.append("refused but a value came back")
-        else:
-            if not (got_value == py_value == js_value):
-                problems.append("values diverge across embeddings")
-            if want_value is not None and got_value != want_value:
-                problems.append("value != committed expectation")
+        if kind == "clean" and got_refused:
+            problems.append("kind=clean but an embedding refused")
+        problems.extend(
+            check_values(
+                got_refused,
+                (got_value, py_value, js_value),
+                want_value_missing,
+                want_value,
+            )
+        )
         # Fail-closed secret scan: values are redacted by construction, so
         # the raw marker must appear nowhere in any captured payload. The
         # committed expectations already pin redaction; this scans the live
@@ -358,6 +417,8 @@ def main() -> int:
                 f"spans={len(got_spans)} severities={got_sev} refused={got_refused}"
             )
         )
+    if checked == 0:
+        return fail("no hermetic cases exercised (zero-proof pass refused)")
     print(f"DIFFERENTIAL-OK ({checked} cases, codes+spans+values identical)")
     return 0
 

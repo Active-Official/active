@@ -105,6 +105,15 @@ jobs:
         # classify()/verify_parity() must turn these red. Runs before the
         # shared harness so a weakened gate never reports green.
         run: python conformance/harness/test_run.py
+      - name: Run differential helper unit tests
+        # test_diff_vectors.py pins the comparison helpers (sorted-set
+        # view, scrubbing, pin loading) used by the differential gate.
+        run: python conformance/harness/test_diff_vectors.py
+      - name: Run harness self-check (tally parser guard)
+        # Guards the tally parser itself: a regex matching failure output
+        # (or missing everything) turns this red. Manual-only before;
+        # now part of CI.
+        run: python conformance/harness/run.py --self-check
       - name: Run shared harness
         run: python conformance/harness/run.py --out harness.json
       - name: Upload harness report

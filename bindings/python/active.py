@@ -121,7 +121,11 @@ class Module:
             self._free(self._store, slot, 4)
 
     def check(self, source: str) -> list[Diagnostic]:
-        """Parse and evaluate; return structured diagnostics (empty if clean)."""
+        """Parse and evaluate; return structured diagnostics (empty if clean).
+
+        The module runs the hermetic engine (resilient default), so this
+        surfaces errors and repair warnings alike.
+        """
         env = self._call_eval(source)
         text = env.get("diagnostics", "") or ""
         return [

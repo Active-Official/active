@@ -47,6 +47,54 @@ fn literal_string(module: &Module, id: Option<NodeId>) -> Option<String> {
     }
 }
 
+/// Field `description` slot for doc comments across codegen targets.
+fn field_description(module: &Module, id: NodeId) -> Option<String> {
+    match module.get(id) {
+        Some(crate::ir::Node::SchemaField { field }) => literal_string(module, field.description),
+        _ => None,
+    }
+}
+
+/// Enum member descriptions joined as `"member: description"` pairs for
+/// targets with a single description string (JSON Schema `description`).
+/// Length mismatches cannot reach here: validation reports them first,
+/// and codegen reads the same evaluated nodes.
+fn enum_descriptions_text(module: &Module, field: &SchemaField) -> Option<String> {
+    let members = match &field.typ {
+        ActiveType::Enum(members) => members,
+        _ => return None,
+    };
+    let id = field.enum_descriptions?;
+    let texts: Vec<String> = match module.get(id) {
+        Some(Node::Literal(crate::ir::Value::Array(items))) => items
+            .iter()
+            .map(|v| match v {
+                crate::ir::Value::String(text) => Some(text.clone()),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()?,
+        Some(Node::Array { elements }) => elements
+            .iter()
+            .map(|e| match module.get(*e) {
+                Some(Node::Literal(crate::ir::Value::String(text))) => Some(text.clone()),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()?,
+        _ => return None,
+    };
+    if texts.len() != members.len() {
+        return None;
+    }
+    Some(
+        members
+            .iter()
+            .zip(texts.iter())
+            .map(|(member, text)| format!("{member}: {text}"))
+            .collect::<Vec<_>>()
+            .join("; "),
+    )
+}
+
 /// Static literal default as JSON (any literal kind, redacted like
 /// every export — secrets never leak through generated defaults).
 fn literal_default(module: &Module, field: &SchemaField) -> Option<JsonValue> {
@@ -149,6 +197,25 @@ fn json_schema_node(module: &Module, id: NodeId) -> JsonValue {
             if !required.is_empty() {
                 obj.insert("required".to_string(), JsonValue::Array(required));
             }
+            let mut dependent: serde_json::Map<String, JsonValue> = serde_json::Map::new();
+            for (name, field_id) in fields {
+                if let Some(crate::ir::Node::SchemaField { field }) = module.get(*field_id) {
+                    if let Some(target) = literal_string(module, field.requires) {
+                        dependent
+                            .entry(target)
+                            .or_insert_with(|| JsonValue::Array(Vec::new()))
+                            .as_array_mut()
+                            .expect("dependentRequired arrays only")
+                            .push(JsonValue::String(name.clone()));
+                    }
+                }
+            }
+            if !dependent.is_empty() {
+                obj.insert(
+                    "dependentRequired".to_string(),
+                    JsonValue::Object(dependent),
+                );
+            }
             if *closed {
                 obj.insert("additionalProperties".to_string(), JsonValue::Bool(false));
             }
@@ -200,6 +267,9 @@ fn json_schema_field(module: &Module, field: &SchemaField) -> JsonValue {
             if let Some(pattern) = literal_string(module, field.pattern) {
                 obj.insert("pattern".to_string(), JsonValue::String(pattern));
             }
+            if let Some(format) = literal_string(module, field.format) {
+                obj.insert("format".to_string(), JsonValue::String(format));
+            }
         }
         // Matches the §1 export shape: durations serialize as
         // `{"ms": n}` objects.
@@ -224,6 +294,9 @@ fn json_schema_field(module: &Module, field: &SchemaField) -> JsonValue {
                 "enum".to_string(),
                 JsonValue::Array(members.iter().cloned().map(JsonValue::String).collect()),
             );
+            if let Some(joined) = enum_descriptions_text(module, field) {
+                obj.insert("description".to_string(), JsonValue::String(joined));
+            }
         }
         // Secrets export as redacted strings.
         ActiveType::Secret => {
@@ -237,6 +310,11 @@ fn json_schema_field(module: &Module, field: &SchemaField) -> JsonValue {
     }
     if let Some(default) = literal_default(module, field) {
         obj.insert("default".to_string(), default);
+    }
+    if field.description.is_some() {
+        if let Some(doc) = literal_string(module, field.description) {
+            obj.insert("description".to_string(), JsonValue::String(doc));
+        }
     }
     if let Some(reason) = field.deprecated.as_deref() {
         obj.insert("deprecated".to_string(), JsonValue::Bool(true));
@@ -332,6 +410,9 @@ impl TsGen<'_> {
             let tname = self.type_name(nominal, format!("{name}{}", pascal_case(key)));
             let typ = self.ts_type(&tname, *field);
             let mark = if optional { "?" } else { "" };
+            if let Some(doc) = field_description(self.module, *field) {
+                self.out.push_str(&format!("  /** {doc} */\n"));
+            }
             if let Some(reason) = self.deprecated(*field) {
                 if reason.is_empty() {
                     self.out.push_str("  /** @deprecated */\n");
@@ -469,6 +550,9 @@ impl GoGen<'_> {
             let nominal = nominal_id(self.module, *field);
             let tname = self.type_name(nominal, format!("{name}{}", pascal_case(key)));
             let typ = self.go_type(&tname, *field);
+            if let Some(doc) = field_description(self.module, *field) {
+                self.out.push_str(&format!("// {doc}\n"));
+            }
             if let Some(reason) = self.deprecated(*field) {
                 if reason.is_empty() {
                     self.out.push_str("\t// Deprecated: no reason given.\n");

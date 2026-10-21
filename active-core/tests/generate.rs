@@ -179,3 +179,29 @@ fn colliding_type_names_suffix_deterministically() {
         assert!(output.contains("ConfigPort_"), "{output}");
     }
 }
+
+const EXT_SCHEMA_DOC: &str = r#"schema = {
+  contact = String(format = "email", description = "Team inbox."),
+  color = Enum("red", "green", descriptions = ["stop", "go"]),
+  cert = String(requires = "tls"),
+  tls = Bool(default = false),
+}
+"#;
+
+#[test]
+fn codegen_carries_new_schema_metadata() {
+    let module = parse(EXT_SCHEMA_DOC, "generate").expect("schema must parse");
+    let schema = schema_to_json_schema(&module).expect("jsonschema");
+    let props = schema["properties"].as_object().expect("properties");
+    assert_eq!(props["contact"]["format"], "email");
+    assert_eq!(props["contact"]["description"], "Team inbox.");
+    assert_eq!(props["color"]["description"], "red: stop; green: go");
+    assert_eq!(
+        schema["dependentRequired"],
+        serde_json::json!({"tls": ["cert"]})
+    );
+    let ts = schema_to_typescript(&module, "Config").expect("ts");
+    assert!(ts.contains("/** Team inbox. */"), "{ts}");
+    let go = schema_to_go(&module, "Config").expect("go");
+    assert!(go.contains("// Team inbox."), "{go}");
+}

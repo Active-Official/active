@@ -433,7 +433,16 @@ impl<'a> Formatter<'a> {
                 .iter()
                 .map(|v| format!("\"{}\"", escape(v)))
                 .collect();
-            return format!("Enum({}{})", quoted.join(", "), deprecated);
+            let mut out = format!("Enum({}", quoted.join(", "));
+            if let Some(descriptions) = field.enum_descriptions {
+                out.push_str(&format!(
+                    ", descriptions = {}",
+                    self.render_expr(descriptions)
+                ));
+            }
+            out.push_str(&deprecated);
+            out.push(')');
+            return out;
         }
         let mut args: Vec<std::string::String> = Vec::new();
         for (name, slot) in [
@@ -442,6 +451,9 @@ impl<'a> Formatter<'a> {
             ("min_len", field.min_len),
             ("max_len", field.max_len),
             ("pattern", field.pattern),
+            ("format", field.format),
+            ("description", field.description),
+            ("requires", field.requires),
             ("default", field.default),
         ] {
             if let Some(arg) = slot {

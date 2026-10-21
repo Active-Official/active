@@ -2,7 +2,7 @@
 schema {
   closed = true
   # Minimum logged severity (no default: be explicit).
-  level = Enum("debug", "info", "warn", "error")
+  level = Enum("debug", "info", "warn", "error", descriptions = ["verbose diagnostics", "normal operations", "suspicious but handled", "failures only"])
   # Emit Prometheus-style metrics.
   metrics = Bool(default = true)
   # Trace sample rate, 0.0 to 1.0.

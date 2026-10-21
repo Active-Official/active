@@ -360,7 +360,7 @@ schema-entry  = identifier "=" schema-type
 schema-type   = bare-type [ "(" [ schema-arg { "," schema-arg } ] ")" ]
               | "Array" "<" schema-type ">"
               | "Table" [ "{" [ schema-entry { "," schema-entry } ] "}" ]
-              | "Enum" "(" string { "," string } ")"
+              | "Enum" "(" string { "," string } [ "," named-args ] ")"
 bare-type     = "Int" | "Float" | "String" | "Bool" | "Null"
               | "Duration" | "Bytes" | "Secret" | "Any" | "Table" | "Array"
 schema-arg    = identifier "=" expression
@@ -372,10 +372,14 @@ schema-arg    = identifier "=" expression
   E020 (a mistyped schema must never silently become data).
 - Named arguments per type (anything else is E020): `Int`/`Float` take
   `min`, `max`, `default`; `Duration`/`Bytes` take `min`, `max`,
-  `default`; `String` takes `min_len`, `max_len`, `pattern`, `default`;
-  `Bool`/`Null`/`Secret`/`Any` take `default` only; `Enum` takes
-  positional strings only (empty is E020); `Array` takes only `<T>`;
-  `Table` takes only `{...}` with an optional reserved `closed = true`
+  `default`; `String` takes `min_len`, `max_len`, `pattern`, `format`,
+  `default`; `Bool`/`Null`/`Secret`/`Any` take `default` only; `Enum` takes
+  positional strings plus optional `descriptions = [...]` and
+  `deprecated`; `Array` takes only `<T>`; `Table` takes only `{...}`
+  with an optional reserved `closed = true`. Every type additionally
+  accepts `description = "..."` (metadata, never a verdict) and
+  `requires = "<dotted-path>"` (conditional presence,
+  spec/schema-extensions.md section 4).
   entry. Every leaf type additionally accepts `deprecated` (C-042):
   `true` or a string-literal migration message (anything else is
   E020). Argument values are full expressions (literals, env refs,

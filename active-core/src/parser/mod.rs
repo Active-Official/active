@@ -4241,6 +4241,22 @@ impl Parser {
             }
             let mut values = Vec::new();
             let mut deprecated: Option<String> = None;
+            let mut field = SchemaField {
+                typ: ActiveType::Enum(Vec::new()),
+                min: None,
+                max: None,
+                min_len: None,
+                max_len: None,
+                pattern: None,
+                format: None,
+                description: None,
+                enum_descriptions: None,
+                requires: None,
+                default: None,
+                deprecated: None,
+                span: Some(span_of(&tok)),
+            };
+            let proxy = ActiveType::Enum(Vec::new());
             loop {
                 self.skip_newlines();
                 match self.peek_kind() {
@@ -4288,6 +4304,25 @@ impl Parser {
                         };
                     }
                     _ => {
+                        // Named argument inside Enum parens
+                        // (`descriptions = [...]`, `deprecated = …` above):
+                        // an identifier directly followed by `=`.
+                        if matches!(self.peek_kind(), TokenKind::Ident)
+                            && matches!(self.peek_kind_at(1), TokenKind::Assign)
+                        {
+                            let arg_tok = self.bump();
+                            let arg = arg_tok.text.clone();
+                            self.bump();
+                            let value = self.parse_expression();
+                            if !Self::store_schema_arg(&mut field, &proxy, &arg, value) {
+                                self.error_at(
+                                    "E020",
+                                    format!("unknown argument `{arg}` for Enum"),
+                                    &arg_tok,
+                                );
+                            }
+                            continue;
+                        }
                         let bad = self.peek().clone();
                         self.error_at("E020", "Enum values must be string literals", &bad);
                         self.bump();
@@ -4302,17 +4337,8 @@ impl Parser {
             if values.is_empty() {
                 self.error_at("E020", "Enum needs at least one value", &tok);
             }
-            let field = SchemaField {
-                typ: ActiveType::Enum(values),
-                min: None,
-                max: None,
-                min_len: None,
-                max_len: None,
-                pattern: None,
-                default: None,
-                deprecated,
-                span: Some(span_of(&tok)),
-            };
+            field.typ = ActiveType::Enum(values);
+            field.deprecated = deprecated;
             return self.add_spanned(Node::SchemaField { field }, &tok);
         }
         // Table { ... }: nested schema table (closed flag included).
@@ -4455,6 +4481,10 @@ impl Parser {
             (String, "min_len") => &mut field.min_len,
             (String, "max_len") => &mut field.max_len,
             (String, "pattern") => &mut field.pattern,
+            (String, "format") => &mut field.format,
+            (_, "description") => &mut field.description,
+            (Enum(_), "descriptions") => &mut field.enum_descriptions,
+            (_, "requires") => &mut field.requires,
             (_, "default") => &mut field.default,
             _ => return false,
         };

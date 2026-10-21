@@ -595,3 +595,81 @@ fn fill_then_coerce_chains_through_fixpoint() {
     assert!(diags.iter().any(|d| d.code == "W005"), "{diags:?}");
     assert!(diags.iter().any(|d| d.code == "H007"), "{diags:?}");
 }
+
+#[test]
+fn format_validators_accept_clean_values() {
+    let v = evaluate_strict("extensions_valid.active").expect("clean formats must pass");
+    assert_eq!(v["contact"], "ops@example.com");
+    assert_eq!(v["release"], "1.4.0");
+    assert_eq!(v["color"], "green");
+}
+
+#[test]
+fn format_validators_reject_with_codes() {
+    let diags = evaluate_strict("extensions_invalid.active").expect_err("must fail strict");
+    let details: Vec<&str> = diags.iter().map(|d| d.message.as_str()).collect();
+    for want in [
+        "does not match format 'email'",
+        "does not match format 'uri'",
+        "does not match format 'uuid'",
+        "does not match format 'semver'",
+        "descriptions length (3) must match Enum members (2)",
+        "not a member of Enum(\"red\", \"green\")",
+        "unknown format 'phone' in schema",
+    ] {
+        assert!(
+            details.iter().any(|m| m.contains(want)),
+            "missing {want}: {details:?}"
+        );
+    }
+    assert!(diags.iter().all(|d| d.code == "T003"), "{diags:?}");
+}
+
+#[test]
+fn unknown_format_reports_once_per_field() {
+    // Array elements re-trigger the walk; the schema bug must appear once.
+    let src = "schema = { tags = Array<String(format = \"phone\")> }\ntags = [\"a\", \"b\"]\n";
+    let diags = strict_diags(src);
+    let unknown: Vec<_> = diags
+        .iter()
+        .filter(|d| d.message.contains("unknown format"))
+        .collect();
+    assert_eq!(unknown.len(), 1, "{diags:?}");
+}
+
+#[test]
+fn requires_fires_only_when_trigger_present() {
+    let diags = evaluate_strict("requires_triggered.active").expect_err("must fail strict");
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == "T004" && d.message.contains("required by present 'mode'")),
+        "{diags:?}"
+    );
+    // Trigger absent: no requires diagnostic.
+    let src = "schema = { mode = String, replicas = Int(requires = \"mode\") }\n";
+    let (v, diags) = resilient_eval(src);
+    assert!(v.get("replicas").is_none(), "{v}");
+    assert!(
+        !diags
+            .iter()
+            .any(|d| d.message.contains("required by present")),
+        "{diags:?}"
+    );
+}
+
+#[test]
+fn requires_yields_to_resilient_default_fill() {
+    let (v, diags) = evaluate_resilient("requires_filled.active");
+    assert_eq!(v["replicas"], 1, "{v}");
+    assert!(diags.iter().any(|d| d.code == "W005"), "{diags:?}");
+    assert!(!diags.iter().any(|d| d.code == "T004"), "{diags:?}");
+}
+
+#[test]
+fn description_metadata_is_ignored_by_verdicts() {
+    let src = "schema = { host = String(description = \"DNS name.\") }\nhost = \"example.com\"\n";
+    let (v, diags) = resilient_eval(src);
+    assert_eq!(v["host"], "example.com");
+    assert!(diags.is_empty(), "{diags:?}");
+}

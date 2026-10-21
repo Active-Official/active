@@ -1,0 +1,5 @@
+include "../../schemas/tls-terminator.active"
+
+tls = true
+cert = "pem-cert"
+key = "pem-key"

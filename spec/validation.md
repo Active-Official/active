@@ -80,7 +80,10 @@ Checked only after the type accepts the value:
   incomparable-bound schema bug (below).
 - **Enum**: membership in the declared member list, else T003 quoting
   the members: `not a member of Enum("a", "b")`. Members are grammar
-  string literals, safe to quote.
+  string literals, safe to quote. Optional parallel `descriptions`
+  document each member; a length mismatch is a once-per-field T003
+  schema bug and descriptions never affect membership
+  (spec/schema-extensions.md section 3).
 - **Schema bugs are reported once per schema field, not per value**: an
   uncompilable pattern or an incomparable bound emits a single T003 the
   first time the walk reaches it (deterministic: schema order decides);
@@ -90,6 +93,17 @@ Checked only after the type accepts the value:
   crate (JSON-Schema-style: authors anchor with `^…$` for a full
   match). A pattern that fails to compile is a schema bug: T003
   `invalid pattern in schema`.
+- **Format**: `format = "email" | "uri" | "uuid" | "semver"` is an
+  anchored full match checked after `pattern`. Mismatch is T003
+  `does not match format '<name>'`. An unknown name or a non-string
+  argument is a once-per-field T003 schema bug
+  (`unknown format '<name>' in schema`,
+  `incomparable format bound for String fields`).
+  Only the closed registry above is accepted so validators stay total
+  (spec/schema-extensions.md section 1).
+- **Documentation**: `description = "..."` is accepted on any field and
+  ignored by validation; it is surfaced by docgen. It never affects
+  verdicts (spec/schema-extensions.md section 2).
 
 Detail strings are structural (`below minimum`, `above maximum`,
 `too short`, `too long`, `does not match pattern`, …): evaluated
@@ -108,7 +122,13 @@ required key`) unless:
   failure rather than going silent; or
 - the field's type is `Null` **and it declares no default** — absence
   is equivalent to null. `Null` with a `default` follows the default
-  rule above in both modes.
+  rule above in both modes; or
+- the field is absent **and** its `requires` target is absent or
+  disabled — the conditional does not trigger. When the target is
+  present and enabled (`true`, non-empty, non-zero; secrets count),
+  the missing field is T004 naming both paths (`missing required key
+  (required by present '<target>')`), unless a resilient default fill
+  satisfies presence (spec/schema-extensions.md section 4).
 
 The span is the schema field's own span (there is no value to point
 at).

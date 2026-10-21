@@ -150,6 +150,43 @@ fn feature_flags_schema() {
 }
 
 #[test]
+fn api_service_schema() {
+    let v = strict_value("good_api.active");
+    assert_eq!(v["base_url"], "https://api.example.com/v1");
+    assert_eq!(v["version"], "2.3.1");
+    assert_eq!(v["channel"], "stable");
+    assert_eq!(
+        strict_issues("bad_api.active"),
+        [
+            (String::from("T003"), Some(String::from("base_url"))),
+            (String::from("T003"), Some(String::from("version"))),
+            (String::from("T003"), Some(String::from("build"))),
+            (String::from("T003"), Some(String::from("channel"))),
+        ]
+    );
+}
+
+#[test]
+fn tls_terminator_schema() {
+    let v = strict_value("good_tls.active");
+    assert_eq!(v["tls"], true);
+    assert_eq!(v["cert"], "pem-cert");
+    assert_eq!(
+        strict_issues("bad_tls.active"),
+        [
+            (String::from("T004"), Some(String::from("cert"))),
+            (String::from("T004"), Some(String::from("key"))),
+        ]
+    );
+    // TLS off: requires does not trigger; resilient fills the defaults.
+    let (v, diags) = resilient_issues("good_tls_off.active");
+    assert_eq!(v["tls"], false);
+    assert_eq!(v["cert"], "");
+    assert!(diags.iter().any(|d| d.0 == "W005"), "{diags:?}");
+    assert!(!diags.iter().any(|d| d.0 == "T004"), "{diags:?}");
+}
+
+#[test]
 fn library_holds_no_secret_literals() {
     // Spec rule: no `secret(...)` calls inside schemas/ — secrets
     // enter through operators' own documents. Scans the raw text
@@ -281,6 +318,7 @@ fn every_library_schema_renders_docs() {
                 "### user",
                 "### password",
                 "### pool",
+                "### contact",
             ],
         ),
         (
@@ -312,6 +350,16 @@ fn every_library_schema_renders_docs() {
                 "### max_tokens",
                 "### retries",
             ],
+        ),
+        (
+            "api-service",
+            "good_api.active",
+            &["### base_url", "### version", "### build", "### channel"],
+        ),
+        (
+            "tls-terminator",
+            "good_tls.active",
+            &["### tls", "### cert", "### key"],
         ),
     ];
     let chapter =

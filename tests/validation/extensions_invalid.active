@@ -1,0 +1,15 @@
+schema = {
+  contact = String(format = "email"),
+  site = String(format = "uri"),
+  build = String(format = "uuid"),
+  release = String(format = "semver"),
+  color = Enum("red", "green", descriptions = ["stop", "go", "extra"]),
+  mystery = String(format = "phone"),
+}
+
+contact = "not-an-email"
+site = "example.com/no-scheme"
+build = "not-a-uuid"
+release = "1.4"
+color = "blue"
+mystery = "anything"

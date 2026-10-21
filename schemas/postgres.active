@@ -11,6 +11,8 @@ schema {
   user = String
   # Login secret (tainted, redacted).
   password = Secret
+  # Team inbox for database alerts.
+  contact = String(format = "email")
   # Connection pool size.
   pool = Int(min = 1, max = 100, default = 5)
 }

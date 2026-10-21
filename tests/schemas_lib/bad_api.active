@@ -1,0 +1,6 @@
+include "../../schemas/api-service.active"
+
+base_url = "api.example.com/no-scheme"
+version = "2.3"
+build = "not-a-uuid"
+channel = "nightly"

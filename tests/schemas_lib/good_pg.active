@@ -6,3 +6,4 @@ database = "app"
 user = "app"
 password = secret("pw-test-only")
 pool = 10
+contact = "dba@example.com"

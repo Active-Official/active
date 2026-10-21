@@ -1,0 +1,12 @@
+# Standard API service schema (ACTIVE schema library).
+schema {
+  closed = true
+  # Public base URL of the service.
+  base_url = String(format = "uri")
+  # Released version.
+  version = String(format = "semver")
+  # Build identifier.
+  build = String(format = "uuid")
+  # Release channel.
+  channel = Enum("stable", "beta", descriptions = ["public traffic", "opt-in testers"], default = "stable")
+}

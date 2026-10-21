@@ -395,7 +395,7 @@ impl<'a> Validator<'a> {
         for (name, field_id) in fields {
             segments.push(PathSeg::Key(name.clone()));
             match map.get(name) {
-                None => self.check_missing(*field_id, segments),
+                None => self.check_missing(*field_id, segments, map),
                 Some(v) => {
                     let child_id = arena_children
                         .as_ref()
@@ -645,20 +645,29 @@ impl<'a> Validator<'a> {
         }
         self.check_constraints(schema_id, field, value, &path, value_id);
     }
-    /// A schema field with no value (spec/validation.md §5 and §9).
+    /// A schema field with no value (spec/validation.md section 5 and 9,
+    /// spec/schema-extensions.md section 4).
     /// A declared default fills under resilient mode (recorded for
     /// later insertion) but is T004 under strict mode (explicitness) —
     /// the default takes precedence over the Null-absence rule so
     /// `Null(default = …)` behaves like every other defaulted field.
+    /// A `requires` target that is present forces T004 naming both paths
+    /// unless a resilient default fill satisfies presence.
     /// Anything else is T004, except Null-typed absence (quiet).
-    fn check_missing(&mut self, field_id: NodeId, segments: &[PathSeg]) {
-        let (default_arg, is_null, field_span) = match self.module.get(field_id) {
+    fn check_missing(
+        &mut self,
+        field_id: NodeId,
+        segments: &[PathSeg],
+        table: &indexmap::IndexMap<String, Value>,
+    ) {
+        let (default_arg, is_null, field_span, requires_arg) = match self.module.get(field_id) {
             Some(Node::SchemaField { field }) => (
                 field.default,
                 matches!(field.typ, ActiveType::Null),
                 field.span.clone(),
+                field.requires,
             ),
-            _ => (None, false, None),
+            _ => (None, false, None, None),
         };
         let path = render_path(segments);
         let (span, file) =
@@ -666,6 +675,28 @@ impl<'a> Validator<'a> {
                 Some(s) => (Some(s), self.module.node_files.get(&field_id).cloned()),
                 None => (None, None),
             };
+        if let Some(requires_id) = requires_arg {
+            let target: Option<String> = match self.values.get(&requires_id) {
+                Some(Value::String(t)) => Some(t.clone()),
+                _ => None,
+            };
+            if let Some(target) = target {
+                let filled = default_arg.is_some() && self.resilient;
+                if !filled && table_has(table, &target) {
+                    self.push(
+                        "T004",
+                        format!(
+                            "schema violation at '{}': missing required key (required by present '{}')",
+                            display_path(&path),
+                            target,
+                        ),
+                        &path,
+                        (span, file),
+                    );
+                    return;
+                }
+            }
+        }
         if let Some(default_id) = default_arg {
             if self.resilient {
                 self.fills.push(FillRequest {
@@ -995,6 +1026,9 @@ impl<'a> Validator<'a> {
         value_id: Option<NodeId>,
     ) {
         let spans = self.spans(value_id, schema_id);
+        if let ActiveType::Enum(members) = &field.typ {
+            self.check_enum_descriptions(field, schema_id, members, path, spans.clone());
+        }
         match (&field.typ, value) {
             (ActiveType::Int, Value::Int(n)) => {
                 self.check_int_bounds(field, schema_id, *n, path, spans, true);
@@ -1032,6 +1066,43 @@ impl<'a> Validator<'a> {
                 );
             }
             _ => {}
+        }
+    }
+
+    /// Enum member descriptions (spec/schema-extensions.md §3): a parallel
+    /// string list whose length must equal the member count. Length or
+    /// element mismatch is a schema bug reported once per field;
+    /// descriptions never affect membership.
+    fn check_enum_descriptions(
+        &mut self,
+        field: &SchemaField,
+        field_id: NodeId,
+        members: &[String],
+        path: &str,
+        spans: (Option<Span>, Option<String>),
+    ) {
+        let Some(desc_id) = field.enum_descriptions else {
+            return;
+        };
+        let ok = match self.values.get(&desc_id) {
+            Some(Value::Array(items)) => {
+                items.len() == members.len() && items.iter().all(|v| matches!(v, Value::String(_)))
+            }
+            _ => false,
+        };
+        if !ok && self.bug_once(field_id, "descriptions") {
+            self.violation(
+                path,
+                &format!(
+                    "descriptions length ({}) must match Enum members ({})",
+                    match self.values.get(&desc_id) {
+                        Some(Value::Array(items)) => items.len().to_string(),
+                        _ => "not a string list".to_string(),
+                    },
+                    members.len()
+                ),
+                spans,
+            );
         }
     }
 
@@ -1240,6 +1311,70 @@ impl<'a> Validator<'a> {
                     if !re.is_match(s) {
                         self.violation(path, "does not match pattern", spans.clone());
                     }
+                }
+            }
+        }
+        if let Some(format_id) = field.format {
+            self.check_format(field, field_id, format_id, s, path, spans);
+        }
+    }
+
+    /// Format validators (spec/schema-extensions.md section 1): anchored
+    /// full matches for a closed registry of names. Unknown names and
+    /// non-string arguments are schema bugs reported once per field.
+    fn check_format(
+        &mut self,
+        field: &SchemaField,
+        field_id: NodeId,
+        format_id: NodeId,
+        s: &str,
+        path: &str,
+        spans: (Option<Span>, Option<String>),
+    ) {
+        let _ = field;
+        static FORMATS: std::sync::OnceLock<Vec<(String, regex::Regex)>> =
+            std::sync::OnceLock::new();
+        let formats = FORMATS.get_or_init(|| {
+            [
+                ("email", r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"),
+                ("uri", r"^[a-zA-Z][a-zA-Z0-9+.-]*://[^\s]+$"),
+                (
+                    "uuid",
+                    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                ),
+                (
+                    "semver",
+                    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$",
+                ),
+            ]
+            .into_iter()
+            .map(|(name, pattern)| {
+                (
+                    name.to_string(),
+                    regex::Regex::new(pattern).expect("fixed format"),
+                )
+            })
+            .collect()
+        });
+        let name: Option<String> = match self.values.get(&format_id) {
+            Some(Value::String(name)) => Some(name.clone()),
+            _ => None,
+        };
+        let Some(name) = name else {
+            if self.bug_once(field_id, "format") {
+                self.violation(path, "incomparable format bound for String fields", spans);
+            }
+            return;
+        };
+        match formats.iter().find(|(known, _)| known == &name) {
+            None => {
+                if self.bug_once(field_id, "format") {
+                    self.violation(path, &format!("unknown format '{name}' in schema"), spans);
+                }
+            }
+            Some((_, re)) => {
+                if !re.is_match(s) {
+                    self.violation(path, &format!("does not match format '{name}'"), spans);
                 }
             }
         }
@@ -1527,6 +1662,41 @@ fn truncate_120(text: &str) -> String {
         format!("{}…", text.chars().take(LIMIT - 1).collect::<String>())
     } else {
         text.to_string()
+    }
+}
+
+/// Presence-plus-enablement test for `requires` targets
+/// (spec/schema-extensions.md section 4): walk dotted segments through
+/// nested tables, then apply truthiness. Present-but-disabled
+/// (`false`, `""`, `0`, empty table/array, null) does not trigger;
+/// a provided secret always counts as enabled.
+fn table_has(table: &indexmap::IndexMap<String, Value>, dotted: &str) -> bool {
+    let mut current = table;
+    let mut parts = dotted.split('.');
+    let mut last = match parts.next() {
+        Some(first) => first,
+        None => return false,
+    };
+    for part in parts {
+        match current.get(last) {
+            Some(Value::Table(nested)) => {
+                current = nested;
+                last = part;
+            }
+            _ => return false,
+        }
+    }
+    match current.get(last) {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(b)) => *b,
+        Some(Value::String(s)) => !s.is_empty(),
+        Some(Value::Int(n)) => *n != 0,
+        Some(Value::Float(f)) => *f != 0.0,
+        Some(Value::DurationMs(ms)) => *ms != 0,
+        Some(Value::Quantity(v, _)) => *v != 0.0,
+        Some(Value::Array(items)) => !items.is_empty(),
+        Some(Value::Table(fields)) => !fields.is_empty(),
+        Some(Value::Secret(_)) => true,
     }
 }
 

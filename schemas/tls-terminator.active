@@ -1,0 +1,10 @@
+# Standard TLS terminator schema (ACTIVE schema library).
+schema {
+  closed = true
+  # Terminate TLS here (certificates come from the secret store).
+  tls = Bool(default = false)
+  # PEM certificate (required when tls is true; empty when off).
+  cert = String(requires = "tls", default = "")
+  # PEM private key (required when tls is true; empty when off).
+  key = String(requires = "tls", default = "")
+}

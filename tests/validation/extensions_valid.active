@@ -1,0 +1,13 @@
+schema = {
+  contact = String(format = "email", description = "Support inbox."),
+  site = String(format = "uri"),
+  build = String(format = "uuid"),
+  release = String(format = "semver"),
+  color = Enum("red", "green", descriptions = ["stop", "go"]),
+}
+
+contact = "ops@example.com"
+site = "https://example.com/docs"
+build = "123e4567-e89b-12d3-a456-426614174000"
+release = "1.4.0"
+color = "green"

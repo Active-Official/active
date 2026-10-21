@@ -25,21 +25,21 @@
 | Python                | 1    | Complete (gate pending) | WASM-first via wasmtime in `bindings/python` (`active.py`, 5/5 tests, harness path `python` green); CHECKLIST 1.004-1.006 done, Phase 1 gate pending |
 | JavaScript/TypeScript | 1    | Complete (gate pending) | WASM-first via hand-written shim plus `bindings/js` wrapper (agent-loop + codes, tests green, harness path `js-native`); N-API deferred; npm name reserved; CHECKLIST 1.007-1.008 done, Phase 1 gate pending |
 | Rust (external crate) | 1    | Complete (gate pending) | Published `active` facade re-exports `active_core`; crate doctest proves external parse plus eval; raw ABI via published `active-ffi`; CHECKLIST 1.009 done, Phase 1 gate pending |
-| Java                  | 2    | Planned    | CHECKLIST 2.001 |
+| Java                  | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.001) |
 | C#                   | 2    | Smoke green | `bindings/csharp` P/Invoke smoke over the frozen C ABI (ABI gate, T001 refusal, redaction); harness path `csharp` green; SPEC.md maps ownership rules |
-| C++                   | 2    | Planned    | CHECKLIST 2.003 |
+| C++                   | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.003) |
 | Zig                   | 2    | Smoke green | `bindings/zig/smoke.zig` drives the frozen C ABI directly (ABI gate, T001 refusal, redaction) via `run-smoke.py`; harness path `zig` green; SPEC.md maps ownership rules |
-| Ruby                  | 2    | Planned    | CHECKLIST 2.005 |
-| PHP                   | 2    | Planned    | CHECKLIST 2.006 |
-| Swift                 | 2    | Planned    | CHECKLIST 2.007 |
-| Kotlin                | 2    | Planned    | CHECKLIST 2.008 |
-| Dart                  | 2    | Planned    | CHECKLIST 2.009 |
-| Elixir                | 2    | Planned    | CHECKLIST 2.010 |
-| Haskell               | 2    | Planned    | CHECKLIST 2.011 |
-| OCaml                 | 2    | Planned    | CHECKLIST 2.012 |
-| Nim                   | 2    | Planned    | CHECKLIST 2.013 |
-| Crystal               | 2    | Planned    | CHECKLIST 2.014 |
-| V                     | 2    | Planned    | CHECKLIST 2.015 |
+| Ruby                  | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.005) |
+| PHP                   | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.006) |
+| Swift                 | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.007) |
+| Kotlin                | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.008) |
+| Dart                  | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.009) |
+| Elixir                | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.010) |
+| Haskell               | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.011) |
+| OCaml                 | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.012) |
+| Nim                   | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.013) |
+| Crystal               | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.014) |
+| V                     | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.015) |
 | Lua / LuaJIT          | 2    | Planned    | CHECKLIST 2.016 |
 
 Update this matrix on every binding status change. Statuses above were

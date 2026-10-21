@@ -1,0 +1,15 @@
+F:\QQQ-AUDIT\SOLID\bindings\csharp\ActiveSmoke\bin\Debug\net8.0\ActiveSmoke.exe
+F:\QQQ-AUDIT\SOLID\bindings\csharp\ActiveSmoke\bin\Debug\net8.0\ActiveSmoke.deps.json
+F:\QQQ-AUDIT\SOLID\bindings\csharp\ActiveSmoke\bin\Debug\net8.0\ActiveSmoke.runtimeconfig.json
+F:\QQQ-AUDIT\SOLID\bindings\csharp\ActiveSmoke\bin\Debug\net8.0\ActiveSmoke.dll
+F:\QQQ-AUDIT\SOLID\bindings\csharp\ActiveSmoke\bin\Debug\net8.0\ActiveSmoke.pdb
+F:\QQQ-AUDIT\SOLID\bindings\csharp\ActiveSmoke\obj\Debug\net8.0\ActiveSmoke.GeneratedMSBuildEditorConfig.editorconfig
+F:\QQQ-AUDIT\SOLID\bindings\csharp\ActiveSmoke\obj\Debug\net8.0\ActiveSmoke.AssemblyInfoInputs.cache
+F:\QQQ-AUDIT\SOLID\bindings\csharp\ActiveSmoke\obj\Debug\net8.0\ActiveSmoke.AssemblyInfo.cs
+F:\QQQ-AUDIT\SOLID\bindings\csharp\ActiveSmoke\obj\Debug\net8.0\ActiveSmoke.csproj.CoreCompileInputs.cache
+F:\QQQ-AUDIT\SOLID\bindings\csharp\ActiveSmoke\obj\Debug\net8.0\ActiveSmoke.sourcelink.json
+F:\QQQ-AUDIT\SOLID\bindings\csharp\ActiveSmoke\obj\Debug\net8.0\ActiveSmoke.dll
+F:\QQQ-AUDIT\SOLID\bindings\csharp\ActiveSmoke\obj\Debug\net8.0\refint\ActiveSmoke.dll
+F:\QQQ-AUDIT\SOLID\bindings\csharp\ActiveSmoke\obj\Debug\net8.0\ActiveSmoke.pdb
+F:\QQQ-AUDIT\SOLID\bindings\csharp\ActiveSmoke\obj\Debug\net8.0\ActiveSmoke.genruntimeconfig.cache
+F:\QQQ-AUDIT\SOLID\bindings\csharp\ActiveSmoke\obj\Debug\net8.0\ref\ActiveSmoke.dll

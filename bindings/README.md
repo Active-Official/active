@@ -26,7 +26,7 @@
 | JavaScript/TypeScript | 1    | Complete (gate pending) | WASM-first via hand-written shim plus `bindings/js` wrapper (agent-loop + codes, tests green, harness path `js-native`); N-API deferred; npm name reserved; CHECKLIST 1.007-1.008 done, Phase 1 gate pending |
 | Rust (external crate) | 1    | Complete (gate pending) | Published `active` facade re-exports `active_core`; crate doctest proves external parse plus eval; raw ABI via published `active-ffi`; CHECKLIST 1.009 done, Phase 1 gate pending |
 | Java                  | 2    | Planned    | CHECKLIST 2.001 |
-| C#                    | 2    | Planned    | CHECKLIST 2.002 |
+| C#                   | 2    | Smoke green | `bindings/csharp` P/Invoke smoke over the frozen C ABI (ABI gate, T001 refusal, redaction); harness path `csharp` green; SPEC.md maps ownership rules |
 | C++                   | 2    | Planned    | CHECKLIST 2.003 |
 | Zig                   | 2    | Smoke green | `bindings/zig/smoke.zig` drives the frozen C ABI directly (ABI gate, T001 refusal, redaction) via `run-smoke.py`; harness path `zig` green; SPEC.md maps ownership rules |
 | Ruby                  | 2    | Planned    | CHECKLIST 2.005 |

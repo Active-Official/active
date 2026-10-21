@@ -79,3 +79,6 @@ bindings/java/*.class
 # C++ smoke outputs
 bindings/cpp/smoke.exe
 bindings/cpp/smoke
+
+# Fortran module files
+*.mod

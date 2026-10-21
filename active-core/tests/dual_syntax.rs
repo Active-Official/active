@@ -402,3 +402,67 @@ fn dotted_header_round_trips_through_formatter() {
         );
     }
 }
+
+#[test]
+fn col0_comment_between_header_and_body_keeps_block() {
+    // A column-0 comment is trivia: it must not pop a never-opened block,
+    // trigger E008, or detach the body from its header (spec §4.2, §7).
+    let plain = "app:\n  name = \"svc\"\n";
+    let commented = "app:\n# note at column zero\n  name = \"svc\"\n";
+    assert_eq!(
+        tree(commented),
+        tree(plain),
+        "comment must not disturb the block"
+    );
+}
+
+#[test]
+fn deeper_than_body_comment_opens_nothing() {
+    // An over-indented comment line carries no content: it must not open a
+    // block, push the stack, or change the tree.
+    let plain = "app:\n  name = \"svc\"\n";
+    let noisy = "app:\n      # far too deep\n  name = \"svc\"\n";
+    assert_eq!(tree(noisy), tree(plain));
+}
+
+#[test]
+fn tab_only_line_reports_e006_without_tokens() {
+    // A whitespace-only line containing a tab still trips E006 (tab in
+    // leading whitespace, spec §4.1/§9), but emits no tokens and changes
+    // no stack: the surrounding block parses as if the line were blank.
+    let diags = codes("app:\n\t\n  name = \"svc\"\n");
+    assert_eq!(
+        diags,
+        vec!["E006".to_string()],
+        "exactly one E006: {diags:?}"
+    );
+}
+
+#[test]
+fn first_line_indentation_is_e010() {
+    // Indentation with no enclosing header is E010 at 1:1, without cascade.
+    let diags = codes("  app = 1\n");
+    assert_eq!(
+        diags,
+        vec!["E010".to_string()],
+        "exactly one E010: {diags:?}"
+    );
+}
+
+#[test]
+fn crlf_indentation_matches_lf() {
+    // CRLF line endings measure exactly like LF: the same document in both
+    // encodings lowers to the identical tree.
+    let lf = "app:\n  name = \"svc\"\n  port = 8080\n";
+    let crlf = "app:\r\n  name = \"svc\"\r\n  port = 8080\r\n";
+    assert_eq!(tree(crlf), tree(lf));
+}
+
+#[test]
+fn bom_before_indented_body_is_invisible() {
+    // A leading BOM is stripped before measurement: it is not content,
+    // shifts no column, and triggers no diagnostic.
+    let plain = "app:\n  name = \"svc\"\n";
+    let bom = "\u{FEFF}app:\n  name = \"svc\"\n";
+    assert_eq!(tree(bom), tree(plain));
+}

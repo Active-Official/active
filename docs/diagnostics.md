@@ -39,6 +39,7 @@ parses leave it unset and tools fall back to the input filename.
 | E006 | `tab character in leading whitespace; use spaces` | the tab | Indentation is spaces only (spec/dual-syntax.md §4.1); each tab counts as one column |
 | E007 | `inconsistent dedentation` | line start | No enclosing indentation level matches; pops to the nearest level below |
 | E008 | `block header has no indented body` | the colon | A `key:` header requires a deeper following line; no table is created |
+| E009 | *(intentionally unassigned)* | — | Reserved gap: E008 reports missing bodies and E010 reports stray indentation; no diagnostic was ever needed between them, and codes are never reused, so E009 stays empty rather than being backfilled |
 | E010 | `unexpected indentation` | line start | An Indent where no block header opened one; the line joins the enclosing block, and the matching Dedent is discarded by level comparison (spec/dual-syntax.md §6) |
 | E014 | `expected a semantic tag ...` / `unknown semantic tag ...` / `a semantic tag must be followed by a multi-line string` | token | Malformed `@tag` blocks (C-024) |
 | E015 | `include paths must be string literals` / `interpolation in include paths is a hard error` / `include paths must not escape the including directory` / `include statements require file-based parsing` | token | Malformed include statements (C-025): non-literal paths, interpolated paths, absolute paths and `..` escapes (unless `allow_parent_escapes`), or includes under string-based parsing |

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import sys
@@ -54,10 +55,15 @@ def main() -> int:
         timeout=600,
     )
     print(p.stdout + p.stderr)
-    if p.returncode != 0 or "SMOKE-OK" not in (p.stdout + p.stderr):
-        return 1
-    print("SMOKE-OK")
-    return 0
+    out = p.stdout + p.stderr
+    if p.returncode == 0 and "SMOKE-OK" in out:
+        print("SMOKE-OK")
+        return 0
+    if p.returncode == 0 and re.search(r"^SKIP", out, re.MULTILINE):
+        # The smoke itself skipped (e.g. no ext-ffi on this host):
+        # propagate the skip instead of failing on the missing tally.
+        return 0
+    return 1
 
 
 if __name__ == "__main__":

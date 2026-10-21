@@ -80,9 +80,11 @@ jobs:
         run: sudo apt-get install -y -qq erlang-dev
       - name: Install V (Linux only)
         if: runner.os == 'Linux'
-        # Pinned to the proven tag; V master moves fast and smoke needs no
-        # newer feature.
-        run: git clone --depth 1 --branch v0.5.2 https://github.com/vlang/v /tmp/v && cd /tmp/v && sudo make && echo "/tmp/v" >> "$GITHUB_PATH"
+        # No version pin: upstream has no stable release tags, so this
+        # tracks the default branch, exactly like the proof container did
+        # (V 0.5.2 built from source on 2026-10-21). The smoke drives the
+        # frozen C ABI, which does not move with V releases.
+        run: git clone --depth 1 https://github.com/vlang/v /tmp/v && cd /tmp/v && sudo make && echo "/tmp/v" >> "$GITHUB_PATH"
       # Swift is container-proven only: the 1 GB toolchain download is not
       # worth every CI run. bindings/swift/run-smoke.py skips openly
       # without swiftc; proof lives in the Tier-2 container logs.

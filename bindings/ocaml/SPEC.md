@@ -6,4 +6,4 @@ Mechanism: OCaml C stubs.
 
 external declarations with handles crossing the C stubs as nativeint (the GC never chases raw C pointers); a small C stub copies owned strings then frees; explicit frees on every path; ABI gate at startup.
 
-Ownership mapping: every active_* owned return is freed exactly once with its matching free function; diagnostic codes are borrowed and never freed; modules stay thread-confined per docs/FFI.md. Agent-loop surface (check, eval, diagnostics with codes) mirrors bindings/python/active.py one to one. Harness path \ocaml\ runs the smoke through run-smoke.py; SKIPs openly without the toolchain.
+Ownership mapping: every active_* owned return is freed exactly once with its matching free function; diagnostic codes are borrowed and never freed; modules stay thread-confined per docs/FFI.md. Agent-loop surface (check, eval, diagnostics with codes) mirrors bindings/python/active.py one to one. Harness path `ocaml` runs the smoke through run-smoke.py; SKIPs openly without the toolchain.

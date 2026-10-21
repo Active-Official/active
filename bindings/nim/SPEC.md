@@ -6,4 +6,4 @@ Mechanism: Nim importc.
 
 importc over the header with try/finally frees; handles as pointer; ABI gate at startup raising on mismatch.
 
-Ownership mapping: every active_* owned return is freed exactly once with its matching free function; diagnostic codes are borrowed and never freed; modules stay thread-confined per docs/FFI.md. Agent-loop surface (check, eval, diagnostics with codes) mirrors bindings/python/active.py one to one. Harness path \nim\ runs the smoke through run-smoke.py; SKIPs openly without the toolchain.
+Ownership mapping: every active_* owned return is freed exactly once with its matching free function; diagnostic codes are borrowed and never freed; modules stay thread-confined per docs/FFI.md. Agent-loop surface (check, eval, diagnostics with codes) mirrors bindings/python/active.py one to one. Harness path `nim` runs the smoke through run-smoke.py; SKIPs openly without the toolchain.

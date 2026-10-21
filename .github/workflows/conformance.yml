@@ -116,6 +116,14 @@ jobs:
         run: python conformance/harness/run.py --self-check
       - name: Run shared harness
         run: python conformance/harness/run.py --out harness.json
+      - name: Install codegen validator deps
+        run: pip install jsonschema==4.26.0
+      - name: Run codegen equivalence check
+        # Per-target validation-equivalence (jsonschema accept/reject,
+        # tsc --strict + zod runtime accept/reject, gofmt + go vet +
+        # validate tags, python import) plus byte-stability (determinism)
+        # and version stamps on every generation.
+        run: python conformance/evidence/codegen_check.py
       - name: Upload harness report
         if: always()
         uses: actions/upload-artifact@v4

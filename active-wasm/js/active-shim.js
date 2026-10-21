@@ -49,6 +49,11 @@
 				ok: env.ok === true,
 				json: JSON.stringify(env.json),
 				diagnostics: String(env.diagnostics || ""),
+				// Passed through verbatim when present, ABSENT otherwise:
+				// the bindings fail closed on a missing items array, so the
+				// shim must never substitute a default here (a stale module
+				// would otherwise read as a false clean).
+				...(env.items !== undefined ? { items: env.items } : {}),
 			};
 		}
 

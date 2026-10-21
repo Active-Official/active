@@ -159,6 +159,16 @@ PATHS: list[tuple[str, list[str], Path, str]] = [
         r"^TEST-OK$",
     ),
     (
+        # Cross-implementation differential: identical codes, spans, and
+        # redacted JSON across the C ABI, Python, and JS embeddings on
+        # every hermetic manifest case (pins honored). This is what makes
+        # the Phase-2 criterion 1 promise checkable instead of advisory.
+        "differential",
+        ["python", "conformance/harness/diff_vectors.py"],
+        ROOT,
+        r"^DIFFERENTIAL-OK",
+    ),
+    (
         "haskell",
         ["python", "bindings/haskell/run-smoke.py"],
         ROOT,
@@ -263,6 +273,12 @@ def self_check() -> int:
         ("SMOKE-FAIL", r"^SMOKE-OK$", False),
         ("SKIP: zig not installed", r"^SKIP.*$", True),
         ("js-FAIL: refused", r"^js-ok$", False),
+        (
+            "DIFFERENTIAL-OK (11 cases, codes+spans+values identical)",
+            r"^DIFFERENTIAL-OK",
+            True,
+        ),
+        ("DIFFERENTIAL-FAIL: 0003 foo", r"^DIFFERENTIAL-OK", False),
     ]
     bad = 0
     for sample, pattern, want in cases:

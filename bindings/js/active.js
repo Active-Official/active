@@ -14,8 +14,6 @@ const fs = require("fs");
 const path = require("path");
 const shim = require("../../active-wasm/js/active-shim.js");
 
-const CODE_RE = /\b([A-Z][0-9]{3})\b/g;
-
 function defaultWasmPath() {
 	return path.join(
 		__dirname,
@@ -53,10 +51,23 @@ class Module {
 	check(source) {
 		this._guard();
 		const env = this._api.evaluate(source);
-		const codes = [
-			...new Set([...env.diagnostics.matchAll(CODE_RE)].map((m) => m[1])),
-		];
-		return codes.map((code) => ({ code, message: env.diagnostics }));
+		if (!Array.isArray(env.items)) {
+			throw new Error("envelope without items: rebuild active_wasm.wasm");
+		}
+		const text = env.diagnostics || "";
+		return env.items.map((item) => {
+			const span = item.span || null;
+			return {
+				code: item.code,
+				message: text,
+				line: span && span.line !== undefined ? span.line : null,
+				column: span && span.column !== undefined ? span.column : null,
+				end_line: span && span.end_line !== undefined ? span.end_line : null,
+				end_column:
+					span && span.end_column !== undefined ? span.end_column : null,
+				severity: item.severity !== undefined ? item.severity : null,
+			};
+		});
 	}
 
 	evaluate(source) {

@@ -13,14 +13,11 @@ explicitly. Never share a module across threads without external locking.
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 import wasmtime
 
 ABI_MAJOR = 1
-
-_CODE_RE = re.compile(r"\b([A-Z][0-9]{3})\b")
 
 
 class ActiveError(Exception):
@@ -28,14 +25,40 @@ class ActiveError(Exception):
 
 
 class Diagnostic:
-    """One structured diagnostic from an evaluation envelope."""
+    """One structured diagnostic from an evaluation envelope.
 
-    def __init__(self, code: str, message: str) -> None:
+    ``message`` is the full diagnostics text (kept for prose readers);
+    ``line``/``column``/``end_line``/``end_column`` carry the structured
+    span when the core attributed one (None when spanless), and
+    ``severity`` is the core severity string (error/warning/info/hint).
+    """
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        line: int | None = None,
+        column: int | None = None,
+        end_line: int | None = None,
+        end_column: int | None = None,
+        severity: str | None = None,
+    ) -> None:
         self.code = code
         self.message = message
+        self.line = line
+        self.column = column
+        self.end_line = end_line
+        self.end_column = end_column
+        self.severity = severity
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"Diagnostic({self.code}: {self.message[:80]})"
+
+    def span(self) -> tuple[int, int, int, int] | None:
+        """Structured span tuple, or None when the core left it spanless."""
+        if self.line is None:
+            return None
+        return (self.line, self.column, self.end_line, self.end_column)
 
 
 def _repo_root() -> Path:
@@ -127,13 +150,31 @@ class Module:
         """Parse and evaluate; return structured diagnostics (empty if clean).
 
         The module runs the hermetic engine (resilient default), so this
-        surfaces errors and repair warnings alike.
+        surfaces errors and repair warnings alike. One Diagnostic per
+        envelope item, in core order (no dedup: recovery can legitimately
+        repeat a code, and strict hosts compare the full list). Fail closed:
+        an envelope without items is a version-skewed module, never a
+        clean bill — returning [] here would be a false clean.
         """
         env = self._call_eval(source)
+        if not isinstance(env.get("items"), list):
+            raise ActiveError("envelope without items: rebuild active_wasm.wasm")
         text = env.get("diagnostics", "") or ""
-        return [
-            Diagnostic(code, text) for code in dict.fromkeys(_CODE_RE.findall(text))
-        ]
+        out = []
+        for item in env.get("items", []) or []:
+            span = item.get("span") or {}
+            out.append(
+                Diagnostic(
+                    item.get("code", ""),
+                    text,
+                    line=span.get("line"),
+                    column=span.get("column"),
+                    end_line=span.get("end_line"),
+                    end_column=span.get("end_column"),
+                    severity=item.get("severity"),
+                )
+            )
+        return out
 
     def eval(self, source: str) -> dict:
         """Evaluate and return the redacted JSON value (raises on refusal)."""

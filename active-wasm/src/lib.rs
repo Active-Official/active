@@ -12,7 +12,8 @@
 //! discipline (linear-memory envelope vs handle/ownership transfer).
 //! A shared internal crate waits for a third embedding (rule of three).
 
-use active_core::{parse, Engine};
+use active_core::diag::{Diagnostic, Severity};
+use active_core::{parse, Engine, EvalError};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::slice;
 use std::str;
@@ -81,30 +82,83 @@ pub extern "C" fn active_free(ptr: *mut u8, size: usize) {
     let _ = size;
 }
 
-fn envelope_ok(json: &str, diagnostics: &str) -> String {
+fn severity_str(s: &Severity) -> &'static str {
+    match s {
+        Severity::Error => "error",
+        Severity::Warning => "warning",
+        Severity::Info => "info",
+        Severity::Hint => "hint",
+    }
+}
+
+/// Structured diagnostic items for the envelope: code, message, severity,
+/// and span (line/column/end_line/end_column, or null when spanless).
+/// The legacy `diagnostics` text line is unchanged; `items` lets hosts
+/// compare codes AND spans strictly without parsing prose.
+fn diag_items(diags: &[Diagnostic]) -> String {
+    let parts: Vec<String> = diags
+        .iter()
+        .map(|d| {
+            let span = match &d.span {
+                Some(s) => format!(
+                    "{{\"line\":{},\"column\":{},\"end_line\":{},\"end_column\":{}}}",
+                    s.line, s.column, s.end_line, s.end_column
+                ),
+                None => "null".to_string(),
+            };
+            format!(
+                "{{\"code\":{},\"message\":{},\"severity\":\"{}\",\"span\":{}}}",
+                serde_json::json!(d.code),
+                serde_json::json!(d.message),
+                severity_str(&d.severity),
+                span
+            )
+        })
+        .collect();
+    format!("[{}]", parts.join(","))
+}
+
+fn envelope_ok(json: &str, diagnostics: &str, items: &str) -> String {
     let mut out = String::from("{\"ok\":true,\"json\":");
     out.push_str(json);
     out.push_str(",\"diagnostics\":");
     out.push_str(diagnostics);
+    out.push_str(",\"items\":");
+    out.push_str(items);
     out.push('}');
     out
 }
 
-fn envelope_err_diagnostics(diagnostics: &str) -> String {
+fn envelope_err_diagnostics(diagnostics: &str, items: &str) -> String {
     // Real diagnostic lines already carry their codes; no synthetic prefix
     // (a wrapper code here would pollute code-set comparisons downstream).
     format!(
-        "{{\"ok\":false,\"json\":\"\",\"diagnostics\":{}}}",
-        serde_json::json!(diagnostics)
+        "{{\"ok\":false,\"json\":\"\",\"diagnostics\":{},\"items\":{}}}",
+        serde_json::json!(diagnostics),
+        items
     )
 }
 
-fn envelope_err(code: &str, message: &str) -> String {
+fn envelope_err(code: &str, message: &str, span: &str) -> String {
+    // Bare codes are always [A-Z0-9]+ by construction; the message is
+    // escaped, and span arrives pre-rendered (object or null).
     format!(
-        "{{\"ok\":false,\"json\":\"\",\"diagnostics\":\"[{code}] {message}\"}}",
-        code = escape_json(code),
-        message = escape_json(message)
+        "{{\"ok\":false,\"json\":\"\",\"diagnostics\":\"[{code}] {message}\",\"items\":[{{\"code\":\"{code}\",\"message\":{},\"severity\":\"error\",\"span\":{span}}}]}}",
+        serde_json::json!(message),
+        code = code,
+        message = escape_json(message),
+        span = span,
     )
+}
+
+fn span_json(span: Option<&active_core::diag::Span>) -> String {
+    match span {
+        Some(s) => format!(
+            "{{\"line\":{},\"column\":{},\"end_line\":{},\"end_column\":{}}}",
+            s.line, s.column, s.end_line, s.end_column
+        ),
+        None => "null".to_string(),
+    }
 }
 
 fn escape_json(text: &str) -> String {
@@ -131,7 +185,7 @@ fn eval_inner(source: &str) -> String {
                 .iter()
                 .map(|d| format!("[{}] {}", d.code, d.message))
                 .collect();
-            return envelope_err_diagnostics(&lines.join("\n"));
+            return envelope_err_diagnostics(&lines.join("\n"), &diag_items(&diags));
         }
     };
     // Hermetic construction: Engine::new() snapshots the process ambient,
@@ -145,16 +199,35 @@ fn eval_inner(source: &str) -> String {
                 .iter()
                 .map(|d| format!("[{}] {}", d.code, d.message))
                 .collect();
-            envelope_ok(&json, &serde_json::json!(lines.join("\n")).to_string())
+            envelope_ok(
+                &json,
+                &serde_json::json!(lines.join("\n")).to_string(),
+                &diag_items(&diags),
+            )
         }
-        Err(e) => envelope_err(e.code(), &e.to_string()),
+        Err(e) => match e {
+            // Validation failures keep every diagnostic (codes AND spans),
+            // not just the first code: strict hosts compare the full list.
+            EvalError::ValidationFailed { diagnostics } => {
+                let lines: Vec<String> = diagnostics
+                    .iter()
+                    .map(|d| format!("[{}] {}", d.code, d.message))
+                    .collect();
+                envelope_err_diagnostics(&lines.join("\n"), &diag_items(&diagnostics))
+            }
+            _ => envelope_err(e.code(), &e.to_string(), &span_json(e.span())),
+        },
     }
 }
 
 /// Evaluate UTF-8 source to a JSON envelope
-/// `{"ok":bool,"json":...,"diagnostics":"..."}`. Returns the envelope bytes
-/// (registry-owned, freed with `active_free`); `out_len` receives the length.
-/// Secrets redact by construction; panics become error envelopes.
+/// `{"ok":bool,"json":...,"diagnostics":"...",`items":[...]}`. The
+/// `diagnostics` text line stays for prose readers; `items` carries one
+/// `{code,message,severity,span}` object per diagnostic so hosts can
+/// compare codes AND spans strictly without parsing prose. Returns the
+/// envelope bytes (registry-owned, freed with `active_free`); `out_len`
+/// receives the length. Secrets redact by construction; panics become
+/// error envelopes.
 ///
 /// # Safety
 ///
@@ -170,17 +243,17 @@ pub unsafe extern "C" fn active_eval_json(
 ) -> *mut u8 {
     let envelope = match catch_unwind(AssertUnwindSafe(|| {
         if src_ptr.is_null() || out_len.is_null() {
-            return envelope_err("ABI", "null pointer argument");
+            return envelope_err("ABI", "null pointer argument", "null");
         }
         // SAFETY: host guarantees readable bytes per WIRING.md.
         let bytes = unsafe { slice::from_raw_parts(src_ptr, src_len) };
         match str::from_utf8(bytes) {
             Ok(text) => eval_inner(text),
-            Err(_) => envelope_err("UTF8", "source is not valid UTF-8"),
+            Err(_) => envelope_err("UTF8", "source is not valid UTF-8", "null"),
         }
     })) {
         Ok(env) => env,
-        Err(_) => envelope_err("PANIC", "evaluation panicked; input rejected"),
+        Err(_) => envelope_err("PANIC", "evaluation panicked; input rejected", "null"),
     };
     let bytes = envelope.into_bytes();
     let len = bytes.len();
@@ -222,6 +295,51 @@ mod tests {
         let env = envelope_of("timeout = 5s + 512MiB\n");
         assert_eq!(env["ok"], false);
         assert!(env["diagnostics"].as_str().unwrap().contains("T001"));
+    }
+
+    #[test]
+    fn envelope_items_carry_codes_and_spans() {
+        // Structured items mirror the text line one to one: strict hosts
+        // compare these, never prose.
+        let env = envelope_of("timeout = 5s + 512MiB\n");
+        let items = env["items"].as_array().expect("items array");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["code"], "T001");
+        assert_eq!(items[0]["severity"], "error");
+        let span = &items[0]["span"];
+        assert!(span.is_object(), "units refusal carries a span");
+        assert_eq!(span["line"], 1);
+        let clean = envelope_of("port = 8080\n");
+        assert_eq!(clean["items"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn envelope_items_cover_spanless_warnings_and_repeats() {
+        // S001 (cycle) is spanless: null span, still an item.
+        let cycle = envelope_of("a = b\nb = a\n");
+        assert_eq!(cycle["ok"], false);
+        let items = cycle["items"].as_array().expect("items array");
+        assert!(!items.is_empty());
+        assert!(items.iter().all(|it| it["code"] == "S001"));
+        assert!(items.iter().all(|it| it["span"].is_null()));
+        // W001 carries warning severity with a span (conformance 0002).
+        let norway = envelope_of("[country]\nname = NO\n");
+        let items = norway["items"].as_array().expect("items array");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["code"], "W001");
+        assert_eq!(items[0]["severity"], "warning");
+        assert!(items[0]["span"].is_object());
+        // Recovery can repeat a code: every occurrence is an item
+        // (conformance 0006: depth trips on open and close brackets).
+        let deep_src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../conformance/cases/0006-budget-depth.active"
+        ))
+        .expect("budget fixture readable");
+        let deep = envelope_of(&deep_src);
+        let items = deep["items"].as_array().expect("items array");
+        assert!(items.len() > 1, "depth refusal repeats: {items:?}");
+        assert!(items.iter().all(|it| it["code"] == "E004"));
     }
 
     #[test]

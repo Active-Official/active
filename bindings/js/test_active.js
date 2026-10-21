@@ -14,6 +14,12 @@ const { load } = require("./active.js");
 		diags.some((d) => d.code === "T001"),
 		"T001 expected",
 	);
+	assert.strictEqual(diags.length, 1);
+	assert.strictEqual(diags[0].severity, "error");
+	assert.deepStrictEqual(
+		[diags[0].line, diags[0].column, diags[0].end_line, diags[0].end_column],
+		[1, 14, 1, 15],
+	);
 	assert.throws(() => m.evaluate("timeout = 5s + 512MiB\n"), /refused/);
 	const v = m.evaluate('token = secret("hunter2")\n[out]\npass = token\n');
 	assert.deepStrictEqual(v, { token: "***SECRET***", out: { pass: null } });

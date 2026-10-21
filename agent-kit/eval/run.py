@@ -15,10 +15,15 @@ Exit code 0 only when every expectation holds.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+# Key-like material only (not every "sk-" substring): real leaked keys are
+# long tokens, while task prose can mention the prefix innocently.
+KEY_RE = re.compile(r"\bsk-[A-Za-z0-9_-]{8,}\b")
 
 ROOT = Path(__file__).resolve().parents[2]
 VECTORS = ROOT / "agent-kit" / "vectors"
@@ -43,6 +48,9 @@ def available(cmd: list[str]) -> bool:
 
 
 def run_loop(cmd: list[str], cwd: Path, task: Path, max_iters: int) -> dict:
+    """Drive one reference loop on one task file; exit 0 means the loop
+    reached a clean check within budget, with the per-iteration log.
+    """
     p = subprocess.run(
         [*cmd, str(task), f"--max-iters={max_iters}"],
         cwd=cwd,
@@ -65,6 +73,28 @@ def run_loop(cmd: list[str], cwd: Path, task: Path, max_iters: int) -> dict:
     return out
 
 
+def baseline_first_attempt(task: Path) -> bool | None:
+    """Unassisted first attempt: direct `active check` with no loop, no
+    repair, no retries. True means the task was already clean; False is
+    the headroom the reference loops must convert (or correctly refuse).
+    None means the baseline itself could not run (infrastructure), which
+    the caller treats as a failure, never as a clean bill.
+    """
+    try:
+        p = subprocess.run(
+            ["cargo", "run", "-q", "-p", "active-cli", "--", "check", str(task)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=300,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    return p.returncode == 0
+
+
 def main() -> int:
     out = Path(sys.argv[sys.argv.index("--out") + 1]) if "--out" in sys.argv else None
     report: dict = {"loops": {}, "ok": True}
@@ -76,9 +106,22 @@ def main() -> int:
         failed = False
         iters_sum = 0
         iters_n = 0
+        improved = 0
         for task, expect_clean in TASKS:
+            base_clean = baseline_first_attempt(VECTORS / task)
+            if base_clean is None:
+                failed = True
+                entry["tasks"][task] = {
+                    "clean": False,
+                    "iters": None,
+                    "codes": [],
+                    "baseline_first_attempt_clean": None,
+                    "improved_over_baseline": False,
+                    "baseline_error": "baseline could not run",
+                }
+                continue
             r = run_loop(cmd, cwd, VECTORS / task, 5)
-            if "hunter2" in json.dumps(r) or "sk-" in json.dumps(r):
+            if "hunter2" in json.dumps(r) or KEY_RE.search(json.dumps(r)):
                 r["secret_leak"] = True
                 failed = True
             clean = r["exit"] == 0
@@ -89,12 +132,25 @@ def main() -> int:
                 iters_n += 1
                 if task == "clean-pass.active" and r["iters"] != 1:
                     failed = True
+            # Improvement = the loop cleans a task the unassisted first
+            # attempt fails. repair-fill must improve; clean-pass must
+            # already be clean (no room, no regression); broken-parse must
+            # stay unclean (true negative, not a repairable task).
+            if clean and not base_clean:
+                improved += 1
             entry["tasks"][task] = {
                 "clean": clean,
                 "iters": r["iters"],
                 "codes": r["codes"],
+                "baseline_first_attempt_clean": base_clean,
+                "improved_over_baseline": clean and not base_clean,
             }
         entry["mean_iters_to_clean"] = (iters_sum / iters_n) if iters_n else None
+        entry["tasks_improved"] = improved
+        if improved < 1:
+            # No task converted from failing to clean: the loop adds
+            # nothing over the direct check.
+            failed = True
         entry["status"] = "fail" if failed else "pass"
         if failed:
             report["ok"] = False

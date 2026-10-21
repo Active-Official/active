@@ -37,6 +37,15 @@ class BindingTest(unittest.TestCase):
         with self.assertRaises(ActiveError):
             self.mod.eval("timeout = 5s + 512MiB\n")
 
+    def test_check_carries_structured_spans(self) -> None:
+        diags = self.mod.check("timeout = 5s + 512MiB\n")
+        self.assertEqual(len(diags), 1)
+        d = diags[0]
+        self.assertEqual(d.code, "T001")
+        self.assertEqual(d.severity, "error")
+        self.assertEqual(d.span(), (1, 14, 1, 15))
+        self.assertEqual(self.mod.check("port = 8080\n"), [])
+
     def test_secret_redacted(self) -> None:
         value = self.mod.eval('token = secret("hunter2")\n[out]\npass = token\n')
         self.assertEqual(value, {"token": "***SECRET***", "out": {"pass": None}})

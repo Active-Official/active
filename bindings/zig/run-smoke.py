@@ -46,7 +46,8 @@ def main() -> int:
         if not staticlib.is_file():
             print(f"BUILD FAILED: missing static archive: {staticlib}")
             return 1
-        link = [str(staticlib)]
+        # The Rust staticlib needs the unwinder at link time.
+        link = [str(staticlib), "-lunwind"]
     b = run(
         [
             "zig",

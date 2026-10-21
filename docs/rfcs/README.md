@@ -8,9 +8,13 @@ stable while letting the language grow.
 
 Grammar, IR nodes, evaluation semantics, new diagnostic codes,
 CLI surface changes, conformance-affecting behavior, MSRV bumps,
-and version-policy changes. Not required: bug fixes restoring
+version-policy changes, schema language extensions (new types,
+constraints, composition), C ABI changes of any kind (even additive:
+new exports need a documented threat review), and new language
+bindings promoted to Tier-1. Not required: bug fixes restoring
 specified behavior, performance work with no observable change,
-docs, tests, tooling internals.
+docs, tests, tooling internals, Tier-2 smoke bindings that add no
+ABI surface.
 
 ## Lifecycle
 

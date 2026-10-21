@@ -146,6 +146,12 @@ PATHS: list[tuple[str, list[str], Path, str]] = [
         ROOT,
         r"^SMOKE-OK$",
     ),
+    (
+        "fortran",
+        ["python", "bindings/fortran/run-smoke.py"],
+        ROOT,
+        r"^SMOKE-OK$",
+    ),
 ]
 
 PLACEHOLDERS = ["go-native"]

@@ -863,6 +863,42 @@ struct PythonGen<'a> {
     taken: HashSet<String>,
 }
 
+/// Python string literal with escaping (members and defaults come from
+/// schema authors, not a fixed dictionary: quotes, backslashes, and
+/// control characters must not break the emitted module).
+fn py_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                out.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Python keywords plus builtins that must not become bare field names.
+const PYTHON_KEYWORDS: &[&str] = &[
+    "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue",
+    "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import",
+    "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while",
+    "with", "yield", "match", "case", "type",
+];
+
+/// Comment-safe single line: newlines would inject arbitrary lines.
+fn py_comment(s: &str) -> String {
+    s.replace(['\n', '\r'], " ")
+}
+
 impl PythonGen<'_> {
     fn type_name(&mut self, id: NodeId, base: String) -> String {
         if let Some(name) = self.names.get(&id) {
@@ -885,13 +921,20 @@ impl PythonGen<'_> {
         if fields.is_empty() {
             self.out.push_str("    pass\n");
         }
+        let mut taken_names = std::collections::HashSet::new();
         for (key, field) in &fields {
-            let field_name = sanitize_ident(&key.to_lowercase(), "field");
+            let mut field_name = sanitize_ident(&key.to_lowercase(), "field");
+            if PYTHON_KEYWORDS.contains(&field_name.as_str()) {
+                field_name.push('_');
+            }
+            while !taken_names.insert(field_name.clone()) {
+                field_name.push('_');
+            }
             if field_name != *key {
                 self.out.push_str(&format!("    # key: {key}\n"));
             }
             if let Some(doc) = field_description(self.module, *field) {
-                self.out.push_str(&format!("    # {doc}\n"));
+                self.out.push_str(&format!("    # {}\n", py_comment(&doc)));
             }
             if let Some(crate::ir::Node::SchemaField { field: f }) = self.module.get(*field) {
                 if let Some(format) = literal_string(self.module, f.format) {
@@ -907,7 +950,8 @@ impl PythonGen<'_> {
                     if reason.is_empty() {
                         self.out.push_str("    # Deprecated\n");
                     } else {
-                        self.out.push_str(&format!("    # Deprecated: {reason}\n"));
+                        self.out
+                            .push_str(&format!("    # Deprecated: {}\n", py_comment(&reason)));
                     }
                 }
             }
@@ -965,7 +1009,7 @@ impl PythonGen<'_> {
             ActiveType::Float => "float".to_string(),
             ActiveType::String | ActiveType::Secret => "str".to_string(),
             ActiveType::Enum(members) => {
-                let quoted: Vec<String> = members.iter().map(|m| format!("\"{m}\"")).collect();
+                let quoted: Vec<String> = members.iter().map(|m| py_string(m)).collect();
                 format!("Literal[{}]", quoted.join(", "))
             }
             ActiveType::Table { .. } => "dict[str, Any]".to_string(),

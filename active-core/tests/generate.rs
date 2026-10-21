@@ -6,7 +6,8 @@
 //! TS/Go, and a rustfmt syntax gate for the Rust output.
 
 use active_core::convert::{
-    schema_to_go, schema_to_json_schema, schema_to_openapi, schema_to_rust, schema_to_typescript,
+    schema_to_go, schema_to_json_schema, schema_to_openapi, schema_to_python, schema_to_rust,
+    schema_to_typescript,
 };
 use active_core::parse;
 
@@ -207,8 +208,19 @@ fn codegen_carries_new_schema_metadata() {
 }
 
 #[test]
+fn python_target_escapes_and_dedupes() {
+    let module = parse(
+        "schema = { class = String(description = \"a\\nb\") }\n",
+        "generate",
+    )
+    .expect("must parse");
+    let py = schema_to_python(&module, "Config").expect("python");
+    assert!(py.contains("class_: str"), "keyword gets underscore:\n{py}");
+    assert!(py.contains("# a b"), "newline folded in comment:\n{py}");
+}
+
+#[test]
 fn python_target_emits_typed_dicts() {
-    use active_core::convert::schema_to_python;
     let module = parse(EXT_SCHEMA_DOC, "generate").expect("schema must parse");
     let py = schema_to_python(&module, "Config").expect("python");
     for probe in [

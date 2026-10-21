@@ -59,6 +59,8 @@ fn null_handles_never_trap() {
     // null-safety; the test asserts the promise holds.
     unsafe {
         let lib = libloading::Library::new(&path).expect("dlopen cdylib");
+        load!(lib, abi, AbiVersionFn, b"active_abi_version");
+        assert_eq!(abi(), 1, "ABI gate: major must be 1");
         load!(lib, check, CheckFn, b"active_check");
         load!(lib, eval, EvalFn, b"active_eval");
         load!(lib, free_mod, FreeFn, b"active_module_free");
@@ -94,6 +96,8 @@ fn hostile_inputs_fail_closed() {
     // every call must return an error or null, never trap or hang.
     unsafe {
         let lib = libloading::Library::new(&path).expect("dlopen cdylib");
+        load!(lib, abi, AbiVersionFn, b"active_abi_version");
+        assert_eq!(abi(), 1, "ABI gate: major must be 1");
         load!(lib, parse, ParseFn, b"active_module_parse");
         load!(lib, check, CheckFn, b"active_check");
         load!(lib, eval, EvalFn, b"active_eval");
@@ -125,19 +129,61 @@ fn hostile_inputs_fail_closed() {
         free_set(set);
         free_mod(m);
 
-        // Adversarial repetition: budgets fail closed, evaluation never
-        // hangs and never returns a value for nonsense.
+        // Adversarial repetition: evaluation never hangs and never
+        // returns a value for nonsense. A 200KB single key parses or
+        // rejects; either way no trap occurs (a trap would abort the
+        // test binary here).
         let mut huge = vec![b'x'; 200_000];
         huge.extend_from_slice(b" = 1\n");
         let m = parse(huge.as_ptr(), huge.len(), std::ptr::null());
         if !m.is_null() {
             let set = check(m, std::ptr::null());
             assert!(!set.is_null());
-            // Either clean or diagnosed; both are fail-closed outcomes.
-            // What must NOT happen is a trap, which would abort here.
             let _ = len(set);
             free_set(set);
             free_mod(m);
         }
+
+        // Tight budget through the real ABI: a document needing more
+        // nodes than allowed must fail closed (diagnosed, no value),
+        // never trap and never evaluate.
+        let mut many = String::new();
+        for i in 0..50u32 {
+            many.push_str(&format!("k{i} = {i}\n"));
+        }
+        #[repr(C)]
+        struct ActiveBudget {
+            struct_size: u32,
+            max_nodes: u64,
+            max_depth: u64,
+            max_array_len: u64,
+            max_keys: u64,
+            max_wall_ms: u64,
+            max_value_size: u64,
+            max_total_value_size: u64,
+        }
+        let tight = ActiveBudget {
+            struct_size: std::mem::size_of::<ActiveBudget>() as u32,
+            max_nodes: 5,
+            max_depth: 256,
+            max_array_len: 100_000,
+            max_keys: 100_000,
+            max_wall_ms: 0,
+            max_value_size: 10_000_000,
+            max_total_value_size: 100_000_000,
+        };
+        let budget_ptr = &tight as *const ActiveBudget as *const std::ffi::c_void;
+        let m = parse(many.as_ptr(), many.len(), std::ptr::null());
+        assert!(!m.is_null());
+        let set = check(m, budget_ptr);
+        assert!(!set.is_null());
+        assert!(
+            len(set) >= 1,
+            "tiny node budget must diagnose, not evaluate clean"
+        );
+        let v = eval(m, budget_ptr);
+        assert!(v.is_null(), "over-budget eval must return null");
+        free_set(set);
+        free_mod(m);
     }
 }

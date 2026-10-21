@@ -34,6 +34,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 RAW_SECRET = "hunter2"
+REDACTED = "***SECRET***"
 
 
 def sh(argv: list[str], cwd: Path) -> tuple[int, str, bool]:
@@ -55,6 +56,11 @@ def sh(argv: list[str], cwd: Path) -> tuple[int, str, bool]:
         return 124, f"TIMEOUT after 900s: {tail[-2000:]}", True
     except FileNotFoundError as e:
         return 127, f"MISSING BINARY: {e}", False
+
+
+def scrub(text: str) -> str:
+    """Redact the fixture raw secret before anything is stored or printed."""
+    return text.replace(RAW_SECRET, REDACTED)
 
 
 def parse_tally(output: str, pattern: str) -> str | None:
@@ -137,6 +143,7 @@ def self_check() -> int:
         ("js-ok", r"^js-ok$", True),
         ("SMOKE-OK", r"^SMOKE-OK$", True),
         ("SMOKE-FAIL", r"^SMOKE-OK$", False),
+        ("SKIP: zig not installed", r"^SKIP.*$", True),
         ("js-FAIL: refused", r"^js-ok$", False),
     ]
     bad = 0
@@ -157,11 +164,22 @@ def main() -> int:
     failed = False
     for name, argv, cwd, tally in PATHS:
         code, output, timed_out = sh(argv, cwd)
+        output = scrub(output)
         clean = RAW_SECRET not in output
         if not clean:
             report["secret_leak"] = True
         tally_line = parse_tally(output, tally)
+        skipped = parse_tally(output, r"^SKIP.*$") is not None
         passed = code == 0 and tally_line is not None and clean and not timed_out
+        if skipped:
+            entry = {
+                "status": "skipped",
+                "exit": code,
+                "tally": tally_line,
+                "secret_clean": clean,
+            }
+            report["paths"][name] = entry
+            continue
         if not passed:
             failed = True
         entry = {

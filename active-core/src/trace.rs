@@ -76,12 +76,23 @@ mod tests {
     use crate::parser::parse;
 
     fn codes_of(source: &str) -> (Vec<TraceEvent>, Vec<String>) {
-        set_tracing(true);
+        struct Guard;
+        impl Guard {
+            fn on() -> Self {
+                set_tracing(true);
+                Guard
+            }
+        }
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                set_tracing(false);
+            }
+        }
+        let _guard = Guard::on();
         let module = parse(source, "trace-test").expect("must parse");
         let engine = crate::eval::Engine::new();
         let _ = engine.evaluate(&module);
         let trail = take_trail();
-        set_tracing(false);
         let codes = trail.last().map(|t| t.codes.clone()).unwrap_or_default();
         (trail, codes)
     }
@@ -92,6 +103,7 @@ mod tests {
         let engine = crate::eval::Engine::new();
         let _ = engine.evaluate(&module);
         assert!(take_trail().is_empty());
+        assert!(!ENABLED.with(Cell::get));
     }
 
     #[test]

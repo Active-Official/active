@@ -158,6 +158,78 @@ PATHS: list[tuple[str, list[str], Path, str]] = [
         ROOT,
         r"^TEST-OK$",
     ),
+    (
+        "haskell",
+        ["python", "bindings/haskell/run-smoke.py"],
+        ROOT,
+        r"^SMOKE-OK$",
+    ),
+    (
+        "julia",
+        ["python", "bindings/julia/run-smoke.py"],
+        ROOT,
+        r"^SMOKE-OK$",
+    ),
+    (
+        "nim",
+        ["python", "bindings/nim/run-smoke.py"],
+        ROOT,
+        r"^SMOKE-OK$",
+    ),
+    (
+        "perl",
+        ["python", "bindings/perl/run-smoke.py"],
+        ROOT,
+        r"^SMOKE-OK$",
+    ),
+    (
+        "r",
+        ["python", "bindings/r/run-smoke.py"],
+        ROOT,
+        r"^SMOKE-OK$",
+    ),
+    (
+        "ocaml",
+        ["python", "bindings/ocaml/run-smoke.py"],
+        ROOT,
+        r"^SMOKE-OK$",
+    ),
+    (
+        "crystal",
+        ["python", "bindings/crystal/run-smoke.py"],
+        ROOT,
+        r"^SMOKE-OK$",
+    ),
+    (
+        "elixir",
+        ["python", "bindings/elixir/run-smoke.py"],
+        ROOT,
+        r"^SMOKE-OK$",
+    ),
+    (
+        "dart",
+        ["python", "bindings/dart/run-smoke.py"],
+        ROOT,
+        r"^SMOKE-OK$",
+    ),
+    (
+        "vlang",
+        ["python", "bindings/vlang/run-smoke.py"],
+        ROOT,
+        r"^SMOKE-OK$",
+    ),
+    (
+        "kotlin",
+        ["python", "bindings/kotlin/run-smoke.py"],
+        ROOT,
+        r"^SMOKE-OK$",
+    ),
+    (
+        "swift",
+        ["python", "bindings/swift/run-smoke.py"],
+        ROOT,
+        r"^SMOKE-OK$",
+    ),
 ]
 
 PLACEHOLDERS = []
@@ -210,15 +282,29 @@ def main() -> int:
     failed = False
     for name, argv, cwd, tally in PATHS:
         code, output, timed_out = sh(argv, cwd)
-        output = scrub(output)
+        # Leak gate reads the RAW output: scrub() redacts the marker, so
+        # checking after scrubbing would pass every run by construction
+        # (review P3-1: the old order made secret_leak dead code).
         clean = RAW_SECRET not in output
         if not clean:
             report["secret_leak"] = True
+            # A raw secret in any path's output fails the whole run,
+            # even a path that otherwise counts as skipped.
+            failed = True
+        output = scrub(output)
         tally_line = parse_tally(output, tally)
-        skipped = parse_tally(output, r"^SKIP.*$") is not None
-        if code == 127 and not skipped:
+        skip_line = parse_tally(output, r"^SKIP.*$") is not None
+        missing_binary = code == 127 and not skip_line
+        if missing_binary:
             # Missing toolchain binary (cargo/node/go): skip openly.
             skipped = True
+        elif skip_line:
+            # A SKIP line skips only on a clean exit: a runner that
+            # prints SKIP and then fails (nonzero code) must fail the
+            # run, never pass silently (review P3-2).
+            skipped = code == 0 and clean
+        else:
+            skipped = False
         passed = code == 0 and tally_line is not None and clean and not timed_out
         if skipped:
             entry = {

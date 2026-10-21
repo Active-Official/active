@@ -44,6 +44,48 @@ jobs:
       - name: Install LuaJIT (Unix only)
         if: runner.os != 'Windows'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq luajit
+      - name: Install Tier-2 apt toolchains (Linux only)
+        # Pinned by the Ubuntu 24.04 (noble) release itself: apt resolves
+        # fixed versions within the runner image date, same as the luajit
+        # step above. Only fast-moving upstreams get explicit pins below.
+        if: runner.os == 'Linux'
+        run: >
+          sudo apt-get update -qq &&
+          sudo apt-get install -y -qq --no-install-recommends
+          perl libffi-platypus-perl r-base-core ghc ocaml elixir
+          kotlin
+      - name: Install Nim via choosenim (Linux only)
+        if: runner.os == 'Linux'
+        run: curl -fsSL https://nim-lang.org/choosenim/init.sh -o /tmp/choosenim.sh && sh /tmp/choosenim.sh -y -- 2.2.12 && echo "$HOME/.nimble/bin" >> "$GITHUB_PATH"
+      - name: Install Crystal (Linux only)
+        # OBS devel:languages:crystal repo for noble; tracks the stable
+        # release like the Dart repo below.
+        if: runner.os == 'Linux'
+        run: curl -fsSL https://crystal-lang.org/install.sh | sudo bash
+      - name: Install Dart (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y -qq apt-transport-https
+          curl -fsSL https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/dart.gpg
+          echo "deb [signed-by=/usr/share/keyrings/dart.gpg arch=amd64] https://storage.googleapis.com/download.dartlang.org/linux/debian stable main" | sudo tee /etc/apt/sources.list.d/dart_stable.list
+          sudo apt-get update -qq && sudo apt-get install -y -qq dart
+          echo "/usr/lib/dart/bin" >> "$GITHUB_PATH"
+      - name: Install Julia via juliaup (Linux only)
+        # Follows the stable release channel; the smoke needs any working
+        # toolchain since it drives the frozen C ABI. Proof pins 1.13.2.
+        if: runner.os == 'Linux'
+        run: curl -fsSL https://install.julialang.org -o /tmp/juliaup && sh /tmp/juliaup -y && echo "$HOME/.juliaup/bin" >> "$GITHUB_PATH"
+      - name: Install Erlang NIF headers (Linux only)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y -qq erlang-dev
+      - name: Install V (Linux only)
+        if: runner.os == 'Linux'
+        # Pinned to the proven tag; V master moves fast and smoke needs no
+        # newer feature.
+        run: git clone --depth 1 --branch v0.5.2 https://github.com/vlang/v /tmp/v && cd /tmp/v && sudo make && echo "/tmp/v" >> "$GITHUB_PATH"
+      # Swift is container-proven only: the 1 GB toolchain download is not
+      # worth every CI run. bindings/swift/run-smoke.py skips openly
+      # without swiftc; proof lives in the Tier-2 container logs.
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"

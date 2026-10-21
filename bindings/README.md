@@ -31,15 +31,18 @@
 | Zig                   | 2    | Smoke green | `bindings/zig/smoke.zig` drives the frozen C ABI directly (ABI gate, T001 refusal, redaction) via `run-smoke.py`; harness path `zig` green; SPEC.md maps ownership rules |
 | Ruby                    | 2    | Smoke green | Fiddle over the frozen C ABI (ABI gate, T001 refusal, redaction); harness path ruby green in Linux container, SKIP without ruby; SPEC.md maps ownership rules |
 | PHP                       | 2    | Smoke green | FFI over the frozen C ABI (ABI gate, T001 refusal, redaction); harness path php green in Linux container (ext-ffi), SKIP without php; SPEC.md maps ownership rules |
-| Swift                 | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.007) |
-| Kotlin                | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.008) |
-| Dart                  | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.009) |
-| Elixir                | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.010) |
-| Haskell               | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.011) |
-| OCaml                 | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.012) |
-| Nim                   | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.013) |
-| Crystal               | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.014) |
-| V                     | 2    | Planned    | SPEC drafted, no toolchain on this machine; design recorded, implementation deferred (CHECKLIST 2.015) |
+| Swift                 | 2    | Smoke green | `bindings/swift` C-shim smoke over the frozen C ABI (ABI gate, T001 refusal, redaction; Swift cannot name forward-declared C types, so a 10-function void\*/char\* shim stands between); harness path `swift` green in Linux container, SKIP without swiftc; SPEC.md maps ownership rules |
+| Kotlin                | 2    | Smoke green | `bindings/kotlin` JNI smoke over the frozen C ABI mirroring bindings/java (ABI gate, T001 refusal, redaction); harness path `kotlin` green in Linux container, SKIP without kotlinc/java; SPEC.md maps ownership rules |
+| Dart                  | 2    | Smoke green | `bindings/dart` package:ffi smoke over the frozen C ABI (ABI gate, T001 refusal, redaction); harness path `dart` green in Linux container, SKIP without dart; SPEC.md maps ownership rules |
+| Elixir                | 2    | Smoke green | `bindings/elixir` NIF smoke over the frozen C ABI (resource type with destructor, ABI gate, T001 refusal, redaction); harness path `elixir` green in Linux container, SKIP without elixir/gcc/erlang-dev; SPEC.md maps ownership rules |
+| Haskell               | 2    | Smoke green | `bindings/haskell` foreign-import-ccall smoke over the frozen C ABI (ABI gate, T001 refusal, redaction); harness path `haskell` green in Linux container, SKIP without ghc; SPEC.md maps ownership rules |
+| OCaml                 | 2    | Smoke green | `bindings/ocaml` external-declaration smoke over the frozen C ABI plus a small C stub for owned-string copies (ABI gate, T001 refusal, redaction); harness path `ocaml` green in Linux container, SKIP without ocamlopt; SPEC.md maps ownership rules |
+| Nim                   | 2    | Smoke green | `bindings/nim` importc smoke over the frozen C ABI (ABI gate, T001 refusal, redaction); harness path `nim` green in Linux container, SKIP without nim; SPEC.md maps ownership rules |
+| Crystal               | 2    | Smoke green | `bindings/crystal` lib-declaration smoke over the frozen C ABI (ABI gate, T001 refusal, redaction); harness path `crystal` green in Linux container, SKIP without crystal; SPEC.md maps ownership rules |
+| V                     | 2    | Smoke green | `bindings/vlang` C-interop smoke over the frozen C ABI (ABI gate, T001 refusal, redaction); harness path `vlang` green in Linux container, SKIP without v; SPEC.md maps ownership rules |
+| Julia                 | 2    | Smoke green | `bindings/julia` ccall smoke over the frozen C ABI (ABI gate, T001 refusal, redaction); harness path `julia` green in Linux container, SKIP without julia; SPEC.md maps ownership rules |
+| R                     | 2    | Smoke green | `bindings/r` .Call-wrapper smoke over the frozen C ABI (ABI gate, T001 refusal, redaction); harness path `r` green in Linux container, SKIP without Rscript; SPEC.md maps ownership rules |
+| Perl                  | 2    | Smoke green | `bindings/perl` FFI::Platypus smoke over the frozen C ABI (ABI gate, T001 refusal, redaction); harness path `perl` green in Linux container, SKIP without perl/FFI::Platypus; SPEC.md maps ownership rules |
 | Lua / LuaJIT          | 2    | Smoke green | LuaJIT FFI over the frozen C ABI (ABI gate, T001 refusal, redaction); harness path lua green in Linux container, SKIP without luajit; SPEC.md maps ownership rules |
 
 Update this matrix on every binding status change. Statuses above were

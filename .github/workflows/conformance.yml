@@ -1,0 +1,61 @@
+name: Conformance
+
+# Shared cross-implementation conformance (CHECKLIST Step 3.001,
+# PROPOSAL section 5.1). Runs the harness over Rust, the C ABI, WASM,
+# Go, Python, JS, Zig, and C# on every push and PR. Any divergence in
+# diagnostic codes or redacted JSON fails the gate; spans stay advisory
+# per tier G-017. Tier-2 paths that cannot run here report
+# not-implemented/skip explicitly instead of passing silently.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  harness:
+    name: Shared harness (all paths)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Install Python WASM runtime
+        run: pip install wasmtime
+      - name: Build WASM module and FFI libraries
+        run: cargo build -p active-wasm --target wasm32-unknown-unknown --release --locked
+      - run: cargo build -p active-ffi --locked
+      - name: Run shared harness
+        run: python conformance/harness/run.py --out harness.json
+      - name: Upload harness report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harness-${{ matrix.os }}
+          path: harness.json

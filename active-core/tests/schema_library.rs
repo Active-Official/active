@@ -150,6 +150,45 @@ fn feature_flags_schema() {
 }
 
 #[test]
+fn webhook_schema() {
+    let v = strict_value("good_webhook.active");
+    assert_eq!(v["target"], "https://hooks.example.com/events");
+    assert_eq!(v["policy"], "retry");
+    assert_eq!(v["hmac_key"], "***SECRET***");
+    assert_eq!(
+        strict_issues("bad_webhook.active"),
+        [(String::from("T003"), Some(String::from("target")))]
+    );
+    // The new schema metadata rides along for agents: description
+    // slots, enum descriptions, secret types, and deprecations
+    // are all queryable through the introspection surface
+    // (requires is exercised by tls-terminator + conformance 0014).
+    let module = parse_file(&fixture("good_webhook.active"), parse_options())
+        .unwrap_or_else(|diags| panic!("webhook: parse failed: {diags:?}"));
+    let inspected = active_core::convert::schema_inspect(&module).expect("inspect");
+    let by_path = |path: &str| {
+        inspected["fields"]
+            .as_array()
+            .expect("fields")
+            .iter()
+            .find(|f| f["path"] == path)
+            .unwrap_or_else(|| panic!("missing {path}"))
+            .clone()
+    };
+    assert_eq!(by_path("target")["constraints"]["format"], "uri");
+    assert!(!by_path("target")["description"]
+        .as_str()
+        .expect("desc")
+        .is_empty());
+    assert_eq!(by_path("hmac_key")["type"], "Secret");
+    assert_eq!(
+        by_path("policy")["member_descriptions"],
+        serde_json::json!(["fire and forget", "exponential backoff"])
+    );
+    assert_eq!(by_path("hook")["deprecated"], "use target");
+}
+
+#[test]
 fn api_service_schema() {
     let v = strict_value("good_api.active");
     assert_eq!(v["base_url"], "https://api.example.com/v1");
@@ -361,6 +400,11 @@ fn every_library_schema_renders_docs() {
             "good_tls.active",
             &["### tls", "### cert", "### key"],
         ),
+        (
+            "webhook",
+            "good_webhook.active",
+            &["### target", "### hmac_key", "### policy", "### hook"],
+        ),
     ];
     let chapter =
         std::fs::read_to_string(workspace_root().join("docs-site/src/reference/schema-library.md"))
@@ -375,7 +419,8 @@ fn every_library_schema_renders_docs() {
         let items = collect_items(&module, &value);
         for item in &items {
             // Every typed leaf renders a description (spec rule:
-            // descriptive comments on every schema field).
+            // descriptive prose on every schema field, comment or
+            // description slot).
             // Array-element fields are exempt: inline-table values
             // never attach annotations or comments reliably
             // (documented parser boundary — statement-level call

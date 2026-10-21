@@ -1,9 +1,10 @@
 # ACTIVE standard schema library (C-062, spec/schema-library.md)
 
 Versioned with the language (same workspace version): `http-server`,
-`postgres`, `observability`, `feature-flags`, and `ai-agent` schemas
-with a descriptive comment on every field, closed tables, and
-defaults where a universal value exists.
+`postgres`, `observability`, `feature-flags`, `ai-agent`,
+`api-service`, `tls-terminator`, and `webhook` schemas
+with descriptive prose on every field (comment or `description`
+slot), closed tables, and defaults where a universal value exists.
 
 Consume by vendoring this directory next to your documents and
 including downward (no flags, no escapes):

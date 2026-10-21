@@ -119,7 +119,9 @@ required key`) unless:
   (explicitness), while resilient mode fills the default and records
   W005 instead (§9). A default that cannot be applied (defensive;
   unreachable on well-formed evaluations) reports T004 noting the
-  failure rather than going silent; or
+  failure rather than going silent. Deprecated fields with a
+  default are exempt from strict explicitness (omission is the
+  migration path; §9); or
 - the field's type is `Null` **and it declares no default** — absence
   is equivalent to null. `Null` with a `default` follows the default
   rule above in both modes; or
@@ -185,6 +187,10 @@ by mode:
 - **Strict**: T004 (`missing required key`, with a message noting that
   strict mode requires explicit values despite the default). Strict
   means explicit: every value in the tree is written by someone.
+  Exception: a *deprecated* field with a default may be omitted —
+  omitting it is the migration path, so strict leaves the key absent
+  instead of failing (resilient still fills it with W005; explicit
+  use still warns via L005).
 - **Resilient**: the evaluated default is inserted into the result
   tree at the missing key and a W005 warning is recorded (`filled
   missing key '<path>' from schema default`, at the schema field

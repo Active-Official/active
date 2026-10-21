@@ -15,10 +15,11 @@ download step), e.g. `include "schemas/http-server.active"`.
 | `ai-agent.active` | `model`, `temperature`, `max_tokens`, `retries` | `model` |
 | `api-service.active` | `base_url`, `version`, `build`, `channel` | `base_url`, `version`, `build` |
 | `tls-terminator.active` | `tls`, `cert` (requires `tls`), `key` (requires `tls`) | conditional (see `requires`) |
+| `webhook.active` | `target`, `hmac_key`, `policy`, `hook` | `target`, `hmac_key` |
 
 Every file follows the library rules (`spec/schema-library.md`):
-closed tables, a descriptive comment on every field, defaults where
-universal (`T004` naming the key otherwise), units for measurable
+closed tables, descriptive prose on every field (comment or
+`description` slot), defaults where universal (`T004` naming the key otherwise), units for measurable
 quantities, and no secrets inside — `Secret`-typed fields accept
 your tainted values and redact like any other secret. Each schema
 is validated by the test suite against good and bad sample

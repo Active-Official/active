@@ -1,7 +1,7 @@
 # Standard Schema Library (C-062, P-061)
 
-Versioned, reusable schemas and include fragments for the five
-most common configuration shapes. Distributed as `schemas/` in
+Versioned, reusable schemas and include fragments for the most
+common configuration shapes. Distributed as `schemas/` in
 the repository (and in every release archive); consumed with a
 literal include — no registry, no download step, paths below are
 relative to the including file:
@@ -13,7 +13,8 @@ include "schemas/http-server.active"
 ## 1. Layout and versioning
 
 - One file per domain: `http-server`, `postgres`, `observability`,
-  `feature-flags`, `ai-agent` (each `<name>.active`).
+  `feature-flags`, `ai-agent`, `api-service`, `tls-terminator`,
+  `webhook` (each `<name>.active`).
 - The library versions WITH the language (same workspace version):
   schemas may use any shipped schema feature, and the library test
   suite (`tests/schema_library.rs`) pins every file against good
@@ -26,7 +27,8 @@ include "schemas/http-server.active"
 
 - Closed tables at every level (`closed = true`): typos fail
   loudly with `did you mean` instead of drifting.
-- Every field carries a descriptive plain comment, which the C-048
+- Every field carries descriptive prose — a plain comment, a
+  `description` slot, or both — which the C-048
   docgen renders into reference pages. (`# @intent` stays on value
   bindings: annotations attach statement-level only, and schema
   fields never take them — spec/annotations.md.)

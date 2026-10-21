@@ -638,6 +638,20 @@ fn unknown_format_reports_once_per_field() {
 }
 
 #[test]
+fn deprecated_defaulted_fields_skip_strict_explicitness() {
+    // Omitting a deprecated key is the migration path, not a
+    // violation: strict leaves it absent, resilient fills it (W005).
+    // Explicit use still warns via L005 (pinned in lint.rs).
+    let v = evaluate_strict("deprecated_omitted.active")
+        .expect("deprecated+default may be omitted in strict");
+    assert_eq!(v["keep"], "k");
+    assert!(v.get("old").is_none(), "{v}");
+    let (v, diags) = evaluate_resilient("deprecated_omitted.active");
+    assert_eq!(v["old"], "o");
+    assert!(diags.iter().any(|d| d.code == "W005"), "{diags:?}");
+}
+
+#[test]
 fn requires_fires_only_when_trigger_present() {
     let diags = evaluate_strict("requires_triggered.active").expect_err("must fail strict");
     assert!(

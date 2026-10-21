@@ -1,0 +1,10 @@
+# Standard outgoing-webhook schema (ACTIVE schema library).
+schema {
+  closed = true,
+  target = String(format = "uri", description = "HTTPS endpoint receiving the event payload."),
+  hmac_key = Secret(description = "HMAC key for the X-Signature header."),
+  # Retry policy.
+  policy = Enum("once", "retry", descriptions = ["fire and forget", "exponential backoff"], default = "retry"),
+  # Legacy hook URL (removed in favor of target).
+  hook = String(default = "", deprecated = "use target"),
+}

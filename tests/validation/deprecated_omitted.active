@@ -1,0 +1,5 @@
+schema = {
+  keep = String,
+  old = String(default = "o", deprecated = "gone"),
+}
+keep = "k"

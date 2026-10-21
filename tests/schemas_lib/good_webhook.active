@@ -1,0 +1,6 @@
+include "../../schemas/webhook.active"
+
+target = "https://hooks.example.com/events"
+hmac_key = secret("s3cr3t-signing-key")
+policy = "retry"
+hook = ""

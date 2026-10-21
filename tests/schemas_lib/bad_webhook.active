@@ -1,0 +1,6 @@
+include "../../schemas/webhook.active"
+
+target = "not a uri"
+hmac_key = secret("s3cr3t-signing-key")
+policy = "retry"
+hook = ""

@@ -660,15 +660,17 @@ impl<'a> Validator<'a> {
         segments: &[PathSeg],
         table: &indexmap::IndexMap<String, Value>,
     ) {
-        let (default_arg, is_null, field_span, requires_arg) = match self.module.get(field_id) {
-            Some(Node::SchemaField { field }) => (
-                field.default,
-                matches!(field.typ, ActiveType::Null),
-                field.span.clone(),
-                field.requires,
-            ),
-            _ => (None, false, None, None),
-        };
+        let (default_arg, is_null, field_span, requires_arg, is_deprecated) =
+            match self.module.get(field_id) {
+                Some(Node::SchemaField { field }) => (
+                    field.default,
+                    matches!(field.typ, ActiveType::Null),
+                    field.span.clone(),
+                    field.requires,
+                    field.deprecated.is_some(),
+                ),
+                _ => (None, false, None, None, false),
+            };
         let path = render_path(segments);
         let (span, file) =
             match field_span.or_else(|| self.module.node_spans.get(&field_id).cloned()) {
@@ -708,15 +710,23 @@ impl<'a> Validator<'a> {
                 });
                 return;
             }
-            self.push(
-                "T004",
-                format!(
-                    "schema violation at '{}': missing required key (strict mode requires explicit values despite a schema default)",
-                    display_path(&path)
-                ),
-                &path,
-                (span, file),
-            );
+            // Deprecated fields are exempt from strict explicitness:
+            // omitting a deprecated key is the migration path, so it is
+            // not a violation (resilient still fills the default with
+            // W005; explicit use still warns via L005). All other
+            // defaulted fields stay strict-explicit (spec/validation.md
+            // §9): every value in the tree is written by someone.
+            if !is_deprecated {
+                self.push(
+                    "T004",
+                    format!(
+                        "schema violation at '{}': missing required key (strict mode requires explicit values despite a schema default)",
+                        display_path(&path)
+                    ),
+                    &path,
+                    (span, file),
+                );
+            }
             return;
         }
         if is_null {

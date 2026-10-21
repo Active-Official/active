@@ -164,21 +164,23 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Checksums
+      - name: Generate SBOMs (CycloneDX)
+        # Same tool/procedure as the committed packaging/sboms/
+        # snapshot (cargo-cyclonedx 0.5.9). Release copies land in
+        # dist/ with release-scoped names and join checksums,
+        # attestations, and the release upload below.
         shell: bash
         run: |
-          cd dist
-          sha256sum active-*.tar.gz active-*.zip active-lang-*.vsix active_wasm.wasm active-conformance.tar.gz > SHA256SUMS
-          cat SHA256SUMS
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: |
-            dist/active-*.tar.gz
-            dist/active-*.zip
-            dist/active-lang-*.vsix
-            dist/active_wasm.wasm
-            dist/active-conformance.tar.gz
+          cargo install cargo-cyclonedx --locked --version 0.5.9
+          cargo cyclonedx --all -f json
+          shopt -s nullglob
+          for f in active/active.cdx.json active-*/active*.cdx.json; do
+            base=$(basename "$f" .cdx.json)
+            mv "$f" "dist/active-sbom-${base}.cdx.json"
+          done
+          count=$(ls dist/active-sbom-*.cdx.json | wc -l)
+          test "$count" -eq 8 || { echo "FAIL: expected 8 SBOMs, got $count"; exit 1; }
+          ls dist/active-sbom-*.cdx.json
       - name: Optional active-sign sidecars
         # RELEASE_SIGNING_KEY holds the `.secret` file text from
         # `active keygen` (written to a file: --key takes a path, not
@@ -186,6 +188,9 @@ jobs:
         # trust file with id "active-release" + the release public key.
         # Gated in-shell (not `if: secrets...`, which the dispatcher
         # rejects): absent key skips quietly, branch stays green.
+        # Runs BEFORE checksums so sidecars are checksummed with every
+        # other release file (key-based authenticity; provenance
+        # attests the build outputs — see the trust split below).
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
         shell: bash
@@ -201,6 +206,29 @@ jobs:
           done
           rm -f "$RUNNER_TEMP/release.key"
           ls *.sig
+      - name: Checksums
+        shell: bash
+        run: |
+          cd dist
+          shopt -s nullglob
+          files=(active-*.tar.gz active-*.zip active-lang-*.vsix active_wasm.wasm active-conformance.tar.gz active-sbom-*.cdx.json *.sig)
+          sha256sum "${files[@]}" > SHA256SUMS
+          cat SHA256SUMS
+      - name: Attest build provenance
+        # Trust split, documented: provenance attests the build outputs
+        # (archives, wasm, conformance, SBOMs). Optional `.sig`
+        # sidecars carry key-based authenticity instead and are pinned
+        # by SHA256SUMS above (nullglob: identical with or without a
+        # release key configured).
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/active-*.tar.gz
+            dist/active-*.zip
+            dist/active-lang-*.vsix
+            dist/active_wasm.wasm
+            dist/active-conformance.tar.gz
+            dist/active-sbom-*.cdx.json
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:

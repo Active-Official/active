@@ -1,0 +1,71 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.3",
+  "version": 1,
+  "serialNumber": "urn:uuid:1f4579aa-94b2-4491-aae8-f2c1860cdbfc",
+  "metadata": {
+    "timestamp": "2026-10-21T23:03:40.124201200Z",
+    "tools": [
+      {
+        "vendor": "CycloneDX",
+        "name": "cargo-cyclonedx",
+        "version": "0.5.9"
+      }
+    ],
+    "authors": [
+      {
+        "name": "Active Language Team"
+      }
+    ],
+    "component": {
+      "type": "library",
+      "bom-ref": "path+file://ACTIVE_REPO/active-infinity#1.0.0",
+      "author": "Active Language Team",
+      "name": "active-infinity",
+      "version": "1.0.0",
+      "description": "Active ecosystem reservation crate: future home of Active's unbounded and streaming evaluation surface.",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "purl": "pkg:cargo/active-infinity@1.0.0?download_url=file://.",
+      "externalReferences": [
+        {
+          "type": "documentation",
+          "url": "https://docs.rs/active-infinity"
+        },
+        {
+          "type": "website",
+          "url": "https://github.com/Active-Official/active"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/Active-Official/active"
+        }
+      ],
+      "components": [
+        {
+          "type": "library",
+          "bom-ref": "path+file://ACTIVE_REPO/active-infinity#1.0.0 bin-target-0",
+          "name": "active_infinity",
+          "version": "1.0.0",
+          "purl": "pkg:cargo/active-infinity@1.0.0?download_url=file://.#src/lib.rs"
+        }
+      ]
+    },
+    "properties": [
+      {
+        "name": "cdx:rustc:sbom:target:triple",
+        "value": "x86_64-pc-windows-msvc"
+      }
+    ]
+  },
+  "components": [],
+  "dependencies": [
+    {
+      "ref": "path+file://ACTIVE_REPO/active-infinity#1.0.0"
+    }
+  ]
+}

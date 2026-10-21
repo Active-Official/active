@@ -1,0 +1,4 @@
+schema = {
+  port = Int(min = 1, max = 65535),
+}
+port = 8080

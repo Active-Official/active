@@ -145,8 +145,8 @@ func (h *handle) evaluate(source string) (*envelope, error) {
 }
 
 func codesOf(diag string) []string {
+	out := []string{}
 	seen := map[string]bool{}
-	var out []string
 	for _, m := range codeRe.FindAllString(diag, -1) {
 		if !seen[m] {
 			seen[m] = true
@@ -226,10 +226,11 @@ func main() {
 	}
 	defer h.close()
 	type entry struct {
-		Iter     int      `json:"iter"`
-		Codes    []string `json:"codes"`
-		Repaired bool     `json:"repaired_by_resilient,omitempty"`
-		Stuck    bool     `json:"stuck,omitempty"`
+		Iter         int      `json:"iter"`
+		Codes        []string `json:"codes"`
+		Repaired     bool     `json:"repaired_by_resilient,omitempty"`
+		Stuck        bool     `json:"stuck,omitempty"`
+		Unrepairable bool     `json:"unrepairable,omitempty"`
 	}
 	var log []entry
 	seen := map[string]bool{}
@@ -242,6 +243,12 @@ func main() {
 		env, err := h.evaluate(current)
 		if err != nil {
 			fail(err)
+		}
+		if !env.OK {
+			e := entry{Iter: i, Codes: codesOf(env.Diagnostics)}
+			e.Unrepairable = true
+			log = append(log, e)
+			fail(fmt.Errorf("unrepairable: %v", e.Codes))
 		}
 		codes := codesOf(env.Diagnostics)
 		e := entry{Iter: i, Codes: codes}

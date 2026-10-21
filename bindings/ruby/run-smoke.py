@@ -35,6 +35,11 @@ def main() -> int:
     if shutil.which("ruby") is None:
         print("SKIP: ruby not installed")
         return 0
+    if sys.platform == "win32":
+        # Fiddle needs libc strlen for NUL-terminated reads; not reliably
+        # present on Windows hosts. Proven in the Linux container instead.
+        print("SKIP: Windows host without libc strlen")
+        return 0
     lib = find_sharedlib()
     if lib is None:
         print("SKIP: no native shared library built")

@@ -53,6 +53,11 @@ def main() -> int:
     if shutil.which("gfortran") is None:
         print("SKIP: no Fortran compiler installed")
         return 0
+    if sys.platform == "win32":
+        # MSVC-built staticlib cannot link under MinGW gfortran
+        # (missing __chkstk et al). Proven in the Linux container instead.
+        print("SKIP: MSVC toolchain required on Windows")
+        return 0
     lib = find_staticlib()
     if lib is None:
         print("SKIP: no native static library built")

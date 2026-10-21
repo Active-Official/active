@@ -620,7 +620,13 @@ fn generate_serves_all_five_targets() {
             "typescript",
             vec!["export interface Config", "port: number"],
         ),
-        ("go", vec!["type Config struct", "`json:\"port\"`"]),
+        (
+            "go",
+            vec![
+                "type Config struct",
+                "`json:\"port\" validate:\"required,min=1\"`",
+            ],
+        ),
         ("rust", vec!["pub struct Config", "pub port: i64"]),
     ] {
         let out = active()

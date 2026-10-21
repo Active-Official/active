@@ -88,10 +88,10 @@ fn go_golden_snapshot() {
     let go = schema_to_go(&module(), "Config").expect("generate");
     for probe in [
         "type Config struct {",
-        "Port int64 `json:\"port\"`",
-        "Host string `json:\"host\"`",
-        "Mode string `json:\"mode\"`",
-        "Tags []string `json:\"tags\"`",
+        "Port  int64  `json:\"port\"`",
+        "Host  string `json:\"host\"`",
+        "Mode   string       `json:\"mode\"`",
+        "Tags   []string     `json:\"tags\"`",
         "Server ConfigServer `json:\"server\"`",
         "type ConfigServer struct {",
         "// Deprecated: use new",
@@ -217,6 +217,44 @@ fn python_target_escapes_and_dedupes() {
     let py = schema_to_python(&module, "Config").expect("python");
     assert!(py.contains("class_: str"), "keyword gets underscore:\n{py}");
     assert!(py.contains("# a b"), "newline folded in comment:\n{py}");
+}
+
+#[test]
+fn codegen_comments_cannot_inject_lines() {
+    // A newline inside a description must fold to a space (never an
+    // uncommented line), and `*/` must not close a TS block comment.
+    // Mirrors the python_target_escapes_and_dedupes precedent for Go/TS.
+    let module = parse(
+        "schema = { hook = String(description = \"a\\nb */ c\", deprecated = \"x\\ny\", format = \"f\\ng\", requires = \"r\\ns\") }\n",
+        "generate",
+    )
+    .expect("must parse");
+    let go = schema_to_go(&module, "Config").expect("go");
+    // Go uses `//` line comments: folding suffices, `*/` needs no
+    // neutralization there (unlike TS block comments below).
+    assert!(go.contains("// a b */ c"), "go folds comment:\n{go}");
+    assert!(
+        !go.lines().any(|l| l == "b * / c" || l == "b */ c"),
+        "go emits no bare injected line:\n{go}"
+    );
+    assert!(go.contains("// Deprecated: x y"), "go folds reason:\n{go}");
+    let ts = schema_to_typescript(&module, "Config").expect("ts");
+    assert!(
+        ts.contains("/** a b * / c */"),
+        "ts neutralizes terminator:\n{ts}"
+    );
+    assert!(ts.contains("@deprecated x y"), "ts folds reason:\n{ts}");
+    let py = schema_to_python(&module, "Config").expect("python");
+    assert!(py.contains("# a b */ c"), "python folds comment:\n{py}");
+    assert!(py.contains("# format: f g"), "python folds format:\n{py}");
+    assert!(
+        py.contains("# requires: r s"),
+        "python folds requires:\n{py}"
+    );
+    assert!(
+        !py.lines().any(|l| l == "b */ c" || l == "g" || l == "s"),
+        "python emits no bare injected line:\n{py}"
+    );
 }
 
 #[test]

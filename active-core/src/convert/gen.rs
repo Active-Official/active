@@ -411,14 +411,15 @@ impl TsGen<'_> {
             let typ = self.ts_type(&tname, *field);
             let mark = if optional { "?" } else { "" };
             if let Some(doc) = field_description(self.module, *field) {
-                self.out.push_str(&format!("  /** {doc} */\n"));
+                self.out
+                    .push_str(&format!("  /** {} */\n", ts_comment(&doc)));
             }
             if let Some(reason) = self.deprecated(*field) {
                 if reason.is_empty() {
                     self.out.push_str("  /** @deprecated */\n");
                 } else {
                     self.out
-                        .push_str(&format!("  /** @deprecated {reason} */\n"));
+                        .push_str(&format!("  /** @deprecated {} */\n", ts_comment(&reason)));
                 }
             }
             self.out.push_str(&format!("  {key}{mark}: {typ};\n"));
@@ -515,6 +516,23 @@ pub fn schema_to_go(module: &Module, root_name: &str) -> Result<String, String> 
     Ok(gen.out)
 }
 
+/// Emit one contiguous run of struct fields with gofmt-style column
+/// alignment: comment lines break runs, so each run aligns names and
+/// types independently, exactly as gofmt does. Widths use byte length,
+/// which equals display width here: schema keys lex as ASCII-only
+/// identifiers (lexer.rs), so names and derived type names never
+/// contain multi-byte characters.
+fn flush_go_run(run: &mut Vec<(String, String, String)>, out: &mut String) {
+    if run.is_empty() {
+        return;
+    }
+    let nw = run.iter().map(|(n, _, _)| n.len()).max().unwrap_or(0);
+    let tw = run.iter().map(|(_, t, _)| t.len()).max().unwrap_or(0);
+    for (n, t, tag) in run.drain(..) {
+        out.push_str(&format!("\t{n:<nw$} {t:<tw$} {tag}\n", nw = nw, tw = tw));
+    }
+}
+
 struct GoGen<'a> {
     module: &'a Module,
     out: String,
@@ -542,6 +560,18 @@ impl GoGen<'_> {
         let fields: Vec<(String, NodeId)> = fields.iter().map(|(k, v)| (k.clone(), *v)).collect();
         self.out.push_str(&format!("type {name} struct {{\n"));
         let mut taken = HashSet::new();
+        // Collect the body first so gofmt-style column alignment can be
+        // computed per contiguous run of fields (comment lines break runs,
+        // exactly as gofmt does).
+        enum BodyLine {
+            Comment(String),
+            Field {
+                name: String,
+                typ: String,
+                tag: String,
+            },
+        }
+        let mut lines: Vec<BodyLine> = Vec::new();
         for (key, field) in &fields {
             let mut field_name = pascal_case(key);
             while !taken.insert(field_name.clone()) {
@@ -551,21 +581,37 @@ impl GoGen<'_> {
             let tname = self.type_name(nominal, format!("{name}{}", pascal_case(key)));
             let typ = self.go_type(&tname, *field);
             if let Some(doc) = field_description(self.module, *field) {
-                self.out.push_str(&format!("// {doc}\n"));
+                lines.push(BodyLine::Comment(doc));
             }
             if let Some(reason) = self.deprecated(*field) {
                 if reason.is_empty() {
-                    self.out.push_str("\t// Deprecated: no reason given.\n");
+                    lines.push(BodyLine::Comment(
+                        "Deprecated: no reason given.".to_string(),
+                    ));
                 } else {
-                    self.out.push_str(&format!("\t// Deprecated: {reason}\n"));
+                    lines.push(BodyLine::Comment(format!("Deprecated: {reason}")));
                 }
             }
             if let Some(doc) = self.doc(*field) {
-                self.out.push_str(&format!("\t// {doc}\n"));
+                lines.push(BodyLine::Comment(doc));
             }
-            self.out
-                .push_str(&format!("\t{field_name} {typ} `json:\"{key}\"`\n"));
+            lines.push(BodyLine::Field {
+                name: field_name,
+                typ,
+                tag: format!("`json:\"{key}\"`"),
+            });
         }
+        let mut run: Vec<(String, String, String)> = Vec::new();
+        for line in lines {
+            match line {
+                BodyLine::Comment(c) => {
+                    flush_go_run(&mut run, &mut self.out);
+                    self.out.push_str(&format!("\t// {}\n", comment_line(&c)));
+                }
+                BodyLine::Field { name, typ, tag } => run.push((name, typ, tag)),
+            }
+        }
+        flush_go_run(&mut run, &mut self.out);
         self.out.push_str("}\n");
         for (key, field) in &fields {
             let nominal = nominal_id(self.module, *field);
@@ -894,9 +940,17 @@ const PYTHON_KEYWORDS: &[&str] = &[
     "with", "yield", "match", "case", "type",
 ];
 
-/// Comment-safe single line: newlines would inject arbitrary lines.
-fn py_comment(s: &str) -> String {
+/// Comment-safe single line for `//` and `#` comments: a newline in a
+/// description would otherwise inject an uncommented line into the output.
+fn comment_line(s: &str) -> String {
     s.replace(['\n', '\r'], " ")
+}
+
+/// Comment-safe text for `/** */` blocks: folded to one line with the
+/// block terminator neutralized, so `*/` in a description cannot close
+/// the comment early.
+fn ts_comment(s: &str) -> String {
+    comment_line(s).replace("*/", "* /")
 }
 
 impl PythonGen<'_> {
@@ -931,27 +985,34 @@ impl PythonGen<'_> {
                 field_name.push('_');
             }
             if field_name != *key {
-                self.out.push_str(&format!("    # key: {key}\n"));
+                self.out
+                    .push_str(&format!("    # key: {}\n", comment_line(key)));
             }
             if let Some(doc) = field_description(self.module, *field) {
-                self.out.push_str(&format!("    # {}\n", py_comment(&doc)));
+                self.out
+                    .push_str(&format!("    # {}\n", comment_line(&doc)));
             }
             if let Some(crate::ir::Node::SchemaField { field: f }) = self.module.get(*field) {
                 if let Some(format) = literal_string(self.module, f.format) {
-                    self.out.push_str(&format!("    # format: {format}\n"));
+                    self.out
+                        .push_str(&format!("    # format: {}\n", comment_line(&format)));
                 }
                 if let Some(default) = literal_default(self.module, f) {
-                    self.out.push_str(&format!("    # default: {default}\n"));
+                    self.out.push_str(&format!(
+                        "    # default: {}\n",
+                        comment_line(&default.to_string())
+                    ));
                 }
                 if let Some(target) = literal_string(self.module, f.requires) {
-                    self.out.push_str(&format!("    # requires: {target}\n"));
+                    self.out
+                        .push_str(&format!("    # requires: {}\n", comment_line(&target)));
                 }
                 if let Some(reason) = f.deprecated.clone() {
                     if reason.is_empty() {
                         self.out.push_str("    # Deprecated\n");
                     } else {
                         self.out
-                            .push_str(&format!("    # Deprecated: {}\n", py_comment(&reason)));
+                            .push_str(&format!("    # Deprecated: {}\n", comment_line(&reason)));
                     }
                 }
             }

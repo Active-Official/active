@@ -708,7 +708,10 @@ fn main() -> anyhow::Result<()> {
                 other => anyhow::bail!("unsupported target: {}", other),
             }
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-            println!("{output}");
+            // Emit exactly one trailing newline: generator outputs
+            // already end with `\n`, and `println!` would append a
+            // second one (a blank line that `gofmt` rejects).
+            println!("{}", output.trim_end_matches('\n'));
         }
         Commands::Doc {
             from,

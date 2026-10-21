@@ -1,0 +1,55 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "active-lang"
+version = "1.4.0"
+description = "Active: explicit, deterministic, hermetic configuration language (WASM-first Python binding)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT OR Apache-2.0" }
+authors = [{ name = "Active Language Team" }]
+keywords = ["config", "configuration", "language", "wasm", "agents"]
+dependencies = ["wasmtime>=47,<50"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "License :: OSI Approved :: Apache Software License",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.urls]
+Homepage = "https://github.com/Active-Official/active"
+Repository = "https://github.com/Active-Official/active"
+Documentation = "https://github.com/Active-Official/active"
+
+# Single-module layout: ship exactly the runtime, its stubs, and the
+# dual license texts. The evaluator WASM is intentionally NOT bundled:
+# it resolves at runtime ($ACTIVE_WASM_PATH, bundled copy placed by
+# packaging/fetch-wasm.py, or in-repo build) so one wheel serves every
+# core release on the same ABI major (see docs/version-and-abi-policy.md).
+[tool.hatch.build]
+artifacts = ["active.py", "active.pyi"]
+exclude = ["test_active.py", ".gitignore", "__pycache__"]
+
+[tool.hatch.build.targets.wheel]
+packages = []
+
+[tool.hatch.build.targets.wheel.force-include]
+"active.py" = "active.py"
+"active.pyi" = "active.pyi"
+"../../LICENSE-MIT" = "LICENSE-MIT"
+"../../LICENSE-APACHE" = "LICENSE-APACHE"
+
+[tool.hatch.build.targets.sdist]
+packages = []
+artifacts = []
+
+[tool.hatch.build.targets.sdist.force-include]
+"active.py" = "active.py"
+"active.pyi" = "active.pyi"
+"README.md" = "README.md"
+"pyproject.toml" = "pyproject.toml"
+"../../LICENSE-MIT" = "LICENSE-MIT"
+"../../LICENSE-APACHE" = "LICENSE-APACHE"

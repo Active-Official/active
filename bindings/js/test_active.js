@@ -28,10 +28,22 @@ const { load } = require("./active.js");
 		"timeout = 5s + 512MiB\n",
 		'token = secret("hunter2")\n[out]\npass = token\n',
 	]) {
-		const shape = (d) => [d.code, d.line, d.column, d.end_line, d.end_column, d.severity, d.message];
+		const shape = (d) => [
+			d.code,
+			d.line,
+			d.column,
+			d.end_line,
+			d.end_column,
+			d.severity,
+			d.message,
+		];
 		const a = m.check(src).map(shape);
 		const b = m.validate(src).map(shape);
-		assert.deepStrictEqual(b, a, `validate/check diverge on ${JSON.stringify(src)}`);
+		assert.deepStrictEqual(
+			b,
+			a,
+			`validate/check diverge on ${JSON.stringify(src)}`,
+		);
 	}
 	assert.throws(() => m.evaluate("timeout = 5s + 512MiB\n"), /refused/);
 	const v = m.evaluate('token = secret("hunter2")\n[out]\npass = token\n');
@@ -40,6 +52,31 @@ const { load } = require("./active.js");
 	const src = "let x = 1 + 2\n[out]\nv = x * 3\n";
 	assert.deepStrictEqual(m.evaluate(src), m.evaluate(src));
 	m.close();
+
+	// WASM resolution: $ACTIVE_WASM_PATH wins; bogus paths fail
+	// closed with acquisition guidance.
+	const savedWasmPath = process.env.ACTIVE_WASM_PATH;
+	process.env.ACTIVE_WASM_PATH = require("path").join(
+		__dirname,
+		"..",
+		"..",
+		"target",
+		"wasm32-unknown-unknown",
+		"release",
+		"active_wasm.wasm",
+	);
+	try {
+		const m2 = await load();
+		assert.deepStrictEqual(m2.evaluate("port = 8080\n"), { port: 8080 });
+		m2.close();
+	} finally {
+		if (savedWasmPath === undefined) delete process.env.ACTIVE_WASM_PATH;
+		else process.env.ACTIVE_WASM_PATH = savedWasmPath;
+	}
+	await assert.rejects(
+		load("/nonexistent/active_wasm.wasm"),
+		/ACTIVE_WASM_PATH/,
+	);
 	console.log("js-ok");
 })().catch((e) => {
 	console.error("js-FAIL:", e.message);

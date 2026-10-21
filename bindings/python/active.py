@@ -14,11 +14,24 @@ construction. Use it as a context manager or call ``close()`` explicitly.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import wasmtime
 
 ABI_MAJOR = 1
+
+
+def _binding_version() -> str:
+    """Distribution version for release-asset URLs. Reads the installed
+    package metadata when available so the hint can never drift from
+    the shipped version; falls back to the workspace version in-repo."""
+    try:
+        from importlib.metadata import version
+
+        return version("active-lang")
+    except Exception:
+        return "1.4.0"
 
 
 class ActiveError(Exception):
@@ -73,6 +86,20 @@ def _repo_root() -> Path:
 
 
 def default_wasm_path() -> Path:
+    """Resolve the evaluator WASM module for installed-package use.
+
+    Order: ``$ACTIVE_WASM_PATH`` first, then a bundled
+    ``active_wasm.wasm`` next to this file (placed there by
+    ``packaging/fetch-wasm.py`` when the distributable is built),
+    then the in-repo debug/release build (development). Packaged
+    installs never depend on the repo target directory.
+    """
+    env = os.environ.get("ACTIVE_WASM_PATH")
+    if env:
+        return Path(env)
+    bundled = Path(__file__).resolve().parent / "active_wasm.wasm"
+    if bundled.is_file():
+        return bundled
     return (
         _repo_root()
         / "target"
@@ -88,7 +115,13 @@ class Module:
     def __init__(self, wasm_path: Path | str | None = None) -> None:
         path = Path(wasm_path) if wasm_path is not None else default_wasm_path()
         if not path.is_file():
-            raise ActiveError(f"wasm module not found: {path}")
+            raise ActiveError(
+                f"wasm module not found: {path} "
+                "(pass wasm_path=..., set ACTIVE_WASM_PATH, or place "
+                "active_wasm.wasm next to the package — see packaging/fetch-wasm.py "
+                "or the release asset at "
+                f"https://github.com/Active-Official/active/releases/tag/v{_binding_version()})"
+            )
         self._store = wasmtime.Store()
         module = wasmtime.Module.from_file(self._store.engine, str(path))
         instance = wasmtime.Instance(self._store, module, [])

@@ -7,6 +7,7 @@ Prints unittest's ``OK`` on success (the harness tally).
 """
 
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -151,6 +152,28 @@ class BindingTest(unittest.TestCase):
             )
             self.assertIn("span", stub_classes["Diagnostic"])
             self.assertIn("span", dir(runtime.Diagnostic))
+
+    def test_wasm_resolution_prefers_env_then_bundled(self) -> None:
+        import active as runtime
+
+        real = runtime.default_wasm_path()
+        self.assertTrue(Path(real).is_file(), real)
+        # $ACTIVE_WASM_PATH wins over every default.
+        old = os.environ.get("ACTIVE_WASM_PATH")
+        os.environ["ACTIVE_WASM_PATH"] = str(real)
+        try:
+            self.assertEqual(runtime.default_wasm_path(), Path(str(real)))
+            with runtime.Module():
+                pass
+        finally:
+            if old is None:
+                del os.environ["ACTIVE_WASM_PATH"]
+            else:
+                os.environ["ACTIVE_WASM_PATH"] = old
+        # A bogus explicit path fails closed with acquisition guidance.
+        with self.assertRaises(ActiveError) as ctx:
+            Module("/nonexistent/active_wasm.wasm")
+        self.assertIn("ACTIVE_WASM_PATH", str(ctx.exception))
 
 
 if __name__ == "__main__":

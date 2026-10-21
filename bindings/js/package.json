@@ -1,0 +1,29 @@
+{
+  "name": "@active-lang/active",
+  "version": "1.4.0",
+  "description": "Active: explicit, deterministic, hermetic configuration language (WASM-first JS/TS binding)",
+  "main": "active.js",
+  "types": "active.d.ts",
+  "files": [
+    "active.js",
+    "active.d.ts",
+    "active-shim.js",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "scripts": {
+    "prepack": "node ./scripts/copy-shim.js",
+    "postpack": "node -e \"for (const f of ['active-shim.js','LICENSE-MIT','LICENSE-APACHE']) require('fs').rmSync(f, {force:true})\"",
+    "test": "node ./test_active.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Active-Official/active.git",
+    "directory": "bindings/js"
+  },
+  "homepage": "https://github.com/Active-Official/active"
+}

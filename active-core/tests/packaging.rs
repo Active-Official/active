@@ -189,3 +189,56 @@ fn vscode_extension_manifest_is_consistent() {
         serde_json::from_str(&grammar_text).expect("grammar parses");
     assert_eq!(grammar_json["scopeName"], "source.active");
 }
+
+#[test]
+fn tier1_package_versions_track_workspace() {
+    // D.005: the language packages pin the workspace version in
+    // three more places (plus runtime fallbacks). Any release bump
+    // must move all of them together; this test fails otherwise.
+    let root: toml::Value = {
+        let path = workspace_root().join("Cargo.toml");
+        std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("root manifest: {e}"))
+            .parse()
+            .expect("root manifest parses")
+    };
+    let version = root
+        .get("workspace")
+        .and_then(|w| w.get("package"))
+        .and_then(|p| p.get("version"))
+        .and_then(|v| v.as_str())
+        .expect("workspace version")
+        .to_string();
+    let pyproject =
+        std::fs::read_to_string(workspace_root().join("bindings/python/pyproject.toml"))
+            .expect("pyproject readable");
+    let py_version = pyproject
+        .parse::<toml::Value>()
+        .expect("pyproject parses")
+        .get("project")
+        .and_then(|p| p.get("version"))
+        .and_then(|v| v.as_str())
+        .expect("pyproject version")
+        .to_string();
+    assert_eq!(py_version, version, "bindings/python version drift");
+    let package_json = std::fs::read_to_string(workspace_root().join("bindings/js/package.json"))
+        .expect("package.json readable");
+    let npm_version = serde_json::from_str::<serde_json::Value>(&package_json)
+        .expect("package.json parses")["version"]
+        .as_str()
+        .expect("npm version")
+        .to_string();
+    assert_eq!(npm_version, version, "bindings/js version drift");
+    // Runtime fallbacks (used only when installed metadata is
+    // unreachable) must match too.
+    for (file, probe) in [
+        ("bindings/python/active.py", format!("return \"{version}\"")),
+        ("bindings/js/active.js", format!("return \"{version}\"")),
+    ] {
+        let text = std::fs::read_to_string(workspace_root().join(file)).expect("readable");
+        assert!(
+            text.contains(&probe),
+            "{file}: fallback version drift (want {probe})"
+        );
+    }
+}

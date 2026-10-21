@@ -131,3 +131,15 @@ Every release runs the release checklist (G-011a): conformance artifact,
 native matrix, wasm blob, checksums, changelog honesty. The cadence is
 demand-driven, never calendar-driven; a quiet month with green CI is a
 healthy month.
+
+## 8. Supersession note (2026-10-21, Phase-2 expansion)
+
+Sections above describe the 1.x-era Rust-crate surface and stay
+unchanged as history. The Tier-1 language packages (PyPI
+`active-lang`, npm `@active-lang/active`, Go module), the
+version/ABI compatibility contract, the install surface, and the
+supply-chain baseline now live in
+`docs/version-and-abi-policy.md`, `docs/install.md`, and
+`packaging/` — those files govern, this one records. Historical
+namespace references (`solid-lang` URLs) are redirect-safe and
+intentionally untouched.

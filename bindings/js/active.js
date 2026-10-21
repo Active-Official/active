@@ -12,9 +12,35 @@
 
 const fs = require("fs");
 const path = require("path");
-const shim = require("../../active-wasm/js/active-shim.js");
+// The shim ships inside the npm package (copied by `npm run prepack`)
+// and lives in active-wasm/js during repo development.
+const shim = (() => {
+	try {
+		return require("./active-shim.js");
+	} catch (e) {
+		// Packaged layout first; fall back to the repo tree only when
+		// the bundled shim is absent — never mask a real load error.
+		if (e && e.code === "MODULE_NOT_FOUND") {
+			return require("../../active-wasm/js/active-shim.js");
+		}
+		throw e;
+	}
+})();
+
+function packageVersion() {
+	try {
+		return require("./package.json").version;
+	} catch {
+		return "1.4.0";
+	}
+}
 
 function defaultWasmPath() {
+	// Order: $ACTIVE_WASM_PATH, bundled active_wasm.wasm (placed by
+	// packaging/fetch-wasm.py at pack time), in-repo build (development).
+	if (process.env.ACTIVE_WASM_PATH) return process.env.ACTIVE_WASM_PATH;
+	const bundled = path.join(__dirname, "active_wasm.wasm");
+	if (fs.existsSync(bundled)) return bundled;
 	return path.join(
 		__dirname,
 		"..",
@@ -28,7 +54,14 @@ function defaultWasmPath() {
 
 async function load(wasmPath) {
 	const file = wasmPath || defaultWasmPath();
-	if (!fs.existsSync(file)) throw new Error("wasm module not found: " + file);
+	if (!fs.existsSync(file))
+		throw new Error(
+			"wasm module not found: " +
+				file +
+				" (pass a path, set ACTIVE_WASM_PATH, or place active_wasm.wasm next to the package — see packaging/fetch-wasm.py or the release asset at https://github.com/Active-Official/active/releases/tag/v" +
+				packageVersion() +
+				")",
+		);
 	const bytes = fs.readFileSync(file);
 	const api = await shim.load(
 		bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),

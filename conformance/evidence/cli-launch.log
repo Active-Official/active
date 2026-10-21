@@ -1,0 +1,138 @@
+=== active --version ===
+active 1.4.0
+=== check examples/demo.active ===
+OK
+=== eval examples/demo.active (full JSON) ===
+{
+  "app": {
+    "name": "active-demo",
+    "environment": "development",
+    "debug": true
+  },
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "read_timeout": 5
+  },
+  "services": {
+    "auth_url": "https://us-east-1.example.com/auth",
+    "users_url": "https://api.example.com/users",
+    "feature_flags": [
+      {
+        "name": "new_checkout",
+        "enabled": true
+      },
+      {
+        "name": "dark_mode",
+        "enabled": false
+      }
+    ]
+  }
+}
+=== check examples/complete.active ===
+OK
+=== eval examples/complete.active run 1 (full JSON) ===
+{
+  "app": {
+    "name": "active-complete-demo",
+    "environment": "development",
+    "debug": true,
+    "version": "0.2.0-alpha"
+  },
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "read_timeout": {
+      "ms": 10000
+    },
+    "write_timeout": {
+      "ms": 30000
+    },
+    "idle_timeout": {
+      "ms": 10000
+    }
+  },
+  "services": {
+    "auth_url": "https://api.us-east-1.example.com/auth/v1",
+    "users_url": "https://api.us-east-1.example.com/users/v2",
+    "billing_url": "https://api.us-east-1.example.com/billing",
+    "auth_timeout": {
+      "ms": 5000
+    },
+    "users_timeout": {
+      "ms": 10000
+    },
+    "billing_timeout": {
+      "ms": 8000
+    }
+  },
+  "database": {
+    "host": "localhost",
+    "port": 5432,
+    "name": "active_app",
+    "user": "app",
+    "password": "***SECRET***",
+    "pool_size": 20
+  },
+  "cache": {
+    "size": 536870912,
+    "ttl": {
+      "ms": 900000
+    },
+    "max_item_size": 2097152,
+    "feature_flags": [
+      {
+        "name": "new_checkout",
+        "enabled": true,
+        "rollout": 25
+      },
+      {
+        "name": "dark_mode",
+        "enabled": true,
+        "rollout": 100
+      },
+      {
+        "name": "ai_search",
+        "enabled": false,
+        "rollout": 0
+      }
+    ],
+    "workers": [
+      {
+        "name": "image-processor",
+        "queue": "images",
+        "concurrency": 4,
+        "timeout": {
+          "ms": 45000
+        }
+      },
+      {
+        "name": "email-sender",
+        "queue": "emails",
+        "concurrency": 8,
+        "timeout": {
+          "ms": 15000
+        }
+      },
+      {
+        "name": "report-generator",
+        "queue": "reports",
+        "concurrency": 2,
+        "timeout": {
+          "ms": 120000
+        }
+      }
+    ]
+  },
+  "limits": {
+    "max_replicas": 10,
+    "is_prod": false,
+    "can_scale": true
+  }
+}
+=== eval examples/complete.active run 2 (saved, compared) ===
+=== eval units-bad.active (expect T001 refusal) ===
+C:\Users\Usuario\AppData\Local\Temp\grok-goal-af4864ec4acf\implementer\units-bad.active:1:14: [Error] T001: type error: unsupported binary op Add on DurationMs(5000) and 536870912
+Error: evaluation failed
+=== determinism: eval1 vs eval2 byte-identical ===
+deterministic: True bytes: 1757

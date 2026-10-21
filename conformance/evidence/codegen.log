@@ -1,0 +1,9 @@
+CODEGEN: jsonschema: schema valid, good accepted, bad rejected
+CODEGEN: jsonschema: props=['base_url', 'cert', 'color', 'tls', 'version'] format=uri accepted_good=True rejected_bad=True
+CODEGEN: typescript: tsc --strict clean (exit 0, no output)
+CODEGEN: typescript: head: export interface Config {
+CODEGEN: go: gofmt -l empty (no diff)
+CODEGEN: go: go vet exit 0 (stderr: empty)
+CODEGEN: go: head: type Config struct {
+CODEGEN: python: compiles, imports, Config present (attrs: ['Any', 'Config', 'Literal', 'NotRequired', 'TypedDict'])
+CODEGEN: ALL PASS

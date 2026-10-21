@@ -1,0 +1,12 @@
+ERROR-CODE CATALOG DIFF (active-core/src + active-cli/src vs docs/diagnostics.md)
+distinct code-like tokens in source: 63
+real diagnostic codes: 62
+real codes present in catalog: 62
+real codes MISSING from catalog: NONE
+non-code token excluded with evidence:
+  E000 -> every hit is the U+E000 private-use sentinel char
+  (lexer escaped-dollar marker, active-core/src/parser/lexer.rs),
+  never constructed as a diagnostic code. Hit files:
+    active-core\src\parser\lexer.rs (U+E000 char literal, not a code)
+    active-core\src\parser\mod.rs (U+E000 char literal, not a code)
+verdict: 62/62 real codes covered, 0 missing

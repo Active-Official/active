@@ -1,0 +1,11 @@
+BINDING-PROOF: codes match reference: set=['T003'] (binding items=['T003', 'T003'])
+BINDING-PROOF: reference cli exit=1 stderr=F:\QQQ-AUDIT\SOLID\_binding_proof_tmp.active:5:8: [Error] T003: schema violation at 'port': above maximum
+F:\QQQ-AUDIT\SOLID\_binding_proof_tmp.active:6:8: [Error] T003: schema violation at 'name': do
+BINDING-PROOF: diag code=T003 severity=error span=(5, 8, 5, 11) msg=[T003] schema violation at 'port': above maximum
+[T003] schema violation at 'nam
+BINDING-PROOF: diag code=T003 severity=error span=(6, 8, 6, 22) msg=[T003] schema violation at 'port': above maximum
+[T003] schema violation at 'nam
+BINDING-PROOF: secret redacted, raw absent
+BINDING-PROOF: spans present: [('T001', (1, 12, 1, 13), 'error')]
+BINDING-PROOF: units refusal T001
+BINDING-PROOF: ALL PASS

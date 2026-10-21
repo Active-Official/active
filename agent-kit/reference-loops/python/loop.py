@@ -87,8 +87,8 @@ def run(source: str, max_iters: int = 5) -> tuple[dict, list[dict]]:
             seen.add(tuple(codes))
             try:
                 value = mod.eval(current)
-            except ActiveError as e:
-                entry["unrepairable"] = str(e)[:120]
+            except ActiveError:
+                entry["unrepairable"] = True
                 break
             entry["repaired_by_resilient"] = True
             current = reemit(value)
@@ -100,14 +100,20 @@ def main() -> int:
     max_iters = 5
     for a in sys.argv[1:]:
         if a.startswith("--max-iters="):
-            max_iters = int(a.split("=", 1)[1])
-    if not args:
-        print("usage: loop.py <candidate.active> [--max-iters=N]", file=sys.stderr)
+            try:
+                max_iters = int(a.split("=", 1)[1])
+            except ValueError:
+                max_iters = 0
+    if not args or max_iters < 1:
+        print(
+            "usage: loop.py <candidate.active> [--max-iters=N (positive integer)]",
+            file=sys.stderr,
+        )
         return 2
     try:
         value, log = run(Path(args[0]).read_text(encoding="utf-8"), max_iters)
-    except ActiveError as e:
-        print(f"FAILED: {e}", file=sys.stderr)
+    except (ActiveError, subprocess.TimeoutExpired) as e:
+        print(f"FAILED: {type(e).__name__}", file=sys.stderr)
         return 1
     print(json.dumps({"value": value, "log": log}, indent=2))
     return 0

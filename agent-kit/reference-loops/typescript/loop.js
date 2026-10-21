@@ -7,6 +7,7 @@
 // node agent-kit/reference-loops/typescript/loop.js <candidate.active>
 
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { execFileSync } = require("child_process");
 const { load } = require("../../../bindings/js/active.js");
@@ -14,19 +15,27 @@ const { load } = require("../../../bindings/js/active.js");
 const ROOT = path.join(__dirname, "..", "..", "..");
 
 function reemit(value) {
-	const tmp = path.join(
-		require("os").tmpdir(),
-		`active-loop-${Date.now()}.json`,
-	);
-	fs.writeFileSync(tmp, JSON.stringify(value));
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "active-loop-"));
+	const tmp = path.join(dir, "value.json");
+	fs.writeFileSync(tmp, JSON.stringify(value), { mode: 0o600 });
 	try {
 		return execFileSync(
 			"cargo",
 			["run", "-q", "-p", "active-cli", "--", "import", tmp, "--from", "json"],
-			{ cwd: ROOT, encoding: "utf8" },
+			{
+				cwd: ROOT,
+				encoding: "utf8",
+				timeout: 120000,
+				maxBuffer: 16 * 1024 * 1024,
+			},
 		);
 	} finally {
-		fs.unlinkSync(tmp);
+		try {
+			fs.unlinkSync(tmp);
+			fs.rmdirSync(dir);
+		} catch {
+			/* best effort */
+		}
 	}
 }
 
@@ -52,7 +61,7 @@ async function run(source, maxIters) {
 			try {
 				value = mod.evaluate(current);
 			} catch (e) {
-				entry.unrepairable = String(e.message || e).slice(0, 120);
+				entry.unrepairable = true;
 				break;
 			}
 			entry.repaired_by_resilient = true;
@@ -76,6 +85,10 @@ async function run(source, maxIters) {
 	);
 	if (!file) {
 		console.error("usage: loop.js <candidate.active> [--max-iters=N]");
+		process.exit(2);
+	}
+	if (!Number.isInteger(maxIters) || maxIters < 1) {
+		console.error("max-iters must be a positive integer");
 		process.exit(2);
 	}
 	try {

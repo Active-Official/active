@@ -24,6 +24,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
@@ -48,16 +49,20 @@ func openModule(wasmPath string) (*handle, error) {
 	wasm, err := os.ReadFile(wasmPath)
 	if err != nil {
 		cancel()
+		rt.Close(context.Background())
 		return nil, err
 	}
 	compiled, err := rt.CompileModule(ctx, wasm)
 	if err != nil {
 		cancel()
+		rt.Close(context.Background())
 		return nil, fmt.Errorf("compile: %w", err)
 	}
+	defer compiled.Close(ctx)
 	inst, err := rt.InstantiateModule(ctx, compiled, wazero.NewModuleConfig())
 	if err != nil {
 		cancel()
+		rt.Close(context.Background())
 		return nil, fmt.Errorf("instantiate: %w", err)
 	}
 	h := &handle{ctx: ctx, cancel: cancel, rt: rt, mod: inst}
@@ -76,7 +81,7 @@ func openModule(wasmPath string) (*handle, error) {
 
 func (h *handle) close() {
 	h.cancel()
-	h.rt.Close(h.ctx)
+	h.rt.Close(context.Background())
 }
 
 func (h *handle) write(s string) (uint32, uint64, error) {
@@ -127,13 +132,13 @@ func (h *handle) evaluate(source string) (*envelope, error) {
 	}
 	raw, ok := h.mem.Read(uint32(out[0]), n)
 	if !ok {
+		h.free.Call(h.ctx, out[0], uint64(n))
 		return nil, fmt.Errorf("read envelope")
 	}
+	// Free before parsing so a corrupt envelope cannot leak the slot.
+	h.free.Call(h.ctx, out[0], uint64(n))
 	var env envelope
 	if err := json.Unmarshal(raw, &env); err != nil {
-		return nil, err
-	}
-	if _, err := h.free.Call(h.ctx, out[0], uint64(n)); err != nil {
 		return nil, err
 	}
 	return &env, nil
@@ -176,8 +181,10 @@ func reemit(value json.RawMessage) (string, error) {
 	tmp.Write(value)
 	tmp.Close()
 	defer os.Remove(name)
-	cmd := exec.Command("cargo", "run", "-q", "-p", "active-cli", "--",
-		"import", name, "--from", "json")
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "cargo", "run", "-q", "-p", "active-cli",
+		"--", "import", name, "--from", "json")
 	cmd.Dir = repoRoot()
 	out, err := cmd.Output()
 	if err != nil {
@@ -194,8 +201,16 @@ func main() {
 	maxIters := 5
 	for _, a := range os.Args[2:] {
 		if strings.HasPrefix(a, "--max-iters=") {
-			maxIters, _ = strconv.Atoi(strings.TrimPrefix(a, "--max-iters="))
+			n, err := strconv.Atoi(strings.TrimPrefix(a, "--max-iters="))
+			if err != nil {
+				n = 0
+			}
+			maxIters = n
 		}
+	}
+	if maxIters < 1 {
+		fmt.Fprintln(os.Stderr, "max-iters must be a positive integer")
+		os.Exit(2)
 	}
 	src, err := os.ReadFile(os.Args[1])
 	if err != nil {

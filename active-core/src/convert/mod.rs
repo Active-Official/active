@@ -13,7 +13,7 @@ pub mod suggest;
 
 pub use doc::{collect_items, doc_to_html, doc_to_man, doc_to_markdown, DocItem};
 
-pub use explain::{explain_all, explain_code};
+pub use explain::{explain_all, explain_code, explain_structured, Explanation};
 pub use export::{value_to_toml_string, value_to_yaml_string};
 pub use gen::{
     schema_to_go, schema_to_json_schema, schema_to_openapi, schema_to_python, schema_to_rust,
@@ -24,7 +24,7 @@ pub use import::{
     yaml_text_to_active,
 };
 pub use inspect::{schema_inspect, INSPECT_VERSION};
-pub use suggest::suggest_patches;
+pub use suggest::{suggest_patches, suggest_patches_structured, PatchKind, PatchSuggestion};
 
 pub fn value_to_json(v: &Value) -> JsonValue {
     match v {

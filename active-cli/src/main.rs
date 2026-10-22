@@ -6,7 +6,7 @@ use active_core::convert::{
 };
 use active_core::diag::{Diagnostic, Severity};
 use active_core::{parse_file, Budget, Engine, EvalError, ParseOptions, Style};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -79,6 +79,15 @@ impl BudgetArgs {
             }
         }
     }
+}
+
+/// Machine-readable output shape for agent-facing commands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum OutFormat {
+    /// Human-readable lines (default).
+    Text,
+    /// JSON array for programmatic consumers.
+    Json,
 }
 
 #[derive(Subcommand)]
@@ -244,6 +253,9 @@ enum Commands {
         /// Input .active file
         #[arg(short, long)]
         from: PathBuf,
+        /// Output format for machine consumers
+        #[arg(long, value_enum, default_value_t = OutFormat::Text)]
+        format: OutFormat,
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
@@ -258,6 +270,9 @@ enum Commands {
         /// Input .active file
         #[arg(short, long)]
         from: PathBuf,
+        /// Output format for machine consumers
+        #[arg(long, value_enum, default_value_t = OutFormat::Text)]
+        format: OutFormat,
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
@@ -456,9 +471,9 @@ fn collect_diags(module: &active_core::Module, filename: &str, budget: Budget) -
     }
 }
 
-/// Stable `CODE path span: guidance` lines (value-free by construction).
-fn explain_lines(diags: &[Diagnostic]) -> Vec<String> {
-    let items: Vec<(String, Option<String>, Option<String>)> = diags
+/// Stable (code, path, span) triples feeding both text and JSON output.
+fn explain_items(diags: &[Diagnostic]) -> Vec<(String, Option<String>, Option<String>)> {
+    diags
         .iter()
         .map(|d| {
             let span = d
@@ -467,8 +482,12 @@ fn explain_lines(diags: &[Diagnostic]) -> Vec<String> {
                 .map(|s| format!("{}:{}-{}:{}", s.line, s.column, s.end_line, s.end_column));
             (d.code.clone(), d.path.clone(), span)
         })
-        .collect();
-    active_core::convert::explain_all(&items)
+        .collect()
+}
+
+/// Stable `CODE path span: guidance` lines (value-free by construction).
+fn explain_lines(diags: &[Diagnostic]) -> Vec<String> {
+    active_core::convert::explain_all(&explain_items(diags))
 }
 
 /// True when the exit code must be non-zero: strict mode fails on any
@@ -818,6 +837,7 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Explain {
             from,
+            format,
             allow_parent_escapes,
             trust_keys,
             budget,
@@ -826,12 +846,26 @@ fn main() -> anyhow::Result<()> {
             let trust = load_trust(&trust_keys)?;
             let module = parse_input(&from, false, allow_parent_escapes, &trust)?;
             let diags = collect_diags(&module, &filename, budget.resolve()?);
-            for line in explain_lines(&diags) {
-                println!("{line}");
+            match format {
+                OutFormat::Text => {
+                    for line in explain_lines(&diags) {
+                        println!("{line}");
+                    }
+                }
+                OutFormat::Json => {
+                    let items = explain_items(&diags);
+                    let structured = active_core::convert::explain_structured(&items);
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&structured)
+                            .map_err(|e| anyhow::anyhow!("{e}"))?
+                    );
+                }
             }
         }
         Commands::Patch {
             from,
+            format,
             allow_parent_escapes,
             trust_keys,
             budget,
@@ -840,8 +874,21 @@ fn main() -> anyhow::Result<()> {
             let trust = load_trust(&trust_keys)?;
             let module = parse_input(&from, false, allow_parent_escapes, &trust)?;
             let diags = collect_diags(&module, &filename, budget.resolve()?);
-            for directive in active_core::convert::suggest_patches(&module, &diags) {
-                println!("{directive}");
+            match format {
+                OutFormat::Text => {
+                    for directive in active_core::convert::suggest_patches(&module, &diags) {
+                        println!("{directive}");
+                    }
+                }
+                OutFormat::Json => {
+                    let structured =
+                        active_core::convert::suggest_patches_structured(&module, &diags);
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&structured)
+                            .map_err(|e| anyhow::anyhow!("{e}"))?
+                    );
+                }
             }
         }
         Commands::Capability { require_major } => {

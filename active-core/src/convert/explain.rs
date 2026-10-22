@@ -39,16 +39,46 @@ pub fn explain_code(code: &str) -> &'static str {
 /// One stable guidance line per diagnostic: `CODE path span: guidance`.
 /// Message text never enters the output (value-free by construction).
 pub fn explain_all(items: &[(String, Option<String>, Option<String>)]) -> Vec<String> {
+    explain_structured(items)
+        .iter()
+        .map(Explanation::line)
+        .collect()
+}
+
+/// A single machine-readable explanation. `span` uses the same
+/// `line:col-end_line:end_col` text form as [`explain_all`] so the two
+/// renderings stay byte-comparable field by field.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Explanation {
+    pub code: String,
+    pub path: Option<String>,
+    pub span: Option<String>,
+    pub guidance: &'static str,
+}
+
+impl Explanation {
+    /// The canonical text rendering (identical to [`explain_all`]).
+    pub fn line(&self) -> String {
+        let where_ = match (&self.path, &self.span) {
+            (Some(p), Some(s)) => format!("{p} {s}"),
+            (Some(p), None) => p.clone(),
+            (None, Some(s)) => s.clone(),
+            (None, None) => "document".to_string(),
+        };
+        format!("{} {where_}: {}", self.code, self.guidance)
+    }
+}
+
+/// Structured explanations in diagnostic order. Same content as
+/// [`explain_all`], shaped for agents to parse instead of scrape.
+pub fn explain_structured(items: &[(String, Option<String>, Option<String>)]) -> Vec<Explanation> {
     items
         .iter()
-        .map(|(code, path, span)| {
-            let where_ = match (path, span) {
-                (Some(p), Some(s)) => format!("{p} {s}"),
-                (Some(p), None) => p.clone(),
-                (None, Some(s)) => s.clone(),
-                (None, None) => "document".to_string(),
-            };
-            format!("{code} {where_}: {}", explain_code(code))
+        .map(|(code, path, span)| Explanation {
+            guidance: explain_code(code),
+            code: code.clone(),
+            path: path.clone(),
+            span: span.clone(),
         })
         .collect()
 }

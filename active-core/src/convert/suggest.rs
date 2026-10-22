@@ -11,10 +11,39 @@ use crate::diag::{Diagnostic, RepairKind};
 use crate::ir::{Module, Node, NodeId, SchemaField};
 use crate::Value;
 
+/// The mechanical operation a suggestion performs. Serialized lowercase
+/// (`rename`/`fill`) for machine consumers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PatchKind {
+    Rename,
+    Fill,
+}
+
+/// A single machine-readable repair directive. `directive` is the exact
+/// `@rename`/`@patch` line; `kind` and `path` let agents route without
+/// parsing it. Deterministic: diagnostic order in, directive order out.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PatchSuggestion {
+    pub kind: PatchKind,
+    pub path: String,
+    pub directive: String,
+}
+
 /// Collect minimal repair directives for diagnostics that map exactly:
-/// safe `KeyTypo` renames and strict-explicit `T004`s with a static
-/// literal default. Unknown shapes are skipped, never approximated.
+/// safe `KeyTypo` renames and missing-key `T004`s with a static literal
+/// default (strict-explicit misses and requires-triggered misses alike).
+/// Unknown shapes are skipped, never approximated.
 pub fn suggest_patches(module: &Module, diags: &[Diagnostic]) -> Vec<String> {
+    suggest_patches_structured(module, diags)
+        .into_iter()
+        .map(|s| s.directive)
+        .collect()
+}
+
+/// Structured suggestions in diagnostic order. Same content as
+/// [`suggest_patches`], shaped for agents to parse instead of scrape.
+pub fn suggest_patches_structured(module: &Module, diags: &[Diagnostic]) -> Vec<PatchSuggestion> {
     let mut out = Vec::new();
     for d in diags {
         if let Some(repair) = d.repair.as_ref() {
@@ -22,14 +51,29 @@ pub fn suggest_patches(module: &Module, diags: &[Diagnostic]) -> Vec<String> {
                 continue;
             }
             if matches!(repair.kind, RepairKind::KeyTypo) {
-                if let Some(directive) = rename_for(d, repair) {
-                    out.push(directive);
+                if let Some((path, directive)) = rename_for(d, repair) {
+                    out.push(PatchSuggestion {
+                        kind: PatchKind::Rename,
+                        path,
+                        directive,
+                    });
                 }
             }
         }
-        if d.code == "T004" && d.message.contains("strict mode requires explicit values") {
-            if let Some(directive) = fill_for(module, d) {
-                out.push(directive);
+        // Any missing-key T004 with a static literal default has one
+        // mechanical fix: write the value out. `fill_for` re-verifies
+        // the static-literal default itself and refuses deprecated
+        // fields (omitting a deprecated key is the migration path, so
+        // suggesting its re-insertion would contradict L005). Matching
+        // is structural on code + schema — never on message text, so a
+        // diagnostic rewording cannot silently disable suggestions.
+        if d.code == "T004" {
+            if let Some((path, directive)) = fill_for(module, d) {
+                out.push(PatchSuggestion {
+                    kind: PatchKind::Fill,
+                    path,
+                    directive,
+                });
             }
         }
     }
@@ -38,15 +82,16 @@ pub fn suggest_patches(module: &Module, diags: &[Diagnostic]) -> Vec<String> {
 
 /// `@rename` for a safe typo: rename requests already carry full dotted
 /// paths; segment-level suggestions rebuild from the diagnostic path.
-fn rename_for(d: &Diagnostic, repair: &crate::diag::Repair) -> Option<String> {
+/// Returns the renamed path plus the directive.
+fn rename_for(d: &Diagnostic, repair: &crate::diag::Repair) -> Option<(String, String)> {
     if repair.original.contains('.') || repair.suggested.contains('.') {
         // Defensive only: every KeyTypo repair in the codebase carries
         // single segments, so this branch never fires today. Kept so
         // a future full-path repair still resolves instead of
         // vanishing silently.
-        return Some(format!(
-            "@rename(\"{}\", \"{}\")",
-            repair.original, repair.suggested
+        return Some((
+            repair.original.clone(),
+            format!("@rename(\"{}\", \"{}\")", repair.original, repair.suggested),
         ));
     }
     let path = d.path.as_ref()?;
@@ -59,27 +104,32 @@ fn rename_for(d: &Diagnostic, repair: &crate::diag::Repair) -> Option<String> {
         }
     });
     match parent {
-        Some(p) => Some(format!(
-            "@rename(\"{path}\", \"{p}.{s}\")",
-            s = repair.suggested
+        Some(p) => Some((
+            path.clone(),
+            format!("@rename(\"{path}\", \"{p}.{s}\")", s = repair.suggested),
         )),
-        None if path == &repair.original => Some(format!(
-            "@rename(\"{}\", \"{}\")",
-            repair.original, repair.suggested
+        None if path == &repair.original => Some((
+            repair.original.clone(),
+            format!("@rename(\"{}\", \"{}\")", repair.original, repair.suggested),
         )),
         None => None,
     }
 }
 
-/// `@patch` with the schema's static default literal for a strict-explicit
-/// T004. Dynamic defaults (expressions, secrets) have no source-text
-/// form here and yield no patch.
-fn fill_for(module: &Module, d: &Diagnostic) -> Option<String> {
+/// `@patch` with the schema's static default literal for a missing-key
+/// T004 (strict-explicit or requires-triggered alike). Dynamic defaults
+/// (expressions, secrets) have no source-text form and yield no patch;
+/// deprecated fields yield no patch either, since omitting them is the
+/// migration path. Returns the filled path plus directive.
+fn fill_for(module: &Module, d: &Diagnostic) -> Option<(String, String)> {
     let path = d.path.as_ref()?;
     if path.contains('[') {
         return None;
     }
     let field = schema_field_at(module, path)?;
+    if field.deprecated.is_some() {
+        return None;
+    }
     if !matches!(
         field.default.and_then(|id| module.get(id)),
         Some(Node::Literal(Value::String(_)))
@@ -120,7 +170,7 @@ fn fill_for(module: &Module, d: &Diagnostic) -> Option<String> {
         Some(Node::Literal(Value::Null)) => "null".to_string(),
         _ => return None,
     };
-    Some(format!("@patch(\"{path}\", {value})"))
+    Some((path.clone(), format!("@patch(\"{path}\", {value})")))
 }
 
 /// Schema field at a dotted value path (tables transparent, like the

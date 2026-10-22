@@ -86,24 +86,24 @@
     },
     {
       "name": "explain",
-      "entry": "active explain --from <file>",
+      "entry": "active explain --from <file> [--format text|json]",
       "description": "Deterministic per-diagnostic repair guidance (stable text per code, value-free).",
       "input": {
         "file": "path to a .active source file"
       },
       "output": {
-        "guidance": "lines of CODE path span: guidance"
+        "guidance": "lines of CODE path span: guidance (text), or [{code, path, span, guidance}] with --format json"
       }
     },
     {
       "name": "patch",
-      "entry": "active patch --from <file>",
+      "entry": "active patch --from <file> [--format text|json]",
       "description": "Minimal @rename/@patch directives for mechanical diagnostics (safe typos, strict-explicit fills); empty when nothing maps exactly.",
       "input": {
         "file": "path to a .active source file"
       },
       "output": {
-        "directives": "zero or more @rename/@patch lines"
+        "directives": "zero or more @rename/@patch lines (text), or [{kind, path, directive}] with --format json (empty array when nothing maps)"
       }
     },
     {

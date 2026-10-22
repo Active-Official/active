@@ -1256,3 +1256,160 @@ fn capability_handshake_accepts_major_one() {
         .expect("run active");
     assert!(!bad.status.success(), "major mismatch must fail");
 }
+
+#[test]
+fn explain_json_matches_text_field_for_field() {
+    // Machine-readable output must carry the same content as text:
+    // parse it, don't string-match it.
+    let f = fixture(
+        "explain_json.active",
+        "schema = { contact = String(format = \"email\") }\ncontact = \"not-an-email\"\n",
+    );
+    let out = active()
+        .args(["explain", "--from"])
+        .arg(&f)
+        .arg("--format")
+        .arg("json")
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let items: serde_json::Value =
+        serde_json::from_str(&stdout).expect("stdout must be a JSON array");
+    let arr = items.as_array().expect("top level array");
+    assert_eq!(arr.len(), 1, "{stdout}");
+    let e = &arr[0];
+    assert_eq!(e["code"], "T003");
+    assert_eq!(e["path"], "contact");
+    assert!(e["span"].as_str().is_some(), "{stdout}");
+    assert!(
+        e["guidance"].as_str().unwrap_or("").contains("format"),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains("not-an-email"),
+        "value leaked into JSON: {stdout}"
+    );
+    // An unsupported format fails closed, like every other command.
+    let bad = active()
+        .args(["explain", "--from"])
+        .arg(&f)
+        .args(["--format", "yaml"])
+        .output()
+        .expect("run active");
+    assert!(!bad.status.success(), "bad format must fail");
+    // A clean file explains to an empty array, not empty output.
+    let f2 = fixture("explain_json_empty.active", "port = 8080\n");
+    let out2 = active()
+        .args(["explain", "--from"])
+        .arg(&f2)
+        .arg("--format")
+        .arg("json")
+        .output()
+        .expect("run active");
+    assert!(out2.status.success());
+    let items2: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out2.stdout)).expect("JSON array");
+    assert_eq!(items2, serde_json::json!([]));
+}
+
+#[test]
+fn patch_json_carries_kind_path_and_directive() {
+    let f = fixture(
+        "patch_json.active",
+        "schema = { closed = true, host = String, port = Int(default = 8080) }\nHost = \"x\"\n",
+    );
+    let out = active()
+        .args(["patch", "--from"])
+        .arg(&f)
+        .arg("--format")
+        .arg("json")
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let items: serde_json::Value =
+        serde_json::from_str(&stdout).expect("stdout must be a JSON array");
+    let arr = items.as_array().expect("top level array");
+    assert!(!arr.is_empty(), "{stdout}");
+    let by_kind = |k: &str| {
+        arr.iter()
+            .find(|s| s["kind"] == k)
+            .unwrap_or_else(|| panic!("missing {k} suggestion: {stdout}"))
+            .clone()
+    };
+    let rename = by_kind("rename");
+    assert_eq!(rename["path"], "Host");
+    assert_eq!(rename["directive"], "@rename(\"Host\", \"host\")");
+    let fill = by_kind("fill");
+    assert_eq!(fill["path"], "port");
+    assert_eq!(fill["directive"], "@patch(\"port\", 8080)");
+    // Empty result is an empty array, not empty output.
+    let f2 = fixture(
+        "patch_json_empty.active",
+        "schema = { contact = String(format = \"email\") }\ncontact = \"x\"\n",
+    );
+    let out2 = active()
+        .args(["patch", "--from"])
+        .arg(&f2)
+        .arg("--format")
+        .arg("json")
+        .output()
+        .expect("run active");
+    assert!(out2.status.success());
+    let items2: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out2.stdout)).expect("JSON array");
+    assert_eq!(items2, serde_json::json!([]));
+}
+
+#[test]
+fn capability_tools_all_map_to_real_subcommands() {
+    // The capability descriptor is the agents' contract: every tool it
+    // advertises must resolve to a real CLI subcommand, or agents are
+    // sent to commands that do not exist. The `format` tool maps to
+    // `fmt`; the `graph` tool fans out to graph/impact/why.
+    let schema_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../agent-kit/capability.schema.json");
+    let doc: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&schema_path).expect("read capability schema"),
+    )
+    .expect("schema parses");
+    let tools = doc["tools"].as_array().expect("tools array");
+    assert!(!tools.is_empty(), "schema must advertise tools");
+    let mut mapping: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
+    mapping.insert("check", vec!["check"]);
+    mapping.insert("eval", vec!["eval"]);
+    mapping.insert("format", vec!["fmt"]);
+    mapping.insert("convert", vec!["convert"]);
+    mapping.insert("graph", vec!["graph", "impact", "why"]);
+    mapping.insert("generate", vec!["generate"]);
+    mapping.insert("schema-introspect", vec!["inspect"]);
+    mapping.insert("explain", vec!["explain"]);
+    mapping.insert("patch", vec!["patch"]);
+    mapping.insert("capability", vec!["capability"]);
+    for tool in tools {
+        let name = tool["name"].as_str().expect("tool name");
+        let cmds = mapping
+            .get(name)
+            .unwrap_or_else(|| panic!("schema tool {name} has no CLI mapping — update the test"));
+        for cmd in cmds {
+            let out = active()
+                .arg(cmd)
+                .arg("--help")
+                .output()
+                .expect("run active");
+            assert!(
+                out.status.success(),
+                "tool {name} maps to missing/broken subcommand {cmd}"
+            );
+        }
+    }
+}

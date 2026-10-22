@@ -1,0 +1,4 @@
+schema = {
+  contact = String(format = "phone"),
+}
+contact = "x@y.z"

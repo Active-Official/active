@@ -1,0 +1,23 @@
+id = "t9-fix-format"
+system = "editor"
+kind = "code"
+
+document = """
+schema = { contact = Table { email = String(format = "email") } }
+
+[contact]
+email = "not-an-email"
+"""
+
+user = """
+This document violates its schema: the contact email must be a valid
+email address. Fix the value so it checks clean, changing as little
+as possible.
+"""
+
+[[checks]]
+type = "check_exit0"
+
+[[checks]]
+type = "not_match"
+pattern = "not-an-email\""

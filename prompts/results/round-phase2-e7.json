@@ -1,0 +1,638 @@
+{
+  "pack": "1.1.0",
+  "stamp": "phase2-e7",
+  "backends": [
+    "copilot",
+    "direct"
+  ],
+  "models": {
+    "copilot": "muse-spark-1.3-contributor",
+    "direct": "muse-spark-1.3-contributor"
+  },
+  "results": [
+    {
+      "id": "t1-gen-basic",
+      "backend": "copilot",
+      "pass": true,
+      "error": "",
+      "ms": 7948,
+      "checks": [
+        {
+          "check": "fence",
+          "pass": true,
+          "detail": "active-fence"
+        },
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "eval_eq server.port",
+          "pass": true,
+          "detail": "got 8080"
+        },
+        {
+          "check": "eval_eq app.name",
+          "pass": true,
+          "detail": "got 'api'"
+        },
+        {
+          "check": "eval_eq app.debug",
+          "pass": true,
+          "detail": "got False"
+        }
+      ],
+      "extraction": "active-fence",
+      "infra_flake": false,
+      "response": "Here's your web service configuration.\n```active\n[app]\nname = \"api\"\ndebug = false\n\n[server]\nport = 8080\n```\n\n"
+    },
+    {
+      "id": "t1-gen-basic",
+      "backend": "direct",
+      "pass": true,
+      "error": "",
+      "ms": 7847,
+      "checks": [
+        {
+          "check": "fence",
+          "pass": true,
+          "detail": "active-fence"
+        },
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "eval_eq server.port",
+          "pass": true,
+          "detail": "got 8080"
+        },
+        {
+          "check": "eval_eq app.name",
+          "pass": true,
+          "detail": "got 'api'"
+        },
+        {
+          "check": "eval_eq app.debug",
+          "pass": true,
+          "detail": "got False"
+        }
+      ],
+      "extraction": "active-fence",
+      "infra_flake": false,
+      "response": "```active\n[app]\nname = \"api\"\ndebug = false\n\n[server]\nport = 8080\n```\nProduced the api web service config."
+    },
+    {
+      "id": "t10-gen-tls",
+      "backend": "copilot",
+      "pass": true,
+      "error": "",
+      "ms": 19538,
+      "checks": [
+        {
+          "check": "fence",
+          "pass": true,
+          "detail": "active-fence"
+        },
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "check_exit0",
+          "pass": true,
+          "detail": "OK\n"
+        },
+        {
+          "check": "contains 'requires'",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "eval_eq tls",
+          "pass": true,
+          "detail": "got True"
+        }
+      ],
+      "extraction": "active-fence",
+      "infra_flake": false,
+      "response": "Flat config with conditional cert \u2014 drafting it to spec.\n\nProduced flat TLS config with conditional cert requirement.\n```active\nschema = { tls = Bool(default = false), cert = String(requires = \"tls\") }\ntls = true\ncert = \"/etc/ssl/cert.pem\"\n```\n\n"
+    },
+    {
+      "id": "t10-gen-tls",
+      "backend": "direct",
+      "pass": true,
+      "error": "",
+      "ms": 25483,
+      "checks": [
+        {
+          "check": "fence",
+          "pass": true,
+          "detail": "active-fence"
+        },
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "check_exit0",
+          "pass": true,
+          "detail": "OK\n"
+        },
+        {
+          "check": "contains 'requires'",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "eval_eq tls",
+          "pass": true,
+          "detail": "got True"
+        }
+      ],
+      "extraction": "active-fence",
+      "infra_flake": false,
+      "response": "```active\nschema = { tls = Bool(), cert = String(requires = \"tls\") }\ntls = true\ncert = \"/etc/ssl/tls.crt\"\n```\nProduced flat config with conditional cert requirement."
+    },
+    {
+      "id": "t2-gen-secret",
+      "backend": "copilot",
+      "pass": true,
+      "error": "",
+      "ms": 5958,
+      "checks": [
+        {
+          "check": "fence",
+          "pass": true,
+          "detail": "active-fence"
+        },
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "contains 'secret('",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "not_match 'password\\\\s*=\\\\s*[\\'\"]'",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "eval_eq database.port",
+          "pass": true,
+          "detail": "got 5432"
+        }
+      ],
+      "extraction": "active-fence",
+      "infra_flake": false,
+      "response": "```active\nlet db_password = secret(\"prod/db/password\")\n\n[database]\nhost = \"db.internal\"\nport = 5432\nname = \"app\"\nuser = \"app\"\npassword = db_password\n```\nProduced Postgres database config with vault-backed password.\n\n"
+    },
+    {
+      "id": "t2-gen-secret",
+      "backend": "direct",
+      "pass": true,
+      "error": "",
+      "ms": 10314,
+      "checks": [
+        {
+          "check": "fence",
+          "pass": true,
+          "detail": "active-fence"
+        },
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "contains 'secret('",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "not_match 'password\\\\s*=\\\\s*[\\'\"]'",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "eval_eq database.port",
+          "pass": true,
+          "detail": "got 5432"
+        }
+      ],
+      "extraction": "active-fence",
+      "infra_flake": false,
+      "response": "```active\nlet db_password = secret(\"prod/db/password\")\n\n[database]\nhost = \"db.internal\"\nport = 5432\nname = \"app\"\nuser = \"app\"\npassword = db_password\n```\nProduced Postgres database config with vault password."
+    },
+    {
+      "id": "t3-edit-add",
+      "backend": "copilot",
+      "pass": true,
+      "error": "",
+      "ms": 7841,
+      "checks": [
+        {
+          "check": "fence",
+          "pass": true,
+          "detail": "active-fence"
+        },
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "eval_eq server.read_timeout",
+          "pass": true,
+          "detail": "got {'ms': 30000}"
+        },
+        {
+          "check": "eval_eq server.host",
+          "pass": true,
+          "detail": "got '0.0.0.0'"
+        },
+        {
+          "check": "eval_eq server.port",
+          "pass": true,
+          "detail": "got 8080"
+        }
+      ],
+      "extraction": "active-fence",
+      "infra_flake": false,
+      "response": "Added `read_timeout` to the server table.\n```active\n[server]\nhost = \"0.0.0.0\"\nport = 8080\nread_timeout = 30s\n```\n\n"
+    },
+    {
+      "id": "t3-edit-add",
+      "backend": "direct",
+      "pass": true,
+      "error": "",
+      "ms": 9389,
+      "checks": [
+        {
+          "check": "fence",
+          "pass": true,
+          "detail": "active-fence"
+        },
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "eval_eq server.read_timeout",
+          "pass": true,
+          "detail": "got {'ms': 30000}"
+        },
+        {
+          "check": "eval_eq server.host",
+          "pass": true,
+          "detail": "got '0.0.0.0'"
+        },
+        {
+          "check": "eval_eq server.port",
+          "pass": true,
+          "detail": "got 8080"
+        }
+      ],
+      "extraction": "active-fence",
+      "infra_flake": false,
+      "response": "Added read_timeout to server, emitting whole document as requested.\n```active\n[server]\nhost = \"0.0.0.0\"\nport = 8080\nread_timeout = 30s\n```"
+    },
+    {
+      "id": "t4-edit-immutable",
+      "backend": "copilot",
+      "pass": true,
+      "error": "",
+      "ms": 11404,
+      "checks": [
+        {
+          "check": "fence",
+          "pass": true,
+          "detail": "active-fence"
+        },
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "eval_eq port",
+          "pass": true,
+          "detail": "got 8080"
+        }
+      ],
+      "extraction": "active-fence",
+      "infra_flake": false,
+      "response": "```active\n# @ai_immutable: true\nport = 8080\n```\nLeft `port` alone: it is marked `@ai_immutable`.\n\n"
+    },
+    {
+      "id": "t4-edit-immutable",
+      "backend": "direct",
+      "pass": true,
+      "error": "",
+      "ms": 7039,
+      "checks": [
+        {
+          "check": "fence",
+          "pass": true,
+          "detail": "active-fence"
+        },
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "eval_eq port",
+          "pass": true,
+          "detail": "got 8080"
+        }
+      ],
+      "extraction": "active-fence",
+      "infra_flake": false,
+      "response": "```active\n# @ai_immutable: true\nport = 8080\n```\nLeft `port` alone: it is marked `@ai_immutable`.\n"
+    },
+    {
+      "id": "t5-edit-patch",
+      "backend": "copilot",
+      "pass": true,
+      "error": "",
+      "ms": 6379,
+      "checks": [
+        {
+          "check": "fence",
+          "pass": true,
+          "detail": "active-fence"
+        },
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "contains '@patch('",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "eval_eq server.port",
+          "pass": true,
+          "detail": "got 9090"
+        }
+      ],
+      "extraction": "active-fence",
+      "infra_flake": false,
+      "response": "Chose patch-only form as requested.\n```active\n@patch(\"server.port\", 9090)\n```\n\n"
+    },
+    {
+      "id": "t5-edit-patch",
+      "backend": "direct",
+      "pass": true,
+      "error": "",
+      "ms": 16707,
+      "checks": [
+        {
+          "check": "fence",
+          "pass": true,
+          "detail": "active-fence"
+        },
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "contains '@patch('",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "eval_eq server.port",
+          "pass": true,
+          "detail": "got 9090"
+        }
+      ],
+      "extraction": "active-fence",
+      "infra_flake": false,
+      "response": "```active\n@patch(\"server.port\", 9090)\n```\nChose patch-only form to set server port to 9090."
+    },
+    {
+      "id": "t6-gen-style",
+      "backend": "copilot",
+      "pass": true,
+      "error": "",
+      "ms": 6255,
+      "checks": [
+        {
+          "check": "fence",
+          "pass": true,
+          "detail": "active-fence"
+        },
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "match '(?m)^server:'",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "same_eval",
+          "pass": true,
+          "detail": ""
+        }
+      ],
+      "extraction": "active-fence",
+      "infra_flake": false,
+      "response": "Rewrote the server config in pure indentation style.\n```active\nserver:\n  host = \"0.0.0.0\"\n  port = 8080\n```\n\n"
+    },
+    {
+      "id": "t6-gen-style",
+      "backend": "direct",
+      "pass": true,
+      "error": "",
+      "ms": 8748,
+      "checks": [
+        {
+          "check": "fence",
+          "pass": true,
+          "detail": "active-fence"
+        },
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "match '(?m)^server:'",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "same_eval",
+          "pass": true,
+          "detail": ""
+        }
+      ],
+      "extraction": "active-fence",
+      "infra_flake": false,
+      "response": "Rewrote the server config in pure indentation style.\n```active\nserver:\n  host = \"0.0.0.0\"\n  port = 8080\n```"
+    },
+    {
+      "id": "t7-explain-depends",
+      "backend": "copilot",
+      "pass": true,
+      "error": "",
+      "ms": 7163,
+      "checks": [
+        {
+          "check": "terms",
+          "pass": true,
+          "detail": "missing=[] banned=[]"
+        }
+      ],
+      "extraction": "prose",
+      "infra_flake": false,
+      "response": "The linter warns L002 naming the missing entry, for example `missing depends_on entry for 'db'`.\n\nAdd the path to the table's `depends_on` array; the declaration documents the edge and never exports as data.\n\n"
+    },
+    {
+      "id": "t7-explain-depends",
+      "backend": "direct",
+      "pass": true,
+      "error": "",
+      "ms": 7189,
+      "checks": [
+        {
+          "check": "terms",
+          "pass": true,
+          "detail": "missing=[] banned=[]"
+        }
+      ],
+      "extraction": "prose",
+      "infra_flake": false,
+      "response": "The linter warns L002 naming the missing entry, for example `missing depends_on entry for 'db'`. Add the path to the table's `depends_on` array; the declaration documents the edge and never exports as data."
+    },
+    {
+      "id": "t8-fix-broken",
+      "backend": "copilot",
+      "pass": true,
+      "error": "",
+      "ms": 6501,
+      "checks": [
+        {
+          "check": "fence",
+          "pass": true,
+          "detail": "active-fence"
+        },
+        {
+          "check": "check_exit0",
+          "pass": true,
+          "detail": "OK\n"
+        },
+        {
+          "check": "eval_eq server.port",
+          "pass": true,
+          "detail": "got 8080"
+        }
+      ],
+      "extraction": "active-fence",
+      "infra_flake": false,
+      "response": "Added missing bracket to close the server table header.\n```active\n[server]\nport = 8080\n```\n\n"
+    },
+    {
+      "id": "t8-fix-broken",
+      "backend": "direct",
+      "pass": true,
+      "error": "",
+      "ms": 12577,
+      "checks": [
+        {
+          "check": "fence",
+          "pass": true,
+          "detail": "active-fence"
+        },
+        {
+          "check": "check_exit0",
+          "pass": true,
+          "detail": "OK\n"
+        },
+        {
+          "check": "eval_eq server.port",
+          "pass": true,
+          "detail": "got 8080"
+        }
+      ],
+      "extraction": "active-fence",
+      "infra_flake": false,
+      "response": "```active\n[server]\nport = 8080\n```\nAdded missing bracket, emitting whole document."
+    },
+    {
+      "id": "t9-fix-format",
+      "backend": "copilot",
+      "pass": true,
+      "error": "",
+      "ms": 11288,
+      "checks": [
+        {
+          "check": "fence",
+          "pass": true,
+          "detail": "active-fence"
+        },
+        {
+          "check": "check_exit0",
+          "pass": true,
+          "detail": "OK\n"
+        },
+        {
+          "check": "not_match 'not-an-email\"'",
+          "pass": true,
+          "detail": ""
+        }
+      ],
+      "extraction": "active-fence",
+      "infra_flake": false,
+      "response": "Chose patch form and fixed the email to a valid address.\n```active\n@patch(\"contact.email\", \"user@example.com\")\n```\n\n"
+    },
+    {
+      "id": "t9-fix-format",
+      "backend": "direct",
+      "pass": true,
+      "error": "",
+      "ms": 17138,
+      "checks": [
+        {
+          "check": "fence",
+          "pass": true,
+          "detail": "active-fence"
+        },
+        {
+          "check": "check_exit0",
+          "pass": true,
+          "detail": "OK\n"
+        },
+        {
+          "check": "not_match 'not-an-email\"'",
+          "pass": true,
+          "detail": ""
+        }
+      ],
+      "extraction": "active-fence",
+      "infra_flake": false,
+      "response": "Chose patch-only form to fix the email value.\n```active\n@patch(\"contact.email\", \"not-an-email@example.com\")\n```"
+    }
+  ],
+  "copilot_rate": 1.0,
+  "copilot_adjusted_rate": 1.0,
+  "direct_rate": 1.0,
+  "direct_adjusted_rate": 1.0
+}

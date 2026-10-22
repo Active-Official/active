@@ -135,10 +135,15 @@ func (h *handle) evaluate(source string) (*envelope, error) {
 		h.free.Call(h.ctx, out[0], uint64(n))
 		return nil, fmt.Errorf("read envelope")
 	}
-	// Free before parsing so a corrupt envelope cannot leak the slot.
+	// Copy out of the module-owned view BEFORE freeing: Read aliases
+	// linear memory, and active_free may reuse/scribble the block
+	// (observed: freed bytes surface as 'X', breaking the parse of
+	// T003-sized envelopes while others passed by luck). Freeing here
+	// still covers every path, so a corrupt envelope cannot leak.
+	buf := append([]byte(nil), raw...)
 	h.free.Call(h.ctx, out[0], uint64(n))
 	var env envelope
-	if err := json.Unmarshal(raw, &env); err != nil {
+	if err := json.Unmarshal(buf, &env); err != nil {
 		return nil, err
 	}
 	return &env, nil
@@ -244,16 +249,27 @@ func main() {
 		if err != nil {
 			fail(err)
 		}
-		if !env.OK {
-			e := entry{Iter: i, Codes: codesOf(env.Diagnostics)}
-			e.Unrepairable = true
-			log = append(log, e)
-			fail(fmt.Errorf("unrepairable: %v", e.Codes))
-		}
+		// Canonical policy, same as the Python/TypeScript loops:
+		// the envelope's ok flag is the refusal signal (the bindings
+		// raise exactly when ok is false). Diagnostics decide the
+		// repair path: a present value with codes re-emits and
+		// converges; only ok==false is unrepairable. Judging by JSON
+		// presence instead over-repairs parse failures, whose error
+		// envelopes may carry a partial payload.
 		codes := codesOf(env.Diagnostics)
 		e := entry{Iter: i, Codes: codes}
 		key := strings.Join(codes, ",")
+		if !env.OK {
+			e.Unrepairable = true
+			log = append(log, e)
+			fail(fmt.Errorf("unrepairable: %v", codes))
+		}
 		if len(codes) == 0 {
+			if len(env.JSON) == 0 || string(env.JSON) == "null" {
+				e.Unrepairable = true
+				log = append(log, e)
+				fail(fmt.Errorf("clean codes but no value"))
+			}
 			log = append(log, e)
 			out, _ := json.Marshal(map[string]any{"value": json.RawMessage(env.JSON), "log": log})
 			fmt.Println(string(out))

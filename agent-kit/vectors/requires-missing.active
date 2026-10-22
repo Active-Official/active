@@ -1,0 +1,5 @@
+schema = {
+  tls = Bool,
+  cert = String(requires = "tls"),
+}
+tls = true

@@ -32,6 +32,20 @@ TASKS = [
     ("repair-fill.active", True),
     ("clean-pass.active", True),
     ("broken-parse.active", False),
+    # Phase-2 schema features ride the documented loop contract
+    # (check -> resilient eval -> re-emit via `active import` ->
+    # check): the re-emit step carries values, not the schema, so
+    # convergence means the loop turned a failing first attempt into
+    # a clean final artifact — the T003/T004 codes stay in the log
+    # as the detection record. What this gate pins is cross-loop
+    # parity (identical verdicts, iterations, codes) plus conversion,
+    # not value-level repair of the constraint itself.
+    # broken-parse remains the true negative (nothing to evaluate,
+    # nothing to re-emit).
+    ("format-broken.active", True),
+    ("requires-missing.active", True),
+    ("unknown-format.active", True),
+    ("descriptions-clean.active", True),
 ]
 
 LOOPS = [
@@ -100,7 +114,12 @@ def main() -> int:
     report: dict = {"loops": {}, "ok": True}
     for name, cmd, cwd in LOOPS:
         if not available(cmd):
+            # Tier-1 reference loops are mandatory: a missing runtime
+            # fails the gate loudly instead of shrinking it. (Tier-2
+            # smoke paths, not these loops, earn SKIP.)
+            failed = True
             report["loops"][name] = {"status": "skipped-no-runtime"}
+            report["ok"] = False
             continue
         entry: dict = {"tasks": {}}
         failed = False

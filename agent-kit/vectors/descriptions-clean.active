@@ -1,0 +1,4 @@
+schema = {
+  color = Enum("red", "green", descriptions = ["stop", "go"]),
+}
+color = "green"

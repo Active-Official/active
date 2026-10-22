@@ -103,7 +103,12 @@ def call_direct(system, user):
         {
             "model": DIRECT_MODEL,
             "temperature": 0,
-            "max_tokens": 2000,
+            # Reasoning models spend budget before emitting content;
+            # 2000 starved longer tasks on the direct backend (null
+            # content, finish length). Applies uniformly to every
+            # task on this backend; the copilot CLI path carries its
+            # own (larger) output budget.
+            "max_tokens": 8192,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},

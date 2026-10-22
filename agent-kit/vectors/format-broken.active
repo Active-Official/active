@@ -1,0 +1,4 @@
+schema = {
+  contact = String(format = "email"),
+}
+contact = "not-an-email"

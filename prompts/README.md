@@ -1,4 +1,4 @@
-# ACTIVE AI Prompt Pack v1.0.0 (P-052)
+# ACTIVE AI Prompt Pack v1.1.0 (P-052)
 
 Versioned system prompts and few-shot examples that teach coding
 agents to emit idiomatic ACTIVE, respect `@ai_immutable` and
@@ -6,14 +6,14 @@ constraints, and prefer patches over whole-file rewrites.
 
 ## Contents
 
-- `VERSION`: pack version (`1.0.0`); every prompt file carries
+- `VERSION`: pack version (`1.1.0`); every prompt file carries
   the same version in its header comment.
 - `v1/system-generator.md`: write new ACTIVE from requirements.
 - `v1/system-editor.md`: edit documents (minimal diffs, patch
   answers, immutable refusal).
 - `v1/system-explainer.md`: answer language questions with exact
   diagnostic codes.
-- `tasks/`: the fixed validation suite (`t1`–`t8`, TOML:
+- `tasks/`: the fixed validation suite (`t1`-`t10`, TOML:
   system, user, optional document, machine-readable checks).
 - `runner/validate.py`: first-attempt harness (no retries):
   sends each task to each backend, extracts the fenced document,

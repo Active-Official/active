@@ -1,0 +1,24 @@
+id = "t10-gen-tls"
+system = "generator"
+kind = "code"
+
+user = """
+Write flat ACTIVE with top-level keys only (no tables, no sections):
+include a schema where cert is required when tls is true, and set
+top-level keys with tls true and a cert value.
+"""
+
+[[checks]]
+type = "parse"
+
+[[checks]]
+type = "check_exit0"
+
+[[checks]]
+type = "contains"
+text = "requires"
+
+[[checks]]
+type = "eval_eq"
+path = "tls"
+value = true

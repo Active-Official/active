@@ -15,7 +15,7 @@
     "wasm": {
       "status": "pass",
       "exit": 0,
-      "tally": "11/13 pass, 2 pinned",
+      "tally": "14/16 pass, 2 pinned",
       "secret_clean": true
     },
     "go": {
@@ -173,3 +173,4 @@
   "ok": true,
   "parity": []
 }
+harness_exit=True

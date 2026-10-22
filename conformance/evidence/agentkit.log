@@ -24,10 +24,44 @@
           "codes": [],
           "baseline_first_attempt_clean": false,
           "improved_over_baseline": false
+        },
+        "format-broken.active": {
+          "clean": true,
+          "iters": 2,
+          "codes": [
+            "T003"
+          ],
+          "baseline_first_attempt_clean": false,
+          "improved_over_baseline": true
+        },
+        "requires-missing.active": {
+          "clean": true,
+          "iters": 2,
+          "codes": [
+            "T004"
+          ],
+          "baseline_first_attempt_clean": false,
+          "improved_over_baseline": true
+        },
+        "unknown-format.active": {
+          "clean": true,
+          "iters": 2,
+          "codes": [
+            "T003"
+          ],
+          "baseline_first_attempt_clean": false,
+          "improved_over_baseline": true
+        },
+        "descriptions-clean.active": {
+          "clean": true,
+          "iters": 1,
+          "codes": [],
+          "baseline_first_attempt_clean": true,
+          "improved_over_baseline": false
         }
       },
-      "mean_iters_to_clean": 1.5,
-      "tasks_improved": 1,
+      "mean_iters_to_clean": 1.6666666666666667,
+      "tasks_improved": 4,
       "status": "pass"
     },
     "typescript": {
@@ -54,10 +88,44 @@
           "codes": [],
           "baseline_first_attempt_clean": false,
           "improved_over_baseline": false
+        },
+        "format-broken.active": {
+          "clean": true,
+          "iters": 2,
+          "codes": [
+            "T003"
+          ],
+          "baseline_first_attempt_clean": false,
+          "improved_over_baseline": true
+        },
+        "requires-missing.active": {
+          "clean": true,
+          "iters": 2,
+          "codes": [
+            "T004"
+          ],
+          "baseline_first_attempt_clean": false,
+          "improved_over_baseline": true
+        },
+        "unknown-format.active": {
+          "clean": true,
+          "iters": 2,
+          "codes": [
+            "T003"
+          ],
+          "baseline_first_attempt_clean": false,
+          "improved_over_baseline": true
+        },
+        "descriptions-clean.active": {
+          "clean": true,
+          "iters": 1,
+          "codes": [],
+          "baseline_first_attempt_clean": true,
+          "improved_over_baseline": false
         }
       },
-      "mean_iters_to_clean": 1.5,
-      "tasks_improved": 1,
+      "mean_iters_to_clean": 1.6666666666666667,
+      "tasks_improved": 4,
       "status": "pass"
     },
     "go": {
@@ -84,10 +152,44 @@
           "codes": [],
           "baseline_first_attempt_clean": false,
           "improved_over_baseline": false
+        },
+        "format-broken.active": {
+          "clean": true,
+          "iters": 2,
+          "codes": [
+            "T003"
+          ],
+          "baseline_first_attempt_clean": false,
+          "improved_over_baseline": true
+        },
+        "requires-missing.active": {
+          "clean": true,
+          "iters": 2,
+          "codes": [
+            "T004"
+          ],
+          "baseline_first_attempt_clean": false,
+          "improved_over_baseline": true
+        },
+        "unknown-format.active": {
+          "clean": true,
+          "iters": 2,
+          "codes": [
+            "T003"
+          ],
+          "baseline_first_attempt_clean": false,
+          "improved_over_baseline": true
+        },
+        "descriptions-clean.active": {
+          "clean": true,
+          "iters": 1,
+          "codes": [],
+          "baseline_first_attempt_clean": true,
+          "improved_over_baseline": false
         }
       },
-      "mean_iters_to_clean": 1.5,
-      "tasks_improved": 1,
+      "mean_iters_to_clean": 1.6666666666666667,
+      "tasks_improved": 4,
       "status": "pass"
     }
   },

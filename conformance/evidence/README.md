@@ -1,22 +1,23 @@
 # Verification evidence (expansion goal close-out)
 
-Captured on HEAD `b7f1bb2` (2026-10-21), committed so the close-out is
+Captured on HEAD `a30b2c9` (2026-10-22), committed so the close-out is
 auditable from the repo itself rather than only from throwaway scratch.
-To reproduce: run the same commands from the repo root; every log states
-its own command at the top where applicable.
+To reproduce: run the same commands from the repo root.
 
 | File | Verification step | Pass criterion in file |
 |---|---|---|
-| `harness.log` | Step 1: shared harness + differential gate | `ok: true`, `secret_leak: false`, `parity: []`, `differential: DIFFERENTIAL-OK`, 10 pass / 18 skip / 0 fail |
-| `binding-proof.log` | Step 2: Tier-1 fresh-consumer proof | `BINDING-PROOF: ALL PASS` with per-diagnostic span transcripts |
-| `codegen.log` | Step 3: multi-target codegen validators | `CODEGEN: ALL PASS` with tsc/gofmt/go-vet/schema/python echoes |
-| `cli-launch.log` | Step 4: CLI launch smoke | Full demo + complete transcripts, T001 refusal, `deterministic: True` |
-| `gates.log` | Step 5: full workspace gates | 71 suites, 2691 passed, 0 failed, `fmt_exit=0`, `clippy done`, lsp 60 + redaction 5 inline |
-| `agentkit.log` / `agentkit-eval.log` | Step 6: agent-kit evaluation | `ok: true`, every loop `tasks_improved: 1` with unassisted baselines |
+| `harness.json` / `harness.log` | Step 1: shared harness + differential gate (Windows) | `ok: true`, `secret_leak: false`, `parity: []`, Tier-1 all pass |
+| `container-harness.json` / `.log` | Step 1b: zero-SKIP proof (all-toolchain container) | `ok: true`, 28/28 `pass`, 0 skipped, 0 failed, `parity: []` |
+| `binding-proof.log` | Step 2: Tier-1 fresh-consumer proof | `BINDING-PROOF: ALL PASS` (codes, resilient eval, T001 refusal, redaction) |
+| `codegen.log` | Step 3: multi-target codegen validators | `CODEGEN: ALL PASS` (jsonschema/tsc+zod/gofmt+go vet+validator/python, determinism, stamps) |
+| `cli-launch.log` | Step 4: CLI launch smoke | Full demo + complete transcripts, T001 refusal, `deterministic: True`, trace events |
+| `gates.log` | Step 5: full workspace gates | `suite_exit=True`, `fmt_exit=True`, `clippy_exit=True`, zero FAILED |
+| `agentkit.log` / `agentkit-eval.json` / `agentkit-eval.log` | Step 6: agent-kit evaluation | `ok: true`, all loops identical per-task verdicts/iters/codes |
 | `catalog-diff.log` | Error-code catalog diff | 62/62 real codes covered, 0 missing |
-| `harness-tests.log` | Harness enforcement unit tests | 23/23 pass (`python -m unittest conformance.harness.test_run -v`) |
+| `harness-tests.log` | Harness enforcement unit tests | 25/25 run.py + 14/14 diff_vectors + capability 3/3 |
 
 Supporting scripts next to the logs (`codegen_check.py`) are the exact
-runners used. CI runs all of the above on every push (see
-`.github/workflows/conformance.yml`); green runs on this HEAD: Conformance
-39608477192, CI 39608477150, CodSpeed 39608477124.
+runners used. CI runs harness, codegen, and the agent-kit gate on every
+push and PR (see `.github/workflows/conformance.yml`); green runs on
+this HEAD are recorded in CHECKLIST Phase gates (see
+`C:\Users\Usuario\Downloads\active-phase2-plan\CHECKLIST.md`).

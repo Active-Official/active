@@ -1,28 +1,9 @@
-test_missing_binary_skips (conformance.harness.test_run.ClassifyTest.test_missing_binary_skips) ... ok
-test_missing_tally_is_fail (conformance.harness.test_run.ClassifyTest.test_missing_tally_is_fail) ... ok
-test_raw_secret_never_counts_clean (conformance.harness.test_run.ClassifyTest.test_raw_secret_never_counts_clean) ... ok
-test_skip_clean_exit_skips (conformance.harness.test_run.ClassifyTest.test_skip_clean_exit_skips) ... ok
-test_skip_nonzero_exit_fails (conformance.harness.test_run.ClassifyTest.test_skip_nonzero_exit_fails) ... ok
-test_tally_match_is_pass (conformance.harness.test_run.ClassifyTest.test_tally_match_is_pass) ... ok
-test_clean_run_is_ok (conformance.harness.test_run.FinalizeTest.test_clean_run_is_ok) ... ok
-test_parity_violation_is_not_ok (conformance.harness.test_run.FinalizeTest.test_parity_violation_is_not_ok) ... ok
-test_path_failure_is_not_ok (conformance.harness.test_run.FinalizeTest.test_path_failure_is_not_ok) ... ok
-test_all_passing_report_holds (conformance.harness.test_run.ParityTest.test_all_passing_report_holds) ... ok
-test_failing_path_fails_parity (conformance.harness.test_run.ParityTest.test_failing_path_fails_parity) ... ok
-test_leaking_differential_gate_fails (conformance.harness.test_run.ParityTest.test_leaking_differential_gate_fails) ... ok
-test_missing_differential_gate_fails (conformance.harness.test_run.ParityTest.test_missing_differential_gate_fails) ... ok
-test_missing_secret_clean_flag_fails (conformance.harness.test_run.ParityTest.test_missing_secret_clean_flag_fails) ... ok
-test_missing_tier1_path_fails_parity (conformance.harness.test_run.ParityTest.test_missing_tier1_path_fails_parity) ... ok
-test_placeholders_never_count (conformance.harness.test_run.ParityTest.test_placeholders_never_count) ... ok
-test_red_differential_gate_fails (conformance.harness.test_run.ParityTest.test_red_differential_gate_fails) ... ok
-test_secret_leak_fails_parity (conformance.harness.test_run.ParityTest.test_secret_leak_fails_parity) ... ok
-test_skipped_differential_fails_parity (conformance.harness.test_run.ParityTest.test_skipped_differential_fails_parity) ... ok
-test_skipped_tier1_path_fails_parity (conformance.harness.test_run.ParityTest.test_skipped_tier1_path_fails_parity) ... ok
-test_tier1_set_matches_wired_paths (conformance.harness.test_run.ParityTest.test_tier1_set_matches_wired_paths) ... ok
-test_timeout_always_fails (conformance.harness.test_run.ParityTest.test_timeout_always_fails) ... ok
-test_wired_paths_complete (conformance.harness.test_run.RegistryTest.test_wired_paths_complete) ... ok
-
 ----------------------------------------------------------------------
-Ran 23 tests in 0.002s
+Ran 25 tests in 0.020s
+
+OK
+Ran 14 tests in 0.001s
+
+OK
 
 OK

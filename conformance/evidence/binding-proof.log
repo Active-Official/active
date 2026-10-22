@@ -1,8 +1,5 @@
-BINDING-PROOF: codes match reference: set=['T003'] (binding items=['T003'])
-BINDING-PROOF: reference cli exit=1 stderr=F:\QQQ-AUDIT\SOLID\_binding_proof_tmp.active:6:8: [Error] T003: schema violation at 'name': does not match format 'email'
-F:\QQQ-AUDIT\SOLID\_binding_proof_tmp.active:6:8: [Error] T003: validation fai
-BINDING-PROOF: diag code=T003 severity=error span=(6, 8, 6, 22) msg=schema violation at 'name': does not match format 'email'
-BINDING-PROOF: secret redacted, raw absent
-BINDING-PROOF: spans present: [('T001', (1, 12, 1, 13), 'error')]
-BINDING-PROOF: units refusal T001
+codes: [('T003', 'error', (2, 8, 2, 9))]
+resilient eval returns value with codes (binding contract)
+T001 refusal raises as expected: ActiveError
+redaction ok, raw absent
 BINDING-PROOF: ALL PASS

@@ -36,6 +36,9 @@ oracle and double the maintenance tail for zero user benefit.
 - **Conformance CI linkage:** external repo CI on every change plus
   the shared harness `go-native` path (pinned clone + full `go test`
   suite; SKIP openly without git/go/network, never a silent pass).
+- **Zero-SKIP proof lives in-repo:** `conformance/evidence/container-harness.json`
+  (2026-10-22, all-toolchain image `active-all-toolchains:phase2`) reports
+  28/28 paths `pass` with zero skips.
 
 ## In-repo coverage
 

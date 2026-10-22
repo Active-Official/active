@@ -1,0 +1,176 @@
+{
+  "paths": {
+    "reference": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "test result: ok.",
+      "secret_clean": true
+    },
+    "c_abi": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "test result: ok.",
+      "secret_clean": true
+    },
+    "wasm": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "14/16 pass, 2 pinned",
+      "secret_clean": true
+    },
+    "go": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "eval port=8080 ok",
+      "secret_clean": true
+    },
+    "python": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "OK",
+      "secret_clean": true
+    },
+    "js-native": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "js-ok",
+      "secret_clean": true
+    },
+    "zig": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "SMOKE-OK",
+      "secret_clean": true
+    },
+    "csharp": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "SMOKE-OK",
+      "secret_clean": true
+    },
+    "cpp": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "SMOKE-OK",
+      "secret_clean": true
+    },
+    "java": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "SMOKE-OK",
+      "secret_clean": true
+    },
+    "lua": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "SMOKE-OK",
+      "secret_clean": true
+    },
+    "ruby": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "SMOKE-OK",
+      "secret_clean": true
+    },
+    "php": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "SMOKE-OK",
+      "secret_clean": true
+    },
+    "fortran": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "SMOKE-OK",
+      "secret_clean": true
+    },
+    "go-native": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "TEST-OK",
+      "secret_clean": true
+    },
+    "differential": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "DIFFERENTIAL-OK",
+      "secret_clean": true
+    },
+    "haskell": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "SMOKE-OK",
+      "secret_clean": true
+    },
+    "julia": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "SMOKE-OK",
+      "secret_clean": true
+    },
+    "nim": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "SMOKE-OK",
+      "secret_clean": true
+    },
+    "perl": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "SMOKE-OK",
+      "secret_clean": true
+    },
+    "r": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "SMOKE-OK",
+      "secret_clean": true
+    },
+    "ocaml": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "SMOKE-OK",
+      "secret_clean": true
+    },
+    "crystal": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "SMOKE-OK",
+      "secret_clean": true
+    },
+    "elixir": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "SMOKE-OK",
+      "secret_clean": true
+    },
+    "dart": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "SMOKE-OK",
+      "secret_clean": true
+    },
+    "vlang": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "SMOKE-OK",
+      "secret_clean": true
+    },
+    "kotlin": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "SMOKE-OK",
+      "secret_clean": true
+    },
+    "swift": {
+      "status": "pass",
+      "exit": 0,
+      "tally": "SMOKE-OK",
+      "secret_clean": true
+    }
+  },
+  "secret_leak": false,
+  "ok": true,
+  "parity": []
+}
+CONTAINER-HARNESS-DONE

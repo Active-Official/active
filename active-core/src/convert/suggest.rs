@@ -218,3 +218,45 @@ fn schema_field_at<'m>(module: &'m Module, path: &str) -> Option<&'m SchemaField
     }
     last_field
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diag::Severity;
+
+    fn t004(path: &str) -> Diagnostic {
+        Diagnostic {
+            severity: Severity::Error,
+            code: "T004".to_string(),
+            message: format!("missing required key: {path}"),
+            path: Some(path.to_string()),
+            span: None,
+            repair: None,
+            confidence: 1.0,
+            file: None,
+        }
+    }
+
+    #[test]
+    fn non_finite_float_default_yields_no_patch() {
+        // The lexer rejects non-finite literals and imports map them to
+        // null (W010), so no parser path can produce this module state —
+        // perturb the parsed default to prove the guard fires anyway.
+        // Positive control first: the finite default fills normally.
+        let mut module = crate::parse("schema = { ratio = Float(default = 1.5) }\n", "fill-finite")
+            .expect("must parse");
+        assert!(fill_for(&module, &t004("ratio")).is_some());
+        let default_id = schema_field_at(&module, "ratio")
+            .expect("field present")
+            .default
+            .expect("default present");
+        match module.get_mut(default_id).expect("default node") {
+            Node::Literal(Value::Float(f)) => *f = f64::INFINITY,
+            other => panic!("expected float default, got {other:?}"),
+        }
+        assert!(
+            fill_for(&module, &t004("ratio")).is_none(),
+            "inf default must not emit an unparseable directive"
+        );
+    }
+}

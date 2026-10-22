@@ -8,6 +8,7 @@ Assumes `cargo build -p active-ffi` already ran (CI release job does).
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -56,15 +57,20 @@ def build_with_retry(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     env["ZIG_LOCAL_CACHE_DIR"] = str(cache / "local")
     env["ZIG_GLOBAL_CACHE_DIR"] = str(cache / "global")
     last: subprocess.CompletedProcess[str] | None = None
-    for attempt in (1, 2, 3):
-        last = run_in(cmd, ROOT, env)
-        if last.returncode == 0:
-            shutil.rmtree(cache, ignore_errors=True)
-            return last
-        print(f"zig build attempt {attempt}/3 failed; retrying...")
-        print((last.stderr or last.stdout)[-500:])
-        time.sleep(5 * attempt)
-    assert last is not None
+    try:
+        for attempt in (1, 2, 3):
+            last = run_in(cmd, ROOT, env)
+            if last.returncode == 0:
+                return last
+            print(f"zig build attempt {attempt}/3 failed; retrying...")
+            print((last.stderr or last.stdout)[-500:])
+            time.sleep(5 * attempt)
+    finally:
+        # Always reclaim the isolated cache, success or failure, so a
+        # failed gate never litters the runner.
+        shutil.rmtree(cache, ignore_errors=True)
+    if last is None:  # Unreachable: the loop always runs at least once.
+        raise RuntimeError("zig build retry loop never executed")
     return last
 
 

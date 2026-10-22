@@ -703,7 +703,7 @@ fn main() -> anyhow::Result<()> {
                 "json" => println!(
                     "{}",
                     serde_json::to_string_pretty(&active_core::graph::to_graph_json(&module))
-                        .unwrap_or_default()
+                        .map_err(|e| anyhow::anyhow!("graph serialize failed: {e}"))?
                 ),
                 other => anyhow::bail!("unsupported format: {}", other),
             }
@@ -827,10 +827,14 @@ fn main() -> anyhow::Result<()> {
             let module = parse_input(&from, false, false, &trust)?;
             // Documents without a schema block exit non-zero (spec §5).
             let output = match to.as_str() {
-                "jsonschema" => schema_to_json_schema(&module)
-                    .map(|schema| serde_json::to_string_pretty(&schema).unwrap_or_default()),
-                "openapi" => schema_to_openapi(&module, &name)
-                    .map(|schema| serde_json::to_string_pretty(&schema).unwrap_or_default()),
+                "jsonschema" => schema_to_json_schema(&module).and_then(|schema| {
+                    serde_json::to_string_pretty(&schema)
+                        .map_err(|e| format!("generate serialize failed: {e}"))
+                }),
+                "openapi" => schema_to_openapi(&module, &name).and_then(|schema| {
+                    serde_json::to_string_pretty(&schema)
+                        .map_err(|e| format!("generate serialize failed: {e}"))
+                }),
                 "typescript" | "ts" => schema_to_typescript(&module, &name),
                 "go" => schema_to_go(&module, &name),
                 "rust" | "serde" => schema_to_rust(&module, &name),
@@ -1073,7 +1077,10 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Verify { file, trust_keys } => {
             let label = file.to_string_lossy().to_string();
-            let trust = load_trust(&Some(trust_keys))?.expect("trust file given");
+            // Verify without a trust file is meaningless: fail closed
+            // instead of panicking on the missing keys.
+            let trust = load_trust(&Some(trust_keys))?
+                .ok_or_else(|| anyhow::anyhow!("verify requires --trust-keys <file>"))?;
             match active_core::sign::verify_file(&file, &trust) {
                 Ok(kid) => println!("{label}: valid signature from key '{kid}'"),
                 Err(e) => {

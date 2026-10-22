@@ -145,6 +145,42 @@ impl Default for Budget {
 }
 
 impl Budget {
+    /// Strict profile: tight enough for CI and serverless loops, with
+    /// headroom over the 10k-node performance target. Identical to
+    /// `Default`; named so agents and CLIs select it explicitly.
+    pub fn strict() -> Self {
+        Self::default()
+    }
+
+    /// Interactive profile: roomier for REPLs, playgrounds, and human
+    /// iteration (larger docs, longer wall time), still bounded.
+    pub fn interactive() -> Self {
+        Self {
+            max_nodes: 1_000_000,
+            max_depth: 512,
+            max_array_len: 1_000_000,
+            max_keys: 1_000_000,
+            max_wall_ms: 2_000,
+            max_value_size: 100_000_000,
+            max_total_value_size: 1_000_000_000,
+        }
+    }
+
+    /// Trusted profile: operator-trusted input (vendored standard
+    /// library, generated configs) at production scale. Generous but
+    /// finite — `0` (unlimited) is never a preset; embedders accept
+    /// that risk field-by-field, never by profile name.
+    pub fn trusted() -> Self {
+        Self {
+            max_nodes: 10_000_000,
+            max_depth: 2048,
+            max_array_len: 10_000_000,
+            max_keys: 10_000_000,
+            max_wall_ms: 30_000,
+            max_value_size: 1_000_000_000,
+            max_total_value_size: 10_000_000_000,
+        }
+    }
     /// Absolute evaluation deadline, or None when the wall-clock
     /// budget is disabled (`max_wall_ms == 0`). Saturating: absurd
     /// configured durations degrade to no deadline instead of

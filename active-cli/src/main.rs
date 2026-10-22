@@ -45,6 +45,11 @@ struct BudgetArgs {
     /// Maximum cumulative materialized size across evaluation
     #[arg(long, default_value_t = Budget::default().max_total_value_size)]
     max_total_value_size: u64,
+    /// Named budget profile: strict (CI/serverless), interactive
+    /// (REPL/playground), or trusted (vendored/generated input).
+    /// A profile replaces every per-field limit above.
+    #[arg(long)]
+    budget_profile: Option<String>,
 }
 
 impl BudgetArgs {
@@ -57,6 +62,21 @@ impl BudgetArgs {
             max_wall_ms: self.max_wall_ms,
             max_value_size: self.max_value_size,
             max_total_value_size: self.max_total_value_size,
+        }
+    }
+
+    /// Named budget profile (`strict`, `interactive`, `trusted`)
+    /// or explicit per-field limits. A profile wins entirely when
+    /// set; per-field flags apply only without a profile.
+    fn resolve(&self) -> anyhow::Result<Budget> {
+        match self.budget_profile.as_deref() {
+            None => Ok(self.budget()),
+            Some("strict") => Ok(Budget::strict()),
+            Some("interactive") => Ok(Budget::interactive()),
+            Some("trusted") => Ok(Budget::trusted()),
+            Some(other) => {
+                anyhow::bail!("unknown budget profile: {other} (want strict|interactive|trusted)")
+            }
         }
     }
 }
@@ -219,6 +239,40 @@ enum Commands {
         #[arg(long)]
         trust_keys: Option<PathBuf>,
     },
+    /// Explain every diagnostic in a file with stable repair guidance
+    Explain {
+        /// Input .active file
+        #[arg(short, long)]
+        from: PathBuf,
+        /// Allow includes to use absolute paths or escape the directory
+        #[arg(long)]
+        allow_parent_escapes: bool,
+        /// Require sibling signatures on includes (C-052)
+        #[arg(long)]
+        trust_keys: Option<PathBuf>,
+        #[command(flatten)]
+        budget: BudgetArgs,
+    },
+    /// Suggest minimal @patch/@rename directives for mechanical diagnostics
+    Patch {
+        /// Input .active file
+        #[arg(short, long)]
+        from: PathBuf,
+        /// Allow includes to use absolute paths or escape the directory
+        #[arg(long)]
+        allow_parent_escapes: bool,
+        /// Require sibling signatures on includes (C-052)
+        #[arg(long)]
+        trust_keys: Option<PathBuf>,
+        #[command(flatten)]
+        budget: BudgetArgs,
+    },
+    /// Print the agent capability descriptor; optionally check its major
+    Capability {
+        /// Fail unless the descriptor major version equals this
+        #[arg(long)]
+        require_major: Option<u64>,
+    },
     /// Render schema, intent, and comments as documentation
     Doc {
         /// Input .active file
@@ -239,6 +293,8 @@ enum Commands {
         /// Require sibling signatures on includes (C-052)
         #[arg(long)]
         trust_keys: Option<PathBuf>,
+        #[command(flatten)]
+        budget: BudgetArgs,
     },
     /// Emit a reproducible lockfile (content hash + provenance)
     Lock {
@@ -382,6 +438,39 @@ fn parse_graph_input(
     Ok((module, name))
 }
 
+/// Embedded agent capability descriptor (agent-kit/capability.schema.json).
+/// Compiled in so installs answer the handshake without the repo tree.
+const CAPABILITY_JSON: &str = include_str!("../../agent-kit/capability.schema.json");
+
+/// Strict-evaluation diagnostics for the explain/patch surfaces: parse
+/// errors abort in parse_input; validation diagnostics are the working
+/// set; any other engine failure is fatal and reported.
+fn collect_diags(module: &active_core::Module, filename: &str, budget: Budget) -> Vec<Diagnostic> {
+    match engine(false, &None, budget).evaluate(module) {
+        Ok((_, diags)) => diags,
+        Err(EvalError::ValidationFailed { diagnostics }) => diagnostics,
+        Err(e) => {
+            report_eval_error(&e, filename);
+            std::process::exit(2);
+        }
+    }
+}
+
+/// Stable `CODE path span: guidance` lines (value-free by construction).
+fn explain_lines(diags: &[Diagnostic]) -> Vec<String> {
+    let items: Vec<(String, Option<String>, Option<String>)> = diags
+        .iter()
+        .map(|d| {
+            let span = d
+                .span
+                .as_ref()
+                .map(|s| format!("{}:{}-{}:{}", s.line, s.column, s.end_line, s.end_column));
+            (d.code.clone(), d.path.clone(), span)
+        })
+        .collect();
+    active_core::convert::explain_all(&items)
+}
+
 /// True when the exit code must be non-zero: strict mode fails on any
 /// Warning-or-Error; resilient mode fails only on Error.
 fn had_failure(diags: &[Diagnostic], resilient: bool) -> bool {
@@ -400,12 +489,7 @@ fn dump_trail(enabled: bool) {
     for event in active_core::trace::take_trail() {
         eprintln!(
             "{}",
-            serde_json::json!({
-                "phase": event.phase,
-                "nodes": event.nodes,
-                "diags": event.diags,
-                "codes": event.codes,
-            })
+            serde_json::to_value(&event).expect("TraceEvent serializes")
         );
     }
 }
@@ -463,7 +547,7 @@ fn main() -> anyhow::Result<()> {
             let trust = load_trust(&trust_keys)?;
             let module = parse_input(&file, resilient, allow_parent_escapes, &trust)?;
 
-            let engine = engine(resilient, &profile, budget.budget());
+            let engine = engine(resilient, &profile, budget.resolve()?);
             active_core::trace::set_tracing(trace);
             let (value, diags) = match engine.evaluate(&module) {
                 Ok(out) => {
@@ -514,7 +598,7 @@ fn main() -> anyhow::Result<()> {
             let trust = load_trust(&trust_keys)?;
             match parse_input(&file, resilient, allow_parent_escapes, &trust) {
                 Ok(module) => {
-                    let engine = engine(resilient, &profile, budget.budget());
+                    let engine = engine(resilient, &profile, budget.resolve()?);
                     active_core::trace::set_tracing(trace);
                     match engine.evaluate(&module) {
                         Ok((_, diags)) => {
@@ -651,7 +735,7 @@ fn main() -> anyhow::Result<()> {
             let name = file.to_string_lossy().to_string();
             let trust = load_trust(&trust_keys)?;
             let module = parse_input(&file, resilient, allow_parent_escapes, &trust)?;
-            let engine = engine(resilient, &profile, budget.budget());
+            let engine = engine(resilient, &profile, budget.resolve()?);
             let (value, diags) = engine
                 .evaluate(&module)
                 .inspect_err(|e| report_eval_error(e, &name))?;
@@ -732,6 +816,59 @@ fn main() -> anyhow::Result<()> {
                 serde_json::to_string_pretty(&inspected).map_err(|e| anyhow::anyhow!("{e}"))?
             );
         }
+        Commands::Explain {
+            from,
+            allow_parent_escapes,
+            trust_keys,
+            budget,
+        } => {
+            let filename = from.to_string_lossy().to_string();
+            let trust = load_trust(&trust_keys)?;
+            let module = parse_input(&from, false, allow_parent_escapes, &trust)?;
+            let diags = collect_diags(&module, &filename, budget.resolve()?);
+            for line in explain_lines(&diags) {
+                println!("{line}");
+            }
+        }
+        Commands::Patch {
+            from,
+            allow_parent_escapes,
+            trust_keys,
+            budget,
+        } => {
+            let filename = from.to_string_lossy().to_string();
+            let trust = load_trust(&trust_keys)?;
+            let module = parse_input(&from, false, allow_parent_escapes, &trust)?;
+            let diags = collect_diags(&module, &filename, budget.resolve()?);
+            for directive in active_core::convert::suggest_patches(&module, &diags) {
+                println!("{directive}");
+            }
+        }
+        Commands::Capability { require_major } => {
+            let descriptor: serde_json::Value =
+                serde_json::from_str(CAPABILITY_JSON).expect("descriptor parses");
+            if let Some(want) = require_major {
+                let version = descriptor
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                let major: u64 = version
+                    .split('.')
+                    .next()
+                    .unwrap_or("")
+                    .parse()
+                    .unwrap_or(u64::MAX);
+                if major != want {
+                    anyhow::bail!(
+                        "capability major mismatch: descriptor is {version}, agent requires {want}"
+                    );
+                }
+            }
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&descriptor).unwrap_or_default()
+            );
+        }
         Commands::Doc {
             from,
             to,
@@ -739,6 +876,7 @@ fn main() -> anyhow::Result<()> {
             resilient,
             allow_parent_escapes,
             trust_keys,
+            budget,
         } => {
             let filename = from.to_string_lossy().to_string();
             let title = title.unwrap_or_else(|| {
@@ -748,8 +886,7 @@ fn main() -> anyhow::Result<()> {
             });
             let trust = load_trust(&trust_keys)?;
             let module = parse_input(&from, resilient, allow_parent_escapes, &trust)?;
-            let mut engine = Engine::new();
-            engine.resilient = resilient;
+            let engine = engine(resilient, &None, budget.resolve()?);
             let (value, diags) = engine
                 .evaluate(&module)
                 .map_err(|e| anyhow::anyhow!("evaluation failed: {e}"))?;
@@ -776,7 +913,7 @@ fn main() -> anyhow::Result<()> {
             let name = file.to_string_lossy().to_string();
             let trust = load_trust(&trust_keys)?;
             let module = parse_input(&file, resilient, allow_parent_escapes, &trust)?;
-            let engine = engine(resilient, &profile, budget.budget());
+            let engine = engine(resilient, &profile, budget.resolve()?);
             let (value, diags) = engine
                 .evaluate(&module)
                 .inspect_err(|e| report_eval_error(e, &name))?;

@@ -338,3 +338,45 @@ fn expired_deadline_takes_precedence_in_strict_validation() {
         .expect_err("must fail");
     assert_eq!(xcode(&err), "X002", "{err:?}");
 }
+
+#[test]
+fn budget_presets_are_ordered_and_strict_is_default() {
+    use active_core::Budget;
+    // CHECKLIST F.005: strict < interactive < trusted on every
+    // field; strict is exactly the shipped default. Unlimited (0)
+    // is never a preset.
+    let (s, i, t) = (Budget::strict(), Budget::interactive(), Budget::trusted());
+    assert_eq!(s, Budget::default());
+    for (name, a, b) in [
+        ("nodes", s.max_nodes, i.max_nodes),
+        ("depth", s.max_depth, i.max_depth),
+        ("array", s.max_array_len, i.max_array_len),
+        ("keys", s.max_keys, i.max_keys),
+        ("wall", s.max_wall_ms, i.max_wall_ms),
+        ("value", s.max_value_size, i.max_value_size),
+        ("total", s.max_total_value_size, i.max_total_value_size),
+    ] {
+        assert!(a < b, "strict.{name} ({a}) must be under interactive ({b})");
+    }
+    for (name, a, b) in [
+        ("nodes", i.max_nodes, t.max_nodes),
+        ("depth", i.max_depth, t.max_depth),
+        ("array", i.max_array_len, t.max_array_len),
+        ("keys", i.max_keys, t.max_keys),
+        ("wall", i.max_wall_ms, t.max_wall_ms),
+        ("value", i.max_value_size, t.max_value_size),
+        ("total", i.max_total_value_size, t.max_total_value_size),
+    ] {
+        assert!(
+            a < b,
+            "interactive.{name} ({a}) must be under trusted ({b})"
+        );
+    }
+    for (name, v) in [
+        ("nodes", t.max_nodes),
+        ("depth", t.max_depth),
+        ("wall", t.max_wall_ms),
+    ] {
+        assert!(v > 0, "trusted.{name} must stay finite");
+    }
+}

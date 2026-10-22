@@ -10,7 +10,7 @@ use crate::diag::Diagnostic;
 use crate::ir::Value;
 
 /// One traced phase of a single evaluation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct TraceEvent {
     pub phase: &'static str,
     pub nodes: u64,
@@ -95,6 +95,26 @@ mod tests {
         let trail = take_trail();
         let codes = trail.last().map(|t| t.codes.clone()).unwrap_or_default();
         (trail, codes)
+    }
+
+    #[test]
+    fn trace_event_shape_is_closed() {
+        // spec/observability.md: a TraceEvent carries exactly four
+        // fields (phase, nodes, diags, codes) — values, sources,
+        // paths, spans, and secrets can never enter telemetry because
+        // the struct has nowhere to put them. Adding a field requires
+        // an RFC, a spec update, and an update to this test.
+        let event = TraceEvent {
+            phase: "eval_done",
+            nodes: 1,
+            diags: 0,
+            codes: vec![],
+        };
+        let json = serde_json::to_value(&event).expect("serializes");
+        let obj = json.as_object().expect("object");
+        let mut keys: Vec<&str> = obj.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["codes", "diags", "nodes", "phase"]);
     }
 
     #[test]

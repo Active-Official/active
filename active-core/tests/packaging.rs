@@ -241,4 +241,16 @@ fn tier1_package_versions_track_workspace() {
             "{file}: fallback version drift (want {probe})"
         );
     }
+    // The agent capability descriptor versions with the workspace;
+    // consumers reject unknown majors, so drift breaks the handshake.
+    let capability =
+        std::fs::read_to_string(workspace_root().join("agent-kit/capability.schema.json"))
+            .expect("capability readable");
+    let descriptor: serde_json::Value =
+        serde_json::from_str(&capability).expect("capability parses");
+    assert_eq!(
+        descriptor.get("version").and_then(|v| v.as_str()),
+        Some(version.as_str()),
+        "capability version drift"
+    );
 }

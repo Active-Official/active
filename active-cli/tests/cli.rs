@@ -1165,3 +1165,94 @@ fn keygen_restricts_secret_permissions() {
         .mode();
     assert_eq!(mode & 0o777, 0o600, "secret key must be owner-only");
 }
+
+// ------------------------------------------------------------------
+// Agent-native surfaces (CHECKLIST F.003/F.004/F.006).
+// ------------------------------------------------------------------
+
+#[test]
+fn explain_reports_stable_guidance_per_code() {
+    let f = fixture(
+        "explain_t003.active",
+        "schema = { contact = String(format = \"email\") }\ncontact = \"not-an-email\"\n",
+    );
+    let out = active()
+        .args(["explain", "--from"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("T003"), "{stdout}");
+    assert!(stdout.contains("format"), "{stdout}");
+    assert!(!stdout.contains("not-an-email"), "value leaked: {stdout}");
+}
+
+#[test]
+fn patch_suggests_rename_and_fill() {
+    let f = fixture(
+        "patch_typo.active",
+        "schema = { closed = true, host = String, port = Int(default = 8080) }\nHost = \"x\"\n",
+    );
+    let out = active()
+        .args(["patch", "--from"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("@rename(\"Host\", \"host\")"), "{stdout}");
+    assert!(stdout.contains("@patch(\"port\", 8080)"), "{stdout}");
+}
+
+#[test]
+fn patch_is_empty_without_exact_mapping() {
+    let f = fixture(
+        "patch_t003.active",
+        "schema = { contact = String(format = \"email\") }\ncontact = \"x\"\n",
+    );
+    let out = active()
+        .args(["patch", "--from"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).trim().is_empty(),
+        "T003 must not map: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+#[test]
+fn capability_handshake_accepts_major_one() {
+    let out = active()
+        .args(["capability", "--require-major", "1"])
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("\"schema-introspect\""), "{stdout}");
+    assert!(stdout.contains("\"explain\""), "{stdout}");
+    let bad = active()
+        .args(["capability", "--require-major", "2"])
+        .output()
+        .expect("run active");
+    assert!(!bad.status.success(), "major mismatch must fail");
+}

@@ -231,8 +231,10 @@ Release archives (Linux/macOS/Windows x x86_64/ARM64, with SHA256SUMS
 and build attestations) are attached to
 [GitHub releases](https://github.com/Active-Official/active/releases).
 Editors: `editors/vscode` (VS Code / Cursor / VSCodium vsix) and
-`editors/neovim` (runtimepath plugin + `active-lsp`). Details and the
-crates.io procedure: `spec/packaging.md`.
+`editors/neovim` (runtimepath plugin + `active-lsp`). Per-language
+packages, WASM resolution, and the version/ABI contract:
+`docs/install.md` and `docs/version-and-abi-policy.md` (the
+historical crate story lives in `spec/packaging.md`).
 
 ## Quick start
 

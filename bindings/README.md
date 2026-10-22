@@ -50,3 +50,31 @@ verified against the live repo on 2026-10-20 by running the shared harness
 (`python conformance/harness/run.py`: reference, C ABI, WASM, and Go smoke
 all pass) and reading the in-tree shims; nothing here is claimed from
 memory.
+
+## Tier-2 Best-Effort Contract (CHECKLIST F.001, PROPOSAL §6.1)
+
+Tier-2 is a promise of honesty, not of features:
+
+- **Opacity and free rules hold everywhere.** Every Tier-2 embedding
+  uses opaque handles and frees Active-allocated memory only through
+  the official `active_*_free` family — the same rules as Tier-1,
+  mapped per language in each binding's SPEC.md. No host GC or free
+  ever touches Active-allocated memory.
+- **SKIP openly, never silently.** A Tier-2 harness path SKIPped when
+  its toolchain is absent (no compiler, no runtime, no network for
+  the pinned external repo) counts as skipped only on a clean exit
+  with no leak; any failure still fails the run
+  (`conformance/NORMALIZATION.md` §7). Swift and V prove green in
+  the Tier-2 container rather than in CI (1 GB download / source
+  build stalls the shared job past its budget).
+- **Best-effort means lag is allowed.** Tier-2 bindings may trail
+  new schema features and agent surfaces (lag details live in each
+  binding's SPEC.md); the matrix row states the smoke proof
+  instead of claiming parity. Each row names its harness path and
+  the proof (Linux container green + SKIP without toolchain).
+- **Promotion is earned.** A Tier-2 binding graduates only by meeting
+  the Tier-1 definition of done (the expansion plan's Appendix B):
+  full agent-loop surface, Allocator Model A with ABI gating, harness
+  parity with identical codes/spans/redacted JSON, ownership docs, and
+  continuous conformance CI — recorded with date and evidence
+  pointer like every Phase A flip.

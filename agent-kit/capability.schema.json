@@ -8,48 +8,126 @@
       "name": "check",
       "entry": "active check <file>",
       "description": "Parse a file and report errors, cycles, and unresolved names with stable diagnostic codes and spans. Zero exit means clean.",
-      "input": { "file": "path to a .active source file" },
-      "output": { "diagnostics": "list of {code, severity, message, span}" }
+      "input": {
+        "file": "path to a .active source file"
+      },
+      "output": {
+        "diagnostics": "list of {code, severity, message, span}"
+      }
     },
     {
       "name": "eval",
       "entry": "active eval <file>",
       "description": "Evaluate a file and print redacted JSON. Secrets always render as ***SECRET***; a raw secret in output is a defect, never data.",
-      "input": { "file": "path to a .active source file" },
-      "output": { "value": "redacted JSON document" }
+      "input": {
+        "file": "path to a .active source file"
+      },
+      "output": {
+        "value": "redacted JSON document"
+      }
     },
     {
       "name": "format",
       "entry": "active fmt <file>",
       "description": "Format a file in the canonical style without changing its meaning.",
-      "input": { "file": "path to a .active source file" },
-      "output": { "file": "formatted source, or a patch" }
+      "input": {
+        "file": "path to a .active source file"
+      },
+      "output": {
+        "file": "formatted source, or a patch"
+      }
     },
     {
       "name": "convert",
       "entry": "active convert <file> --to json|yaml|toml",
       "description": "Convert an evaluated result to another format with redaction preserved.",
-      "input": { "file": "path to a .active source file", "to": "target format" },
-      "output": { "document": "converted text" }
+      "input": {
+        "file": "path to a .active source file",
+        "to": "target format"
+      },
+      "output": {
+        "document": "converted text"
+      }
     },
     {
       "name": "graph",
-      "entry": "active graph|impact|why <file> [key]",
+      "entry": "active graph <file> [--format text|mermaid|dot|json]; active impact <KEY> <file>; active why <KEY> <file>",
       "description": "Query the dependency graph: render it, list what breaks if a key changes, or list what a key is built from.",
-      "input": { "file": "path to a .active source file", "key": "optional dotted key" },
-      "output": { "graph": "text, Mermaid, DOT, or JSON per flags" }
+      "input": {
+        "file": "path to a .active source file",
+        "key": "optional dotted key"
+      },
+      "output": {
+        "graph": "text, Mermaid, DOT, or JSON per flags"
+      }
     },
     {
       "name": "generate",
-      "entry": "active generate --target <t> <schema>",
+      "entry": "active generate --from <file> --to <target> [--name Name]",
       "description": "Emit typed artifacts from an Active schema for the listed codegen targets.",
-      "input": { "schema": "path to a schema file", "target": "jsonschema|typescript|go|python" },
-      "output": { "artifact": "generated source text" }
+      "input": {
+        "schema": "path to a schema file",
+        "target": "jsonschema|typescript|go|python"
+      },
+      "output": {
+        "artifact": "generated source text"
+      }
     },
     {
       "name": "schema-introspect",
-      "status": "planned",
-      "description": "List a schema's fields, constraints, defaults, and discriminators for agents. Not yet implemented; tracked by CHECKLIST 4.002."
+      "entry": "active inspect --from <file>",
+      "description": "List a schema's fields, types, constraints, defaults, descriptions, and deprecations as versioned JSON (INSPECT_VERSION=1).",
+      "input": {
+        "file": "path to a .active source file with a schema block"
+      },
+      "output": {
+        "inspect": "versioned JSON field list"
+      }
+    },
+    {
+      "name": "explain",
+      "entry": "active explain --from <file>",
+      "description": "Deterministic per-diagnostic repair guidance (stable text per code, value-free).",
+      "input": {
+        "file": "path to a .active source file"
+      },
+      "output": {
+        "guidance": "lines of CODE path span: guidance"
+      }
+    },
+    {
+      "name": "patch",
+      "entry": "active patch --from <file>",
+      "description": "Minimal @rename/@patch directives for mechanical diagnostics (safe typos, strict-explicit fills); empty when nothing maps exactly.",
+      "input": {
+        "file": "path to a .active source file"
+      },
+      "output": {
+        "directives": "zero or more @rename/@patch lines"
+      }
+    },
+    {
+      "name": "capability",
+      "entry": "active capability [--require-major N]",
+      "description": "Print this descriptor; fail closed when the descriptor major does not equal N (handshake).",
+      "input": {
+        "require-major": "optional expected major version"
+      },
+      "output": {
+        "descriptor": "this JSON document"
+      }
     }
+  ],
+  "features": [
+    "format-validators",
+    "conditional-presence-requires",
+    "enum-descriptions",
+    "description-metadata",
+    "deprecated-messaging",
+    "schema-introspection",
+    "codegen-jsonschema",
+    "codegen-typescript-zod",
+    "codegen-go",
+    "codegen-python"
   ]
 }

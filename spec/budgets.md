@@ -106,32 +106,42 @@ replaces them, because continuing would defeat the protection.
 ## 5. Tuning
 
 - Library: set `engine.budget` fields before `evaluate()`; read
-  `Budget::default()` for the shipped profile.
-- CLI: `eval`, `check`, and `convert` accept `--max-nodes`,
-  `--max-depth`, `--max-array-len`, `--max-keys`, `--max-wall-ms`,
-  `--max-value-size`, and `--max-total-value-size` (each defaulting
-  to the shipped profile; `0` disables). Absurd durations use
+  `Budget::default()` for the shipped profile — or start from a
+  named preset: `Budget::strict()` (== default), `Budget::interactive()`,
+  `Budget::trusted()` (see table).
+- CLI: `eval`, `check`, and `convert` accept `--budget-profile
+  strict|interactive|trusted` (replacing every per-field limit) or
+  the individual `--max-nodes`, `--max-depth`, `--max-array-len`,
+  `--max-keys`, `--max-wall-ms`, `--max-value-size`, and
+  `--max-total-value-size` flags (each defaulting to the shipped
+  profile; `0` disables). Absurd durations use
   `checked_add` (degrading to no deadline where the platform would
   overflow) instead of panicking.
 - Performance work (C-055) tunes these numbers with measurements,
   never hunches: if the 10k-node benchmark regresses, the limits
   move only with a recorded rationale.
 
-### Named presets (G-010)
+### Named presets (CHECKLIST F.005; supersedes G-010 rows)
 
 Hosts must never invent unsafe limits: start from one of these rows
-(multipliers on the shipped profile) and tune with measurements.
+and tune with measurements. WASM embeddings run the shipped hard
+budgets (no per-call budgets on that path — DERIVED Phase-2
+decision) with the §6 wall-clock delta in force; reference agent
+loops additionally enforce iteration budgets (`--max-iters` with
+stuck-loop detection).
 
 | Preset | Nodes | Depth | Array / Keys | Wall ms | Value / Total | Use |
 |---|---|---|---|---|---|---|
-| `ci` | 1x | 1x | 1x / 1x | 1x | 1x / 1x | The reference: CI and serverless loops |
-| `agent` | 0.5x | 1x | 0.5x / 0.5x | 30000 | 0.5x / 0.5x | Many workers, fail fast on bad generations |
-| `interactive` | 2x | 1x | 2x / 2x | 5000 | 2x / 2x | Human present, bigger local files |
+| `strict` (== default) | 100,000 | 256 | 100,000 | 100 | 10M / 100M | The reference: CI and serverless loops |
+| `interactive` | 1,000,000 | 512 | 1,000,000 | 2,000 | 100M / 1G | Human present, bigger local files |
+| `trusted` | 10,000,000 | 2048 | 10,000,000 | 30,000 | 1G / 10G | Operator-trusted input at production scale |
 
-Depth never scales (shape protection is not negotiable); wall-clock on
-`agent` is generous because workers share machines, while `interactive`
-stays short because a human is waiting. wasm32 hosts use these rows with
-the §6 wall-clock delta in force.
+`0` (unlimited) is never a preset: embedders accept that risk
+field-by-field, never by profile name. Depth scales modestly
+because shape protection is barely negotiable even for trusted
+input; wall-clock on `trusted` is generous because batch jobs own
+their machines, while `interactive` stays short because a human is
+waiting.
 
 ## 6. What budgets do NOT do
 

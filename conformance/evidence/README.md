@@ -1,8 +1,7 @@
 # Verification evidence (expansion goal close-out)
 
-Captured on HEAD `e57042f` (2026-10-22); the battery ran on the
-identical code tree (`a30b2c9`, plus only the evidence files
-themselves and a SPEC comment), then committed as `e57042f`.
+Captured on HEAD `427806a` (2026-10-22) by re-running the full
+verification battery fresh on that exact tree.
 To reproduce: run the same commands from the repo root.
 
 | File | Verification step | Pass criterion in file |
@@ -11,7 +10,7 @@ To reproduce: run the same commands from the repo root.
 | `container-harness.json` / `.log` | Step 1b: zero-SKIP proof (all-toolchain container) | `ok: true`, 28/28 `pass`, 0 skipped, 0 failed, `parity: []` |
 | `binding-proof.log` | Step 2: Tier-1 fresh-consumer proof | `BINDING-PROOF: ALL PASS` (codes, resilient eval, T001 refusal, redaction) |
 | `codegen.log` | Step 3: multi-target codegen validators | `CODEGEN: ALL PASS` (jsonschema/tsc+zod/gofmt+go vet+validator/python, determinism, stamps) |
-| `cli-launch.log` | Step 4: CLI launch smoke | Full demo + complete transcripts, T001 refusal, `deterministic: True`, trace events |
+| `cli-launch.log` / `cli.log` | Step 4: CLI launch smoke | Full demo + complete transcripts, T001 refusal, `deterministic: True`, trace events |
 | `gates.log` | Step 5: full workspace gates | Every section `GATE: PASS` (workspace tests, fmt, clippy, packaging, capability, harness tests, secret scan: 0 raw hits) |
 | `ci.log` | Step 6: real CI verdicts | Live `gh run list` for HEAD on origin+official: Conformance/CI/CodSpeed all `success` |
 | `review-final.log` | Step 7: fresh Copilot review (BYOK meta-muse xhigh) | `CONFIRMED CLEAN`, no open findings |

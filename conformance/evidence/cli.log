@@ -1,0 +1,63 @@
+=== active check examples/demo.active (exit 0) ===
+OK
+
+=== active eval examples/demo.active (exit 0) ===
+{
+  "app": {
+    "name": "active-demo",
+    "environment": "development",
+    "debug": true
+  },
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "read_timeout": 5
+  },
+  "services": {
+    "auth_url": "https://us-east-1.example.com/auth",
+    "users_url": "https://api.example.com/users",
+    "feature_flags": [
+      {
+        "name": "new_checkout",
+        "enabled": true
+      },
+      {
+        "name": "dark_mode",
+        "enabled": false
+      }
+    ]
+  }
+}
+
+deterministic: True
+=== active check examples/complete.active (exit 0) ===
+OK
+
+=== active eval examples/complete.active (exit 0) ===
+{
+  "app": {
+    "name": "active-complete-demo",
+    "environment": "development",
+    "debug": true,
+    "version": "0.2.0-alpha"
+  },
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "read_timeout": {
+      "ms": 10000
+    },
+    "write_timeout": {
+      "ms": 30000
+    },
+    "idle_time
+=== units-mismatch T001 refusal ===
+exit 1
+C:\Users\Usuario\AppData\Local\Temp\grok-goal-2e83ccd474b7\implementer\units-bad.active:1:14: [Error] T001: type error: unsupported binary op Add on DurationMs(5000) and 536870912
+Error: evaluation failed
+
+=== active check --trace examples/demo.active (exit 0) ===
+OK
+{"phase":"eval_start","nodes":23,"diags":0,"codes":[]}
+{"phase":"eval_done","nodes":19,"diags":0,"codes":[]}
+

@@ -22,7 +22,7 @@ its real surface lands (enforced by `packaging.rs`).
 |---|---|---|---|
 | Rust (external crate) | `active` on crates.io | 1.4.0 (workspace) | `cargo add active` |
 | Python | `active-lang` on PyPI (name verified free; unscoped `active` taken) | 1.4.0 | `pip install active-lang` |
-| JS/TS | `@active-lang/active` on npm (scope verified free; unscoped taken) | 1.4.0 | `npm install @active-lang/active` |
+| JS/TS | `active-lang` on npm (unscoped `active` taken; `@active-lang/active` reserved as fallback) | 1.4.0 | `npm install active-lang` |
 | Go | `github.com/Active-Official/active-go` (external repo, library) | tracks ABI v1 + release wasm (harness pin `f5bd6e2`) | `go get github.com/Active-Official/active-go@latest` |
 
 Language packages stay publish-ready on every main commit (proven by

@@ -39,7 +39,7 @@ with Module() as m:
 ## JavaScript / TypeScript
 
 ```sh
-npm install @active-lang/active   # zero dependencies, Node 20+ / Deno / Bun / browsers
+npm install active-lang   # zero dependencies, Node 20+ / Deno / Bun / browsers
 ```
 
 Same WASM resolution as Python (`ACTIVE_WASM_PATH`, bundled copy,
@@ -47,7 +47,7 @@ or explicit path). Load once per process and reuse the module (see
 `bindings/js/README.md`).
 
 ```js
-const { load } = require("@active-lang/active");
+const { load } = require("active-lang");
 const m = await load();
 m.evaluate("port = 8080\n");
 m.close();

@@ -136,7 +136,7 @@ healthy month.
 
 Sections above describe the 1.x-era Rust-crate surface and stay
 unchanged as history. The Tier-1 language packages (PyPI
-`active-lang`, npm `@active-lang/active`, Go module), the
+`active-lang`, npm `active-lang` (`@active-lang/active` reserved as fallback), Go module), the
 version/ABI compatibility contract, the install surface, and the
 supply-chain baseline now live in
 `docs/version-and-abi-policy.md`, `docs/install.md`, and

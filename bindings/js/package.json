@@ -1,7 +1,8 @@
 {
-  "name": "@active-lang/active",
+  "name": "active-lang",
   "version": "1.4.0",
   "description": "Active: explicit, deterministic, hermetic configuration language (WASM-first JS/TS binding)",
+  "keywords": ["active", "config", "configuration", "language", "wasm", "deterministic", "agents"],
   "main": "active.js",
   "types": "active.d.ts",
   "files": [

@@ -7,7 +7,8 @@
 //
 // Decision (DERIVED, owner authority): WASM-first via the shim. A native
 // N-API addon stays an option if profiling ever justifies it; the package
-// name is decided as `@active-lang/active` (registry-verified free;
+// name is `active-lang` on the public registry (unscoped `active` belongs
+// to someone else; `@active-lang/active` reserved as scoped fallback);
 // publish-ready, awaiting an owner token to claim).
 
 const fs = require("fs");

@@ -13,7 +13,7 @@ public registry is a point of no return and is not done unilaterally):
 | Target | Package name status (checked 2026-10-21) | Ready artifact |
 |---|---|---|
 | PyPI | `active-lang` free | `bindings/python` + wasmtime dep; needs `pyproject.toml` + publish token |
-| npm | `@active-lang/active` scope free | `bindings/js` wrapper + shim; needs `package.json` + publish token |
+| npm | `active-lang` free (plus `@active-lang/active` fallback) | `bindings/js` wrapper + shim; published with owner token |
 | Go modules | proxy serves any repo path | external `active-go` repo; needs a tagged release there |
 | Maven / GitHub Packages | unclaimed | Java binding is SPEC-only; no artifact yet |
 | NuGet | unclaimed | C# smoke proven; needs `.nuspec`/SDK pack + API key |

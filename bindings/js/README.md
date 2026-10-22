@@ -7,7 +7,7 @@ Allocator Model A. Zero dependencies; runs on Node 20+, Deno, Bun, browsers.
 ## Decision (DERIVED, owner authority)
 
 WASM-first. No N-API addon until profiling justifies one. The npm name is
-**`active-lang`** on the public npm registry (unscoped `active` belongs to another owner; `@active-lang/active` held as scoped fallback). Install with `npm install active-lang`. TypeScript types ship in `active.d.ts`,
+**`active-lang`** on the public npm registry (unscoped `active` belongs to another owner; @active-lang/active` held as scoped fallback). Install with `npm install active-lang` (if `latest` still resolves a staged placeholder instead of the current version, the release is still clearing npm review — retry `npm view active-lang version` later). TypeScript types ship in `active.d.ts`,
 mirroring `active.js` exactly.
 
 ## API

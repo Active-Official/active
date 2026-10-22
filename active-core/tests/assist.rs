@@ -117,6 +117,19 @@ fn suggest_emits_safe_rename_and_static_fill() {
 }
 
 #[test]
+fn suggest_float_fill_keeps_decimal_point() {
+    // A Float default must fill with a parseable float literal: the
+    // `{f:?}` formatting keeps the decimal point so 1.5 never degrades
+    // into the Int literal 1, and the directive re-parses as Float.
+    let (module, diags) = strict_diags("schema = { ratio = Float(default = 1.5) }\n");
+    let patches = suggest_patches(&module, &diags);
+    assert!(
+        patches.iter().any(|p| p == "@patch(\"ratio\", 1.5)"),
+        "{patches:?}"
+    );
+}
+
+#[test]
 fn suggest_emits_nothing_without_exact_mapping() {
     // Unsafe typo (no safe repair) and bare T003 (no directive form).
     let (module, diags) = strict_diags(

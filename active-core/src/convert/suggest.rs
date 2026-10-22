@@ -164,8 +164,16 @@ fn fill_for(module: &Module, d: &Diagnostic) -> Option<(String, String)> {
         }
         Some(Node::Literal(Value::Int(i))) => i.to_string(),
         // Debug formatting preserves the decimal point, so 1.0 never
-        // degrades into the Int literal 1.
-        Some(Node::Literal(Value::Float(f))) => format!("{f:?}"),
+        // degrades into the Int literal 1. Non-finite floats have no
+        // Active source form (the lexer rejects them, and imports map
+        // them to null with W010), so they yield no patch rather than
+        // an unparseable directive.
+        Some(Node::Literal(Value::Float(f))) => {
+            if !f.is_finite() {
+                return None;
+            }
+            format!("{f:?}")
+        }
         Some(Node::Literal(Value::Bool(b))) => b.to_string(),
         Some(Node::Literal(Value::Null)) => "null".to_string(),
         _ => return None,

@@ -52,7 +52,7 @@ def build_with_retry(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     # Retries stay strict: deterministic breakage fails every attempt
     # identically and still fails the run. Every attempt is logged.
     cache = Path(tempfile.mkdtemp(prefix="active-zig-cache-"))
-    env = dict(subprocess.os.environ)
+    env = dict(os.environ)
     env["ZIG_LOCAL_CACHE_DIR"] = str(cache / "local")
     env["ZIG_GLOBAL_CACHE_DIR"] = str(cache / "global")
     last: subprocess.CompletedProcess[str] | None = None

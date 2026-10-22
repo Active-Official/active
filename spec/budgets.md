@@ -23,7 +23,7 @@ config fails fast with an X-code instead of eating CI) and
 *pathological dynamics* (regex backtracking, merged nesting deeper
 than any single file allows).
 
-## 2. The five runtime limits
+## 2. The seven runtime limits
 
 `Engine` carries a public `Budget` (all fields `0` means unlimited —
 the embedder accepts the risk explicitly):

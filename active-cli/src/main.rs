@@ -48,8 +48,20 @@ struct BudgetArgs {
     /// Named budget profile: strict (CI/serverless), interactive
     /// (REPL/playground), or trusted (vendored/generated input).
     /// A profile replaces every per-field limit above.
-    #[arg(long)]
-    budget_profile: Option<String>,
+    #[arg(long, value_enum)]
+    budget_profile: Option<BudgetProfile>,
+}
+
+/// Named budget profiles. Parsed by clap, so a typo fails fast with
+/// a usage error instead of a runtime bail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum BudgetProfile {
+    /// CI/serverless: identical to the compiled-in defaults.
+    Strict,
+    /// REPL/playground: generous interactive ceilings.
+    Interactive,
+    /// Vendored/generated input: minimal guardrails.
+    Trusted,
 }
 
 impl BudgetArgs {
@@ -67,17 +79,20 @@ impl BudgetArgs {
 
     /// Named budget profile (`strict`, `interactive`, `trusted`)
     /// or explicit per-field limits. A profile wins entirely when
-    /// set; per-field flags apply only without a profile.
+    /// set; per-field flags apply only without a profile. Passing
+    /// both prints a warning so a stale `--max-*` flag cannot
+    /// silently do nothing.
     fn resolve(&self) -> anyhow::Result<Budget> {
-        match self.budget_profile.as_deref() {
-            None => Ok(self.budget()),
-            Some("strict") => Ok(Budget::strict()),
-            Some("interactive") => Ok(Budget::interactive()),
-            Some("trusted") => Ok(Budget::trusted()),
-            Some(other) => {
-                anyhow::bail!("unknown budget profile: {other} (want strict|interactive|trusted)")
-            }
+        let profile = match self.budget_profile {
+            None => return Ok(self.budget()),
+            Some(BudgetProfile::Strict) => Budget::strict(),
+            Some(BudgetProfile::Interactive) => Budget::interactive(),
+            Some(BudgetProfile::Trusted) => Budget::trusted(),
+        };
+        if self.budget() != Budget::default() {
+            eprintln!("warning: --budget-profile overrides the explicit --max-* flags");
         }
+        Ok(profile)
     }
 }
 
@@ -505,11 +520,13 @@ fn dump_trail(enabled: bool) {
     if !enabled {
         return;
     }
+    // Trace serialization cannot fail for the closed TraceEvent shape,
+    // but a failed event must never abort a successful evaluation:
+    // skip it so --trace stays observability-only.
     for event in active_core::trace::take_trail() {
-        eprintln!(
-            "{}",
-            serde_json::to_value(&event).expect("TraceEvent serializes")
-        );
+        if let Ok(value) = serde_json::to_value(&event) {
+            eprintln!("{value}");
+        }
     }
 }
 
@@ -892,8 +909,11 @@ fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Capability { require_major } => {
-            let descriptor: serde_json::Value =
-                serde_json::from_str(CAPABILITY_JSON).expect("descriptor parses");
+            // The descriptor is embedded at build time and must parse:
+            // a corrupt descriptor is a build bug, so fail closed
+            // instead of printing an empty success.
+            let descriptor: serde_json::Value = serde_json::from_str(CAPABILITY_JSON)
+                .map_err(|e| anyhow::anyhow!("capability descriptor corrupt: {e}"))?;
             if let Some(want) = require_major {
                 let version = descriptor
                     .get("version")
@@ -913,7 +933,8 @@ fn main() -> anyhow::Result<()> {
             }
             println!(
                 "{}",
-                serde_json::to_string_pretty(&descriptor).unwrap_or_default()
+                serde_json::to_string_pretty(&descriptor)
+                    .map_err(|e| anyhow::anyhow!("capability serialize failed: {e}"))?
             );
         }
         Commands::Doc {

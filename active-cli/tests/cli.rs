@@ -1258,6 +1258,70 @@ fn capability_handshake_accepts_major_one() {
 }
 
 #[test]
+fn unknown_budget_profile_fails_fast_with_usage() {
+    // A typo'd profile must fail at argument-parse time (clap), not as
+    // a runtime bail after the document is read.
+    let f = fixture("budget_typo.active", "port = 8080\n");
+    let out = active()
+        .args(["eval"])
+        .arg(&f)
+        .args(["--budget-profile", "strictt"])
+        .output()
+        .expect("run active");
+    assert!(!out.status.success(), "unknown profile must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("strict") && stderr.contains("interactive") && stderr.contains("trusted"),
+        "clap must list the valid profiles: {stderr}"
+    );
+}
+
+#[test]
+fn budget_profile_wins_over_explicit_flags_with_warning() {
+    // A profile plus stale --max-* flags: the profile wins, and a
+    // warning names the override so nothing is silently ignored.
+    let f = fixture("budget_combo.active", "port = 8080\n");
+    let out = active()
+        .args(["eval"])
+        .arg(&f)
+        .args(["--budget-profile", "strict", "--max-nodes", "7"])
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "profile eval must succeed; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("--budget-profile overrides"),
+        "must warn about the ignored flag: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn budget_profile_without_flags_stays_silent() {
+    // No conflict, no warning: stderr carries only the JSON value.
+    let f = fixture("budget_quiet.active", "port = 8080\n");
+    let out = active()
+        .args(["eval"])
+        .arg(&f)
+        .args(["--budget-profile", "trusted"])
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !String::from_utf8_lossy(&out.stderr).contains("overrides"),
+        "no warning without explicit flags: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
 fn explain_json_matches_text_field_for_field() {
     // Machine-readable output must carry the same content as text:
     // parse it, don't string-match it.

@@ -6,6 +6,16 @@
 //! Guidance names the repair direction (fix the value, add the key,
 //! loosen nothing silently); the `patch` surface turns the mechanical
 //! subset into `@patch`/`@rename` directives.
+//!
+//! Coverage contract: [`explain_code`] pins canned guidance for the
+//! codes enumerated in its match arms. Every other code (fatal
+//! aborts such as X001–X006, unlisted E/T/W/S/H/L codes) falls back
+//! to a generic pointer that preserves the code and span — the code
+//! itself stays the machine-readable contract, never invented advice.
+//! Reachability note: codes that abort collection (parse-fatal E*
+//! via the `check` path, X* budget aborts, S001 cycle aborts) surface
+//! with their code and span through the normal error report, so the
+//! code is never lost even where no canned paragraph exists.
 
 /// Stable one-paragraph repair guidance for a diagnostic code.
 /// Unknown codes fall back to a generic pointer instead of inventing

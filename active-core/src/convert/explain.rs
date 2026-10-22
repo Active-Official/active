@@ -15,7 +15,7 @@ pub fn explain_code(code: &str) -> &'static str {
         "E001" => "Expected a different token here: the document structure is incomplete or a delimiter is missing. Compare the span against the grammar (tables, brackets, commas) and close what is open.",
         "E002" => "Unexpected token at this position: something appears where the grammar allows nothing. Remove it or move it into the table it belongs to; do not quote it to silence the parser.",
         "E003" => "Malformed secret.env form: secret.env() takes a single string-literal name. Fix the call shape at the span; any other value form is rejected here.",
-        "E004" => "Expression nesting cap exceeded: the parser allows 64 levels of expression nesting, fixed (no flag raises it). Split the expression with let bindings.",
+        "E004" => "Nesting cap exceeded: the parser allows 64 levels of expression nesting and 64 levels of schema nesting, fixed (no flag raises either). Split the expression with let bindings and flatten nested schemas.",
         "E006" => "Tab in leading whitespace: Active indents with spaces only. Replace the tab with spaces matching the surrounding level.",
         "E007" => "Inconsistent dedentation: the dedent does not match any open indent level. Align it with a level that is actually open.",
         "E011" => "Maximum block nesting depth (64) exceeded: flatten the document structure. The cap is fixed by the parser.",

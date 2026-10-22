@@ -68,10 +68,14 @@ Tier-2 is a promise of honesty, not of features:
   the Tier-2 container rather than in CI (1 GB download / source
   build stalls the shared job past its budget).
 - **Best-effort means lag is allowed.** Tier-2 bindings may trail
-  new schema features and agent surfaces (lag details live in each
-  binding's SPEC.md); the matrix row states the smoke proof
-  instead of claiming parity. Each row names its harness path and
-  the proof (Linux container green + SKIP without toolchain).
+  new schema features and agent surfaces; the matrix row states the
+  smoke proof instead of claiming parity. Uniform lag statement for
+  every Tier-2 row today: each smoke proves the ABI gate, T001
+  refusal, and secret redaction over the frozen C ABI. None of them
+  carries the agent-loop surface (`validate`, introspection,
+  codegen-aware repair) — that is Tier-1 scope until a binding
+  earns promotion. Each row names its harness path and the proof
+  (Linux container green + SKIP without toolchain).
 - **Promotion is earned.** A Tier-2 binding graduates only by meeting
   the Tier-1 definition of done (the expansion plan's Appendix B):
   full agent-loop surface, Allocator Model A with ABI gating, harness

@@ -40,10 +40,10 @@ pub fn suggest_patches(module: &Module, diags: &[Diagnostic]) -> Vec<String> {
 /// paths; segment-level suggestions rebuild from the diagnostic path.
 fn rename_for(d: &Diagnostic, repair: &crate::diag::Repair) -> Option<String> {
     if repair.original.contains('.') || repair.suggested.contains('.') {
-        // Defensive: real KeyTypo repairs carry path segments here
-        // (validate.rs) or full dotted paths (rename requests); both
-        // shapes resolve below, so this branch only fires on a
-        // hypothetical mixed shape.
+        // Defensive only: every KeyTypo repair in the codebase carries
+        // single segments, so this branch never fires today. Kept so
+        // a future full-path repair still resolves instead of
+        // vanishing silently.
         return Some(format!(
             "@rename(\"{}\", \"{}\")",
             repair.original, repair.suggested

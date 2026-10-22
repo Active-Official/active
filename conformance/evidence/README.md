@@ -1,7 +1,8 @@
 # Verification evidence (expansion goal close-out)
 
-Captured on HEAD `a30b2c9` (2026-10-22), committed so the close-out is
-auditable from the repo itself rather than only from throwaway scratch.
+Captured on HEAD `e57042f` (2026-10-22); the battery ran on the
+identical code tree (`a30b2c9`, plus only the evidence files
+themselves and a SPEC comment), then committed as `e57042f`.
 To reproduce: run the same commands from the repo root.
 
 | File | Verification step | Pass criterion in file |

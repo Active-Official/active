@@ -41,8 +41,12 @@ class CapabilityTest(unittest.TestCase):
             "graph",
             "generate",
             "schema-introspect",
+            "explain",
+            "patch",
+            "capability",
         ):
             self.assertIn(required, names, f"tool surface missing {required}")
+        self.assertEqual(len(names), 10, f"tool surface changed: {names}")
 
     def test_every_tool_described(self) -> None:
         for tool in self.doc.get("tools", []):

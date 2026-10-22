@@ -82,3 +82,25 @@ fn suggest_emits_nothing_without_exact_mapping() {
     let (module, _) = strict_diags("port = 1\n");
     assert!(suggest_patches(&module, &[fixed]).is_empty());
 }
+
+#[test]
+fn suggest_handles_nested_paths_and_dynamic_defaults() {
+    // Nested safe typo resolves against the full dotted path.
+    let (module, diags) = strict_diags(
+        "schema = { closed = true, server = Table { closed = true, host = String } }\n[server]\nHost = \"x\"\n",
+    );
+    let patches = suggest_patches(&module, &diags);
+    assert!(
+        patches
+            .iter()
+            .any(|p| p == "@rename(\"server.Host\", \"server.host\")"),
+        "{patches:?}"
+    );
+    // A computed default has no source-text form: no @patch.
+    let (module, diags) = strict_diags("schema = { port = Int(default = 1 + 1) }\n");
+    let patches = suggest_patches(&module, &diags);
+    assert!(
+        !patches.iter().any(|p| p.contains("port")),
+        "dynamic default must not map: {patches:?}"
+    );
+}

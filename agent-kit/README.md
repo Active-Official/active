@@ -26,7 +26,7 @@ module, reference loops, and an evaluation harness.
   every expectation holds. Required CI check
   (`.github/workflows/conformance.yml`).
 - `eval/test_capability.py` — pins the capability descriptor
-  authority (major version 1, complete 7-tool surface).
+  authority (major version 1, complete 10-tool surface).
 - WASM module: `../active-wasm/js/active-shim.js` plus the release
   `.wasm` (zero imports, plain `WebAssembly.instantiate`).
 - Prompt packs: `../prompts/` (versioned v1.1.0, tasks t1-t10, validation

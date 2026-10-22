@@ -1,0 +1,60 @@
+name: PyPI (trusted publishing)
+
+# Publishes bindings/python as `active-lang` to PyPI on version tags,
+# with NO stored secrets: OIDC trusted publishing via
+# pypa/gh-action-pypi-publish. The pending-publisher rows below must
+# exist on PyPI BEFORE the first tag that should publish (PyPI creates
+# the `active-lang` project on first upload from either publisher).
+#
+# ONE-TIME OWNER SETUP, pypi.org → account → Publishing → pending
+# publishers (repeat once per GitHub repo row):
+#   Row 1 (canonical public repo):
+#     PyPI Project Name: active-lang
+#     Owner:              Active-Official
+#     Repository name:    active
+#     Workflow name:      pypi.yml        (THIS file's name)
+#     Environment name:   (leave empty)
+#   Row 2 (dual-push mirror; keeps tags cut on either remote green):
+#     PyPI Project Name: active-lang
+#     Owner:              RatioArtificiosa
+#     Repository name:    active-lang
+#     Workflow name:      pypi.yml
+#     Environment name:   (leave empty)
+# Rehearsal uses the identical form on test.pypi.org's publisher page.
+# API-token alternative (no workflow needed): PyPI account → API tokens
+# → Add token, scope Entire account (required: the project does not
+# exist yet), then `twine upload dist/*` with username `__token__`.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  pypi:
+    name: Build and publish active-lang to PyPI
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # OIDC only; no API token, no secrets
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build sdist and wheel (separate invocations)
+        # hatchling force-includes ../../LICENSE-* which only resolves
+        # from the source tree: `python -m build` builds the wheel FROM
+        # the sdist where those paths no longer exist. Building each
+        # artifact directly from source keeps both deterministic. If
+        # hatchling ever supports parent includes from sdists, this can
+        # collapse back to a single `python -m build` (verify with
+        # `twine check dist/*` after any change here).
+        run: |
+          python -m pip install --upgrade build twine
+          cd bindings/python
+          rm -rf dist/
+          python -m build --sdist
+          python -m build --wheel
+          python -m twine check dist/*
+      - name: Publish to PyPI (trusted publishing, no token)
+        uses: pypa/gh-action-pypi-publish@release/v1

@@ -30,18 +30,36 @@ def run(argv: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+def run_in(
+    argv: list[str], cwd: Path, env: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        argv,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=600,
+        env=env,
+    )
+
+
 def build_with_retry(cmd: list[str]) -> subprocess.CompletedProcess[str]:
-    # The zig Windows toolchain intermittently fails to stage the C
-    # import (FileNotFound on a committed header) under runner load;
-    # identical code passes on retry and in the Linux container.
-    # Retry the toolchain invocation (max 3 attempts, backoff) while
-    # keeping the gate strict: deterministic breakage fails every
-    # attempt identically and still fails the run. Every attempt is
-    # logged so retries never hide silently.
+    # Zig's on-disk cache races on Windows runners (AV locks, stale
+    # link artifacts): isolate every build in a fresh cache dir so one
+    # poisoned cache can never fail the gate twice for the same reason.
+    # Retries stay strict: deterministic breakage fails every attempt
+    # identically and still fails the run. Every attempt is logged.
+    cache = Path(tempfile.mkdtemp(prefix="active-zig-cache-"))
+    env = dict(subprocess.os.environ)
+    env["ZIG_LOCAL_CACHE_DIR"] = str(cache / "local")
+    env["ZIG_GLOBAL_CACHE_DIR"] = str(cache / "global")
     last: subprocess.CompletedProcess[str] | None = None
     for attempt in (1, 2, 3):
-        last = run(cmd, ROOT)
+        last = run_in(cmd, ROOT, env)
         if last.returncode == 0:
+            shutil.rmtree(cache, ignore_errors=True)
             return last
         print(f"zig build attempt {attempt}/3 failed; retrying...")
         print((last.stderr or last.stdout)[-500:])

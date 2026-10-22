@@ -67,17 +67,21 @@ def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="active-fortran-"))
     try:
         exe = tmp / ("smoke.exe" if sys.platform == "win32" else "smoke")
+        # Compile inside the temp dir with absolute paths: gfortran
+        # stages temporary module files (*.mod0) in the working
+        # directory, and compiling in the repo root both litters the
+        # tree and risks temp-file collisions across runs.
         p = run(
             [
                 "gfortran",
-                "bindings/fortran/smoke.f90",
+                str(ROOT / "bindings" / "fortran" / "smoke.f90"),
                 "-I",
-                "active-ffi",
+                str(ROOT / "active-ffi"),
                 str(lib),
                 "-o",
                 str(exe),
             ],
-            ROOT,
+            tmp,
         )
         if p.returncode != 0:
             print("BUILD FAILED:\n" + (p.stderr or p.stdout)[-2000:])

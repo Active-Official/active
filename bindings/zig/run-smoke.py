@@ -54,6 +54,15 @@ def main() -> int:
     if shutil.which("zig") is None:
         print("SKIP: zig not installed")
         return 0
+    # Absolute include path: @cImport resolution must not depend on how
+    # the driver was invoked. Fail fast with the exact missing path
+    # instead of a bare translator FileNotFound.
+    header = ROOT / "active-ffi" / "active.h"
+    if not header.is_file():
+        print(f"BUILD FAILED: missing header: {header}")
+        return 1
+    ver = run(["zig", "version"], ROOT)
+    print(f"zig toolchain: {(ver.stdout or '').strip()}")
     tmp = Path(tempfile.mkdtemp(prefix="active-zig-"))
     exe = tmp / ("smoke.exe" if sys.platform == "win32" else "smoke")
     # Windows links the import library (proven green) with the DLL staged
@@ -61,7 +70,7 @@ def main() -> int:
     # runtime loader path is needed.
     link: list[str] = []
     if sys.platform == "win32":
-        link = ["-L", "target/debug", "-l", "active_ffi"]
+        link = ["-L", str(ROOT / "target" / "debug"), "-l", "active_ffi"]
     else:
         staticlib = ROOT / "target" / "debug" / "libactive_ffi.a"
         if not staticlib.is_file():
@@ -75,7 +84,7 @@ def main() -> int:
             "build-exe",
             "bindings/zig/smoke.zig",
             "-I",
-            "active-ffi",
+            str(ROOT / "active-ffi"),
             *link,
             "-lc",
             "-femit-bin=" + str(exe),

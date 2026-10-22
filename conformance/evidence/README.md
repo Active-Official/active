@@ -1,6 +1,6 @@
 # Verification evidence (expansion goal close-out)
 
-Captured on HEAD `427806a` (2026-10-22) by re-running the full
+Captured on HEAD `211ba2f` (2026-10-22) by re-running the full
 verification battery fresh on that exact tree.
 To reproduce: run the same commands from the repo root.
 

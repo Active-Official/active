@@ -12,7 +12,9 @@ To reproduce: run the same commands from the repo root.
 | `binding-proof.log` | Step 2: Tier-1 fresh-consumer proof | `BINDING-PROOF: ALL PASS` (codes, resilient eval, T001 refusal, redaction) |
 | `codegen.log` | Step 3: multi-target codegen validators | `CODEGEN: ALL PASS` (jsonschema/tsc+zod/gofmt+go vet+validator/python, determinism, stamps) |
 | `cli-launch.log` | Step 4: CLI launch smoke | Full demo + complete transcripts, T001 refusal, `deterministic: True`, trace events |
-| `gates.log` | Step 5: full workspace gates | `suite_exit=True`, `fmt_exit=True`, `clippy_exit=True`, zero FAILED |
+| `gates.log` | Step 5: full workspace gates | Every section `GATE: PASS` (workspace tests, fmt, clippy, packaging, capability, harness tests, secret scan: 0 raw hits) |
+| `ci.log` | Step 6: real CI verdicts | Live `gh run list` for HEAD on origin+official: Conformance/CI/CodSpeed all `success` |
+| `review-final.log` | Step 7: fresh Copilot review (BYOK meta-muse xhigh) | `CONFIRMED CLEAN`, no open findings |
 | `agentkit.log` / `agentkit-eval.json` / `agentkit-eval.log` | Step 6: agent-kit evaluation | `ok: true`, all loops identical per-task verdicts/iters/codes |
 | `catalog-diff.log` | Error-code catalog diff | 62/62 real codes covered, 0 missing |
 | `harness-tests.log` | Harness enforcement unit tests | 25/25 run.py + 14/14 diff_vectors + capability 3/3 |

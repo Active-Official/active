@@ -1,5 +1,6 @@
 codes: [('T003', 'error', (2, 8, 2, 9))]
 resilient eval returns value with codes (binding contract)
 T001 refusal raises as expected: ActiveError
+redacted value: {"token": "***SECRET***", "out": {"pass": null}}
 redaction ok, raw absent
 BINDING-PROOF: ALL PASS

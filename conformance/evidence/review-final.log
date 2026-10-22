@@ -1,0 +1,9 @@
+Close-out check ÔÇö verifying the retry gate can't hide real failures.
+
+CONFIRMED CLEAN
+
+1. No masking: `build_with_retry` returns 0 only on real success; deterministic failure fails all 3 identically ÔåÆ returns non-zero ÔåÆ `main` exits 1. Every attempt prints `attempt n/3` + 500 chars output.
+2. No stall: bounded `for (1,2,3)`, sleeps 5+10+15s=30s total; `run()` keeps 600s `timeout` (raises, never hangs); only build step retried.
+3. Gate intact: diff is 1 file only; `BUILD FAILED`/`SMOKE-OK` checks unchanged, no new `return 0`.
+
+

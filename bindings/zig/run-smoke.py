@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -27,6 +28,26 @@ def run(argv: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
         errors="replace",
         timeout=600,
     )
+
+
+def build_with_retry(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+    # The zig Windows toolchain intermittently fails to stage the C
+    # import (FileNotFound on a committed header) under runner load;
+    # identical code passes on retry and in the Linux container.
+    # Retry the toolchain invocation (max 3 attempts, backoff) while
+    # keeping the gate strict: deterministic breakage fails every
+    # attempt identically and still fails the run. Every attempt is
+    # logged so retries never hide silently.
+    last: subprocess.CompletedProcess[str] | None = None
+    for attempt in (1, 2, 3):
+        last = run(cmd, ROOT)
+        if last.returncode == 0:
+            return last
+        print(f"zig build attempt {attempt}/3 failed; retrying...")
+        print((last.stderr or last.stdout)[-500:])
+        time.sleep(5 * attempt)
+    assert last is not None
+    return last
 
 
 def main() -> int:
@@ -48,7 +69,7 @@ def main() -> int:
             return 1
         # The Rust staticlib needs the unwinder at link time.
         link = [str(staticlib), "-lunwind"]
-    b = run(
+    b = build_with_retry(
         [
             "zig",
             "build-exe",
@@ -58,8 +79,7 @@ def main() -> int:
             *link,
             "-lc",
             "-femit-bin=" + str(exe),
-        ],
-        ROOT,
+        ]
     )
     if b.returncode != 0:
         print("BUILD FAILED:\n" + (b.stderr or b.stdout)[-2000:])

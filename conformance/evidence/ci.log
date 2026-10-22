@@ -1,14 +1,22 @@
-d7b76d19e81a24f914a4c7d486326dec26b9f3ec
-d7b76d1 fix(expansion): retry zig toolchain build step on transient C-import staging failures
+aeef768 docs(expansion): re-run full verification battery fresh on HEAD 427806a
+aeef76804b5511deedab246519c7137d8450e374
+--- origin (RatioArtificiosa/active-lang), final code tree d7b76d1..aeef768 (evidence-only deltas) ---
+completed	success	docs(expansion): re-run full verification battery fresh on HEAD 427806a	CI	main	push	39715336948	2m19s	2026-10-22T03:09:57Z
+completed	success	docs(expansion): re-run full verification battery fresh on HEAD 427806a	Conformance	main	push	39715336918	9m3s	2026-10-22T03:09:57Z
+completed	success	docs(expansion): re-run full verification battery fresh on HEAD 427806a	CodSpeed	main	push	39715336899	3m1s	2026-10-22T03:09:57Z
+completed	success	docs(expansion): complete verification evidence (ci.log, full gates, ÔÇª	CodSpeed	main	push	39713670647	2m17s	2026-10-22T02:51:35Z
+completed	success	docs(expansion): complete verification evidence (ci.log, full gates, ÔÇª	Conformance	main	push	39713670619	8m26s	2026-10-22T02:51:34Z
+completed	success	docs(expansion): complete verification evidence (ci.log, full gates, ÔÇª	CI	main	push	39713670614	2m10s	2026-10-22T02:51:35Z
 completed	success	fix(expansion): retry zig toolchain build step on transient C-import ÔÇª	CI	main	push	39711977582	1m50s	2026-10-22T02:32:52Z
 completed	success	fix(expansion): retry zig toolchain build step on transient C-import ÔÇª	CodSpeed	main	push	39711977512	2m53s	2026-10-22T02:32:52Z
 completed	success	fix(expansion): retry zig toolchain build step on transient C-import ÔÇª	Conformance	main	push	39711977482	8m13s	2026-10-22T02:32:52Z
-completed	success	fix(expansion): verifier notes (capability 10 tools, Go matrix date, ÔÇª	CodSpeed	main	push	39711060791	2m27s	2026-10-22T02:22:55Z
-completed	failure	fix(expansion): verifier notes (capability 10 tools, Go matrix date, ÔÇª	Conformance	main	push	39711060783	5m39s	2026-10-22T02:22:55Z
-completed	success	fix(expansion): verifier notes (capability 10 tools, Go matrix date, ÔÇª	CI	main	push	39711060775	1m54s	2026-10-22T02:22:55Z
+--- official (Active-Official/active) ---
+completed	success	docs(expansion): re-run full verification battery fresh on HEAD 427806a	CodSpeed	main	push	39715339772	2m20s	2026-10-22T03:09:59Z
+completed	success	docs(expansion): re-run full verification battery fresh on HEAD 427806a	Conformance	main	push	39715339754	4m53s	2026-10-22T03:09:59Z
+completed	success	docs(expansion): re-run full verification battery fresh on HEAD 427806a	CI	main	push	39715339664	2m6s	2026-10-22T03:09:59Z
+completed	success	docs(expansion): complete verification evidence (ci.log, full gates, ÔÇª	CodSpeed	main	push	39713673820	3m0s	2026-10-22T02:51:37Z
+completed	success	docs(expansion): complete verification evidence (ci.log, full gates, ÔÇª	Conformance	main	push	39713673779	8m14s	2026-10-22T02:51:37Z
+completed	success	docs(expansion): complete verification evidence (ci.log, full gates, ÔÇª	CI	main	push	39713673732	1m52s	2026-10-22T02:51:37Z
 completed	success	fix(expansion): retry zig toolchain build step on transient C-import ÔÇª	CI	main	push	39711981270	2m25s	2026-10-22T02:32:54Z
 completed	success	fix(expansion): retry zig toolchain build step on transient C-import ÔÇª	CodSpeed	main	push	39711981260	2m44s	2026-10-22T02:32:54Z
 completed	success	fix(expansion): retry zig toolchain build step on transient C-import ÔÇª	Conformance	main	push	39711981248	8m29s	2026-10-22T02:32:54Z
-completed	success	fix(expansion): verifier notes (capability 10 tools, Go matrix date, ÔÇª	Conformance	main	push	39711064289	9m24s	2026-10-22T02:22:57Z
-completed	success	fix(expansion): verifier notes (capability 10 tools, Go matrix date, ÔÇª	CodSpeed	main	push	39711064158	2m46s	2026-10-22T02:22:57Z
-completed	success	fix(expansion): verifier notes (capability 10 tools, Go matrix date, ÔÇª	CI	main	push	39711064149	2m27s	2026-10-22T02:22:57Z

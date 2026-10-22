@@ -1,22 +1,16 @@
-f5adf3a968ac300879fdb26bffc050426ecd80da
-f5adf3a docs(expansion): refresh verification evidence on true final HEAD 211ba2f
---- origin ---
+8fbf162 docs(expansion): record final CI verdicts for HEAD f5adf3a
+8fbf162d389157498d819719c9f05667b9d90e09
+--- origin (RatioArtificiosa/active-lang) ---
+completed	success	docs(expansion): record final CI verdicts for HEAD f5adf3a	CI	main	push	39723319622	2m16s	2026-10-22T04:36:31Z
+completed	success	docs(expansion): record final CI verdicts for HEAD f5adf3a	Conformance	main	push	39723319572	7m36s	2026-10-22T04:36:31Z
+completed	success	docs(expansion): record final CI verdicts for HEAD f5adf3a	CodSpeed	main	push	39723319549	4m2s	2026-10-22T04:36:31Z
 completed	success	docs(expansion): refresh verification evidence on true final HEAD 211ÔÇª	Conformance	main	push	39721926151	9m25s	2026-10-22T04:21:33Z
 completed	success	docs(expansion): refresh verification evidence on true final HEAD 211ÔÇª	CodSpeed	main	push	39721926135	2m53s	2026-10-22T04:21:33Z
 completed	success	docs(expansion): refresh verification evidence on true final HEAD 211ÔÇª	CI	main	push	39721926131	2m26s	2026-10-22T04:21:33Z
-completed	success	fix(expansion): isolate zig cache per build to defeat Windows runner ÔÇª	CodSpeed	main	push	39719161499	1m55s	2026-10-22T03:51:44Z
-completed	success	fix(expansion): isolate zig cache per build to defeat Windows runner ÔÇª	Conformance	main	push	39719161481	7m4s	2026-10-22T03:51:44Z
-completed	success	fix(expansion): isolate zig cache per build to defeat Windows runner ÔÇª	CI	main	push	39719161341	2m20s	2026-10-22T03:51:44Z
-completed	success	fix(expansion): harden zig smoke with absolute include/lib paths plusÔÇª	CI	main	push	39717595767	2m12s	2026-10-22T03:34:37Z
-completed	failure	fix(expansion): harden zig smoke with absolute include/lib paths plusÔÇª	Conformance	main	push	39717595760	9m31s	2026-10-22T03:34:37Z
-completed	success	fix(expansion): harden zig smoke with absolute include/lib paths plusÔÇª	CodSpeed	main	push	39717595685	2m51s	2026-10-22T03:34:37Z
---- official ---
+--- official (Active-Official/active) ---
+completed	success	docs(expansion): record final CI verdicts for HEAD f5adf3a	Conformance	main	push	39723322995	9m29s	2026-10-22T04:36:33Z
+completed	success	docs(expansion): record final CI verdicts for HEAD f5adf3a	CI	main	push	39723322975	1m48s	2026-10-22T04:36:33Z
+completed	success	docs(expansion): record final CI verdicts for HEAD f5adf3a	CodSpeed	main	push	39723322971	2m10s	2026-10-22T04:36:33Z
 completed	success	docs(expansion): refresh verification evidence on true final HEAD 211ÔÇª	Conformance	main	push	39721930396	9m27s	2026-10-22T04:21:36Z
 completed	success	docs(expansion): refresh verification evidence on true final HEAD 211ÔÇª	CI	main	push	39721930358	2m7s	2026-10-22T04:21:36Z
 completed	success	docs(expansion): refresh verification evidence on true final HEAD 211ÔÇª	CodSpeed	main	push	39721930347	2m47s	2026-10-22T04:21:36Z
-completed	success	fix(expansion): isolate zig cache per build to defeat Windows runner ÔÇª	CI	main	push	39719164034	2m16s	2026-10-22T03:51:45Z
-completed	success	fix(expansion): isolate zig cache per build to defeat Windows runner ÔÇª	Conformance	main	push	39719163986	8m59s	2026-10-22T03:51:45Z
-completed	success	fix(expansion): isolate zig cache per build to defeat Windows runner ÔÇª	CodSpeed	main	push	39719163950	2m47s	2026-10-22T03:51:45Z
-completed	success	fix(expansion): harden zig smoke with absolute include/lib paths plusÔÇª	CI	main	push	39717599179	2m23s	2026-10-22T03:34:40Z
-completed	success	fix(expansion): harden zig smoke with absolute include/lib paths plusÔÇª	Conformance	main	push	39717599141	7m59s	2026-10-22T03:34:40Z
-completed	success	fix(expansion): harden zig smoke with absolute include/lib paths plusÔÇª	CodSpeed	main	push	39717599125	2m11s	2026-10-22T03:34:40Z

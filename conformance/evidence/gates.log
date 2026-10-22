@@ -33,8 +33,7 @@ GATE: PASS
 === cargo clippy denied warnings ===
 $ cargo clippy --workspace --all-targets --locked -- -D warnings
 exit=0
-    Blocking waiting for file lock on package cache
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.62s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.27s
 
 GATE: PASS
 === packaging gate (single-sourced version + Tier-1 parity + metadata) ===
@@ -49,7 +48,7 @@ test publish_metadata_is_complete ... ok
 
 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
 
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.63s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.68s
      Running tests\packaging.rs (target\debug\deps\packaging-d7073b809a6a1a10.exe)
 
 GATE: PASS
@@ -86,7 +85,7 @@ test_timeout_always_fails (__main__.ParityTest.test_timeout_always_fails) ... ok
 test_wired_paths_complete (__main__.RegistryTest.test_wired_paths_complete) ... ok
 
 ----------------------------------------------------------------------
-Ran 25 tests in 0.082s
+Ran 25 tests in 0.126s
 
 OK
 

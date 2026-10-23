@@ -26,6 +26,27 @@ Overhead when disabled is one thread-local flag check per evaluation.
 The trail buffer lives thread-locally and is bounded by two events per
 `evaluate` call; long-running hosts should drain between documents.
 
+## Agent-loop metrics (CHECKLIST OBS.001, PROPOSAL §5.2)
+
+The opt-in CLI trace plus the agent-kit eval report compose the
+agent-loop metrics surface — no new event kinds needed:
+
+- **Iteration counts**: `agent-kit/eval/run.py` records
+  `mean_iterations_to_clean` and per-task iteration logs.
+- **Budget headroom**: Data Mode W013 warnings fire at 80% of each
+  nonzero limit; hard ceilings trip with X-codes either way.
+- **Diagnostic histograms**: `--trace` JSONL `codes` arrays plus the
+  eval harness `codes` histogram per loop; the repair planner's
+  `final_codes` give per-run histograms for multi-step loops.
+- **Audit trail**: `active eval --audit-trail FILE` (spec
+  `audit-trail.md`) persists counts, codes, and the redacted content
+  hash as a re-validatable Active document.
+
+The four-field `TraceEvent` shape stays closed (adding a field
+requires an RFC, a spec update here, and a test asserting the new
+field cannot carry values) — see "Secret and source guarantee"
+below.
+
 ## Binding-level hooks
 
 Bindings already observe everything the core emits: diagnostic codes

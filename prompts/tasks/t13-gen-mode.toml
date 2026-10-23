@@ -1,0 +1,24 @@
+id = "t13-gen-mode"
+system = "generator"
+kind = "code"
+
+user = """
+Write ACTIVE for a cache: maximum 100 entries, default TTL 60
+seconds, in explicit Data Mode (active_mode = "data"). The
+document must check clean.
+"""
+
+[[checks]]
+type = "parse"
+
+[[checks]]
+type = "check_exit0"
+
+[[checks]]
+type = "contains"
+text = "active_mode"
+
+[[checks]]
+type = "eval_eq"
+path = "active_mode"
+value = "data"

@@ -177,6 +177,11 @@ enum Commands {
         /// Dotted/index path (`server.host`, `ports[0]`).
         #[arg(long)]
         path: Option<String>,
+        /// Write a secret-redacted audit document of this evaluation
+        /// (PROPOSAL §5.1): counts, diagnostic codes, content hash —
+        /// itself a valid Active document, never raw values.
+        #[arg(long)]
+        audit_trail: Option<PathBuf>,
         /// Named sandbox profile (strict|data|agent|trusted): selects
         /// the profile's budget preset and refuses to evaluate
         /// documents declaring capabilities outside the profile
@@ -597,6 +602,62 @@ fn check_declared_against(
     }
 }
 
+/// Secret-redacted audit document (PROPOSAL §5.1, CHECKLIST AUD.001):
+/// counts, diagnostic codes, mode, and the content hash of the
+/// REDACTED result — itself a valid Active document, never raw
+/// values or secrets. Written on success and on validation failure
+/// alike (the outcome field tells them apart); fatal engine errors
+/// return before any value exists, so they carry no audit trail.
+fn write_audit_trail(
+    path: &std::path::Path,
+    file: &std::path::Path,
+    module: &active_core::Module,
+    value: &active_core::Value,
+    diags: &[active_core::Diagnostic],
+    resilient: bool,
+) -> anyhow::Result<()> {
+    fn quote(s: &str) -> String {
+        format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+    }
+    let mut codes: Vec<String> = diags
+        .iter()
+        .map(|d| {
+            format!(
+                "{}{}",
+                d.code,
+                d.path
+                    .as_deref()
+                    .map(|p| format!("@{p}"))
+                    .unwrap_or_default()
+            )
+        })
+        .collect();
+    codes.sort();
+    codes.dedup();
+    let codes_list = codes
+        .iter()
+        .map(|c| format!("\"{c}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    // Outcome mirrors had_failure exactly: strict fails on any
+    // warning; resilient tolerates warnings but never errors.
+    let failed = had_failure(diags, resilient);
+    let doc = format!(
+        "audit = {{\n  tool = \"active\",\n  version = {},\n  source = {},\n  mode = \"{}\",\n  nodes = {},\n  diagnostics = [{}],\n  result = \"{}\",\n  outcome = \"{}\"\n}}\n",
+        quote(env!("CARGO_PKG_VERSION")),
+        quote(&file.to_string_lossy()),
+        match module.mode {
+            active_core::Mode::Data => "data",
+            active_core::Mode::Config => "config",
+        },
+        module.arena.len(),
+        codes_list,
+        active_core::provenance::content_hash(value),
+        if failed { "failed" } else { "clean" },
+    );
+    std::fs::write(path, doc).map_err(|e| anyhow::anyhow!("cannot write {}: {e}", path.display()))
+}
+
 /// Decidable graph query entry point (PROPOSAL §2.6, CHECKLIST
 /// GQ.004): runs one named query over the parsed module, evaluating
 /// only for value-dependent queries (secret-tainted-cone,
@@ -832,6 +893,7 @@ fn main() -> anyhow::Result<()> {
             trace,
             materialise_blobs,
             path,
+            audit_trail,
             sandbox,
             budget,
         } => {
@@ -936,6 +998,9 @@ fn main() -> anyhow::Result<()> {
                     Err(e) => anyhow::bail!("toml export failed: {e}"),
                 },
                 other => anyhow::bail!("unsupported format: {}", other),
+            }
+            if let Some(audit_path) = audit_trail {
+                write_audit_trail(&audit_path, &file, &module, &value, &diags, resilient)?;
             }
             if had_failure(&diags, resilient) {
                 std::process::exit(1);

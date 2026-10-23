@@ -1,0 +1,30 @@
+id = "t12-fix-typo-fill"
+system = "editor"
+kind = "code"
+
+document = """
+schema = {
+  closed = true,
+  host = String,
+  port = Int(default = 8080),
+}
+Host = "x"
+"""
+
+user = """
+This document fails to check. Fix it so it checks clean, changing
+as little as possible.
+"""
+
+[[checks]]
+type = "check_exit0"
+
+[[checks]]
+type = "eval_eq"
+path = "host"
+value = "x"
+
+[[checks]]
+type = "eval_eq"
+path = "port"
+value = 8080

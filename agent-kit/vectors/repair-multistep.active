@@ -1,0 +1,2 @@
+schema = { closed = true, host = String, port = Int(default = 8080) }
+Host = "x"

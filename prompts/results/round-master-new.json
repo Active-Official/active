@@ -1,0 +1,230 @@
+{
+  "pack": "1.1.0",
+  "stamp": "master-new",
+  "backends": [
+    "copilot",
+    "direct"
+  ],
+  "models": {
+    "copilot": "muse-spark-1.3-contributor",
+    "direct": "muse-spark-1.3-contributor"
+  },
+  "results": [
+    {
+      "id": "t11-gen-blob",
+      "backend": "copilot",
+      "pass": true,
+      "error": "",
+      "ms": 197457,
+      "checks": [
+        {
+          "check": "fence",
+          "pass": true,
+          "detail": "active-fence"
+        },
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "check_exit0",
+          "pass": true,
+          "detail": "OK\n"
+        },
+        {
+          "check": "contains 'blob('",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "contains 'text/plain'",
+          "pass": true,
+          "detail": ""
+        }
+      ],
+      "extraction": "active-fence",
+      "infra_flake": false,
+      "response": "Writing your logo blob \u2014 checking ACTIVE syntax first.\n\nBasic syntax confirmed \u2014 verifying the blob shape.\n\nHere's your content-addressed logo blob.\n```active\nlogo = blob(\"text/plain\", \"hello\")\n```\n\n"
+    },
+    {
+      "id": "t11-gen-blob",
+      "backend": "direct",
+      "pass": false,
+      "error": "",
+      "ms": 30845,
+      "checks": [
+        {
+          "check": "fence",
+          "pass": true,
+          "detail": "active-fence"
+        },
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "check_exit0",
+          "pass": true,
+          "detail": "OK\n"
+        },
+        {
+          "check": "contains 'blob('",
+          "pass": false,
+          "detail": ""
+        },
+        {
+          "check": "contains 'text/plain'",
+          "pass": true,
+          "detail": ""
+        }
+      ],
+      "extraction": "active-fence",
+      "infra_flake": false,
+      "response": "```active\n[logo]\nmedia_type = \"text/plain\"\ncontent = \"hello\"\n```\nCreated the logo blob."
+    },
+    {
+      "id": "t12-fix-typo-fill",
+      "backend": "copilot",
+      "pass": true,
+      "error": "",
+      "ms": 74392,
+      "checks": [
+        {
+          "check": "fence",
+          "pass": true,
+          "detail": "active-fence"
+        },
+        {
+          "check": "check_exit0",
+          "pass": true,
+          "detail": "OK\n"
+        },
+        {
+          "check": "eval_eq host",
+          "pass": true,
+          "detail": "got 'x'"
+        },
+        {
+          "check": "eval_eq port",
+          "pass": true,
+          "detail": "got 8080"
+        }
+      ],
+      "extraction": "active-fence",
+      "infra_flake": false,
+      "response": "Fixing your config to check clean \u2014 minimal patch coming up.\n\nI spotted the case mismatch causing the failure \u2014 verifying the fix.\n\nFixed `Host` case typo and added missing required `port`.\n```active\nschema = {\n  closed = true,\n  host = String,\n  port = Int(default = 8080),\n}\nhost = \"x\"\nport = 8080\n```\n\n"
+    },
+    {
+      "id": "t12-fix-typo-fill",
+      "backend": "direct",
+      "pass": false,
+      "error": "",
+      "ms": 15734,
+      "checks": [
+        {
+          "check": "fence",
+          "pass": true,
+          "detail": "active-fence"
+        },
+        {
+          "check": "check_exit0",
+          "pass": false,
+          "detail": "C:\\Users\\Usuario\\AppData\\Local\\Temp\\tmpl5gv29p6\\t12-fix-typo-fill.active:4:10: [Error] T004: schema violation at 'port': missing required key (strict mode requires explicit values despite a schema default)\nC:\\Users\\Usuario\\AppData\\Local\\Temp\\tmpl5gv29p6\\t12-fix-typo-fill.active:4:10: [Error] T004: validation failed\n"
+        },
+        {
+          "check": "eval_eq host",
+          "pass": false,
+          "detail": "evaluation failed"
+        },
+        {
+          "check": "eval_eq port",
+          "pass": false,
+          "detail": "evaluation failed"
+        }
+      ],
+      "extraction": "active-fence",
+      "infra_flake": false,
+      "response": "Fixed Host casing to host, emitting whole document.\n```active\nschema = {\n  closed = true,\n  host = String,\n  port = Int(default = 8080),\n}\nhost = \"x\"\n```"
+    },
+    {
+      "id": "t13-gen-mode",
+      "backend": "copilot",
+      "pass": true,
+      "error": "",
+      "ms": 43390,
+      "checks": [
+        {
+          "check": "fence",
+          "pass": true,
+          "detail": "active-fence"
+        },
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "check_exit0",
+          "pass": true,
+          "detail": "OK\n"
+        },
+        {
+          "check": "contains 'active_mode'",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "eval_eq active_mode",
+          "pass": true,
+          "detail": "got 'data'"
+        }
+      ],
+      "extraction": "active-fence",
+      "infra_flake": false,
+      "response": "Writing your cache config \u2014 checking syntax first.\n\nHere's your cache configuration.\n\n```active\nactive_mode = \"data\"\n\n[cache]\nmax_entries = 100\ndefault_ttl = 60s\n```\n\n"
+    },
+    {
+      "id": "t13-gen-mode",
+      "backend": "direct",
+      "pass": true,
+      "error": "",
+      "ms": 16338,
+      "checks": [
+        {
+          "check": "fence",
+          "pass": true,
+          "detail": "active-fence"
+        },
+        {
+          "check": "parse",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "check_exit0",
+          "pass": true,
+          "detail": "OK\n"
+        },
+        {
+          "check": "contains 'active_mode'",
+          "pass": true,
+          "detail": ""
+        },
+        {
+          "check": "eval_eq active_mode",
+          "pass": true,
+          "detail": "got 'data'"
+        }
+      ],
+      "extraction": "active-fence",
+      "infra_flake": false,
+      "response": "```active\nactive_mode = \"data\"\n\n[cache]\nmax_entries = 100\ndefault_ttl = 60s\n```\nProduced cache config in Data Mode.\n"
+    }
+  ],
+  "copilot_rate": 1.0,
+  "copilot_adjusted_rate": 1.0,
+  "direct_rate": 0.3333333333333333,
+  "direct_adjusted_rate": 0.3333333333333333
+}

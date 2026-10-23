@@ -1770,7 +1770,6 @@ fn graph_query_closed_set_end_to_end() {
     let out = run(&["query", "--query", "nope"]);
     assert!(!out.status.success(), "unknown query must fail");
 }
-
 #[test]
 fn capability_handshake_accepts_advertised_rejects_rest() {
     let ok = fixture(
@@ -1841,5 +1840,40 @@ fn sandbox_gate_applies_budget_and_refuses_excess() {
         out.status.success(),
         "agent sandbox must accept repair: {}",
         String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn audit_trail_is_valid_active_without_secrets() {
+    let f = fixture(
+        "audit_src.active",
+        "token = secret(\"s3cr3t-audit\")\nport = 8080\n",
+    );
+    let audit = std::env::temp_dir().join("active-cli-tests-audit.active");
+    let out = active()
+        .args(["eval", "--audit-trail"])
+        .arg(&audit)
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = std::fs::read_to_string(&audit).expect("audit written");
+    assert!(text.contains("outcome = \"clean\""), "{text}");
+    assert!(!text.contains("s3cr3t-audit"), "audit leaked: {text}");
+    assert!(text.contains("sha256:"), "{text}");
+    // The audit artifact is itself valid Active.
+    let check = active()
+        .args(["check"])
+        .arg(&audit)
+        .output()
+        .expect("run active");
+    assert!(
+        check.status.success(),
+        "audit file must check clean: {}",
+        String::from_utf8_lossy(&check.stderr)
     );
 }

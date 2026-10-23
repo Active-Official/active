@@ -1,0 +1,22 @@
+id = "t11-gen-blob"
+system = "generator"
+kind = "code"
+
+user = """
+Write ACTIVE declaring a content-addressed logo blob: media type
+"text/plain", content "hello". The document must check clean.
+"""
+
+[[checks]]
+type = "parse"
+
+[[checks]]
+type = "check_exit0"
+
+[[checks]]
+type = "contains"
+text = "blob("
+
+[[checks]]
+type = "contains"
+text = "text/plain"

@@ -47,6 +47,8 @@ TASKS = [
     ("unknown-format.active", True),
     ("descriptions-clean.active", True),
     ("blob-clean.active", True),
+    ("repair-multistep.active", True),
+    ("mode-data.active", True),
 ]
 
 LOOPS = [

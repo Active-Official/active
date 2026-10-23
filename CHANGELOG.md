@@ -21,7 +21,8 @@ with E025, the capability handshake (`--check-doc`) and sandbox
 profiles (`--sandbox`, 4 profiles). Capability descriptor grows 10
 → 12 tools plus `profiles` and new `features` entries; INSPECT v2.
 Consumers pinning exact tool/feature sets should expect additions —
-breaking changes, if ever needed, will bump the minor.
+any incompatible change ships under a new major version per the
+stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
 
 ### SOLID → Active rename
 

@@ -65,6 +65,13 @@ enum BudgetProfile {
 }
 
 impl BudgetArgs {
+    /// True when the user passed any explicit --max-* flag (vs. all
+    /// clap defaults): used to warn when a named profile silently
+    /// overrides them.
+    fn has_explicit(&self) -> bool {
+        self.budget() != Budget::default()
+    }
+
     fn budget(&self) -> Budget {
         Budget {
             max_nodes: self.max_nodes,
@@ -836,6 +843,7 @@ fn main() -> anyhow::Result<()> {
             // its budget preset and refuses documents declaring
             // capabilities outside the profile's tool set — the host
             // refuses excess requests before evaluation.
+            let explicit_flags = budget.has_explicit();
             let mut budget = budget.resolve()?;
             if let Some(ref sandbox) = sandbox {
                 let profile_def =
@@ -845,9 +853,10 @@ fn main() -> anyhow::Result<()> {
                         )
                     })?;
                 // Like --budget-profile: a named preset wins over
-                // per-field flags — warn instead of silently dropping
-                // the user's explicit limits.
-                if budget != Budget::default() {
+                // explicit per-field flags — warn only when the user
+                // actually passed --max-* (not when another profile
+                // already selected non-default budgets).
+                if explicit_flags {
                     eprintln!("warning: --sandbox overrides the explicit --max-* flags");
                 }
                 budget = match profile_def.budget {

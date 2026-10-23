@@ -4449,43 +4449,37 @@ impl Parser {
                     }
                     // Schema evolution metadata (PROPOSAL §2.4,
                     // CHECKLIST SC.005): reserved string keys holding
-                    // `major.minor.patch` versions. Malformed versions
-                    // are E020 schema bugs, never silent.
-                    if name == "version" || name == "min_reader" || name == "min_writer" {
-                        let ver_tok = self.peek().clone();
-                        match self.peek_kind() {
+                    // `major.minor.patch` versions. Only a plain string
+                    // literal is metadata — a type expression under the
+                    // same name (e.g. `version = String(...)`) is an
+                    // ordinary field, so existing schemas keep working.
+                    // Malformed versions are E020 schema bugs, never silent.
+                    if (name == "version" || name == "min_reader" || name == "min_writer")
+                        && matches!(
+                            self.peek_kind(),
                             TokenKind::String(_)
-                            | TokenKind::SingleString
-                            | TokenKind::MlString(_)
-                            | TokenKind::MlSingleString => {
-                                let vtok = self.bump();
-                                let version = vtok.text.clone();
-                                if !Self::is_schema_version(&version) {
-                                    self.error_at(
-                                        "E020",
-                                        format!(
-                                            "{name} must be major.minor.patch, got {version:?}"
-                                        ),
-                                        &ver_tok,
-                                    );
-                                } else {
-                                    let slot = match name.as_str() {
-                                        "version" => &mut meta.version,
-                                        "min_reader" => &mut meta.min_reader,
-                                        _ => &mut meta.min_writer,
-                                    };
-                                    // First wins, like every other argument.
-                                    if slot.is_none() {
-                                        *slot = Some(version);
-                                    }
-                                }
-                            }
-                            _ => {
-                                self.error_at(
-                                    "E020",
-                                    format!("{name} must be a version string"),
-                                    &ver_tok,
-                                );
+                                | TokenKind::SingleString
+                                | TokenKind::MlString(_)
+                                | TokenKind::MlSingleString
+                        )
+                    {
+                        let vtok = self.bump();
+                        let version = vtok.text.clone();
+                        if !Self::is_schema_version(&version) {
+                            self.error_at(
+                                "E020",
+                                format!("{name} must be major.minor.patch, got {version:?}"),
+                                &vtok,
+                            );
+                        } else {
+                            let slot = match name.as_str() {
+                                "version" => &mut meta.version,
+                                "min_reader" => &mut meta.min_reader,
+                                _ => &mut meta.min_writer,
+                            };
+                            // First wins, like every other argument.
+                            if slot.is_none() {
+                                *slot = Some(version);
                             }
                         }
                         self.skip_newlines();

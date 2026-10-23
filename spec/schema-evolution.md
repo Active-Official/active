@@ -23,7 +23,10 @@ schema = {
 - `version`: this document's schema version (`major.minor.patch`).
 - `min_reader`: oldest reader that can still process it.
 - `min_writer`: oldest writer whose output it still accepts.
-- All three are optional; all three must be `major.minor.patch` with all-numeric parts when present. Anything else is E020.
+- All three are optional; string literals must be `major.minor.patch`
+  with all-numeric parts — anything else is E020. A type expression
+  under the same name (e.g. `version = String(...)`) is an ordinary
+  field, so existing schemas keep working.
 - First wins on repetition, like every other schema argument.
 - Includes: metadata follows local-wins — absent local keys inherit the included document's values.
 

@@ -51,6 +51,7 @@ parses leave it unset and tools fall back to the input filename.
 | E021 | `invalid @<kind> annotation: <detail>` | annotation comment span | Malformed annotations (C-033): bad `@intent` string, non-boolean `@ai_immutable`, empty or trailing `@constraint` payload. Truncated predicates keep their precise expression codes with rebased spans |
 | E022 | ``depends_on` entries must be string literals` / ``depends_on` is only allowed as a direct table member` | token | Malformed dependency blocks (C-042): non-string array elements, or inline-table occurrences |
 | E023 | `integer literal out of i64 range: \`<text>\`` | the literal token | An integer literal exceeds the i64 range (spec/specification.md §1.3): recorded as an error and the value saturates at `i64::MAX` — never a silent `0` |
+| E024 | `active_mode must be "data" or "config"` / `unknown mode '<text>': want "data" or "config"` | marker key | Bad mode marker (Phase M): the `active_mode` key is not one of the two valid strings |
 | E032 | `<file>: unsigned (no signature sidecar …)` / `<file>: unknown signing key '<kid>'` / `<file>: signature mismatch (key '<kid>')` | include statement | An included file failed overlay enforcement (C-052): no sibling sidecar, a key outside the trusted set, or a bad signature. Fail-closed before a byte parses; key material never quoted |
 
 ### S0xx — Semantic (evaluation, severity Error)
@@ -112,6 +113,7 @@ parses leave it unset and tools fall back to the input filename.
 | W003 | `profile '<name>' overrides '<path>' with a different type` | node | A profile value wins over a base value of a different type (C-027) |
 | W004 | `remove target '<path>' does not exist` / `rename source '<path>' does not exist` / `array index <i> out of bounds at '<path>'` | node | A patch target is missing; the operation succeeds idempotently (C-028) |
 | W005 | `filled missing key '<path>' from schema default` | schema field span | Resilient mode inserted an evaluated schema default for a missing key (C-032); the filled value is then validated like any written value |
+| W013 | `approaching <budget> (<used> of limit <limit>); hard ceilings apply in Data Mode exactly as in Config` | none (loop-level) | Data Mode progressive warning at 80% of any nonzero budget (M.004); informational only, evaluation continues; hard ceilings bind both modes |
 | W006 | `null has no TOML representation; omitted '<path>'` | none (export-time) | TOML export skips null-valued keys (C-046); announced per key, never silent |
 | W007 | `imported key '<key>' sanitized to '<clean>'` / `duplicate key '<clean>' after sanitization; last wins` / `YAML non-string key stringified to '<key>'` / `YAML null key stringified to 'null'` | none (import-time) | Reverse converters (C-046) adapt foreign keys to ACTIVE identifiers; duplicates keep the last value like JSON itself |
 | W008 | `TOML datetime at '<path>' imported as string` | none (import-time) | TOML datetimes have no ACTIVE equivalent; the RFC 3339 text survives (C-046) |

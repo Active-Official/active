@@ -61,6 +61,12 @@ pub struct Module {
     /// from value fields at parse (never exported) and recorded here
     /// against their scope's table node.
     pub depends_on: HashMap<NodeId, DependsOn>,
+    /// Evaluation mode resolved at parse (PROPOSAL §0.2, Phase M):
+    /// `Config` unless a root-level `active_mode = "data"` marker is
+    /// present. The marker stays a regular value key (self-describing
+    /// documents); the field lets the engine budget progressively
+    /// without re-reading the tree.
+    pub mode: Mode,
 }
 
 /// A parsed `# @…` annotation attached to a node (spec/annotations.md).
@@ -181,6 +187,18 @@ pub struct SchemaMeta {
     pub min_writer: Option<String>,
 }
 
+/// Evaluation mode (PROPOSAL §0.2, CHECKLIST Phase M): Config is the
+/// default and stays 1.0-compatible; Data is explicit opt-in via an
+/// `active_mode = "data"` marker key. Both modes share the IR, type
+/// system, taint, budgets, and conformance guarantees — Data only
+/// adds progressive budget warnings (hard ceilings never move).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mode {
+    #[default]
+    Config,
+    Data,
+}
+
 /// Layout style for output (spec/dual-syntax.md §8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Style {
@@ -241,6 +259,7 @@ impl Module {
             schema: None,
             annotations: HashMap::new(),
             depends_on: HashMap::new(),
+            mode: Mode::default(),
         }
     }
 

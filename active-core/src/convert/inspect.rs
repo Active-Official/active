@@ -274,6 +274,10 @@ pub fn schema_inspect(module: &Module) -> Result<JsonValue, String> {
         "schema_version": schema_version,
         "min_reader": min_reader,
         "min_writer": min_writer,
+        "mode": match module.mode {
+            crate::ir::Mode::Data => "data",
+            crate::ir::Mode::Config => "config",
+        },
         "fields": fields,
     }))
 }

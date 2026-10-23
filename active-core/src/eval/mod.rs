@@ -532,15 +532,16 @@ fn check_static_budgets(module: &Module, budget: &Budget) -> Result<(), EvalErro
 /// `limit + 1` so the numbers stay tiny; tripping either aborts with
 /// the offending node's span. Memoized per node, so shared subtrees
 /// cost O(1) — the pass itself is linear. Returns the cumulative
-/// bound total plus the per-node bounds table (drives delta
-/// accounting for dynamic values during the walk).
+/// bound total, the per-node bounds table (drives delta
+/// accounting for dynamic values during the walk), and the maximum
+/// value depth bound (drives Data Mode progressive warnings).
 fn check_dp_bounds(
     module: &Module,
     order: &[petgraph::graph::NodeIndex],
     budget: &Budget,
-) -> Result<(u64, Vec<u64>), EvalError> {
+) -> Result<(u64, Vec<u64>, u64), EvalError> {
     if budget.max_value_size == 0 && budget.max_depth == 0 && budget.max_total_value_size == 0 {
-        return Ok((0, vec![1u64; module.arena.len()]));
+        return Ok((0, vec![1u64; module.arena.len()], 0));
     }
     // Separate saturation caps: comparing against `limit + 1` keeps
     // numbers tiny, and `>= cap` (instead of `> limit`) stays correct
@@ -565,6 +566,7 @@ fn check_dp_bounds(
     // large value trip here). Over-approximates (unreachable nodes
     // count) in the fail-safe direction.
     let mut total = 0u64;
+    let mut max_depth_seen = 0u64;
     for node_idx in order {
         let id = module.graph[*node_idx];
         let i = id.0 as usize;
@@ -701,8 +703,9 @@ fn check_dp_bounds(
                 Some(id),
             ));
         }
+        max_depth_seen = max_depth_seen.max(depth[i]);
     }
-    Ok((total, size))
+    Ok((total, size, max_depth_seen))
 }
 
 /// Memo store for incremental evaluation (C-055, spec/performance.md
@@ -720,11 +723,11 @@ fn check_dp_bounds(
 /// own redacting `Debug` wherever else they are formatted.
 pub struct IncrementalMemo {
     map: HashMap<u64, (Value, Vec<Diagnostic>)>,
-    // (resilient, profile override, budget, materialise flag): any
-    // configuration change clears the store before the walk, so a
-    // flag flip can never serve a stale identity-only tree as
-    // materialised (or vice versa).
-    config: Option<(bool, Option<String>, Budget, bool)>,
+    // (resilient, profile override, budget, materialise flag, mode):
+    // any configuration change clears the store before the walk, so a
+    // flag flip or mode change can never serve a stale tree (or a
+    // warning-less diagnostic set) across modes.
+    config: Option<(bool, Option<String>, Budget, bool, Mode)>,
     salt: u64,
     pub last_eval_count: u64,
     pub last_memo_hits: u64,
@@ -1055,6 +1058,7 @@ impl Engine {
             self.profile_override.clone(),
             self.budget,
             self.materialise_blobs,
+            module.mode,
         );
         if memo.config.as_ref() != Some(&token) {
             memo.map.clear();
@@ -1098,8 +1102,10 @@ impl Engine {
         // billion-laughs killer. Runs on the topological order so every
         // bound is final when read; saturating arithmetic keeps it
         // linear even for exponential shapes. Returns the cumulative
-        // bound, seeding the transform accountant below.
-        let (dp_total, dp_bounds) = check_dp_bounds(module, &order, &self.budget)?;
+        // bound plus the per-node bounds and the maximum depth bound,
+        // seeding the transform accountant below.
+        let (dp_total, dp_bounds, dp_max_depth) = check_dp_bounds(module, &order, &self.budget)?;
+        let max_node_size = dp_bounds.iter().copied().max().unwrap_or(0);
         let mut account = Accountant {
             spent: dp_total,
             limit: self.budget.max_total_value_size,
@@ -1113,6 +1119,48 @@ impl Engine {
         let mut values: HashMap<NodeId, Value> = HashMap::new();
         let mut diagnostics = module.diagnostics.clone();
         diagnostics.extend(module.healing.iter().cloned());
+        // Data Mode progressive warnings (PROPOSAL §0.2, Phase M): at
+        // 80% of any nonzero limit, warn that the hard ceiling (which
+        // never moves) is approaching. Informational only — evaluation
+        // continues and the same ceilings bind both modes. Emitted
+        // here (after the DP pass, before the walk) so the numbers are
+        // final bounds, not samples.
+        if module.mode == Mode::Data {
+            let warn_at = |used: u64, limit: u64| limit != 0 && used * 5 >= limit * 4;
+            let mut warn = |kind: BudgetKind, used: u64, limit: u64| {
+                if warn_at(used, limit) {
+                    diagnostics.push(Diagnostic {
+                        severity: Severity::Warning,
+                        code: "W013".into(),
+                        message: format!(
+                            "approaching {} ({} of limit {}); hard ceilings apply in Data Mode exactly as in Config",
+                            kind, used, limit
+                        ),
+                        path: None,
+                        span: None,
+                        repair: None,
+                        confidence: 1.0,
+                        file: None,
+                    });
+                }
+            };
+            warn(
+                BudgetKind::Nodes,
+                module.arena.len() as u64,
+                self.budget.max_nodes,
+            );
+            warn(
+                BudgetKind::ValueSize,
+                max_node_size,
+                self.budget.max_value_size,
+            );
+            warn(BudgetKind::Depth, dp_max_depth, self.budget.max_depth);
+            warn(
+                BudgetKind::ValueSize,
+                dp_total,
+                self.budget.max_total_value_size,
+            );
+        }
         // Wall-clock backstop (spec/budgets.md §2): sampled every 1024
         // nodes so the overhead is unmeasurable. Counts already passed
         // their static and DP checks; only time needs watching mid-walk.

@@ -22,8 +22,9 @@ pub mod validate;
 pub use diag::{Diagnostic, Repair, RepairKind, Severity};
 pub use eval::{Budget, BudgetKind, Engine, EnvLookup, EvalError, IncrementalMemo};
 pub use ir::{
-    Annotation, AnnotationKind, Attachment, BinOp, DependsOn, IncludeStmt, InterpPart, Module,
-    Node, NodeId, PatchOp, SchemaField, SemanticTag, Style, TriviaComment, UnOp, Value,
+    Annotation, AnnotationKind, Attachment, BinOp, DependsOn, IncludeStmt, InterpPart, Mode,
+    Module, Node, NodeId, PatchOp, SchemaField, SchemaMeta, SemanticTag, Style, TriviaComment,
+    UnOp, Value,
 };
 pub use lint::{lint, lint_with, LintOptions};
 pub use parser::{

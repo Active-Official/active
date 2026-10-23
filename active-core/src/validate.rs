@@ -418,6 +418,11 @@ impl<'a> Validator<'a> {
                 if fields.contains_key(key) {
                     continue;
                 }
+                // The mode marker is metadata, not data (Phase M): it
+                // never counts as an unexpected key, open or closed.
+                if key == "active_mode" {
+                    continue;
+                }
                 segments.push(PathSeg::Key(key.clone()));
                 let key_path = render_path(segments);
                 let key_id = arena_children

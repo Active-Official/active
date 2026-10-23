@@ -369,6 +369,10 @@ fn parse_recovering_impl(
     parser.extract_schemas();
     // Dependency metadata leaves value fields the same way (spec §2.11).
     parser.extract_depends_on();
+    // Mode marker resolution (PROPOSAL §0.2, Phase M): reads the
+    // `active_mode` marker but leaves it as data (self-describing
+    // documents carry the marker into evaluated JSON).
+    parser.resolve_mode();
     parser.attach_trivia();
     parser.module.source_style = if parser.indent_tables > parser.brace_tables {
         Style::Indent
@@ -2446,6 +2450,63 @@ impl Parser {
             return;
         };
         self.extract_table_depends_on(root);
+    }
+
+    /// Resolve the evaluation mode from a root-level
+    /// `active_mode = "data" | "config"` marker (PROPOSAL §0.2, Phase
+    /// M, CHECKLIST M.001–M.002). The marker STAYS a regular value
+    /// key (self-describing documents; the interchange profile
+    /// mandates a visible marker) while `Module.mode` drives the
+    /// engine. Unknown values and non-string markers are E024 schema
+    /// bugs, never silent defaults. Runs once per top-level
+    /// document; included files cannot set the mode.
+    fn resolve_mode(&mut self) {
+        if self.in_include {
+            return;
+        }
+        let fields = match self.module.root.and_then(|root| self.module.get(root)) {
+            Some(Node::Table { fields, .. }) => fields.clone(),
+            _ => return,
+        };
+        let Some(marker) = fields.get("active_mode") else {
+            return;
+        };
+        let (text, tok) = match self.module.get(*marker) {
+            Some(Node::Literal(Value::String(s))) => (s.clone(), *marker),
+            _ => {
+                let bad = self.module.node_spans.get(marker).cloned();
+                let file = self.module.node_files.get(marker).cloned();
+                self.errors.push(Diagnostic {
+                    severity: Severity::Error,
+                    code: "E024".into(),
+                    message: "active_mode must be \"data\" or \"config\"".into(),
+                    path: Some("active_mode".into()),
+                    span: bad,
+                    repair: None,
+                    confidence: 1.0,
+                    file,
+                });
+                return;
+            }
+        };
+        match text.as_str() {
+            "data" => self.module.mode = crate::ir::Mode::Data,
+            "config" => self.module.mode = crate::ir::Mode::Config,
+            _ => {
+                let span = self.module.node_spans.get(&tok).cloned();
+                let file = self.module.node_files.get(&tok).cloned();
+                self.errors.push(Diagnostic {
+                    severity: Severity::Error,
+                    code: "E024".into(),
+                    message: format!("unknown mode {text:?}: want \"data\" or \"config\""),
+                    path: Some("active_mode".into()),
+                    span,
+                    repair: None,
+                    confidence: 1.0,
+                    file,
+                });
+            }
+        }
     }
 
     /// Extract `depends_on` from one value table node and recurse.

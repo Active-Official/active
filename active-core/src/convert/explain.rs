@@ -47,6 +47,12 @@ pub fn explain_code(code: &str) -> &'static str {
         "B003" => "Blob materialisation refused: the blob is structurally tainted. Tainted payloads are never emitted — redesign so the consumer needs only the identity.",
         "B004" => "Blob media type mismatches the schema media_type: the bytes are not what the schema promises. Fix the data or the declared type.",
         "B005" => "Blob payload unavailable: the identity was re-imported without retained bytes. Re-evaluate from the source document with materialisation enabled.",
+        "C040" => "Compatibility: a required field was added — old documents fail the new schema. Add a default, make it Null-typed, or accept the break explicitly.",
+        "C041" => "Compatibility: a field was removed — old readers and writers lose data. Restore it, or confirm the removal was scheduled (removed_in at or before the new version).",
+        "C042" => "Compatibility: a field type changed (or a blob constraint tightened) — existing documents and payloads may fail. Migrate the data or version the schema.",
+        "C043" => "Compatibility: the schema version regressed — the new version is older than the old one. Versions only move forward.",
+        "C044" => "Compatibility: min_reader or min_writer was raised above the old version — old readers or writers are dropped. Lower the floor or accept the break explicitly.",
+        "E040" => "Breaking schema changes detected: the compatibility report lists error-severity findings that must be resolved or explicitly accepted.",
         _ => "No canned guidance for this code: the code and span are the contract — read the message, fix the span it names, and re-run check.",
     }
 }

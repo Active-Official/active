@@ -35,6 +35,22 @@ fn canonical_brace_document_round_trips_byte_for_byte() {
 }
 
 #[test]
+fn schema_evolution_metadata_round_trips() {
+    // PROPOSAL §2.4: version/min_reader/min_writer and removed_in
+    // survive formatting (idempotent), so fmt never drops the
+    // compatibility contract.
+    let src = "schema = {\n  version = \"1.2.0\",\n  min_reader = \"1.0.0\",\n  old = String(removed_in = \"1.3.0\"),\n  port = Int,\n}\nport = 1\n";
+    for style in [Style::Brace, Style::Indent, Style::Preserve] {
+        let once = fmt(src, style);
+        assert!(once.contains("version = \"1.2.0\""), "{once}");
+        assert!(once.contains("min_reader = \"1.0.0\""), "{once}");
+        assert!(once.contains("removed_in = \"1.3.0\""), "{once}");
+        let twice = fmt(&once, style);
+        assert_eq!(once, twice, "not idempotent for {style:?}:\n{once}");
+    }
+}
+
+#[test]
 fn canonical_indent_document_round_trips_byte_for_byte() {
     assert_eq!(fmt(INDENT_DOC, Style::Indent), INDENT_DOC);
     assert_eq!(fmt(INDENT_DOC, Style::Preserve), INDENT_DOC);

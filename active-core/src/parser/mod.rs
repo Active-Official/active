@@ -2024,12 +2024,22 @@ impl Parser {
         spliced: &mut std::collections::HashSet<String>,
         overwrite: bool,
     ) -> bool {
-        let (local_fields, local_closed) = match self.module.get(local_id) {
-            Some(Node::SchemaTable { fields, closed }) => (fields.clone(), *closed),
+        let (local_fields, local_closed, _) = match self.module.get(local_id) {
+            Some(Node::SchemaTable {
+                fields,
+                closed,
+                meta,
+                ..
+            }) => (fields.clone(), *closed, meta.clone()),
             _ => return false,
         };
-        let (inc_fields, inc_closed) = match self.module.get(inc_id) {
-            Some(Node::SchemaTable { fields, closed }) => (fields.clone(), *closed),
+        let (inc_fields, inc_closed, inc_meta) = match self.module.get(inc_id) {
+            Some(Node::SchemaTable {
+                fields,
+                closed,
+                meta,
+                ..
+            }) => (fields.clone(), *closed, meta.clone()),
             _ => return false,
         };
         let mut merged = local_fields;
@@ -2074,17 +2084,39 @@ impl Parser {
                 }
             }
         }
+        // Evolution metadata follows local-wins: absent local keys
+        // inherit the included ones. Computed outside the field
+        // gate so a metadata-only inheritance still registers.
+        let mut meta_changed = false;
+        if let Some(Node::SchemaTable {
+            meta: meta_slot, ..
+        }) = self.module.get_mut(local_id)
+        {
+            if meta_slot.version.is_none() && inc_meta.version.is_some() {
+                meta_slot.version = inc_meta.version.clone();
+                meta_changed = true;
+            }
+            if meta_slot.min_reader.is_none() && inc_meta.min_reader.is_some() {
+                meta_slot.min_reader = inc_meta.min_reader.clone();
+                meta_changed = true;
+            }
+            if meta_slot.min_writer.is_none() && inc_meta.min_writer.is_some() {
+                meta_slot.min_writer = inc_meta.min_writer.clone();
+                meta_changed = true;
+            }
+        }
         if changed {
             if let Some(Node::SchemaTable {
                 fields: slot,
                 closed,
+                ..
             }) = self.module.get_mut(local_id)
             {
                 *slot = merged;
                 *closed = merged_closed;
             }
         }
-        changed
+        changed || meta_changed
     }
 
     /// True when a table subtree contains any local (unmarked) content.
@@ -2384,6 +2416,7 @@ impl Parser {
                 let id = self.module.add_node(Node::SchemaTable {
                     fields: IndexMap::new(),
                     closed: false,
+                    meta: crate::ir::SchemaMeta::default(),
                 });
                 schema_id = Some(id);
                 id
@@ -4141,8 +4174,15 @@ impl Parser {
         let open = self
             .expect(TokenKind::LBrace)
             .unwrap_or_else(|| key_tok.clone());
-        let (fields, closed) = self.parse_schema_entries(SchemaEnd::Brace);
-        self.add_spanned(Node::SchemaTable { fields, closed }, &open)
+        let (fields, closed, meta) = self.parse_schema_entries(SchemaEnd::Brace);
+        self.add_spanned(
+            Node::SchemaTable {
+                fields,
+                closed,
+                meta,
+            },
+            &open,
+        )
     }
 
     /// Parse a `schema { … }` brace block (the `{` is next).
@@ -4151,21 +4191,53 @@ impl Parser {
             .expect(TokenKind::LBrace)
             .unwrap_or_else(|| key_tok.clone());
         self.brace_tables += 1;
-        let (fields, closed) = self.parse_schema_entries(SchemaEnd::Brace);
-        self.add_spanned(Node::SchemaTable { fields, closed }, &open)
+        let (fields, closed, meta) = self.parse_schema_entries(SchemaEnd::Brace);
+        self.add_spanned(
+            Node::SchemaTable {
+                fields,
+                closed,
+                meta,
+            },
+            &open,
+        )
     }
 
     /// Parse a `schema:` indented body (the Indent is next).
     fn parse_schema_indent(&mut self, key_tok: &Token, _level: usize) -> NodeId {
-        let (fields, closed) = self.parse_schema_entries(SchemaEnd::Indent);
-        self.add_spanned(Node::SchemaTable { fields, closed }, key_tok)
+        let (fields, closed, meta) = self.parse_schema_entries(SchemaEnd::Indent);
+        self.add_spanned(
+            Node::SchemaTable {
+                fields,
+                closed,
+                meta,
+            },
+            key_tok,
+        )
     }
 
-    /// Parse `name = type` entries (plus the reserved `closed` flag)
-    /// until the terminator. Returns the fields and the closed flag.
-    fn parse_schema_entries(&mut self, end: SchemaEnd) -> (IndexMap<String, NodeId>, bool) {
+    /// `major.minor.patch` with all-numeric parts (PROPOSAL §2.4):
+    /// the only accepted shape for `version` / `min_reader` /
+    /// `min_writer` / `removed_in`. Anything else is an E020
+    /// schema bug at the use site.
+    fn is_schema_version(text: &str) -> bool {
+        let parts: Vec<&str> = text.split('.').collect();
+        parts.len() == 3
+            && parts
+                .iter()
+                .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+    }
+
+    /// Parse `name = type` entries (plus the reserved `closed` flag
+    /// and schema-evolution metadata `version` / `min_reader` /
+    /// `min_writer`) until the terminator. Returns the fields, the
+    /// closed flag, and the evolution metadata.
+    fn parse_schema_entries(
+        &mut self,
+        end: SchemaEnd,
+    ) -> (IndexMap<String, NodeId>, bool, crate::ir::SchemaMeta) {
         let mut fields = IndexMap::new();
         let mut closed = false;
+        let mut meta = crate::ir::SchemaMeta::default();
         loop {
             self.skip_newlines();
             match self.peek_kind() {
@@ -4225,6 +4297,53 @@ impl Parser {
                         }
                         continue;
                     }
+                    // Schema evolution metadata (PROPOSAL §2.4,
+                    // CHECKLIST SC.005): reserved string keys holding
+                    // `major.minor.patch` versions. Malformed versions
+                    // are E020 schema bugs, never silent.
+                    if name == "version" || name == "min_reader" || name == "min_writer" {
+                        let ver_tok = self.peek().clone();
+                        match self.peek_kind() {
+                            TokenKind::String(_)
+                            | TokenKind::SingleString
+                            | TokenKind::MlString(_)
+                            | TokenKind::MlSingleString => {
+                                let vtok = self.bump();
+                                let version = vtok.text.clone();
+                                if !Self::is_schema_version(&version) {
+                                    self.error_at(
+                                        "E020",
+                                        format!(
+                                            "{name} must be major.minor.patch, got {version:?}"
+                                        ),
+                                        &ver_tok,
+                                    );
+                                } else {
+                                    let slot = match name.as_str() {
+                                        "version" => &mut meta.version,
+                                        "min_reader" => &mut meta.min_reader,
+                                        _ => &mut meta.min_writer,
+                                    };
+                                    // First wins, like every other argument.
+                                    if slot.is_none() {
+                                        *slot = Some(version);
+                                    }
+                                }
+                            }
+                            _ => {
+                                self.error_at(
+                                    "E020",
+                                    format!("{name} must be a version string"),
+                                    &ver_tok,
+                                );
+                            }
+                        }
+                        self.skip_newlines();
+                        if matches!(self.peek_kind(), TokenKind::Comma) {
+                            self.bump();
+                        }
+                        continue;
+                    }
                     let id = self.parse_schema_type(&name_tok);
                     // Tag arg idents with the entry name for sibling
                     // resolution parity with value parsing.
@@ -4257,7 +4376,7 @@ impl Parser {
                 }
             }
         }
-        (fields, closed)
+        (fields, closed, meta)
     }
 
     /// Guard one level of schema-type recursion (`Array<…>` nesting,
@@ -4336,6 +4455,7 @@ impl Parser {
                 default: None,
                 blob_media_type: None,
                 blob_max_size: None,
+                removed_in: None,
                 deprecated: None,
                 span: Some(span_of(&tok)),
             };
@@ -4433,9 +4553,16 @@ impl Parser {
             if self.enter_schema_depth(&tok) {
                 return self.fallback_schema_field(&tok);
             }
-            let (fields, closed) = self.parse_schema_entries(SchemaEnd::Brace);
+            let (fields, closed, meta) = self.parse_schema_entries(SchemaEnd::Brace);
             self.exit_schema_depth();
-            return self.add_spanned(Node::SchemaTable { fields, closed }, &open);
+            return self.add_spanned(
+                Node::SchemaTable {
+                    fields,
+                    closed,
+                    meta,
+                },
+                &open,
+            );
         }
         // Bare or call-form type.
         let Some(typ) = ActiveType::bare(&type_name) else {
@@ -4519,6 +4646,28 @@ impl Parser {
                         continue;
                     }
                     let value = self.parse_expression();
+                    // `removed_in` is static text on every leaf type
+                    // (PROPOSAL §2.4): a `major.minor.patch` version
+                    // string — never an expression.
+                    if arg == "removed_in" {
+                        if field.removed_in.is_none() {
+                            match self.module.get(value) {
+                                Some(Node::Literal(Value::String(v)))
+                                    if Self::is_schema_version(v) =>
+                                {
+                                    field.removed_in = Some(v.clone());
+                                }
+                                _ => {
+                                    self.error_at(
+                                        "E020",
+                                        "removed_in takes a version string (major.minor.patch)",
+                                        &arg_tok,
+                                    );
+                                }
+                            }
+                        }
+                        continue;
+                    }
                     if !Self::store_schema_arg(&mut field, &typ, &arg, value) {
                         self.error_at(
                             "E020",

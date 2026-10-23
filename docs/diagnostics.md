@@ -83,6 +83,17 @@ parses leave it unset and tools fall back to the input filename.
 | B004 | `schema violation at '<path>': blob media type '<a>' does not match expected '<b>'` | schema field span | Blob media type mismatches the schema `media_type` (exact match, spec/blob.md §4) |
 | B005 | `blob materialisation refused (B005): blob payload was not retained; re-evaluate from source with materialisation enabled` | none (demand-time) | `--materialise-blobs` demanded a payload-less blob; fail closed instead of silently emitting identity (spec/blob.md §5) |
 
+### C0xx/E04x — Schema compatibility (compat report, PROPOSAL §2.4)
+
+| Code | Message | Span | Emitted when |
+|---|---|---|---|
+| C040 | `field '<name>' added without a default: old documents fail the new schema` (info variant when defaulted/Null) | compatibility report path | A required field was added; old documents fail the new schema |
+| C041 | `field '<name>' removed: old readers and writers lose data` (info variant when removed on schedule) | compatibility report path | A field was removed; scheduled removals (`removed_in` at or before the new version) are info |
+| C042 | `field '<name>' type changed from <a> to <b>` / `blob '<path>' max_size tightened …` / `blob '<path>' media type changed …` | compatibility report path | A field type changed or a blob constraint tightened |
+| C043 | `version regressed from <old> to <new>` | schema.version | The new schema version is older than the old one |
+| C044 | `min_reader <floor> exceeds old version <old>: old readers are dropped` / `min_writer … : old writers are dropped` | schema.min_reader / schema.min_writer | The reader or writer floor leapfrogs the old version |
+| E040 | `E040: breaking schema changes detected` | none (report summary) | The compatibility report contains error-severity findings; the CLI exits nonzero |
+
 ### L0xx — Lint (linter, severity Warning, C-042)
 
 | Code | Message | Span | Emitted when |

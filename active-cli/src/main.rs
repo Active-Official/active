@@ -309,6 +309,19 @@ enum Commands {
         #[arg(long)]
         require_major: Option<u64>,
     },
+    /// Compare two documents' schema blocks for compatibility
+    /// (PROPOSAL §2.4): added/removed fields, type changes, tightened
+    /// blob constraints, version regressions, raised reader floors.
+    /// Exits nonzero when any breaking (error-severity) finding exists.
+    Compatibility {
+        /// Old (baseline) .active file
+        old: PathBuf,
+        /// New (candidate) .active file
+        new: PathBuf,
+        /// Output format
+        #[arg(short, long, default_value = "text")]
+        format: String,
+    },
     /// Render schema, intent, and comments as documentation
     Doc {
         /// Input .active file
@@ -959,6 +972,34 @@ fn main() -> anyhow::Result<()> {
                 serde_json::to_string_pretty(&descriptor)
                     .map_err(|e| anyhow::anyhow!("capability serialize failed: {e}"))?
             );
+        }
+        Commands::Compatibility { old, new, format } => {
+            let old_module = parse_input(&old, false, false, &None)?;
+            let new_module = parse_input(&new, false, false, &None)?;
+            let findings = active_core::convert::compare_schemas(&old_module, &new_module)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            match format.as_str() {
+                "json" => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&findings)
+                        .map_err(|e| anyhow::anyhow!("compatibility serialize failed: {e}"))?
+                ),
+                "text" => {
+                    if findings.is_empty() {
+                        println!("compatible: no schema changes");
+                    }
+                    for finding in &findings {
+                        println!(
+                            "[{}] {} {}: {}",
+                            finding.severity, finding.code, finding.path, finding.message
+                        );
+                    }
+                }
+                other => anyhow::bail!("unsupported format: {other}"),
+            }
+            if findings.iter().any(|finding| finding.is_breaking()) {
+                anyhow::bail!("E040: breaking schema changes detected");
+            }
         }
         Commands::Doc {
             from,

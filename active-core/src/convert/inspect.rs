@@ -42,7 +42,12 @@ fn push_field(
         return;
     }
     match module.get(id) {
-        Some(Node::SchemaTable { fields, closed }) => {
+        Some(Node::SchemaTable {
+            fields,
+            closed,
+            meta,
+            ..
+        }) => {
             out.push(json!({
                 "path": path,
                 "name": name,
@@ -57,6 +62,9 @@ fn push_field(
                 "members": JsonValue::Null,
                 "member_descriptions": JsonValue::Null,
                 "closed": closed,
+                "version": meta.version,
+                "min_reader": meta.min_reader,
+                "min_writer": meta.min_writer,
                 "element": JsonValue::Null,
             }));
             for (key, child) in fields {
@@ -195,6 +203,14 @@ fn field_entry(module: &Module, path: String, name: String, field: &SchemaField)
         ActiveType::Table { closed: is_closed } => {
             closed = JsonValue::Bool(*is_closed);
         }
+        ActiveType::Blob => {
+            if let Some(media) = literal_string(module, field.blob_media_type) {
+                constraints.insert("media_type".to_string(), JsonValue::String(media));
+            }
+            if let Some(Node::Literal(v)) = field.blob_max_size.and_then(|id| module.get(id)) {
+                constraints.insert("max_size".to_string(), super::value_to_json(v));
+            }
+        }
         _ => {}
     }
     // NodeId-keyed lookup needs the field's own id; the caller passes the
@@ -212,6 +228,7 @@ fn field_entry(module: &Module, path: String, name: String, field: &SchemaField)
         "constraints": JsonValue::Object(constraints),
         "description": opt_string(literal_string(module, field.description)),
         "deprecated": opt_string(field.deprecated.clone()),
+        "removed_in": opt_string(field.removed_in.clone()),
         "requires": opt_string(literal_string(module, field.requires)),
         "members": members,
         "member_descriptions": member_descriptions,
@@ -221,8 +238,10 @@ fn field_entry(module: &Module, path: String, name: String, field: &SchemaField)
 }
 
 /// Inspect a parsed module's schema block: versioned JSON with one entry
-/// per field in source order (depth-first, dotted paths). Errors only
-/// when the document has no schema block.
+/// per field in source order (depth-first, dotted paths). Schema
+/// evolution metadata (version, min_reader, min_writer) rides at the
+/// top level so agents discover the contract without parsing source.
+/// Errors only when the document has no schema block.
 pub fn schema_inspect(module: &Module) -> Result<JsonValue, String> {
     let root = schema_root(module)?;
     if !matches!(module.get(root), Some(Node::SchemaTable { .. })) {
@@ -233,5 +252,28 @@ pub fn schema_inspect(module: &Module) -> Result<JsonValue, String> {
     // The root table entry itself carries no field data; drop it so the
     // output is exactly the field list agents query.
     fields.retain(|entry| !entry["path"].as_str().unwrap_or("").is_empty());
-    Ok(json!({ "version": INSPECT_VERSION, "fields": fields }))
+    let (schema_version, min_reader, min_writer) = match module.get(root) {
+        Some(Node::SchemaTable { meta, .. }) => (
+            meta.version
+                .clone()
+                .map(JsonValue::String)
+                .unwrap_or(JsonValue::Null),
+            meta.min_reader
+                .clone()
+                .map(JsonValue::String)
+                .unwrap_or(JsonValue::Null),
+            meta.min_writer
+                .clone()
+                .map(JsonValue::String)
+                .unwrap_or(JsonValue::Null),
+        ),
+        _ => (JsonValue::Null, JsonValue::Null, JsonValue::Null),
+    };
+    Ok(json!({
+        "version": INSPECT_VERSION,
+        "schema_version": schema_version,
+        "min_reader": min_reader,
+        "min_writer": min_writer,
+        "fields": fields,
+    }))
 }

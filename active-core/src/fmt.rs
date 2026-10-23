@@ -347,16 +347,31 @@ impl<'a> Formatter<'a> {
     /// schema emits inline (`schema = {}`) in every style: indentation
     /// style cannot express a bodyless block.
     fn emit_schema_table(&mut self, id: NodeId, depth: usize) {
-        let (fields, closed) = match self.module.get(id) {
-            Some(Node::SchemaTable { fields, closed }) => (fields.clone(), *closed),
+        let (fields, closed, meta) = match self.module.get(id) {
+            Some(Node::SchemaTable {
+                fields,
+                closed,
+                meta,
+                ..
+            }) => (fields.clone(), *closed, meta.clone()),
             _ => return,
         };
-        if fields.is_empty() && !closed {
+        if fields.is_empty() && !closed && meta.version.is_none() {
             let indent = INDENT.repeat(depth);
             self.out.push_str(&format!("{indent}schema = {{}}"));
             self.emit_trailing("schema");
             self.out.push('\n');
             return;
+        }
+        let mut meta_lines: Vec<std::string::String> = Vec::new();
+        for (name, slot) in [
+            ("version", &meta.version),
+            ("min_reader", &meta.min_reader),
+            ("min_writer", &meta.min_writer),
+        ] {
+            if let Some(v) = slot {
+                meta_lines.push(format!("{name} = \"{}\"", escape(v)));
+            }
         }
         let indent = INDENT.repeat(depth);
         match self.style {
@@ -367,6 +382,9 @@ impl<'a> Formatter<'a> {
                 let inner = INDENT.repeat(depth + 1);
                 if closed {
                     self.out.push_str(&format!("{inner}closed = true\n"));
+                }
+                for line in &meta_lines {
+                    self.out.push_str(&format!("{inner}{line}\n"));
                 }
                 for (name, entry) in &fields {
                     let typ = self.render_schema_type(*entry);
@@ -380,6 +398,9 @@ impl<'a> Formatter<'a> {
                 let inner = INDENT.repeat(depth + 1);
                 if closed {
                     self.out.push_str(&format!("{inner}closed = true\n"));
+                }
+                for line in &meta_lines {
+                    self.out.push_str(&format!("{inner}{line}\n"));
                 }
                 for (name, entry) in &fields {
                     let typ = self.render_schema_type(*entry);
@@ -399,10 +420,27 @@ impl<'a> Formatter<'a> {
             Some(Node::SchemaArray { element }) => {
                 format!("Array<{}>", self.render_schema_type(element))
             }
-            Some(Node::SchemaTable { fields, closed }) => {
+            Some(Node::SchemaTable {
+                fields,
+                closed,
+                meta,
+                ..
+            }) => {
                 let mut parts: Vec<std::string::String> = Vec::new();
                 if closed {
                     parts.push("closed = true".to_string());
+                }
+                // Evolution metadata round-trips first (insertion
+                // order is not significant; the parser accepts any
+                // position for these reserved keys).
+                for (name, slot) in [
+                    ("version", &meta.version),
+                    ("min_reader", &meta.min_reader),
+                    ("min_writer", &meta.min_writer),
+                ] {
+                    if let Some(v) = slot {
+                        parts.push(format!("{name} = \"{}\"", escape(v)));
+                    }
                 }
                 for (name, entry) in fields {
                     parts.push(format!("{name} = {}", self.render_schema_type(entry)));
@@ -461,6 +499,10 @@ impl<'a> Formatter<'a> {
             if let Some(arg) = slot {
                 args.push(format!("{name} = {}", self.render_expr(arg)));
             }
+        }
+        // `removed_in` is static text (a version string), not a node.
+        if let Some(removed) = &field.removed_in {
+            args.push(format!("removed_in = \"{}\"", escape(removed)));
         }
         match &field.deprecated {
             None => {}

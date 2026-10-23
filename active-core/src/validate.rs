@@ -330,7 +330,7 @@ impl<'a> Validator<'a> {
             Some(Node::SchemaField { field }) => {
                 self.validate_field(schema_id, &field, value_id, value, segments);
             }
-            Some(Node::SchemaTable { fields, closed }) => {
+            Some(Node::SchemaTable { fields, closed, .. }) => {
                 self.validate_table(schema_id, &fields, closed, value_id, value, segments)?;
             }
             Some(Node::SchemaArray { element }) => {

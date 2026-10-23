@@ -209,7 +209,7 @@ pub fn schema_to_json_schema(module: &Module) -> Result<JsonValue, String> {
 
 fn json_schema_node(module: &Module, id: NodeId) -> JsonValue {
     match module.get(id) {
-        Some(Node::SchemaTable { fields, closed }) => {
+        Some(Node::SchemaTable { fields, closed, .. }) => {
             let mut properties = serde_json::Map::new();
             let mut required = Vec::new();
             for (name, field) in fields {
@@ -543,7 +543,7 @@ impl TsGen<'_> {
     /// Closed tables emit `.strict()` so extra keys are rejected exactly
     /// like `additionalProperties: false` in JSON Schema and Active.
     fn emit_zod_table(&mut self, name: &str, id: NodeId) {
-        let Some(Node::SchemaTable { fields, closed }) = self.module.get(id) else {
+        let Some(Node::SchemaTable { fields, closed, .. }) = self.module.get(id) else {
             return;
         };
         let fields: Vec<(String, NodeId)> = fields.iter().map(|(k, v)| (k.clone(), *v)).collect();

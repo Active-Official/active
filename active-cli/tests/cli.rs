@@ -1533,3 +1533,47 @@ fn capability_tools_all_map_to_real_subcommands() {
         }
     }
 }
+
+#[test]
+fn compatibility_reports_breaking_changes_and_fails_closed() {
+    let old = fixture(
+        "compat_old.active",
+        "schema = { host = String }\nhost = \"x\"\n",
+    );
+    let new = fixture(
+        "compat_new.active",
+        "schema = { host = String, port = Int }\nhost = \"x\"\nport = 1\n",
+    );
+    let out = active()
+        .args(["compatibility"])
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success(), "breaking change must fail");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("C040"), "{stdout}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E040"), "{stderr}");
+}
+
+#[test]
+fn compatibility_json_reports_compatible_schemas() {
+    let src = "schema = { host = String }\nhost = \"x\"\n";
+    let old = fixture("compat_same_old.active", src);
+    let new = fixture("compat_same_new.active", src);
+    let out = active()
+        .args(["compatibility", "--format", "json"])
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let findings: serde_json::Value = serde_json::from_str(&stdout).expect("JSON array");
+    assert_eq!(findings, serde_json::json!([]), "{stdout}");
+}

@@ -131,6 +131,12 @@ pub struct SchemaField {
     pub enum_descriptions: Option<NodeId>,
     pub requires: Option<NodeId>,
     pub default: Option<NodeId>,
+    /// Removal schedule (PROPOSAL §2.4, CHECKLIST SC.005): the
+    /// `major.minor.patch` version this field is removed in. The
+    /// compatibility surface treats removal at-or-before the new
+    /// version as scheduled (info), earlier removal as breaking.
+    /// Parsed from `removed_in = "1.2.0"`; malformed strings are E020.
+    pub removed_in: Option<String>,
     /// Blob-only constraints (spec/blob.md §4): expected media type
     /// (`media_type = "..."`) and maximum payload bytes
     /// (`max_size = N`). Ignored on non-Blob types (E020 at parse).
@@ -155,12 +161,24 @@ impl SchemaField {
             enum_descriptions: None,
             requires: None,
             default: None,
+            removed_in: None,
             blob_media_type: None,
             blob_max_size: None,
             deprecated: None,
             span,
         }
     }
+}
+
+/// Schema evolution metadata (PROPOSAL §2.4, CHECKLIST SC.005):
+/// the document's own version plus the oldest reader/writer that
+/// can still process it. All three are `major.minor.patch` strings;
+/// the parser rejects malformed versions with E020.
+#[derive(Debug, Clone, Default)]
+pub struct SchemaMeta {
+    pub version: Option<String>,
+    pub min_reader: Option<String>,
+    pub min_writer: Option<String>,
 }
 
 /// Layout style for output (spec/dual-syntax.md §8).
@@ -392,6 +410,11 @@ pub enum Node {
     SchemaTable {
         fields: IndexMap<String, NodeId>,
         closed: bool,
+        /// Schema evolution metadata (PROPOSAL §2.4): reserved
+        /// `version` / `min_reader` / `min_writer` string keys inside
+        /// the schema block. Absent by default; the compatibility
+        /// surface reads them.
+        meta: SchemaMeta,
     },
     /// An array element schema (spec §2.10): `element` is a SchemaField
     /// node carrying the full element constraints.

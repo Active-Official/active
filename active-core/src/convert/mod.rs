@@ -3,6 +3,7 @@
 use crate::ir::Value;
 use serde_json::{json, Value as JsonValue};
 
+pub mod compat;
 pub mod doc;
 pub mod explain;
 pub mod export;
@@ -11,6 +12,7 @@ pub mod import;
 pub mod inspect;
 pub mod suggest;
 
+pub use compat::{compare as compare_schemas, CompatFinding};
 pub use doc::{collect_items, doc_to_html, doc_to_man, doc_to_markdown, DocItem};
 
 pub use explain::{explain_all, explain_code, explain_structured, Explanation};

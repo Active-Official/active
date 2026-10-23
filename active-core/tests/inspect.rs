@@ -2,7 +2,9 @@
 //!
 //! The versioned JSON surface agents query instead of parsing schema
 //! source: fields, types, constraints, defaults, descriptions,
-//! deprecations, requires targets, enum members, and table closure.
+//! deprecations, removed_in, requires targets, enum members, table
+//! closure, and schema evolution metadata (version, min_reader,
+//! min_writer).
 
 use active_core::convert::{schema_inspect, INSPECT_VERSION};
 use active_core::parse;
@@ -16,6 +18,7 @@ const SCHEMA_DOC: &str = r#"schema = {
   replicas = Int(requires = "mode"),
   color = Enum("red", "green", descriptions = ["stop", "go"]),
   old = String(deprecated = "use fqdn"),
+  gone = String(removed_in = "1.2.0"),
   token = Secret,
   server = Table { host = String, closed = true },
   tags = Array<String(min_len = 2)>,
@@ -133,4 +136,22 @@ fn inspect_entries_share_one_shape() {
 fn inspect_fails_without_a_schema() {
     let module = parse("port = 1\n", "inspect").expect("must parse");
     assert!(schema_inspect(&module).is_err());
+}
+
+#[test]
+fn inspect_covers_evolution_metadata() {
+    // PROPOSAL §2.4: schema-level version/min_reader/min_writer plus
+    // per-field removed_in travel through the inspector for agents.
+    let module = parse(
+        "schema = {\n  version = \"1.2.0\",\n  min_reader = \"1.0.0\",\n  gone = String(removed_in = \"1.3.0\"),\n}\n",
+        "inspect",
+    )
+    .expect("schema must parse");
+    let doc = schema_inspect(&module).expect("inspect");
+    assert_eq!(doc["schema_version"], "1.2.0");
+    assert_eq!(doc["min_reader"], "1.0.0");
+    assert_eq!(doc["min_writer"], serde_json::Value::Null);
+    let gone = by_path(&doc, "gone");
+    assert_eq!(gone["removed_in"], "1.3.0");
+    assert_eq!(gone["type"], "String");
 }

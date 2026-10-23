@@ -105,6 +105,34 @@ enum OutFormat {
     Json,
 }
 
+/// Decidable graph queries (PROPOSAL §2.6, CHECKLIST GQ.001–GQ.004):
+/// a closed set over the dependency DAG plus value-tree queries.
+/// Outputs are paths and identity metadata only — values and secrets
+/// never appear.
+#[derive(Debug, Clone, Subcommand)]
+enum GraphQuery {
+    /// Run one named query.
+    Query {
+        /// Input .active file (defaults to the outer `graph` file)
+        #[arg(long)]
+        from: Option<PathBuf>,
+        /// Query name: dependents-of, dependencies-of, shortest-path,
+        /// secret-tainted-cone, content-addressed-above-size
+        #[arg(long)]
+        query: String,
+        /// Dotted key for dependents-of / dependencies-of; "a,b" pair
+        /// for shortest-path
+        #[arg(long)]
+        key: Option<String>,
+        /// Minimum blob size in bytes (content-addressed-above-size)
+        #[arg(long, default_value_t = 1)]
+        min_size: u64,
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Parse and evaluate a .active file, print as JSON
@@ -167,12 +195,17 @@ enum Commands {
         #[command(flatten)]
         budget: BudgetArgs,
     },
-    /// Show dependency graph (text, Mermaid, DOT, or JSON)
+    /// Show dependency graph (text, Mermaid, DOT, or JSON).
+    /// With a subcommand, run a decidable graph query instead
+    /// (PROPOSAL §2.6): `active graph [FILE] query --query <name>`.
     Graph {
-        file: PathBuf,
+        /// Input .active file (also the default for `query --from`)
+        file: Option<PathBuf>,
         /// Output format
         #[arg(long, default_value = "text")]
         format: String,
+        #[command(subcommand)]
+        command: Option<GraphQuery>,
         /// Enable medium-confidence healing repairs (resilient mode)
         #[arg(long)]
         resilient: bool,
@@ -507,10 +540,111 @@ fn parse_input(
     })
 }
 
+/// Decidable graph query entry point (PROPOSAL §2.6, CHECKLIST
+/// GQ.004): runs one named query over the parsed module, evaluating
+/// only for value-dependent queries (secret-tainted-cone,
+/// content-addressed-above-size). Outputs are paths and identity
+/// metadata only — values and secrets never cross.
+#[allow(clippy::too_many_arguments)]
+fn run_graph_query(
+    from: &std::path::Path,
+    query: &str,
+    key: Option<&str>,
+    min_size: u64,
+    format: &str,
+) -> anyhow::Result<()> {
+    let trust = load_trust(&None)?;
+    let module = parse_input(from, true, false, &trust)?;
+    let name = from.to_string_lossy().to_string();
+    for d in &module.healing {
+        report(d, &name);
+    }
+    let need_key = |what: &str| -> anyhow::Result<String> {
+        key.map(str::to_string)
+            .ok_or_else(|| anyhow::anyhow!("{what} needs --key <dotted-path>"))
+    };
+    let print_paths = |title: &str, paths: &[String]| -> anyhow::Result<()> {
+        match format {
+            "text" => {
+                for p in paths {
+                    println!("{p}");
+                }
+                Ok(())
+            }
+            "json" => {
+                println!("{}", serde_json::json!({"query": title, "paths": paths}));
+                Ok(())
+            }
+            other => anyhow::bail!("unsupported format: {other}"),
+        }
+    };
+    match query {
+        "dependents-of" => {
+            let key = need_key("dependents-of")?;
+            let id = active_core::graph::resolve_key(&module, &key)
+                .ok_or_else(|| anyhow::anyhow!("unknown key '{key}' in {name}"))?;
+            print_paths(query, &active_core::graph::impact_paths(&module, id))
+        }
+        "dependencies-of" => {
+            let key = need_key("dependencies-of")?;
+            let id = active_core::graph::resolve_key(&module, &key)
+                .ok_or_else(|| anyhow::anyhow!("unknown key '{key}' in {name}"))?;
+            print_paths(query, &active_core::graph::why_paths(&module, id))
+        }
+        "shortest-path" => {
+            let pair = need_key("shortest-path (as \"from-key,to-key\")")?;
+            let mut parts = pair.splitn(2, ',');
+            let (from_key, to_key) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+            if from_key.is_empty() || to_key.is_empty() {
+                anyhow::bail!("shortest-path needs --key <from-key>,<to-key>");
+            }
+            let from_id = active_core::graph::resolve_key(&module, from_key)
+                .ok_or_else(|| anyhow::anyhow!("unknown key '{from_key}' in {name}"))?;
+            let to_id = active_core::graph::resolve_key(&module, to_key)
+                .ok_or_else(|| anyhow::anyhow!("unknown key '{to_key}' in {name}"))?;
+            match active_core::graph::shortest_path(&module, from_id, to_id) {
+                Some(path) => print_paths(query, &path),
+                None => anyhow::bail!("no path from '{from_key}' to '{to_key}'"),
+            }
+        }
+        "secret-tainted-cone" | "content-addressed-above-size" => {
+            let (value, diags) = Engine::new()
+                .evaluate(&module)
+                .map_err(|e| anyhow::anyhow!("evaluation failed: {e}"))?;
+            for d in &diags {
+                report(d, &name);
+            }
+            if query.starts_with("secret") {
+                print_paths(query, &active_core::graph::secret_tainted_paths(&value))
+            } else {
+                let blobs = active_core::graph::blobs_above_size(&value, min_size);
+                match format {
+                    "text" => {
+                        for (path, size, hash) in &blobs {
+                            println!("{path} size={size} blake3:{hash}");
+                        }
+                        Ok(())
+                    }
+                    "json" => {
+                        println!(
+                            "{}",
+                            serde_json::json!({"query": query, "blobs": blobs.iter().map(|(path, size, hash)| serde_json::json!({"path": path, "size": size, "hash": format!("blake3:{hash}")})).collect::<Vec<_>>()})
+                        );
+                        Ok(())
+                    }
+                    other => anyhow::bail!("unsupported format: {other}"),
+                }
+            }
+        }
+        other => anyhow::bail!(
+            "unknown query: {other} (want dependents-of | dependencies-of | shortest-path | secret-tainted-cone | content-addressed-above-size)"
+        ),
+    }
+}
+
 fn engine(resilient: bool, profile: &Option<String>, budget: Budget) -> Engine {
-    let mut engine = Engine::new();
-    // The CLI is strict by default: only --resilient tolerates
-    // violations. Engine::new stays resilient for library use.
+    let mut engine = Engine::new(); // The CLI is strict by default: only --resilient tolerates
+                                    // violations. Engine::new stays resilient for library use.
     engine.resilient = resilient;
     engine.profile_override = profile.clone();
     engine.budget = budget;
@@ -757,11 +891,28 @@ fn main() -> anyhow::Result<()> {
         Commands::Graph {
             file,
             format,
+            command,
             resilient,
             allow_parent_escapes,
             trust_keys,
             profile: _,
         } => {
+            if let Some(GraphQuery::Query {
+                from: sub_from,
+                query,
+                key,
+                min_size,
+                format: qformat,
+            }) = command
+            {
+                let resolved = sub_from.or(file).ok_or_else(|| {
+                    anyhow::anyhow!("graph query needs a file: pass FILE or --from FILE")
+                })?;
+                return run_graph_query(&resolved, &query, key.as_deref(), min_size, &qformat);
+            }
+            let file = file.ok_or_else(|| {
+                anyhow::anyhow!("graph needs a FILE (or use `graph query --from FILE`)")
+            })?;
             let name = file.to_string_lossy().to_string();
             let trust = load_trust(&trust_keys)?;
             let module = parse_input(&file, resilient, allow_parent_escapes, &trust)?;

@@ -1721,3 +1721,50 @@ fn materialise_applies_to_cone_not_whole_tree() {
         String::from_utf8_lossy(&out.stdout)
     );
 }
+
+#[test]
+fn graph_query_closed_set_end_to_end() {
+    let f = fixture(
+        "gq.active",
+        "a = 1\nb = a\nc = b\ns = secret(\"s3cr3t\")\nt = s\n",
+    );
+    let run = |args: &[&str]| {
+        let mut cmd = active();
+        cmd.arg("graph").arg(&f);
+        for a in args {
+            cmd.arg(a);
+        }
+        cmd.output().expect("run active")
+    };
+    let out = run(&["query", "--query", "dependents-of", "--key", "a"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains('b') && text.contains('c'), "{text}");
+
+    let out = run(&["query", "--query", "shortest-path", "--key", "a,c"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines, vec!["a", "b", "c"]);
+
+    let out = run(&["query", "--query", "secret-tainted-cone"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains('t'), "{text}");
+    assert!(!text.contains("s3cr3t"), "secret leaked: {text}");
+
+    let out = run(&["query", "--query", "nope"]);
+    assert!(!out.status.success(), "unknown query must fail");
+}

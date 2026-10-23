@@ -94,6 +94,144 @@ pub fn why_paths(module: &Module, id: NodeId) -> Vec<String> {
     paths
 }
 
+/// Shortest directed path between two nodes (BFS over the dependency
+/// DAG, edges dependency → dependent). Returns node labels from
+/// source to target, or None when unreachable. Deterministic:
+/// neighbors visit in parse order. Used by `graph query
+/// shortest-path` for agent impact scoping.
+pub fn shortest_path(module: &Module, from: NodeId, to: NodeId) -> Option<Vec<String>> {
+    use std::collections::VecDeque;
+    let (&start, &goal) = (
+        module.node_to_graph.get(&from)?,
+        module.node_to_graph.get(&to)?,
+    );
+    let mut prev: HashMap<petgraph::graph::NodeIndex, petgraph::graph::NodeIndex> = HashMap::new();
+    let mut seen = HashSet::from([start]);
+    let mut queue = VecDeque::from([start]);
+    while let Some(idx) = queue.pop_front() {
+        if idx == goal {
+            let mut rev = vec![goal];
+            while let Some(p) = prev.get(rev.last().expect("non-empty")) {
+                rev.push(*p);
+            }
+            rev.reverse();
+            return Some(
+                rev.into_iter()
+                    .map(|n| node_label(module, module.graph[n]))
+                    .collect(),
+            );
+        }
+        let mut neighbors: Vec<_> = module
+            .graph
+            .neighbors_directed(idx, Direction::Outgoing)
+            .collect();
+        neighbors.sort_by_key(|n| n.index());
+        for neighbor in neighbors {
+            if seen.insert(neighbor) {
+                prev.insert(neighbor, idx);
+                queue.push_back(neighbor);
+            }
+        }
+    }
+    None
+}
+
+/// Dotted paths of the secret-tainted cone in an evaluated value:
+/// every path whose subtree contains secret material or a tainted
+/// blob, including all ancestors (taint flows outward through
+/// containers). Labels only — values never enter the output
+/// (H-001 class guarantee for graph queries). Operates on the
+/// evaluated tree, so it reflects actual data flow rather than
+/// static edges.
+pub fn secret_tainted_paths(value: &crate::ir::Value) -> Vec<String> {
+    fn walk(value: &crate::ir::Value, path: String, out: &mut Vec<String>) -> bool {
+        use crate::ir::Value;
+        let tainted = match value {
+            Value::Secret(_) => true,
+            Value::Blob { tainted: true, .. } => true,
+            Value::Blob { .. } => false,
+            Value::Array(items) => {
+                let mut any = false;
+                for (i, item) in items.iter().enumerate() {
+                    let child = if path.is_empty() {
+                        format!("[{i}]")
+                    } else {
+                        format!("{path}[{i}]")
+                    };
+                    any |= walk(item, child, out);
+                }
+                any
+            }
+            Value::Table(map) => {
+                let mut any = false;
+                for (key, val) in map {
+                    let child = if path.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{path}.{key}")
+                    };
+                    any |= walk(val, child, out);
+                }
+                any
+            }
+            _ => false,
+        };
+        if tainted && !path.is_empty() {
+            out.push(path);
+        }
+        tainted
+    }
+    let mut out = Vec::new();
+    walk(value, String::new(), &mut out);
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Blobs at or above a size floor in an evaluated value: `(path,
+/// size, blake3-hex)` triples. Identity metadata only — payloads
+/// never enter the output.
+pub fn blobs_above_size(value: &crate::ir::Value, min_size: u64) -> Vec<(String, u64, String)> {
+    fn walk(
+        value: &crate::ir::Value,
+        path: String,
+        min_size: u64,
+        out: &mut Vec<(String, u64, String)>,
+    ) {
+        use crate::ir::Value;
+        match value {
+            Value::Blob { hash, size, .. } if *size >= min_size => {
+                out.push((path, *size, crate::blob::hash_hex(hash)))
+            }
+            Value::Array(items) => {
+                for (i, item) in items.iter().enumerate() {
+                    let child = if path.is_empty() {
+                        format!("[{i}]")
+                    } else {
+                        format!("{path}[{i}]")
+                    };
+                    walk(item, child, min_size, out);
+                }
+            }
+            Value::Table(map) => {
+                for (key, val) in map {
+                    let child = if path.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{path}.{key}")
+                    };
+                    walk(val, child, min_size, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(value, String::new(), min_size, &mut out);
+    out.sort();
+    out
+}
+
 /// Arena-stable node id for renderings (`n<index>`).
 fn render_id(id: NodeId) -> String {
     format!("n{}", id.0)

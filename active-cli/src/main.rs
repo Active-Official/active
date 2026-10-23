@@ -136,6 +136,12 @@ enum Commands {
         /// against the materialised-size budgets.
         #[arg(long)]
         materialise_blobs: bool,
+        /// Emit only the demanded cone of the evaluated value
+        /// (PROPOSAL §2.2): the budget accountant still guards the
+        /// whole graph; the path selects what gets printed.
+        /// Dotted/index path (`server.host`, `ports[0]`).
+        #[arg(long)]
+        path: Option<String>,
         #[command(flatten)]
         budget: BudgetArgs,
     },
@@ -634,6 +640,7 @@ fn main() -> anyhow::Result<()> {
             profile,
             trace,
             materialise_blobs,
+            path,
             budget,
         } => {
             let name = file.to_string_lossy().to_string();
@@ -668,6 +675,19 @@ fn main() -> anyhow::Result<()> {
                     anyhow::anyhow!("evaluation failed")
                 })?;
             }
+            // Demanded cone selection (PROPOSAL §2.2): project AFTER the
+            // full budgeted evaluation, so safety stays whole-document
+            // while agents fetch only what they need.
+            let projected;
+            let value = match path.as_deref() {
+                Some(p) => {
+                    projected = active_core::convert::project_path(&value, p)
+                        .map_err(|e| anyhow::anyhow!("{e}"))?
+                        .clone();
+                    &projected
+                }
+                None => &value,
+            };
 
             match format.as_str() {
                 "json" => println!("{}", value_to_pretty_json(&value)),

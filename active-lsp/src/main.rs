@@ -445,6 +445,7 @@ fn handle_notification(
                     params.text_document.uri.clone(),
                     params.text_document.text,
                     params.text_document.version,
+                    None,
                 );
                 let outgoing = publish_all(open, published, &key, &doc, Some(version));
                 open.insert(key, doc);
@@ -458,10 +459,14 @@ fn handle_notification(
                 if let Some(change) = params.content_changes.into_iter().last() {
                     let version = params.text_document.version;
                     let key = params.text_document.uri.to_string();
+                    // Carry the previous revision's memo: unchanged
+                    // documents re-evaluate as microsecond cache hits.
+                    let memo = open.remove(&key).map(|doc| doc.memo);
                     let doc = analysis::open_doc(
                         params.text_document.uri.clone(),
                         change.text,
                         params.text_document.version,
+                        memo,
                     );
                     let outgoing = publish_all(open, published, &key, &doc, Some(version));
                     open.insert(key, doc);

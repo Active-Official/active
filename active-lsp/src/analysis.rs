@@ -41,12 +41,26 @@ pub struct Doc {
     #[allow(dead_code)]
     pub eval_diags: Vec<Diagnostic>,
     pub lint_diags: Vec<Diagnostic>,
+    /// Incremental memo (PROPOSAL §2.3, PE.003): reuses the evaluated
+    /// tree when the fingerprint (source, env, profile, budget) is
+    /// unchanged — repeat analyses of an untouched document are
+    /// microsecond cache hits instead of full re-evaluations.
+    #[allow(dead_code)]
+    pub memo: active_core::IncrementalMemo,
 }
 
 /// Parse buffer text, resolving includes against the file's own
 /// directory for `file://` URIs (spec/lsp.md §1). Untitled or
 /// unparseable-decision inputs parse hermetically instead.
-pub fn open_doc(uri: Url, text: String, version: i32) -> Doc {
+/// `memo` carries the previous revision's incremental store: an
+/// unchanged document reuses its evaluated tree (microsecond hit)
+/// instead of re-walking the arena.
+pub fn open_doc(
+    uri: Url,
+    text: String,
+    version: i32,
+    memo: Option<active_core::IncrementalMemo>,
+) -> Doc {
     let options = ParseOptions {
         enable_includes: true,
         ..Default::default()
@@ -61,7 +75,8 @@ pub fn open_doc(uri: Url, text: String, version: i32) -> Doc {
             (module, diags)
         }
     };
-    let (value, eval_diags) = match Engine::new().evaluate(&module) {
+    let mut memo = memo.unwrap_or_default();
+    let (value, eval_diags) = match Engine::new().evaluate_incremental(&module, &mut memo) {
         Ok((v, d)) => (Some(v), d),
         // Hard evaluation failures (cycles, budgets, validation in
         // strict mode) still publish: the error becomes one
@@ -94,6 +109,7 @@ pub fn open_doc(uri: Url, text: String, version: i32) -> Doc {
         value,
         eval_diags,
         lint_diags,
+        memo,
     }
 }
 

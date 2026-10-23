@@ -10,11 +10,13 @@ pub mod export;
 pub mod gen;
 pub mod import;
 pub mod inspect;
+pub mod project;
 pub mod repair;
 pub mod suggest;
 
 pub use compat::{compare as compare_schemas, CompatFinding};
 pub use doc::{collect_items, doc_to_html, doc_to_man, doc_to_markdown, DocItem};
+pub use project::project as project_path;
 pub use repair::{repair as repair_document, PlannedStep, RepairOutcome, StepStatus};
 
 pub use explain::{explain_all, explain_code, explain_structured, Explanation};

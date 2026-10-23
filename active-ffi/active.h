@@ -275,6 +275,22 @@ bool active_value_is_secret(const struct ActiveValue *value);
 bool active_value_is_tainted(const struct ActiveValue *value);
 
 /**
+ * Demanded-cone projection (PROPOSAL §2.2, the FFI equivalent of
+ * `active eval --path`): JSON for the sub-value at a dotted/index
+ * path (`server.host`, `ports[0]`), or null when the path is unknown
+ * or malformed (detail via `active_last_error`). The value is
+ * evaluated whole upstream — budgets guard the full graph — and only
+ * the cone crosses the boundary. Returns an owned string the host
+ * frees with `active_string_free`.
+ *
+ * # Safety
+ *
+ * The value must be a live handle; the path bytes must be readable
+ * for `path_len` when non-null. Null value or null path yields null.
+ */
+char *active_value_project(const struct ActiveValue *value, const char *path, uintptr_t path_len);
+
+/**
  * Coarse type code (F-015): 0 null, 1 bool, 2 int, 3 float, 4 string,
  * 5 duration, 6 quantity, 7 array, 8 table, 9 secret, 10 blob
  * (identity; additive tag, existing codes unchanged); u32::MAX on null.

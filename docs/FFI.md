@@ -41,7 +41,9 @@ this, never a host reimplementation).
 Inspection: `active_value_to_json(value) -> *mut ActiveString` (secrets
 always redacted; provenance of this guarantee: core taint rules, H-001
 log-leak trap); `active_value_is_secret(value) -> bool` (accurate for
-nested values); `active_value_type(value) -> ActiveType` enum.
+nested values); `active_value_is_tainted(value) -> bool` (secrets plus
+structurally tainted blobs); `active_value_project(value, path, len)`
+demanded-cone JSON (PROPOSAL §2.2; null on unknown path); `active_value_type(value) -> ActiveType` enum (10 = blob identity).
 
 Host callbacks: `active_set_include_loader(module, cb, userdata)` and
 `active_set_env_lookup(module, cb, userdata)`. Callbacks run on the calling

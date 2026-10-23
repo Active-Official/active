@@ -13,6 +13,7 @@ fn open() -> analysis::Doc {
         Url::parse("untitled:sweep").expect("uri"),
         DOC.to_string(),
         1,
+        None,
     )
 }
 
@@ -60,6 +61,7 @@ fn diagnostics_carry_no_secrets() {
         Url::parse("untitled:sweep-broken").expect("uri"),
         "token = secret(\"s3cr3t-lsp-sweep\")\nport = \n".to_string(),
         1,
+        None,
     );
     for d in analysis::diagnostics_for(&doc) {
         scrubbed(&d.message, "diagnostic");

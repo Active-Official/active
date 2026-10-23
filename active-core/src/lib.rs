@@ -28,7 +28,8 @@ pub use ir::{
 pub use lint::{lint, lint_with, LintOptions};
 pub use parser::{
     parse, parse_file, parse_file_with_trust, parse_recovering, parse_text_recovering_with_file,
-    parse_text_with_file, parse_with, IncludeLoader, Lexed, ParseOptions,
+    parse_text_with_file, parse_with, validate_patch_path, IncludeLoader, Lexed, ParseOptions,
+    PathSeg,
 };
 pub use types::{Constraint, Unit};
 

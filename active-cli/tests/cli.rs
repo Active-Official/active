@@ -1656,3 +1656,43 @@ fn repair_fails_closed_on_unrepairable() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("H008"), "{stderr}");
 }
+
+#[test]
+fn eval_path_selects_demanded_cone() {
+    let f = fixture(
+        "cone.active",
+        "server = { host = \"h\", ports = [80, 443] }\n",
+    );
+    let out = active()
+        .args(["eval", "--path", "server.ports[1]"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "443",
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+#[test]
+fn eval_path_unknown_fails_closed() {
+    let f = fixture("cone_missing.active", "server = { host = \"h\" }\n");
+    let out = active()
+        .args(["eval", "--path", "server.missing"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success(), "unknown path must fail");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("unknown path"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

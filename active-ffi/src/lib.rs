@@ -763,6 +763,53 @@ pub unsafe extern "C" fn active_value_is_tainted(value: *const ActiveValue) -> b
     })
 }
 
+/// Demanded-cone projection (PROPOSAL §2.2, the FFI equivalent of
+/// `active eval --path`): JSON for the sub-value at a dotted/index
+/// path (`server.host`, `ports[0]`), or null when the path is unknown
+/// or malformed (detail via `active_last_error`). The value is
+/// evaluated whole upstream — budgets guard the full graph — and only
+/// the cone crosses the boundary. Returns an owned string the host
+/// frees with `active_string_free`.
+///
+/// # Safety
+///
+/// The value must be a live handle; the path bytes must be readable
+/// for `path_len` when non-null. Null value or null path yields null.
+#[no_mangle]
+pub unsafe extern "C" fn active_value_project(
+    value: *const ActiveValue,
+    path: *const std::os::raw::c_char,
+    path_len: usize,
+) -> *mut std::os::raw::c_char {
+    guard(std::ptr::null_mut(), || {
+        if value.is_null() || path.is_null() {
+            set_last(ACTIVE_ERR_NULL_HANDLE);
+            return std::ptr::null_mut();
+        }
+        // SAFETY: live handle + readable path per the contract above.
+        let value = unsafe { &*value };
+        let bytes = unsafe { std::slice::from_raw_parts(path as *const u8, path_len) };
+        let path_str = match std::str::from_utf8(bytes) {
+            Ok(s) => s,
+            Err(_) => {
+                set_last(ACTIVE_ERR_UTF8);
+                return std::ptr::null_mut();
+            }
+        };
+        match active_core::convert::project_path(&value.value, path_str) {
+            Ok(cone) => {
+                let json = active_core::convert::value_to_pretty_json(cone);
+                set_last(ACTIVE_ERR_OK);
+                cstring_lossy(&json).into_raw()
+            }
+            Err(_) => {
+                set_last(ACTIVE_ERR_BAD_ARGUMENT);
+                std::ptr::null_mut()
+            }
+        }
+    })
+}
+
 /// Coarse type code (F-015): 0 null, 1 bool, 2 int, 3 float, 4 string,
 /// 5 duration, 6 quantity, 7 array, 8 table, 9 secret, 10 blob
 /// (identity; additive tag, existing codes unchanged); u32::MAX on null.
@@ -1268,6 +1315,41 @@ mod tests {
             assert!(!json.contains("hunter2"), "{json}");
             assert!(!active_value_is_secret(value));
             active_string_free(json_ptr);
+            active_value_free(value);
+            active_module_free(module);
+        }
+    }
+
+    #[test]
+    fn eval_value_project_selects_cone() {
+        unsafe {
+            let src = b"server = { host = \"h\", ports = [80, 443] }\n";
+            let module = active_module_parse(src.as_ptr(), src.len(), std::ptr::null());
+            assert!(!module.is_null());
+            let value = active_eval(module, std::ptr::null());
+            assert!(!value.is_null());
+            // Demanded cone over the FFI boundary (PE.001).
+            let path = b"server.ports[1]";
+            let cone_ptr = active_value_project(
+                value,
+                path.as_ptr() as *const std::os::raw::c_char,
+                path.len(),
+            );
+            assert!(!cone_ptr.is_null());
+            let cone = std::ffi::CStr::from_ptr(cone_ptr)
+                .to_string_lossy()
+                .into_owned();
+            assert_eq!(cone.trim(), "443", "{cone}");
+            active_string_free(cone_ptr);
+            // Unknown path fails closed (null + BAD_ARGUMENT).
+            let bad = b"server.missing";
+            let bad_ptr = active_value_project(
+                value,
+                bad.as_ptr() as *const std::os::raw::c_char,
+                bad.len(),
+            );
+            assert!(bad_ptr.is_null());
+            assert_eq!(active_last_error(), ACTIVE_ERR_BAD_ARGUMENT);
             active_value_free(value);
             active_module_free(module);
         }

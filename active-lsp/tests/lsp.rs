@@ -13,7 +13,7 @@ fn untitled(name: &str) -> lsp_types::Url {
 }
 
 fn open_untitled(name: &str, text: &str) -> analysis::Doc {
-    analysis::open_doc(untitled(name), text.to_string(), 1)
+    analysis::open_doc(untitled(name), text.to_string(), 1, None)
 }
 
 fn no_lookup() -> impl Fn(&str) -> Option<String> {
@@ -282,7 +282,7 @@ fn missing_include_reports_e017_and_keeps_document() {
         "include \"does-not-exist-xyz.active\"\nport = 1\n",
     );
     let text = std::fs::read_to_string(uri.to_file_path().expect("file uri")).expect("read back");
-    let doc = analysis::open_doc(uri, text, 1);
+    let doc = analysis::open_doc(uri, text, 1, None);
     assert!(
         doc.parse_diags.iter().any(|d| d.code == "E017"),
         "missing include must be E017: {:?}",
@@ -502,7 +502,7 @@ fn definition_jumps_across_includes() {
     );
     let text =
         std::fs::read_to_string(main_uri.to_file_path().expect("file uri")).expect("read back");
-    let doc = analysis::open_doc(main_uri.clone(), text, 1);
+    let doc = analysis::open_doc(main_uri.clone(), text, 1, None);
     // The merged module indexes the included key with its file.
     let found = doc
         .module
@@ -828,7 +828,7 @@ fn include_diagnostics_publish_under_their_own_file() {
     );
     let text =
         std::fs::read_to_string(main_uri.to_file_path().expect("file uri")).expect("read back");
-    let doc = analysis::open_doc(main_uri.clone(), text, 1);
+    let doc = analysis::open_doc(main_uri.clone(), text, 1, None);
     let lookup = |path: &str| std::fs::read_to_string(path).ok();
     let groups = analysis::diagnostics_by_file(&doc, &lookup);
     assert!(groups.len() >= 2, "{groups:?}");
@@ -860,7 +860,7 @@ fn include_diagnostics_publish_under_their_own_file() {
 fn buffer_matching_tolerates_uri_case_differences() {
     use std::collections::HashMap;
     let (uri, path) = temp_fixture("lspcase.active", "port = 1\n");
-    let doc = analysis::open_doc(uri.clone(), "port = 1\n".to_string(), 7);
+    let doc = analysis::open_doc(uri.clone(), "port = 1\n".to_string(), 7, None);
     let mut open = HashMap::new();
     open.insert(uri.to_string(), doc);
     assert_eq!(

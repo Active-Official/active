@@ -42,6 +42,11 @@ pub fn explain_code(code: &str) -> &'static str {
         "W005" => "Resilient default fill (informational): the engine inserted a schema default for a missing key. Harmless in resilient mode; strict mode requires the key written out.",
         "H005" => "Unknown key with a near-identical known key: apply the did-you-mean suggestion (`@rename`) when it matches intent.",
         "S001" => "Dependency cycle: the listed keys depend on each other and no evaluation order exists. Break the cycle by removing one dependency edge.",
+        "B001" => "Malformed blob() call: blob() takes a string media type and string (or secret) data — blob(\"text/plain\", \"...\"). Fix the argument shapes at the span.",
+        "B002" => "Blob payload exceeds the schema max_size: shrink the payload or raise max_size deliberately, never strip the bound to silence it.",
+        "B003" => "Blob materialisation refused: the blob is structurally tainted. Tainted payloads are never emitted — redesign so the consumer needs only the identity.",
+        "B004" => "Blob media type mismatches the schema media_type: the bytes are not what the schema promises. Fix the data or the declared type.",
+        "B005" => "Blob payload unavailable: the identity was re-imported without retained bytes. Re-evaluate from the source document with materialisation enabled.",
         _ => "No canned guidance for this code: the code and span are the contract — read the message, fix the span it names, and re-run check.",
     }
 }

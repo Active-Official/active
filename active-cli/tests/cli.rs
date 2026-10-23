@@ -1258,6 +1258,62 @@ fn capability_handshake_accepts_major_one() {
 }
 
 #[test]
+fn blob_materialise_flag_embeds_payload_and_default_does_not() {
+    let f = fixture("blob_mat.active", "f = blob(\"text/plain\", \"hello\")\n");
+    let plain = active()
+        .args(["eval"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        plain.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&plain.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&plain.stdout);
+    assert!(
+        stdout.contains("blake3:ef8a8525ffd1d32141916f461ccb49c92ee84d57279145268364fb7c1c179eea"),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains("payload_b64"),
+        "identity only without the flag: {stdout}"
+    );
+    let mat = active()
+        .args(["eval", "--materialise-blobs"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        mat.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&mat.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&mat.stdout).contains("\"payload_b64\": \"aGVsbG8=\""),
+        "{}",
+        String::from_utf8_lossy(&mat.stdout)
+    );
+}
+
+#[test]
+fn blob_materialise_refuses_tainted_with_b003() {
+    let f = fixture(
+        "blob_taint.active",
+        "f = blob(\"text/plain\", secret(\"s3cr3t\"))\n",
+    );
+    let out = active()
+        .args(["eval", "--materialise-blobs"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success(), "tainted materialisation must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("B003"), "{stderr}");
+    assert!(!stderr.contains("s3cr3t"), "secret leaked: {stderr}");
+}
+
+#[test]
 fn unknown_budget_profile_fails_fast_with_usage() {
     // A typo'd profile must fail at argument-parse time (clap), not as
     // a runtime bail after the document is read.

@@ -1087,6 +1087,7 @@ impl Parser {
                         | TokenKind::Null
                         | TokenKind::Env
                         | TokenKind::Secret
+                        | TokenKind::Blob
                         | TokenKind::Minus
                         | TokenKind::Bang
                         | TokenKind::LParen
@@ -3628,6 +3629,86 @@ impl Parser {
                 self.add_spanned(Node::Secret { locator }, &tok)
             }
 
+            TokenKind::Blob => {
+                self.bump();
+                // `blob(media_type, data)` — both arguments must be
+                // string literals, except `data` may also be a
+                // `secret(...)` / `secret.env(...)` locator (then the
+                // blob is structurally tainted). `Ident`/`Ref` nodes
+                // (let-bound or key aliases) are allowed through: they
+                // resolve before evaluation, which enforces the string
+                // shape with a type error. Anything else is B001; the
+                // node is still built so parsing continues and
+                // evaluation reports, never panics. Arity errors are
+                // B001 as well (never a generic E001/E002): the call
+                // shape is blob-specific, so peek-guards replace
+                // `expect` for every structural token here.
+                if !matches!(self.peek_kind(), TokenKind::LParen) {
+                    self.error(
+                        "B001",
+                        "blob() takes exactly two arguments: blob(media_type, data)",
+                    );
+                    // Recover with empty parts; evaluation reports.
+                    let empty = self.add_spanned(Node::Literal(Value::String(String::new())), &tok);
+                    self.add_spanned(
+                        Node::ContentAddressed {
+                            media_type: empty,
+                            data: empty,
+                        },
+                        &tok,
+                    )
+                } else {
+                    self.bump(); // consume `(`
+                    let media = self.parse_expression();
+                    let mut arity_ok = true;
+                    if !matches!(self.peek_kind(), TokenKind::Comma) {
+                        self.error(
+                            "B001",
+                            "blob() takes exactly two arguments: blob(media_type, data)",
+                        );
+                        arity_ok = false;
+                    } else {
+                        self.bump(); // consume `,`
+                    }
+                    let data = self.parse_expression();
+                    if !matches!(self.peek_kind(), TokenKind::RParen) {
+                        self.error(
+                            "B001",
+                            "blob() takes exactly two arguments: blob(media_type, data)",
+                        );
+                        arity_ok = false;
+                    } else {
+                        self.bump(); // consume `)`
+                    }
+                    let ok_media = matches!(
+                        self.module.get(media),
+                        Some(Node::Literal(Value::String(_)))
+                            | Some(Node::Ident(_))
+                            | Some(Node::Ref(_))
+                    );
+                    let ok_data = matches!(
+                        self.module.get(data),
+                        Some(Node::Literal(Value::String(_)))
+                            | Some(Node::Secret { .. })
+                            | Some(Node::Ident(_))
+                            | Some(Node::Ref(_))
+                    );
+                    if !arity_ok || !ok_media || !ok_data {
+                        self.error(
+                            "B001",
+                            "blob() takes a string media type and string (or secret) data: blob(\"text/plain\", \"...\")",
+                        );
+                    }
+                    self.add_spanned(
+                        Node::ContentAddressed {
+                            media_type: media,
+                            data,
+                        },
+                        &tok,
+                    )
+                }
+            }
+
             TokenKind::Ident => {
                 self.bump();
                 // Will be turned into Ref during build_graph if it matches a
@@ -4253,6 +4334,8 @@ impl Parser {
                 enum_descriptions: None,
                 requires: None,
                 default: None,
+                blob_media_type: None,
+                blob_max_size: None,
                 deprecated: None,
                 span: Some(span_of(&tok)),
             };
@@ -4482,6 +4565,8 @@ impl Parser {
             (String, "max_len") => &mut field.max_len,
             (String, "pattern") => &mut field.pattern,
             (String, "format") => &mut field.format,
+            (Blob, "media_type") => &mut field.blob_media_type,
+            (Blob, "max_size") => &mut field.blob_max_size,
             (_, "description") => &mut field.description,
             (Enum(_), "descriptions") => &mut field.enum_descriptions,
             (_, "requires") => &mut field.requires,
@@ -5196,6 +5281,10 @@ impl Parser {
                 }
                 Some(Node::Secret { locator }) => {
                     self.module.add_edge(locator, id);
+                }
+                Some(Node::ContentAddressed { media_type, data }) => {
+                    self.module.add_edge(media_type, id);
+                    self.module.add_edge(data, id);
                 }
                 _ => {}
             }

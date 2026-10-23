@@ -3,6 +3,7 @@
 //! This is the alpha production foundation of the Active language.
 
 pub mod ast;
+pub mod blob;
 pub mod convert;
 pub mod diag;
 pub mod eval;

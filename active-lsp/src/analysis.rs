@@ -877,6 +877,8 @@ fn value_kind(value: &Value) -> &'static str {
         Value::Quantity(_, _) => "Quantity",
         Value::Array(_) => "Array",
         Value::Table(_) => "Table",
+        // Identity only: hashes are metadata, never secret material.
+        Value::Blob { .. } => "Blob",
     }
 }
 
@@ -901,6 +903,16 @@ fn render_hover_value(value: &Value) -> String {
         Value::Quantity(n, unit) => format!("{n} {}", unit.suffix()),
         Value::Array(items) => format!("array[{}]", items.len()),
         Value::Table(map) => format!("table{{{}}}", map.len()),
+        // Identity only: hover never renders payload bytes.
+        Value::Blob {
+            hash,
+            size,
+            tainted,
+            ..
+        } => format!(
+            "blob(blake3:{}, size={size}, tainted={tainted})",
+            active_core::blob::hash_hex(hash)
+        ),
     }
 }
 
@@ -1607,7 +1619,7 @@ fn classify(
 ) -> Option<u32> {
     use active_core::parser::TokenKind as K;
     match kind {
-        K::Let | K::Env | K::Secret | K::True | K::False | K::Null => Some(TOK_KEYWORD),
+        K::Let | K::Env | K::Secret | K::Blob | K::True | K::False | K::Null => Some(TOK_KEYWORD),
         K::String(_) | K::SingleString | K::MlString(_) | K::MlSingleString => Some(TOK_STRING),
         K::Integer | K::Float | K::Unit(_) => Some(TOK_NUMBER),
         K::Ident => {

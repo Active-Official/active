@@ -131,6 +131,11 @@ pub struct SchemaField {
     pub enum_descriptions: Option<NodeId>,
     pub requires: Option<NodeId>,
     pub default: Option<NodeId>,
+    /// Blob-only constraints (spec/blob.md §4): expected media type
+    /// (`media_type = "..."`) and maximum payload bytes
+    /// (`max_size = N`). Ignored on non-Blob types (E020 at parse).
+    pub blob_media_type: Option<NodeId>,
+    pub blob_max_size: Option<NodeId>,
     pub deprecated: Option<String>,
     pub span: Option<crate::diag::Span>,
 }
@@ -150,6 +155,8 @@ impl SchemaField {
             enum_descriptions: None,
             requires: None,
             default: None,
+            blob_media_type: None,
+            blob_max_size: None,
             deprecated: None,
             span,
         }
@@ -330,6 +337,14 @@ pub enum Node {
     Secret {
         locator: NodeId,
     },
+    /// Content-addressed blob construction site (PROPOSAL §1.1,
+    /// spec/blob.md): `blob(media_type, data)`. The hash, size, and
+    /// taint are computed at evaluation from the data node; `payload`
+    /// retains the data node for demand-driven materialisation.
+    ContentAddressed {
+        media_type: NodeId,
+        data: NodeId,
+    },
     Ref(NodeId),
     Ident(String), // unresolved name, resolved during graph build
     Interpolate {
@@ -459,6 +474,17 @@ pub enum Value {
     Array(Vec<Value>),
     Table(IndexMap<String, Value>),
     Secret(String), // in production this is zeroized; here plain for demo
+    /// Content-addressed blob identity (PROPOSAL §1.1, spec/blob.md).
+    /// The payload is present only after explicit materialisation;
+    /// tainted blobs never carry a payload. Hashes never appear in
+    /// ordinary Active source — only here, in evaluated values.
+    Blob {
+        hash: [u8; 32],
+        size: u64,
+        tainted: bool,
+        media_type: String,
+        payload: Option<Vec<u8>>,
+    },
 }
 
 impl std::fmt::Debug for Value {
@@ -496,6 +522,19 @@ impl std::fmt::Debug for Value {
             Value::String(s) => write!(f, "{s:?}"),
             Value::DurationMs(ms) => write!(f, "DurationMs({ms})"),
             Value::Quantity(n, unit) => write!(f, "Quantity({n:?}, {unit:?})"),
+            // Identity only: hashes are metadata, payloads never leak
+            // through Debug (tainted or not).
+            Value::Blob {
+                hash,
+                size,
+                media_type,
+                tainted,
+                ..
+            } => write!(
+                f,
+                "Blob(blake3:{}, size={size}, media={media_type:?}, tainted={tainted})",
+                crate::blob::hash_hex(hash)
+            ),
         }
     }
 }
@@ -533,6 +572,43 @@ impl Serialize for Value {
                 serde_json::Value::Object(obj)
             }
             Value::Secret(_) => serde_json::Value::from("***SECRET***"),
+            // Identity shape (spec/blob.md §5): hash, size, media type,
+            // taint bit. Payload bytes serialize ONLY when the value
+            // carries them — set exclusively by explicit
+            // materialisation on an untainted blob.
+            Value::Blob {
+                hash,
+                size,
+                tainted,
+                media_type,
+                payload,
+            } => {
+                let mut inner = serde_json::Map::new();
+                inner.insert(
+                    "hash".to_string(),
+                    serde_json::Value::from(format!("blake3:{}", crate::blob::hash_hex(hash))),
+                );
+                inner.insert("size".to_string(), serde_json::Value::from(*size));
+                inner.insert(
+                    "media_type".to_string(),
+                    serde_json::Value::from(media_type.clone()),
+                );
+                inner.insert("tainted".to_string(), serde_json::Value::from(*tainted));
+                if let Some(bytes) = payload {
+                    inner.insert(
+                        "payload_b64".to_string(),
+                        serde_json::Value::from(base64::Engine::encode(
+                            &base64::engine::general_purpose::STANDARD,
+                            bytes,
+                        )),
+                    );
+                }
+                serde_json::Value::Object(
+                    [("$active.blob".to_string(), serde_json::Value::Object(inner))]
+                        .into_iter()
+                        .collect(),
+                )
+            }
         };
         json.serialize(serializer)
     }

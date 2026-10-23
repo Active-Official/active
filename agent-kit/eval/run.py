@@ -46,6 +46,7 @@ TASKS = [
     ("requires-missing.active", True),
     ("unknown-format.active", True),
     ("descriptions-clean.active", True),
+    ("blob-clean.active", True),
 ]
 
 LOOPS = [

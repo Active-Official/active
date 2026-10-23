@@ -156,6 +156,10 @@ fn ref_targets(module: &Module, id: NodeId) -> HashSet<NodeId> {
             Some(Node::Secret { locator }) => {
                 stack.push(*locator);
             }
+            Some(Node::ContentAddressed { media_type, data }) => {
+                stack.push(*media_type);
+                stack.push(*data);
+            }
             _ => {}
         }
     }

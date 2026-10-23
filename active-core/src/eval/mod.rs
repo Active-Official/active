@@ -55,6 +55,17 @@ pub enum EvalError {
     },
     #[error("secret used in unsafe context")]
     SecretLeak { file: Option<String> },
+    /// Blob materialisation failures (spec/blob.md §8): tainted
+    /// materialisation refused (B003) or payload not retained (B005).
+    /// Value-free by construction: only the code, path, and the fixed
+    /// reason travel — never payload bytes.
+    #[error("blob materialisation refused ({code}): {message}")]
+    BlobError {
+        code: &'static str,
+        message: String,
+        span: Option<Span>,
+        file: Option<String>,
+    },
     /// Schema validation failures (C-031, spec/validation.md) and
     /// constraint failures (C-034, spec/annotations.md): every
     /// violation diagnostic, collected in deterministic order. Strict
@@ -229,6 +240,7 @@ impl EvalError {
             EvalError::TypeError { .. } => "T001",
             EvalError::PatchError { .. } => "E019",
             EvalError::SecretLeak { .. } => "S004",
+            EvalError::BlobError { code, .. } => code,
             EvalError::BudgetExceeded { kind, .. } => match kind {
                 BudgetKind::Nodes => "X001",
                 BudgetKind::WallClock => "X002",
@@ -238,9 +250,18 @@ impl EvalError {
                 BudgetKind::ValueSize => "X006",
             },
             EvalError::ValidationFailed { diagnostics } => {
+                // Pass through the stable code of the first diagnostic
+                // for the documented families. Only B002/B004 can head
+                // a validation failure (B001 is a parse diagnostic;
+                // B003/B005 are materialisation-time eval errors), but
+                // the full family is listed so the contract is explicit.
+                // Constants (not borrows) keep the 'static contract.
+                use crate::blob::code as blob_code;
                 match diagnostics.first().map(|d| d.code.as_str()) {
                     Some("T003") => "T003",
                     Some("T004") => "T004",
+                    Some("B002") => blob_code::TOO_LARGE,
+                    Some("B004") => blob_code::MEDIA_MISMATCH,
                     _ => "T002",
                 }
             }
@@ -251,6 +272,7 @@ impl EvalError {
     pub fn span(&self) -> Option<&Span> {
         match self {
             EvalError::TypeError { span, .. } | EvalError::PatchError { span, .. } => span.as_ref(),
+            EvalError::BlobError { span, .. } => span.as_ref(),
             EvalError::BudgetExceeded { span, .. } => span.as_ref(),
             EvalError::ValidationFailed { diagnostics } => {
                 diagnostics.first().and_then(|d| d.span.as_ref())
@@ -266,6 +288,7 @@ impl EvalError {
             EvalError::TypeError { file, .. } | EvalError::PatchError { file, .. } => {
                 file.as_deref()
             }
+            EvalError::BlobError { file, .. } => file.as_deref(),
             EvalError::SecretLeak { file } => file.as_deref(),
             EvalError::BudgetExceeded { file, .. } => file.as_deref(),
             EvalError::ValidationFailed { diagnostics } => {
@@ -335,6 +358,11 @@ pub struct Engine {
     /// Lazy host lookup consulted on snapshot miss, before defaults
     /// (F-016). `None` preserves legacy behavior exactly.
     pub env_fallback: Option<EnvLookup>,
+    /// Blob payload materialisation (spec/blob.md §5): when true,
+    /// untainted blob values retain their payload bytes (charged
+    /// against the materialised-size budgets); otherwise values carry
+    /// identity only. Tainted blobs never retain payloads either way.
+    pub materialise_blobs: bool,
 }
 
 impl Default for Engine {
@@ -429,6 +457,11 @@ pub(crate) fn measure_value(value: &Value) -> u64 {
         match v {
             Value::String(s) | Value::Secret(s) => {
                 total = total.saturating_add(s.len() as u64);
+            }
+            // Identity leaf of known size (spec/blob.md §6): the
+            // payload is charged at materialisation, not here.
+            Value::Blob { size, .. } => {
+                total = total.saturating_add(*size);
             }
             Value::Array(items) => stack.extend(items.iter()),
             Value::Table(map) => stack.extend(map.values()),
@@ -618,6 +651,23 @@ fn check_dp_bounds(
                     depth[i] = depth[c];
                 }
             }
+            // Blob construction: identity metadata plus the full
+            // payload bytes (children bounds are already computed:
+            // graph edges guarantee topological order). Aliases
+            // inherit this bound through the Ref arm, so N aliases
+            // count N times toward the cumulative total.
+            Some(Node::ContentAddressed { media_type, data }) => {
+                let mut bound = 1u64;
+                for child in [*media_type, *data] {
+                    let c = child.0 as usize;
+                    if c < size.len() {
+                        bound = sat_size(bound, size[c]);
+                        child_depth = child_depth.max(depth[c]);
+                    }
+                }
+                size[i] = bound;
+                depth[i] = child_depth.saturating_add(1).min(depth_cap);
+            }
             _ => {}
         }
         // `>= cap` (not `> limit`): identical for ordinary limits,
@@ -669,7 +719,11 @@ fn check_dp_bounds(
 /// own redacting `Debug` wherever else they are formatted.
 pub struct IncrementalMemo {
     map: HashMap<u64, (Value, Vec<Diagnostic>)>,
-    config: Option<(bool, Option<String>, Budget)>,
+    // (resilient, profile override, budget, materialise flag): any
+    // configuration change clears the store before the walk, so a
+    // flag flip can never serve a stale identity-only tree as
+    // materialised (or vice versa).
+    config: Option<(bool, Option<String>, Budget, bool)>,
     salt: u64,
     pub last_eval_count: u64,
     pub last_memo_hits: u64,
@@ -799,9 +853,24 @@ fn fp_value(hasher: &mut FpHasher, value: &Value) {
         }
         // Same-process memo key only: secrecy rests on the redacting
         // `Debug` impl and export refusal, never on hiding this hash.
+        // Blobs fingerprint by identity (hash + size + taint), never by
+        // payload bytes: same identity ⇒ same value.
         Value::Secret(text) => {
             9u8.hash(hasher);
             text.hash(hasher);
+        }
+        Value::Blob {
+            hash,
+            size,
+            tainted,
+            media_type,
+            ..
+        } => {
+            10u8.hash(hasher);
+            hash.hash(hasher);
+            size.hash(hasher);
+            tainted.hash(hasher);
+            media_type.hash(hasher);
         }
     }
 }
@@ -906,6 +975,11 @@ fn fingerprint_one(
             tag.as_str().hash(&mut hasher);
             child(inner)?.hash(&mut hasher);
         }
+        Node::ContentAddressed { media_type, data } => {
+            12u8.hash(&mut hasher);
+            child(media_type)?.hash(&mut hasher);
+            child(data)?.hash(&mut hasher);
+        }
         _ => return None,
     }
     Some(hasher.finish())
@@ -938,6 +1012,7 @@ impl Engine {
             budget: Budget::default(),
             env: std::collections::HashMap::new(),
             env_fallback: None,
+            materialise_blobs: false,
         }
     }
 
@@ -974,7 +1049,12 @@ impl Engine {
     ) -> Result<(Value, Vec<Diagnostic>), EvalError> {
         // `Budget` compares by value (all fields are `u64`): any
         // configuration change clears the store before the walk.
-        let token = (self.resilient, self.profile_override.clone(), self.budget);
+        let token = (
+            self.resilient,
+            self.profile_override.clone(),
+            self.budget,
+            self.materialise_blobs,
+        );
         if memo.config.as_ref() != Some(&token) {
             memo.map.clear();
             memo.config = Some(token);
@@ -1162,15 +1242,75 @@ impl Engine {
                     secret
                 }
 
+                // Content-addressed blob (PROPOSAL §1.1, spec/blob.md):
+                // hash the resolved bytes, record identity. Bytes are
+                // charged as delta (the DP pass counted the node as a
+                // leaf of known size only after evaluation knows it).
+                // String data is untainted; secret-derived data is
+                // structurally tainted and never retains a payload.
+                Node::ContentAddressed { media_type, data } => {
+                    let media = match values.get(media_type).cloned().unwrap_or(Value::Null) {
+                        Value::String(s) => s,
+                        _ => {
+                            return Err(EvalError::type_error(
+                                "blob() media type must be a string",
+                                module,
+                                node_id,
+                            ));
+                        }
+                    };
+                    let (bytes, tainted) = match values.get(data).cloned().unwrap_or(Value::Null) {
+                        Value::String(s) => (s.into_bytes(), false),
+                        Value::Secret(s) => (s.into_bytes(), true),
+                        _ => {
+                            return Err(EvalError::type_error(
+                                "blob() data must be a string or secret locator",
+                                module,
+                                node_id,
+                            ));
+                        }
+                    };
+                    let size = bytes.len() as u64;
+                    account.charge(module, Some(node_id), size)?;
+                    // Record the actual for reference deltas below:
+                    // aliases re-charge through the Ref arm.
+                    actuals.insert(node_id, 1u64.saturating_add(size));
+                    let hash = crate::blob::hash(&media, &bytes);
+                    let payload = if tainted {
+                        None
+                    } else if self.materialise_blobs {
+                        Some(bytes)
+                    } else {
+                        None
+                    };
+                    Value::Blob {
+                        hash,
+                        size,
+                        tainted,
+                        media_type: media,
+                        payload,
+                    }
+                }
+
                 Node::Ref(id) => {
                     let v = values.get(id).cloned().unwrap_or(Value::Null);
                     // Dynamic targets (env/secret actuals recorded at
                     // production) charge actual-minus-bound per clone;
                     // static targets stay within DP bounds (delta zero,
-                    // no measuring needed).
+                    // no measuring needed). Retained blob payloads are
+                    // the exception: cloning duplicates the bytes in
+                    // memory, so every alias charges the payload again
+                    // (fail-safe over-counting, same as the DP total).
                     if let Some(actual) = actuals.get(id) {
                         let bound = dp_bounds.get(id.0 as usize).copied().unwrap_or(1);
                         account.charge(module, Some(node_id), actual.saturating_sub(bound))?;
+                    }
+                    if let Value::Blob {
+                        payload: Some(bytes),
+                        ..
+                    } = &v
+                    {
+                        account.charge(module, Some(node_id), bytes.len() as u64)?;
                     }
                     v
                 }
@@ -1221,7 +1361,13 @@ impl Engine {
                                         Value::Null => out.push_str("null"),
                                         // Structured values have no string
                                         // form: interpolating them is a type
-                                        // error, never a placeholder.
+                                        // error, never a placeholder. Blobs
+                                        // interpolate as their stable identity
+                                        // reference (never payload bytes).
+                                        Value::Blob { hash, .. } => out.push_str(&format!(
+                                            "$active.blob(blake3:{})",
+                                            crate::blob::hash_hex(hash)
+                                        )),
                                         Value::Array(_) | Value::Table(_) => {
                                             return Err(EvalError::type_error(
                                                 format!(
@@ -1701,6 +1847,7 @@ pub(crate) fn value_kind_name(v: &Value) -> String {
         Value::Array(_) => "array".into(),
         Value::Table(_) => "table".into(),
         Value::Secret(_) => "secret".into(),
+        Value::Blob { .. } => "blob".into(),
     }
 }
 

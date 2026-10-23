@@ -1,0 +1,4 @@
+schema = {
+  logo = Blob(max_size = 100),
+}
+logo = blob("text/plain", "hello")

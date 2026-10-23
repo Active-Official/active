@@ -127,6 +127,7 @@ fn opt_string(value: Option<String>) -> JsonValue {
 fn stable_type(field: &SchemaField) -> String {
     match &field.typ {
         ActiveType::Enum(_) => "Enum".to_string(),
+        ActiveType::Blob => "Blob".to_string(),
         other => other.name(),
     }
 }

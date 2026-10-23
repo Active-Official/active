@@ -44,11 +44,75 @@ pub fn value_to_json(v: &Value) -> JsonValue {
             JsonValue::Object(obj)
         }
         Value::Secret(_) => json!("***SECRET***"),
+        // Identity shape, same contract as the Serialize impl:
+        // payload bytes serialize ONLY when the value carries them,
+        // which happens exclusively under explicit materialisation
+        // (engine.materialise_blobs) on an untainted blob.
+        Value::Blob {
+            hash,
+            size,
+            tainted,
+            media_type,
+            payload,
+        } => {
+            let mut inner = serde_json::Map::new();
+            inner.insert(
+                "hash".to_string(),
+                json!(format!("blake3:{}", crate::blob::hash_hex(hash))),
+            );
+            inner.insert("size".to_string(), json!(size));
+            inner.insert("media_type".to_string(), json!(media_type));
+            inner.insert("tainted".to_string(), json!(tainted));
+            if let Some(bytes) = payload {
+                inner.insert(
+                    "payload_b64".to_string(),
+                    json!(base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        bytes
+                    )),
+                );
+            }
+            json!({ "$active.blob": inner })
+        }
     }
 }
 
 pub fn value_to_pretty_json(v: &Value) -> String {
     serde_json::to_string_pretty(&value_to_json(v)).unwrap_or_else(|_| "{}".into())
+}
+
+/// Enforce a materialisation demand (spec/blob.md §5, `--materialise-blobs`):
+/// every blob in the tree must carry its payload. Tainted blobs fail
+/// with B003 (never emitted), payload-less untainted blobs fail with
+/// B005 (fail closed instead of silently emitting identity). Called by
+/// entry points after evaluation when the caller demanded materialised
+/// output; identity-only paths never call this.
+pub fn require_materialised(v: &Value) -> Result<(), crate::eval::EvalError> {
+    let mut stack = vec![v];
+    while let Some(node) = stack.pop() {
+        match node {
+            Value::Array(items) => stack.extend(items.iter()),
+            Value::Table(map) => stack.extend(map.values()),
+            Value::Blob { tainted: true, .. } => {
+                return Err(crate::eval::EvalError::BlobError {
+                    code: crate::blob::code::TAINTED_MATERIALISE,
+                    message: "tainted blob payloads are never emitted".to_string(),
+                    span: None,
+                    file: None,
+                });
+            }
+            Value::Blob { payload: None, .. } => {
+                return Err(crate::eval::EvalError::BlobError {
+                    code: crate::blob::code::NO_PAYLOAD,
+                    message: "blob payload was not retained; re-evaluate from source with materialisation enabled".to_string(),
+                    span: None,
+                    file: None,
+                });
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// Active brace-style emission (`key = value` lines plus `[table]`
@@ -89,6 +153,17 @@ fn value_to_toml_literal(v: &Value) -> String {
         Value::DurationMs(ms) => format!("{}ms", ms),
         Value::Quantity(n, unit) => unit.format_amount(*n),
         Value::Secret(_) => "\"***SECRET***\"".into(),
+        // Identity reference: TOML carries the blob identity, never
+        // payload bytes (same contract as JSON).
+        Value::Blob {
+            hash,
+            size,
+            media_type,
+            ..
+        } => format!(
+            "\"$active.blob(blake3:{}, size={size}, media={media_type})\"",
+            crate::blob::hash_hex(hash)
+        ),
         Value::Array(arr) => {
             let parts: Vec<String> = arr.iter().map(value_to_toml_literal).collect();
             format!("[{}]", parts.join(", "))

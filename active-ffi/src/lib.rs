@@ -738,8 +738,34 @@ pub unsafe extern "C" fn active_value_is_secret(value: *const ActiveValue) -> bo
     })
 }
 
+/// Taint query for hosts (F-015 extension, spec/blob.md §7): true for
+/// secret values and for structurally tainted blobs — anything whose
+/// payload bytes must never cross the boundary. Identity metadata
+/// (hash, size, media type) is safe to read; payloads are not.
+///
+/// # Safety
+///
+/// The value must be a live handle; null yields false without
+/// dereference.
+#[no_mangle]
+pub unsafe extern "C" fn active_value_is_tainted(value: *const ActiveValue) -> bool {
+    guard(false, || {
+        if value.is_null() {
+            set_last(ACTIVE_ERR_NULL_HANDLE);
+            return false;
+        }
+        // SAFETY: live handle per docs/FFI.md section 1.
+        let value = unsafe { &*value };
+        matches!(
+            value.value,
+            Value::Secret(_) | Value::Blob { tainted: true, .. }
+        )
+    })
+}
+
 /// Coarse type code (F-015): 0 null, 1 bool, 2 int, 3 float, 4 string,
-/// 5 duration, 6 quantity, 7 array, 8 table, 9 secret; u32::MAX on null.
+/// 5 duration, 6 quantity, 7 array, 8 table, 9 secret, 10 blob
+/// (identity; additive tag, existing codes unchanged); u32::MAX on null.
 #[no_mangle]
 /// # Safety
 ///
@@ -764,6 +790,9 @@ pub unsafe extern "C" fn active_value_type(value: *const ActiveValue) -> u32 {
             Value::Array(_) => 7,
             Value::Table(_) => 8,
             Value::Secret(_) => 9,
+            // Additive tag for the Blob identity (PROPOSAL §1.1):
+            // existing tags are unchanged (frozen C ABI v1).
+            Value::Blob { .. } => 10,
         }
     })
 }

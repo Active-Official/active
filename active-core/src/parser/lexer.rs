@@ -116,6 +116,7 @@ pub enum TokenKind {
     Let,
     Env,
     Secret,
+    Blob,
 
     // Operators
     Assign,        // =
@@ -947,6 +948,7 @@ impl Lexer {
                         "null" => TokenKind::Null,
                         "env" => TokenKind::Env,
                         "secret" => TokenKind::Secret,
+                        "blob" => TokenKind::Blob,
                         _ => TokenKind::Ident,
                     };
                     tokens.push(self.make_token(kind, s, l, col));

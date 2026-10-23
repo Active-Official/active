@@ -73,6 +73,16 @@ parses leave it unset and tools fall back to the input filename.
 | T005 | `schema violation at '<path>': unexpected key '<key>' in closed table` | value expression span when resolvable (the token that produced the value), else the schema table span | A value key has no schema field inside a `closed = true` table (C-032). Key names are author-written identifiers, safe to quote |
 | T006 | `constraint violation at '<path>': <source> does not hold (actual: <rendered>)` / `constraint violation at '<path>': <source> must evaluate to a boolean, got <kind>` | value span when resolvable, else the annotation comment span | A `@constraint` predicate fails (C-034). `<source>` is the author-written payload, truncated at 120 chars and rendered generic when it contains `secret(…)`; `<rendered>` is the actual value rendered safely (secrets as `secret`, truncation at 120 chars) |
 
+### B0xx — Blob / content-addressed values (evaluation + validation, severity Error)
+
+| Code | Message | Span | Emitted when |
+|---|---|---|---|
+| B001 | `blob() takes a string media type and string (or secret) data: blob("text/plain", "...")` | call site | Malformed `blob()` call (spec/blob.md §8): non-literal arguments or wrong arity; the node is still built so evaluation reports instead of panicking |
+| B002 | `schema violation at '<path>': blob size <n> exceeds max_size <m>` | schema field span | Blob payload exceeds the schema `max_size` (spec/blob.md §4) |
+| B003 | `blob materialisation refused (B003): tainted blob payloads are never emitted` | none (demand-time) | `--materialise-blobs` demanded a tainted blob; fail closed with identity withheld (spec/blob.md §5) |
+| B004 | `schema violation at '<path>': blob media type '<a>' does not match expected '<b>'` | schema field span | Blob media type mismatches the schema `media_type` (exact match, spec/blob.md §4) |
+| B005 | `blob materialisation refused (B005): blob payload was not retained; re-evaluate from source with materialisation enabled` | none (demand-time) | `--materialise-blobs` demanded a payload-less blob; fail closed instead of silently emitting identity (spec/blob.md §5) |
+
 ### L0xx — Lint (linter, severity Warning, C-042)
 
 | Code | Message | Span | Emitted when |

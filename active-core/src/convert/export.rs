@@ -83,6 +83,8 @@ fn toml_kind(v: &Value) -> u8 {
         Value::Int(_) => 2,
         Value::Float(_) => 3,
         Value::String(_) | Value::DurationMs(_) | Value::Quantity(_, _) | Value::Secret(_) => 4,
+        // Blobs export as identity tables (kind 6 with the rest).
+        Value::Blob { .. } => 6,
         Value::Array(_) => 5,
         Value::Table(_) => 6,
     }
@@ -114,6 +116,38 @@ fn build_toml_value(v: &Value, path: &str, diags: &mut Vec<Diagnostic>) -> Optio
         Value::DurationMs(ms) => Some(toml::Value::String(format!("{ms}ms"))),
         Value::Quantity(n, unit) => Some(toml::Value::String(unit.format_amount(*n))),
         Value::Secret(_) => Some(toml::Value::String("***SECRET***".to_string())),
+        // Identity table: hash, size, media type, taint. Payload bytes
+        // ride along only when the value carries them (explicit
+        // materialisation demand); identity-only values omit the key.
+        Value::Blob {
+            hash,
+            size,
+            tainted,
+            media_type,
+            payload,
+        } => {
+            let mut map = toml::map::Map::new();
+            map.insert(
+                "$active.blob".to_string(),
+                toml::Value::String(format!("blake3:{}", crate::blob::hash_hex(hash))),
+            );
+            map.insert("size".to_string(), toml::Value::Integer(*size as i64));
+            map.insert(
+                "media_type".to_string(),
+                toml::Value::String(media_type.clone()),
+            );
+            map.insert("tainted".to_string(), toml::Value::Boolean(*tainted));
+            if let Some(bytes) = payload {
+                map.insert(
+                    "payload_b64".to_string(),
+                    toml::Value::String(base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        bytes,
+                    )),
+                );
+            }
+            Some(toml::Value::Table(map))
+        }
         Value::Array(items) => {
             let mut out = Vec::with_capacity(items.len());
             for (i, item) in items.iter().enumerate() {

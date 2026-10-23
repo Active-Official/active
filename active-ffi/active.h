@@ -262,8 +262,22 @@ char *active_value_to_json(const struct ActiveValue *value);
 bool active_value_is_secret(const struct ActiveValue *value);
 
 /**
+ * Taint query for hosts (F-015 extension, spec/blob.md §7): true for
+ * secret values and for structurally tainted blobs — anything whose
+ * payload bytes must never cross the boundary. Identity metadata
+ * (hash, size, media type) is safe to read; payloads are not.
+ *
+ * # Safety
+ *
+ * The value must be a live handle; null yields false without
+ * dereference.
+ */
+bool active_value_is_tainted(const struct ActiveValue *value);
+
+/**
  * Coarse type code (F-015): 0 null, 1 bool, 2 int, 3 float, 4 string,
- * 5 duration, 6 quantity, 7 array, 8 table, 9 secret; u32::MAX on null.
+ * 5 duration, 6 quantity, 7 array, 8 table, 9 secret, 10 blob
+ * (identity; additive tag, existing codes unchanged); u32::MAX on null.
  * # Safety
  *
  * The value must be a live handle; null yields `u32::MAX` without

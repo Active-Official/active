@@ -452,6 +452,8 @@ impl<'a> Formatter<'a> {
             ("max_len", field.max_len),
             ("pattern", field.pattern),
             ("format", field.format),
+            ("media_type", field.blob_media_type),
+            ("max_size", field.blob_max_size),
             ("description", field.description),
             ("requires", field.requires),
             ("default", field.default),
@@ -641,6 +643,13 @@ impl<'a> Formatter<'a> {
             },
             Some(Node::Secret { locator }) => {
                 format!("secret({})", self.render_expr(*locator))
+            }
+            Some(Node::ContentAddressed { media_type, data }) => {
+                format!(
+                    "blob({}, {})",
+                    self.render_expr(*media_type),
+                    self.render_expr(*data)
+                )
             }
             Some(Node::Ref(target)) => self
                 .names
@@ -867,6 +876,10 @@ fn render_literal(v: &Value) -> String {
         }
         // Never emit secret material; the marker is the canonical form.
         Value::Secret(_) => "\"***SECRET***\"".into(),
+        // Source fidelity: the formatter reprints what the user wrote.
+        // Blob payloads are expressions in source; re-render the call
+        // shape with the same literal escaping as strings.
+        Value::Blob { .. } => "\"$active.blob\"".into(),
     }
 }
 

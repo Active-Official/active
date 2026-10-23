@@ -130,6 +130,12 @@ enum Commands {
         /// only, never values, sources, or secrets) as JSONL on stderr
         #[arg(long)]
         trace: bool,
+        /// Materialise untainted blob payloads into the output
+        /// (`payload_b64` alongside the identity; spec/blob.md §5).
+        /// Tainted blobs never materialise. Payload bytes are charged
+        /// against the materialised-size budgets.
+        #[arg(long)]
+        materialise_blobs: bool,
         #[command(flatten)]
         budget: BudgetArgs,
     },
@@ -577,13 +583,16 @@ fn main() -> anyhow::Result<()> {
             trust_keys,
             profile,
             trace,
+            materialise_blobs,
             budget,
         } => {
             let name = file.to_string_lossy().to_string();
             let trust = load_trust(&trust_keys)?;
             let module = parse_input(&file, resilient, allow_parent_escapes, &trust)?;
 
-            let engine = engine(resilient, &profile, budget.resolve()?);
+            let mut eng = engine(resilient, &profile, budget.resolve()?);
+            eng.materialise_blobs = materialise_blobs;
+            let engine = eng;
             active_core::trace::set_tracing(trace);
             let (value, diags) = match engine.evaluate(&module) {
                 Ok(out) => {
@@ -598,6 +607,16 @@ fn main() -> anyhow::Result<()> {
             };
             for d in &diags {
                 report(d, &name);
+            }
+
+            // Explicit materialisation demand (spec/blob.md §5): fail
+            // closed on tainted (B003) or payload-less (B005) blobs
+            // instead of silently emitting identity.
+            if materialise_blobs {
+                active_core::convert::require_materialised(&value).map_err(|e| {
+                    report_eval_error(&e, &name);
+                    anyhow::anyhow!("evaluation failed")
+                })?;
             }
 
             match format.as_str() {

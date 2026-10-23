@@ -1075,7 +1075,79 @@ impl<'a> Validator<'a> {
                     spans,
                 );
             }
+            (
+                ActiveType::Blob,
+                Value::Blob {
+                    size, media_type, ..
+                },
+            ) => {
+                self.check_blob_bounds(field, schema_id, *size, media_type, path, spans);
+            }
             _ => {}
+        }
+    }
+
+    /// Blob constraints (spec/blob.md §4, §8): `max_size` breach is
+    /// B002, `media_type` mismatch is B004. Both are value-free:
+    /// sizes and media types are metadata, never secret material.
+    fn check_blob_bounds(
+        &mut self,
+        field: &SchemaField,
+        schema_id: NodeId,
+        size: u64,
+        media_type: &str,
+        path: &str,
+        spans: (Option<Span>, Option<String>),
+    ) {
+        if let Some(max_id) = field.blob_max_size {
+            match self.values.get(&max_id) {
+                Some(Value::Int(max)) if *max >= 0 => {
+                    if size > *max as u64 {
+                        self.push(
+                            crate::blob::code::TOO_LARGE,
+                            format!(
+                                "schema violation at '{}': blob size {} exceeds max_size {}",
+                                display_path(path),
+                                size,
+                                max,
+                            ),
+                            path,
+                            spans.clone(),
+                        );
+                    }
+                }
+                // Schema bug, reported once per field like a bad
+                // pattern: max_size must be a non-negative integer.
+                _ if self.bug_once(schema_id, "blob_max_size") => {
+                    self.violation(path, "invalid max_size in schema", spans.clone());
+                }
+                _ => {}
+            }
+        }
+        if let Some(media_id) = field.blob_media_type {
+            match self.values.get(&media_id) {
+                Some(Value::String(expected)) => {
+                    if media_type != expected {
+                        self.push(
+                            crate::blob::code::MEDIA_MISMATCH,
+                            format!(
+                                "schema violation at '{}': blob media type '{}' does not match expected '{}'",
+                                display_path(path),
+                                media_type,
+                                expected,
+                            ),
+                            path,
+                            spans,
+                        );
+                    }
+                }
+                // Schema bug, reported once per field: media_type must
+                // be a string.
+                _ if self.bug_once(schema_id, "blob_media_type") => {
+                    self.violation(path, "invalid media_type in schema", spans);
+                }
+                _ => {}
+            }
         }
     }
 
@@ -1638,6 +1710,10 @@ fn subtree_has_secret(module: &Module, expr: NodeId) -> bool {
             Some(Node::Env {
                 default: Some(def), ..
             }) => stack.push(*def),
+            Some(Node::ContentAddressed { media_type, data }) => {
+                stack.push(*media_type);
+                stack.push(*data);
+            }
             _ => {}
         }
     }
@@ -1660,6 +1736,10 @@ fn render_constrained(value: &Value) -> String {
         Value::Quantity(n, unit) => unit.format_amount(*n),
         Value::Array(_) => "array".to_string(),
         Value::Table(_) => "table".to_string(),
+        // Identity only: hashes are metadata, never secret material.
+        Value::Blob { hash, size, .. } => {
+            format!("blob(blake3:{}, size={size})", crate::blob::hash_hex(hash))
+        }
     };
     truncate_120(&text)
 }
@@ -1707,6 +1787,8 @@ fn table_has(table: &indexmap::IndexMap<String, Value>, dotted: &str) -> bool {
         Some(Value::Array(items)) => !items.is_empty(),
         Some(Value::Table(fields)) => !fields.is_empty(),
         Some(Value::Secret(_)) => true,
+        // A present blob always counts as enabled (identity present).
+        Some(Value::Blob { .. }) => true,
     }
 }
 
@@ -1806,6 +1888,7 @@ fn type_accepts(typ: &ActiveType, value: &Value) -> bool {
             | (Duration, Value::DurationMs(_))
             | (Bytes, Value::Int(_))
             | (Secret, Value::Secret(_))
+            | (Blob, Value::Blob { .. })
             | (Any, _)
             | (Table { .. }, Tab(_))
             | (Enum(_), Value::String(_))

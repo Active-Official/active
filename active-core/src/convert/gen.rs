@@ -162,7 +162,8 @@ fn sanitize_ident(s: &str, fallback: &str) -> String {
 /// Codegen pipeline version (CHECKLIST C.008): bump on any output-shape
 /// change in any target. Emitters stamp it into every artifact next to
 /// the workspace version so agents can detect stale bindings.
-pub const CODEGEN_VERSION: u32 = 1;
+/// v2: Blob identity shape (x-active-blob / ActiveBlob) on all targets.
+pub const CODEGEN_VERSION: u32 = 2;
 
 /// Single-line generated-file header for text targets (`prefix` is the
 /// comment marker: `//` for TS/Go/Rust, `#` for Python).
@@ -331,6 +332,17 @@ fn json_schema_field(module: &Module, field: &SchemaField) -> JsonValue {
                 "description".to_string(),
                 JsonValue::String("secret value, redacted as ***SECRET*** on export".to_string()),
             );
+        }
+        // Blobs export as their identity object (spec/blob.md §5).
+        ActiveType::Blob => {
+            obj.insert("type".to_string(), JsonValue::String("object".to_string()));
+            obj.insert("x-active-blob".to_string(), JsonValue::Bool(true));
+            if let Some(media) = literal_string(module, field.blob_media_type) {
+                obj.insert("x-active-media-type".to_string(), JsonValue::String(media));
+            }
+            if let Some(max) = literal_int(module, field.blob_max_size) {
+                obj.insert("x-active-max-size".to_string(), JsonValue::from(max));
+            }
         }
         ActiveType::Any => return JsonValue::Bool(true),
     }
@@ -506,6 +518,7 @@ impl TsGen<'_> {
                 "number".to_string()
             }
             ActiveType::String | ActiveType::Secret => "string".to_string(),
+            ActiveType::Blob => "{ $active.blob: { hash: string; size: number; media_type: string; tainted: boolean } }".to_string(),
             ActiveType::Table { .. } => "Record<string, unknown>".to_string(),
             ActiveType::Enum(members) => members
                 .iter()
@@ -610,6 +623,7 @@ impl TsGen<'_> {
             ActiveType::Float => "z.number()".to_string(),
             ActiveType::Duration | ActiveType::Bytes => "z.number().int()".to_string(),
             ActiveType::Secret => "z.string()".to_string(),
+            ActiveType::Blob => "z.object({ \"$active.blob\": z.object({ hash: z.string(), size: z.number(), media_type: z.string(), tainted: z.boolean() }) })".to_string(),
             ActiveType::Table { .. } => "z.record(z.string(), z.unknown())".to_string(),
             ActiveType::Any => "z.unknown()".to_string(),
             ActiveType::Enum(members) => {
@@ -707,6 +721,23 @@ pub fn schema_to_go(module: &Module, root_name: &str) -> Result<String, String> 
     };
     let root_name = gen.type_name(root, pascal_case(&sanitize_ident(root_name, "Config")));
     gen.emit_table(&root_name, root);
+    if module.arena.iter().any(|n| {
+        matches!(
+            n,
+            Node::SchemaField {
+                field: SchemaField {
+                    typ: ActiveType::Blob,
+                    ..
+                },
+            }
+        )
+    }) {
+        // Shared identity shape for Blob fields (spec/blob.md §5):
+        // hash, size, media type, taint. Payloads never cross codegen.
+        gen.out.push_str(
+            "\ntype ActiveBlob struct {\n\tHash string `json:\"hash\"`\n\tSize uint64 `json:\"size\"`\n\tMediaType string `json:\"media_type\"`\n\tTainted bool `json:\"tainted\"`\n}\n",
+        );
+    }
     Ok(gen.out)
 }
 
@@ -922,6 +953,7 @@ impl GoGen<'_> {
             ActiveType::Int | ActiveType::Duration | ActiveType::Bytes => "int64".to_string(),
             ActiveType::Float => "float64".to_string(),
             ActiveType::String | ActiveType::Secret | ActiveType::Enum(_) => "string".to_string(),
+            ActiveType::Blob => "ActiveBlob".to_string(),
             ActiveType::Table { .. } => "map[string]interface{}".to_string(),
         }
     }
@@ -997,6 +1029,22 @@ pub fn schema_to_rust(module: &Module, root_name: &str) -> Result<String, String
     };
     let root_name = gen.type_name(root, pascal_case(&sanitize_ident(root_name, "Config")));
     gen.emit_table(&root_name, root);
+    if module.arena.iter().any(|n| {
+        matches!(
+            n,
+            Node::SchemaField {
+                field: SchemaField {
+                    typ: ActiveType::Blob,
+                    ..
+                },
+            }
+        )
+    }) {
+        // Shared identity shape for Blob fields (spec/blob.md §5).
+        gen.out.push_str(
+            "\n#[derive(Debug, Clone, Serialize, Deserialize)]\npub struct ActiveBlob {\n    pub hash: String,\n    pub size: u64,\n    pub media_type: String,\n    pub tainted: bool,\n}\n",
+        );
+    }
     Ok(gen.out)
 }
 
@@ -1123,6 +1171,9 @@ impl RustGen<'_> {
                 ActiveType::Int => "i64".to_string(),
                 ActiveType::Float => "f64".to_string(),
                 ActiveType::String | ActiveType::Secret => "String".to_string(),
+                // Shared identity shape (spec/blob.md §5), emitted once
+                // below as `ActiveBlob`: hash, size, media type, taint.
+                ActiveType::Blob => "ActiveBlob".to_string(),
                 ActiveType::Duration | ActiveType::Bytes => "u64".to_string(),
                 ActiveType::Table { .. } => {
                     "std::collections::HashMap<String, serde_json::Value>".to_string()
@@ -1185,6 +1236,22 @@ pub fn schema_to_python(module: &Module, root_name: &str) -> Result<String, Stri
     };
     let root_name = gen.type_name(root, pascal_case(&sanitize_ident(root_name, "Config")));
     gen.emit_table(&root_name, root);
+    if module.arena.iter().any(|n| {
+        matches!(
+            n,
+            Node::SchemaField {
+                field: SchemaField {
+                    typ: ActiveType::Blob,
+                    ..
+                },
+            }
+        )
+    }) {
+        // Shared identity shape for Blob fields (spec/blob.md §5).
+        gen.out.push_str(
+            "\n\nclass ActiveBlob(TypedDict):\n    hash: str\n    size: int\n    media_type: str\n    tainted: bool\n",
+        );
+    }
     Ok(gen.out)
 }
 
@@ -1359,6 +1426,9 @@ impl PythonGen<'_> {
             ActiveType::Int | ActiveType::Duration | ActiveType::Bytes => "int".to_string(),
             ActiveType::Float => "float".to_string(),
             ActiveType::String | ActiveType::Secret => "str".to_string(),
+            // Shared identity shape (spec/blob.md §5), emitted once
+            // below as an `ActiveBlob` TypedDict.
+            ActiveType::Blob => "ActiveBlob".to_string(),
             ActiveType::Enum(members) => {
                 let quoted: Vec<String> = members.iter().map(|m| py_string(m)).collect();
                 format!("Literal[{}]", quoted.join(", "))

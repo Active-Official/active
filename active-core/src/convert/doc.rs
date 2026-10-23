@@ -303,6 +303,7 @@ fn value_kind_name(val: &Value) -> String {
         Value::Array(_) => "Array".to_string(),
         Value::Table(map) => format!("Table({})", map.len()),
         Value::Secret(_) => "Secret".to_string(),
+        Value::Blob { .. } => "Blob".to_string(),
     }
 }
 
@@ -323,6 +324,10 @@ fn render_value(val: &Value) -> String {
         },
         Value::Array(items) => format!("array[{}]", items.len()),
         Value::Table(map) => format!("table{{{}}}", map.len()),
+        // Identity only: docs never carry payload bytes.
+        Value::Blob { hash, size, .. } => {
+            format!("blob(blake3:{}, size={size})", crate::blob::hash_hex(hash))
+        }
     }
 }
 

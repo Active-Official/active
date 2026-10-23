@@ -316,9 +316,14 @@ pub enum ActiveType {
     String,
     Duration,
     Bytes,
-    Table { closed: bool },
+    Table {
+        closed: bool,
+    },
     Enum(Vec<String>),
     Secret,
+    /// Content-addressed blob (PROPOSAL §1.1, spec/blob.md): bare
+    /// `Blob` or `Blob(media_type = "...", max_size = N)`.
+    Blob,
     Any,
 }
 
@@ -337,6 +342,7 @@ impl ActiveType {
             "Bytes" => Some(ActiveType::Bytes),
             "Table" => Some(ActiveType::Table { closed: false }),
             "Secret" => Some(ActiveType::Secret),
+            "Blob" => Some(ActiveType::Blob),
             "Any" => Some(ActiveType::Any),
             _ => None,
         }
@@ -363,6 +369,7 @@ impl ActiveType {
             }
             ActiveType::Enum(values) => format!("Enum({})", values.join(", ")),
             ActiveType::Secret => "Secret".into(),
+            ActiveType::Blob => "Blob".into(),
             ActiveType::Any => "Any".into(),
         }
     }

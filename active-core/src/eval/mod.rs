@@ -96,6 +96,10 @@ pub enum BudgetKind {
     Keys,
     /// Materialized value size (reference expansion included).
     ValueSize,
+    /// Cumulative materialized size across evaluation (DP total and
+    /// runtime accountant): trips X006 like ValueSize, but names the
+    /// cumulative bound in messages and warnings.
+    TotalSize,
 }
 
 impl std::fmt::Display for BudgetKind {
@@ -107,6 +111,7 @@ impl std::fmt::Display for BudgetKind {
             BudgetKind::ArrayLength => write!(f, "array budget"),
             BudgetKind::Keys => write!(f, "key budget"),
             BudgetKind::ValueSize => write!(f, "value size budget"),
+            BudgetKind::TotalSize => write!(f, "cumulative value size budget"),
         }
     }
 }
@@ -248,6 +253,7 @@ impl EvalError {
                 BudgetKind::ArrayLength => "X004",
                 BudgetKind::Keys => "X005",
                 BudgetKind::ValueSize => "X006",
+                BudgetKind::TotalSize => "X006",
             },
             EvalError::ValidationFailed { diagnostics } => {
                 // Pass through the stable code of the first diagnostic
@@ -427,7 +433,7 @@ impl Accountant {
         // would otherwise go blind.
         if self.limit != 0 && self.spent >= self.limit.saturating_add(1) {
             return Err(EvalError::budget_exceeded(
-                BudgetKind::ValueSize,
+                BudgetKind::TotalSize,
                 self.limit,
                 module,
                 node,
@@ -697,7 +703,7 @@ fn check_dp_bounds(
             && total >= budget.max_total_value_size.saturating_add(1)
         {
             return Err(EvalError::budget_exceeded(
-                BudgetKind::ValueSize,
+                BudgetKind::TotalSize,
                 budget.max_total_value_size,
                 module,
                 Some(id),
@@ -1120,13 +1126,28 @@ impl Engine {
         let mut diagnostics = module.diagnostics.clone();
         diagnostics.extend(module.healing.iter().cloned());
         // Data Mode progressive warnings (PROPOSAL §0.2, Phase M): at
-        // 80% of any nonzero limit, warn that the hard ceiling (which
-        // never moves) is approaching. Informational only — evaluation
-        // continues and the same ceilings bind both modes. Emitted
-        // here (after the DP pass, before the walk) so the numbers are
-        // final bounds, not samples.
+        // 80% of any nonzero limit except wall-clock (which has no
+        // static bound to warn on — documented, not an omission),
+        // warn that the hard ceiling (which never moves) is
+        // approaching. Informational only — evaluation continues and
+        // the same ceilings bind both modes. Emitted here (after the
+        // DP pass, before the walk) so the numbers are final bounds,
+        // not samples.
         if module.mode == Mode::Data {
-            let warn_at = |used: u64, limit: u64| limit != 0 && used * 5 >= limit * 4;
+            let warn_at =
+                |used: u64, limit: u64| limit != 0 && (used as u128) * 5 >= (limit as u128) * 4;
+            // Static shape scan (same counting as
+            // check_static_budgets): longest array and total
+            // value-table keys for the progressive warnings.
+            let mut keys = 0u64;
+            let mut max_arr = 0u64;
+            for node in &module.arena {
+                match node {
+                    Node::Table { fields } => keys += fields.len() as u64,
+                    Node::Array { elements } => max_arr = max_arr.max(elements.len() as u64),
+                    _ => {}
+                }
+            }
             let mut warn = |kind: BudgetKind, used: u64, limit: u64| {
                 if warn_at(used, limit) {
                     diagnostics.push(Diagnostic {
@@ -1156,10 +1177,12 @@ impl Engine {
             );
             warn(BudgetKind::Depth, dp_max_depth, self.budget.max_depth);
             warn(
-                BudgetKind::ValueSize,
+                BudgetKind::TotalSize,
                 dp_total,
                 self.budget.max_total_value_size,
             );
+            warn(BudgetKind::ArrayLength, max_arr, self.budget.max_array_len);
+            warn(BudgetKind::Keys, keys, self.budget.max_keys);
         }
         // Wall-clock backstop (spec/budgets.md §2): sampled every 1024
         // nodes so the overhead is unmeasurable. Counts already passed

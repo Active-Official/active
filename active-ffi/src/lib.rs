@@ -775,6 +775,7 @@ pub unsafe extern "C" fn active_value_is_tainted(value: *const ActiveValue) -> b
 ///
 /// The value must be a live handle; the path bytes must be readable
 /// for `path_len` when non-null. Null value or null path yields null.
+/// A non-UTF8 path fails closed with UTF8 (never partial reads).
 #[no_mangle]
 pub unsafe extern "C" fn active_value_project(
     value: *const ActiveValue,
@@ -1349,6 +1350,18 @@ mod tests {
                 bad.len(),
             );
             assert!(bad_ptr.is_null());
+            assert_eq!(active_last_error(), ACTIVE_ERR_BAD_ARGUMENT);
+            // Null and empty paths fail closed too.
+            let null_ptr = active_value_project(value, std::ptr::null(), 0);
+            assert!(null_ptr.is_null());
+            assert_eq!(active_last_error(), ACTIVE_ERR_NULL_HANDLE);
+            let empty = b"";
+            let empty_ptr = active_value_project(
+                value,
+                empty.as_ptr() as *const std::os::raw::c_char,
+                empty.len(),
+            );
+            assert!(empty_ptr.is_null());
             assert_eq!(active_last_error(), ACTIVE_ERR_BAD_ARGUMENT);
             active_value_free(value);
             active_module_free(module);

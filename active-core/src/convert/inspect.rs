@@ -3,9 +3,11 @@
 //!
 //! `schema_inspect` walks the schema tree and returns versioned JSON
 //! describing every field: dotted path, type, required flag, static
-//! default, constraints, description, deprecation, requires target,
-//! enum members, and table closure. Validation never reads this output;
-//! agents query it instead of parsing schema source text.
+//! default, constraints, description, deprecation, removed_in,
+//! requires target, enum members, table closure, schema evolution
+//! metadata (version, min_reader, min_writer), and evaluation mode.
+//! Validation never reads this output; agents query it instead of
+//! parsing schema source text.
 
 use super::gen::{literal_default, literal_string};
 use crate::ir::{Module, Node, NodeId, SchemaField};
@@ -16,7 +18,9 @@ use serde_json::{json, Map as JsonMap, Value as JsonValue};
 /// Any shape change (added, removed, or retyped keys) bumps it; additive
 /// and breaking changes are not distinguished, so consumers pin the exact
 /// value they were built against and reject anything else.
-pub const INSPECT_VERSION: u32 = 1;
+/// v2: schema evolution metadata (schema_version, min_reader,
+/// min_writer), per-field removed_in, and top-level mode.
+pub const INSPECT_VERSION: u32 = 2;
 
 /// Parser's own nesting ceiling, mirrored here so hand-built arenas can
 /// never recurse deeper than parsed documents.

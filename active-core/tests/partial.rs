@@ -118,3 +118,13 @@ fn blob_aliases_charge_per_clone() {
     let err = engine.evaluate(&module).expect_err("must trip total size");
     assert_eq!(err.code(), "X006");
 }
+
+#[test]
+fn cone_projection_never_leaks_secrets() {
+    // A demanded cone containing secrets still redacts on export.
+    let v = evaluated("token = secret(\"s3cr3t-cone\")\n[out]\npass = token\n");
+    let cone = project_path(&v, "out").expect("cone");
+    let text = serde_json::to_string(&json(cone)).expect("valid json");
+    assert!(!text.contains("s3cr3t-cone"), "leak: {text}");
+    assert_eq!(json(cone)["pass"], serde_json::Value::Null);
+}

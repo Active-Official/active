@@ -287,6 +287,7 @@ bool active_value_is_tainted(const struct ActiveValue *value);
  *
  * The value must be a live handle; the path bytes must be readable
  * for `path_len` when non-null. Null value or null path yields null.
+ * A non-UTF8 path fails closed with UTF8 (never partial reads).
  */
 char *active_value_project(const struct ActiveValue *value, const char *path, uintptr_t path_len);
 

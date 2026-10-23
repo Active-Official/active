@@ -677,16 +677,13 @@ fn main() -> anyhow::Result<()> {
             }
             // Demanded cone selection (PROPOSAL §2.2): project AFTER the
             // full budgeted evaluation, so safety stays whole-document
-            // while agents fetch only what they need.
-            let projected;
+            // while agents fetch only what they need. The cone is owned
+            // (cloned out) so downstream borrows stay single-level.
             let value = match path.as_deref() {
-                Some(p) => {
-                    projected = active_core::convert::project_path(&value, p)
-                        .map_err(|e| anyhow::anyhow!("{e}"))?
-                        .clone();
-                    &projected
-                }
-                None => &value,
+                Some(p) => active_core::convert::project_path(&value, p)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?
+                    .clone(),
+                None => value,
             };
 
             match format.as_str() {

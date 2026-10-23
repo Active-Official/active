@@ -2464,13 +2464,30 @@ impl Parser {
         if self.in_include {
             return;
         }
-        let fields = match self.module.root.and_then(|root| self.module.get(root)) {
+        let root = match self.module.root {
+            Some(root) => root,
+            _ => return,
+        };
+        let fields = match self.module.get(root) {
             Some(Node::Table { fields, .. }) => fields.clone(),
             _ => return,
         };
         let Some(marker) = fields.get("active_mode") else {
             return;
         };
+        // Only the top-level document's own marker counts: a merged
+        // `active_mode` from an include is ignored entirely (no E024),
+        // so included files can neither set the mode nor break the
+        // document. Local markers carry the current file (or nothing
+        // for plain string parses); included markers carry the
+        // included file's identity.
+        let here = self
+            .current_file
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned());
+        if self.module.node_files.get(marker).cloned() != here {
+            return;
+        }
         let (text, tok) = match self.module.get(*marker) {
             Some(Node::Literal(Value::String(s))) => (s.clone(), *marker),
             _ => {

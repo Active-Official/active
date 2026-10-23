@@ -35,15 +35,20 @@ Incremental memo key = hash of:
 1. Source text (exact bytes),
 2. Environment snapshot (the closed map the engine read),
 3. Active profile selection (document key or `--profile` override),
-4. Budget configuration (all seven limits),
+4. Budget configuration (all seven limits, by value),
 5. `materialise_blobs` flag,
-6. Mode (reserved: joins the token when Phase M lands Data Mode).
+6. Mode (Config vs Data — a Data evaluation must never serve a
+   Config memo's warning-free diagnostics, and vice versa).
 
 Canonicalisation: sources hash as given (no normalization — different
 bytes are different documents by the one-file→one-meaning rule);
-environment maps hash sorted by key; budgets hash by value. Any
-configuration change clears the store before the walk, so a flag flip
-can never serve a stale identity-only tree as materialised.
+environment maps hash sorted by key; per-node structural fingerprints
+hash expression shape, literal data, env values actually read, and
+already-computed dependency fingerprints topologically with a
+per-memo salt; blobs hash by identity (hash + size + taint), never by
+payload bytes. Any configuration change clears the store before the
+walk, so a flag flip can never serve a stale identity-only tree as
+materialised.
 
 ## 3. Public incremental memo API (PE.003)
 

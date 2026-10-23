@@ -44,7 +44,7 @@ fn by_path(doc: &serde_json::Value, path: &str) -> serde_json::Value {
 fn inspect_reports_version_and_field_list() {
     let doc = fields();
     assert_eq!(doc["version"], INSPECT_VERSION);
-    assert_eq!(doc["version"], 1);
+    assert_eq!(doc["version"], 2);
     assert!(doc["fields"].as_array().expect("fields").len() >= 9);
 }
 

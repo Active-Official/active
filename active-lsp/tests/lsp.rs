@@ -2183,3 +2183,18 @@ fn stdio_stale_include_groups_withdrawn() {
     );
     server.shutdown();
 }
+
+#[test]
+fn carried_memo_turns_reanalysis_into_hits() {
+    // PE.003: re-analyzing an unchanged document with the previous
+    // revision's memo must hit instead of re-walking the arena.
+    let (uri, _path) = temp_fixture("lspmemo.active", "port = 1\n");
+    let text = std::fs::read_to_string(uri.to_file_path().expect("uri")).expect("read back");
+    let first = analysis::open_doc(uri.clone(), text.clone(), 1, None);
+    assert_eq!(first.memo.last_memo_hits, 0);
+    let second = analysis::open_doc(uri, text, 2, Some(first.memo));
+    assert!(
+        second.memo.last_memo_hits > 0,
+        "carried memo must hit on unchanged content"
+    );
+}

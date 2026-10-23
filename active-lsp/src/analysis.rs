@@ -42,9 +42,12 @@ pub struct Doc {
     pub eval_diags: Vec<Diagnostic>,
     pub lint_diags: Vec<Diagnostic>,
     /// Incremental memo (PROPOSAL §2.3, PE.003): reuses the evaluated
-    /// tree when the fingerprint (source, env, profile, budget) is
-    /// unchanged — repeat analyses of an untouched document are
-    /// microsecond cache hits instead of full re-evaluations.
+    /// tree when the fingerprint is unchanged. The token covers
+    /// (resilient, profile, budget, materialise, mode) plus per-node
+    /// structural hashes, so an untouched document re-analyzes as a
+    /// microsecond cache hit while any flag or content change clears
+    /// the store first. `#[allow(dead_code)]` because the field is
+    /// threaded cross-crate (main.rs carries it across didChange).
     #[allow(dead_code)]
     pub memo: active_core::IncrementalMemo,
 }

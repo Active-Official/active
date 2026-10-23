@@ -8,8 +8,11 @@ module, reference loops, and an evaluation harness.
 
 - `capability.schema.json` — every tool an agent may call (`check`,
   `eval`, `format`, `convert`, `graph`, `generate`,
-  `schema-introspect`), with input/output shapes. Versioned with the
-  workspace; consumers must reject unknown major versions.
+  `schema-introspect`, `explain`, `patch`, `repair`, `compatibility`,
+  `capability`), with input/output shapes, plus the `profiles` map
+  (`strict`, `data`, `agent`, `trusted`) and the `features` list.
+  Versioned with the workspace; consumers must reject unknown major
+  versions.
 - `reference-loops/{python,typescript,go}/` — the full repair cycle on
   the real path: check (diagnose) → resilient eval (repair) → re-emit
   via `active import` → check again (validate) → final redacted eval.
@@ -19,14 +22,29 @@ module, reference loops, and an evaluation harness.
   (correctly unrepairable), `format-broken` (T003, converged),
   `requires-missing` (T004, converged), `unknown-format` (schema
   bug, converged), `descriptions-clean` (metadata ignored, clean
+  on first check), `blob-clean` (content-addressed identity, clean
   on first check).
+
+## Capability negotiation handshake (PROPOSAL §6.3)
+
+Before generating, an agent verifies the host offers what its
+document needs (`active capability --check-doc FILE`): the
+document's `active_capabilities` list is diffed against the
+descriptor's advertised tools, and any unadvertised entry fails
+closed naming the refused capabilities. Sandboxes select the whole
+contract at once (`active ... --sandbox NAME`): the profile's budget
+preset applies and documents declaring outside-profile capabilities
+are refused before evaluation. `active capability --profile NAME`
+prints one profile for inspection.
+
 - `eval/run.py` — runs every available loop over every vector and
   reports first-attempt success, mean iterations to clean, code
   histogram, budget adherence, and secret safety. Exit 0 only when
   every expectation holds. Required CI check
   (`.github/workflows/conformance.yml`).
 - `eval/test_capability.py` — pins the capability descriptor
-  authority (major version 1, complete 10-tool surface).
+  authority (major version 1, complete 12-tool surface, 4 sandbox
+  profiles with tool-subset discipline).
 - WASM module: `../active-wasm/js/active-shim.js` plus the release
   `.wasm` (zero imports, plain `WebAssembly.instantiate`).
 - Prompt packs: `../prompts/` (versioned v1.1.0, tasks t1-t10, validation

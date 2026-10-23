@@ -170,6 +170,11 @@ enum Commands {
         /// Dotted/index path (`server.host`, `ports[0]`).
         #[arg(long)]
         path: Option<String>,
+        /// Named sandbox profile (strict|data|agent|trusted): selects
+        /// the profile's budget preset and refuses to evaluate
+        /// documents declaring capabilities outside the profile
+        #[arg(long)]
+        sandbox: Option<String>,
         #[command(flatten)]
         budget: BudgetArgs,
     },
@@ -347,6 +352,13 @@ enum Commands {
         /// Fail unless the descriptor major version equals this
         #[arg(long)]
         require_major: Option<u64>,
+        /// Verify a document's declared capabilities against the
+        /// advertised tools (negotiation handshake); fail on refused
+        #[arg(long)]
+        check_doc: Option<PathBuf>,
+        /// Print one sandbox profile (strict|data|agent|trusted)
+        #[arg(long)]
+        profile: Option<String>,
     },
     /// Compare two documents' schema blocks for compatibility
     /// (PROPOSAL §2.4): added/removed fields, type changes, tightened
@@ -538,6 +550,40 @@ fn parse_input(
         }
         anyhow::anyhow!("parse failed")
     })
+}
+
+/// Negotiation handshake (PROPOSAL §6.3, CHECKLIST CAP.003): verify a
+/// document's declared capabilities against the host's advertised
+/// tools. Anything declared but not offered is refused, fail-closed,
+/// before evaluation. Prints the verdict; Ok(()) only when nothing
+/// is refused.
+fn check_declared_against(
+    file: &std::path::Path,
+    descriptor: &serde_json::Value,
+) -> anyhow::Result<()> {
+    let name = file.to_string_lossy().to_string();
+    let module = parse_input(file, false, false, &None)?;
+    let host_tools: Vec<&str> = descriptor
+        .get("tools")
+        .and_then(|t| t.as_array())
+        .map(|tools| {
+            tools
+                .iter()
+                .filter_map(|t| t.get("name").and_then(|n| n.as_str()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let refused = active_core::convert::refused_capabilities(&module.capabilities, &host_tools);
+    if refused.is_empty() {
+        println!("capabilities ok: {}", module.capabilities.join(", "));
+        let _ = name;
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!(
+            "host refuses capabilities: {} (document {name} declares them, this host does not offer them)",
+            refused.join(", ")
+        ))
+    }
 }
 
 /// Decidable graph query entry point (PROPOSAL §2.6, CHECKLIST
@@ -775,13 +821,43 @@ fn main() -> anyhow::Result<()> {
             trace,
             materialise_blobs,
             path,
+            sandbox,
             budget,
         } => {
             let name = file.to_string_lossy().to_string();
             let trust = load_trust(&trust_keys)?;
             let module = parse_input(&file, resilient, allow_parent_escapes, &trust)?;
 
-            let mut eng = engine(resilient, &profile, budget.resolve()?);
+            // Sandbox gate (PROPOSAL §3.5): the named profile selects
+            // its budget preset and refuses documents declaring
+            // capabilities outside the profile's tool set — the host
+            // refuses excess requests before evaluation.
+            let mut budget = budget.resolve()?;
+            if let Some(ref sandbox) = sandbox {
+                let profile_def =
+                    active_core::convert::sandbox_profile(sandbox).ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "unknown sandbox profile: {sandbox} (want strict|data|agent|trusted)"
+                        )
+                    })?;
+                budget = match profile_def.budget {
+                    "strict" => Budget::strict(),
+                    "interactive" => Budget::interactive(),
+                    "trusted" => Budget::trusted(),
+                    other => anyhow::bail!("unknown profile budget: {other}"),
+                };
+                let host_tools: Vec<&str> = profile_def.tools.to_vec();
+                let refused =
+                    active_core::convert::refused_capabilities(&module.capabilities, &host_tools);
+                if !refused.is_empty() {
+                    anyhow::bail!(
+                        "sandbox '{sandbox}' refuses capabilities: {}",
+                        refused.join(", ")
+                    );
+                }
+            }
+
+            let mut eng = engine(resilient, &profile, budget);
             eng.materialise_blobs = materialise_blobs;
             let engine = eng;
             active_core::trace::set_tracing(trace);
@@ -1154,7 +1230,11 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Commands::Capability { require_major } => {
+        Commands::Capability {
+            require_major,
+            check_doc,
+            profile,
+        } => {
             // The descriptor is embedded at build time and must parse:
             // a corrupt descriptor is a build bug, so fail closed
             // instead of printing an empty success.
@@ -1176,6 +1256,25 @@ fn main() -> anyhow::Result<()> {
                         "capability major mismatch: descriptor is {version}, agent requires {want}"
                     );
                 }
+            }
+            if let Some(name) = profile {
+                match active_core::convert::sandbox_profile(&name) {
+                    Some(p) => println!(
+                        "{}",
+                        serde_json::json!({
+                            "profile": p.name,
+                            "budget": p.budget,
+                            "tools": p.tools,
+                        })
+                    ),
+                    None => anyhow::bail!(
+                        "unknown sandbox profile: {name} (want strict|data|agent|trusted)"
+                    ),
+                }
+                return Ok(());
+            }
+            if let Some(doc) = check_doc {
+                return check_declared_against(&doc, &descriptor);
             }
             println!(
                 "{}",

@@ -1514,6 +1514,8 @@ fn capability_tools_all_map_to_real_subcommands() {
     mapping.insert("schema-introspect", vec!["inspect"]);
     mapping.insert("explain", vec!["explain"]);
     mapping.insert("patch", vec!["patch"]);
+    mapping.insert("repair", vec!["repair"]);
+    mapping.insert("compatibility", vec!["compatibility"]);
     mapping.insert("capability", vec!["capability"]);
     for tool in tools {
         let name = tool["name"].as_str().expect("tool name");
@@ -1767,4 +1769,77 @@ fn graph_query_closed_set_end_to_end() {
 
     let out = run(&["query", "--query", "nope"]);
     assert!(!out.status.success(), "unknown query must fail");
+}
+
+#[test]
+fn capability_handshake_accepts_advertised_rejects_rest() {
+    let ok = fixture(
+        "cap_ok.active",
+        "active_capabilities = [\"eval\", \"schema-introspect\"]\nport = 1\n",
+    );
+    let out = active()
+        .args(["capability", "--check-doc"])
+        .arg(&ok)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "advertised caps must pass: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let bad = fixture(
+        "cap_bad.active",
+        "active_capabilities = [\"eval\", \"teleport\"]\nport = 1\n",
+    );
+    let out = active()
+        .args(["capability", "--check-doc"])
+        .arg(&bad)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success(), "unadvertised caps must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("teleport"), "{stderr}");
+    let out = active()
+        .args(["capability", "--profile", "strict"])
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "profiles must print: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let profile: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).expect("profile JSON");
+    assert_eq!(profile["budget"], "strict");
+}
+
+#[test]
+fn sandbox_gate_applies_budget_and_refuses_excess() {
+    // Strict sandbox refuses a doc declaring agent-only tools.
+    let f = fixture(
+        "sandbox_refuse.active",
+        "active_capabilities = [\"repair\"]\nport = 1\n",
+    );
+    let out = active()
+        .args(["eval", "--sandbox", "strict"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success(), "sandbox must refuse excess caps");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("refuses"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Same doc under agent sandbox evaluates fine.
+    let out = active()
+        .args(["eval", "--sandbox", "agent"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "agent sandbox must accept repair: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }

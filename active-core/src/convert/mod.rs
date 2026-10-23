@@ -3,6 +3,7 @@
 use crate::ir::Value;
 use serde_json::{json, Value as JsonValue};
 
+pub mod capability;
 pub mod compat;
 pub mod doc;
 pub mod explain;
@@ -14,6 +15,9 @@ pub mod project;
 pub mod repair;
 pub mod suggest;
 
+pub use capability::{
+    profile as sandbox_profile, profiles as sandbox_profiles, refused as refused_capabilities,
+};
 pub use compat::{compare as compare_schemas, CompatFinding};
 pub use doc::{collect_items, doc_to_html, doc_to_man, doc_to_markdown, DocItem};
 pub use project::project as project_path;

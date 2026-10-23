@@ -67,6 +67,12 @@ pub struct Module {
     /// documents); the field lets the engine budget progressively
     /// without re-reading the tree.
     pub mode: Mode,
+    /// Declared capabilities (PROPOSAL §3.5, CHECKLIST CAP.001): the
+    /// root-level `active_capabilities = [...]` string list a document
+    /// asks the host for. Hosts may refuse excess requests (the
+    /// `active capability --check-doc` handshake and `--sandbox`
+    /// gate); evaluation itself never branches on this list.
+    pub capabilities: Vec<String>,
 }
 
 /// A parsed `# @…` annotation attached to a node (spec/annotations.md).
@@ -260,6 +266,7 @@ impl Module {
             annotations: HashMap::new(),
             depends_on: HashMap::new(),
             mode: Mode::default(),
+            capabilities: Vec::new(),
         }
     }
 

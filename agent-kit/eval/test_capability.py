@@ -44,9 +44,39 @@ class CapabilityTest(unittest.TestCase):
             "explain",
             "patch",
             "capability",
+            "repair",
+            "compatibility",
         ):
             self.assertIn(required, names, f"tool surface missing {required}")
-        self.assertEqual(len(names), 10, f"tool surface changed: {names}")
+        self.assertEqual(len(names), 12, f"tool surface changed: {names}")
+
+    def test_sandbox_profiles_match_code(self) -> None:
+        # The descriptor's profiles section and the core's sandbox
+        # table are one contract in two renderings: names, budgets,
+        # and tool sets must agree exactly.
+        profiles = self.doc.get("profiles", {})
+        self.assertEqual(
+            sorted(profiles),
+            ["agent", "data", "strict", "trusted"],
+            f"profile set changed: {sorted(profiles)}",
+        )
+        for name, entry in profiles.items():
+            self.assertIn(
+                entry.get("budget"),
+                ("strict", "interactive", "trusted", "data"),
+                f"{name}: unknown budget profile",
+            )
+            self.assertTrue(entry.get("tools"), f"{name}: profile needs a tool list")
+        # Agent is the strict superset of data; trusted matches agent.
+        self.assertTrue(
+            set(profiles["data"]["tools"]) <= set(profiles["agent"]["tools"]),
+            "agent must offer everything data offers",
+        )
+        self.assertEqual(
+            sorted(profiles["agent"]["tools"]),
+            sorted(profiles["trusted"]["tools"]),
+            "trusted matches the agent tool surface",
+        )
 
     def test_every_tool_described(self) -> None:
         for tool in self.doc.get("tools", []):

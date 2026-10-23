@@ -76,7 +76,7 @@
     {
       "name": "schema-introspect",
       "entry": "active inspect --from <file>",
-      "description": "List a schema's fields, types, constraints, defaults, descriptions, and deprecations as versioned JSON (INSPECT_VERSION=1).",
+      "description": "List a schema's fields, types, constraints, defaults, descriptions, deprecations, requires targets, and evolution metadata (version, min_reader, min_writer, removed_in, mode) as versioned JSON (INSPECT_VERSION=2).",
       "input": {
         "file": "path to a .active source file with a schema block"
       },
@@ -108,16 +108,59 @@
     },
     {
       "name": "capability",
-      "entry": "active capability [--require-major N]",
-      "description": "Print this descriptor; fail closed when the descriptor major does not equal N (handshake).",
+      "entry": "active capability [--require-major N] [--check-doc FILE] [--profile NAME]",
+      "description": "Print this descriptor; fail closed when the descriptor major does not equal N (handshake). With --check-doc, verify a document's active_capabilities against the advertised tools and fail on refused entries. With --profile, print one sandbox profile.",
       "input": {
-        "require-major": "optional expected major version"
+        "require-major": "optional expected major version",
+        "check-doc": "optional .active file whose declared capabilities are verified",
+        "profile": "optional sandbox profile name (strict|data|agent|trusted)"
       },
       "output": {
-        "descriptor": "this JSON document"
+        "descriptor": "this JSON document, the check verdict, or the profile"
+      }
+    },
+    {
+      "name": "repair",
+      "entry": "active repair --from <file> [--goal validate|preserve-key|minimize-diff] [--preserve <path>] [--max-steps N] [--format text|json] [--output FILE]",
+      "description": "Multi-step goal-directed repair: safe @patch/@rename plans applied through the patch engine with stuck (H006) and unrepairable (H008) terminal states.",
+      "input": {
+        "file": "path to a .active source file"
+      },
+      "output": {
+        "plan": "text lines or JSON RepairOutcome; --output writes the repaired source"
+      }
+    },
+    {
+      "name": "compatibility",
+      "entry": "active compatibility <old> <new> [--format text|json]",
+      "description": "Compare two schema blocks for compatibility (C040-C044, E040 summary); exits nonzero on breaking changes.",
+      "input": {
+        "old": "baseline .active file",
+        "new": "candidate .active file"
+      },
+      "output": {
+        "report": "text lines or JSON finding list"
       }
     }
   ],
+  "profiles": {
+    "strict": {
+      "budget": "strict",
+      "tools": ["check", "eval", "format"]
+    },
+    "data": {
+      "budget": "interactive",
+      "tools": ["check", "eval", "format", "convert", "graph", "generate", "schema-introspect"]
+    },
+    "agent": {
+      "budget": "interactive",
+      "tools": ["check", "eval", "format", "convert", "graph", "generate", "schema-introspect", "explain", "patch", "repair", "compatibility", "capability"]
+    },
+    "trusted": {
+      "budget": "trusted",
+      "tools": ["check", "eval", "format", "convert", "graph", "generate", "schema-introspect", "explain", "patch", "repair", "compatibility", "capability"]
+    }
+  },
   "features": [
     "format-validators",
     "conditional-presence-requires",
@@ -125,9 +168,17 @@
     "description-metadata",
     "deprecated-messaging",
     "schema-introspection",
+    "schema-evolution",
     "codegen-jsonschema",
     "codegen-typescript-zod",
     "codegen-go",
-    "codegen-python"
+    "codegen-python",
+    "content-addressed-blobs",
+    "multi-step-repair",
+    "compatibility-report",
+    "evaluation-modes",
+    "graph-queries",
+    "partial-evaluation",
+    "sandbox-profiles"
   ]
 }

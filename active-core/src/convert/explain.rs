@@ -33,6 +33,7 @@ pub fn explain_code(code: &str) -> &'static str {
         "E020" => "Bad schema type expression at the span: unknown type or argument, malformed Array<T> / Enum(...) shape, non-boolean closed flag, or a schema block where schemas are not allowed (e.g. inside profiles). Fix the type expression.",
         "E023" => "Integer out of range: positive literals saturate at i64::MAX, and negating the minimum yields MIN+1. Use a smaller magnitude or a different unit.",
         "E024" => "Bad mode marker: active_mode must be the string \"data\" or \"config\". Fix the spelling; Data Mode is explicit opt-in, Config is the default when the marker is absent.",
+        "E025" => "Bad capabilities declaration: active_capabilities must be an array of strings naming tools the host offers. Fix the shapes; unknown names are refused at handshake time, not here.",
         "E032" => "Signature or trust failure: the sidecar is missing, mismatched, or untrusted. Verify against the trust file for the recorded key id; never bypass verification to make it pass.",
         "T001" => "Unit or quantity violation at the span: an unsupported operator or dimension mismatch. Fix the unit expression; the code names the exact mismatch.",
         "T002" => "Type mismatch: the value's type does not satisfy the schema or operator at the span. Change the value to the expected type (or widen the schema deliberately), not the other way around.",

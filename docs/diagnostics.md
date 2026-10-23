@@ -52,6 +52,7 @@ parses leave it unset and tools fall back to the input filename.
 | E022 | ``depends_on` entries must be string literals` / ``depends_on` is only allowed as a direct table member` | token | Malformed dependency blocks (C-042): non-string array elements, or inline-table occurrences |
 | E023 | `integer literal out of i64 range: \`<text>\`` | the literal token | An integer literal exceeds the i64 range (spec/specification.md §1.3): recorded as an error and the value saturates at `i64::MAX` — never a silent `0` |
 | E024 | `active_mode must be "data" or "config"` / `unknown mode '<text>': want "data" or "config"` | marker key | Bad mode marker (Phase M): the `active_mode` key is not one of the two valid strings |
+| E025 | `active_capabilities must be an array of strings` | marker key | Bad capabilities declaration (Phase CAP): entries must be tool-name strings; unknown names are refused at handshake time |
 | E032 | `<file>: unsigned (no signature sidecar …)` / `<file>: unknown signing key '<kid>'` / `<file>: signature mismatch (key '<kid>')` | include statement | An included file failed overlay enforcement (C-052): no sibling sidecar, a key outside the trusted set, or a bad signature. Fail-closed before a byte parses; key material never quoted |
 
 ### S0xx — Semantic (evaluation, severity Error)

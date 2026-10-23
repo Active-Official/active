@@ -373,6 +373,8 @@ fn parse_recovering_impl(
     // `active_mode` marker but leaves it as data (self-describing
     // documents carry the marker into evaluated JSON).
     parser.resolve_mode();
+    // Capability declarations (PROPOSAL §3.5, CHECKLIST CAP.001).
+    parser.resolve_capabilities();
     parser.attach_trivia();
     parser.module.source_style = if parser.indent_tables > parser.brace_tables {
         Style::Indent
@@ -2524,6 +2526,67 @@ impl Parser {
                 });
             }
         }
+    }
+
+    /// Capability declarations (PROPOSAL §3.5, CHECKLIST CAP.001):
+    /// a root-level `active_capabilities = ["eval", "inspect", ...]`
+    /// records what the document asks the host for. The marker stays
+    /// a regular value (like `active_mode`); this records the parsed
+    /// list on the module for the handshake (`active capability
+    /// --check-doc`) and sandbox gates. Non-array or non-string
+    /// entries are E025 schema bugs; merged include markers follow
+    /// the same file-identity rule as modes (ignored when foreign).
+    fn resolve_capabilities(&mut self) {
+        if self.in_include {
+            return;
+        }
+        let fields = match self.module.root.and_then(|root| self.module.get(root)) {
+            Some(Node::Table { fields, .. }) => fields.clone(),
+            _ => return,
+        };
+        let Some(marker) = fields.get("active_capabilities") else {
+            return;
+        };
+        let marker = *marker;
+        if self.module.node_files.get(&marker).cloned()
+            != self
+                .current_file
+                .as_ref()
+                .map(|p| p.to_string_lossy().into_owned())
+        {
+            return;
+        }
+        let mut caps = Vec::new();
+        let mut ok = true;
+        match self.module.get(marker) {
+            Some(Node::Array { elements }) => {
+                let ids = elements.clone();
+                for id in &ids {
+                    match self.module.get(*id) {
+                        Some(Node::Literal(Value::String(s))) => caps.push(s.clone()),
+                        _ => {
+                            ok = false;
+                            break;
+                        }
+                    }
+                }
+            }
+            _ => ok = false,
+        }
+        if !ok {
+            self.errors.push(Diagnostic {
+                severity: Severity::Error,
+                code: "E025".into(),
+                message: "active_capabilities must be an array of strings".into(),
+                path: Some("active_capabilities".into()),
+                span: self.module.node_spans.get(&marker).cloned(),
+                repair: None,
+                confidence: 1.0,
+                file: self.module.node_files.get(&marker).cloned(),
+            });
+            return;
+        }
+        self.module.capabilities = caps;
     }
 
     /// Extract `depends_on` from one value table node and recurse.

@@ -52,6 +52,9 @@ __pycache__/
 *.log
 *.bak
 
+# Evidence transcripts are deliverables, not scratch: keep them tracked
+!conformance/evidence/*.log
+
 # Fuzzing artifacts (cargo-fuzz)
 # (Seed inputs under fuzz/corpus/ ARE committed; only fresh crash
 # reproducers stay untracked.)
@@ -59,6 +62,10 @@ fuzz/artifacts/
 
 # Agent goal prompts (private working prompts, never committed)
 goal-prompts/
+
+# Master Program working copies (checklists + gap register are local
+# working state; the normative originals live outside the repository)
+master-program/
 
 # Generated wasm-bindgen glue (regenerated in CI and releases via
 # `wasm-bindgen`; never committed, always rebuilt from the .wasm)

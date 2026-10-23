@@ -17,8 +17,8 @@ use active_core::{
 };
 use lsp_types::{
     CodeAction, CodeActionKind, CompletionItem, CompletionItemKind, Hover, HoverContents,
-    InlayHint, InlayHintKind, Location, MarkupContent, MarkupKind, Position, Range, TextEdit, Url,
-    WorkspaceEdit,
+    InlayHint, InlayHintKind, Location, MarkupContent, MarkupKind, Position, Range,
+    SymbolInformation, SymbolKind, TextEdit, Url, WorkspaceEdit,
 };
 use serde_json::Value as JsonValue;
 
@@ -79,7 +79,13 @@ pub fn open_doc(
         }
     };
     let mut memo = memo.unwrap_or_default();
-    let (value, eval_diags) = match Engine::new().evaluate_incremental(&module, &mut memo) {
+    // Analysis is hermetic and budgeted (spec/lsp.md §1, LSP.012):
+    // the server never reads ambient environment values and every
+    // evaluation fails closed on the strict preset. A trip surfaces
+    // as the normal X00x diagnostic instead of a hung editor.
+    let mut engine = Engine::hermetic();
+    engine.budget = active_core::Budget::strict();
+    let (value, eval_diags) = match engine.evaluate_incremental(&module, &mut memo) {
         Ok((v, d)) => (Some(v), d),
         // Hard evaluation failures (cycles, budgets, validation in
         // strict mode) still publish: the error becomes one
@@ -1612,6 +1618,13 @@ pub fn token_legend() -> lsp_types::SemanticTokensLegend {
             T::PROPERTY,
             T::VARIABLE,
             T::OPERATOR,
+            // Custom types (LSP allows vendor types in the legend).
+            // Values never travel in tokens: `secret` marks the
+            // construct, not the material.
+            T::new("secret"),
+            T::new("mode"),
+            T::new("contentAddressed"),
+            T::new("schema"),
         ],
         token_modifiers: vec![],
     }
@@ -1624,6 +1637,10 @@ const TOK_COMMENT: u32 = 3;
 const TOK_PROPERTY: u32 = 4;
 const TOK_VARIABLE: u32 = 5;
 const TOK_OPERATOR: u32 = 6;
+const TOK_SECRET: u32 = 7;
+const TOK_MODE: u32 = 8;
+const TOK_CA: u32 = 9;
+const TOK_SCHEMA: u32 = 10;
 
 /// Classify one lexer token, with statement context for names:
 /// binding names after `let`, tag names after `@`, table names
@@ -1638,10 +1655,18 @@ fn classify(
 ) -> Option<u32> {
     use active_core::parser::TokenKind as K;
     match kind {
-        K::Let | K::Env | K::Secret | K::Blob | K::True | K::False | K::Null => Some(TOK_KEYWORD),
+        K::Secret => Some(TOK_SECRET),
+        K::Blob => Some(TOK_CA),
+        K::Let | K::Env | K::True | K::False | K::Null => Some(TOK_KEYWORD),
         K::String(_) | K::SingleString | K::MlString(_) | K::MlSingleString => Some(TOK_STRING),
         K::Integer | K::Float | K::Unit(_) => Some(TOK_NUMBER),
         K::Ident => {
+            if matches!(text, "active_mode" | "active_capabilities") {
+                return Some(TOK_MODE);
+            }
+            if text == "schema" {
+                return Some(TOK_SCHEMA);
+            }
             if text == "prompt" || text == "policy" || text == "template" {
                 return Some(TOK_KEYWORD);
             }
@@ -1928,12 +1953,288 @@ pub fn completion_at(doc: &Doc, line: u32, character: u32) -> Vec<CompletionItem
             });
         }
     }
+    // Unit suffixes after a numeric literal: the client replaces only
+    // the unit part (a zero-width insertion right after the digits),
+    // never the number itself.
+    if let Some((digits, unit_prefix)) = split_numeric_prefix(&raw_prefix) {
+        if !digits.is_empty() {
+            let unit_cols = utf16_len(unit_prefix);
+            let start = Position {
+                line,
+                character: character.saturating_sub(unit_cols),
+            };
+            for unit in UNIT_SUGGESTIONS {
+                if unit.starts_with(unit_prefix) {
+                    items.push(CompletionItem {
+                        label: (*unit).to_string(),
+                        kind: Some(CompletionItemKind::UNIT),
+                        detail: Some("unit suffix".to_string()),
+                        text_edit: Some(lsp_types::CompletionTextEdit::Edit(TextEdit {
+                            range: Range {
+                                start,
+                                end: Position { line, character },
+                            },
+                            new_text: (*unit).to_string(),
+                        })),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+    }
+    // Root-level metadata keys (mode, capabilities, schema block).
+    if scope_path.is_empty() {
+        for (label, detail, insert) in [
+            (
+                "active_mode",
+                "evaluation mode marker (\"config\" or \"data\")",
+                "active_mode = \"data\"",
+            ),
+            (
+                "active_capabilities",
+                "declare the capabilities this document needs",
+                "active_capabilities = [\"check\", \"eval\"]",
+            ),
+            ("schema", "schema block", "schema = {\n  \n}"),
+        ] {
+            if label.starts_with(&prefix) {
+                items.push(CompletionItem {
+                    label: label.to_string(),
+                    kind: Some(CompletionItemKind::PROPERTY),
+                    detail: Some(detail.to_string()),
+                    insert_text: Some(insert.to_string()),
+                    ..Default::default()
+                });
+            }
+        }
+    }
     items.sort_by(|a, b| a.label.cmp(&b.label));
     items
 }
 
-/// One core diagnostic as an LSP diagnostic: stable code, severity
-/// mapping per spec §4, span ranges, `"active"` source. Span-less
+/// Unit suffixes offered after a numeric literal (spec/grammar.md §1.6).
+const UNIT_SUGGESTIONS: &[&str] = &[
+    "ns", "us", "ms", "s", "m", "h", "d", "week", "B", "KiB", "MiB", "GiB", "TiB", "KB", "MB",
+    "GB", "TB", "%", "Hz", "kHz", "MHz", "GHz", "bps", "Kbps", "Mbps", "Gbps", "tokens", "ktokens",
+    "Mtokens", "Pa", "bar", "psi", "V", "A", "W", "J", "kWh", "N", "deg", "rad", "rpm", "K", "Cel",
+    "Fahr", "dB",
+];
+
+/// Split a completion prefix into its leading digits and the unit text
+/// after them (`30m` -> `("30", "m")`, `30` -> `("30", "")`). Returns
+/// `None` when the prefix does not start with a digit.
+fn split_numeric_prefix(prefix: &str) -> Option<(&str, &str)> {
+    if !prefix.starts_with(|c: char| c.is_ascii_digit()) {
+        return None;
+    }
+    let split = prefix
+        .char_indices()
+        .find(|(_, c)| !c.is_ascii_digit())
+        .map(|(i, _)| i)
+        .unwrap_or(prefix.len());
+    Some((&prefix[..split], &prefix[split..]))
+}
+
+// ------------------------------------------------------------------
+// Formatting and symbols (LSP.008, LSP.010)
+// ------------------------------------------------------------------
+
+/// Formatting position of the end of a document (exclusive).
+fn document_end(text: &str) -> Position {
+    let mut line = 0u32;
+    let mut character = 0u32;
+    for ch in text.chars() {
+        if ch == '\n' {
+            line += 1;
+            character = 0;
+        } else {
+            character += ch.len_utf16() as u32;
+        }
+    }
+    Position { line, character }
+}
+
+/// Full-document formatting edit through the canonical engine. The
+/// source's own style is preserved (`Style::Preserve`); a canonical
+/// document yields no edit, so format-on-save is idempotent.
+pub fn formatting_edits(doc: &Doc) -> Vec<TextEdit> {
+    let formatted = active_core::fmt::format(&doc.module, active_core::Style::Preserve);
+    if formatted == doc.text {
+        return Vec::new();
+    }
+    vec![TextEdit {
+        range: Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: document_end(&doc.text),
+        },
+        new_text: formatted,
+    }]
+}
+
+/// Range formatting: compute the single canonical diff hunk and return
+/// it only when it lies inside the requested line range. Clients keep
+/// full-document formatting for wide changes; a hunk that spills past
+/// the selection yields no edit rather than corrupting neighboring
+/// lines (spec/lsp.md §2.2).
+pub fn range_formatting_edits(doc: &Doc, range: Range) -> Vec<TextEdit> {
+    let formatted = active_core::fmt::format(&doc.module, active_core::Style::Preserve);
+    if formatted == doc.text {
+        return Vec::new();
+    }
+    let original: Vec<&str> = doc.text.split('\n').collect();
+    let updated: Vec<&str> = formatted.split('\n').collect();
+    let mut prefix = 0usize;
+    while prefix < original.len() && prefix < updated.len() && original[prefix] == updated[prefix] {
+        prefix += 1;
+    }
+    let mut suffix = 0usize;
+    while suffix < original.len().saturating_sub(prefix)
+        && suffix < updated.len().saturating_sub(prefix)
+        && original[original.len() - 1 - suffix] == updated[updated.len() - 1 - suffix]
+    {
+        suffix += 1;
+    }
+    let original_end = original.len() - suffix;
+    let updated_end = updated.len() - suffix;
+    let sel_start = range.start.line as usize;
+    let sel_end = range.end.line as usize;
+    // The hunk must start inside the selection and end before its last
+    // line, so every replaced byte sits inside `range`.
+    if prefix < sel_start || prefix > sel_end || original_end > sel_end {
+        return Vec::new();
+    }
+    let mut new_text = updated[prefix..updated_end].join("\n");
+    if original_end < original.len() {
+        new_text.push('\n');
+    }
+    let end = if original_end < original.len() {
+        Position {
+            line: original_end as u32,
+            character: 0,
+        }
+    } else {
+        document_end(&doc.text)
+    };
+    vec![TextEdit {
+        range: Range {
+            start: Position {
+                line: prefix as u32,
+                character: 0,
+            },
+            end,
+        },
+        new_text,
+    }]
+}
+
+/// Flat document symbols: every value path and `let` binding with its
+/// source range, sorted by position then name (deterministic).
+/// `SymbolInformation::deprecated` is a required struct field that the
+/// protocol now expresses through `tags`; there is no other way to
+/// construct the type, so the deprecated field is explicitly allowed.
+#[allow(deprecated)]
+pub fn document_symbols(doc: &Doc) -> Vec<SymbolInformation> {
+    let mut out: Vec<SymbolInformation> = Vec::new();
+    for (id, path) in doc.module.value_paths() {
+        if path.is_empty() {
+            continue;
+        }
+        let range = doc
+            .module
+            .node_spans
+            .get(&id)
+            .map(|span| range_of_span(&doc.text, span))
+            .unwrap_or_default();
+        let name = path.rsplit('.').next().unwrap_or(&path).to_string();
+        let container_name = path.rsplit_once('.').map(|(parent, _)| parent.to_string());
+        out.push(SymbolInformation {
+            name,
+            kind: if id_is_table(&doc.module, id) {
+                SymbolKind::OBJECT
+            } else {
+                SymbolKind::FIELD
+            },
+            tags: None,
+            deprecated: None,
+            location: Location {
+                uri: doc.uri.clone(),
+                range,
+            },
+            container_name,
+        });
+    }
+    for (name, id) in &doc.module.bindings {
+        let range = doc
+            .module
+            .node_spans
+            .get(id)
+            .map(|span| range_of_span(&doc.text, span))
+            .unwrap_or_default();
+        out.push(SymbolInformation {
+            name: name.clone(),
+            kind: SymbolKind::VARIABLE,
+            tags: None,
+            deprecated: None,
+            location: Location {
+                uri: doc.uri.clone(),
+                range,
+            },
+            container_name: None,
+        });
+    }
+    out.sort_by(|a, b| {
+        (
+            a.location.range.start.line,
+            a.location.range.start.character,
+            &a.name,
+        )
+            .cmp(&(
+                b.location.range.start.line,
+                b.location.range.start.character,
+                &b.name,
+            ))
+    });
+    out
+}
+
+fn id_is_table(module: &Module, id: NodeId) -> bool {
+    matches!(module.get(id), Some(Node::Table { .. }))
+}
+
+/// Workspace symbols across every open document, filtered by a
+/// case-insensitive substring of the name (empty query returns all).
+pub fn workspace_symbols<'a>(
+    docs: impl Iterator<Item = &'a Doc>,
+    query: &str,
+) -> Vec<SymbolInformation> {
+    let needle = query.to_lowercase();
+    let mut out: Vec<SymbolInformation> = Vec::new();
+    for doc in docs {
+        for symbol in document_symbols(doc) {
+            if needle.is_empty() || symbol.name.to_lowercase().contains(&needle) {
+                out.push(symbol);
+            }
+        }
+    }
+    out.sort_by(|a, b| {
+        (
+            a.location.uri.as_str(),
+            a.location.range.start.line,
+            &a.name,
+        )
+            .cmp(&(
+                b.location.uri.as_str(),
+                b.location.range.start.line,
+                &b.name,
+            ))
+    });
+    out
+}
+
+/// One core diagnostic as an LSP diagnostic: stable code, severity/// mapping per spec §4, span ranges, `"active"` source. Span-less
 /// diagnostics publish as zero-length ranges at (0,0) rather than
 /// vanishing.
 fn to_lsp_diagnostic(text: &str, diag: &Diagnostic) -> lsp_types::Diagnostic {
@@ -2214,8 +2515,128 @@ pub fn code_actions(doc: &Doc, range: Range) -> Vec<CodeAction> {
     out.extend(extract_action(doc, range));
     out.extend(convert_actions(doc));
     out.extend(depends_on_actions(doc, range));
+    out.extend(mode_marker_action(doc, range));
+    out.extend(annotation_action(doc, range));
+    out.extend(repair_plan_action(doc));
     out.sort_by(|a, b| a.title.cmp(&b.title));
     out
+}
+
+/// Offer the Data Mode marker when the document does not declare one
+/// and the request reaches the root (spec/mode.md; LSP.007).
+fn mode_marker_action(doc: &Doc, range: Range) -> Vec<CodeAction> {
+    if range.start.line > 0 || range.start.character > 0 {
+        return Vec::new();
+    }
+    if doc
+        .text
+        .lines()
+        .any(|line| line.trim_start().starts_with("active_mode"))
+    {
+        return Vec::new();
+    }
+    vec![CodeAction {
+        title: "Set active_mode = \"data\"".to_string(),
+        kind: Some(CodeActionKind::QUICKFIX),
+        edit: Some(single_file_edit(
+            doc.uri.clone(),
+            TextEdit {
+                range: Range {
+                    start: Position {
+                        line: 0,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 0,
+                    },
+                },
+                new_text: "active_mode = \"data\"\n\n".to_string(),
+            },
+        )),
+        ..Default::default()
+    }]
+}
+
+/// Offer `@ai_immutable: true` above the statement under the cursor.
+/// The action inserts a comment; it never rewrites the value.
+fn annotation_action(doc: &Doc, range: Range) -> Vec<CodeAction> {
+    let Some(line) = doc.text.split('\n').nth(range.start.line as usize) else {
+        return Vec::new();
+    };
+    let trimmed = line.trim_start();
+    if trimmed.is_empty()
+        || trimmed.starts_with('#')
+        || trimmed.starts_with('@')
+        || trimmed.starts_with('[')
+        || !trimmed.contains('=')
+    {
+        return Vec::new();
+    }
+    vec![CodeAction {
+        title: "Mark binding @ai_immutable".to_string(),
+        kind: Some(CodeActionKind::QUICKFIX),
+        edit: Some(single_file_edit(
+            doc.uri.clone(),
+            TextEdit {
+                range: Range {
+                    start: Position {
+                        line: range.start.line,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: range.start.line,
+                        character: 0,
+                    },
+                },
+                new_text: "# @ai_immutable: true\n".to_string(),
+            },
+        )),
+        ..Default::default()
+    }]
+}
+
+/// Offer the multi-step safe repair plan as one document edit. The
+/// plan is computed by the shipped repair engine (strict engine,
+/// bounded steps), so the action and `active repair` agree by
+/// construction (LSP.007, REPAIR-UI semantics).
+fn repair_plan_action(doc: &Doc) -> Vec<CodeAction> {
+    let outcome = active_core::convert::repair_document(
+        &doc.text,
+        active_core::diag::RepairGoal::Validate,
+        &[],
+        8,
+    );
+    if outcome.steps.is_empty() || outcome.repaired_source == doc.text {
+        return Vec::new();
+    }
+    let safe = outcome.steps.iter().filter(|step| step.safe).count();
+    if safe == 0 {
+        return Vec::new();
+    }
+    let noun = if outcome.steps.len() == 1 {
+        "step"
+    } else {
+        "steps"
+    };
+    vec![CodeAction {
+        title: format!("Apply safe repair plan ({} {noun})", outcome.steps.len()),
+        kind: Some(CodeActionKind::QUICKFIX),
+        edit: Some(single_file_edit(
+            doc.uri.clone(),
+            TextEdit {
+                range: Range {
+                    start: Position {
+                        line: 0,
+                        character: 0,
+                    },
+                    end: document_end(&doc.text),
+                },
+                new_text: outcome.repaired_source,
+            },
+        )),
+        ..Default::default()
+    }]
 }
 
 /// One edit to one file, as a workspace edit.

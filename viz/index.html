@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Active visualizer</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 70em; padding: 0 1rem; }
+  h1 { font-weight: 600; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+  th, td { border-bottom: 1px solid #ddd; padding: .35rem .5rem; text-align: left; }
+  code { background: #f4f4f4; padding: 0 .25rem; }
+  .meta { color: #555; }
+  .tainted { color: #a11; font-weight: 600; }
+</style>
+</head>
+<body>
+<h1>Active visualizer</h1>
+<p class="meta">Load a JSON export from <code>active viz</code> (graph, taint,
+budget, schema, or repair). Data is already redacted; this page performs no
+evaluation and sends nothing anywhere.</p>
+<input type="file" id="file" accept="application/json,.json">
+<div id="out"></div>
+<script src="viewer.js"></script>
+</body>
+</html>

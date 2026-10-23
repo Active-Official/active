@@ -1508,6 +1508,7 @@ fn capability_tools_all_map_to_real_subcommands() {
     mapping.insert("check", vec!["check"]);
     mapping.insert("eval", vec!["eval"]);
     mapping.insert("format", vec!["fmt"]);
+    mapping.insert("lint", vec!["lint"]);
     mapping.insert("convert", vec!["convert"]);
     mapping.insert("graph", vec!["graph", "impact", "why"]);
     mapping.insert("generate", vec!["generate"]);
@@ -1876,4 +1877,264 @@ fn audit_trail_is_valid_active_without_secrets() {
         "audit file must check clean: {}",
         String::from_utf8_lossy(&check.stderr)
     );
+}
+
+#[test]
+fn lint_json_and_sarif_are_machine_readable() {
+    let f = fixture(
+        "lint_formats.active",
+        "[server]\nreadTimeout = 1\nmax_retries = 2\n",
+    );
+    let json_out = active()
+        .args(["lint", "--format", "json"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(!json_out.status.success(), "findings exit non-zero");
+    let json: serde_json::Value = serde_json::from_slice(&json_out.stdout).expect("stdout is JSON");
+    let rows = json.as_array().expect("array");
+    assert!(!rows.is_empty(), "{json}");
+    assert_eq!(rows[0]["code"], "L008");
+    assert!(rows[0]["message"].is_string());
+
+    let sarif_out = active()
+        .args(["lint", "--format", "sarif"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(!sarif_out.status.success());
+    let sarif: serde_json::Value =
+        serde_json::from_slice(&sarif_out.stdout).expect("stdout is SARIF");
+    assert_eq!(sarif["version"], "2.1.0");
+    assert_eq!(sarif["runs"][0]["tool"]["driver"]["name"], "active");
+    assert!(!sarif["runs"][0]["results"]
+        .as_array()
+        .expect("results")
+        .is_empty());
+}
+
+#[test]
+fn inspect_path_reports_text_and_redacts() {
+    let f = fixture(
+        "inspect_path.active",
+        "schema = { port = Int(min = 1, max = 65535, description = \"listen port\") }\nport = 8080\ntoken = secret(\"hunter2-inspect\")\n",
+    );
+    let text = active()
+        .args(["inspect", "--from"])
+        .arg(&f)
+        .args(["--path", "port", "--format", "text"])
+        .output()
+        .expect("run active");
+    assert!(
+        text.status.success(),
+        "{}",
+        String::from_utf8_lossy(&text.stderr)
+    );
+    let body = String::from_utf8_lossy(&text.stdout);
+    assert!(body.contains("constraint: min 1"), "{body}");
+    assert!(body.contains("description: listen port"), "{body}");
+    assert!(body.contains("8080"), "{body}");
+
+    let secret = active()
+        .args(["inspect", "--from"])
+        .arg(&f)
+        .args(["--path", "token"])
+        .output()
+        .expect("run active");
+    assert!(secret.status.success());
+    let body = String::from_utf8_lossy(&secret.stdout);
+    assert!(body.contains("***SECRET***"), "{body}");
+    assert!(!body.contains("hunter2"), "raw secret leaked: {body}");
+}
+
+#[test]
+fn debug_steps_break_and_replay_are_secret_safe() {
+    let f = fixture(
+        "debug.active",
+        "schema = { port = Int(max = 10) }\nport = 999\nunrelated = 1\ntoken = secret(\"hunter2-debug\")\n",
+    );
+    let steps = active()
+        .args(["debug", "--from"])
+        .arg(&f)
+        .args(["--format", "text"])
+        .output()
+        .expect("run active");
+    assert!(
+        steps.status.success(),
+        "{}",
+        String::from_utf8_lossy(&steps.stderr)
+    );
+    let body = String::from_utf8_lossy(&steps.stdout);
+    assert!(body.contains("#0"), "{body}");
+    assert!(body.contains("***SECRET***"), "{body}");
+    assert!(!body.contains("hunter2"), "raw secret in steps: {body}");
+
+    let break_out = active()
+        .args(["debug", "--from"])
+        .arg(&f)
+        .args(["--break", "taint", "--format", "text"])
+        .output()
+        .expect("run active");
+    assert!(break_out.status.success());
+    assert!(String::from_utf8_lossy(&break_out.stdout).contains("break at #"));
+
+    let replay = active()
+        .args(["debug", "--from"])
+        .arg(&f)
+        .args(["--replay", "--format", "text"])
+        .output()
+        .expect("run active");
+    assert!(replay.status.success());
+    assert!(String::from_utf8_lossy(&replay.stdout).contains("replay: OK"));
+
+    let reduce = active()
+        .args(["debug", "--from"])
+        .arg(&f)
+        .args(["--minimize", "T003", "--format", "text"])
+        .output()
+        .expect("run active");
+    assert!(
+        reduce.status.success(),
+        "{}",
+        String::from_utf8_lossy(&reduce.stderr)
+    );
+    let body = String::from_utf8_lossy(&reduce.stdout);
+    assert!(body.contains("keeping T003"), "{body}");
+}
+
+#[test]
+fn viz_emitters_are_machine_readable_and_redacted() {
+    let f = fixture(
+        "viz.active",
+        "schema = { port = Int(min = 1), token = String }\nport = 8080\ntoken = secret(\"hunter2-viz\")\n",
+    );
+    let graph = active()
+        .args(["viz", "graph", "--from"])
+        .arg(&f)
+        .args(["--format", "mermaid"])
+        .output()
+        .expect("run active");
+    assert!(graph.status.success());
+    assert!(String::from_utf8_lossy(&graph.stdout).contains("flowchart TD"));
+
+    for kind in ["taint", "budget", "schema"] {
+        let out = active()
+            .args(["viz", kind, "--from"])
+            .arg(&f)
+            .output()
+            .expect("run active");
+        assert!(
+            out.status.success(),
+            "{kind}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let body = String::from_utf8_lossy(&out.stdout);
+        assert!(!body.contains("hunter2"), "{kind} leaked a secret: {body}");
+        serde_json::from_str::<serde_json::Value>(&body)
+            .unwrap_or_else(|e| panic!("{kind} is not JSON: {e}"));
+    }
+
+    let repair_fixture = fixture(
+        "viz_repair.active",
+        "schema = { port = Int(default = 8080) }\n",
+    );
+    let repair = active()
+        .args(["viz", "repair", "--from"])
+        .arg(&repair_fixture)
+        .output()
+        .expect("run active");
+    assert!(repair.status.success());
+    let plan: serde_json::Value = serde_json::from_slice(&repair.stdout).expect("repair JSON");
+    assert!(!plan["steps"].as_array().expect("steps").is_empty());
+}
+
+#[test]
+fn viz_unknown_kind_fails_closed() {
+    let f = fixture("viz_bad.active", "port = 8080\n");
+    let out = active()
+        .args(["viz", "teleport", "--from"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("unknown viz kind"));
+}
+
+#[test]
+fn repair_browser_and_partial_apply() {
+    let f = fixture(
+        "repair_browser.active",
+        "schema = { port = Int(default = 8080), host = String(default = \"x\") }\n",
+    );
+    let browser = active()
+        .args(["repair", "--from"])
+        .arg(&f)
+        .arg("--browser")
+        .output()
+        .expect("run active");
+    assert!(browser.status.success());
+    let model: serde_json::Value = serde_json::from_slice(&browser.stdout).expect("browser JSON");
+    assert!(model["diagnostics"].is_array());
+    assert!(model["plan"]["steps"].is_array());
+    assert!(model["plan"].get("repaired_source").is_none());
+
+    let partial = active()
+        .args(["repair", "--from"])
+        .arg(&f)
+        .args(["--apply-step", "0", "--format", "text"])
+        .output()
+        .expect("run active");
+    assert!(
+        partial.status.success(),
+        "{}",
+        String::from_utf8_lossy(&partial.stderr)
+    );
+    assert!(String::from_utf8_lossy(&partial.stdout).contains("selected: 1 directives"));
+
+    let cherry = active()
+        .args(["repair", "--from"])
+        .arg(&f)
+        .args(["--cherry-pick", "host", "--format", "text"])
+        .output()
+        .expect("run active");
+    assert!(cherry.status.success());
+    let body = String::from_utf8_lossy(&cherry.stdout);
+    assert!(body.contains("apply @patch(\"host\""), "{body}");
+}
+
+#[test]
+fn query_aliases_report_schema_mode_and_budget() {
+    let f = fixture(
+        "query_aliases.active",
+        "schema = { port = Int(min = 1, max = 10) }\nport = 5\n",
+    );
+    let schema = active()
+        .args(["schema", "inspect", "--from"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(schema.status.success());
+    let doc: serde_json::Value = serde_json::from_slice(&schema.stdout).expect("schema JSON");
+    assert_eq!(doc["version"], 2);
+
+    let mode = active()
+        .args(["mode", "--from"])
+        .arg(&f)
+        .args(["--format", "json"])
+        .output()
+        .expect("run active");
+    assert!(mode.status.success());
+    let mode_doc: serde_json::Value = serde_json::from_slice(&mode.stdout).expect("mode JSON");
+    assert_eq!(mode_doc["mode"], "config");
+    assert_eq!(mode_doc["marker"], false);
+
+    let budget = active()
+        .args(["budget", "explain", "--from"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(budget.status.success());
+    let body = String::from_utf8_lossy(&budget.stdout);
+    assert!(body.contains("nodes: used"), "{body}");
+    assert!(body.contains("headroom"), "{body}");
 }

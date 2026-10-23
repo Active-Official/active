@@ -124,6 +124,20 @@ jobs:
         # validate tags, python import) plus byte-stability (determinism)
         # and version stamps on every generation.
         run: python conformance/evidence/codegen_check.py
+      - name: Build CLI for output-schema checks
+        run: cargo build -p active-cli --locked
+      - name: Validate tooling JSON outputs against committed schemas
+        # Every machine-readable emitter (graph, taint, budget, inspect,
+        # mode, lint, repair plan, debug steps) is validated against
+        # docs/schemas/*.json, so an output shape change fails here.
+        run: python conformance/evidence/output_schema_check.py
+      - name: Editor smoke (VS Code extension + Neovim layer)
+        # Activates the real extension against a stubbed VS Code API and
+        # probes redaction through the same CLI it calls; the Neovim
+        # check SKIPs openly when no Lua toolchain is installed.
+        run: |
+          node editors/vscode/scripts/smoke.js
+          python editors/neovim/smoke.py
       - name: Run agent-kit eval (reference loops)
         # Hard gate: all three reference loops must converge identically
         # (same clean verdicts, iterations, and codes per task) with a
@@ -137,3 +151,44 @@ jobs:
           path: |
             harness.json
             agentkit-eval.json
+
+  tooling:
+    name: Tooling suite (LSP, inspector, debugger, viz, editor)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Language server + CLI suites
+        run: |
+          cargo test -p active-lsp --locked
+          cargo test -p active-cli --locked
+      - name: Tooling core suites
+        run: cargo test -p active-core --locked --test lint --test inspect --test viz --test debug --test repair --test capability
+      - name: Output schema and editor smoke
+        run: |
+          cargo build -p active-cli --locked
+          python -m pip install jsonschema==4.26.0
+          python conformance/evidence/output_schema_check.py
+          node editors/vscode/scripts/smoke.js
+          python editors/neovim/smoke.py
+          python packaging/test_package_neovim.py
+
+  fuzz:
+    name: Tooling fuzz (bounded cargo-fuzz)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Build fuzz targets
+        working-directory: fuzz
+        run: cargo +nightly fuzz build
+      - name: Fuzz lexer, parser, and interpolation (bounded)
+        working-directory: fuzz
+        run: |
+          cargo +nightly fuzz run lexer -- -max_total_time=20
+          cargo +nightly fuzz run parser -- -max_total_time=20
+          cargo +nightly fuzz run interpolation -- -max_total_time=20

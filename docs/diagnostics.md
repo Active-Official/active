@@ -107,6 +107,11 @@ parses leave it unset and tools fall back to the input filename.
 | L003 | `expression complexity <n> exceeds limit <m>` | value expression | One key/let value holds more than 100 operator nodes |
 | L004 | `possible hard-coded secret in key '<path>' (use secret() or secret.env())` | value expression | A pure string literal under a credential-named key (minus placeholders), or a high-entropy long literal anywhere. The value is never quoted |
 | L005 | `deprecated field '<path>' is still used` / `deprecated field '<path>' is still used: <message>` | value expression | A value exists for a schema-deprecated field; migration message quoted when the schema provides one |
+| L006 | `schema carries reader/writer or removal metadata but no version; add version = "x.y.z" so compatibility can be checked` | schema block | The schema uses `min_reader`, `min_writer`, or `removed_in` without `version` |
+| L007 | `unknown capability '<name>' (not advertised by the descriptor)` | document | `active_capabilities` names a capability the shipped descriptor does not offer |
+| L008 | `table '<path>' mixes cased and snake_case keys` | table node | One table mixes camel/Pascal-case keys with snake_case keys |
+| L009 | `string literal at '<path>' is <n> bytes; consider blob() content addressing` | literal node | A string literal exceeds 65,536 bytes |
+| L010 | `Data-oriented constructs without active_mode = "data"` | document root | Content-addressed values, evolution metadata, or capability declarations in Config Mode |
 
 ### W0xx — Warnings
 | Code | Message | Span | Emitted when |

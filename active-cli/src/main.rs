@@ -7,7 +7,7 @@ use active_core::convert::{
 use active_core::diag::{Diagnostic, Severity};
 use active_core::{parse_file, Budget, Engine, EvalError, ParseOptions, Style};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(
@@ -315,12 +315,69 @@ enum Commands {
         #[arg(long)]
         trust_keys: Option<PathBuf>,
     },
-    /// Inspect a schema block as queryable JSON (fields, types,
-    /// constraints, defaults, descriptions) for agents
+    /// Inspect a schema block or one value path as queryable JSON
     Inspect {
-        /// Input .active file (must contain a schema block)
+        /// Input .active file
         #[arg(short, long)]
         from: PathBuf,
+        /// Dotted/index path to inspect (defaults to the schema view)
+        #[arg(long)]
+        path: Option<String>,
+        /// Output format: json (default) or text (path mode)
+        #[arg(long, default_value = "json")]
+        format: String,
+        /// Require sibling signatures on includes (C-052)
+        #[arg(long)]
+        trust_keys: Option<PathBuf>,
+    },
+    /// Step, breakpoint, replay, or reduce a document (debugger)
+    Debug {
+        /// Input .active file
+        #[arg(short, long)]
+        from: PathBuf,
+        /// Stop at the first matching breakpoint: taint, path:<prefix>,
+        /// code:<CODE>, or node:<n>
+        #[arg(long = "break")]
+        break_at: Option<String>,
+        /// Deterministic replay: evaluate twice and compare hashes,
+        /// codes, and step traces
+        #[arg(long)]
+        replay: bool,
+        /// Expected content hash for --replay (sha256:...)
+        #[arg(long)]
+        expect: Option<String>,
+        /// Reduce the document while the given diagnostic code survives
+        #[arg(long)]
+        minimize: Option<String>,
+        /// Maximum reduction attempts
+        #[arg(long, default_value_t = 200)]
+        max_attempts: usize,
+        /// Output format: json (default) or text
+        #[arg(long, default_value = "json")]
+        format: String,
+        /// Require sibling signatures on includes (C-052)
+        #[arg(long)]
+        trust_keys: Option<PathBuf>,
+    },
+    /// Export visualizer data: graph, taint, budget, schema, or repair
+    Viz {
+        /// What to export: graph, taint, budget, schema, repair
+        kind: String,
+        /// Input .active file
+        #[arg(short, long)]
+        from: PathBuf,
+        /// graph output: json, mermaid, or dot (other kinds: json)
+        #[arg(long, default_value = "json")]
+        format: String,
+        /// Repair goal: validate, preserve-key, or minimize-diff
+        #[arg(long, default_value = "validate")]
+        goal: String,
+        /// Path to preserve (repeatable, repair only)
+        #[arg(long)]
+        preserve: Vec<String>,
+        /// Maximum repair plan steps
+        #[arg(long, default_value_t = 8)]
+        max_steps: usize,
         /// Require sibling signatures on includes (C-052)
         #[arg(long)]
         trust_keys: Option<PathBuf>,
@@ -410,6 +467,15 @@ enum Commands {
         /// skipped with a warning unless the result is clean)
         #[arg(short, long)]
         output: Option<PathBuf>,
+        /// Apply only steps up to this zero-based index (partial apply)
+        #[arg(long)]
+        apply_step: Option<usize>,
+        /// Apply only steps whose target path starts with this prefix
+        #[arg(long)]
+        cherry_pick: Option<String>,
+        /// Emit the unified browser model (diagnostics + plan) as JSON
+        #[arg(long)]
+        browser: bool,
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
@@ -516,7 +582,121 @@ enum Commands {
         /// complexity, hardcoded-secrets, deprecated
         #[arg(long = "disable-lint")]
         disable: Vec<String>,
+        /// Output format: text (human), json (stable schema), sarif 2.1.0
+        #[arg(long = "format", default_value = "text")]
+        output_format: String,
     },
+    /// Schema query alias surface: `active schema inspect ...`
+    Schema {
+        #[command(subcommand)]
+        action: SchemaAction,
+    },
+    /// Report the document mode and declared capabilities
+    Mode {
+        /// Input .active file
+        #[arg(short, long)]
+        from: PathBuf,
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// Explain the effective budget and observed usage
+    Budget {
+        #[command(subcommand)]
+        action: BudgetAction,
+    },
+}
+
+/// `active schema ...` subcommands (QUERY.002).
+#[derive(Subcommand)]
+enum SchemaAction {
+    /// Inspect a schema block or one value path
+    Inspect {
+        /// Input .active file
+        #[arg(short, long)]
+        from: PathBuf,
+        /// Dotted/index path to inspect (defaults to the schema view)
+        #[arg(long)]
+        path: Option<String>,
+        /// Output format: json (default) or text (path mode)
+        #[arg(long, default_value = "json")]
+        format: String,
+        /// Require sibling signatures on includes (C-052)
+        #[arg(long)]
+        trust_keys: Option<PathBuf>,
+    },
+}
+
+/// `active budget ...` subcommands (QUERY.004).
+#[derive(Subcommand)]
+enum BudgetAction {
+    /// Explain limits, observed usage, and headroom
+    Explain {
+        /// Input .active file
+        #[arg(short, long)]
+        from: PathBuf,
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+}
+
+/// Lint report formats (LINT.008).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LintFormat {
+    Text,
+    Json,
+    Sarif,
+}
+
+impl LintFormat {
+    fn parse(value: &str) -> anyhow::Result<Self> {
+        match value {
+            "text" => Ok(Self::Text),
+            "json" => Ok(Self::Json),
+            "sarif" => Ok(Self::Sarif),
+            other => anyhow::bail!("unknown lint format `{other}` (want text|json|sarif)"),
+        }
+    }
+}
+
+/// Shared implementation of `inspect` and `schema inspect` (QUERY.002).
+fn run_inspect(
+    from: &Path,
+    path: Option<&str>,
+    format: &str,
+    trust_keys: &Option<PathBuf>,
+) -> anyhow::Result<()> {
+    let trust = load_trust(trust_keys)?;
+    let module = parse_input(from, false, false, &trust)?;
+    match path {
+        None => {
+            if format != "json" {
+                anyhow::bail!("schema inspection supports --format json only");
+            }
+            let inspected = schema_inspect(&module).map_err(|e| anyhow::anyhow!("{e}"))?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&inspected).map_err(|e| anyhow::anyhow!("{e}"))?
+            );
+        }
+        Some(path) => {
+            let (value, _) = Engine::new()
+                .evaluate(&module)
+                .map_err(|e| anyhow::anyhow!("cannot evaluate for inspection: {e}"))?;
+            let report = active_core::convert::inspect_path(&module, &value, path)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            match format {
+                "json" => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report).map_err(|e| anyhow::anyhow!("{e}"))?
+                ),
+                "text" => print!("{}", active_core::convert::render_inspection_text(&report)),
+                other => anyhow::bail!("unknown inspect format `{other}` (want json|text)"),
+            }
+        }
+    }
+    Ok(())
 }
 
 fn options(resilient: bool, allow_parent_escapes: bool) -> ParseOptions {
@@ -880,7 +1060,15 @@ fn report_eval_error(e: &EvalError, name: &str) {
 }
 
 fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    // The derived clap command tree is large; parse on a thread with a
+    // generous stack so debug builds on Windows cannot overflow while
+    // building help or parsing arguments.
+    let cli = std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(Cli::parse)
+        .expect("spawn argument parser")
+        .join()
+        .expect("argument parser thread");
 
     match cli.command {
         Commands::Eval {
@@ -1249,14 +1437,270 @@ fn main() -> anyhow::Result<()> {
             // second one (a blank line that `gofmt` rejects).
             println!("{}", output.trim_end_matches('\n'));
         }
-        Commands::Inspect { from, trust_keys } => {
+        Commands::Inspect {
+            from,
+            path,
+            format,
+            trust_keys,
+        } => {
+            run_inspect(&from, path.as_deref(), &format, &trust_keys)?;
+        }
+        Commands::Schema { action } => {
+            let SchemaAction::Inspect {
+                from,
+                path,
+                format,
+                trust_keys,
+            } = action;
+            run_inspect(&from, path.as_deref(), &format, &trust_keys)?;
+        }
+        Commands::Mode { from, format } => {
+            let source = std::fs::read_to_string(&from)
+                .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", from.display()))?;
+            let module = parse_input(&from, false, false, &None)?;
+            let marker = source
+                .lines()
+                .any(|line| line.trim_start().starts_with("active_mode"));
+            let mode = match module.mode {
+                active_core::Mode::Data => "data",
+                active_core::Mode::Config => "config",
+            };
+            if format == "text" {
+                println!("mode: {mode}");
+                println!("marker: {}", if marker { "present" } else { "absent" });
+                if module.capabilities.is_empty() {
+                    println!("capabilities: (none)");
+                } else {
+                    println!("capabilities: {}", module.capabilities.join(", "));
+                }
+            } else if format == "json" {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "mode": mode,
+                        "marker": marker,
+                        "capabilities": module.capabilities,
+                    }))
+                    .map_err(|e| anyhow::anyhow!("{e}"))?
+                );
+            } else {
+                anyhow::bail!("unknown mode format `{format}` (want json|text)");
+            }
+        }
+        Commands::Budget { action } => {
+            let BudgetAction::Explain { from, format } = action;
+            let module = parse_input(&from, false, false, &None)?;
+            let engine = Engine::new();
+            let (value, diagnostics) = engine
+                .evaluate(&module)
+                .map_err(|e| anyhow::anyhow!("cannot evaluate: {e}"))?;
+            let data = active_core::viz::budget_data(&module, &value, &engine.budget, &diagnostics);
+            if format == "text" {
+                let limits = &data["limits"];
+                let usage = &data["usage"];
+                let headroom = &data["headroom"];
+                for (label, key) in [
+                    ("nodes", "nodes"),
+                    ("depth", "depth"),
+                    ("array length", "array_len"),
+                    ("keys", "keys"),
+                    ("value size", "value_size"),
+                    ("total size", "total_size"),
+                ] {
+                    println!(
+                        "{label}: used {} of {} (headroom {})",
+                        usage[key], limits[key], headroom[key]
+                    );
+                }
+                println!(
+                    "wall clock: {} ms (host-time limit; not sampled here)",
+                    limits["wall_ms"]
+                );
+            } else if format == "json" {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&data).map_err(|e| anyhow::anyhow!("{e}"))?
+                );
+            } else {
+                anyhow::bail!("unknown budget format `{format}` (want json|text)");
+            }
+        }
+        Commands::Debug {
+            from,
+            break_at,
+            replay,
+            expect,
+            minimize,
+            max_attempts,
+            format,
+            trust_keys,
+        } => {
             let trust = load_trust(&trust_keys)?;
             let module = parse_input(&from, false, false, &trust)?;
-            let inspected = schema_inspect(&module).map_err(|e| anyhow::anyhow!("{e}"))?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&inspected).map_err(|e| anyhow::anyhow!("{e}"))?
-            );
+            if format != "json" && format != "text" {
+                anyhow::bail!("unknown debug format `{format}` (want json|text)");
+            }
+            if replay {
+                let report = active_core::debug::replay(&module, expect.as_deref())
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                if format == "text" {
+                    println!(
+                        "replay: {} hash={} steps={} steps_match={}",
+                        if report["ok"].as_bool().unwrap_or(false) {
+                            "OK"
+                        } else {
+                            "MISMATCH"
+                        },
+                        report["hash"].as_str().unwrap_or("?"),
+                        report["steps"].as_u64().unwrap_or(0),
+                        report["steps_match"].as_bool().unwrap_or(false)
+                    );
+                } else {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&report)
+                            .map_err(|e| anyhow::anyhow!("{e}"))?
+                    );
+                }
+                if !report["ok"].as_bool().unwrap_or(false) {
+                    std::process::exit(1);
+                }
+                return Ok(());
+            }
+            if let Some(code) = minimize {
+                let source = std::fs::read_to_string(&from)
+                    .map_err(|e| anyhow::anyhow!("cannot read source: {e}"))?;
+                let report = active_core::debug::minimal_case(&source, &code, max_attempts);
+                if format == "text" {
+                    println!(
+                        "reduced {} -> {} bytes ({} attempts) keeping {}",
+                        report["original_bytes"], report["reduced_bytes"], report["attempts"], code
+                    );
+                    print!("{}", report["reduced"].as_str().unwrap_or(""));
+                } else {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&report)
+                            .map_err(|e| anyhow::anyhow!("{e}"))?
+                    );
+                }
+                return Ok(());
+            }
+            let (_, _, steps) = Engine::new()
+                .evaluate_with_steps(&module)
+                .map_err(|e| anyhow::anyhow!("cannot evaluate for stepping: {e}"))?;
+            let (shown, matched) = match break_at.as_deref() {
+                Some(selector) => match active_core::debug::breakpoint_index(&steps, selector) {
+                    Some(index) => (steps[..=index].to_vec(), Some(index)),
+                    None => (Vec::new(), None),
+                },
+                None => (steps.clone(), None),
+            };
+            if format == "text" {
+                if let Some(selector) = &break_at {
+                    match matched {
+                        Some(index) => println!("break at #{index} ({selector})"),
+                        None => println!("breakpoint not reached ({selector})"),
+                    }
+                }
+                print!("{}", active_core::debug::render_steps(&shown));
+            } else {
+                let report = serde_json::json!({
+                    "breakpoint": break_at,
+                    "matched": matched,
+                    "total_steps": steps.len(),
+                    "steps": shown,
+                });
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report).map_err(|e| anyhow::anyhow!("{e}"))?
+                );
+            }
+            if break_at.is_some() && matched.is_none() {
+                std::process::exit(1);
+            }
+        }
+        Commands::Viz {
+            kind,
+            from,
+            format,
+            goal,
+            preserve,
+            max_steps,
+            trust_keys,
+        } => {
+            let trust = load_trust(&trust_keys)?;
+            let module = parse_input(&from, false, false, &trust)?;
+            match kind.as_str() {
+                "graph" => match format.as_str() {
+                    "json" => println!(
+                        "{}",
+                        serde_json::to_string_pretty(&active_core::graph::to_graph_json(&module))
+                            .map_err(|e| anyhow::anyhow!("{e}"))?
+                    ),
+                    "mermaid" => print!("{}", active_core::graph::to_mermaid(&module)),
+                    "dot" => print!("{}", active_core::graph::to_dot(&module)),
+                    other => {
+                        anyhow::bail!("unknown graph format `{other}` (want json|mermaid|dot)")
+                    }
+                },
+                "taint" => {
+                    let (value, _) = Engine::new()
+                        .evaluate(&module)
+                        .map_err(|e| anyhow::anyhow!("cannot evaluate: {e}"))?;
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&active_core::viz::taint_data(
+                            &module, &value
+                        ))
+                        .map_err(|e| anyhow::anyhow!("{e}"))?
+                    );
+                }
+                "budget" => {
+                    let engine = Engine::new();
+                    let (value, diagnostics) = engine
+                        .evaluate(&module)
+                        .map_err(|e| anyhow::anyhow!("cannot evaluate: {e}"))?;
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&active_core::viz::budget_data(
+                            &module,
+                            &value,
+                            &engine.budget,
+                            &diagnostics
+                        ))
+                        .map_err(|e| anyhow::anyhow!("{e}"))?
+                    );
+                }
+                "schema" => {
+                    let data = active_core::viz::schema_data(&module)
+                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&data).map_err(|e| anyhow::anyhow!("{e}"))?
+                    );
+                }
+                "repair" => {
+                    let source = std::fs::read_to_string(&from)
+                        .map_err(|e| anyhow::anyhow!("cannot read source: {e}"))?;
+                    let goal = match goal.as_str() {
+                        "validate" => active_core::diag::RepairGoal::Validate,
+                        "preserve-key" => active_core::diag::RepairGoal::PreserveKey(preserve.clone()),
+                        "minimize-diff" => active_core::diag::RepairGoal::MinimizeDiff,
+                        other => anyhow::bail!(
+                            "unknown repair goal `{other}` (want validate|preserve-key|minimize-diff)"
+                        ),
+                    };
+                    let data = active_core::viz::repair_data(&source, goal, &preserve, max_steps);
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&data).map_err(|e| anyhow::anyhow!("{e}"))?
+                    );
+                }
+                other => anyhow::bail!(
+                    "unknown viz kind `{other}` (want graph|taint|budget|schema|repair)"
+                ),
+            }
         }
         Commands::Explain {
             from,
@@ -1404,6 +1848,9 @@ fn main() -> anyhow::Result<()> {
             max_steps,
             format,
             output,
+            apply_step,
+            cherry_pick,
+            browser,
             allow_parent_escapes,
             trust_keys,
             profile,
@@ -1439,6 +1886,20 @@ fn main() -> anyhow::Result<()> {
             }
             let mut eng = engine(false, &profile, budget.resolve()?);
             eng.materialise_blobs = false;
+            if browser {
+                let model = active_core::convert::repair::browser_model(
+                    &source,
+                    goal_parsed.clone(),
+                    &preserve,
+                    max_steps,
+                );
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&model)
+                        .map_err(|e| anyhow::anyhow!("browser serialize failed: {e}"))?
+                );
+                return Ok(());
+            }
             let outcome = active_core::convert::repair::repair_with_engine_and_options(
                 &source,
                 goal_parsed,
@@ -1448,6 +1909,33 @@ fn main() -> anyhow::Result<()> {
                 Some(&from),
                 allow_parent_escapes,
             );
+            // Partial application (REPAIR-UI.003): an explicit subset
+            // applies only safe steps inside the index bound and/or
+            // matching the path prefix, in plan order.
+            let partial = apply_step.is_some() || cherry_pick.is_some();
+            let (target_source, applied_directives) = if partial {
+                active_core::convert::repair::apply_selected(
+                    &source,
+                    &outcome.steps,
+                    apply_step,
+                    cherry_pick.as_deref(),
+                )
+            } else {
+                (
+                    outcome.repaired_source.clone(),
+                    outcome
+                        .steps
+                        .iter()
+                        .filter(|step| {
+                            matches!(
+                                step.status,
+                                active_core::convert::repair::StepStatus::Applied
+                            )
+                        })
+                        .map(|step| step.directive.clone())
+                        .collect(),
+                )
+            };
             // PreserveKey carries its paths inside the goal for the
             // plan record; the loop itself used the raw list.
             match format.as_str() {
@@ -1476,12 +1964,27 @@ fn main() -> anyhow::Result<()> {
                     if !outcome.clean {
                         println!("repair: not clean ({})", outcome.final_codes.join(", "));
                     }
+                    if partial {
+                        println!("selected: {} directives", applied_directives.len());
+                        for directive in &applied_directives {
+                            println!("apply {directive}");
+                        }
+                    }
                 }
                 other => anyhow::bail!("unsupported format: {other}"),
             }
             if let Some(path) = output {
-                if outcome.clean {
-                    std::fs::write(&path, &outcome.repaired_source)
+                if partial && !applied_directives.is_empty() {
+                    std::fs::write(&path, &target_source)
+                        .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", path.display()))?;
+                    if !outcome.clean {
+                        eprintln!(
+                            "warning: wrote a partial repair to {} (plan is not clean yet)",
+                            path.display()
+                        );
+                    }
+                } else if !partial && outcome.clean {
+                    std::fs::write(&path, &target_source)
                         .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", path.display()))?;
                 } else {
                     eprintln!(
@@ -1490,7 +1993,11 @@ fn main() -> anyhow::Result<()> {
                     );
                 }
             }
-            if !outcome.clean {
+            if partial {
+                if applied_directives.is_empty() {
+                    std::process::exit(1);
+                }
+            } else if !outcome.clean {
                 std::process::exit(1);
             }
         }
@@ -1699,8 +2206,13 @@ fn main() -> anyhow::Result<()> {
                 std::process::exit(1);
             }
         }
-        Commands::Lint { files, disable } => {
+        Commands::Lint {
+            files,
+            disable,
+            output_format,
+        } => {
             use active_core::lint;
+            let format = LintFormat::parse(&output_format)?;
             let options = lint::LintOptions::with_disabled(&disable).map_err(|e| {
                 eprintln!("[Error] {e}");
                 anyhow::anyhow!("bad --disable-lint flag")
@@ -1708,21 +2220,48 @@ fn main() -> anyhow::Result<()> {
             // Read-only across files: every file always runs, even
             // when an earlier file fails to parse.
             let mut dirty = false;
+            let mut items: Vec<(String, Diagnostic)> = Vec::new();
             for file in &files {
                 let name = file.to_string_lossy().to_string();
                 let module = match parse_file(file, ParseOptions::default()) {
                     Ok(module) => module,
                     Err(diags) => {
                         for d in &diags {
-                            report(d, &name);
+                            if format == LintFormat::Text {
+                                report(d, &name);
+                            } else {
+                                items.push((name.clone(), d.clone()));
+                            }
                         }
                         dirty = true;
                         continue;
                     }
                 };
                 for d in lint::lint_with(&module, &options) {
-                    report(&d, &name);
+                    if format == LintFormat::Text {
+                        report(&d, &name);
+                    } else {
+                        items.push((name.clone(), d.clone()));
+                    }
                     dirty = true;
+                }
+            }
+            match format {
+                LintFormat::Text => {}
+                LintFormat::Json => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&lint::json_report(&items))?
+                    );
+                }
+                LintFormat::Sarif => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&lint::sarif_report(
+                            &items,
+                            env!("CARGO_PKG_VERSION")
+                        ))?
+                    );
                 }
             }
             if dirty {

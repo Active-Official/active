@@ -14,6 +14,7 @@ pub mod inspect;
 pub mod project;
 pub mod repair;
 pub mod suggest;
+pub mod value_inspect;
 
 pub use capability::{
     profile as sandbox_profile, profiles as sandbox_profiles, refused as refused_capabilities,
@@ -35,6 +36,7 @@ pub use import::{
 };
 pub use inspect::{schema_inspect, INSPECT_VERSION};
 pub use suggest::{suggest_patches, suggest_patches_structured, PatchKind, PatchSuggestion};
+pub use value_inspect::{inspect_path, render_text as render_inspection_text};
 
 pub fn value_to_json(v: &Value) -> JsonValue {
     match v {

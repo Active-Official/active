@@ -30,6 +30,10 @@ fn capabilities() -> ServerCapabilities {
         }),
         code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
         inlay_hint_provider: Some(OneOf::Left(true)),
+        document_formatting_provider: Some(OneOf::Left(true)),
+        document_range_formatting_provider: Some(OneOf::Left(true)),
+        document_symbol_provider: Some(OneOf::Left(true)),
+        workspace_symbol_provider: Some(OneOf::Left(true)),
         semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
             SemanticTokensOptions {
                 legend: analysis::token_legend(),
@@ -229,6 +233,43 @@ fn handle_request(open: &mut HashMap<String, Doc>, req: Request) -> Option<Respo
                 };
             let result = doc_at(open, &params.text_document.uri)
                 .map(|doc| analysis::code_actions(doc, params.range));
+            Some(Response::new_ok(req.id, result))
+        }
+        "textDocument/formatting" => {
+            let params: lsp_types::DocumentFormattingParams =
+                match parse_request::<lsp_types::request::Formatting>(&req) {
+                    Ok(params) => params,
+                    Err(response) => return Some(*response),
+                };
+            let result = doc_at(open, &params.text_document.uri).map(analysis::formatting_edits);
+            Some(Response::new_ok(req.id, result))
+        }
+        "textDocument/rangeFormatting" => {
+            let params: lsp_types::DocumentRangeFormattingParams =
+                match parse_request::<lsp_types::request::RangeFormatting>(&req) {
+                    Ok(params) => params,
+                    Err(response) => return Some(*response),
+                };
+            let result = doc_at(open, &params.text_document.uri)
+                .map(|doc| analysis::range_formatting_edits(doc, params.range));
+            Some(Response::new_ok(req.id, result))
+        }
+        "textDocument/documentSymbol" => {
+            let params: lsp_types::DocumentSymbolParams =
+                match parse_request::<lsp_types::request::DocumentSymbolRequest>(&req) {
+                    Ok(params) => params,
+                    Err(response) => return Some(*response),
+                };
+            let result = doc_at(open, &params.text_document.uri).map(analysis::document_symbols);
+            Some(Response::new_ok(req.id, result))
+        }
+        "workspace/symbol" => {
+            let params: lsp_types::WorkspaceSymbolParams =
+                match parse_request::<lsp_types::request::WorkspaceSymbolRequest>(&req) {
+                    Ok(params) => params,
+                    Err(response) => return Some(*response),
+                };
+            let result = analysis::workspace_symbols(open.values(), &params.query);
             Some(Response::new_ok(req.id, result))
         }
         // Dependency-graph queries for agents and dashboards
@@ -473,6 +514,12 @@ fn handle_notification(
                     return outgoing;
                 }
             }
+        }
+        "textDocument/didSave" => {
+            // Full sync: didChange already delivered the buffer, so a
+            // save changes no server state. The notification is
+            // acknowledged explicitly (spec/lsp.md §1).
+            return Vec::new();
         }
         "textDocument/didClose" => {
             if let Ok(params) =

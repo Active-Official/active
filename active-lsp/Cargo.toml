@@ -27,3 +27,11 @@ lsp-server = "0.7"
 lsp-types = "0.94"
 serde_json = { workspace = true }
 active-core = { workspace = true }
+
+[dev-dependencies]
+criterion = "0.5"
+codspeed-criterion-compat = "2"
+
+[[bench]]
+name = "analysis"
+harness = false

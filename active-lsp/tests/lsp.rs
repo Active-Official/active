@@ -141,7 +141,9 @@ fn semantic_tokens_encode_and_start_at_zero() {
     assert_eq!(encoded[0].delta_start, 0);
     // A comment token is present (type index 3).
     assert!(encoded.iter().any(|t| t.token_type == 3));
-    assert_eq!(analysis::token_legend().token_types.len(), 7);
+    // Legend is contractual: 7 standard types plus the four custom
+    // Active classes (secret, mode, contentAddressed, schema).
+    assert_eq!(analysis::token_legend().token_types.len(), 11);
 }
 
 // ------------------------------------------------------------------

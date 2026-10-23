@@ -19,7 +19,9 @@ flag with W013 progressive warnings and E024, decidable graph
 queries (`active graph query`), in-document `active_capabilities`
 with E025, the capability handshake (`--check-doc`) and sandbox
 profiles (`--sandbox`, 4 profiles). Capability descriptor grows 10
-→ 12 tools plus `profiles` and new `features` entries; INSPECT v2.
+→ 13 tools (adds `lint`, `repair`, `compatibility`) plus `profiles`
+and new `features` entries; the linter grows to ten rules with JSON
+and SARIF 2.1.0 reports; INSPECT v2.
 
 The same program also lands: multi-target code generation validated
 against real ecosystems (JSON Schema Draft 2020-12, TypeScript + zod,

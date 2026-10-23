@@ -15,6 +15,11 @@ is a separate check tool that exits 1 when any enabled rule fires.
 | `complexity` (L003) | Excessive expression complexity | One key/let value holds more than 100 operator nodes (`Binary`, `Unary`, interpolation expressions, references, env/secret lookups). Data nodes (literals, arrays, tables) are free: size is not complexity | Warning |
 | `hardcoded-secrets` (L004) | Probable hard-coded secret | A pure string literal sits under a credential-named key (`password`, `passwd`, `secret`, `token`, `api_key`, `apikey`, `private_key`, `privatekey`, `auth`, `credentials`, `access_key`, `secret_key` — case-insensitive, `_`/`-` agnostic, prefix/suffix match), unless the value is a known placeholder (`changeme`, `password`, `xxx`, `test`, `example`, `placeholder`, `redacted`, `***`, `***SECRET***`, empty) or a `scheme://` URL locator; **or** any string literal with Shannon entropy ≥ 4.5 bits/char at length ≥ 20 (precision-tuned: no per-file suppression exists yet, so the bar stays high; URLs are not exempt here — token-laden query strings stay flaggable). Messages name the key path only — never the value (C-036) | Warning |
 | `deprecated` (L005) | Use of a schema-deprecated field | A value exists for a field whose schema declares `deprecated` (message quoted from the schema; schema-authored, safe) | Warning |
+| `schema-evolution` (L006) | Partial evolution metadata | Schema carries `min_reader`, `min_writer`, or a field `removed_in` but no `version`; a fully unversioned schema is allowed | Warning |
+| `unknown-capability` (L007) | Unadvertised capability | `active_capabilities` names a capability the shipped descriptor does not advertise | Warning |
+| `key-style` (L008) | Mixed key style in one table | One table mixes cased (camel/Pascal) keys with snake_case keys; per table, not per document | Warning |
+| `large-literal` (L009) | Oversized string literal | A string literal exceeds 65,536 bytes (content addressing candidate) | Warning |
+| `data-mode` (L010) | Data construct without the marker | Content-addressed values, evolution metadata, or capability declarations while the document is in Config Mode | Warning |
 
 ## 2. `depends_on` syntax and semantics
 
@@ -64,10 +69,12 @@ port = 8080
 
 ## 4. Disablement
 
-- CLI: `ACTIVE lint [--disable-lint <rule>]... <file>...`
-  (repeatable; unknown rule names are an error listing the five).
+- CLI: `ACTIVE lint [--format text|json|sarif] [--disable-lint <rule>]... <file>...`
+  (repeatable; unknown rule names are an error listing the ten).
 - Library: `LintOptions { disabled: HashSet<String> }` (rule IDs as
-  above); `active_core::lint::lint(&module, &options)`.
+  above); `active_core::lint::lint(&module, &options)`. Reports:
+  `lint::json_report` (stable array schema) and `lint::sarif_report`
+  (SARIF 2.1.0).
 - No file-level suppression comments in this phase (noted future).
 
 ## 5. `ACTIVE lint` contract

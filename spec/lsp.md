@@ -10,11 +10,18 @@ ACTIVE-core directly (parse recovering, evaluate, lint, format).
 - `initialize` → advertises: hover, definition, references, rename
   (prepare not needed), completion (no trigger chars beyond
   identifiers), code actions (quickfix), inlay hints, semantic
-  tokens (full only), diagnostic publishing (push, not pull).
+  tokens (full only), full and range formatting, document symbols,
+  workspace symbols, diagnostic publishing (push, not pull).
   `initialized` → ready. `shutdown`/`exit` handled; unknown
   methods get `MethodNotFound`, never a crash.
+- Analysis is hermetic and budgeted: the server evaluates buffers
+  with an empty environment snapshot and the strict budget preset,
+  so ambient host values never leak into hover/completion and a
+  pathological document fails closed as an X0xx diagnostic instead
+  of hanging the editor.
 - `textDocument/didOpen` (full text, `languageId: ACTIVE`),
-  `didChange` (full sync), `didClose` (drop state, clear
+  `didChange` (full sync), `didSave` (acknowledged; full sync means
+  no state change), `didClose` (drop state, clear
   diagnostics). `file://` URIs map to paths; includes resolve from
   disk relative to the workspace file (unsaved include buffers are
   out of scope — documented).
@@ -145,6 +152,12 @@ from comments or string contents.
   static is known. Secret values hint `: Secret` — never the
   value. Kind `Type`, padding on the left. Hints outside a
   requested range are withheld.
+- **Completion**: schema field names for the innermost scope,
+  in-scope `let` bindings, `true`/`false`/`null`, unit suffixes
+  after a numeric literal (the edit inserts only the unit, never
+  replacing the digits), and root-level metadata keys
+  (`active_mode`, `active_capabilities`, `schema`). Items are
+  prefix-filtered and sorted by label.
 
 ## 5. Code actions (C-045)
 
@@ -195,8 +208,37 @@ determinism.
    diagnostics fire for declared arrays, empty included — so the
    creation branch is defensive, kept total against linter
    evolution.)
+5. **Set `active_mode`** — at the document start when no marker
+   exists: insert `active_mode = "data"` (spec/mode.md). Offered
+   only for a request at (0,0), so it cannot fire mid-document.
+6. **Mark `@ai_immutable`** — on a non-comment, non-header line
+   containing `=`: insert `# @ai_immutable: true` above the
+   statement. The value itself is never rewritten.
+7. **Apply safe repair plan** — run the shipped multi-step repair
+   engine (strict engine, validate goal, eight-step cap) and, when
+   the plan contains at least one safe step, offer the repaired
+   source as one document edit. The action and `active repair`
+   share the engine, so their plans cannot drift.
+
+## 5.1 Formatting
+
+- **Full** (`textDocument/formatting`): the canonical formatter
+  with `Style::Preserve`, returned as one full-document edit; a
+  canonical document returns no edits, so format-on-save is
+  idempotent.
+- **Range** (`textDocument/rangeFormatting`): compute the single
+  canonical diff hunk and return it only when it lies inside the
+  requested line range. A hunk that spills past the selection
+  yields no edit rather than corrupting neighboring lines.
 
 ## 6. Semantic tokens (C-043)
+
+The legend is contractual: `keyword`, `string`, `number`, `comment`,
+`property`, `variable`, `operator`, plus four custom types:
+`secret` (the `secret` construct; values never travel in tokens),
+`mode` (`active_mode` / `active_capabilities` keys), `contentAddressed`
+(the `blob` construct), and `schema` (the `schema` keyword). Tokens are
+full-document, split per line, UTF-16 lengths, delta-encoded.
 
 Full-document tokens from the lexer stream (no new parsing):
 keywords (`let`, `true`, `false`, `null`, `profile`, `include`,

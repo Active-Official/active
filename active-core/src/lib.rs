@@ -5,6 +5,7 @@
 pub mod ast;
 pub mod blob;
 pub mod convert;
+pub mod debug;
 pub mod diag;
 pub mod eval;
 pub mod fmt;
@@ -18,9 +19,10 @@ pub mod sign;
 pub mod trace;
 pub mod types;
 pub mod validate;
+pub mod viz;
 
 pub use diag::{Diagnostic, Repair, RepairKind, Severity};
-pub use eval::{Budget, BudgetKind, Engine, EnvLookup, EvalError, IncrementalMemo};
+pub use eval::{Budget, BudgetKind, Engine, EnvLookup, EvalError, IncrementalMemo, StepEvent};
 pub use ir::{
     Annotation, AnnotationKind, Attachment, BinOp, DependsOn, IncludeStmt, InterpPart, Mode,
     Module, Node, NodeId, PatchOp, SchemaField, SchemaMeta, SemanticTag, Style, TriviaComment,

@@ -44,3 +44,27 @@ vim.lsp.config('active_ls', {
 })
 vim.lsp.enable('active_ls')
 ```
+
+## Status line and commands (EDITOR.004)
+
+The bundled Lua layer adds a status string and five commands. It needs
+the `active` CLI on PATH (override with `vim.g.active_cli = '/path/to/active'`):
+
+```lua
+require('active').setup()
+vim.opt.statusline:append('%{v:lua.require"active".status()}')
+```
+
+| Command | Runs |
+|---|---|
+| `:ActiveCheck` | `active check` |
+| `:ActiveGraph` | `active graph --format mermaid` |
+| `:ActiveRepair` | `active repair --browser` |
+| `:ActiveCapability` | `active capability` |
+| `:ActiveMode` | `active mode` |
+
+`M.status()` renders `Active <mode> <node-budget %> [taint]`; it runs on
+`BufEnter`/`BufWritePost` and is safe to call from a status line (it
+returns an empty string for non-file buffers). Secrets never enter the
+status string: the CLI exports are redacted and the layer prints only
+mode, percentages, and a taint marker.

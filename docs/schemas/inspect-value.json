@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Active value inspection export",
+  "type": "object",
+  "required": ["version", "path", "kind", "tainted", "value", "size_bytes", "dependencies"],
+  "properties": {
+    "version": { "const": 1 },
+    "path": { "type": "string" },
+    "kind": { "type": "string" },
+    "tainted": { "type": "boolean" },
+    "value": {},
+    "size_bytes": { "type": "integer", "minimum": 0 },
+    "dependencies": { "type": "array", "items": { "type": "string" } },
+    "schema": {
+      "type": "object",
+      "required": ["type", "required", "constraints"],
+      "properties": {
+        "type": { "type": "string" },
+        "required": { "type": "boolean" },
+        "constraints": { "type": "array", "items": { "type": "string" } },
+        "description": { "type": "string" },
+        "deprecated": { "type": "string" },
+        "removed_in": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "schema_evolution": {
+      "type": "object",
+      "properties": {
+        "version": { "type": ["string", "null"] },
+        "min_reader": { "type": ["string", "null"] },
+        "min_writer": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "content_addressed": {
+      "type": "object",
+      "required": ["hash", "size", "media_type", "tainted"],
+      "properties": {
+        "hash": { "type": "string", "pattern": "^blake3:" },
+        "size": { "type": "integer", "minimum": 0 },
+        "media_type": { "type": "string" },
+        "tainted": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

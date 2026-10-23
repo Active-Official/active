@@ -144,9 +144,25 @@ jobs:
           name: active-vsix
           path: editors/vscode/*.vsix
 
+  neovim:
+    name: Package Neovim plugin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build deterministic plugin archive
+        run: python packaging/package-neovim.py --out dist
+      - name: Upload Neovim plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: active-neovim
+          path: dist/active-neovim-*.tar.gz
+
   release:
     name: Publish release
-    needs: [build, vsix, wasm]
+    needs: [build, vsix, wasm, neovim]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -164,6 +180,14 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Build documentation bundle
+        # The docs site is part of the tooling deliverable: build it from
+        # the same tree and ship the HTML as a release artifact.
+        run: |
+          cargo install mdbook --locked --version 0.4.52
+          mdbook build docs-site
+          tar czf dist/active-docs.tar.gz -C docs-site book
+          ls dist/active-docs.tar.gz
       - name: Generate SBOMs (CycloneDX)
         # Same tool/procedure as the committed packaging/sboms/
         # snapshot (cargo-cyclonedx 0.5.9). Release copies land in

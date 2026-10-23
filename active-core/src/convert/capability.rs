@@ -26,7 +26,7 @@ pub fn profiles() -> Vec<SandboxProfile> {
         SandboxProfile {
             name: "strict",
             budget: "strict",
-            tools: &["check", "eval", "format"],
+            tools: &["check", "eval", "format", "lint"],
         },
         SandboxProfile {
             name: "data",
@@ -35,6 +35,7 @@ pub fn profiles() -> Vec<SandboxProfile> {
                 "check",
                 "eval",
                 "format",
+                "lint",
                 "convert",
                 "graph",
                 "generate",
@@ -48,6 +49,7 @@ pub fn profiles() -> Vec<SandboxProfile> {
                 "check",
                 "eval",
                 "format",
+                "lint",
                 "convert",
                 "graph",
                 "generate",
@@ -66,6 +68,7 @@ pub fn profiles() -> Vec<SandboxProfile> {
                 "check",
                 "eval",
                 "format",
+                "lint",
                 "convert",
                 "graph",
                 "generate",

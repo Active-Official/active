@@ -39,7 +39,12 @@ fn rule_ids_are_stable_and_complete() {
             "depends-on",
             "complexity",
             "hardcoded-secrets",
-            "deprecated"
+            "deprecated",
+            "schema-evolution",
+            "unknown-capability",
+            "key-style",
+            "large-literal",
+            "data-mode"
         ]
     );
 }
@@ -360,4 +365,114 @@ fn chained_and_nested_uses_count_as_used() {
     assert_eq!(diags.len(), 1, "{diags:?}");
     assert_eq!(diags[0].code, "L001");
     assert!(diags[0].message.contains("idle"), "{:?}", diags[0]);
+}
+
+// ------------------------------------------------------------------
+// Tooling-phase rules (LINT.003-LINT.007): schema evolution, agent
+// capabilities, key style, large literals, and mode discipline.
+// ------------------------------------------------------------------
+
+#[test]
+fn schema_evolution_fires_only_on_partial_metadata() {
+    let partial = r#"schema = { min_reader = "1.0.0", port = Int }"#;
+    assert!(lint_codes(partial).contains(&"L006".to_string()));
+    // A fully unversioned schema is allowed: many contracts never
+    // negotiate, and the rule targets inconsistency, not absence.
+    let plain = "schema = { port = Int }";
+    assert!(!lint_codes(plain).contains(&"L006".to_string()));
+    let versioned = r#"schema = { version = "1.2.0", min_reader = "1.0.0", port = Int }"#;
+    assert!(!lint_codes(versioned).contains(&"L006".to_string()));
+}
+
+#[test]
+fn unknown_capability_fires_for_unadvertised_names() {
+    let bad = "active_capabilities = [\"check\", \"teleport\"]\nport = 1";
+    assert!(lint_codes(bad).contains(&"L007".to_string()));
+    let good = "active_capabilities = [\"check\", \"eval\"]\nport = 1";
+    assert!(!lint_codes(good).contains(&"L007".to_string()));
+}
+
+#[test]
+fn key_style_fires_only_when_one_table_mixes_styles() {
+    let mixed = "[server]\nreadTimeout = 1\nmax_retries = 2\n";
+    assert!(lint_codes(mixed).contains(&"L008".to_string()));
+    let snake = "[server]\nread_timeout = 1\nmax_retries = 2\n";
+    assert!(!lint_codes(snake).contains(&"L008".to_string()));
+    // Two tables using different styles are each internally
+    // consistent; the rule is per table, not per document.
+    let split = "[a]\nxY = 1\n[b]\np_q = 2\n";
+    assert!(!lint_codes(split).contains(&"L008".to_string()));
+}
+
+#[test]
+fn large_literal_suggests_content_addressing() {
+    let big = "x".repeat(70_000);
+    let src = format!("payload = \"{big}\"\n");
+    assert!(lint_codes(&src).contains(&"L009".to_string()));
+    assert!(!lint_codes("payload = \"small\"\n").contains(&"L009".to_string()));
+}
+
+#[test]
+fn data_mode_hint_fires_for_data_constructs_in_config_mode() {
+    let blob = "id = blob(\"text/plain\", \"hi\")\n";
+    assert!(lint_codes(blob).contains(&"L010".to_string()));
+    let marked = "active_mode = \"data\"\nid = blob(\"text/plain\", \"hi\")\n";
+    assert!(!lint_codes(marked).contains(&"L010".to_string()));
+    // Capability declarations are Data-oriented too.
+    let caps = "active_capabilities = [\"check\"]\nport = 1\n";
+    assert!(lint_codes(caps).contains(&"L010".to_string()));
+}
+
+#[test]
+fn new_rules_disable_independently() {
+    let src = "active_capabilities = [\"teleport\"]\nid = blob(\"text/plain\", \"hi\")\n";
+    let all = lint_codes(src);
+    assert!(all.contains(&"L007".to_string()));
+    assert!(all.contains(&"L010".to_string()));
+    let options = LintOptions {
+        disabled: ["unknown-capability", "data-mode"]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+    };
+    let codes: Vec<String> = lint_with(&parse_ok(src), &options)
+        .iter()
+        .map(|d| d.code.clone())
+        .collect();
+    assert!(!codes.contains(&"L007".to_string()), "{codes:?}");
+    assert!(!codes.contains(&"L010".to_string()), "{codes:?}");
+}
+
+#[test]
+fn machine_readable_reports_have_stable_shapes() {
+    let module = parse_ok("[server]\nreadTimeout = 1\nmax_retries = 2\n");
+    let diags = lint(&module);
+    assert!(!diags.is_empty(), "fixture must lint");
+    let items: Vec<(String, active_core::Diagnostic)> = diags
+        .iter()
+        .cloned()
+        .map(|d| ("svc.active".to_string(), d))
+        .collect();
+
+    let json = active_core::lint::json_report(&items);
+    let rows = json.as_array().expect("array");
+    assert_eq!(rows.len(), diags.len());
+    assert_eq!(rows[0]["file"], "svc.active");
+    assert_eq!(rows[0]["code"], diags[0].code);
+    assert!(rows[0]["severity"].is_string());
+
+    let sarif = active_core::lint::sarif_report(&items, "1.4.0");
+    assert_eq!(sarif["version"], "2.1.0");
+    assert_eq!(sarif["runs"][0]["tool"]["driver"]["name"], "active");
+    let rules = sarif["runs"][0]["tool"]["driver"]["rules"]
+        .as_array()
+        .expect("rules");
+    assert!(!rules.is_empty());
+    let results = sarif["runs"][0]["results"].as_array().expect("results");
+    assert_eq!(results.len(), diags.len());
+    assert_eq!(results[0]["ruleId"], diags[0].code);
+    assert_eq!(
+        results[0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
+        "svc.active"
+    );
 }

@@ -58,9 +58,22 @@
           "type": "string",
           "default": "active-lsp",
           "description": "Path to the active-lsp language server binary (PATH lookup by default; cargo install active-lsp)."
+        },
+        "active.cli.path": {
+          "type": "string",
+          "default": "active",
+          "description": "Path to the Active CLI binary used by the status bar and tooling commands (PATH lookup by default; cargo install active-cli)."
         }
       }
-    }
+    },
+    "commands": [
+      { "command": "active.check", "title": "Active: Check document" },
+      { "command": "active.inspect", "title": "Active: Inspect value path" },
+      { "command": "active.graph", "title": "Active: Show dependency graph" },
+      { "command": "active.repair", "title": "Active: Show repair plan" },
+      { "command": "active.capability", "title": "Active: Show capability descriptor" },
+      { "command": "active.refreshStatus", "title": "Active: Refresh status bar" }
+    ]
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"

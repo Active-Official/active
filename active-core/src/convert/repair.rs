@@ -367,3 +367,103 @@ pub fn repair_with_engine_and_options(
         repaired_source: current,
     }
 }
+
+/// Unified browser model (TOOLING REPAIR-UI.001): the repair plan plus
+/// the initial diagnostics that justified it. Values never appear;
+/// codes, paths, severities, and messages only.
+pub fn browser_model(
+    source: &str,
+    goal: RepairGoal,
+    preserve: &[String],
+    max_steps: usize,
+) -> serde_json::Value {
+    let outcome = repair(source, goal, preserve, max_steps);
+    let mut engine = Engine::new();
+    engine.resilient = false;
+    let diagnostics: Vec<serde_json::Value> = match crate::parse(source, "browser") {
+        Ok(module) => match engine.evaluate(&module) {
+            Ok((_, diags)) => diags
+                .into_iter()
+                .map(|d| {
+                    serde_json::json!({
+                        "code": d.code,
+                        "severity": d.severity,
+                        "message": d.message,
+                        "path": d.path,
+                        "span": d.span,
+                    })
+                })
+                .collect(),
+            Err(crate::eval::EvalError::ValidationFailed { diagnostics }) => diagnostics
+                .into_iter()
+                .map(|d| {
+                    serde_json::json!({
+                        "code": d.code,
+                        "severity": d.severity,
+                        "message": d.message,
+                        "path": d.path,
+                        "span": d.span,
+                    })
+                })
+                .collect(),
+            Err(error) => vec![serde_json::json!({
+                "code": error.code(),
+                "severity": "error",
+                "message": error.to_string(),
+                "path": null,
+                "span": null,
+            })],
+        },
+        Err(diags) => diags
+            .into_iter()
+            .map(|d| {
+                serde_json::json!({
+                    "code": d.code,
+                    "severity": d.severity,
+                    "message": d.message,
+                    "path": d.path,
+                    "span": d.span,
+                })
+            })
+            .collect(),
+    };
+    // The browser model carries the plan and the diagnostics, never
+    // the source text: an authored literal secret lives in the source,
+    // and a model meant for display/logging must not echo it.
+    let mut plan = serde_json::to_value(&outcome).unwrap_or(serde_json::Value::Null);
+    if let Some(object) = plan.as_object_mut() {
+        object.remove("repaired_source");
+    }
+    serde_json::json!({
+        "diagnostics": diagnostics,
+        "plan": plan,
+    })
+}
+
+/// Apply a selected subset of planned steps to the original source:
+/// safe, applied steps inside `max_index` (inclusive) and/or matching
+/// `prefix` are prepended in plan order (the same composition the
+/// repair loop uses). Returns the source plus the directives actually
+/// applied, for auditability.
+pub fn apply_selected(
+    source: &str,
+    steps: &[PlannedStep],
+    max_index: Option<usize>,
+    prefix: Option<&str>,
+) -> (String, Vec<String>) {
+    let mut applied = Vec::new();
+    for (index, step) in steps.iter().enumerate() {
+        let index_ok = max_index.is_none_or(|limit| index <= limit);
+        let prefix_ok = prefix.is_none_or(|p| step.path.starts_with(p));
+        if index_ok && prefix_ok && step.safe && matches!(step.status, StepStatus::Applied) {
+            applied.push(step.directive.clone());
+        }
+    }
+    let mut out = String::new();
+    for directive in &applied {
+        out.push_str(directive);
+        out.push('\n');
+    }
+    out.push_str(source);
+    (out, applied)
+}

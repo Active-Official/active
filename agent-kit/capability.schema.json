@@ -16,6 +16,19 @@
       }
     },
     {
+      "name": "lint",
+      "entry": "active lint [--format text|json|sarif] [--disable-lint <rule>]... <file>...",
+      "description": "Static rules beyond validation: unused lets, depends_on hygiene, complexity, hardcoded-secret heuristics, deprecated usage, partial schema evolution, unknown capabilities, mixed key style, oversized literals, and Data constructs without the mode marker. Text, stable JSON, or SARIF 2.1.0; exits nonzero when any rule fires.",
+      "input": {
+        "files": "one or more .active source files",
+        "format": "text|json|sarif (default text)",
+        "disable-lint": "optional rule name to disable, repeatable"
+      },
+      "output": {
+        "findings": "text lines, a JSON array, or a SARIF 2.1.0 log"
+      }
+    },
+    {
       "name": "eval",
       "entry": "active eval <file> [--format json|pretty] [--path a.b[0]] [--materialise-blobs] [--audit-trail FILE] [--resilient] [--profile NAME] [--trace] [--sandbox strict|data|agent|trusted]",
       "description": "Evaluate a file and print redacted JSON. Secrets always render as ***SECRET***; a raw secret in output is a defect, never data. --path emits only the demanded cone, --materialise-blobs includes blob payloads (refused for tainted blobs), and --audit-trail writes a re-validatable redacted audit document.",
@@ -146,19 +159,19 @@
   "profiles": {
     "strict": {
       "budget": "strict",
-      "tools": ["check", "eval", "format"]
+      "tools": ["check", "eval", "format", "lint"]
     },
     "data": {
       "budget": "interactive",
-      "tools": ["check", "eval", "format", "convert", "graph", "generate", "schema-introspect"]
+      "tools": ["check", "eval", "format", "lint", "convert", "graph", "generate", "schema-introspect"]
     },
     "agent": {
       "budget": "interactive",
-      "tools": ["check", "eval", "format", "convert", "graph", "generate", "schema-introspect", "explain", "patch", "repair", "compatibility", "capability"]
+      "tools": ["check", "eval", "format", "lint", "convert", "graph", "generate", "schema-introspect", "explain", "patch", "repair", "compatibility", "capability"]
     },
     "trusted": {
       "budget": "trusted",
-      "tools": ["check", "eval", "format", "convert", "graph", "generate", "schema-introspect", "explain", "patch", "repair", "compatibility", "capability"]
+      "tools": ["check", "eval", "format", "lint", "convert", "graph", "generate", "schema-introspect", "explain", "patch", "repair", "compatibility", "capability"]
     }
   },
   "features": [
@@ -179,6 +192,15 @@
     "evaluation-modes",
     "graph-queries",
     "partial-evaluation",
-    "sandbox-profiles"
+    "sandbox-profiles",
+    "lint-sarif",
+    "inspect-value",
+    "debug-steps",
+    "viz-exporters",
+    "repair-browser",
+    "mode-cli",
+    "budget-cli",
+    "editor-status",
+    "output-schemas"
   ]
 }

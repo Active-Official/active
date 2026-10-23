@@ -16,6 +16,11 @@ pub const RULE_DEPENDS_ON: &str = "depends-on";
 pub const RULE_COMPLEXITY: &str = "complexity";
 pub const RULE_HARDCODED_SECRETS: &str = "hardcoded-secrets";
 pub const RULE_DEPRECATED: &str = "deprecated";
+pub const RULE_SCHEMA_EVOLUTION: &str = "schema-evolution";
+pub const RULE_UNKNOWN_CAPABILITY: &str = "unknown-capability";
+pub const RULE_KEY_STYLE: &str = "key-style";
+pub const RULE_LARGE_LITERAL: &str = "large-literal";
+pub const RULE_DATA_MODE: &str = "data-mode";
 
 /// All rule IDs in stable order (also the CLI's unknown-name error).
 pub const ALL_RULES: &[&str] = &[
@@ -24,6 +29,11 @@ pub const ALL_RULES: &[&str] = &[
     RULE_COMPLEXITY,
     RULE_HARDCODED_SECRETS,
     RULE_DEPRECATED,
+    RULE_SCHEMA_EVOLUTION,
+    RULE_UNKNOWN_CAPABILITY,
+    RULE_KEY_STYLE,
+    RULE_LARGE_LITERAL,
+    RULE_DATA_MODE,
 ];
 
 /// Expression operator nodes that trip the complexity budget.
@@ -88,7 +98,207 @@ pub fn lint_with(module: &Module, options: &LintOptions) -> Vec<Diagnostic> {
     if options.enabled(RULE_DEPRECATED) {
         out.extend(deprecated(module));
     }
+    if options.enabled(RULE_SCHEMA_EVOLUTION) {
+        out.extend(schema_evolution(module));
+    }
+    if options.enabled(RULE_UNKNOWN_CAPABILITY) {
+        out.extend(unknown_capability(module));
+    }
+    if options.enabled(RULE_KEY_STYLE) {
+        out.extend(key_style(module));
+    }
+    if options.enabled(RULE_LARGE_LITERAL) {
+        out.extend(large_literal(module));
+    }
+    if options.enabled(RULE_DATA_MODE) {
+        out.extend(data_mode(module));
+    }
     out
+}
+
+/// Every table key longer than this is flagged as a content-addressing
+/// opportunity (L009).
+const LARGE_LITERAL_BYTES: usize = 65_536;
+
+/// Capabilities the shipped descriptor advertises. Mirrors
+/// `convert::capability` and the descriptor; a test pins them equal.
+pub const KNOWN_CAPABILITIES: &[&str] = &[
+    "check",
+    "eval",
+    "format",
+    "convert",
+    "graph",
+    "generate",
+    "schema-introspect",
+    "explain",
+    "patch",
+    "repair",
+    "compatibility",
+    "capability",
+];
+
+/// Node → dotted value path map (tables win ties, like resolution).
+fn value_path_map(module: &Module) -> HashMap<NodeId, String> {
+    let mut paths: HashMap<NodeId, String> = HashMap::new();
+    for (name, id) in &module.bindings {
+        paths.insert(*id, name.clone());
+    }
+    for (id, path) in module.value_paths() {
+        paths.insert(id, path);
+    }
+    paths
+}
+
+/// L006: partial evolution metadata without a `version`. A schema with
+/// no evolution metadata at all is allowed — many contracts never
+/// negotiate; mixing `min_reader`/`min_writer`/`removed_in` with no
+/// version is the inconsistency (spec/schema-evolution.md).
+fn schema_evolution(module: &Module) -> Vec<Diagnostic> {
+    let Some(root) = module.schema else {
+        return Vec::new();
+    };
+    let Some(Node::SchemaTable { fields, meta, .. }) = module.get(root) else {
+        return Vec::new();
+    };
+    let has_removed = fields.values().any(|id| {
+        matches!(module.get(*id), Some(Node::SchemaField { field }) if field.removed_in.is_some())
+    });
+    let partial = meta.min_reader.is_some() || meta.min_writer.is_some() || has_removed;
+    if partial && meta.version.is_none() {
+        return vec![warning(
+            module,
+            "L006",
+            "schema carries reader/writer or removal metadata but no version; \
+             add version = \"x.y.z\" so compatibility can be checked"
+                .to_string(),
+            Some("schema".to_string()),
+            Some(root),
+        )];
+    }
+    Vec::new()
+}
+
+/// L007: a declared capability the shipped descriptor does not
+/// advertise (a typo or an unimplemented host would be refused at the
+/// handshake anyway; catching it source-side is cheaper).
+fn unknown_capability(module: &Module) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    for capability in &module.capabilities {
+        if !KNOWN_CAPABILITIES.contains(&capability.as_str()) {
+            out.push(warning(
+                module,
+                "L007",
+                format!("unknown capability '{capability}' (not advertised by the descriptor)"),
+                Some("active_capabilities".to_string()),
+                None,
+            ));
+        }
+    }
+    out
+}
+
+/// L008: one table mixes camel/Pascal-case keys with snake_case keys.
+/// Kebab keys are not legal identifiers, so the observable style split
+/// is case-based (grammar §1.3: ident chars are letters, digits, `_`).
+fn key_style(module: &Module) -> Vec<Diagnostic> {
+    let paths = value_path_map(module);
+    let mut out = Vec::new();
+    for (index, node) in module.arena.iter().enumerate() {
+        let Node::Table { fields } = node else {
+            continue;
+        };
+        if fields.len() < 2 {
+            continue;
+        }
+        let mut cased = false;
+        let mut snake = false;
+        for key in fields.keys() {
+            if key.chars().any(|c| c.is_uppercase()) {
+                cased = true;
+            } else if key.contains('_') {
+                snake = true;
+            }
+        }
+        if cased && snake {
+            let id = NodeId(index as u32);
+            let path = paths.get(&id).cloned().unwrap_or_default();
+            out.push(warning(
+                module,
+                "L008",
+                format!(
+                    "table '{}' mixes cased and snake_case keys",
+                    if path.is_empty() { "(root)" } else { &path }
+                ),
+                Some(path),
+                Some(id),
+            ));
+        }
+    }
+    out
+}
+
+/// L009: a string literal large enough that content addressing would
+/// pay for itself (identity, dedupe, lazy materialisation).
+fn large_literal(module: &Module) -> Vec<Diagnostic> {
+    let paths = value_path_map(module);
+    let mut out = Vec::new();
+    for (index, node) in module.arena.iter().enumerate() {
+        let Node::Literal(Value::String(text)) = node else {
+            continue;
+        };
+        if text.len() <= LARGE_LITERAL_BYTES {
+            continue;
+        }
+        let id = NodeId(index as u32);
+        let path = paths.get(&id).cloned().unwrap_or_default();
+        out.push(warning(
+            module,
+            "L009",
+            format!(
+                "string literal at '{}' is {} bytes; consider blob() content addressing",
+                if path.is_empty() { "(inline)" } else { &path },
+                text.len()
+            ),
+            Some(path),
+            Some(id),
+        ));
+    }
+    out
+}
+
+/// L010: Data-oriented surface (content-addressed values, evolution
+/// metadata, capability declarations) without the Data Mode marker.
+fn data_mode(module: &Module) -> Vec<Diagnostic> {
+    if module.mode == crate::ir::Mode::Data {
+        return Vec::new();
+    }
+    let has_ca = module
+        .arena
+        .iter()
+        .any(|node| matches!(node, Node::ContentAddressed { .. }));
+    let has_evolution = module.schema.is_some_and(|root| {
+        matches!(
+            module.get(root),
+            Some(Node::SchemaTable { fields, meta, .. })
+                if meta.version.is_some()
+                    || meta.min_reader.is_some()
+                    || meta.min_writer.is_some()
+                    || fields.values().any(|id| matches!(
+                        module.get(*id),
+                        Some(Node::SchemaField { field }) if field.removed_in.is_some()
+                    ))
+        )
+    });
+    if !has_ca && !has_evolution && module.capabilities.is_empty() {
+        return Vec::new();
+    }
+    vec![warning(
+        module,
+        "L010",
+        "Data-oriented constructs without active_mode = \"data\"".to_string(),
+        Some("active_mode".to_string()),
+        module.root,
+    )]
 }
 
 fn warning(
@@ -643,4 +853,86 @@ fn deprecated(module: &Module) -> Vec<Diagnostic> {
     // The stack reverses source order; restore it for determinism.
     out.reverse();
     out
+}
+
+// ------------------------------------------------------------------
+// Machine-readable reports (LINT.008)
+// ------------------------------------------------------------------
+
+/// Stable JSON report: one object per finding with the owning file,
+/// severity, code, message, path, and span (when known). Field names
+/// are contractual; additive changes only.
+pub fn json_report(items: &[(String, Diagnostic)]) -> serde_json::Value {
+    let rows: Vec<serde_json::Value> = items
+        .iter()
+        .map(|(file, diagnostic)| {
+            serde_json::json!({
+                "file": file,
+                "severity": diagnostic.severity,
+                "code": diagnostic.code,
+                "message": diagnostic.message,
+                "path": diagnostic.path,
+                "span": diagnostic.span,
+            })
+        })
+        .collect();
+    serde_json::Value::Array(rows)
+}
+
+/// SARIF 2.1.0 log for CI upload. Rule metadata is derived from the
+/// findings (unique rule IDs, stable order); locations carry the span
+/// when the diagnostic has one and a file-level location otherwise.
+pub fn sarif_report(items: &[(String, Diagnostic)], tool_version: &str) -> serde_json::Value {
+    let mut rule_ids: Vec<String> = Vec::new();
+    for (_, diagnostic) in items {
+        if !rule_ids.contains(&diagnostic.code) {
+            rule_ids.push(diagnostic.code.clone());
+        }
+    }
+    rule_ids.sort();
+    let rules: Vec<serde_json::Value> = rule_ids
+        .iter()
+        .map(|id| {
+            serde_json::json!({
+                "id": id,
+                "name": id,
+                "shortDescription": {"text": format!("Active rule {id}")},
+            })
+        })
+        .collect();
+    let results: Vec<serde_json::Value> = items
+        .iter()
+        .map(|(file, diagnostic)| {
+            let mut physical = serde_json::json!({
+                "artifactLocation": {"uri": file},
+            });
+            if let Some(span) = &diagnostic.span {
+                physical["region"] = serde_json::json!({
+                    "startLine": span.line,
+                    "startColumn": span.column,
+                    "endLine": span.end_line,
+                    "endColumn": span.end_column,
+                });
+            }
+            serde_json::json!({
+                "ruleId": diagnostic.code,
+                "level": match diagnostic.severity {
+                    Severity::Error => "error",
+                    Severity::Warning => "warning",
+                    Severity::Info => "note",
+                    Severity::Hint => "note",
+                },
+                "message": {"text": diagnostic.message},
+                "locations": [{"physicalLocation": physical}],
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {"driver": {"name": "active", "version": tool_version, "rules": rules}},
+            "results": results,
+        }],
+    })
 }

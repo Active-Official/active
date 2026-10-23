@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Active mode report",
+  "type": "object",
+  "required": ["mode", "marker", "capabilities"],
+  "properties": {
+    "mode": { "enum": ["config", "data"] },
+    "marker": { "type": "boolean" },
+    "capabilities": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": false
+}

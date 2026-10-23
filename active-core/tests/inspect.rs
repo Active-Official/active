@@ -155,3 +155,69 @@ fn inspect_covers_evolution_metadata() {
     assert_eq!(gone["removed_in"], "1.3.0");
     assert_eq!(gone["type"], "String");
 }
+
+// ------------------------------------------------------------------
+// Path inspection (TOOLING INSPECT.001-005)
+// ------------------------------------------------------------------
+
+fn inspect_fixture() -> (active_core::Module, active_core::Value) {
+    let src = "schema = { port = Int(min = 1, max = 65535, description = \"listen port\"), token = String(description = \"auth\") }\nport = 8080\ntoken = secret(\"hunter2-inspect\")\nid = blob(\"text/plain\", \"hi\")\n";
+    let module = active_core::parse(src, "inspect-value").expect("parse");
+    let (value, _) = active_core::Engine::new()
+        .evaluate(&module)
+        .expect("evaluate");
+    (module, value)
+}
+
+#[test]
+fn inspect_path_reports_schema_and_value() {
+    let (module, value) = inspect_fixture();
+    let report = active_core::convert::inspect_path(&module, &value, "port").expect("inspect");
+    assert_eq!(report["path"], "port");
+    assert_eq!(report["kind"], "Int");
+    assert_eq!(report["value"], 8080);
+    assert_eq!(report["schema"]["type"], "Int");
+    assert_eq!(report["schema"]["description"], "listen port");
+    let constraints = report["schema"]["constraints"]
+        .as_array()
+        .expect("constraints");
+    let texts: Vec<&str> = constraints.iter().filter_map(|v| v.as_str()).collect();
+    assert!(texts.contains(&"min 1"), "{texts:?}");
+    assert!(texts.contains(&"max 65535"), "{texts:?}");
+}
+
+#[test]
+fn inspect_path_redacts_secret_material() {
+    let (module, value) = inspect_fixture();
+    let report = active_core::convert::inspect_path(&module, &value, "token").expect("inspect");
+    assert_eq!(report["kind"], "Secret");
+    assert_eq!(report["tainted"], true);
+    assert_eq!(report["value"], "***SECRET***");
+    let text = active_core::convert::render_inspection_text(&report);
+    assert!(text.contains("***SECRET***"), "{text}");
+    assert!(
+        !text.contains("hunter2"),
+        "raw secret in text output: {text}"
+    );
+    assert!(!report.to_string().contains("hunter2"));
+}
+
+#[test]
+fn inspect_path_reports_content_addressed_identity() {
+    let (module, value) = inspect_fixture();
+    let report = active_core::convert::inspect_path(&module, &value, "id").expect("inspect");
+    assert_eq!(report["kind"], "Blob");
+    let blob = &report["content_addressed"];
+    assert!(blob["hash"].as_str().expect("hash").starts_with("blake3:"));
+    assert_eq!(blob["size"], 2);
+    assert_eq!(blob["media_type"], "text/plain");
+    assert_eq!(blob["tainted"], false);
+}
+
+#[test]
+fn inspect_path_unknown_path_fails_closed() {
+    let (module, value) = inspect_fixture();
+    let err =
+        active_core::convert::inspect_path(&module, &value, "missing.key").expect_err("must fail");
+    assert!(err.contains("missing.key"), "{err}");
+}

@@ -28,13 +28,21 @@ full `--max-*` budget family.
   dependents and dependencies.
 - `active graph query <file> <kind> ...` - `dependents`, `dependencies`,
   `shortest-path`, `secret-cone`, `ca-above-size`.
-- `active inspect --from <file>` - versioned JSON schema introspection
-  (INSPECT_VERSION 2): fields, types, constraints, defaults, descriptions,
-  deprecations, `removed_in`, evolution metadata, and mode.
+- `active inspect --from <file> [--path a.b] [--format json|text]` - schema
+  introspection (default) or one value path: kind, redacted value, taint,
+  size, content-addressed identity, schema contract with constraints, and
+  dependency provenance.
 - `active compatibility <old> <new> [--format text|json]` - C040-C044
   findings with an E040 summary; exits nonzero on breaking changes.
 - `active capability [--require-major N] [--check-doc FILE] [--profile NAME]`
   - the descriptor, a document-capability handshake, or one sandbox profile.
+- `active schema inspect [--from <file>] [--path a.b]` - alias of
+  `inspect` for schema-first workflows.
+- `active mode --from <file> [--format json|text]` - resolved mode,
+  marker presence, and declared capabilities.
+- `active budget explain --from <file> [--format json|text]` - effective
+  limits, observed usage, headroom, and progressive warnings.
+- Output shapes are pinned by `docs/schemas/` and validated in CI.
 
 ## Repair and explanation
 
@@ -63,8 +71,11 @@ full `--max-*` budget family.
 
 - `active fmt [--style brace|indent|preserve] [--write] [--check] <file>...`
   - canonical formatting; `--check` is the CI mode.
-- `active lint [--disable-lint <rule>]... <file>...` - rules: `unused-lets`,
-  `depends-on`, `complexity`, `hardcoded-secrets`, `deprecated`.
+- `active lint [--format text|json|sarif] [--disable-lint <rule>]... <file>...`
+  - ten rules: `unused-lets`, `depends-on`, `complexity`,
+  `hardcoded-secrets`, `deprecated`, `schema-evolution`,
+  `unknown-capability`, `key-style`, `large-literal`, `data-mode`
+  (catalog: `docs/lint-rules.md`).
 
 ## Security workflow
 

@@ -1,0 +1,13 @@
+# Tool-result envelope (spec/tool-result-envelope.md), Data Mode.
+active_mode = "data"
+active_capabilities = ["check", "eval"]
+
+envelope = {
+  version = "1.0.0",
+  capability = "agent",
+  tainted = false,
+  payload = { ok = true, port = 8080, service = "api" },
+  budget = { nodes = 120, headroom = 0.88 },
+  diagnostics = [],
+  result = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+}

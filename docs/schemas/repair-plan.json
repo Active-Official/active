@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Active repair plan (RepairOutcome)",
+  "type": "object",
+  "required": ["goal", "steps", "clean", "stuck", "unrepairable", "final_codes", "findings", "repaired_source"],
+  "properties": {
+    "goal": {
+      "oneOf": [
+        { "const": "validate" },
+        { "const": "minimize_diff" },
+        {
+          "type": "object",
+          "required": ["preserve_key"],
+          "properties": {
+            "preserve_key": { "type": "array", "items": { "type": "string" } }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "path", "directive", "safe", "status", "side_effects"],
+        "properties": {
+          "kind": { "type": "string" },
+          "path": { "type": "string" },
+          "directive": { "type": "string" },
+          "safe": { "type": "boolean" },
+          "status": {
+            "oneOf": [
+              { "const": "applied" },
+              {
+                "type": "object",
+                "required": ["skipped"],
+                "properties": {
+                  "skipped": {
+                    "type": "object",
+                    "required": ["reason"],
+                    "properties": { "reason": { "type": "string" } },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
+          },
+          "side_effects": { "type": "array", "items": { "type": "string" } }
+        },
+        "additionalProperties": false
+      }
+    },
+    "clean": { "type": "boolean" },
+    "stuck": { "type": "boolean" },
+    "unrepairable": { "type": "boolean" },
+    "final_codes": { "type": "array", "items": { "type": "string" } },
+    "findings": { "type": "array", "items": { "type": "object" } },
+    "repaired_source": { "type": "string" }
+  },
+  "additionalProperties": false
+}

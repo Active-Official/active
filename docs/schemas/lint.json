@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Active lint JSON report",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["file", "severity", "code", "message", "path", "span"],
+    "properties": {
+      "file": { "type": "string" },
+      "severity": { "enum": ["error", "warning", "info", "hint"] },
+      "code": { "type": "string", "pattern": "^L[0-9]{3}$" },
+      "message": { "type": "string" },
+      "path": { "type": ["string", "null"] },
+      "span": {
+        "type": ["object", "null"],
+        "required": ["line", "column", "end_line", "end_column"],
+        "properties": {
+          "line": { "type": "integer", "minimum": 1 },
+          "column": { "type": "integer", "minimum": 1 },
+          "end_line": { "type": "integer", "minimum": 1 },
+          "end_column": { "type": "integer", "minimum": 1 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "additionalProperties": false
+  }
+}

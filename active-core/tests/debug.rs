@@ -1,0 +1,85 @@
+//! Debugger tests (TOOLING DEBUG.001-006): step traces redact secret
+//! material, breakpoints select deterministically, replay compares
+//! hashes and traces, and reduction preserves the target diagnostic.
+
+use active_core::debug;
+use active_core::{parse, Engine};
+
+fn module(src: &str) -> active_core::Module {
+    parse(src, "debug").expect("parse")
+}
+
+#[test]
+fn steps_redact_secret_locator_literals() {
+    let src = "token = secret(\"hunter2-step\")\nport = 8080\n";
+    let (_, _, steps) = Engine::new()
+        .evaluate_with_steps(&module(src))
+        .expect("evaluate");
+    let rendered = serde_json::to_string(&steps).expect("json");
+    assert!(
+        !rendered.contains("hunter2"),
+        "raw secret in steps: {rendered}"
+    );
+    assert!(steps.iter().any(|s| s.tainted), "taint recorded");
+    assert!(steps.iter().any(|s| s.path.as_deref() == Some("token")));
+}
+
+#[test]
+fn breakpoints_select_by_taint_path_and_code() {
+    let src = "let base = 1\nport = base\nsecret_value = secret(\"x\")\n";
+    let (_, _, steps) = Engine::new()
+        .evaluate_with_steps(&module(src))
+        .expect("evaluate");
+    let taint = debug::breakpoint_index(&steps, "taint").expect("taint breakpoint");
+    assert!(steps[taint].tainted);
+    let by_path = debug::breakpoint_index(&steps, "path:port").expect("path breakpoint");
+    assert_eq!(steps[by_path].path.as_deref(), Some("port"));
+    let by_node = debug::breakpoint_index(&steps, "node:0").expect("node breakpoint");
+    assert_eq!(by_node, 0);
+    assert!(debug::breakpoint_index(&steps, "path:nope").is_none());
+    assert!(debug::breakpoint_index(&steps, "bogus").is_none());
+}
+
+#[test]
+fn replay_is_deterministic_and_honors_expected_hash() {
+    let src = "port = 8080\nname = \"svc\"\n";
+    let module = module(src);
+    let report = debug::replay(&module, None).expect("replay");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["steps_match"], true);
+    let hash = report["hash"].as_str().expect("hash").to_string();
+    let expected = debug::replay(&module, Some(&hash)).expect("replay");
+    assert_eq!(expected["expected_match"], true);
+    let mismatch = debug::replay(&module, Some("sha256:00")).expect("replay");
+    assert_eq!(mismatch["ok"], false);
+    assert_eq!(mismatch["expected_match"], false);
+}
+
+#[test]
+fn reduction_keeps_the_target_diagnostic_and_shrinks() {
+    let src = "schema = { port = Int(max = 10) }\nport = 999\nunrelated = 1\n# comment\n";
+    let (reduced, attempts) = debug::reduce(src, "T003", 100);
+    assert!(attempts > 0);
+    assert!(reduced.len() < src.len(), "reduced: {reduced:?}");
+    assert!(
+        reduced.contains("port = 999"),
+        "target line kept: {reduced:?}"
+    );
+    assert!(!reduced.contains("unrelated"), "noise removed: {reduced:?}");
+    let (_, diagnostics) = Engine::new()
+        .evaluate(&parse(&reduced, "reduced").expect("reduced parses"))
+        .expect("reduced evaluates");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "T003"),
+        "target survives: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn minimal_case_reports_sizes_and_keeps_source_shape() {
+    let src = "schema = { port = Int(max = 10) }\nport = 999\nunrelated = 1\n";
+    let report = debug::minimal_case(src, "T003", 100);
+    assert_eq!(report["target_code"], "T003");
+    assert!(report["reduced_bytes"].as_u64().unwrap() < report["original_bytes"].as_u64().unwrap());
+    assert!(report["reduced"].as_str().unwrap().contains("port = 999"));
+}

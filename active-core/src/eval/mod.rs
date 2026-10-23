@@ -995,6 +995,69 @@ fn fingerprint_one(
     Some(hasher.finish())
 }
 
+/// One secret-safe evaluation step (TOOLING DEBUG.001): node identity,
+/// value path when one exists, kind, redacted JSON value, taint, and
+/// the diagnostic codes emitted while the node was evaluated. Values
+/// render through the canonical redactor, so secret material never
+/// enters a step.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StepEvent {
+    pub node: u32,
+    pub path: Option<String>,
+    pub kind: String,
+    pub tainted: bool,
+    pub value: serde_json::Value,
+    pub codes: Vec<String>,
+}
+
+fn value_has_secret(value: &Value) -> bool {
+    match value {
+        Value::Secret(_) => true,
+        Value::Array(items) => items.iter().any(value_has_secret),
+        Value::Table(map) => map.values().any(value_has_secret),
+        _ => false,
+    }
+}
+
+/// Insert a node and every node reachable from it into `set` (used to
+/// mark `secret(...)` locator subtrees as sensitive in step traces).
+fn collect_subtree(module: &Module, root: NodeId, set: &mut std::collections::HashSet<NodeId>) {
+    let mut stack = vec![root];
+    while let Some(id) = stack.pop() {
+        if !set.insert(id) {
+            continue;
+        }
+        match module.get(id) {
+            Some(Node::Interpolate { parts }) => {
+                for part in parts {
+                    if let InterpPart::Expr(expr) = part {
+                        stack.push(*expr);
+                    }
+                }
+            }
+            Some(Node::Binary { lhs, rhs, .. }) => {
+                stack.push(*lhs);
+                stack.push(*rhs);
+            }
+            Some(Node::Unary { expr, .. }) => stack.push(*expr),
+            Some(Node::Array { elements }) => stack.extend(elements.iter().copied()),
+            Some(Node::Table { fields }) => stack.extend(fields.values().copied()),
+            Some(Node::Quantity { value, .. }) => stack.push(*value),
+            Some(Node::Semantic { inner, .. }) => stack.push(*inner),
+            Some(Node::ContentAddressed { media_type, data }) => {
+                stack.push(*media_type);
+                stack.push(*data);
+            }
+            Some(Node::Env {
+                default: Some(default),
+                ..
+            }) => stack.push(*default),
+            Some(Node::Secret { locator }) => stack.push(*locator),
+            _ => {}
+        }
+    }
+}
+
 impl Engine {
     pub fn new() -> Self {
         let mut engine = Self::hermetic();
@@ -1039,7 +1102,23 @@ impl Engine {
     }
 
     pub fn evaluate(&self, module: &Module) -> Result<(Value, Vec<Diagnostic>), EvalError> {
-        self.evaluate_inner(module, None)
+        self.evaluate_inner(module, None, None)
+    }
+
+    /// Evaluate and return one secret-safe step per arena node in
+    /// topological order (TOOLING DEBUG.001/002). Each step carries the
+    /// node id, its value path when one exists, the value kind, the
+    /// REDACTED JSON value, taint, and the diagnostic codes emitted
+    /// while evaluating that node. Deterministic: same input, same
+    /// steps. The stepper is a post-hoc trace of the real walk, not a
+    /// second evaluator.
+    pub fn evaluate_with_steps(
+        &self,
+        module: &Module,
+    ) -> Result<(Value, Vec<Diagnostic>, Vec<StepEvent>), EvalError> {
+        let mut steps = Vec::new();
+        let (value, diagnostics) = self.evaluate_inner(module, None, Some(&mut steps))?;
+        Ok((value, diagnostics, steps))
     }
 
     /// Incremental evaluation over a reused memo store (C-055,
@@ -1072,7 +1151,7 @@ impl Engine {
         }
         memo.last_eval_count = 0;
         memo.last_memo_hits = 0;
-        let outcome = self.evaluate_inner(module, Some(memo));
+        let outcome = self.evaluate_inner(module, Some(memo), None);
         // Bound the store: every document version inserts novel
         // fingerprints, so without eviction a long-lived memo (the
         // language server reuses one per document) grows with edit
@@ -1091,6 +1170,7 @@ impl Engine {
         &self,
         module: &Module,
         mut memo: Option<&mut IncrementalMemo>,
+        mut steps: Option<&mut Vec<StepEvent>>,
     ) -> Result<(Value, Vec<Diagnostic>), EvalError> {
         // The deadline covers everything from here on (spec/budgets.md
         // §2): static scans, cycle check, sort, walk, transforms, and
@@ -1189,6 +1269,28 @@ impl Engine {
         // their static and DP checks; only time needs watching mid-walk.
         // `deadline` was computed at entry and shared with validation.
         let mut visited = 0u64;
+        // Step paths are built once, only when the caller asked for a
+        // stepper; plain evaluation pays nothing.
+        let step_paths: Option<HashMap<NodeId, String>> = steps.as_ref().map(|_| {
+            module
+                .value_paths()
+                .into_iter()
+                .collect::<HashMap<NodeId, String>>()
+        });
+        // Nodes inside a `secret(...)` locator expression are secret
+        // material even though they are not Secret-kinded themselves
+        // (a literal locator would otherwise appear verbatim in a
+        // step). Collect the transitive locator subtrees once, only
+        // when a stepper asked for a trace.
+        let secret_nodes: Option<std::collections::HashSet<NodeId>> = steps.as_ref().map(|_| {
+            let mut set = std::collections::HashSet::new();
+            for node in &module.arena {
+                if let Node::Secret { locator } = node {
+                    collect_subtree(module, *locator, &mut set);
+                }
+            }
+            set
+        });
 
         // Fingerprints for this call (arena-indexed cache, sized
         // once): computed inline during the walk below, which runs
@@ -1218,6 +1320,7 @@ impl Engine {
                 }
             }
             let node_id = module.graph[node_idx];
+            let diag_start = diagnostics.len();
             let node = module.get(node_id).ok_or(EvalError::MissingNode(node_id))?;
             // Incremental fast path: the fingerprint is computed
             // inline (dependencies already walked, so their prints
@@ -1509,6 +1612,29 @@ impl Engine {
                 }
             }
 
+            if let Some(list) = steps.as_deref_mut() {
+                let sensitive = secret_nodes
+                    .as_ref()
+                    .is_some_and(|set| set.contains(&node_id));
+                let rendered = if sensitive {
+                    serde_json::Value::String("***SECRET***".to_string())
+                } else {
+                    crate::convert::value_to_json(&value)
+                };
+                list.push(StepEvent {
+                    node: node_id.0,
+                    path: step_paths
+                        .as_ref()
+                        .and_then(|paths| paths.get(&node_id).cloned()),
+                    kind: value_kind_name(&value),
+                    tainted: sensitive || value_has_secret(&value),
+                    value: rendered,
+                    codes: diagnostics[diag_start..]
+                        .iter()
+                        .map(|d| d.code.clone())
+                        .collect(),
+                });
+            }
             values.insert(node_id, value);
         }
 

@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Active budget dashboard export",
+  "type": "object",
+  "required": ["version", "mode", "limits", "usage", "headroom", "warnings"],
+  "properties": {
+    "version": { "const": 1 },
+    "mode": { "enum": ["config", "data"] },
+    "limits": {
+      "type": "object",
+      "required": ["nodes", "depth", "array_len", "keys", "wall_ms", "value_size", "total_size"],
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "usage": {
+      "type": "object",
+      "required": ["nodes", "depth", "array_len", "keys", "value_size", "total_size"],
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "headroom": {
+      "type": "object",
+      "additionalProperties": { "type": ["integer", "null"], "minimum": 0 }
+    },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": false
+}

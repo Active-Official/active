@@ -1,0 +1,9 @@
+OUTPUT-SCHEMA graph ok
+OUTPUT-SCHEMA taint ok
+OUTPUT-SCHEMA budget ok
+OUTPUT-SCHEMA inspect-value ok
+OUTPUT-SCHEMA mode ok
+OUTPUT-SCHEMA lint ok
+OUTPUT-SCHEMA repair-plan ok
+OUTPUT-SCHEMA debug-steps ok
+OUTPUT-SCHEMA: OK (8 outputs)

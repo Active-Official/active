@@ -162,3 +162,55 @@ fn clean_document_plans_nothing() {
     assert!(out.clean && out.steps.is_empty());
     assert_eq!(out.repaired_source, "port = 8080\n");
 }
+
+// ------------------------------------------------------------------
+// Browser model and partial application (TOOLING REPAIR-UI)
+// ------------------------------------------------------------------
+
+#[test]
+fn browser_model_pairs_diagnostics_and_plan() {
+    let src = "schema = { port = Int(max = 10) }\nport = 999\nunexpected = 1\n";
+    let model = active_core::convert::repair::browser_model(
+        src,
+        active_core::diag::RepairGoal::Validate,
+        &[],
+        8,
+    );
+    assert!(model["plan"]["steps"].is_array());
+    let diagnostics = model["diagnostics"].as_array().expect("diagnostics");
+    assert!(diagnostics.iter().any(|d| d["code"] == "T003"), "{model}");
+    // Secret material never enters the model; plain values may appear
+    // in schema messages (they are authored data, not secrets).
+    let secret_src = "schema = { port = Int }\nport = secret(\"hunter2-browser\")\n";
+    let secret_model = active_core::convert::repair::browser_model(
+        secret_src,
+        active_core::diag::RepairGoal::Validate,
+        &[],
+        8,
+    );
+    assert!(
+        !secret_model.to_string().contains("hunter2"),
+        "raw secret in browser model: {secret_model}"
+    );
+}
+
+#[test]
+fn apply_selected_honors_index_and_prefix() {
+    let src = "schema = { port = Int(default = 8080), host = String(default = \"x\") }\n";
+    let outcome =
+        active_core::convert::repair::repair(src, active_core::diag::RepairGoal::Validate, &[], 8);
+    assert!(outcome.steps.len() >= 2, "{outcome:?}");
+    let (first, applied) =
+        active_core::convert::repair::apply_selected(src, &outcome.steps, Some(0), None);
+    assert_eq!(applied.len(), 1);
+    assert!(first.starts_with(&applied[0]));
+    let (only_host, applied) =
+        active_core::convert::repair::apply_selected(src, &outcome.steps, None, Some("host"));
+    assert_eq!(applied.len(), 1);
+    assert!(applied[0].contains("host"), "{applied:?}");
+    assert!(only_host.contains("host"));
+    let (none, applied) =
+        active_core::convert::repair::apply_selected(src, &outcome.steps, None, Some("nope"));
+    assert!(applied.is_empty());
+    assert_eq!(none, src);
+}

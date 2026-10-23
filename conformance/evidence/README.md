@@ -15,7 +15,7 @@ tree; re-run the commands from the repo root to reproduce any row.
 | `ci.log` | Step 6: real CI verdicts | Live `gh run list` for the pushed HEAD on origin+official |
 | `review-final.log` | Step 7: fresh review (BYOK xhigh) | `CONFIRMED CLEAN`, no open findings |
 | `agentkit.log` / `agentkit-eval.json` / `agentkit-eval.log` | Step 6: agent-kit evaluation | `ok: true`, `tasks_improved` 5, mean 1.5 iterations, cone agreement true |
-| `catalog-diff.log` | Error-code catalog diff (`catalog_diff.py`) | 78 emitted, 79 catalogued, 0 missing (E009 intentionally unassigned) |
+| `catalog-diff.log` | Error-code catalog diff (`catalog_diff.py`) | 83 emitted, 84 catalogued, 0 missing (E009 intentionally unassigned) |
 | `harness-tests.log` | Harness enforcement unit tests | 25/25 run.py + 14/14 diff_vectors + capability 4/4 |
 | `miri.log` | Miri (nightly) over `active-core` trace + blob units | 3/3 trace + 3/3 blob pass, no UB (master program EVID.001) |
 | `research-battery.md` | Research battery + corpus summary | 1,998 RB tests, ported corpora counts, fuzz seeds, secret proofs |

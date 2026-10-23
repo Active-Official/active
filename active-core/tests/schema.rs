@@ -139,7 +139,7 @@ fn nested_schema_attaches_to_its_table() {
     // The root schema is an open parent created for the nested table.
     let root = module.schema.expect("open parent expected");
     let (fields, closed) = match module.get(root).expect("schema node") {
-        Node::SchemaTable { fields, closed } => (fields.clone(), *closed),
+        Node::SchemaTable { fields, closed, .. } => (fields.clone(), *closed),
         other => panic!("schema table expected, got {other:?}"),
     };
     assert!(!closed, "synthesized parent stays open");

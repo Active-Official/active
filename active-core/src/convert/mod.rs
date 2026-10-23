@@ -10,10 +10,12 @@ pub mod export;
 pub mod gen;
 pub mod import;
 pub mod inspect;
+pub mod repair;
 pub mod suggest;
 
 pub use compat::{compare as compare_schemas, CompatFinding};
 pub use doc::{collect_items, doc_to_html, doc_to_man, doc_to_markdown, DocItem};
+pub use repair::{repair as repair_document, PlannedStep, RepairOutcome, StepStatus};
 
 pub use explain::{explain_all, explain_code, explain_structured, Explanation};
 pub use export::{value_to_toml_string, value_to_yaml_string};

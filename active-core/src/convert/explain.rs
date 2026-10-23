@@ -41,6 +41,8 @@ pub fn explain_code(code: &str) -> &'static str {
         "W004" => "Patch target warning: a @remove/@rename names a path that does not exist. Nothing was changed; check the path spelling.",
         "W005" => "Resilient default fill (informational): the engine inserted a schema default for a missing key. Harmless in resilient mode; strict mode requires the key written out.",
         "H005" => "Unknown key with a near-identical known key: apply the did-you-mean suggestion (`@rename`) when it matches intent.",
+        "H006" => "Repair stuck: the same diagnostics returned after another repair step, so the loop stopped instead of cycling. Inspect the plan's applied steps; the remaining diagnostics need a repair kind the suggester does not emit.",
+        "H008" => "Unrepairable terminal state: remaining diagnostics have no safe repair mapping (or evaluation fails fatally). The agent loop must stop here; report the codes, do not retry blindly.",
         "S001" => "Dependency cycle: the listed keys depend on each other and no evaluation order exists. Break the cycle by removing one dependency edge.",
         "B001" => "Malformed blob() call: blob() takes a string media type and string (or secret) data — blob(\"text/plain\", \"...\"). Fix the argument shapes at the span.",
         "B002" => "Blob payload exceeds the schema max_size: shrink the payload or raise max_size deliberately, never strip the bound to silence it.",

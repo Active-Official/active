@@ -1577,3 +1577,82 @@ fn compatibility_json_reports_compatible_schemas() {
     let findings: serde_json::Value = serde_json::from_str(&stdout).expect("JSON array");
     assert_eq!(findings, serde_json::json!([]), "{stdout}");
 }
+
+#[test]
+fn repair_reaches_clean_and_writes_output() {
+    let f = fixture(
+        "repair_clean.active",
+        "schema = { closed = true, host = String, port = Int(default = 8080) }\nHost = \"x\"\n",
+    );
+    let out = active()
+        .args(["repair", "--from"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("repair: clean"), "{stdout}");
+    assert!(stdout.contains("@patch(\"port\", 8080)"), "{stdout}");
+    assert!(stdout.contains("@rename(\"Host\", \"host\")"), "{stdout}");
+}
+
+#[test]
+fn repair_reports_json_plan_and_output_file() {
+    let f = fixture(
+        "repair_json.active",
+        "schema = { closed = true, host = String, port = Int(default = 8080) }\nHost = \"x\"\n",
+    );
+    let outpath = std::env::temp_dir().join("active-cli-tests-repaired.active");
+    let out = active()
+        .args(["repair", "--from"])
+        .arg(&f)
+        .args(["--format", "json", "--output"])
+        .arg(&outpath)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let plan: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).expect("JSON plan");
+    assert_eq!(plan["clean"], true);
+    assert_eq!(plan["steps"].as_array().expect("steps").len(), 2);
+    let written = std::fs::read_to_string(&outpath).expect("output written");
+    assert!(written.contains("@patch(\"port\", 8080)"), "{written}");
+    // The written artifact re-evaluates clean: the plan is executable.
+    let check = active()
+        .args(["repair", "--from"])
+        .arg(&outpath)
+        .output()
+        .expect("run active");
+    assert!(
+        check.status.success(),
+        "repaired file must evaluate clean: {}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+}
+
+#[test]
+fn repair_fails_closed_on_unrepairable() {
+    let f = fixture(
+        "repair_bad.active",
+        "schema = { contact = String(format = \"email\") }\ncontact = \"not-an-email\"\n",
+    );
+    let out = active()
+        .args(["repair", "--from"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success(), "unrepairable must fail");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("not clean"), "{stdout}");
+    // H008 terminal finding rides the diagnostic channel (stderr).
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("H008"), "{stderr}");
+}

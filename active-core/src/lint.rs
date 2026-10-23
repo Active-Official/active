@@ -306,6 +306,9 @@ fn missing_entry(
         suggested: name.to_string(),
         kind: RepairKind::Other("add_depends_on".to_string()),
         safe: true,
+        side_effects: Vec::new(),
+        goal: None,
+        steps: Vec::new(),
     });
     diag
 }

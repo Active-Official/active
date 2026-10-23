@@ -222,6 +222,9 @@ pub fn make_key_typo_diagnostic(
             suggested: suggestion.into(),
             kind: RepairKind::KeyTypo,
             safe,
+            side_effects: Vec::new(),
+            goal: None,
+            steps: Vec::new(),
         }),
         confidence,
         // The caller stamps the file (same file as the typo); library

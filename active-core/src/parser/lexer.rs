@@ -70,6 +70,9 @@ fn unclosed_string_repair(line: u32, col: u32, delimiter: &str) -> Diagnostic {
             suggested: delimiter.to_string(),
             kind: RepairKind::InsertQuote,
             safe: true,
+            side_effects: Vec::new(),
+            goal: None,
+            steps: Vec::new(),
         }),
         confidence: thresholds::AUTO_APPLY + 0.03,
         // The parser stamps the session file (includes get their own).

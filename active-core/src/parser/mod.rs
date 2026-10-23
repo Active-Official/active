@@ -2596,6 +2596,9 @@ impl Parser {
                     suggested: format!("{:?}", expected),
                     kind: RepairKind::Other("bracket_mismatch".into()),
                     safe: false,
+                    side_effects: Vec::new(),
+                    goal: None,
+                    steps: Vec::new(),
                 },
                 thresholds::MEDIUM + 0.12, // 0.82 — resilient mode only
             );
@@ -5183,6 +5186,9 @@ impl Parser {
                         suggested: String::new(),
                         kind: RepairKind::RemoveTrailingComma,
                         safe: true,
+                        side_effects: Vec::new(),
+                        goal: None,
+                        steps: Vec::new(),
                     },
                     thresholds::AUTO_APPLY + 0.03,
                 ) {
@@ -5208,6 +5214,9 @@ impl Parser {
                             suggested: String::new(),
                             kind: RepairKind::RemoveTrailingComma,
                             safe: true,
+                            side_effects: Vec::new(),
+                            goal: None,
+                            steps: Vec::new(),
                         },
                         thresholds::AUTO_APPLY + 0.03,
                     );
@@ -5227,6 +5236,9 @@ impl Parser {
                         suggested: ",".into(),
                         kind: RepairKind::Other("insert_comma".into()),
                         safe: false,
+                        side_effects: Vec::new(),
+                        goal: None,
+                        steps: Vec::new(),
                     },
                     thresholds::HIGH + 0.05, // 0.90 — auto-apply with warning
                 ) {
@@ -5266,6 +5278,9 @@ impl Parser {
                         suggested: String::new(),
                         kind: RepairKind::RemoveTrailingComma,
                         safe: true,
+                        side_effects: Vec::new(),
+                        goal: None,
+                        steps: Vec::new(),
                     },
                     thresholds::AUTO_APPLY + 0.03,
                 ) {
@@ -5297,6 +5312,9 @@ impl Parser {
                             suggested: String::new(),
                             kind: RepairKind::RemoveTrailingComma,
                             safe: true,
+                            side_effects: Vec::new(),
+                            goal: None,
+                            steps: Vec::new(),
                         },
                         thresholds::AUTO_APPLY + 0.03,
                     );
@@ -5315,6 +5333,9 @@ impl Parser {
                         suggested: ",".into(),
                         kind: RepairKind::Other("insert_comma".into()),
                         safe: false,
+                        side_effects: Vec::new(),
+                        goal: None,
+                        steps: Vec::new(),
                     },
                     thresholds::HIGH + 0.05, // 0.90 — auto-apply with warning
                 ) {

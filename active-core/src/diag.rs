@@ -43,6 +43,43 @@ pub struct Repair {
     pub kind: RepairKind,
     /// If true, safe to auto-apply
     pub safe: bool,
+    /// Dotted paths this repair changes beyond its own target
+    /// (PROPOSAL §2.1, CHECKLIST R.001): empty for purely additive
+    /// fills; renames list the renamed path so agents and cherry-pick
+    /// flows know the blast radius.
+    #[serde(default)]
+    pub side_effects: Vec<String>,
+    /// Goal this repair serves when built by the repair planner
+    /// (None for single diagnostics outside a plan).
+    #[serde(default)]
+    pub goal: Option<RepairGoal>,
+    /// Sub-steps for multi-step repairs (empty for single repairs).
+    #[serde(default)]
+    pub steps: Vec<RepairStep>,
+}
+
+/// Goal a repair plan optimizes for (PROPOSAL §2.1, CHECKLIST R.002).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RepairGoal {
+    /// Reach a clean validation (default).
+    Validate,
+    /// Reach clean validation while never touching `PreserveKey.0`.
+    PreserveKey(String),
+    /// Fewest, smallest steps first.
+    MinimizeDiff,
+}
+
+/// One step of a multi-step repair (CHECKLIST R.002): the action in
+/// directive form, its target path, and the observable effect.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RepairStep {
+    /// `@rename("a", "b")` / `@patch("p", v)` directive text.
+    pub action: String,
+    /// Dotted path this step changes.
+    pub target: String,
+    /// Observable effect (e.g. `fill`, `rename`, `skip: preserved`).
+    pub effect: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

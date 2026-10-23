@@ -61,10 +61,10 @@ fn explain_covers_every_documented_code() {
     // silent fallback for a known code is a bug.
     let covered = [
         "E001", "E002", "E003", "E004", "E006", "E007", "E011", "E019", "E020", "E023", "E032",
-        "T001", "T002", "T003", "T004", "T005", "W004", "W005", "H005", "S001", "B001", "B002",
-        "B003", "B004", "B005", "C040", "C041", "C042", "C043", "C044", "E040",
+        "T001", "T002", "T003", "T004", "T005", "W004", "W005", "H005", "H006", "H008", "S001",
+        "B001", "B002", "B003", "B004", "B005", "C040", "C041", "C042", "C043", "C044", "E040",
     ];
-    assert_eq!(covered.len(), 31);
+    assert_eq!(covered.len(), 33);
     for code in covered {
         let g = explain_code(code);
         assert!(
@@ -159,6 +159,9 @@ fn suggest_emits_nothing_without_exact_mapping() {
             suggested: "host".into(),
             kind: RepairKind::KeyTypo,
             safe: true,
+            side_effects: Vec::new(),
+            goal: None,
+            steps: Vec::new(),
         }),
         confidence: 1.0,
         file: None,

@@ -499,6 +499,9 @@ impl<'a> Validator<'a> {
                             suggested: suggested.clone(),
                             kind: RepairKind::KeyTypo,
                             safe: normalized_levenshtein(key, suggested) >= thresholds::AUTO_APPLY,
+                            side_effects: Vec::new(),
+                            goal: None,
+                            steps: Vec::new(),
                         });
                         confidence = *score;
                     }
@@ -861,6 +864,9 @@ impl<'a> Validator<'a> {
                                 suggested: to,
                                 kind: RepairKind::KeyTypo,
                                 safe,
+                                side_effects: Vec::new(),
+                                goal: None,
+                                steps: Vec::new(),
                             }),
                             confidence,
                         },
@@ -929,6 +935,9 @@ impl<'a> Validator<'a> {
                             kind: RepairKind::KeyTypo,
                             safe: normalized_levenshtein(&req.from, &req.to)
                                 >= thresholds::AUTO_APPLY,
+                            side_effects: Vec::new(),
+                            goal: None,
+                            steps: Vec::new(),
                         }),
                         confidence: req.confidence,
                     },
@@ -963,6 +972,9 @@ impl<'a> Validator<'a> {
                     suggested: req.to.clone(),
                     kind: RepairKind::KeyTypo,
                     safe: normalized_levenshtein(&req.from, &req.to) >= thresholds::AUTO_APPLY,
+                    side_effects: Vec::new(),
+                    goal: None,
+                    steps: Vec::new(),
                 }),
                 confidence: req.confidence,
             },

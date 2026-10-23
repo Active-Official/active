@@ -322,6 +322,31 @@ enum Commands {
         #[arg(short, long, default_value = "text")]
         format: String,
     },
+    /// Repair a document toward a goal (PROPOSAL §2.1): multi-step
+    /// plan of safe @patch/@rename directives applied through the
+    /// shipped patch engine, re-evaluated each step. Stops on clean,
+    /// stuck (same codes twice, H006), or unrepairable (H008).
+    /// Exits nonzero unless the result is clean.
+    Repair {
+        /// Input .active file
+        #[arg(long)]
+        from: PathBuf,
+        /// Repair goal: validate, preserve-key, minimize-diff
+        #[arg(long, default_value = "validate")]
+        goal: String,
+        /// Dotted paths the loop must never touch (repeatable)
+        #[arg(long)]
+        preserve: Vec<String>,
+        /// Maximum applied directives
+        #[arg(long, default_value_t = 8)]
+        max_steps: usize,
+        /// Output format for the plan
+        #[arg(short, long, default_value = "text")]
+        format: String,
+        /// Write the repaired source here (directives prepended)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
     /// Render schema, intent, and comments as documentation
     Doc {
         /// Input .active file
@@ -999,6 +1024,71 @@ fn main() -> anyhow::Result<()> {
             }
             if findings.iter().any(|finding| finding.is_breaking()) {
                 anyhow::bail!("E040: breaking schema changes detected");
+            }
+        }
+        Commands::Repair {
+            from,
+            goal,
+            preserve,
+            max_steps,
+            format,
+            output,
+        } => {
+            use active_core::diag::RepairGoal;
+            let goal_parsed = match goal.as_str() {
+                "validate" => RepairGoal::Validate,
+                "minimize-diff" => RepairGoal::MinimizeDiff,
+                "preserve-key" => {
+                    if preserve.is_empty() {
+                        anyhow::bail!("preserve-key goal needs at least one --preserve <path>");
+                    }
+                    RepairGoal::PreserveKey(preserve.join(","))
+                }
+                other => anyhow::bail!(
+                    "unknown repair goal: {other} (want validate|preserve-key|minimize-diff)"
+                ),
+            };
+            let source = std::fs::read_to_string(&from)
+                .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", from.display()))?;
+            let outcome =
+                active_core::convert::repair_document(&source, goal_parsed, &preserve, max_steps);
+            // PreserveKey carries its paths inside the goal for the
+            // plan record; the loop itself used the raw list.
+            match format.as_str() {
+                "json" => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&outcome)
+                        .map_err(|e| anyhow::anyhow!("repair serialize failed: {e}"))?
+                ),
+                "text" => {
+                    if outcome.clean {
+                        println!("repair: clean");
+                    }
+                    for step in &outcome.steps {
+                        match &step.status {
+                            active_core::convert::repair::StepStatus::Applied => {
+                                println!("applied {} {}", step.kind, step.directive)
+                            }
+                            active_core::convert::repair::StepStatus::Skipped { reason } => {
+                                println!("skipped {} {} ({reason})", step.kind, step.directive)
+                            }
+                        }
+                    }
+                    for finding in &outcome.findings {
+                        report(finding, &from.to_string_lossy());
+                    }
+                    if !outcome.clean {
+                        println!("repair: not clean ({})", outcome.final_codes.join(", "));
+                    }
+                }
+                other => anyhow::bail!("unsupported format: {other}"),
+            }
+            if let Some(path) = output {
+                std::fs::write(&path, &outcome.repaired_source)
+                    .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", path.display()))?;
+            }
+            if !outcome.clean {
+                std::process::exit(1);
             }
         }
         Commands::Doc {

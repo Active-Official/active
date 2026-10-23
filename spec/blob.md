@@ -35,7 +35,7 @@ digest = BLAKE3("active-blob/v1" || 0x00 || le64(len(media)) || media || le64(le
 
 Test vectors (payload `hello`, media type `text/plain`):
 
-- Canonical input (hex): `6163746976652d626c6f622f7631000a0000000000000000746578742f706c61696e050000000000000068656c6c6f`
+- Canonical input (hex): `6163746976652d626c6f622f7631000a00000000000000746578742f706c61696e050000000000000068656c6c6f`
 - Implementations MUST assert the full 32-byte digest below (pinned in `active-core` unit tests; any change fails the gate):
 
 ```
@@ -81,7 +81,7 @@ Blobs evaluate to an identity object; the payload is absent unless explicitly ma
 { "logo": { "$active.blob": { "hash": "blake3:<64-hex>", "size": 5, "media_type": "text/plain" } } }
 ```
 
-- Materialisation (`active eval --materialise-blobs`, or `eval --path` demanding the blob cone with the flag) adds `"payload_b64"`: base64 of the payload bytes. Tainted blobs fail the demand with **B003**; blobs without retained payload fail with **B005** — both fail closed rather than silently emitting identity.
+- Materialisation (`active eval --materialise-blobs`, or `eval --path` demanding the blob cone with the flag) adds `"payload_b64"`: base64 of the payload bytes. Tainted blobs fail the demand with **B003**; blobs without retained payload fail with **B005** — both fail closed rather than silently emitting identity. With `--path`, the demand applies to the emitted cone: undemanded subtrees stay identities and cannot fail the fetch (budgets still guarded the full walk).
 - Payload bytes are charged against `max_value_size` / `max_total_value_size` at materialisation time; breach aborts with the standard **X006** (materialisation consumes the existing budgets, it does not bypass them).
 
 ## 6. Budget integration (CA.007)

@@ -86,7 +86,7 @@ mod tests {
         let bytes = canonical_bytes("text/plain", b"hello");
         assert_eq!(
             bytes.iter().map(|b| format!("{b:02x}")).collect::<String>(),
-            "6163746976652d626c6f622f7631000a0000000000000000746578742f706c61696e050000000000000068656c6c6f"
+            "6163746976652d626c6f622f7631000a00000000000000746578742f706c61696e050000000000000068656c6c6f"
         );
     }
 }

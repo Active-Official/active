@@ -418,9 +418,11 @@ impl<'a> Validator<'a> {
                 if fields.contains_key(key) {
                     continue;
                 }
-                // The mode marker is metadata, not data (Phase M): it
-                // never counts as an unexpected key, open or closed.
-                if key == "active_mode" {
+                // The mode marker is metadata, not data (Phase M): at the
+                // document root it never counts as an unexpected key.
+                // Nested tables keep the strict rule — a nested
+                // `active_mode` is an ordinary key there.
+                if key == "active_mode" && segments.is_empty() {
                     continue;
                 }
                 segments.push(PathSeg::Key(key.clone()));

@@ -73,6 +73,29 @@ fn included_marker_neither_sets_nor_breaks() {
 }
 
 #[test]
+fn nested_active_mode_stays_an_ordinary_key() {
+    // The root-only exemption is precise: a nested `active_mode` in a
+    // closed table fails like any other unexpected key — never
+    // silently exempt, never a mode flip.
+    let module = parse(
+        "schema = { outer = Table { host = String, closed = true } }\n[outer]\nactive_mode = \"data\"\nhost = \"x\"\n",
+        "mode",
+    )
+    .expect("must parse");
+    assert_eq!(module.mode, active_core::Mode::Config);
+    let mut engine = Engine::new();
+    engine.resilient = false;
+    let err = engine
+        .evaluate(&module)
+        .expect_err("nested marker must fail");
+    assert!(
+        err.code() == "T005" || err.code() == "T002",
+        "unexpected code: {}",
+        err.code()
+    );
+}
+
+#[test]
 fn closed_tables_exempt_the_marker() {
     // The mode marker is metadata, not data: it never trips T005.
     let module = parse(

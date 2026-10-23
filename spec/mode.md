@@ -23,8 +23,9 @@ port = 8080
   the agent-interchange profile mandates).
 - Included files cannot set the mode; only the top-level document's
   marker counts (local document wins, includes inherit nothing).
-- `active_mode` never counts as an unexpected key in closed tables —
-  it is metadata, not data.
+- `active_mode` never counts as an unexpected key in a root-level
+  closed table — it is metadata, not data. Nested tables keep the
+  strict rule: a nested `active_mode` key is an ordinary key there.
 
 ## 2. Config compatibility (M.003)
 

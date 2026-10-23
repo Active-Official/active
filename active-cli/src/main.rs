@@ -666,25 +666,30 @@ fn main() -> anyhow::Result<()> {
                 report(d, &name);
             }
 
-            // Explicit materialisation demand (spec/blob.md §5): fail
-            // closed on tainted (B003) or payload-less (B005) blobs
-            // instead of silently emitting identity.
-            if materialise_blobs {
-                active_core::convert::require_materialised(&value).map_err(|e| {
-                    report_eval_error(&e, &name);
-                    anyhow::anyhow!("evaluation failed")
-                })?;
-            }
             // Demanded cone selection (PROPOSAL §2.2): project AFTER the
             // full budgeted evaluation, so safety stays whole-document
             // while agents fetch only what they need. The cone is owned
             // (cloned out) so downstream borrows stay single-level.
+            // Materialisation demand applies to the cone, not the whole
+            // tree: undemanded tainted blobs cannot fail a cone fetch
+            // (budgets still guarded the full walk).
             let value = match path.as_deref() {
                 Some(p) => active_core::convert::project_path(&value, p)
                     .map_err(|e| anyhow::anyhow!("{e}"))?
                     .clone(),
                 None => value,
             };
+
+            // Explicit materialisation demand (spec/blob.md §5): fail
+            // closed on tainted (B003) or payload-less (B005) blobs
+            // inside the emitted cone instead of silently emitting
+            // identity.
+            if materialise_blobs {
+                active_core::convert::require_materialised(&value).map_err(|e| {
+                    report_eval_error(&e, &name);
+                    anyhow::anyhow!("evaluation failed")
+                })?;
+            }
 
             match format.as_str() {
                 "json" => println!("{}", value_to_pretty_json(&value)),

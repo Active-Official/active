@@ -1696,3 +1696,28 @@ fn eval_path_unknown_fails_closed() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+#[test]
+fn materialise_applies_to_cone_not_whole_tree() {
+    // A tainted blob OUTSIDE the demanded cone must not fail the
+    // fetch: the demand applies to the emitted cone only.
+    let f = fixture(
+        "cone_taint.active",
+        "keep = blob(\"text/plain\", \"hello\")\ntainted = blob(\"text/plain\", secret(\"s3cr3t\"))\n",
+    );
+    let out = active()
+        .args(["eval", "--materialise-blobs", "--path", "keep"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "cone fetch must succeed despite tainted sibling: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("payload_b64"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}

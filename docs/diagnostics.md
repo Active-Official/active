@@ -6,7 +6,9 @@ and repair policy. When a code is added, it is added here first (spec before
 code). The catalog is the contract tools and agents rely on.
 
 **Ranges:** `E0xx` syntax · `S0xx` semantic · `H0xx` healing · `T0xx`
-type/constraint · `X0xx` execution budget · `W0xx` warnings.
+type/constraint · `X0xx` execution budget · `W0xx` warnings · `B0xx`
+content-addressed blobs · `C04x` schema compatibility (with the `E040`
+breaking-change summary) · `L0xx` linter rules.
 
 ## Output format
 
@@ -191,6 +193,7 @@ advisory, C-042).
 - **No message ever contains secret material** (invariant; the proptest suite
   asserts it).
 - **No `TODO` markers here** — this file is a deliverable, not code.
-- The alpha does not emit machine-readable JSON diagnostics per run yet; the
-  stable codes and spans above are the contract that the C-045 LSP and the
-  `--format json` output path build on.
+- Machine-readable output exists for the structured commands (`inspect`,
+  `capability`, `explain`, `patch`, `repair`, `graph`, `compatibility`);
+  `check` and `lint` stay text-first, with the stable codes and spans above
+  as their machine contract.

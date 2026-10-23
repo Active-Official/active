@@ -45,7 +45,7 @@ survive formatting round-trips (C-022/C-040).
 
 ```
 identifier   = ident-start { ident-char }
-keyword      = "let" | "true" | "false" | "null" | "env" | "secret"
+keyword      = "let" | "true" | "false" | "null" | "env" | "secret" | "blob"
 ```
 
 A keyword is lexed as its own token kind and never as an `identifier`.
@@ -362,9 +362,13 @@ schema-type   = bare-type [ "(" [ schema-arg { "," schema-arg } ] ")" ]
               | "Table" [ "{" [ schema-entry { "," schema-entry } ] "}" ]
               | "Enum" "(" string { "," string } [ "," named-args ] ")"
 bare-type     = "Int" | "Float" | "String" | "Bool" | "Null"
-              | "Duration" | "Bytes" | "Secret" | "Any" | "Table" | "Array"
+              | "Duration" | "Bytes" | "Secret" | "Blob" | "Any" | "Table" | "Array"
 schema-arg    = identifier "=" expression
 ```
+
+`Blob` fields additionally accept `media_type = "<mime>"` and
+`max_size = <int>` (spec/blob.md); evolution metadata accepts
+`removed_in = "<major.minor.patch>"` (spec/schema-evolution.md).
 
 - `schema` is contextual: a `schema` key with a **table value** parses
   as a schema block; a `schema` key with any other value stays ordinary

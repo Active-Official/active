@@ -6,8 +6,8 @@
   "tools": [
     {
       "name": "check",
-      "entry": "active check <file>",
-      "description": "Parse a file and report errors, cycles, and unresolved names with stable diagnostic codes and spans. Zero exit means clean.",
+      "entry": "active check <file> [--resilient] [--allow-parent-escapes --trust-keys <toml>] [--profile NAME] [--trace] [--budget-profile strict|interactive|trusted]",
+      "description": "Parse a file and report errors, cycles, and unresolved names with stable diagnostic codes and spans. Zero exit means clean; --budget-profile selects a named budget preset and --trace emits the same value-free trace as eval.",
       "input": {
         "file": "path to a .active source file"
       },
@@ -17,8 +17,8 @@
     },
     {
       "name": "eval",
-      "entry": "active eval <file>",
-      "description": "Evaluate a file and print redacted JSON. Secrets always render as ***SECRET***; a raw secret in output is a defect, never data.",
+      "entry": "active eval <file> [--format json|pretty] [--path a.b[0]] [--materialise-blobs] [--audit-trail FILE] [--resilient] [--profile NAME] [--trace] [--sandbox strict|data|agent|trusted]",
+      "description": "Evaluate a file and print redacted JSON. Secrets always render as ***SECRET***; a raw secret in output is a defect, never data. --path emits only the demanded cone, --materialise-blobs includes blob payloads (refused for tainted blobs), and --audit-trail writes a re-validatable redacted audit document.",
       "input": {
         "file": "path to a .active source file"
       },
@@ -51,8 +51,8 @@
     },
     {
       "name": "graph",
-      "entry": "active graph <file> [--format text|mermaid|dot|json]; active impact <KEY> <file>; active why <KEY> <file>",
-      "description": "Query the dependency graph: render it, list what breaks if a key changes, or list what a key is built from.",
+      "entry": "active graph <file> [--format text|mermaid|dot|json]; active impact|why <KEY> <file> [--format text|json]; active graph query <file> <dependents|dependencies|shortest-path|secret-cone|ca-above-size> ...",
+      "description": "Query the dependency graph: render it, list what breaks if a key changes, list what a key is built from, or run decisive queries (dependents, dependencies, shortest path, secret cone, content-addressed values above a size).",
       "input": {
         "file": "path to a .active source file",
         "key": "optional dotted key"
@@ -67,7 +67,7 @@
       "description": "Emit typed artifacts from an Active schema for the listed codegen targets.",
       "input": {
         "schema": "path to a schema file",
-        "target": "jsonschema|typescript|go|python"
+        "target": "jsonschema|openapi|typescript|go|rust|python"
       },
       "output": {
         "artifact": "generated source text"

@@ -3,23 +3,31 @@
 ## 1. Declaration
 
 The Rust implementation in this repository
-(`RatioArtificiosa/solid-lang`, workspace root) is declared the
-**reference implementation for the 1.0 conformance suite**: the
+(`Active-Official/active`, workspace root) is declared the
+**reference implementation for the 1.x conformance suite**: the
 compatibility target every other implementation proves against.
-Final 1.0 declaration happens at C-090; disputes meanwhile are
-recorded for the RFC process (C-064).
+The 1.0 declaration is recorded in `spec/readiness-1.0.md`; later
+disputes use the RFC process (docs/governance.md).
 
-## 2. The suite
+## 2. The suites
 
-`tests/spec/` holds the official conformance suite: 13 pairs of
-`<name>.active` + `<name>.expected.json` — operator precedence (01),
-unit normalization (02), interpolation (03, 12), env defaults
-(04), secret redaction (05), sibling resolution (06), arrays of
-tables (07), duration arithmetic (08), parser resilience (09 —
-pins the §4.1 statement-level skip quirks of spec/grammar.md),
-dual-syntax brace/indent equivalence (10–11), and multi-line
-strings (13). Each pair asserts an ACCEPTED document's evaluated
-value tree, byte for byte.
+Two suites serve different jobs and must both stay green:
+
+- `tests/spec/` is the **value corpus**: 13 pairs of
+  `<name>.active` + `<name>.expected.json` — operator precedence (01),
+  unit normalization (02), interpolation (03, 12), env defaults
+  (04), secret redaction (05), sibling resolution (06), arrays of
+  tables (07), duration arithmetic (08), parser resilience (09 —
+  pins the §4.1 statement-level skip quirks of spec/grammar.md),
+  dual-syntax brace/indent equivalence (10–11), and multi-line
+  strings (13). Each pair asserts an ACCEPTED document's evaluated
+  value tree, byte for byte.
+- `conformance/manifest.toml` is the **cross-embedding suite**
+  (16 cases today, including negative and host-feature pins)
+  driven by `conformance/harness/run.py` across the reference,
+  C ABI, WASM, and binding paths. Its normalization contract is
+  `conformance/NORMALIZATION.md`; the differential gate
+  (`conformance/harness/diff_vectors.py`) is the strictest proof.
 
 ### 2.1 Harness contract (what "passing" means)
 

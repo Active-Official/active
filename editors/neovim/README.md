@@ -37,7 +37,7 @@ Neovim 0.11+ built-in client (`root_markers`, plural, needs 0.11;
 on older Neovim use nvim-lspconfig with `root_dir` instead): >
 
 ```lua
-vim.lsp.config('active_ls, {
+vim.lsp.config('active_ls', {
   cmd = { 'active-lsp' },
   filetypes = { 'active' },
   root_markers = { '.git' },

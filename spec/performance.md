@@ -84,9 +84,9 @@ test does exactly that):
   loses hits; the bound is a pure function of counts, so
   behavior stays deterministic. Engines are cheap to drop;
   long-lived servers (the language server) reuse one memo per
-  document to compound the wins (integration point, not yet
-  wired — recorded here so the next LS pass can adopt it
-  without redesign).
+  document to compound the wins: `Doc.memo` is carried across
+  `didOpen`/`didChange` and passed to every analysis re-run, so
+  repeat analyses of an untouched buffer are cache hits.
 
 ## 3. Measured numbers (reference hardware, release profile)
 

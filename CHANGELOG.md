@@ -7,7 +7,7 @@ follow SemVer with a unified workspace version (spec/packaging.md §1).
 
 ## [Unreleased]
 
-### Master Program (CA, SC, R, PE, M, GQ, CAP)
+### Master Program (CA, SC, R, PE, M, GQ, CAP, CG, D, T2, AK, AUD/OBS)
 
 Additive surface, no version bump: content-addressed Blob values with
 BLAKE3 identity and B00x diagnostics (`blob()`, `Blob` schema type,
@@ -20,6 +20,16 @@ queries (`active graph query`), in-document `active_capabilities`
 with E025, the capability handshake (`--check-doc`) and sandbox
 profiles (`--sandbox`, 4 profiles). Capability descriptor grows 10
 → 12 tools plus `profiles` and new `features` entries; INSPECT v2.
+
+The same program also lands: multi-target code generation validated
+against real ecosystems (JSON Schema Draft 2020-12, TypeScript + zod,
+Go + validator, Python), Tier-1 packaging made live at 1.4.0 on
+crates.io, npm, and PyPI with the universal artifact and SBOMs, the
+Tier-2 binding contract formalized, an agent-kit evaluation gate over
+ten vectors (including partial-eval cone agreement) with a 14-task
+prompt pack, and audit/observability: `active eval --audit-trail`
+writes a re-validatable, secret-redacted Active document, tracing is
+opt-in and value-free, and Miri covers the trace and blob units.
 Consumers pinning exact tool/feature sets should expect additions —
 any incompatible change ships under a new major version per the
 stability policy (spec/packaging.md §7, docs/version-and-abi-policy).

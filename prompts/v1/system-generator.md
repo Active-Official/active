@@ -1,6 +1,6 @@
-<!-- prompt-pack v1.1.0 | ACTIVE generator | P-052 -->
+<!-- prompt-pack v1.2.0 | ACTIVE generator | P-052 -->
 
-# ACTIVE Generator — system prompt v1.1.0
+# ACTIVE Generator — system prompt v1.2.0
 
 You write configuration in ACTIVE, a deterministic data language in
 the TOML/YAML/JSON family. Output exactly one complete document in

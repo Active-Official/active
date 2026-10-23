@@ -58,10 +58,41 @@
           "codes": [],
           "baseline_first_attempt_clean": true,
           "improved_over_baseline": false
+        },
+        "blob-clean.active": {
+          "clean": true,
+          "iters": 1,
+          "codes": [],
+          "baseline_first_attempt_clean": true,
+          "improved_over_baseline": false
+        },
+        "repair-multistep.active": {
+          "clean": true,
+          "iters": 2,
+          "codes": [
+            "H005",
+            "W005"
+          ],
+          "baseline_first_attempt_clean": false,
+          "improved_over_baseline": true
+        },
+        "mode-data.active": {
+          "clean": true,
+          "iters": 1,
+          "codes": [],
+          "baseline_first_attempt_clean": true,
+          "improved_over_baseline": false
+        },
+        "partial-cone.active": {
+          "clean": true,
+          "iters": 1,
+          "codes": [],
+          "baseline_first_attempt_clean": true,
+          "improved_over_baseline": false
         }
       },
-      "mean_iters_to_clean": 1.6666666666666667,
-      "tasks_improved": 4,
+      "mean_iters_to_clean": 1.5,
+      "tasks_improved": 5,
       "status": "pass"
     },
     "typescript": {
@@ -122,10 +153,41 @@
           "codes": [],
           "baseline_first_attempt_clean": true,
           "improved_over_baseline": false
+        },
+        "blob-clean.active": {
+          "clean": true,
+          "iters": 1,
+          "codes": [],
+          "baseline_first_attempt_clean": true,
+          "improved_over_baseline": false
+        },
+        "repair-multistep.active": {
+          "clean": true,
+          "iters": 2,
+          "codes": [
+            "H005",
+            "W005"
+          ],
+          "baseline_first_attempt_clean": false,
+          "improved_over_baseline": true
+        },
+        "mode-data.active": {
+          "clean": true,
+          "iters": 1,
+          "codes": [],
+          "baseline_first_attempt_clean": true,
+          "improved_over_baseline": false
+        },
+        "partial-cone.active": {
+          "clean": true,
+          "iters": 1,
+          "codes": [],
+          "baseline_first_attempt_clean": true,
+          "improved_over_baseline": false
         }
       },
-      "mean_iters_to_clean": 1.6666666666666667,
-      "tasks_improved": 4,
+      "mean_iters_to_clean": 1.5,
+      "tasks_improved": 5,
       "status": "pass"
     },
     "go": {
@@ -186,12 +248,44 @@
           "codes": [],
           "baseline_first_attempt_clean": true,
           "improved_over_baseline": false
+        },
+        "blob-clean.active": {
+          "clean": true,
+          "iters": 1,
+          "codes": [],
+          "baseline_first_attempt_clean": true,
+          "improved_over_baseline": false
+        },
+        "repair-multistep.active": {
+          "clean": true,
+          "iters": 2,
+          "codes": [
+            "H005",
+            "W005"
+          ],
+          "baseline_first_attempt_clean": false,
+          "improved_over_baseline": true
+        },
+        "mode-data.active": {
+          "clean": true,
+          "iters": 1,
+          "codes": [],
+          "baseline_first_attempt_clean": true,
+          "improved_over_baseline": false
+        },
+        "partial-cone.active": {
+          "clean": true,
+          "iters": 1,
+          "codes": [],
+          "baseline_first_attempt_clean": true,
+          "improved_over_baseline": false
         }
       },
-      "mean_iters_to_clean": 1.6666666666666667,
-      "tasks_improved": 4,
+      "mean_iters_to_clean": 1.5,
+      "tasks_improved": 5,
       "status": "pass"
     }
   },
-  "ok": true
+  "ok": true,
+  "partial_eval_cone_agreement": true
 }

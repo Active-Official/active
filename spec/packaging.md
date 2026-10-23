@@ -6,8 +6,10 @@ signing, crates.io publication, and editor distribution.
 ## 1. Version policy
 
 - One workspace version (`[workspace.package] version`): currently
-  `1.0.0`. All crates release together; no independent
-  crate versioning.
+  `1.4.0`. All crates release together; no independent crate versioning.
+  The version/ABI contract for the language packages lives in
+  `docs/version-and-abi-policy.md`; this section records the Rust
+  workspace mechanics.
 - SemVer: `0.x` alphas may break the surface (documented in
   CHANGELOG entries); `1.0.0` ships with C-090 and freezes the
   surface (grammar + IR + diagnostics codes + CLI flags).
@@ -85,7 +87,7 @@ it):
 
 1. **Trusted Publishing (preferred, no tokens):** link the repo on
    crates.io (`active-core`, `active-cli`, `active-fmt`,
-   `active-lsp` → GitHub OIDC for `RatioArtificiosa/solid-lang`);
+   `active-lsp` → GitHub OIDC for `Active-Official/active`);
    release.yml then publishes passwordlessly on tags.
 2. **Token:** `cargo login` with `CARGO_REGISTRY_TOKEN`; release.yml
    publishes when the secret exists, else skips with a notice.

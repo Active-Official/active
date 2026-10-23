@@ -72,13 +72,18 @@ spec/ + the docs site. **PASS.**
 
 ## 8. AI prompt pack
 
-`prompts/v1` (generator/editor/explainer) validated by
-`prompts/runner/validate.py` against the fixed 8-task suite on two
-backends: round-3 first-attempt rates **1.0 copilot / 1.0 direct**
-(16/16 — unanimous on the fixed suite,
-`prompts/results/round-round3.json`). Version/fence pins are gated
-in CI (`--test prompts`); the live 2-backend runs are committed
-manual artifacts, re-runnable with one command. **PASS.**
+`prompts/v1` (generator/editor/explainer) is validated by
+`prompts/runner/validate.py` against the fixed task suite on two
+backends. The 1.0-era measurement was round-3, **1.0 copilot / 1.0
+direct** (16/16 on the then-8-task suite,
+`prompts/results/round-round3.json`). The pack has since grown
+additively to 14 tasks (v1.2.0); the current measurement is
+**14/14 copilot / 12/14 direct**
+(`prompts/results/round-master-t14.json`), both clearing the
+documented >=80% bar, with the two direct-backend misses recorded
+verbatim for audit. Version/fence pins are gated in CI
+(`--test prompts`); the live 2-backend runs are committed manual
+artifacts, re-runnable with one command. **PASS.**
 
 ## 9. Performance
 
@@ -119,7 +124,7 @@ generation. The living statement is `docs-site/src/non-goals.md`.
 | Dual-syntax parsing complexity | Closed: differential brace/indent/mixed tests (30), lossless round-trips (18), formal grammar; no open syntax bugs. |
 | Secret leakage through diagnostics/logs | Closed: taint-as-kind + redaction audits across exports, diagnostics, hover, graphs, docs; `cargo audit` gating; criterion 5 evidence. |
 | Performance regression with large graphs | Closed: 25 ms p99 at 10k nodes, sub-DAG incremental re-evaluation, CodSpeed continuous tracking. |
-| AI agents inventing invalid syntax | Closed: prompt pack at 1.0/1.0 first-attempt, schema completions, healer with confidence policy. |
+| AI agents inventing invalid syntax | Closed at 1.0: prompt pack at 1.0/1.0 first-attempt on the 8-task suite; schema completions; healer with confidence policy. Current 14-task suite: 14/14 copilot, 12/14 direct. |
 | Scope creep into full programming language | Closed: C-070 re-affirmed above; RFC process gates post-1.0 changes. |
 
 No new risks discovered this cycle. Next review: the 1.x cycle per C-080.

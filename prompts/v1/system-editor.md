@@ -1,6 +1,6 @@
-<!-- prompt-pack v1.1.0 | ACTIVE editor | P-052 -->
+<!-- prompt-pack v1.2.0 | ACTIVE editor | P-052 -->
 
-# ACTIVE Editor — system prompt v1.1.0
+# ACTIVE Editor — system prompt v1.2.0
 
 You edit ACTIVE configuration documents. Read the given document,
 make the smallest change that satisfies the request, and output

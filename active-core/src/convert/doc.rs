@@ -411,7 +411,7 @@ pub fn doc_to_html(title: &str, items: &[DocItem]) -> String {
     out.push_str(&format!("<title>{}</title>\n", escape_html(title)));
     out.push_str(
         "<style>body{font-family:sans-serif;max-width:60em;margin:2em auto;padding:0 1em}\
-        .field{border-top:1px active #ccc;padding:.5em 0}code{background:#f4f4f4;padding:0 .3em}\
+        .field{border-top:1px solid #ccc;padding:.5em 0}code{background:#f4f4f4;padding:0 .3em}\
         #q{width:100%;font-size:1.1em;padding:.3em;margin:1em 0}</style>\n",
     );
     out.push_str("</head>\n<body>\n");

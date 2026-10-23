@@ -7,16 +7,26 @@ observable, dual-syntax, secure-by-default.
 
 ## Workspace layout
 
-- `active-core/` — parser (lexer + recursive descent), IR, dependency graph,
-  evaluator, types/units, diagnostics, healer, converters.
-- `active-cli/` — the `active` binary: `eval`, `check`, `graph`, `convert`.
-- `active-fmt/` — dual-syntax formatter (in development).
-- `active-lsp/` — Language Server Protocol implementation (in development).
-- `examples/` — `.active` example files; both MUST keep evaluating cleanly.
-- `docs/` — design and roadmap documents (`proposal.md`, `checklist.md`,
-  `DESIGN.md`) are the authority for language design decisions.
-- `tests/`, `spec/`, `benchmarks/`, `tools/` — test corpus, spec files,
-  benchmarks, helper tools.
+- `active-core/` - parser (lexer + recursive descent), IR, dependency graph,
+  evaluator, types/units, diagnostics, healer, converters, blob identity.
+- `active-cli/` - the `active` binary: eval, check, fmt, lint, graph/impact/
+  why/query, convert, import, inspect, generate, doc, lock, explain, patch,
+  repair, compatibility, capability, keygen/sign/verify.
+- `active-fmt/` - dual-syntax formatter (production, `--check` included).
+- `active-lsp/` - Language Server Protocol 3.17 implementation (hover,
+  definition, references, rename, completion, code actions, inlay hints,
+  semantic tokens, diagnostics, graph methods).
+- `active-ffi/` - frozen C ABI v1 (opaque handles, Allocator Model A).
+- `active-wasm/` - zero-import WebAssembly module plus the hand-written shim.
+- `bindings/` - Tier-1 (Go external, Python, JS/TS, Rust facade) and the
+  Tier-2 matrix; `bindings/README.md` is the support matrix.
+- `conformance/` - manifest, cases, harness, normalization contract, evidence.
+- `agent-kit/` - capability descriptor, eval harness, vectors, reference loops.
+- `schemas/` - standard schema library; `editors/` - VS Code and Neovim.
+- `examples/` - `.active` example files; both MUST keep evaluating cleanly.
+- `spec/` - the public language specification and contracts (normative).
+- `tests/`, `fuzz/`, `benches/`, `tools/` - corpora, fuzzing, benchmarks,
+  helper tools.
 
 ## Engineering rules (non-negotiable)
 
@@ -55,16 +65,18 @@ Never leave an unmarked stub or a vague `// TODO:` without a checklist id.
 
 ## Language design authority
 
-This repository is a public mirror of a language whose design authority lives
-in local-only documents (`docs/proposal.md`, `docs/checklist.md`,
-`docs/DESIGN.md`) that are NOT tracked in git. The essential, public policy is
-inlined below; treat it as binding.
+The normative public contract is `spec/` (grammar, specification,
+validation, budgets, secrets, blob, mode, partial evaluation, schema
+evolution, graph, linter, formatter, LSP, packaging, threat model,
+conformance). The Master Program working documents are local-only and never
+part of the repository. When code and `spec/` disagree, that is a bug: fix
+the code or the spec in the same change, and never let them drift.
 
-**Core principles (from docs/DESIGN.md):** deterministic (same input → same
-value tree + diagnostics), hermetic (no arbitrary I/O, shell, or network
-during evaluation), bounded (hard limits on nodes, depth, evaluation time),
-observable (dependency graph and diagnostics are first-class), dual-syntax
-(humans and AIs both write it), secure by default (secrets tainted and
+**Core principles (from `spec/specification.md` and `spec/threat-model.md`):**
+deterministic (same input → same value tree + diagnostics), hermetic (no
+arbitrary I/O, shell, or network during evaluation), bounded (hard limits on
+nodes, depth, size, wall time), observable (graph, diagnostics, audit trail,
+opt-in tracing), dual-syntax, secure by default (secrets tainted and
 redacted; env read-only).
 
 **Healing confidence policy:** ≥0.95 auto-apply; 0.85–0.94 auto-apply with

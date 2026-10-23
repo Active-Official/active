@@ -10,8 +10,9 @@ standard schema library (`schemas/`), and the release artifacts
 ## Reporting a vulnerability
 
 **Do not open a public issue.** Report privately through a
-[GitHub private security advisory](https://github.com/RatioArtificiosa/solid-lang/security/advisories/new)
-against `RatioArtificiosa/solid-lang`.
+[GitHub private security advisory](https://github.com/Active-Official/active/security/advisories/new)
+against `Active-Official/active` (the canonical repository; the
+`RatioArtificiosa/active-lang` mirror receives the same fixes).
 
 Include: affected versions / commits, a minimal `.active` reproducer
 (or the attack scenario for supply-chain issues), and the impact
@@ -36,8 +37,8 @@ with repo security access can pick them up if the owner is away:
 
 | Version | Supported |
 |---|---|
-| 1.x (once declared, C-090) | Full support |
-| 0.1.0-alpha.x | Best effort; upgrade to 1.x when available |
+| 1.x (current line: 1.4.0) | Full support |
+| 0.1.0-alpha.x | Best effort; upgrade to 1.x |
 
 ## Scope notes
 

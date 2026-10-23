@@ -58,7 +58,7 @@ prints one profile for inspection.
 
 Harness proof: `python agent-kit/eval/run.py` — all three loops pass
 with identical per-task verdicts, iterations, and codes
-(`tasks_improved` 4, mean 1.67 iterations to clean), `broken-parse`
+(`tasks_improved` 5, mean 1.5 iterations to clean), `broken-parse`
 is unrepairable in all three, and no secret material appears in any
 log. Prompt pack proof: `prompts/runner/validate.py` round
 `phase2-e7` — 10/10 first-attempt on both backends, zero flakes.

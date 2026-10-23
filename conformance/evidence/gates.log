@@ -1,181 +1,508 @@
-=== cargo test --workspace ===
-$ cargo test --workspace
-exit=0
-ps\units_si2-12cbb97ce23121df.exe)
-     Running tests\units_temp.rs (target\debug\deps\units_temp-c0ebe42d41e6c1fa.exe)
-     Running tests\units_time.rs (target\debug\deps\units_time-efa7e0eaf43974a2.exe)
-     Running tests\validation.rs (target\debug\deps\validation-9e8868ebdf0d8525.exe)
-     Running unittests src\lib.rs (target\debug\deps\active_ffi-23dfb921b4a8d313.exe)
-     Running tests\header_drift.rs (target\debug\deps\header_drift-19f8aaa9d466e5e7.exe)
-     Running tests\misuse.rs (target\debug\deps\misuse-a903fcea4604a2cf.exe)
-     Running tests\native_smoke.rs (target\debug\deps\native_smoke-b1352934f85e73c4.exe)
-     Running unittests src\lib.rs (target\debug\deps\active_fmt-2f894e87b5347137.exe)
-     Running unittests src\main.rs (target\debug\deps\active_fmt-965e21586d4f99b3.exe)
-     Running tests\cli.rs (target\debug\deps\cli-2dfe61785dc172b5.exe)
-     Running unittests src\lib.rs (target\debug\deps\active_infinity-7c3d8dec504e8c87.exe)
-     Running unittests src\lib.rs (target\debug\deps\active_ls-ab39079792c3de4b.exe)
-     Running unittests src\main.rs (target\debug\deps\active_lsp-357ff2b69cc085bf.exe)
-     Running tests\lsp.rs (target\debug\deps\lsp-4b2e644aba374b17.exe)
-     Running tests\redaction.rs (target\debug\deps\redaction-cb05a001f6b4614f.exe)
-     Running unittests src\lib.rs (target\debug\deps\active_wasm-f6243ef1463a25f7.exe)
-   Doc-tests active
-   Doc-tests active_core
-   Doc-tests active_fmt
-   Doc-tests active_infinity
-   Doc-tests active_ls
+== build ==
+   Compiling active-core v1.4.0 (F:\QQQ-AUDIT\SOLID\active-core)
+   Compiling active-fmt v1.4.0 (F:\QQQ-AUDIT\SOLID\active-fmt)
+   Compiling active-lsp v1.4.0 (F:\QQQ-AUDIT\SOLID\active-lsp)
+   Compiling active v1.4.0 (F:\QQQ-AUDIT\SOLID\active)
+   Compiling active-cli v1.4.0 (F:\QQQ-AUDIT\SOLID\active-cli)
+   Compiling active-ffi v1.4.0 (F:\QQQ-AUDIT\SOLID\active-ffi)
+   Compiling active-wasm v1.4.0 (F:\QQQ-AUDIT\SOLID\active-wasm)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.54s
+BUILD_EXIT=0
+== fmt ==
+FMT_EXIT=0
+== clippy ==
+    Checking active-core v1.4.0 (F:\QQQ-AUDIT\SOLID\active-core)
+   Compiling active-ffi v1.4.0 (F:\QQQ-AUDIT\SOLID\active-ffi)
+    Checking active-infinity v1.0.0 (F:\QQQ-AUDIT\SOLID\active-infinity)
+    Checking active-lsp v1.4.0 (F:\QQQ-AUDIT\SOLID\active-lsp)
+    Checking active-fmt v1.4.0 (F:\QQQ-AUDIT\SOLID\active-fmt)
+    Checking active v1.4.0 (F:\QQQ-AUDIT\SOLID\active)
+    Checking active-wasm v1.4.0 (F:\QQQ-AUDIT\SOLID\active-wasm)
+    Checking active-cli v1.4.0 (F:\QQQ-AUDIT\SOLID\active-cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 19.79s
+CLIPPY_EXIT=0
+== tests ==
+   Compiling active-core v1.4.0 (F:\QQQ-AUDIT\SOLID\active-core)
+   Compiling active-lsp v1.4.0 (F:\QQQ-AUDIT\SOLID\active-lsp)
+   Compiling active-fmt v1.4.0 (F:\QQQ-AUDIT\SOLID\active-fmt)
+   Compiling active v1.4.0 (F:\QQQ-AUDIT\SOLID\active)
+   Compiling active-cli v1.4.0 (F:\QQQ-AUDIT\SOLID\active-cli)
+   Compiling active-ffi v1.4.0 (F:\QQQ-AUDIT\SOLID\active-ffi)
+   Compiling active-wasm v1.4.0 (F:\QQQ-AUDIT\SOLID\active-wasm)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 44.27s
+     Running unittests src\lib.rs (target\debug\deps\active-84d815af09b6623b.exe)
 
-GATE: PASS
-=== cargo fmt --all --check ===
-$ cargo fmt --all --check
-exit=0
+running 0 tests
 
-GATE: PASS
-=== cargo clippy denied warnings ===
-$ cargo clippy --workspace --all-targets --locked -- -D warnings
-exit=0
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.27s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-GATE: PASS
-=== packaging gate (single-sourced version + Tier-1 parity + metadata) ===
-$ cargo test -p active-core --test packaging
-exit=0
+     Running tests\facade.rs (target\debug\deps\facade-357f4ac500594bdd.exe)
+
+running 2 tests
+test facade_version_matches_package ... ok
+test facade_parses_evaluates_and_converts ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\main.rs (target\debug\deps\active-d81ba5dedb57910e.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\cli.rs (target\debug\deps\cli-179b362485e2b1c8.exe)
+
+running 61 tests
+test blob_materialise_refuses_tainted_with_b003 ... ok
+test budget_profile_without_flags_stays_silent ... ok
+test budget_profile_wins_over_explicit_flags_with_warning ... ok
+test compatibility_json_reports_compatible_schemas ... ok
+test compatibility_reports_breaking_changes_and_fails_closed ... ok
+test capability_handshake_accepts_major_one ... ok
+test blob_materialise_flag_embeds_payload_and_default_does_not ... ok
+test audit_trail_is_valid_active_without_secrets ... ok
+test capability_handshake_accepts_advertised_rejects_rest ... ok
+test eval_path_selects_demanded_cone ... ok
+test eval_path_unknown_fails_closed ... ok
+test doc_parent_escapes_need_the_flag ... ok
+test explain_reports_stable_guidance_per_code ... ok
+test export_rejects_unknown_formats ... ok
+test doc_rejects_bad_targets_and_broken_files ... ok
+test declined_repair_fails_in_strict_and_heals_in_resilient ... ok
+test convert_subcommand_serves_yaml_and_toml ... ok
+test fmt_check_flags_unformatted_files ... ok
+test fmt_check_passes_canonical_files ... ok
+test fmt_indent_style_emits_headers ... ok
+test fmt_prints_canonical_form_to_stdout ... ok
+test fmt_write_never_touches_unparseable_files ... ok
+test doc_serves_all_three_formats ... ok
+test fmt_write_stops_at_first_failure_leaving_later_files_untouched ... ok
+test explain_json_matches_text_field_for_field ... ok
+test fmt_requires_at_least_one_file ... ok
+test export_serves_all_three_formats_with_redaction ... ok
+test fmt_write_then_check_is_clean ... ok
+test generate_refuses_schemaless_documents_and_bad_targets ... ok
+test fmt_rejects_contradictory_and_ambiguous_invocations ... ok
+test import_jsonschema_emits_checked_schema ... ok
+test lint_clean_file_exits_zero ... ok
+test lint_findings_exit_nonzero_with_codes ... ok
+test import_round_trips_json_through_active ... ok
+test lint_processes_every_file_despite_failures ... ok
+test lint_disable_flag_silences_one_rule ... ok
+test import_reports_lossy_corners_and_rejects_garbage ... ok
+test graph_query_closed_set_end_to_end ... ok
+test impact_and_why_answer_with_paths_and_json ... ok
+test lint_needs_a_file_and_refuses_broken_ones ... ok
+test materialise_applies_to_cone_not_whole_tree ... ok
+test generate_serves_all_five_targets ... ok
+test patch_is_empty_without_exact_mapping ... ok
+test lock_emits_versioned_hash_and_provenance ... ok
+test graph_serves_all_four_formats ... ok
+test lock_writes_output_files_and_fails_cleanly ... ok
+test patch_suggests_rename_and_fill ... ok
+test repair_fails_closed_on_unrepairable ... ok
+test repair_reaches_clean_and_writes_output ... ok
+test medium_repair_passes_resilient_and_fails_strict ... ok
+test keygen_sign_verify_round_trip ... ok
+test patch_json_carries_kind_path_and_directive ... ok
+test unknown_budget_profile_fails_fast_with_usage ... ok
+test safe_repairs_do_not_fail_strict_mode ... ok
+test repair_reports_json_plan_and_output_file ... ok
+test sandbox_gate_applies_budget_and_refuses_excess ... ok
+test unexpected_character_is_rejected_in_both_modes ... ok
+test secrets_never_reach_stdout_or_stderr ... ok
+test signing_commands_fail_cleanly_on_bad_inputs ... ok
+test capability_tools_all_map_to_real_subcommands ... ok
+test trust_keys_gate_include_loading ... ok
+
+test result: ok. 61 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.86s
+
+     Running unittests src\lib.rs (target\debug\deps\active_core-cbd1f6513b1387e1.exe)
+
+running 7 tests
+test blob::tests::media_type_changes_identity ... ok
+test blob::tests::canonical_digest_is_pinned ... ok
+test blob::tests::canonical_layout_matches_spec_hex ... ok
+test trace::tests::trace_event_shape_is_closed ... ok
+test convert::suggest::tests::non_finite_float_default_yields_no_patch ... ok
+test trace::tests::trace_is_off_by_default ... ok
+test trace::tests::trace_carries_codes_never_values ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\annotations.rs (target\debug\deps\annotations-7e50a335a0977b78.exe)
+
+running 39 tests
+test annotations_attach_to_lets_by_name ... ok
+test free_text_intent_and_bare_immutable_flag ... ok
+test crlf_terminators_never_reach_annotation_payloads ... ok
+test constraint_rewrites_value_to_a_reference ... ok
+test file_parses_attach_root_annotations ... ok
+test all_three_annotations_stack_on_one_binding ... ok
+test annotations_attach_to_tables_with_dotted_paths ... ok
+test blank_line_breaks_the_block_but_plain_comments_do_not ... ok
+test annotations_survive_formatting_in_both_styles ... ok
+test aliased_includes_scope_annotation_paths ... ok
+test constraint_violations_order_by_path ... ok
+test intent_attaches_with_text_path_and_span ... ok
+test malformed_annotations_are_e021 ... ok
+test constraints_see_let_bindings ... ok
+test long_actuals_truncate ... ok
+test included_constraints_see_patched_values ... ok
+test included_annotations_attach_with_file_attribution ... ok
+test included_immutable_blocks_main_file_patches ... ok
+test non_boolean_predicates_are_t006 ... ok
+test patched_values_face_constraints ... ok
+test profile_bodies_take_no_annotations ... ok
+test profile_merges_face_constraints ... ok
+test mutable_and_false_immutable_accept_patches ... ok
+test profile_overrides_of_immutable_keys_stay_allowed ... ok
+test schemas_never_take_annotations ... ok
+test removed_keys_skip_constraints ... ok
+test long_sources_truncate_to_120_total ... ok
+test single_quotes_and_escapes_in_intent ... ok
+test removed_tables_skip_nested_constraints ... ok
+test trailing_annotation_belongs_to_its_own_line ... ok
+test unknown_at_kinds_are_plain_comments ... ok
+test truncated_predicates_keep_expression_errors ... ok
+test secret_actuals_render_as_secret ... ok
+test secret_predicates_render_generic ... ok
+test secret_touching_sources_render_generic ... ok
+test satisfied_constraints_pass_silently_in_both_modes ... ok
+test same_path_diagnostics_order_deterministically ... ok
+test violated_constraints_fail_strict_and_collect_resilient ... ok
+test immutable_keys_reject_all_patch_ops ... ok
+
+test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\assist.rs (target\debug\deps\assist-c6c9ab907e098d95.exe)
+
+running 11 tests
+test explain_covers_every_documented_code ... ok
+test explain_structured_matches_text_field_for_field ... ok
+test explain_codes_are_stable_and_value_free ... ok
+test suggest_float_fill_keeps_decimal_point ... ok
+test suggest_fills_requires_triggered_missing_keys ... ok
+test suggest_emits_safe_rename_and_static_fill ... ok
+test suggest_structured_carries_kind_and_path ... ok
+test suggest_ignores_secret_and_deprecated_defaults ... ok
+test suggest_handles_nested_paths_and_dynamic_defaults ... ok
+test suggest_emits_nothing_without_exact_mapping ... ok
+test assist_outputs_are_byte_identical_across_runs ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\blob.rs (target\debug\deps\blob-a49d7da2a0ffec74.exe)
+
+running 15 tests
+test blob_source_round_trips_through_fmt ... ok
+test malformed_blob_call_is_b001 ... ok
+test blob_arity_errors_are_b001_not_generic ... ok
+test blob_materialisation_is_charged_to_size_budget ... ok
+test demand_without_flag_fails_closed_b005 ... ok
+test blob_aliases_are_charged_per_clone ... ok
+test blob_let_bound_variables_pass_b001_and_evaluate ... ok
+test blob_field_rejects_non_blob_with_t002 ... ok
+test identity_matches_pinned_digest ... ok
+test blob_negative_or_wrong_typed_max_size_is_schema_bug ... ok
+test materialised_flag_embeds_payload ... ok
+test materialise_flag_flip_clears_incremental_memo ... ok
+test secret_derived_blob_is_tainted_and_never_materialises ... ok
+test max_size_breach_is_b002_and_media_mismatch_is_b004 ... ok
+test blob_toml_and_yaml_carry_identity_shape ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\budgets.rs (target\debug\deps\budgets-5b7d02cede53fbd0.exe)
+
+running 18 tests
+test budget_presets_are_ordered_and_strict_is_default ... ok
+test depth_budget_trips_with_span ... ok
+test node_budget_trips_on_large_documents ... ok
+test over_depth_spans_are_stable_across_runs ... ok
+test key_count_budget_trips ... ok
+test array_length_budget_trips_with_span ... ok
+test dynamic_values_charge_actuals_per_clone ... ok
+test patch_composed_depth_is_checked ... ok
+test wall_clock_deadline_never_panics_on_extremes ... ok
+test reference_expansion_dies_before_materializing ... ok
+test shipped_defaults_admit_ordinary_documents ... ok
+test reference_chains_count_toward_depth ... ok
+test patch_clones_charge_the_cumulative_total ... ok
+test cumulative_total_trips_on_many_aliases ... ok
+test saturation_comparison_holds_at_max_limit ... ok
+test zero_disables_every_limit ... ok
+test expired_deadline_takes_precedence_in_strict_validation ... ok
+test wall_clock_backstop_trips_on_slow_evaluations ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.62s
+
+     Running tests\capability.rs (target\debug\deps\capability-29b8874c1cf9744d.exe)
+
+running 5 tests
+test refused_is_set_difference_in_order ... ok
+test capabilities_parse_from_root_marker ... ok
+test capabilities_require_string_arrays ... ok
+test code_profiles_match_descriptor ... ok
+test included_markers_neither_set_nor_error ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\compat.rs (target\debug\deps\compat-4db1004862bdc4b3.exe)
+
+running 9 tests
+test type_change_is_breaking_c042 ... ok
+test malformed_versions_are_schema_bugs_not_silent ... ok
+test added_defaulted_field_is_info ... ok
+test added_required_field_is_breaking_c040 ... ok
+test breaking_findings_gate_the_cli_with_e040 ... ok
+test identical_schemas_are_compatible ... ok
+test removed_field_is_breaking_c041_unless_scheduled ... ok
+test version_regression_and_reader_floor_are_breaking ... ok
+test blob_tightening_is_breaking_c042 ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\conformance.rs (target\debug\deps\conformance-0905ceab67ed012b.exe)
+
+running 1 test
+test conformance_manifest_is_green ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests\convert.rs (target\debug\deps\convert-95a3b57c7ae5f57b.exe)
+
+running 28 tests
+test json_syntax_errors_are_hard ... ok
+test jsonschema_boolean_and_garbage_shapes ... ok
+test json_bad_keys_sanitize_with_w007 ... ok
+test inline_objects_report_key_notes ... ok
+test json_huge_integers_note_w010 ... ok
+test json_top_level_scalars_wrap_with_w009 ... ok
+test jsonschema_pattern_keeps_regex_anchors_byte_identical ... ok
+test import_hard_errors_withhold_source_excerpts ... ok
+test malformed_inputs_never_echo_secrets ... ok
+test non_finite_floats_convert_to_null_with_w010 ... ok
+test quantity_values_emit_normalized_magnitude_strings ... ok
+test export_redacts_secrets_uniformly ... ok
+test json_round_trip_is_fixed_point ... ok
+test json_import_emits_parsing_active ... ok
+test toml_datetimes_stringify_with_w008 ... ok
+test secret_markers_import_as_plain_strings ... ok
+test jsonschema_maps_types_ranges_and_closed_tables ... ok
+test toml_syntax_errors_are_hard ... ok
+test yaml_syntax_errors_are_hard ... ok
+test toml_arrays_of_tables_emit_double_brackets ... ok
+test yaml_import_handles_mappings_sequences_and_scalars ... ok
+test toml_import_maps_tables_arrays_and_scalars ... ok
+test yaml_non_string_keys_stringify_with_w007 ... ok
+test export_shapes_cover_every_value_kind ... ok
+test toml_mixed_arrays_are_hard_errors_with_paths ... ok
+test parser_special_keys_rename_only_where_meaning_changes ... ok
+test exponent_floats_emit_parseable_plain_decimals ... ok
+test jsonschema_imported_schema_constrains_values ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\corpus.rs (target\debug\deps\corpus-2910d9dce9555d95.exe)
+
+running 3 tests
+test negative_corpus_fails ... ok
+test spec_corpus_matches_expected_values ... ok
+test positive_corpus_parses_and_evaluates_cleanly ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests\diagnostics_spans.rs (target\debug\deps\diagnostics_spans-68b3045a997f3aab.exe)
+
+running 7 tests
+test parse_errors_carry_code_and_span ... ok
+test e003_bad_secret_env_carries_code_and_span ... ok
+test type_error_carries_code_and_span ... ok
+test e004_depth_error_carries_code_and_span ... ok
+test eval_errors_have_stable_codes ... ok
+test unresolved_identifier_warning_carries_code_and_span ... ok
+test secret_leak_error_has_stable_code ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\docgen.rs (target\debug\deps\docgen-bc9a9cbae6437c9b.exe)
+
+running 8 tests
+test markdown_surfaces_schema_description_and_deprecated ... ok
+test schemaless_documents_still_generate ... ok
+test html_escapes_content ... ok
+test items_cover_nested_and_array_paths ... ok
+test html_is_searchable_and_escaped ... ok
+test man_pages_use_requests_and_escape ... ok
+test secrets_redact_in_every_format ... ok
+test markdown_renders_types_values_and_prose ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\docs_site.rs (target\debug\deps\docs_site-690e4beddc23843f.exe)
+
+running 11 tests
+test terraform_vars_sample ... ok
+test ai_prompts_evaluate_to_strings ... ok
+test multi_region_selects_eu_west ... ok
+test feature_flags_sample ... ok
+test twelve_factor_uses_defaults ... ok
+test kubernetes_sample ... ok
+test ci_pipeline_sample ... ok
+test multi_region_profile_override ... ok
+test migration_samples ... ok
+test every_tutorial_fence_evaluates_cleanly ... ok
+test every_site_sample_evaluates_cleanly ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests\dual_syntax.rs (target\debug\deps\dual_syntax-65740227d168248f.exe)
+
+running 36 tests
+test dotted_conflict_with_scalar_is_e001 ... ok
+test close_brace_cannot_close_an_indentation_block ... ok
+test dotted_header_missing_segment_is_e001 ... ok
+test deep_dotted_header_nests_three_levels ... ok
+test deeper_than_body_comment_opens_nothing ... ok
+test colon_key_values_match_equals_form ... ok
+test bom_before_indented_body_is_invisible ... ok
+test brace_table_blocks_match_header_style ... ok
+test blank_lines_and_comments_do_not_change_the_tree ... ok
+test dotted_header_repeated_leaf_is_last_wins ... ok
+test crlf_indentation_matches_lf ... ok
+test col0_comment_between_header_and_body_keeps_block ... ok
+test brace_and_indentation_styles_lower_to_identical_ir ... ok
+test first_line_indentation_is_e010 ... ok
+test dotted_headers_merge_across_headers ... ok
+test dotted_header_nests_like_braces ... ok
+test dotted_tables_work_under_profiles ... ok
+test header_without_body_is_e008 ... ok
+test e010_recovery_preserves_enclosing_scope ... ok
+test header_body_ends_below_the_headers_own_column ... ok
+test inconsistent_dedent_is_e007 ... ok
+test dotted_table_takes_constraints_at_its_path ... ok
+test dotted_tables_work_with_patches ... ok
+test empty_brace_block_is_an_empty_table ... ok
+test mismatched_pair_does_not_disable_indentation_measurement ... ok
+test unclosed_brace_block_is_e001 ... ok
+test e010_inside_a_block_keeps_later_statements_in_that_block ... ok
+test mixed_styles_in_one_document ... ok
+test tab_indentation_is_e006 ... ok
+test tab_only_line_reports_e006_without_tokens ... ok
+test unexpected_indentation_is_e010_without_cascade ... ok
+test indentation_is_cosmetic_inside_brackets ... ok
+test dotted_header_round_trips_through_formatter ... ok
+test nested_indentation_blocks ... ok
+test depth_limit_recovery_keeps_following_siblings ... ok
+test structural_nesting_is_bounded ... ok
+
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests\examples_smoke.rs (target\debug\deps\examples_smoke-f60447a9a36e88c8.exe)
+
+running 3 tests
+test secret_is_redacted_in_json_export ... ok
+test demo_example_evaluates ... ok
+test complete_example_evaluates ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\format_roundtrip.rs (target\debug\deps\format_roundtrip-16aafaf2c70e9c5a.exe)
+
+running 19 tests
+test annotations_are_preserved_like_comments ... ok
+test duplicate_key_comments_are_not_dropped ... ok
+test empty_table_keeps_its_trailing_comment_in_indent_style ... ok
+test comments_survive_every_mode ... ok
+test canonical_brace_document_round_trips_byte_for_byte ... ok
+test canonical_indent_document_round_trips_byte_for_byte ... ok
+test comment_placement_is_exact ... ok
+test env_default_operand_is_parenthesized ... ok
+test large_and_small_floats_re_parse ... ok
+test preserve_mode_follows_the_source_style ... ok
+test let_bindings_and_expressions_round_trip ... ok
+test trailing_comment_stays_on_a_table_header_line ... ok
+test trailing_comments_survive_on_every_header_form ... ok
+test precedence_needs_no_extra_parentheses_but_keeps_meaning ... ok
+test schema_evolution_metadata_round_trips ... ok
+test formatting_is_idempotent ... ok
+test styles_agree_on_the_tree_and_produce_each_other ... ok
+test formatting_is_idempotent_on_the_whole_positive_corpus ... ok
+test long_left_associative_chains_do_not_overflow ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s
+
+     Running tests\fuzz.rs (target\debug\deps\fuzz-2d89455d2af433a3.exe)
 
 running 4 tests
-test vscode_extension_manifest_is_consistent ... ok
-test tier1_package_versions_track_workspace ... ok
-test workspace_version_is_single_sourced ... ok
-test publish_metadata_is_complete ... ok
+test deep_nesting_fails_with_depth_guard_not_crash ... ok
+test interpolation_never_panics ... ok
+test lexer_never_panics_on_arbitrary_bytes ... ok
+test parser_never_panics_on_arbitrary_bytes ... ok
 
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
 
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.68s
-     Running tests\packaging.rs (target\debug\deps\packaging-d7073b809a6a1a10.exe)
+     Running tests\generate.rs (target\debug\deps\generate-edca4e3860331902.exe)
 
-GATE: PASS
-=== capability manifest validation (major v1 + 10 tools) ===
-$ python agent-kit/eval/test_capability.py
-exit=0
+running 17 tests
+test generation_fails_without_a_schema ... ok
+test dynamic_bounds_skip_without_diagnostics ... ok
+test go_tags_skip_bool_required_and_ambiguous_oneof ... ok
+test codegen_comments_cannot_inject_lines ... ok
+test blob_codegen_emits_identity_shape_on_all_targets ... ok
+test python_target_escapes_and_dedupes ... ok
+test colliding_type_names_suffix_deterministically ... ok
+test openapi_wraps_the_schema_under_components ... ok
+test json_schema_covers_types_constraints_and_flags ... ok
+test go_golden_snapshot ... ok
+test codegen_carries_new_schema_metadata ... ok
+test python_target_emits_typed_dicts ... ok
+test codegen_artifacts_carry_version_stamps ... ok
+test zod_schemas_mirror_constraints ... ok
+test typescript_golden_snapshot ... ok
+test codegen_is_byte_stable_across_runs ... ok
+test rust_output_parses_as_valid_syntax ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests\governance.rs (target\debug\deps\governance-b1240132cd4deacb.exe)
+
+running 1 test
+test governance_documents_exist_with_substance ... FAILED
+
+failures:
+
+---- governance_documents_exist_with_substance stdout ----
+
+thread 'governance_documents_exist_with_substance' (1664) panicked at active-core\tests\governance.rs:85:13:
+SECURITY.md missing "RatioArtificiosa/solid-lang/security/advisories"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    governance_documents_exist_with_substance
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p active-core --test governance`
+TEST_EXIT=101
+== package ==
+error: 1 files in the working directory contain changes that were not yet committed into git:
+
+active-core\src\convert\doc.rs
+
+to proceed despite this and include the uncommitted changes, pass the `--allow-dirty` flag
+PACKAGE_EXIT=101
+== capability ==
 test_every_tool_described (__main__.CapabilityTest.test_every_tool_described) ... ok
+test_sandbox_profiles_match_code (__main__.CapabilityTest.test_sandbox_profiles_match_code) ... ok
 test_tool_surface_complete (__main__.CapabilityTest.test_tool_surface_complete) ... ok
 test_version_major_is_one (__main__.CapabilityTest.test_version_major_is_one) ... ok
 
 ----------------------------------------------------------------------
-Ran 3 tests in 0.001s
+Ran 4 tests in 0.001s
 
 OK
-
-GATE: PASS
-=== harness enforcement tests ===
-$ python conformance/harness/test_run.py
-exit=0
-_ok (__main__.FinalizeTest.test_path_failure_is_not_ok) ... ok
-test_all_passing_report_holds (__main__.ParityTest.test_all_passing_report_holds) ... ok
-test_failing_path_fails_parity (__main__.ParityTest.test_failing_path_fails_parity) ... ok
-test_leaking_differential_gate_fails (__main__.ParityTest.test_leaking_differential_gate_fails) ... ok
-test_missing_differential_gate_fails (__main__.ParityTest.test_missing_differential_gate_fails) ... ok
-test_missing_secret_clean_flag_fails (__main__.ParityTest.test_missing_secret_clean_flag_fails) ... ok
-test_missing_tier1_path_fails_parity (__main__.ParityTest.test_missing_tier1_path_fails_parity) ... ok
-test_placeholders_never_count (__main__.ParityTest.test_placeholders_never_count) ... ok
-test_red_differential_gate_fails (__main__.ParityTest.test_red_differential_gate_fails) ... ok
-test_secret_leak_fails_parity (__main__.ParityTest.test_secret_leak_fails_parity) ... ok
-test_skipped_differential_fails_parity (__main__.ParityTest.test_skipped_differential_fails_parity) ... ok
-test_skipped_tier1_path_fails_parity (__main__.ParityTest.test_skipped_tier1_path_fails_parity) ... ok
-test_tier1_set_matches_wired_paths (__main__.ParityTest.test_tier1_set_matches_wired_paths) ... ok
-test_timeout_always_fails (__main__.ParityTest.test_timeout_always_fails) ... ok
-test_wired_paths_complete (__main__.RegistryTest.test_wired_paths_complete) ... ok
-
-----------------------------------------------------------------------
-Ran 25 tests in 0.126s
-
-OK
-
-GATE: PASS
-$ python conformance/harness/test_diff_vectors.py
-exit=0
-th_a_value_fails (__main__.CheckValuesTest.test_refused_with_a_value_fails) ... ok
-test_refused_with_no_values_is_clean (__main__.CheckValuesTest.test_refused_with_no_values_is_clean) ... ok
-test_valued_case_diverging_embeddings_fail (__main__.CheckValuesTest.test_valued_case_diverging_embeddings_fail) ... ok
-test_valued_case_matching_expectation_passes (__main__.CheckValuesTest.test_valued_case_matching_expectation_passes) ... ok
-test_valued_case_mismatching_expectation_fails (__main__.CheckValuesTest.test_valued_case_mismatching_expectation_fails) ... ok
-test_valued_case_without_expectation_file_fails (__main__.CheckValuesTest.test_valued_case_without_expectation_file_fails) ... ok
-test_empty_stays_empty (__main__.NormCodesTest.test_empty_stays_empty) ... ok
-test_order_and_duplicates_collapse (__main__.NormCodesTest.test_order_and_duplicates_collapse) ... ok
-test_single_sorted_trivially (__main__.NormCodesTest.test_single_sorted_trivially) ... ok
-test_load_pins_empty_without_section (__main__.PinsTest.test_load_pins_empty_without_section) ... ok
-test_load_pins_maps_id_to_reason (__main__.PinsTest.test_load_pins_maps_id_to_reason) ... ok
-test_clean_text_untouched (__main__.ScrubTest.test_clean_text_untouched) ... ok
-test_fail_output_is_scrubbed (__main__.ScrubTest.test_fail_output_is_scrubbed) ... ok
-test_raw_marker_redacted (__main__.ScrubTest.test_raw_marker_redacted) ... ok
-
-----------------------------------------------------------------------
-Ran 14 tests in 0.001s
-
-OK
-
-GATE: PASS
-=== reference-loop secret scan (raw marker must be absent from outputs) ===
-$ python agent-kit/eval/run.py --out C:\Users\Usuario\AppData\Local\Temp\grok-goal-2e83ccd474b7\implementer\agentkit-eval-gates.json
-exit=0
-oved_over_baseline": true
-        },
-        "clean-pass.active": {
-          "clean": true,
-          "iters": 1,
-          "codes": [],
-          "baseline_first_attempt_clean": true,
-          "improved_over_baseline": false
-        },
-        "broken-parse.active": {
-          "clean": false,
-          "iters": null,
-          "codes": [],
-          "baseline_first_attempt_clean": false,
-          "improved_over_baseline": false
-        },
-        "format-broken.active": {
-          "clean": true,
-          "iters": 2,
-          "codes": [
-            "T003"
-          ],
-          "baseline_first_attempt_clean": false,
-          "improved_over_baseline": true
-        },
-        "requires-missing.active": {
-          "clean": true,
-          "iters": 2,
-          "codes": [
-            "T004"
-          ],
-          "baseline_first_attempt_clean": false,
-          "improved_over_baseline": true
-        },
-        "unknown-format.active": {
-          "clean": true,
-          "iters": 2,
-          "codes": [
-            "T003"
-          ],
-          "baseline_first_attempt_clean": false,
-          "improved_over_baseline": true
-        },
-        "descriptions-clean.active": {
-          "clean": true,
-          "iters": 1,
-          "codes": [],
-          "baseline_first_attempt_clean": true,
-          "improved_over_baseline": false
-        }
-      },
-      "mean_iters_to_clean": 1.6666666666666667,
-      "tasks_improved": 4,
-      "status": "pass"
-    }
-  },
-  "ok": true
-}
-
-GATE: PASS
-raw marker hits in machine outputs (eval+harness+binding-proof): 0 (must be 0)
-redacted marker hits in binding-proof (positive redaction proof): 1 (must be > 0)
-GATE: PASS
+CAPABILITY_EXIT=0
+GATES_DONE

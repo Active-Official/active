@@ -23,10 +23,10 @@ syntax region activeInterp matchgroup=activeInterpDelim start="\${" end="}" cont
 
 syntax match activeTableHeader "^\s*\[[^]]*\]" contains=activeTableName
 syntax match activeTableName "[A-Za-z_][A-Za-z0-9_]*" contained
-syntax keyword activeKeyword let profile include schema active_profile depends_on as private closed
-syntax match activeFunction "\<\(env\|secret\)\>\ze\s*[.(]"
+syntax keyword activeKeyword let profile include schema active_profile active_mode active_capabilities depends_on as private closed
+syntax match activeFunction "\<\(env\|secret\|blob\)\>\ze\s*[.(]"
 
-syntax match activeNumber "\<-\=\(\d\+\.\d\+\|\d\+\)\(ns\|us\|µs\|ms\|s\|m\|h\|d\|B\|KiB\|MiB\|GiB\|TiB\|KB\|MB\|GB\|TB\|/s\|/m\|/h\|req/s\|req/m\|req/h\)\=\>"
+syntax match activeNumber "\<-\=\(\d\+\.\d\+\|\d\+\)\(ns\|us\|µs\|ms\|s\|m\|h\|d\|week\|sec\|min\|B\|KiB\|MiB\|GiB\|TiB\|PiB\|EiB\|KB\|MB\|GB\|TB\|/s\|/m\|/h\|req/s\|req/m\|req/h\|Hz\|kHz\|MHz\|GHz\|THz\|b\|Kb\|Mb\|Gb\|bps\|Kbps\|Mbps\|Gbps\|MB/s\|tokens\|ktokens\|Mtokens\|tok/s\|FLOPS\|TFLOPS\|PFLOPS\|Pa\|bar\|psi\|V\|A\|W\|J\|kWh\|N\|deg\|rad\|rpm\|meter\|km\|kg\|g\|K\|Cel\|Fahr\|dB\)\=\>"
 syntax keyword activeBool true false null
 
 highlight default link activeComment Comment

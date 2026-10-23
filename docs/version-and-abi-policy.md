@@ -25,9 +25,13 @@ its real surface lands (enforced by `packaging.rs`).
 | JS/TS | `active-lang` on npm (unscoped `active` taken; `@active-lang/active` reserved as fallback) | 1.4.0 | `npm install active-lang` |
 | Go | `github.com/Active-Official/active-go` (external repo, library) | tracks ABI v1 + release wasm (harness pin `f5bd6e2`) | `go get github.com/Active-Official/active-go@latest` |
 
-Language packages stay publish-ready on every main commit (proven by
-build gates); actual registry publication needs a one-time owner
-token handoff and is recorded in the release notes when it happens.
+Language packages publish from this tree and are live at the 1.4.0
+line (verified 2026-10-22): npm `active-lang`, PyPI `active-lang`, and
+crates.io `active-core` all serve 1.4.0. The PyPI path publishes through
+OIDC trusted publishing (`pypi.yml`, no stored token); npm and crates.io
+use their registry tokens in the release flow. Registry publication is
+still an explicit, human-approved release act: a normal commit never
+publishes.
 
 ## 3. Frozen C ABI v1 (docs/FFI.md, never weakened)
 

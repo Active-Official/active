@@ -107,17 +107,17 @@
       "patterns": [
         {
           "name": "keyword.control.active",
-          "match": "\\b(let|profile|include|schema|active_profile|depends_on|as|private|closed)\\b"
+          "match": "\\b(let|profile|include|schema|active_profile|active_mode|active_capabilities|depends_on|as|private|closed)\\b"
         },
         {
           "name": "support.function.active",
-          "match": "\\b(env|secret)\\b(?=\\s*[.(])"
+          "match": "\\b(env|secret|blob)\\b(?=\\s*[.(])"
         }
       ]
     },
     "number": {
       "name": "constant.numeric.active",
-      "match": "\\b-?(\\d+\\.\\d+|\\d+)(ns|us|µs|ms|s|m|h|d|B|KiB|MiB|GiB|TiB|KB|MB|GB|TB|/s|/m|/h|req/s|req/m|req/h)?\\b"
+      "match": "\\b-?(\\d+\\.\\d+|\\d+)(ns|us|µs|ms|s|m|h|d|week|sec|min|B|KiB|MiB|GiB|TiB|PiB|EiB|KB|MB|GB|TB|/s|/m|/h|req/s|req/m|req/h|Hz|kHz|MHz|GHz|THz|b|Kb|Mb|Gb|bps|Kbps|Mbps|Gbps|MB/s|tokens|ktokens|Mtokens|tok/s|FLOPS|TFLOPS|PFLOPS|Pa|bar|psi|V|A|W|J|kWh|N|deg|rad|rpm|meter|km|kg|g|K|Cel|Fahr|dB)?\\b"
     },
     "boolean": {
       "name": "constant.language.active",

@@ -65,11 +65,11 @@ same bytes.
 
 Three custom methods (no capability advertisement needed):
 
-- `ACTIVE/graph` (`{textDocument}`) →
+- `active/graph` (`{textDocument}`) →
   `{"mermaid": …, "dot": …, "json": …}`.
-- `ACTIVE/impact` (`{textDocument, position}`) →
+- `active/impact` (`{textDocument, position}`) →
   `{"key": …, "paths": […]}` or `null` off-symbol.
-- `ACTIVE/why` (same shape as impact).
+- `active/why` (same shape as impact).
 
 Position-based like references: identifiers and interpolation
 references initiate; anything else returns `null`. Served from the

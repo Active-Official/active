@@ -22,7 +22,7 @@ fn governance_documents_exist_with_substance() {
                 "3 days",
                 "14 days",
                 "30 days",
-                "RatioArtificiosa/solid-lang/security/advisories",
+                "Active-Official/active/security/advisories",
                 "spec/threat-model.md",
             ],
         ),

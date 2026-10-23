@@ -1,8 +1,58 @@
-Ran 25 tests in 0.027s
+test_missing_binary_skips (__main__.ClassifyTest.test_missing_binary_skips) ... ok
+test_missing_tally_is_fail (__main__.ClassifyTest.test_missing_tally_is_fail) ... ok
+test_raw_secret_never_counts_clean (__main__.ClassifyTest.test_raw_secret_never_counts_clean) ... ok
+test_skip_clean_exit_skips (__main__.ClassifyTest.test_skip_clean_exit_skips) ... ok
+test_skip_nonzero_exit_fails (__main__.ClassifyTest.test_skip_nonzero_exit_fails) ... ok
+test_tally_match_is_pass (__main__.ClassifyTest.test_tally_match_is_pass) ... ok
+test_error_files_stored_sorted_set (__main__.ExpectationFilesTest.test_error_files_stored_sorted_set) ... ok
+test_non_refused_cases_have_expected_values (__main__.ExpectationFilesTest.test_non_refused_cases_have_expected_values) ... ok
+test_clean_run_is_ok (__main__.FinalizeTest.test_clean_run_is_ok) ... ok
+test_parity_violation_is_not_ok (__main__.FinalizeTest.test_parity_violation_is_not_ok) ... ok
+test_path_failure_is_not_ok (__main__.FinalizeTest.test_path_failure_is_not_ok) ... ok
+test_all_passing_report_holds (__main__.ParityTest.test_all_passing_report_holds) ... ok
+test_failing_path_fails_parity (__main__.ParityTest.test_failing_path_fails_parity) ... ok
+test_leaking_differential_gate_fails (__main__.ParityTest.test_leaking_differential_gate_fails) ... ok
+test_missing_differential_gate_fails (__main__.ParityTest.test_missing_differential_gate_fails) ... ok
+test_missing_secret_clean_flag_fails (__main__.ParityTest.test_missing_secret_clean_flag_fails) ... ok
+test_missing_tier1_path_fails_parity (__main__.ParityTest.test_missing_tier1_path_fails_parity) ... ok
+test_placeholders_never_count (__main__.ParityTest.test_placeholders_never_count) ... ok
+test_red_differential_gate_fails (__main__.ParityTest.test_red_differential_gate_fails) ... ok
+test_secret_leak_fails_parity (__main__.ParityTest.test_secret_leak_fails_parity) ... ok
+test_skipped_differential_fails_parity (__main__.ParityTest.test_skipped_differential_fails_parity) ... ok
+test_skipped_tier1_path_fails_parity (__main__.ParityTest.test_skipped_tier1_path_fails_parity) ... ok
+test_tier1_set_matches_wired_paths (__main__.ParityTest.test_tier1_set_matches_wired_paths) ... ok
+test_timeout_always_fails (__main__.ParityTest.test_timeout_always_fails) ... ok
+test_wired_paths_complete (__main__.RegistryTest.test_wired_paths_complete) ... ok
+
+----------------------------------------------------------------------
+Ran 25 tests in 0.021s
 
 OK
+test_refused_with_a_value_fails (__main__.CheckValuesTest.test_refused_with_a_value_fails) ... ok
+test_refused_with_no_values_is_clean (__main__.CheckValuesTest.test_refused_with_no_values_is_clean) ... ok
+test_valued_case_diverging_embeddings_fail (__main__.CheckValuesTest.test_valued_case_diverging_embeddings_fail) ... ok
+test_valued_case_matching_expectation_passes (__main__.CheckValuesTest.test_valued_case_matching_expectation_passes) ... ok
+test_valued_case_mismatching_expectation_fails (__main__.CheckValuesTest.test_valued_case_mismatching_expectation_fails) ... ok
+test_valued_case_without_expectation_file_fails (__main__.CheckValuesTest.test_valued_case_without_expectation_file_fails) ... ok
+test_empty_stays_empty (__main__.NormCodesTest.test_empty_stays_empty) ... ok
+test_order_and_duplicates_collapse (__main__.NormCodesTest.test_order_and_duplicates_collapse) ... ok
+test_single_sorted_trivially (__main__.NormCodesTest.test_single_sorted_trivially) ... ok
+test_load_pins_empty_without_section (__main__.PinsTest.test_load_pins_empty_without_section) ... ok
+test_load_pins_maps_id_to_reason (__main__.PinsTest.test_load_pins_maps_id_to_reason) ... ok
+test_clean_text_untouched (__main__.ScrubTest.test_clean_text_untouched) ... ok
+test_fail_output_is_scrubbed (__main__.ScrubTest.test_fail_output_is_scrubbed) ... ok
+test_raw_marker_redacted (__main__.ScrubTest.test_raw_marker_redacted) ... ok
+
+----------------------------------------------------------------------
 Ran 14 tests in 0.001s
 
 OK
+test_every_tool_described (__main__.CapabilityTest.test_every_tool_described) ... ok
+test_sandbox_profiles_match_code (__main__.CapabilityTest.test_sandbox_profiles_match_code) ... ok
+test_tool_surface_complete (__main__.CapabilityTest.test_tool_surface_complete) ... ok
+test_version_major_is_one (__main__.CapabilityTest.test_version_major_is_one) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.001s
 
 OK

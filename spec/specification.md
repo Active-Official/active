@@ -47,9 +47,15 @@ Node = Literal(Value)                         // constant
      | Quantity { value: NodeId, unit: Unit }
      | ApplyConstraint { target: NodeId, constraint: Constraint }
      | Patch { target: NodeId, ops: Vec<PatchOp> }
+     | ContentAddressed { media_type: NodeId, data: NodeId }
+     | Semantic { tag: SemanticTag, inner: NodeId }
 
 InterpPart = Literal(String) | Expr(NodeId)
 ```
+
+Schema, profile, include, annotation, and patch nodes are additional node
+kinds defined by their own specs (`spec/validation.md`,
+`spec/schema-evolution.md`, `spec/annotations.md`).
 
 `BinOp = Add | Sub | Mul | Div | Eq | Ne | Lt | Le | Gt | Ge | And | Or`.
 `UnOp = Neg | Not`.
@@ -62,6 +68,8 @@ Value = Null | Bool(bool) | Int(i64) | Float(f64) | String(String)
       | Quantity(f64, Unit)                  // rates and custom units
       | Array(Vec<Value>) | Table(IndexMap<String, Value>)
       | Secret(String)                       // opaque; redacted on export
+      | Blob { hash: [u8; 32], size: u64, tainted: bool,
+               media_type: String, payload: Option<Vec<u8>> }
 ```
 
 Integer literals outside the i64 range are `E023` (never silent `0`):

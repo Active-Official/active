@@ -575,7 +575,11 @@ fn check_declared_against(
         .unwrap_or_default();
     let refused = active_core::convert::refused_capabilities(&module.capabilities, &host_tools);
     if refused.is_empty() {
-        println!("capabilities ok: {}", module.capabilities.join(", "));
+        if module.capabilities.is_empty() {
+            println!("capabilities ok (none declared)");
+        } else {
+            println!("capabilities ok: {}", module.capabilities.join(", "));
+        }
         let _ = name;
         Ok(())
     } else {
@@ -840,6 +844,12 @@ fn main() -> anyhow::Result<()> {
                             "unknown sandbox profile: {sandbox} (want strict|data|agent|trusted)"
                         )
                     })?;
+                // Like --budget-profile: a named preset wins over
+                // per-field flags — warn instead of silently dropping
+                // the user's explicit limits.
+                if budget != Budget::default() {
+                    eprintln!("warning: --sandbox overrides the explicit --max-* flags");
+                }
                 budget = match profile_def.budget {
                     "strict" => Budget::strict(),
                     "interactive" => Budget::interactive(),
@@ -1257,6 +1267,7 @@ fn main() -> anyhow::Result<()> {
                     );
                 }
             }
+            let want_profile = profile.is_some();
             if let Some(name) = profile {
                 match active_core::convert::sandbox_profile(&name) {
                     Some(p) => println!(
@@ -1271,10 +1282,12 @@ fn main() -> anyhow::Result<()> {
                         "unknown sandbox profile: {name} (want strict|data|agent|trusted)"
                     ),
                 }
-                return Ok(());
             }
             if let Some(doc) = check_doc {
                 return check_declared_against(&doc, &descriptor);
+            }
+            if want_profile {
+                return Ok(());
             }
             println!(
                 "{}",

@@ -5,7 +5,25 @@ specification. (Entries below the rename keep their original
 SOLID-era names: that history is accurate as written.) Versions
 follow SemVer with a unified workspace version (spec/packaging.md §1).
 
-## [Unreleased] — SOLID → Active rename
+## [Unreleased]
+
+### Master Program (CA, SC, R, PE, M, GQ, CAP)
+
+Additive surface, no version bump: content-addressed Blob values with
+BLAKE3 identity and B00x diagnostics (`blob()`, `Blob` schema type,
+`--materialise-blobs`), schema evolution metadata and the
+`active compatibility` CLI (C04x/E040), multi-step `active repair`
+with H006/H008 terminal states, demanded-cone `eval --path` plus FFI
+`active_value_project` and LSP incremental memo, Config/Data mode
+flag with W013 progressive warnings and E024, decidable graph
+queries (`active graph query`), in-document `active_capabilities`
+with E025, the capability handshake (`--check-doc`) and sandbox
+profiles (`--sandbox`, 4 profiles). Capability descriptor grows 10
+→ 12 tools plus `profiles` and new `features` entries; INSPECT v2.
+Consumers pinning exact tool/feature sets should expect additions —
+breaking changes, if ever needed, will bump the minor.
+
+### SOLID → Active rename
 
 The language is renamed SOLID → Active across code, packages, docs,
 and fixtures: crates `active`, `active-core`, `active-cli`,

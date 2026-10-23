@@ -49,6 +49,30 @@ fn refused_is_set_difference_in_order() {
 }
 
 #[test]
+fn included_markers_neither_set_nor_error() {
+    // Includes cannot set capabilities: a merged marker is ignored
+    // entirely (no E025), and the outer document keeps its own list.
+    // The `if self.in_include` guard mirrors resolve_mode (defense in
+    // depth); the file-identity check does the real work, proven here.
+    let dir = std::env::temp_dir().join("active-cap-include");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    std::fs::write(
+        dir.join("inc.active"),
+        "active_capabilities = [\"teleport\"]\nx = 1\n",
+    )
+    .expect("write inc");
+    let main = dir.join("main.active");
+    std::fs::write(
+        &main,
+        "include \"inc.active\"\nactive_capabilities = [\"eval\"]\nport = 1\n",
+    )
+    .expect("write main");
+    let module = active_core::parse_file(&main, active_core::ParseOptions::default())
+        .unwrap_or_else(|diags| panic!("must parse: {diags:?}"));
+    assert_eq!(module.capabilities, vec!["eval".to_string()]);
+}
+
+#[test]
 fn code_profiles_match_descriptor() {
     // Single contract, two renderings: the code profiles and
     // agent-kit/capability.schema.json must agree exactly.

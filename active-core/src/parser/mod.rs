@@ -2563,7 +2563,13 @@ impl Parser {
                 let ids = elements.clone();
                 for id in &ids {
                     match self.module.get(*id) {
-                        Some(Node::Literal(Value::String(s))) => caps.push(s.clone()),
+                        Some(Node::Literal(Value::String(s))) => {
+                            // Deduplicate at parse: repeats are the same
+                            // declaration, and downstream diffing stays clean.
+                            if !caps.contains(s) {
+                                caps.push(s.clone());
+                            }
+                        }
                         _ => {
                             ok = false;
                             break;

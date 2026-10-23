@@ -337,15 +337,27 @@ enum Commands {
         /// Dotted paths the loop must never touch (repeatable)
         #[arg(long)]
         preserve: Vec<String>,
-        /// Maximum applied directives
+        /// Maximum applied directives (capped at 64)
         #[arg(long, default_value_t = 8)]
         max_steps: usize,
         /// Output format for the plan
         #[arg(short, long, default_value = "text")]
         format: String,
-        /// Write the repaired source here (directives prepended)
+        /// Write the repaired source here (directives prepended;
+        /// skipped with a warning unless the result is clean)
         #[arg(short, long)]
         output: Option<PathBuf>,
+        /// Allow includes to use absolute paths or escape the directory
+        #[arg(long)]
+        allow_parent_escapes: bool,
+        /// Require sibling signatures on includes (C-052)
+        #[arg(long)]
+        trust_keys: Option<PathBuf>,
+        /// Select a profile by name, overriding the active_profile key
+        #[arg(long)]
+        profile: Option<String>,
+        #[command(flatten)]
+        budget: BudgetArgs,
     },
     /// Render schema, intent, and comments as documentation
     Doc {
@@ -1033,8 +1045,17 @@ fn main() -> anyhow::Result<()> {
             max_steps,
             format,
             output,
+            allow_parent_escapes,
+            trust_keys,
+            profile,
+            budget,
         } => {
             use active_core::diag::RepairGoal;
+            if max_steps > 64 {
+                anyhow::bail!(
+                    "--max-steps capped at 64 (bounded loop; larger plans split across runs)"
+                );
+            }
             let goal_parsed = match goal.as_str() {
                 "validate" => RepairGoal::Validate,
                 "minimize-diff" => RepairGoal::MinimizeDiff,
@@ -1042,7 +1063,7 @@ fn main() -> anyhow::Result<()> {
                     if preserve.is_empty() {
                         anyhow::bail!("preserve-key goal needs at least one --preserve <path>");
                     }
-                    RepairGoal::PreserveKey(preserve.join(","))
+                    RepairGoal::PreserveKey(preserve.clone())
                 }
                 other => anyhow::bail!(
                     "unknown repair goal: {other} (want validate|preserve-key|minimize-diff)"
@@ -1050,8 +1071,24 @@ fn main() -> anyhow::Result<()> {
             };
             let source = std::fs::read_to_string(&from)
                 .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", from.display()))?;
-            let outcome =
-                active_core::convert::repair_document(&source, goal_parsed, &preserve, max_steps);
+            let trust = load_trust(&trust_keys)?;
+            if trust.is_some() {
+                // Gate the original file through trust verification
+                // before planning: untrusted includes fail here, the
+                // same as every other tool path.
+                parse_input(&from, false, allow_parent_escapes, &trust)?;
+            }
+            let mut eng = engine(false, &profile, budget.resolve()?);
+            eng.materialise_blobs = false;
+            let outcome = active_core::convert::repair::repair_with_engine_and_options(
+                &source,
+                goal_parsed,
+                &preserve,
+                max_steps,
+                &eng,
+                Some(&from),
+                allow_parent_escapes,
+            );
             // PreserveKey carries its paths inside the goal for the
             // plan record; the loop itself used the raw list.
             match format.as_str() {
@@ -1084,8 +1121,15 @@ fn main() -> anyhow::Result<()> {
                 other => anyhow::bail!("unsupported format: {other}"),
             }
             if let Some(path) = output {
-                std::fs::write(&path, &outcome.repaired_source)
-                    .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", path.display()))?;
+                if outcome.clean {
+                    std::fs::write(&path, &outcome.repaired_source)
+                        .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", path.display()))?;
+                } else {
+                    eprintln!(
+                        "warning: not writing {}: repair did not reach clean",
+                        path.display()
+                    );
+                }
             }
             if !outcome.clean {
                 std::process::exit(1);

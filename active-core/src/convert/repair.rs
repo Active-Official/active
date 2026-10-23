@@ -36,7 +36,12 @@ pub struct PlannedStep {
 /// Outcome of a repair run: the ordered plan, the repaired source
 /// (original with applied directives prepended), and the terminal
 /// state. `clean` means no error- or warning-severity diagnostic
-/// remains.
+/// remains. `final_codes` carries `(code, path)` pairs for
+/// validation-level outcomes (`T004@port`) and bare codes for fatal
+/// loop-terminal errors (`E019`, parse codes) that never had a
+/// value-level path — consumers match on the code prefix, not the
+/// shape. `stuck` fires on any repeat over the full code-set history
+/// (consecutive repeat or A→B→A oscillation) after applied steps.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepairOutcome {
     pub goal: RepairGoal,
@@ -109,9 +114,62 @@ pub fn repair(
     preserve: &[String],
     max_steps: usize,
 ) -> RepairOutcome {
+    let mut engine = Engine::new();
+    engine.resilient = false;
+    repair_with_engine(source, goal, preserve, max_steps, &engine, None)
+}
+
+/// Repair loop with caller-provided engine and optional file context.
+///
+/// * `engine` carries budget, profile override, and (like every other
+///   tool path) strictness forced off here: the planner must see the
+///   raw diagnostics, not resiliently healed ones. The materialise
+///   flag and environment snapshot ride along from the caller.
+/// * `file_ctx`: when set, sources parse with that file's include
+///   context (includes resolve and merge); otherwise parsing stays
+///   hermetic (no filesystem reads).
+pub fn repair_with_engine(
+    source: &str,
+    goal: RepairGoal,
+    preserve: &[String],
+    max_steps: usize,
+    engine: &Engine,
+    file_ctx: Option<&std::path::Path>,
+) -> RepairOutcome {
+    repair_with_engine_and_options(source, goal, preserve, max_steps, engine, file_ctx, false)
+}
+
+/// Full loop with caller-provided engine, file context, and include
+/// policy. `allow_parent_escapes` mirrors every other tool path
+/// (E015 otherwise); trust verification stays the caller's gate
+/// (checked once on the original file before planning).
+#[allow(clippy::too_many_arguments)]
+pub fn repair_with_engine_and_options(
+    source: &str,
+    goal: RepairGoal,
+    preserve: &[String],
+    max_steps: usize,
+    engine: &Engine,
+    file_ctx: Option<&std::path::Path>,
+    allow_parent_escapes: bool,
+) -> RepairOutcome {
+    // The goal's own path list unions with the explicit slice: both
+    // spellings protect the same paths (a mismatch between them would
+    // silently narrow protection).
+    let mut protected: Vec<String> = preserve.to_vec();
+    if let RepairGoal::PreserveKey(paths) = &goal {
+        for p in paths {
+            if !protected.contains(p) {
+                protected.push(p.clone());
+            }
+        }
+    }
     let mut steps: Vec<PlannedStep> = Vec::new();
     let mut applied: Vec<String> = Vec::new();
-    let mut prev_codes: Vec<String> = Vec::new();
+    // Full code-set history, not just the previous set: an
+    // A→B→A oscillation is stuck just as much as A→A, and the
+    // consecutive-only check would evade it.
+    let mut seen: std::collections::HashSet<Vec<String>> = std::collections::HashSet::new();
     let mut stuck = false;
     let mut unrepairable = false;
     let mut findings: Vec<Diagnostic> = Vec::new();
@@ -119,22 +177,59 @@ pub fn repair(
     let mut clean = false;
 
     let mut current = source.to_string();
+    // The caller's engine minus resilience: budgets, profile override,
+    // environment, and materialise flag ride along, but planning
+    // evaluation is always strict so the loop sees raw diagnostics.
+    let mut strict = engine.clone();
+    strict.resilient = false;
+    let engine = &strict;
     for _ in 0..=max_steps {
-        let module = match parse(&current, "repair") {
-            Ok(m) => m,
-            Err(_) => {
-                unrepairable = true;
-                findings.push(unrepairable_finding(
-                    "source does not parse; no plan can start",
-                ));
-                break;
-            }
+        // Parse errors keep their diagnostics: the first code names
+        // the failure (value-free codes only, never messages).
+        let parse_diags = |diags: &[Diagnostic]| {
+            let mut codes: Vec<String> = diags.iter().map(|d| d.code.clone()).collect();
+            codes.sort();
+            codes.dedup();
+            codes
         };
-        // Strict evaluation: the planner must see the raw missing-key
-        // and typo diagnostics with their repair payloads, not the
-        // resilient engine's already-applied fixes.
-        let mut engine = Engine::new();
-        engine.resilient = false;
+        let module = match file_ctx {
+            Some(path) => {
+                let name = path.to_string_lossy().to_string();
+                let mut options = crate::ParseOptions::strict();
+                options.allow_parent_escapes = allow_parent_escapes;
+                match crate::parse_text_with_file(&current, &name, options, path) {
+                    Ok(m) => m,
+                    Err(diags) => {
+                        unrepairable = true;
+                        let codes = parse_diags(&diags);
+                        findings.push(unrepairable_finding(&format!(
+                            "source does not parse (first error {})",
+                            codes.first().map(String::as_str).unwrap_or("?")
+                        )));
+                        final_codes = codes;
+                        break;
+                    }
+                }
+            }
+            None => match parse(&current, "repair") {
+                Ok(m) => m,
+                Err(diags) => {
+                    unrepairable = true;
+                    let codes = parse_diags(&diags);
+                    findings.push(unrepairable_finding(&format!(
+                        "source does not parse (first error {})",
+                        codes.first().map(String::as_str).unwrap_or("?")
+                    )));
+                    final_codes = codes;
+                    break;
+                }
+            },
+        };
+        // Strict planning evaluation on the caller's engine (budgets,
+        // profile override, and environment ride along; resilient mode
+        // stays off): the planner must see the raw missing-key and
+        // typo diagnostics with their repair payloads, not already
+        // applied fixes.
         let diags = match engine.evaluate(&module) {
             Ok((_, diags)) => diags,
             // Validation failures still yield their diagnostics: those
@@ -157,16 +252,19 @@ pub fn repair(
             final_codes = codes;
             break;
         }
-        // Consecutive repeat after an application means the applied
-        // directive changed nothing: with the current Fill/Rename-only
-        // suggester every effective application strictly shrinks the
-        // (code, path) set, so a repeat is a void application — stop
-        // instead of looping (H006). Reaching this iteration at all
-        // implies the previous one applied something (all other
-        // no-progress paths break), so equality here always follows
+        // Repeat detection over the full history: any previously seen
+        // code set means the trajectory is cycling (consecutive repeat
+        // or A→B→A oscillation) after applications that changed
+        // nothing net — stop instead of looping (H006). Reaching an
+        // iteration implies the previous one applied something (every
+        // other no-progress path breaks), so a repeat always follows
         // an application.
-        let repeat = codes == prev_codes;
-        prev_codes = codes.clone();
+        if !seen.insert(codes.clone()) {
+            stuck = true;
+            findings.push(stuck_finding());
+            final_codes = codes;
+            break;
+        }
 
         let suggestions = crate::convert::suggest_patches_structured(&module, &diags);
         // Goal ordering: MinimizeDiff prefers fills (purely additive)
@@ -189,7 +287,12 @@ pub fn repair(
                 if applied.contains(&directive) {
                     continue;
                 }
-                if preserve.iter().any(|p| p == &s.path) {
+                // Preserve blocks the path AND both rename endpoints: a
+                // rename onto a preserved path still touches it.
+                let touches_preserved = protected.iter().any(|p| {
+                    p == &s.path || s.from.as_ref() == Some(p) || s.to.as_ref() == Some(p)
+                });
+                if touches_preserved {
                     steps.push(PlannedStep {
                         kind: format!("{:?}", s.kind).to_lowercase(),
                         path: s.path.clone(),
@@ -198,17 +301,26 @@ pub fn repair(
                         status: StepStatus::Skipped {
                             reason: "preserved path: goal forbids touching it".to_string(),
                         },
-                        side_effects: vec![s.path.clone()],
+                        side_effects: match (&s.from, &s.to) {
+                            (Some(from), Some(to)) => vec![from.clone(), to.clone()],
+                            _ => vec![s.path.clone()],
+                        },
                     });
                     continue;
                 }
+                let side_effects = match (&s.from, &s.to) {
+                    // Renames name both endpoints as the blast radius;
+                    // fills are purely additive (no side effects).
+                    (Some(from), Some(to)) => vec![from.clone(), to.clone()],
+                    _ => Vec::new(),
+                };
                 steps.push(PlannedStep {
                     kind: format!("{:?}", s.kind).to_lowercase(),
                     path: s.path.clone(),
                     directive: directive.clone(),
                     safe: true,
                     status: StepStatus::Applied,
-                    side_effects: vec![s.path.clone()],
+                    side_effects,
                 });
                 applied.push(directive);
                 progressed = true;
@@ -218,18 +330,6 @@ pub fn repair(
             }
         }
         if !progressed {
-            if repeat {
-                // Applied-but-void iteration (or re-suggested applied
-                // work): the trajectory is not converging — stop
-                // instead of looping (H006). Reaching an iteration at
-                // all implies the previous one applied something (every
-                // other no-progress path breaks), so a repeat here
-                // always follows an application.
-                stuck = true;
-                findings.push(stuck_finding());
-                final_codes = codes;
-                break;
-            }
             if applied.len() >= max_steps {
                 // Budget exhausted with work remaining: stop without
                 // blaming the document (neither stuck nor unrepairable).

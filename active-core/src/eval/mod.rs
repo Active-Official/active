@@ -342,6 +342,7 @@ impl EvalError {
     }
 }
 
+#[derive(Clone)]
 pub struct Engine {
     pub resilient: bool,
     /// CLI `--profile` override: when set, selects this profile instead

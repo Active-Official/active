@@ -82,11 +82,32 @@ fn preserved_paths_are_skipped_not_touched() {
         "schema = { closed = true, host = String, port = Int(default = 8080) }\nHost = \"x\"\n";
     let out = repair_document(
         src,
-        RepairGoal::PreserveKey("port,host".to_string()),
+        RepairGoal::PreserveKey(vec!["port".to_string(), "host".to_string()]),
         &["port".to_string(), "host".to_string(), "Host".to_string()],
         8,
     );
     assert!(!out.clean && out.unrepairable);
+    assert!(out
+        .steps
+        .iter()
+        .all(|s| matches!(s.status, StepStatus::Skipped { .. })));
+    assert!(!out.repaired_source.contains("@patch"));
+    assert!(!out.repaired_source.contains("@rename"));
+}
+
+#[test]
+fn preserve_goal_unions_with_explicit_preserve_list() {
+    // Goal-carried paths and the explicit list protect identically: a
+    // step touching either is skipped, never applied.
+    let src =
+        "schema = { closed = true, host = String, port = Int(default = 8080) }\nHost = \"x\"\n";
+    let out = repair_document(
+        src,
+        RepairGoal::PreserveKey(vec!["port".to_string()]),
+        &["Host".to_string()],
+        8,
+    );
+    assert!(!out.clean);
     assert!(out
         .steps
         .iter()
@@ -112,6 +133,27 @@ fn unparseable_source_is_unrepairable() {
     let out = validate("port = \n");
     assert!(!out.clean && out.unrepairable);
     assert!(out.findings.iter().any(|d| d.code == "H008"));
+}
+
+#[test]
+fn large_typo_doc_terminates_at_a_fixpoint() {
+    // Ten typos plus ten missing keys: the loop must terminate with a
+    // bounded number of evals, reach clean, and fixpoint (a second run
+    // plans nothing). This is the termination property the H006
+    // history net guarantees.
+    let mut src = String::from("schema = { closed = true");
+    for i in 0..10 {
+        src.push_str(&format!(", k{i} = String, p{i} = Int(default = {i})"));
+    }
+    src.push_str(" }\n");
+    for i in 0..10 {
+        src.push_str(&format!("K{i} = \"x\"\n"));
+    }
+    let out = repair_document(&src, RepairGoal::Validate, &[], 64);
+    assert!(out.clean && !out.stuck, "{out:?}");
+    assert_eq!(out.steps.len(), 20, "{out:?}");
+    let again = repair_document(&out.repaired_source, RepairGoal::Validate, &[], 64);
+    assert!(again.clean && again.steps.is_empty());
 }
 
 #[test]

@@ -64,8 +64,8 @@ pub struct Repair {
 pub enum RepairGoal {
     /// Reach a clean validation (default).
     Validate,
-    /// Reach clean validation while never touching `PreserveKey.0`.
-    PreserveKey(String),
+    /// Reach clean validation without touching the listed paths.
+    PreserveKey(Vec<String>),
     /// Fewest, smallest steps first.
     MinimizeDiff,
 }

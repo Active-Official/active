@@ -222,7 +222,7 @@ pub fn make_key_typo_diagnostic(
             suggested: suggestion.into(),
             kind: RepairKind::KeyTypo,
             safe,
-            side_effects: Vec::new(),
+            side_effects: vec![typo.to_string(), suggestion.to_string()],
             goal: None,
             steps: Vec::new(),
         }),

@@ -499,7 +499,7 @@ impl<'a> Validator<'a> {
                             suggested: suggested.clone(),
                             kind: RepairKind::KeyTypo,
                             safe: normalized_levenshtein(key, suggested) >= thresholds::AUTO_APPLY,
-                            side_effects: Vec::new(),
+                            side_effects: vec![key.clone(), suggested.clone()],
                             goal: None,
                             steps: Vec::new(),
                         });
@@ -860,11 +860,11 @@ impl<'a> Validator<'a> {
                         DiagMeta {
                             severity: Severity::Error,
                             repair: Some(Repair {
-                                original: from,
-                                suggested: to,
+                                original: from.clone(),
+                                suggested: to.clone(),
                                 kind: RepairKind::KeyTypo,
                                 safe,
-                                side_effects: Vec::new(),
+                                side_effects: vec![from, to],
                                 goal: None,
                                 steps: Vec::new(),
                             }),
@@ -935,7 +935,7 @@ impl<'a> Validator<'a> {
                             kind: RepairKind::KeyTypo,
                             safe: normalized_levenshtein(&req.from, &req.to)
                                 >= thresholds::AUTO_APPLY,
-                            side_effects: Vec::new(),
+                            side_effects: vec![req.from.clone(), req.to.clone()],
                             goal: None,
                             steps: Vec::new(),
                         }),
@@ -972,7 +972,7 @@ impl<'a> Validator<'a> {
                     suggested: req.to.clone(),
                     kind: RepairKind::KeyTypo,
                     safe: normalized_levenshtein(&req.from, &req.to) >= thresholds::AUTO_APPLY,
-                    side_effects: Vec::new(),
+                    side_effects: vec![req.from.clone(), req.to.clone()],
                     goal: None,
                     steps: Vec::new(),
                 }),

@@ -22,12 +22,17 @@ pub enum PatchKind {
 
 /// A single machine-readable repair directive. `directive` is the exact
 /// `@rename`/`@patch` line; `kind` and `path` let agents route without
-/// parsing it. Deterministic: diagnostic order in, directive order out.
+/// parsing it. `from`/`to` carry the rename endpoints (None for fills)
+/// so planners can reason about blast radius without scraping the
+/// directive string. Deterministic: diagnostic order in, directive
+/// order out.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct PatchSuggestion {
     pub kind: PatchKind,
     pub path: String,
     pub directive: String,
+    pub from: Option<String>,
+    pub to: Option<String>,
 }
 
 /// Collect minimal repair directives for diagnostics that map exactly:
@@ -51,11 +56,13 @@ pub fn suggest_patches_structured(module: &Module, diags: &[Diagnostic]) -> Vec<
                 continue;
             }
             if matches!(repair.kind, RepairKind::KeyTypo) {
-                if let Some((path, directive)) = rename_for(d, repair) {
+                if let Some((path, from, to, directive)) = rename_for(d, repair) {
                     out.push(PatchSuggestion {
                         kind: PatchKind::Rename,
                         path,
                         directive,
+                        from: Some(from),
+                        to: Some(to),
                     });
                 }
             }
@@ -73,6 +80,8 @@ pub fn suggest_patches_structured(module: &Module, diags: &[Diagnostic]) -> Vec<
                     kind: PatchKind::Fill,
                     path,
                     directive,
+                    from: None,
+                    to: None,
                 });
             }
         }
@@ -82,38 +91,78 @@ pub fn suggest_patches_structured(module: &Module, diags: &[Diagnostic]) -> Vec<
 
 /// `@rename` for a safe typo: rename requests already carry full dotted
 /// paths; segment-level suggestions rebuild from the diagnostic path.
-/// Returns the renamed path plus the directive.
-fn rename_for(d: &Diagnostic, repair: &crate::diag::Repair) -> Option<(String, String)> {
-    if repair.original.contains('.') || repair.suggested.contains('.') {
+/// Returns the renamed path, the full from/to endpoints, and the
+/// directive. Endpoints interpolate raw, like fill paths: both are
+/// key segments, and key segments are lexer identifiers by
+/// construction (ASCII alphanumerics plus underscore — never quotes,
+/// backslashes, or control characters), so no breakout is
+/// expressible. Values, which CAN carry arbitrary text, go through
+/// `escape_directive_str` instead.
+fn rename_for(
+    d: &Diagnostic,
+    repair: &crate::diag::Repair,
+) -> Option<(String, String, String, String)> {
+    // Returns (path, from, to, directive).
+    let built = if repair.original.contains('.') || repair.suggested.contains('.') {
         // Defensive only: every KeyTypo repair in the codebase carries
         // single segments, so this branch never fires today. Kept so
         // a future full-path repair still resolves instead of
         // vanishing silently.
-        return Some((
+        Some((
             repair.original.clone(),
-            format!("@rename(\"{}\", \"{}\")", repair.original, repair.suggested),
-        ));
-    }
-    let path = d.path.as_ref()?;
-    let parent = path.strip_suffix(&repair.original).and_then(|p| {
-        let p = p.strip_suffix('.')?;
-        if p.is_empty() {
-            None
-        } else {
-            Some(p)
+            repair.original.clone(),
+            repair.suggested.clone(),
+        ))
+    } else {
+        let path = d.path.as_ref()?;
+        let parent = path.strip_suffix(&repair.original).and_then(|p| {
+            let p = p.strip_suffix('.')?;
+            if p.is_empty() {
+                None
+            } else {
+                Some(p)
+            }
+        });
+        match parent {
+            Some(p) => Some((
+                path.clone(),
+                path.clone(),
+                format!("{p}.{}", repair.suggested),
+            )),
+            None if path == &repair.original => Some((
+                repair.original.clone(),
+                repair.original.clone(),
+                repair.suggested.clone(),
+            )),
+            None => None,
         }
-    });
-    match parent {
-        Some(p) => Some((
-            path.clone(),
-            format!("@rename(\"{path}\", \"{p}.{s}\")", s = repair.suggested),
-        )),
-        None if path == &repair.original => Some((
-            repair.original.clone(),
-            format!("@rename(\"{}\", \"{}\")", repair.original, repair.suggested),
-        )),
-        None => None,
+    };
+    let (path, from, to) = built?;
+    Some((
+        path,
+        from.clone(),
+        to.clone(),
+        format!("@rename(\"{from}\", \"{to}\")"),
+    ))
+}
+
+/// Source-text escaping for directive strings: backslashes first,
+/// then quotes and control characters. Shared by fill values and
+/// rename endpoints so neither can break out of the directive string.
+fn escape_directive_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
     }
+    out
 }
 
 /// `@patch` with the schema's static default literal for a missing-key
@@ -141,26 +190,11 @@ fn fill_for(module: &Module, d: &Diagnostic) -> Option<(String, String)> {
         return None;
     }
     let value = match field.default.and_then(|id| module.get(id)) {
-        // Source-text escaping for the directive: backslashes first,
-        // then quotes and control characters. Anything composite
-        // (tables, arrays, quantities, durations) has no one-line
-        // source form here and yields no patch by design.
+        // Anything composite (tables, arrays, quantities, durations)
+        // has no one-line source form here and yields no patch by
+        // design. Shared escaper with rename endpoints.
         Some(Node::Literal(Value::String(s))) => {
-            let mut out = String::with_capacity(s.len() + 2);
-            out.push('"');
-            for c in s.chars() {
-                match c {
-                    '\\' => out.push_str("\\\\"),
-                    '"' => out.push_str("\\\""),
-                    '\n' => out.push_str("\\n"),
-                    '\r' => out.push_str("\\r"),
-                    '\t' => out.push_str("\\t"),
-                    c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-                    c => out.push(c),
-                }
-            }
-            out.push('"');
-            out
+            format!("\"{}\"", escape_directive_str(s))
         }
         Some(Node::Literal(Value::Int(i))) => i.to_string(),
         // Debug formatting preserves the decimal point, so 1.0 never
@@ -178,6 +212,12 @@ fn fill_for(module: &Module, d: &Diagnostic) -> Option<(String, String)> {
         Some(Node::Literal(Value::Null)) => "null".to_string(),
         _ => return None,
     };
+    // Paths interpolate raw: `path` is built from schema field and
+    // value key segments, which lex as identifiers (ASCII
+    // alphanumerics plus underscore) — the applier's
+    // `validate_patch_path` enforces the same shape, so quoting or
+    // escaping here would produce directives the engine rejects.
+    // Array paths never reach this point (rejected above).
     Some((path.clone(), format!("@patch(\"{path}\", {value})")))
 }
 

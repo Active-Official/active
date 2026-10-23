@@ -518,7 +518,7 @@ impl TsGen<'_> {
                 "number".to_string()
             }
             ActiveType::String | ActiveType::Secret => "string".to_string(),
-            ActiveType::Blob => "{ $active.blob: { hash: string; size: number; media_type: string; tainted: boolean } }".to_string(),
+            ActiveType::Blob => "{ \"$active.blob\": { hash: string; size: number; media_type: string; tainted: boolean } }".to_string(),
             ActiveType::Table { .. } => "Record<string, unknown>".to_string(),
             ActiveType::Enum(members) => members
                 .iter()
@@ -734,9 +734,33 @@ pub fn schema_to_go(module: &Module, root_name: &str) -> Result<String, String> 
     }) {
         // Shared identity shape for Blob fields (spec/blob.md §5):
         // hash, size, media type, taint. Payloads never cross codegen.
-        gen.out.push_str(
-            "\ntype ActiveBlob struct {\n\tHash string `json:\"hash\"`\n\tSize uint64 `json:\"size\"`\n\tMediaType string `json:\"media_type\"`\n\tTainted bool `json:\"tainted\"`\n}\n",
-        );
+        // Aligned through the same run formatter as tables so the
+        // output stays gofmt-clean (the equivalence gate checks).
+        gen.out.push_str("\ntype ActiveBlob struct {\n");
+        let mut run = vec![
+            (
+                "Hash".to_string(),
+                "string".to_string(),
+                "`json:\"hash\"`".to_string(),
+            ),
+            (
+                "Size".to_string(),
+                "uint64".to_string(),
+                "`json:\"size\"`".to_string(),
+            ),
+            (
+                "MediaType".to_string(),
+                "string".to_string(),
+                "`json:\"media_type\"`".to_string(),
+            ),
+            (
+                "Tainted".to_string(),
+                "bool".to_string(),
+                "`json:\"tainted\"`".to_string(),
+            ),
+        ];
+        flush_go_run(&mut run, &mut gen.out);
+        gen.out.push_str("}\n");
     }
     Ok(gen.out)
 }
@@ -1235,7 +1259,9 @@ pub fn schema_to_python(module: &Module, root_name: &str) -> Result<String, Stri
         taken: HashSet::new(),
     };
     let root_name = gen.type_name(root, pascal_case(&sanitize_ident(root_name, "Config")));
-    gen.emit_table(&root_name, root);
+    // Shared identity shape for Blob fields (spec/blob.md §5) comes
+    // FIRST: TypedDict field annotations resolve at class creation,
+    // so a use-before-definition would NameError at import.
     if module.arena.iter().any(|n| {
         matches!(
             n,
@@ -1247,11 +1273,11 @@ pub fn schema_to_python(module: &Module, root_name: &str) -> Result<String, Stri
             }
         )
     }) {
-        // Shared identity shape for Blob fields (spec/blob.md §5).
         gen.out.push_str(
-            "\n\nclass ActiveBlob(TypedDict):\n    hash: str\n    size: int\n    media_type: str\n    tainted: bool\n",
+            "class ActiveBlob(TypedDict):\n    hash: str\n    size: int\n    media_type: str\n    tainted: bool\n\n\n",
         );
     }
+    gen.emit_table(&root_name, root);
     Ok(gen.out)
 }
 

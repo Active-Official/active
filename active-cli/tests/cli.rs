@@ -2138,3 +2138,74 @@ fn query_aliases_report_schema_mode_and_budget() {
     assert!(body.contains("nodes: used"), "{body}");
     assert!(body.contains("headroom"), "{body}");
 }
+
+#[test]
+fn debug_minimize_works_on_unparseable_source() {
+    let f = fixture(
+        "debug_broken.active",
+        "ok = 1\nbad = = 2\nnoise = 3\nmore = 4\n",
+    );
+    let out = active()
+        .args(["debug", "--from"])
+        .arg(&f)
+        .args(["--minimize", "E002", "--format", "text"])
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let body = String::from_utf8_lossy(&out.stdout);
+    assert!(body.contains("keeping E002"), "{body}");
+    assert!(body.contains("bad = = 2"), "target line kept: {body}");
+    assert!(!body.contains("noise = 3"), "noise removed: {body}");
+}
+
+#[test]
+fn debug_text_prints_steps_before_the_verdict() {
+    let f = fixture("debug_order.active", "token = secret(\"x\")\nport = 1\n");
+    let out = active()
+        .args(["debug", "--from"])
+        .arg(&f)
+        .args(["--break", "taint", "--format", "text"])
+        .output()
+        .expect("run active");
+    let body = String::from_utf8_lossy(&out.stdout);
+    let step = body.find("#0").expect("steps printed");
+    let verdict = body.find("break at").expect("verdict printed");
+    assert!(step < verdict, "steps must precede the verdict: {body}");
+}
+
+#[test]
+fn mode_marker_ignores_longer_keys() {
+    let f = fixture("mode_lookalike.active", "active_mode_extra = 1\nport = 1\n");
+    let out = active()
+        .args(["mode", "--from"])
+        .arg(&f)
+        .args(["--format", "json"])
+        .output()
+        .expect("run active");
+    assert!(out.status.success());
+    let doc: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    assert_eq!(doc["marker"], false);
+}
+
+#[test]
+fn viz_rejects_flags_that_do_not_apply() {
+    let f = fixture("viz_flags.active", "port = 1\n");
+    let format = active()
+        .args(["viz", "taint", "--from"])
+        .arg(&f)
+        .args(["--format", "mermaid"])
+        .output()
+        .expect("run active");
+    assert!(!format.status.success());
+    let goal = active()
+        .args(["viz", "taint", "--from"])
+        .arg(&f)
+        .args(["--goal", "minimize-diff"])
+        .output()
+        .expect("run active");
+    assert!(!goal.status.success());
+}

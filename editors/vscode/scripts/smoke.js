@@ -120,9 +120,9 @@ Module._load = originalLoad;
 	// must degrade to the warning state rather than throw.
 	await new Promise((resolve) => setTimeout(resolve, 600));
 	assert.ok(
-		statusItem.text.includes("Active") ||
-			statusItem.text.includes("unavailable"),
-		`unexpected status text: ${statusItem.text}`,
+		statusItem.text.includes("Active config") ||
+			statusItem.text.includes("Active data"),
+		`status refresh must drive the real CLI path, got: ${statusItem.text}`,
 	);
 
 	// Redaction at the editor boundary: the same CLI the extension calls

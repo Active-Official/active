@@ -22,8 +22,9 @@ local function run(args)
   return out
 end
 
---- Status line string: mode, node-budget percentage, taint marker.
-function M.status()
+--- Compute the status string once (three CLI calls). Hidden work:
+--- the status line itself must never spawn processes on redraw.
+local function compute()
   local name = file()
   if not name then
     return ""
@@ -50,6 +51,20 @@ function M.status()
     end
   end
   return string.format("Active %s %d%%%s", mode.mode or "?", pct, taint)
+end
+
+--- Refresh the per-buffer cache. Called by the autocmd and setup.
+function M.refresh()
+  vim.b.active_status = compute()
+  return vim.b.active_status
+end
+
+--- Status line entry point: reads the cache only (fast per redraw).
+function M.status()
+  if vim.b.active_status == nil then
+    return M.refresh()
+  end
+  return vim.b.active_status
 end
 
 local function show(title, body)
@@ -106,9 +121,10 @@ function M.setup()
   vim.api.nvim_create_autocmd({ "BufEnter", "BufWritePost" }, {
     pattern = "*.active",
     callback = function()
-      pcall(M.status)
+      M.refresh()
     end,
   })
+  pcall(M.refresh)
 end
 
 return M

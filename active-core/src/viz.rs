@@ -17,7 +17,8 @@ pub fn taint_data(module: &Module, value: &Value) -> JsonValue {
     let mut export_points: Vec<String> = Vec::new();
     walk_taint(value, "", &mut |path, node_value, parent| {
         if contains_secret(node_value) {
-            let leaf = matches!(node_value, Value::Secret(_));
+            let leaf = matches!(node_value, Value::Secret(_))
+                || matches!(node_value, Value::Blob { tainted: true, .. });
             nodes.push(json!({
                 "id": path,
                 "label": if path.is_empty() { "(root)" } else { path },
@@ -143,6 +144,7 @@ pub fn repair_data(
 fn contains_secret(value: &Value) -> bool {
     match value {
         Value::Secret(_) => true,
+        Value::Blob { tainted, .. } => *tainted,
         Value::Array(items) => items.iter().any(contains_secret),
         Value::Table(map) => map.values().any(contains_secret),
         _ => false,

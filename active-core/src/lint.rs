@@ -126,6 +126,7 @@ pub const KNOWN_CAPABILITIES: &[&str] = &[
     "check",
     "eval",
     "format",
+    "lint",
     "convert",
     "graph",
     "generate",
@@ -879,6 +880,24 @@ pub fn json_report(items: &[(String, Diagnostic)]) -> serde_json::Value {
     serde_json::Value::Array(rows)
 }
 
+/// URI-safe rendering of a filesystem path for SARIF: forward slashes,
+/// and percent-encoding for anything outside RFC 3986 unreserved,
+/// `/`, and `:`.
+fn sarif_uri(path: &str) -> String {
+    let normalized = path.replace('\\', "/");
+    let mut out = String::with_capacity(normalized.len());
+    for byte in normalized.bytes() {
+        let keep =
+            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/' | b':');
+        if keep {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
 /// SARIF 2.1.0 log for CI upload. Rule metadata is derived from the
 /// findings (unique rule IDs, stable order); locations carry the span
 /// when the diagnostic has one and a file-level location otherwise.
@@ -904,7 +923,7 @@ pub fn sarif_report(items: &[(String, Diagnostic)], tool_version: &str) -> serde
         .iter()
         .map(|(file, diagnostic)| {
             let mut physical = serde_json::json!({
-                "artifactLocation": {"uri": file},
+                "artifactLocation": {"uri": sarif_uri(file)},
             });
             if let Some(span) = &diagnostic.span {
                 physical["region"] = serde_json::json!({

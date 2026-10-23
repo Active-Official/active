@@ -476,3 +476,48 @@ fn machine_readable_reports_have_stable_shapes() {
         "svc.active"
     );
 }
+
+#[test]
+fn known_capabilities_match_the_descriptor_exactly() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../agent-kit/capability.schema.json");
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("descriptor readable"))
+            .expect("descriptor parses");
+    let mut advertised: Vec<String> = doc["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .map(|t| t["name"].as_str().expect("name").to_string())
+        .collect();
+    advertised.sort();
+    let mut known: Vec<String> = active_core::lint::KNOWN_CAPABILITIES
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    known.sort();
+    assert_eq!(known, advertised, "L007 list drifted from the descriptor");
+}
+
+#[test]
+fn l007_accepts_the_advertised_lint_capability() {
+    let src = "active_capabilities = [\"check\", \"lint\"]\nport = 1\n";
+    assert!(!lint_codes(src).contains(&"L007".to_string()));
+}
+
+#[test]
+fn sarif_uris_are_forward_slash_and_percent_encoded() {
+    let module = parse_ok("[server]\nreadTimeout = 1\nmax_retries = 2\n");
+    let diags = lint(&module);
+    let items: Vec<(String, active_core::Diagnostic)> = diags
+        .into_iter()
+        .map(|d| ("C:\\tmp\\a b.active".to_string(), d))
+        .collect();
+    let sarif = active_core::lint::sarif_report(&items, "1.4.0");
+    let uri = sarif["runs"][0]["results"][0]["locations"][0]["physicalLocation"]
+        ["artifactLocation"]["uri"]
+        .as_str()
+        .expect("uri");
+    assert_eq!(uri, "C:/tmp/a%20b.active");
+    assert!(!uri.contains('\\'));
+}

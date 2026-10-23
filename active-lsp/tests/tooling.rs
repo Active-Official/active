@@ -183,3 +183,80 @@ fn code_actions_offer_mode_marker_and_repair_plan() {
         plan.iter().map(|a| &a.title).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn formatting_refuses_broken_documents() {
+    let doc = open("port=8080\nbad = = 2\n");
+    assert!(
+        analysis::formatting_edits(&doc).is_empty(),
+        "a document with parse errors must not be reformatted"
+    );
+    let full = Range {
+        start: Position {
+            line: 0,
+            character: 0,
+        },
+        end: Position {
+            line: 2,
+            character: 0,
+        },
+    };
+    assert!(analysis::range_formatting_edits(&doc, full).is_empty());
+}
+
+#[test]
+fn document_symbols_exclude_included_files() {
+    let dir = std::env::temp_dir().join(format!("active-lsp-symbols-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    std::fs::write(dir.join("inc.active"), "host = \"included\"\n").expect("include");
+    let main = dir.join("main.active");
+    let text = "include \"inc.active\"\nport = 1\n";
+    std::fs::write(&main, text).expect("main");
+    let uri = Url::from_file_path(&main).expect("file url");
+    let doc = analysis::open_doc(uri, text.to_string(), 1, None);
+    let symbols = analysis::document_symbols(&doc);
+    let names: Vec<&str> = symbols.iter().map(|s| s.name.as_str()).collect();
+    assert!(names.contains(&"port"), "{names:?}");
+    assert!(
+        !names.contains(&"host"),
+        "included symbols must not be attributed to the open document: {names:?}"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn mode_marker_action_uses_exact_key() {
+    let lookalike = open("active_mode_extra = 1\n");
+    let actions = analysis::code_actions(
+        &lookalike,
+        Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 0,
+            },
+        },
+    );
+    assert!(
+        actions.iter().any(|a| a.title.contains("active_mode")),
+        "lookalike key must not suppress the marker action"
+    );
+    let real = open("active_mode = \"data\"\n");
+    let actions = analysis::code_actions(
+        &real,
+        Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 0,
+            },
+        },
+    );
+    assert!(!actions.iter().any(|a| a.title.contains("Set active_mode")));
+}

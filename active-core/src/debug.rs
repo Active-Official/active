@@ -52,8 +52,7 @@ pub fn replay(module: &Module, expected: Option<&str>) -> Result<JsonValue, Stri
     let second_hash = crate::provenance::content_hash(&second);
     let first_codes: Vec<&str> = first_diags.iter().map(|d| d.code.as_str()).collect();
     let second_codes: Vec<&str> = second_diags.iter().map(|d| d.code.as_str()).collect();
-    let steps_match =
-        serde_json::to_string(&first_steps).ok() == serde_json::to_string(&second_steps).ok();
+    let steps_match = first_steps == second_steps;
     let expected_ok = expected.is_none_or(|text| text == first_hash);
     let ok = first_hash == second_hash && first_codes == second_codes && steps_match && expected_ok;
 

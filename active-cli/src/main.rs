@@ -699,6 +699,18 @@ fn run_inspect(
     Ok(())
 }
 
+/// Whether a line declares the root `active_mode` key (not a longer
+/// key such as `active_mode_extra`).
+fn declares_active_mode(line: &str) -> bool {
+    line.trim_start()
+        .strip_prefix("active_mode")
+        .is_some_and(|rest| {
+            rest.is_empty()
+                || rest.starts_with(|c: char| c.is_whitespace())
+                || rest.starts_with('=')
+        })
+}
+
 fn options(resilient: bool, allow_parent_escapes: bool) -> ParseOptions {
     ParseOptions {
         resilient,
@@ -1458,9 +1470,7 @@ fn main() -> anyhow::Result<()> {
             let source = std::fs::read_to_string(&from)
                 .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", from.display()))?;
             let module = parse_input(&from, false, false, &None)?;
-            let marker = source
-                .lines()
-                .any(|line| line.trim_start().starts_with("active_mode"));
+            let marker = source.lines().any(declares_active_mode);
             let mode = match module.mode {
                 active_core::Mode::Data => "data",
                 active_core::Mode::Config => "config",
@@ -1536,10 +1546,32 @@ fn main() -> anyhow::Result<()> {
             trust_keys,
         } => {
             let trust = load_trust(&trust_keys)?;
-            let module = parse_input(&from, false, false, &trust)?;
             if format != "json" && format != "text" {
                 anyhow::bail!("unknown debug format `{format}` (want json|text)");
             }
+            // Reduction works on raw source: a document with parse
+            // errors is exactly the case it exists for, so handle it
+            // before parsing the module.
+            if let Some(code) = minimize {
+                let source = std::fs::read_to_string(&from)
+                    .map_err(|e| anyhow::anyhow!("cannot read source: {e}"))?;
+                let report = active_core::debug::minimal_case(&source, &code, max_attempts);
+                if format == "text" {
+                    println!(
+                        "reduced {} -> {} bytes ({} attempts) keeping {}",
+                        report["original_bytes"], report["reduced_bytes"], report["attempts"], code
+                    );
+                    print!("{}", report["reduced"].as_str().unwrap_or(""));
+                } else {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&report)
+                            .map_err(|e| anyhow::anyhow!("{e}"))?
+                    );
+                }
+                return Ok(());
+            }
+            let module = parse_input(&from, false, false, &trust)?;
             if replay {
                 let report = active_core::debug::replay(&module, expect.as_deref())
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -1567,25 +1599,6 @@ fn main() -> anyhow::Result<()> {
                 }
                 return Ok(());
             }
-            if let Some(code) = minimize {
-                let source = std::fs::read_to_string(&from)
-                    .map_err(|e| anyhow::anyhow!("cannot read source: {e}"))?;
-                let report = active_core::debug::minimal_case(&source, &code, max_attempts);
-                if format == "text" {
-                    println!(
-                        "reduced {} -> {} bytes ({} attempts) keeping {}",
-                        report["original_bytes"], report["reduced_bytes"], report["attempts"], code
-                    );
-                    print!("{}", report["reduced"].as_str().unwrap_or(""));
-                } else {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&report)
-                            .map_err(|e| anyhow::anyhow!("{e}"))?
-                    );
-                }
-                return Ok(());
-            }
             let (_, _, steps) = Engine::new()
                 .evaluate_with_steps(&module)
                 .map_err(|e| anyhow::anyhow!("cannot evaluate for stepping: {e}"))?;
@@ -1597,13 +1610,13 @@ fn main() -> anyhow::Result<()> {
                 None => (steps.clone(), None),
             };
             if format == "text" {
+                print!("{}", active_core::debug::render_steps(&shown));
                 if let Some(selector) = &break_at {
                     match matched {
                         Some(index) => println!("break at #{index} ({selector})"),
                         None => println!("breakpoint not reached ({selector})"),
                     }
                 }
-                print!("{}", active_core::debug::render_steps(&shown));
             } else {
                 let report = serde_json::json!({
                     "breakpoint": break_at,
@@ -1631,6 +1644,14 @@ fn main() -> anyhow::Result<()> {
         } => {
             let trust = load_trust(&trust_keys)?;
             let module = parse_input(&from, false, false, &trust)?;
+            // Reject flags that do not apply to this kind instead of
+            // accepting and silently ignoring them.
+            if kind != "graph" && format != "json" {
+                anyhow::bail!("--format is only meaningful for `viz graph` (want json)");
+            }
+            if kind != "repair" && (goal != "validate" || !preserve.is_empty() || max_steps != 8) {
+                anyhow::bail!("--goal/--preserve/--max-steps only apply to `viz repair`");
+            }
             match kind.as_str() {
                 "graph" => match format.as_str() {
                     "json" => println!(

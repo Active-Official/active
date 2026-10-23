@@ -221,3 +221,16 @@ fn inspect_path_unknown_path_fails_closed() {
         active_core::convert::inspect_path(&module, &value, "missing.key").expect_err("must fail");
     assert!(err.contains("missing.key"), "{err}");
 }
+
+#[test]
+fn inspect_reports_a_tainted_blob_as_tainted() {
+    let src = "f = blob(\"text/plain\", secret(\"hunter2-blob\"))\n";
+    let module = active_core::parse(src, "inspect-blob").expect("parse");
+    let (value, _) = active_core::Engine::new()
+        .evaluate(&module)
+        .expect("evaluate");
+    let report = active_core::convert::inspect_path(&module, &value, "f").expect("inspect");
+    assert_eq!(report["tainted"], true);
+    assert_eq!(report["content_addressed"]["tainted"], true);
+    assert!(!report.to_string().contains("hunter2"));
+}

@@ -40,6 +40,12 @@ schema = { port = Int(default = 8080), host = String(default = "x") }
 unexpected = 1
 """
 
+LINT_FIXTURE = """\
+[server]
+readTimeout = 1
+max_retries = 2
+"""
+
 
 def run(args: list[str]) -> str:
     proc = subprocess.run(
@@ -71,6 +77,8 @@ def main() -> int:
     fixture.write_text(FIXTURE, encoding="utf-8")
     repair_fixture = work / "repair.active"
     repair_fixture.write_text(REPAIR_FIXTURE, encoding="utf-8")
+    lint_fixture = work / "lint.active"
+    lint_fixture.write_text(LINT_FIXTURE, encoding="utf-8")
 
     checks = [
         ("graph", json.loads(run(["graph", str(fixture), "--format", "json"]))),
@@ -82,6 +90,7 @@ def main() -> int:
         ),
         ("mode", json.loads(run(["mode", "--from", str(fixture), "--format", "json"]))),
         ("lint", json.loads(run(["lint", str(repair_fixture), "--format", "json"]))),
+        ("sarif", json.loads(run(["lint", str(lint_fixture), "--format", "sarif"]))),
         (
             "repair-plan",
             json.loads(

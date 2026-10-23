@@ -68,3 +68,19 @@ fn repair_data_exposes_the_plan() {
         .expect("source")
         .contains("@patch"));
 }
+
+#[test]
+fn taint_data_surfaces_secret_bearing_blobs() {
+    let src = "f = blob(\"text/plain\", secret(\"hunter2-taint\"))\n";
+    let module = parse(src, "viz-blob").expect("parse");
+    let (value, _) = Engine::new().evaluate(&module).expect("evaluate");
+    let data = viz::taint_data(&module, &value);
+    let sources: Vec<&str> = data["sources"]
+        .as_array()
+        .expect("sources")
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(sources.contains(&"f"), "{sources:?}");
+    assert!(!data.to_string().contains("hunter2"));
+}

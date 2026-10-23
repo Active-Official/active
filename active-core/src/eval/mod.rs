@@ -1000,7 +1000,7 @@ fn fingerprint_one(
 /// the diagnostic codes emitted while the node was evaluated. Values
 /// render through the canonical redactor, so secret material never
 /// enters a step.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct StepEvent {
     pub node: u32,
     pub path: Option<String>,
@@ -1013,8 +1013,43 @@ pub struct StepEvent {
 fn value_has_secret(value: &Value) -> bool {
     match value {
         Value::Secret(_) => true,
+        Value::Blob { tainted, .. } => *tainted,
         Value::Array(items) => items.iter().any(value_has_secret),
         Value::Table(map) => map.values().any(value_has_secret),
+        _ => false,
+    }
+}
+
+/// Replace every string in a rendered JSON tree equal to a known
+/// sensitive value. Returns true when anything was replaced, so the
+/// step can be marked tainted.
+fn redact_json_strings(
+    value: &mut serde_json::Value,
+    sensitive: &std::collections::HashSet<String>,
+) -> bool {
+    match value {
+        serde_json::Value::String(text) => {
+            if sensitive.contains(text.as_str()) {
+                *text = "***SECRET***".to_string();
+                true
+            } else {
+                false
+            }
+        }
+        serde_json::Value::Array(items) => {
+            let mut any = false;
+            for item in items {
+                any |= redact_json_strings(item, sensitive);
+            }
+            any
+        }
+        serde_json::Value::Object(map) => {
+            let mut any = false;
+            for item in map.values_mut() {
+                any |= redact_json_strings(item, sensitive);
+            }
+            any
+        }
         _ => false,
     }
 }
@@ -1053,6 +1088,11 @@ fn collect_subtree(module: &Module, root: NodeId, set: &mut std::collections::Ha
                 ..
             }) => stack.push(*default),
             Some(Node::Secret { locator }) => stack.push(*locator),
+            // A locator that reaches through a binding (or a
+            // constraint target) is still secret material: follow the
+            // reference so the whole subtree is marked.
+            Some(Node::Ref(target)) => stack.push(*target),
+            Some(Node::ApplyConstraint { target, .. }) => stack.push(*target),
             _ => {}
         }
     }
@@ -1291,6 +1331,12 @@ impl Engine {
             }
             set
         });
+        // Evaluated values of sensitive nodes, so a container step can
+        // redact the same bytes even though the container itself is
+        // not Secret-kinded (topological order means children are
+        // registered before their parents).
+        let mut sensitive_values: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
 
         // Fingerprints for this call (arena-indexed cache, sized
         // once): computed inline during the walk below, which runs
@@ -1616,18 +1662,24 @@ impl Engine {
                 let sensitive = secret_nodes
                     .as_ref()
                     .is_some_and(|set| set.contains(&node_id));
-                let rendered = if sensitive {
+                if sensitive {
+                    if let Value::String(text) = &value {
+                        sensitive_values.insert(text.clone());
+                    }
+                }
+                let mut rendered = if sensitive {
                     serde_json::Value::String("***SECRET***".to_string())
                 } else {
                     crate::convert::value_to_json(&value)
                 };
+                let replaced = redact_json_strings(&mut rendered, &sensitive_values);
                 list.push(StepEvent {
                     node: node_id.0,
                     path: step_paths
                         .as_ref()
                         .and_then(|paths| paths.get(&node_id).cloned()),
                     kind: value_kind_name(&value),
-                    tainted: sensitive || value_has_secret(&value),
+                    tainted: sensitive || replaced || value_has_secret(&value),
                     value: rendered,
                     codes: diagnostics[diag_start..]
                         .iter()

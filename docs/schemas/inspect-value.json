@@ -9,7 +9,11 @@
     "kind": { "type": "string" },
     "tainted": { "type": "boolean" },
     "value": {},
-    "size_bytes": { "type": "integer", "minimum": 0 },
+    "size_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Size of the redacted JSON rendering (secret payloads report the marker length)"
+    },
     "dependencies": { "type": "array", "items": { "type": "string" } },
     "schema": {
       "type": "object",

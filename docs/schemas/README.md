@@ -12,6 +12,7 @@ so a shape change fails the build.
 | `inspect-value.json` | `active inspect --from <file> --path <p>` / `active schema inspect --path <p>` |
 | `mode.json` | `active mode --from <file> --format json` |
 | `lint.json` | `active lint --format json` |
+| `sarif.json` | `active lint --format sarif` (SARIF 2.1.0) |
 | `repair-plan.json` | `active repair --from <file> --format json` |
 | `debug-steps.json` | `active debug --from <file>` |
 

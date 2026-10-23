@@ -161,13 +161,17 @@ function registerTooling(context) {
 		vscode.commands.registerCommand("active.graph", async () => {
 			const document = activeFile();
 			if (!document) return;
-			const text = await run([
-				"graph",
-				document.uri.fsPath,
-				"--format",
-				"mermaid",
-			]);
-			show("active graph (mermaid)", text);
+			try {
+				const text = await run([
+					"graph",
+					document.uri.fsPath,
+					"--format",
+					"mermaid",
+				]);
+				show("active graph (mermaid)", text);
+			} catch (e) {
+				show("active graph (mermaid)", String(e.message));
+			}
 		}),
 		vscode.commands.registerCommand("active.inspect", async () => {
 			const document = activeFile();
@@ -177,31 +181,43 @@ function registerTooling(context) {
 				prompt: "Dotted value path (for example server.port)",
 			});
 			if (!path) return;
-			const text = await run([
-				"inspect",
-				"--from",
-				document.uri.fsPath,
-				"--path",
-				path,
-				"--format",
-				"text",
-			]);
-			show(`inspect ${path}`, text);
+			try {
+				const text = await run([
+					"inspect",
+					"--from",
+					document.uri.fsPath,
+					"--path",
+					path,
+					"--format",
+					"text",
+				]);
+				show(`inspect ${path}`, text);
+			} catch (e) {
+				show(`inspect ${path}`, String(e.message));
+			}
 		}),
 		vscode.commands.registerCommand("active.repair", async () => {
 			const document = activeFile();
 			if (!document) return;
-			const text = await run([
-				"repair",
-				"--from",
-				document.uri.fsPath,
-				"--browser",
-			]);
-			showWebview("Active repair plan", text);
+			try {
+				const text = await run([
+					"repair",
+					"--from",
+					document.uri.fsPath,
+					"--browser",
+				]);
+				showWebview("Active repair plan", text);
+			} catch (e) {
+				show("Active repair plan", String(e.message));
+			}
 		}),
 		vscode.commands.registerCommand("active.capability", async () => {
-			const text = await run(["capability"]);
-			showWebview("Active capability descriptor", text);
+			try {
+				const text = await run(["capability"]);
+				showWebview("Active capability descriptor", text);
+			} catch (e) {
+				show("Active capability descriptor", String(e.message));
+			}
 		}),
 		vscode.workspace.onDidSaveTextDocument((document) => {
 			if (document.languageId === "active") scheduleRefresh();

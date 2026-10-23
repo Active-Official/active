@@ -83,3 +83,48 @@ fn minimal_case_reports_sizes_and_keeps_source_shape() {
     assert!(report["reduced_bytes"].as_u64().unwrap() < report["original_bytes"].as_u64().unwrap());
     assert!(report["reduced"].as_str().unwrap().contains("port = 999"));
 }
+
+#[test]
+fn step_trace_redacts_locators_through_bindings_and_env() {
+    use std::collections::HashMap;
+    let mut env = HashMap::new();
+    env.insert("SUPER_PASS".to_string(), "ENVSECRET-xyz789".to_string());
+    let module = parse("p = env.SUPER_PASS\nk = secret(p)\n", "debug-env").expect("parse");
+    let (_, _, steps) = Engine::hermetic()
+        .with_env(env)
+        .evaluate_with_steps(&module)
+        .expect("evaluate");
+    let rendered = serde_json::to_string(&steps).expect("json");
+    assert!(
+        !rendered.contains("ENVSECRET"),
+        "secret through a binding leaked: {rendered}"
+    );
+    assert!(
+        steps.iter().any(|s| s.kind == "table" && s.tainted),
+        "container step must be tainted: {steps:?}"
+    );
+}
+
+#[test]
+fn step_trace_redacts_literal_locator_behind_a_binding() {
+    let module = parse("loc = \"hunter2-via-let\"\nk = secret(loc)\n", "debug-ref").expect("parse");
+    let (_, _, steps) = Engine::new()
+        .evaluate_with_steps(&module)
+        .expect("evaluate");
+    let rendered = serde_json::to_string(&steps).expect("json");
+    assert!(!rendered.contains("hunter2"), "{rendered}");
+}
+
+#[test]
+fn taint_breakpoint_matches_a_tainted_blob() {
+    let module = parse("f = blob(\"text/plain\", secret(\"x\"))\n", "debug-blob").expect("parse");
+    let (_, _, steps) = Engine::new()
+        .evaluate_with_steps(&module)
+        .expect("evaluate");
+    let index = debug::breakpoint_index(&steps, "taint").expect("taint breakpoint");
+    assert!(steps[index].tainted);
+    assert!(
+        steps.iter().any(|s| s.kind == "blob" && s.tainted),
+        "tainted blob step missing: {steps:?}"
+    );
+}

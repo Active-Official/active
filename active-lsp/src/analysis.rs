@@ -2058,6 +2058,17 @@ fn document_end(text: &str) -> Position {
 /// source's own style is preserved (`Style::Preserve`); a canonical
 /// document yields no edit, so format-on-save is idempotent.
 pub fn formatting_edits(doc: &Doc) -> Vec<TextEdit> {
+    // Never reformat a buffer with parse errors: the recovering parser
+    // produces a partial IR, and formatting that IR would rewrite the
+    // user's broken text (turn `bad = = 2` into `bad = null`). Format
+    // only once the document parses.
+    if doc
+        .parse_diags
+        .iter()
+        .any(|d| d.severity == Severity::Error)
+    {
+        return Vec::new();
+    }
     let formatted = active_core::fmt::format(&doc.module, active_core::Style::Preserve);
     if formatted == doc.text {
         return Vec::new();
@@ -2080,6 +2091,13 @@ pub fn formatting_edits(doc: &Doc) -> Vec<TextEdit> {
 /// the selection yields no edit rather than corrupting neighboring
 /// lines (spec/lsp.md §2.2).
 pub fn range_formatting_edits(doc: &Doc, range: Range) -> Vec<TextEdit> {
+    if doc
+        .parse_diags
+        .iter()
+        .any(|d| d.severity == Severity::Error)
+    {
+        return Vec::new();
+    }
     let formatted = active_core::fmt::format(&doc.module, active_core::Style::Preserve);
     if formatted == doc.text {
         return Vec::new();
@@ -2139,7 +2157,7 @@ pub fn range_formatting_edits(doc: &Doc, range: Range) -> Vec<TextEdit> {
 pub fn document_symbols(doc: &Doc) -> Vec<SymbolInformation> {
     let mut out: Vec<SymbolInformation> = Vec::new();
     for (id, path) in doc.module.value_paths() {
-        if path.is_empty() {
+        if path.is_empty() || !node_in_doc(doc, id) {
             continue;
         }
         let range = doc
@@ -2167,6 +2185,9 @@ pub fn document_symbols(doc: &Doc) -> Vec<SymbolInformation> {
         });
     }
     for (name, id) in &doc.module.bindings {
+        if !node_in_doc(doc, *id) {
+            continue;
+        }
         let range = doc
             .module
             .node_spans
@@ -2528,11 +2549,7 @@ fn mode_marker_action(doc: &Doc, range: Range) -> Vec<CodeAction> {
     if range.start.line > 0 || range.start.character > 0 {
         return Vec::new();
     }
-    if doc
-        .text
-        .lines()
-        .any(|line| line.trim_start().starts_with("active_mode"))
-    {
+    if doc.text.lines().any(declares_active_mode) {
         return Vec::new();
     }
     vec![CodeAction {
@@ -2556,6 +2573,18 @@ fn mode_marker_action(doc: &Doc, range: Range) -> Vec<CodeAction> {
         )),
         ..Default::default()
     }]
+}
+
+/// Whether a line declares the root `active_mode` key (not a key whose
+/// name merely starts with it, like `active_mode_extra`).
+fn declares_active_mode(line: &str) -> bool {
+    line.trim_start()
+        .strip_prefix("active_mode")
+        .is_some_and(|rest| {
+            rest.is_empty()
+                || rest.starts_with(|c: char| c.is_whitespace())
+                || rest.starts_with('=')
+        })
 }
 
 /// Offer `@ai_immutable: true` above the statement under the cursor.

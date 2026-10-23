@@ -18,6 +18,9 @@ pub fn inspect_path(module: &Module, root: &Value, path: &str) -> Result<JsonVal
     let kind = kind_name(cone);
     let tainted = contains_secret(cone);
     let value = crate::convert::value_to_json(cone);
+    // Size of the REDACTED rendering (the bytes a consumer actually
+    // receives). Secret payloads therefore report the marker length,
+    // never the material's length.
     let size = serde_json::to_string(&value)
         .map(|text| text.len())
         .unwrap_or(0);
@@ -150,6 +153,7 @@ fn kind_name(value: &Value) -> &'static str {
 fn contains_secret(value: &Value) -> bool {
     match value {
         Value::Secret(_) => true,
+        Value::Blob { tainted, .. } => *tainted,
         Value::Array(items) => items.iter().any(contains_secret),
         Value::Table(map) => map.values().any(contains_secret),
         _ => false,

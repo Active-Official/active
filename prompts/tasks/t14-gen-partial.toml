@@ -1,0 +1,29 @@
+id = "t14-gen-partial"
+system = "generator"
+kind = "code"
+
+user = """
+Write ACTIVE with two independent tables, [app] (host "example",
+port 8080) and [cache] (max_entries 100, ttl_secs 60), so that
+`active eval --path app.port` returns 8080. The document must
+check clean.
+"""
+
+[[checks]]
+type = "parse"
+
+[[checks]]
+type = "check_exit0"
+
+[[checks]]
+type = "contains"
+text = "[app]"
+
+[[checks]]
+type = "contains"
+text = "[cache]"
+
+[[checks]]
+type = "eval_eq"
+path = "app.port"
+value = 8080

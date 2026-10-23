@@ -17,6 +17,7 @@ To reproduce: run the same commands from the repo root.
 | `agentkit.log` / `agentkit-eval.json` / `agentkit-eval.log` | Step 6: agent-kit evaluation | `ok: true`, all loops identical per-task verdicts/iters/codes |
 | `catalog-diff.log` | Error-code catalog diff | 62/62 real codes covered, 0 missing |
 | `harness-tests.log` | Harness enforcement unit tests | 25/25 run.py + 14/14 diff_vectors + capability 3/3 |
+| `miri.log` | Miri (nightly) over `active-core` trace + blob units | 3/3 trace + 3/3 blob pass, no UB (master program EVID.001) |
 
 Supporting scripts next to the logs (`codegen_check.py`) are the exact
 runners used. CI runs harness, codegen, and the agent-kit gate on every

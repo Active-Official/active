@@ -1,0 +1,11 @@
+# PE vector: two independent cones for path-based partial evaluation.
+# `active eval --path app` selects only the app cone; the full eval
+# agrees on every subcone. Clean on first check (no repair needed).
+
+[app]
+host = "example"
+port = 8080
+
+[cache]
+max_entries = 100
+ttl_secs = 60

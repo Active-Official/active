@@ -23,7 +23,11 @@ module, reference loops, and an evaluation harness.
   `requires-missing` (T004, converged), `unknown-format` (schema
   bug, converged), `descriptions-clean` (metadata ignored, clean
   on first check), `blob-clean` (content-addressed identity, clean
-  on first check).
+  on first check), `repair-multistep` (multi-step plan, converged),
+  `mode-data` (explicit Data Mode, clean on first check),
+  `partial-cone` (two independent cones, clean on first check;
+  the harness additionally asserts `eval --path app.port` agrees
+  with the full-eval subcone).
 
 ## Capability negotiation handshake (PROPOSAL §6.3)
 

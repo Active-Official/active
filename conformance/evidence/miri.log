@@ -1,0 +1,214 @@
+warning: unused field `description` in `workspace.package`
+  --> Cargo.toml:23:1
+   |
+23 | description = "Active - Symmetric, Overlay-ready, Loop-proof, Intent-driven, Deterministic configuration language"
+   | ^^^^^^^^^^^
+   |
+   = note: `cargo::unused_workspace_package_fields` is set to `warn` by default
+help: consider removing the field `workspace.package.description`
+warning: workspace (manifest) generated 1 warning
+warning: `package.homepage` is redundant with `package.repository`
+ --> active-cli\Cargo.toml:9:1
+  |
+8 | repository.workspace = true
+  | ----------
+9 | homepage.workspace = true
+  | ^^^^^^^^
+  |
+  = note: `cargo::redundant_homepage` is set to `warn` by default
+help: consider removing `package.homepage`
+warning: `active-cli` (manifest) generated 1 warning
+warning: `package.homepage` is redundant with `package.repository`
+ --> active\Cargo.toml:9:1
+  |
+8 | repository.workspace = true
+  | ----------
+9 | homepage.workspace = true
+  | ^^^^^^^^
+  |
+  = note: `cargo::redundant_homepage` is set to `warn` by default
+help: consider removing `package.homepage`
+warning: `active` (manifest) generated 1 warning
+warning: `package.homepage` is redundant with `package.repository`
+ --> active-wasm\Cargo.toml:9:1
+  |
+8 | repository.workspace = true
+  | ----------
+9 | homepage.workspace = true
+  | ^^^^^^^^
+  |
+  = note: `cargo::redundant_homepage` is set to `warn` by default
+help: consider removing `package.homepage`
+warning: `active-wasm` (manifest) generated 1 warning
+warning: `package.homepage` is redundant with `package.repository`
+ --> active-fmt\Cargo.toml:9:1
+  |
+8 | repository.workspace = true
+  | ----------
+9 | homepage.workspace = true
+  | ^^^^^^^^
+  |
+  = note: `cargo::redundant_homepage` is set to `warn` by default
+help: consider removing `package.homepage`
+warning: `active-fmt` (manifest) generated 1 warning
+warning: `package.homepage` is redundant with `package.repository`
+ --> active-core\Cargo.toml:9:1
+  |
+8 | repository.workspace = true
+  | ----------
+9 | homepage.workspace = true
+  | ^^^^^^^^
+  |
+  = note: `cargo::redundant_homepage` is set to `warn` by default
+help: consider removing `package.homepage`
+warning: `active-core` (manifest) generated 1 warning
+warning: `package.homepage` is redundant with `package.repository`
+  --> active-infinity\Cargo.toml:11:1
+   |
+10 | repository.workspace = true
+   | ----------
+11 | homepage.workspace = true
+   | ^^^^^^^^
+   |
+   = note: `cargo::redundant_homepage` is set to `warn` by default
+help: consider removing `package.homepage`
+warning: `active-infinity` (manifest) generated 1 warning
+warning: `package.homepage` is redundant with `package.repository`
+ --> active-ffi\Cargo.toml:9:1
+  |
+8 | repository.workspace = true
+  | ----------
+9 | homepage.workspace = true
+  | ^^^^^^^^
+  |
+  = note: `cargo::redundant_homepage` is set to `warn` by default
+help: consider removing `package.homepage`
+warning: `active-ffi` (manifest) generated 1 warning
+warning: `package.homepage` is redundant with `package.repository`
+ --> active-lsp\Cargo.toml:9:1
+  |
+8 | repository.workspace = true
+  | ----------
+9 | homepage.workspace = true
+  | ^^^^^^^^
+  |
+  = note: `cargo::redundant_homepage` is set to `warn` by default
+help: consider removing `package.homepage`
+warning: `active-lsp` (manifest) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.27s
+     Running unittests src\lib.rs (target\miri\x86_64-pc-windows-msvc\debug\build\active-core/b3801e0d02b767b2\out\active_core-b3801e0d02b767b2.exe)
+
+running 3 tests
+test trace::tests::trace_carries_codes_never_values ... ok
+test trace::tests::trace_event_shape_is_closed ... ok
+test trace::tests::trace_is_off_by_default ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 2.98s
+
+warning: unused field `description` in `workspace.package`
+  --> Cargo.toml:23:1
+   |
+23 | description = "Active - Symmetric, Overlay-ready, Loop-proof, Intent-driven, Deterministic configuration language"
+   | ^^^^^^^^^^^
+   |
+   = note: `cargo::unused_workspace_package_fields` is set to `warn` by default
+help: consider removing the field `workspace.package.description`
+warning: workspace (manifest) generated 1 warning
+warning: `package.homepage` is redundant with `package.repository`
+ --> active-cli\Cargo.toml:9:1
+  |
+8 | repository.workspace = true
+  | ----------
+9 | homepage.workspace = true
+  | ^^^^^^^^
+  |
+  = note: `cargo::redundant_homepage` is set to `warn` by default
+help: consider removing `package.homepage`
+warning: `active-cli` (manifest) generated 1 warning
+warning: `package.homepage` is redundant with `package.repository`
+ --> active\Cargo.toml:9:1
+  |
+8 | repository.workspace = true
+  | ----------
+9 | homepage.workspace = true
+  | ^^^^^^^^
+  |
+  = note: `cargo::redundant_homepage` is set to `warn` by default
+help: consider removing `package.homepage`
+warning: `active` (manifest) generated 1 warning
+warning: `package.homepage` is redundant with `package.repository`
+ --> active-wasm\Cargo.toml:9:1
+  |
+8 | repository.workspace = true
+  | ----------
+9 | homepage.workspace = true
+  | ^^^^^^^^
+  |
+  = note: `cargo::redundant_homepage` is set to `warn` by default
+help: consider removing `package.homepage`
+warning: `active-wasm` (manifest) generated 1 warning
+warning: `package.homepage` is redundant with `package.repository`
+ --> active-fmt\Cargo.toml:9:1
+  |
+8 | repository.workspace = true
+  | ----------
+9 | homepage.workspace = true
+  | ^^^^^^^^
+  |
+  = note: `cargo::redundant_homepage` is set to `warn` by default
+help: consider removing `package.homepage`
+warning: `active-fmt` (manifest) generated 1 warning
+warning: `package.homepage` is redundant with `package.repository`
+ --> active-core\Cargo.toml:9:1
+  |
+8 | repository.workspace = true
+  | ----------
+9 | homepage.workspace = true
+  | ^^^^^^^^
+  |
+  = note: `cargo::redundant_homepage` is set to `warn` by default
+help: consider removing `package.homepage`
+warning: `active-core` (manifest) generated 1 warning
+warning: `package.homepage` is redundant with `package.repository`
+  --> active-infinity\Cargo.toml:11:1
+   |
+10 | repository.workspace = true
+   | ----------
+11 | homepage.workspace = true
+   | ^^^^^^^^
+   |
+   = note: `cargo::redundant_homepage` is set to `warn` by default
+help: consider removing `package.homepage`
+warning: `active-infinity` (manifest) generated 1 warning
+warning: `package.homepage` is redundant with `package.repository`
+ --> active-ffi\Cargo.toml:9:1
+  |
+8 | repository.workspace = true
+  | ----------
+9 | homepage.workspace = true
+  | ^^^^^^^^
+  |
+  = note: `cargo::redundant_homepage` is set to `warn` by default
+help: consider removing `package.homepage`
+warning: `active-ffi` (manifest) generated 1 warning
+warning: `package.homepage` is redundant with `package.repository`
+ --> active-lsp\Cargo.toml:9:1
+  |
+8 | repository.workspace = true
+  | ----------
+9 | homepage.workspace = true
+  | ^^^^^^^^
+  |
+  = note: `cargo::redundant_homepage` is set to `warn` by default
+help: consider removing `package.homepage`
+warning: `active-lsp` (manifest) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.29s
+     Running unittests src\lib.rs (target\miri\x86_64-pc-windows-msvc\debug\build\active-core/b3801e0d02b767b2\out\active_core-b3801e0d02b767b2.exe)
+
+running 3 tests
+test blob::tests::canonical_digest_is_pinned ... ok
+test blob::tests::canonical_layout_matches_spec_hex ... ok
+test blob::tests::media_type_changes_identity ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 1.16s
+

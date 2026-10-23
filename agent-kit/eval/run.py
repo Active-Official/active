@@ -49,6 +49,10 @@ TASKS = [
     ("blob-clean.active", True),
     ("repair-multistep.active", True),
     ("mode-data.active", True),
+    # PE vector: two independent cones, clean on first check. The
+    # reference loops prove convergence; the partial-eval cone check
+    # below proves `--path` selection agrees with the full eval.
+    ("partial-cone.active", True),
 ]
 
 LOOPS = [
@@ -177,6 +181,65 @@ def main() -> int:
         if failed:
             report["ok"] = False
         report["loops"][name] = entry
+    # PE cone agreement (Phase PE): `eval --path app.port` on the PE
+    # vector must equal the same subcone of the full eval. Runs once
+    # (not per loop) because it exercises the core CLI path directly.
+    try:
+        full = subprocess.run(
+            [
+                "cargo",
+                "run",
+                "-q",
+                "-p",
+                "active-cli",
+                "--",
+                "eval",
+                str(VECTORS / "partial-cone.active"),
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=300,
+        )
+        cone = subprocess.run(
+            [
+                "cargo",
+                "run",
+                "-q",
+                "-p",
+                "active-cli",
+                "--",
+                "eval",
+                str(VECTORS / "partial-cone.active"),
+                "--path",
+                "app.port",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=300,
+        )
+        cone_value = cone.stdout.strip()
+        try:
+            full_doc = json.loads(full.stdout)
+            full_port = full_doc.get("app", {}).get("port")
+        except (json.JSONDecodeError, AttributeError):
+            full_port = None
+        pe_ok = (
+            full.returncode == 0
+            and cone.returncode == 0
+            and cone_value == "8080"
+            and full_port == 8080
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pe_ok = False
+    report["partial_eval_cone_agreement"] = pe_ok
+    if not pe_ok:
+        report["ok"] = False
     text = json.dumps(report, indent=2)
     print(text)
     if out:

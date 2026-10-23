@@ -13,7 +13,7 @@ constraints, and prefer patches over whole-file rewrites.
   answers, immutable refusal).
 - `v1/system-explainer.md`: answer language questions with exact
   diagnostic codes.
-- `tasks/`: the fixed validation suite (`t1`-`t10`, TOML:
+- `tasks/`: the fixed validation suite (`t1`-`t14`, TOML:
   system, user, optional document, machine-readable checks).
 - `runner/validate.py`: first-attempt harness (no retries):
   sends each task to each backend, extracts the fenced document,
@@ -33,6 +33,22 @@ Backends used here are local and free; the model is disclosed in
 each results file. A third-party hosted framework needs API keys
 absent from this machine. That limitation is recorded, not
 hidden. Re-run with `python3 prompts/runner/validate.py`.
+
+## Measured baselines
+
+- `results/round-master-full.json` (pack 1.1.0, tasks `t1`-`t13`,
+  model `muse-spark-1.3-contributor` on both backends): copilot
+  13/13 first-attempt (100%), direct 11/13 (85%). Both clear the
+  ≥80% bar; the direct-backend misses are recorded verbatim in
+  the results file for audit.
+- `results/round-master-t14.json` (pack 1.1.0, tasks `t1`-`t14`,
+  model `muse-spark-1.3-contributor` on both backends): copilot
+  14/14 first-attempt (100%), direct 12/14 (86%). New task `t14`
+  (partial-eval cones) passes on both backends.
+- Tasks `t11` (blob), `t12` (typo-fill repair), `t13` (Data Mode),
+  and `t14` (partial-eval cones) cover the Master Program
+  additions (CA, R, M, PE); every new code family and construct
+  ships with a prompt-pack task.
 
 ## Evidence policy
 

@@ -112,10 +112,12 @@ fn still_fails(text: &str, target_code: &str) -> bool {
 }
 
 /// Minimal-failing-case export: the reduced source plus the metadata a
-/// regression needs (target code, attempts, sizes). Callers add the
-/// budget/profile/mode context they ran under.
+/// regression needs (target code, attempts, sizes). Authored
+/// `secret("…")` literals are redacted in the exported text: the bundle
+/// is display data, never a secret carrier.
 pub fn minimal_case(source: &str, target_code: &str, max_attempts: usize) -> JsonValue {
     let (reduced, attempts) = reduce(source, target_code, max_attempts);
+    let reduced = redact_secret_literals(&reduced);
     json!({
         "target_code": target_code,
         "attempts": attempts,
@@ -123,6 +125,57 @@ pub fn minimal_case(source: &str, target_code: &str, max_attempts: usize) -> Jso
         "reduced_bytes": reduced.len(),
         "reduced": reduced,
     })
+}
+
+/// Replace the payload of `secret("…")` / `secret('…')` literals with a
+/// fixed marker, preserving the call shape. `secret.env(NAME)` and
+/// non-literal locators pass through unchanged (names are not material).
+fn redact_secret_literals(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    let mut rest = source;
+    while let Some(position) = rest.find("secret(") {
+        let split = position + "secret(".len();
+        out.push_str(&rest[..split]);
+        let tail = &rest[split..];
+        let trimmed = tail.trim_start();
+        let whitespace = tail.len() - trimmed.len();
+        let Some(quote) = trimmed.chars().next().filter(|c| *c == '"' || *c == '\'') else {
+            rest = tail;
+            continue;
+        };
+        out.push_str(&tail[..whitespace]);
+        out.push(quote);
+        let after = &trimmed[1..];
+        let mut escaped = false;
+        let mut end = None;
+        for (index, ch) in after.char_indices() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == quote {
+                end = Some(index);
+                break;
+            }
+        }
+        match end {
+            Some(index) => {
+                out.push_str("***SECRET***");
+                out.push_str(&after[index..]);
+                rest = &after[index + 1..];
+            }
+            None => {
+                out.push_str(after);
+                rest = "";
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Human rendering of a step trace (values redacted).

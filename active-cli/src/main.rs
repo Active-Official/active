@@ -378,6 +378,9 @@ enum Commands {
         /// Maximum repair plan steps
         #[arg(long, default_value_t = 8)]
         max_steps: usize,
+        /// Allow includes to use absolute paths or escape the directory
+        #[arg(long)]
+        allow_parent_escapes: bool,
         /// Require sibling signatures on includes (C-052)
         #[arg(long)]
         trust_keys: Option<PathBuf>,
@@ -850,9 +853,12 @@ fn run_graph_query(
     key: Option<&str>,
     min_size: u64,
     format: &str,
+    resilient: bool,
+    allow_parent_escapes: bool,
+    trust_keys: &Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    let trust = load_trust(&None)?;
-    let module = parse_input(from, true, false, &trust)?;
+    let trust = load_trust(trust_keys)?;
+    let module = parse_input(from, resilient, allow_parent_escapes, &trust)?;
     let name = from.to_string_lossy().to_string();
     for d in &module.healing {
         report(d, &name);
@@ -1256,7 +1262,25 @@ fn main() -> anyhow::Result<()> {
                 let resolved = sub_from.or(file).ok_or_else(|| {
                     anyhow::anyhow!("graph query needs a file: pass FILE or --from FILE")
                 })?;
-                return run_graph_query(&resolved, &query, key.as_deref(), min_size, &qformat);
+                // Outer flags apply to the query too: honor an outer
+                // --format when the subcommand kept its default, and
+                // pass trust/include/resilience through so the query
+                // path cannot bypass the same gates as `active graph`.
+                let effective_format = if qformat == "text" {
+                    format.clone()
+                } else {
+                    qformat
+                };
+                return run_graph_query(
+                    &resolved,
+                    &query,
+                    key.as_deref(),
+                    min_size,
+                    &effective_format,
+                    resilient,
+                    allow_parent_escapes,
+                    &trust_keys,
+                );
             }
             let file = file.ok_or_else(|| {
                 anyhow::anyhow!("graph needs a FILE (or use `graph query --from FILE`)")
@@ -1626,6 +1650,7 @@ fn main() -> anyhow::Result<()> {
             goal,
             preserve,
             max_steps,
+            allow_parent_escapes,
             trust_keys,
         } => {
             let trust = load_trust(&trust_keys)?;
@@ -1638,6 +1663,11 @@ fn main() -> anyhow::Result<()> {
                 anyhow::bail!("--goal/--preserve/--max-steps only apply to `viz repair`");
             }
             if kind == "repair" {
+                if max_steps > 64 {
+                    anyhow::bail!(
+                        "--max-steps capped at 64 (bounded loop; larger plans split across runs)"
+                    );
+                }
                 let parsed_goal = match goal.as_str() {
                     "validate" => active_core::diag::RepairGoal::Validate,
                     "preserve-key" => {
@@ -1669,11 +1699,18 @@ fn main() -> anyhow::Result<()> {
                     max_steps,
                     &engine,
                     Some(&from),
-                    false,
+                    allow_parent_escapes,
                 );
+                // The plan is display data: strip the source, which can
+                // contain an authored secret literal (spec/viz.md §3).
+                let mut data =
+                    serde_json::to_value(&outcome).map_err(|e| anyhow::anyhow!("{e}"))?;
+                if let Some(object) = data.as_object_mut() {
+                    object.remove("repaired_source");
+                }
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&outcome).map_err(|e| anyhow::anyhow!("{e}"))?
+                    serde_json::to_string_pretty(&data).map_err(|e| anyhow::anyhow!("{e}"))?
                 );
                 return Ok(());
             }
@@ -1918,11 +1955,14 @@ fn main() -> anyhow::Result<()> {
             let mut eng = engine(false, &profile, budget.resolve()?);
             eng.materialise_blobs = false;
             if browser {
-                let model = active_core::convert::repair::browser_model(
+                let model = active_core::convert::repair::browser_model_with(
                     &source,
                     goal_parsed.clone(),
                     &preserve,
                     max_steps,
+                    &eng,
+                    Some(&from),
+                    allow_parent_escapes,
                 );
                 println!(
                     "{}",

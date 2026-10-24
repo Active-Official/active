@@ -1,7 +1,7 @@
 # Visualizer exports (TOOLING §6)
 
-Every emitter returns redacted JSON (`version: 1`). Labels are paths and
-kinds; values render through the canonical redactor.
+Every emitter returns redacted JSON. Taint and budget carry
+`version: 1`; graph and repair are fixed shapes.
 
 ## `active viz <kind> --from <file>`
 
@@ -11,7 +11,7 @@ kinds; values render through the canonical redactor.
 | `taint` | `{version, nodes, edges, sources, export_points}` | `json` |
 | `budget` | `{version, mode, limits, usage, headroom, warnings}` | `json` |
 | `schema` | INSPECT v2 document plus `mode` | `json` |
-| `repair` | `RepairOutcome` (goal, steps, clean/stuck/unrepairable, repaired_source) | `json` |
+| `repair` | `RepairOutcome` without `repaired_source` (goal, steps, clean/stuck/unrepairable, final_codes, findings) | `json` |
 
 ### Taint
 
@@ -30,8 +30,10 @@ for the run. Walls are host-time and appear as limits only.
 
 ### Repair
 
-The plan is produced by the shipped engine (`validate` goal, caller's
-step cap), so `viz repair` and `active repair` agree by construction.
+The plan is produced by the shipped engine with the caller's goal, step
+cap, and file context, so `viz repair` and `active repair` agree by
+construction (including includes). `repaired_source` is omitted: it can
+contain an authored secret literal, and this export is display data.
 
 ## Static viewer
 

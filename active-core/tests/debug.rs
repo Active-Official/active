@@ -128,3 +128,19 @@ fn taint_breakpoint_matches_a_tainted_blob() {
         "tainted blob step missing: {steps:?}"
     );
 }
+
+#[test]
+fn minimal_case_redacts_authored_secret_literals() {
+    let src = "schema = { token = Int }\ntoken = secret(\"hunter2-min\")\nnoise = 1\n";
+    let report = debug::minimal_case(src, "T002", 100);
+    let rendered = report.to_string();
+    assert!(!rendered.contains("hunter2"), "{rendered}");
+    assert!(
+        report["reduced"]
+            .as_str()
+            .unwrap()
+            .contains("secret(\"***SECRET***\")"),
+        "{}",
+        report["reduced"]
+    );
+}

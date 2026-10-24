@@ -31,7 +31,7 @@
     {
       "name": "eval",
       "entry": "active eval <file> [--format json|yaml|toml] [--path a.b[0]] [--materialise-blobs] [--audit-trail FILE] [--resilient] [--profile NAME] [--trace] [--sandbox strict|data|agent|trusted]",
-      "description": "Evaluate a file and print redacted JSON. Secrets always render as ***SECRET***; a raw secret in output is a defect, never data. --path emits only the demanded cone, --materialise-blobs includes blob payloads (refused for tainted blobs), and --audit-trail writes a re-validatable redacted audit document.",
+      "description": "Evaluate a file and print a redacted document (JSON, YAML, or TOML per --format). Secrets always render as ***SECRET***; a raw secret in output is a defect, never data. --path emits only the demanded cone, --materialise-blobs includes blob payloads (refused for tainted blobs), and --audit-trail writes a re-validatable redacted audit document.",
       "input": {
         "file": "path to a .active source file"
       },
@@ -65,7 +65,7 @@
     {
       "name": "graph",
       "entry": "active graph [FILE] [--format text|mermaid|dot|json]; active impact|why <KEY> <FILE> [--format text|json]; active graph [FILE] query --query <dependents-of|dependencies-of|shortest-path|secret-tainted-cone|content-addressed-above-size> [--key KEY] [--min-size N] [--format text|json]",
-      "description": "Query the dependency graph: render it, list what breaks if a key changes, list what a key is built from, or run a named decisive query (dependents-of, dependencies-of, shortest-path, secret-tainted-cone, content-addressed-above-size).",
+      "description": "Query the dependency graph: render it (text/Mermaid/DOT/JSON), list what breaks if a key changes, list what a key is built from, or run a named decisive query. Query results are path lists (or a path pair for shortest-path); values and secrets never appear.",
       "input": {
         "file": "path to a .active source file",
         "key": "optional dotted key"

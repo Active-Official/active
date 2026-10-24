@@ -377,46 +377,72 @@ pub fn browser_model(
     preserve: &[String],
     max_steps: usize,
 ) -> serde_json::Value {
-    let outcome = repair(source, goal, preserve, max_steps);
     let mut engine = Engine::new();
     engine.resilient = false;
-    let diagnostics: Vec<serde_json::Value> = match crate::parse(source, "browser") {
-        Ok(module) => match engine.evaluate(&module) {
-            Ok((_, diags)) => diags
-                .into_iter()
-                .map(|d| {
-                    serde_json::json!({
-                        "code": d.code,
-                        "severity": d.severity,
-                        "message": d.message,
-                        "path": d.path,
-                        "span": d.span,
-                    })
-                })
-                .collect(),
-            Err(crate::eval::EvalError::ValidationFailed { diagnostics }) => diagnostics
-                .into_iter()
-                .map(|d| {
-                    serde_json::json!({
-                        "code": d.code,
-                        "severity": d.severity,
-                        "message": d.message,
-                        "path": d.path,
-                        "span": d.span,
-                    })
-                })
-                .collect(),
-            Err(error) => vec![serde_json::json!({
-                "code": error.code(),
-                "severity": "error",
-                "message": error.to_string(),
-                "path": null,
-                "span": null,
-            })],
+    browser_model_with(source, goal, preserve, max_steps, &engine, None, false)
+}
+
+/// File-aware browser model: the plan runs with the caller's engine and
+/// file context, and diagnostics parse with includes resolved exactly
+/// like `active repair` (so includes cannot make the browser disagree
+/// with the CLI).
+pub fn browser_model_with(
+    source: &str,
+    goal: RepairGoal,
+    preserve: &[String],
+    max_steps: usize,
+    engine: &Engine,
+    file_ctx: Option<&std::path::Path>,
+    allow_parent_escapes: bool,
+) -> serde_json::Value {
+    let outcome = repair_with_engine_and_options(
+        source,
+        goal,
+        preserve,
+        max_steps,
+        engine,
+        file_ctx,
+        allow_parent_escapes,
+    );
+    let parsed = match file_ctx {
+        Some(path) => {
+            let options = crate::ParseOptions {
+                enable_includes: true,
+                allow_parent_escapes,
+                ..Default::default()
+            };
+            crate::parse_text_recovering_with_file(source, &path.to_string_lossy(), options, path)
+        }
+        None => match crate::parse(source, "browser") {
+            Ok(module) => (module, Vec::new()),
+            Err(diags) => return model_with_diagnostics(outcome, diags),
         },
-        Err(diags) => diags
-            .into_iter()
-            .map(|d| {
+    };
+    let (module, parse_diags) = parsed;
+    let mut diagnostics: Vec<serde_json::Value> = parse_diags
+        .into_iter()
+        .map(|d| {
+            serde_json::json!({
+                "code": d.code,
+                "severity": d.severity,
+                "message": d.message,
+                "path": d.path,
+                "span": d.span,
+            })
+        })
+        .collect();
+    match engine.evaluate(&module) {
+        Ok((_, diags)) => diagnostics.extend(diags.into_iter().map(|d| {
+            serde_json::json!({
+                "code": d.code,
+                "severity": d.severity,
+                "message": d.message,
+                "path": d.path,
+                "span": d.span,
+            })
+        })),
+        Err(crate::eval::EvalError::ValidationFailed { diagnostics: ds }) => {
+            diagnostics.extend(ds.into_iter().map(|d| {
                 serde_json::json!({
                     "code": d.code,
                     "severity": d.severity,
@@ -424,12 +450,16 @@ pub fn browser_model(
                     "path": d.path,
                     "span": d.span,
                 })
-            })
-            .collect(),
-    };
-    // The browser model carries the plan and the diagnostics, never
-    // the source text: an authored literal secret lives in the source,
-    // and a model meant for display/logging must not echo it.
+            }))
+        }
+        Err(error) => diagnostics.push(serde_json::json!({
+            "code": error.code(),
+            "severity": "error",
+            "message": error.to_string(),
+            "path": null,
+            "span": null,
+        })),
+    }
     let mut plan = serde_json::to_value(&outcome).unwrap_or(serde_json::Value::Null);
     if let Some(object) = plan.as_object_mut() {
         object.remove("repaired_source");
@@ -438,6 +468,29 @@ pub fn browser_model(
         "diagnostics": diagnostics,
         "plan": plan,
     })
+}
+
+fn model_with_diagnostics(
+    outcome: RepairOutcome,
+    diagnostics: Vec<crate::Diagnostic>,
+) -> serde_json::Value {
+    let rows: Vec<serde_json::Value> = diagnostics
+        .into_iter()
+        .map(|d| {
+            serde_json::json!({
+                "code": d.code,
+                "severity": d.severity,
+                "message": d.message,
+                "path": d.path,
+                "span": d.span,
+            })
+        })
+        .collect();
+    let mut plan = serde_json::to_value(&outcome).unwrap_or(serde_json::Value::Null);
+    if let Some(object) = plan.as_object_mut() {
+        object.remove("repaired_source");
+    }
+    serde_json::json!({"diagnostics": rows, "plan": plan})
 }
 
 /// Apply a selected subset of planned steps to the original source:

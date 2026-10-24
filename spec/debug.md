@@ -69,6 +69,7 @@ step, then the breakpoint verdict.
 
 No step, breakpoint, replay report, or reduction bundle contains raw
 secret material: the value mapping redacts Secret values, locator
-subtrees are replaced structurally, and the reduction path never prints
-values. Regression tests pin both the locator case and the CLI text
-output.
+subtrees are replaced structurally, and `--minimize` rewrites authored
+`secret("…")` literal payloads to `secret("***SECRET***")` in the
+exported source. Regression tests pin the locator case, the
+let/env-backed case, tainted blobs, and the CLI text output.

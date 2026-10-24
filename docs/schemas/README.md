@@ -20,8 +20,10 @@ Rules:
 
 - Additive fields are allowed only when the schema is updated in the
   same change; removing or retyping a field is breaking.
-- Every document carries a `version` where the shape can evolve
-  (`taint`, `budget`, `inspect-value`, `debug` wrapper); `graph` and
-  `lint` are arrays/objects fixed by this contract.
-- Secrets never appear in any of these outputs; the redaction policy is
-  upstream of the shape.
+- `taint`, `budget`, and `inspect-value` carry a `version`; `graph`,
+  `lint`, `repair-plan`, and `debug-steps` are fixed shapes.
+- `repair-plan.json` includes `repaired_source`, which can contain an
+  authored secret literal. Treat that field as sensitive; use
+  `repair --browser` or `viz repair` for display, which omit it.
+- Secrets never appear as material in the redacted fields of these
+  outputs; source text is the one documented exception above.

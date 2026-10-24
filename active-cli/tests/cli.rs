@@ -2244,3 +2244,106 @@ fn nested_active_mode_is_not_a_root_marker() {
     assert_eq!(doc["marker"], false);
     assert_eq!(doc["mode"], "config");
 }
+
+#[test]
+fn viz_repair_omits_source_and_secrets() {
+    let f = fixture(
+        "viz_repair_secret.active",
+        "schema = { token = Int }\ntoken = secret(\"hunter2-viz-repair\")\n",
+    );
+    let out = active()
+        .args(["viz", "repair", "--from"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(out.status.success());
+    let body = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !body.contains("hunter2"),
+        "raw secret in viz repair: {body}"
+    );
+    assert!(!body.contains("repaired_source"), "{body}");
+}
+
+#[test]
+fn graph_query_honors_outer_format_and_trust_gate() {
+    let f = fixture("graph_query_flags.active", "[s]\na = 1\nb = a\n");
+    let json = active()
+        .args(["graph"])
+        .arg(&f)
+        .args([
+            "--format",
+            "json",
+            "query",
+            "--query",
+            "dependents-of",
+            "--key",
+            "s.a",
+        ])
+        .output()
+        .expect("run active");
+    assert!(
+        json.status.success(),
+        "{}",
+        String::from_utf8_lossy(&json.stderr)
+    );
+    let doc: serde_json::Value = serde_json::from_slice(&json.stdout).expect("json output");
+    assert_eq!(doc["query"], "dependents-of");
+
+    let missing = std::env::temp_dir().join("active-missing-trust.toml");
+    let trust = active()
+        .args(["graph"])
+        .arg(&f)
+        .args(["--trust-keys"])
+        .arg(&missing)
+        .args(["query", "--query", "dependents-of", "--key", "s.a"])
+        .output()
+        .expect("run active");
+    assert!(
+        !trust.status.success(),
+        "a missing trust set must fail, not be ignored"
+    );
+}
+
+#[test]
+fn repair_browser_resolves_includes_like_repair() {
+    let dir = std::env::temp_dir().join(format!("active-browser-include-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    std::fs::write(dir.join("inc.active"), "host = \"x\"\n").expect("include");
+    let main = dir.join("main.active");
+    std::fs::write(
+        &main,
+        "include \"inc.active\"\nschema = { port = Int(default = 8080) }\n",
+    )
+    .expect("main");
+
+    let browser = active()
+        .args(["repair", "--from"])
+        .arg(&main)
+        .arg("--browser")
+        .output()
+        .expect("run active");
+    assert!(
+        browser.status.success(),
+        "{}",
+        String::from_utf8_lossy(&browser.stderr)
+    );
+    let model: serde_json::Value = serde_json::from_slice(&browser.stdout).expect("model");
+    assert_eq!(model["plan"]["clean"], true, "{model}");
+    assert!(
+        !model["plan"]["steps"].as_array().expect("steps").is_empty(),
+        "{model}"
+    );
+
+    let repair = active()
+        .args(["repair", "--from"])
+        .arg(&main)
+        .output()
+        .expect("run active");
+    assert!(
+        repair.status.success(),
+        "CLI parity: {}",
+        String::from_utf8_lossy(&repair.stderr)
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}

@@ -64,9 +64,12 @@ Every message constructor was audited for evaluated-value echo:
 - W001–W004: identifier names, profile names, key paths — all
   source-authored, never values.
 - T001: operand kind names only (value-free: no content, no marker).
-- T002–T006: kinds and schema-authored literals only
-  (spec/validation.md §7, spec/annotations.md §6). W005 (default
-  fills) carries the key path only — filled values are never quoted.
+- T002–T005: kinds and schema-authored literals only
+  (spec/validation.md §7). T006 renders the evaluated actual through
+  the structural redactor: a material actual (any kind) becomes the
+  marker, and a string containing a known secret is redacted in
+  place. W005 (default fills) carries the key path only — filled
+  values are never quoted.
 - S001/S002/S003: structural messages, no values. S004 carries no
   positions by design (positions could point at secret data).
 - E019: patch and annotation paths only.

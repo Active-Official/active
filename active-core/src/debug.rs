@@ -278,7 +278,7 @@ fn normalize_secret_gaps(source: &str) -> String {
         if !is_secret_token(tokens, index) {
             continue;
         }
-        let Some(call) = call_opening(tokens, index + 1) else {
+        let Some(call) = call_opening(tokens, index + 1, tokens[index].text == "secret") else {
             continue;
         };
         let probe = call.open;
@@ -342,7 +342,7 @@ fn secret_call_lines(source: &str) -> std::collections::HashSet<u32> {
             continue;
         }
         let start_line = tokens[index].line;
-        let Some(call) = call_opening(tokens, index + 1) else {
+        let Some(call) = call_opening(tokens, index + 1, tokens[index].text == "secret") else {
             index += 1;
             continue;
         };
@@ -436,7 +436,7 @@ fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
         if !is_secret_token(tokens, probe) {
             continue;
         }
-        let Some(call) = call_opening(tokens, probe + 1) else {
+        let Some(call) = call_opening(tokens, probe + 1, tokens[probe].text == "secret") else {
             continue;
         };
         if !call.canonical_env {
@@ -464,7 +464,7 @@ fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
         // The gap was normalized to spaces, so the call opens at the
         // next token; `secret.env("NAME")` is a name (metadata), so its
         // first string is exempt but later arguments are still scanned.
-        let Some(call) = call_opening(tokens, index + 1) else {
+        let Some(call) = call_opening(tokens, index + 1, true) else {
             index += 1;
             continue;
         };
@@ -535,10 +535,14 @@ fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
                     )
                 })
             });
-        // Fail closed: a malformed spelling, or an env call carrying
-        // anything beyond its name, redacts every string literal in the
-        // document except canonical env names.
-        if call.malformed || (skip_first_string && (seen_comma || extra_env_args)) {
+        // Fail closed: a malformed spelling, an env call whose first
+        // argument is not a name, or an env call carrying anything
+        // beyond its name redacts every string literal in the document
+        // except canonical env names.
+        if call.malformed
+            || (skip_first_string && !first_arg_plain)
+            || (skip_first_string && (seen_comma || extra_env_args))
+        {
             for token in tokens {
                 if matches!(
                     token.kind,
@@ -597,7 +601,11 @@ fn is_secret_token(tokens: &[crate::parser::Token], index: usize) -> bool {
     })
 }
 
-fn call_opening(tokens: &[crate::parser::Token], start: usize) -> Option<CallOpen> {
+fn call_opening(
+    tokens: &[crate::parser::Token],
+    start: usize,
+    spelling_ok: bool,
+) -> Option<CallOpen> {
     use crate::parser::TokenKind as K;
     let mut probe = skip_layout(tokens, start);
     let mut dots_before_env = 0usize;
@@ -632,14 +640,15 @@ fn call_opening(tokens: &[crate::parser::Token], start: usize) -> Option<CallOpe
         return None;
     }
     let canonical_env = env && dots_before_env == 1 && dots_after_env == 0 && !ident_run;
-    // Whitespace is not a malformation; stray dots or identifiers
-    // around `env` are. A malformed shape still opens a call (the
-    // parenthesis is there), so callers can protect and fail closed.
+    // Whitespace is not a malformation; stray dots, identifiers around
+    // `env`, or a case-divergent keyword are. A malformed shape still
+    // opens a call (the parenthesis is there), so callers can protect
+    // and fail closed.
     let malformed = if env {
         !canonical_env
     } else {
         dots_before_env != 0 || ident_run
-    };
+    } || !spelling_ok;
     Some(CallOpen {
         open: probe,
         canonical_env,

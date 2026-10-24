@@ -992,10 +992,13 @@ fn fingerprint_one(
             child(media_type)?.hash(&mut hasher);
             child(data)?.hash(&mut hasher);
             // Structural taint is an input to the value: adding a
-            // `secret(data)` elsewhere in the document must not serve a
-            // memoized untainted blob.
+            // `secret(data)` or `secret(media)` elsewhere in the
+            // document must not serve a memoized untainted blob.
             materials
                 .is_some_and(|profile| profile.node_is_secret(*data))
+                .hash(&mut hasher);
+            materials
+                .is_some_and(|profile| profile.node_is_secret(*media_type))
                 .hash(&mut hasher);
         }
         _ => return None,

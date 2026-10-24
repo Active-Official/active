@@ -78,7 +78,7 @@ schema = { logo = Blob, upload = Blob(media_type = "image/png", max_size = 26214
 Blobs evaluate to an identity object; the payload is absent unless explicitly materialised and the blob is untainted:
 
 ```json
-{ "logo": { "$active.blob": { "hash": "blake3:<64-hex>", "size": 5, "media_type": "text/plain" } } }
+{ "logo": { "$active.blob": { "hash": "blake3:<64-hex>", "size": 5, "media_type": "text/plain", "tainted": false } } }
 ```
 
 - Materialisation (`active eval --materialise-blobs`, or `eval --path` demanding the blob cone with the flag) adds `"payload_b64"`: base64 of the payload bytes. Tainted blobs (including a blob whose media type is material) fail the demand with **B003**; blobs without retained payload fail with **B005** — both fail closed rather than silently emitting identity. With `--path`, the demand applies to the emitted cone: undemanded subtrees stay identities and cannot fail the fetch (budgets still guarded the full walk).
@@ -92,7 +92,7 @@ The dependency-pass treats `ContentAddressed` as a leaf of known size (`size` by
 
 The structural taint bit travels with the blob on every export path (JSON identity, materialised JSON, lockfiles, provenance, graph queries, repair plans, audit trail): a tainted blob's identity object carries `"tainted": true`, and its payload is never emitted. A media type that is itself material (for example an `env` lookup used as a secret locator) taints the identity as well, and a tainted identity renders `"media_type": "***SECRET***"`: the identity's media field is never allowed to carry material. Redaction obligations are identical to secrets: any raw tainted byte in any output is a gate failure.
 
-Known limitation (documented, not hidden): the identity hash of a tainted blob is deterministic over the secret bytes, so a low-entropy secret is theoretically subject to an offline dictionary check by anyone who can already see the identity object. Mitigations in force: tainted payloads are never emitted anywhere, hashes never appear in source, and high-entropy secret material (tokens, keys) is not dictionary-enumerable. If a deployment needs identity-hiding for tainted blobs, the extension point is a per-document salt in the canonical bytes (domain `active-blob/v2`) — a deliberate future change, never a silent one.
+Known limitation (documented, not hidden): the identity hash of a tainted blob is deterministic over the secret bytes, so a low-entropy secret is theoretically subject to an offline dictionary check by anyone who can already see the identity object. B002 also reports the payload size (needed to explain `max_size`), a length oracle for a secret-derived payload; schemas that set `max_size` already publish a bound. Mitigations in force: tainted payloads are never emitted anywhere, hashes never appear in source, and high-entropy secret material (tokens, keys) is not dictionary-enumerable. If a deployment needs identity-hiding for tainted blobs, the extension point is a per-document salt in the canonical bytes (domain `active-blob/v2`) — a deliberate future change, never a silent one.
 
 ## 8. Diagnostic family B00x (CA.010)
 

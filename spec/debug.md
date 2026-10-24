@@ -20,7 +20,13 @@ StepEvent { node: u32, path: Option<String>, kind: String,
 - **Locator redaction:** every node inside a `secret(...)` locator
   subtree renders as `"***SECRET***"` with `tainted: true`. A literal
   locator is not Secret-kinded, so this is enforced structurally, not
-  by the value kind.
+  by the value kind. A container keeps its shape and each material
+  leaf (string, number, …) renders the marker.
+- **Transforms run after the walk.** Profile merges, `@patch`
+  directives, and schema-default fills apply to the final tree, so
+  the root step shows the walked document; `eval` shows the
+  post-transform tree. Inspect and hover resolve transform paths
+  explicitly (the structural profile maps them).
 
 Determinism: same source, environment, profile, mode, and budget →
 byte-identical step arrays.

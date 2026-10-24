@@ -29,9 +29,10 @@ pub fn inspect_path(module: &Module, root: &Value, path: &str) -> Result<JsonVal
     // `Value::Secret` marker, so taint is structural. Render with the
     // profile's path map, then sweep authored literals out of any
     // string that embedded one.
-    let mut value = render_cone(&profile, path, cone);
+    let (mut value, marked) = render_cone(&profile, path, cone);
     let redacted = profile.redact_json(&mut value);
-    let tainted = profile.path_is_secret(path) || contains_secret(cone) || redacted || media_secret;
+    let tainted =
+        profile.path_is_secret(path) || contains_secret(cone) || redacted || marked || media_secret;
     // Size of the REDACTED rendering (the bytes a consumer actually
     // receives). Secret payloads therefore report the marker length,
     // never the material's length.
@@ -89,7 +90,9 @@ pub fn inspect_path(module: &Module, root: &Value, path: &str) -> Result<JsonVal
         report["content_addressed"] = json!({
             "hash": format!("blake3:{}", crate::blob::hash_hex(hash)),
             "size": blob_size,
-            "media_type": if media_secret { MARKER } else { media_type },
+            // A tainted identity redacts its media type (spec/blob.md
+            // §5/§7), matching every other export path.
+            "media_type": if *blob_tainted || media_secret { MARKER } else { media_type },
             "tainted": blob_tainted,
         });
     }
@@ -99,30 +102,41 @@ pub fn inspect_path(module: &Module, root: &Value, path: &str) -> Result<JsonVal
 /// Render a selected cone, replacing material leaves with the marker.
 /// Containers keep their shape so non-secret siblings stay visible;
 /// every leaf carries its own path, including array indexes, so the
-/// structural taint set applies at the right granularity.
-fn render_cone(profile: &SecretProfile, path: &str, value: &Value) -> JsonValue {
+/// structural taint set applies at the right granularity. The bool
+/// reports whether anything was marked, so the report's `tainted` flag
+/// never says false on a value that contains markers.
+fn render_cone(profile: &SecretProfile, path: &str, value: &Value) -> (JsonValue, bool) {
     match value {
-        Value::Array(items) => JsonValue::Array(
-            items
+        Value::Array(items) => {
+            let mut marked = false;
+            let rendered = items
                 .iter()
                 .enumerate()
-                .map(|(index, item)| render_cone(profile, &format!("{path}[{index}]"), item))
-                .collect(),
-        ),
+                .map(|(index, item)| {
+                    let (child, hit) = render_cone(profile, &format!("{path}[{index}]"), item);
+                    marked |= hit;
+                    child
+                })
+                .collect();
+            (JsonValue::Array(rendered), marked)
+        }
         Value::Table(map) => {
             let mut out = serde_json::Map::new();
+            let mut marked = false;
             for (key, item) in map {
                 let child = if path.is_empty() {
                     key.clone()
                 } else {
                     format!("{path}.{key}")
                 };
-                out.insert(key.clone(), render_cone(profile, &child, item));
+                let (rendered, hit) = render_cone(profile, &child, item);
+                marked |= hit;
+                out.insert(key.clone(), rendered);
             }
-            JsonValue::Object(out)
+            (JsonValue::Object(out), marked)
         }
-        _ if profile.path_is_secret(path) => JsonValue::String(MARKER.to_string()),
-        _ => crate::convert::value_to_json(value),
+        _ if profile.path_is_secret(path) => (JsonValue::String(MARKER.to_string()), true),
+        _ => (crate::convert::value_to_json(value), false),
     }
 }
 

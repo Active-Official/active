@@ -21,6 +21,23 @@ fn module(src: &str) -> active_core::Module {
     parse(src, "debug").expect("parse")
 }
 
+/// Minimal case with a real file context. Malformed-secret fixtures do
+/// not parse strictly, so the independent target only exists on the
+/// recovering path (`minimal_case` with `file_ctx`).
+fn minimal_with_file(src: &str, code: &str) -> serde_json::Value {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let path = std::env::temp_dir().join(format!(
+        "active-debug-r13-{}-{}.active",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::write(&path, src).expect("write debug fixture");
+    let report = debug::minimal_case_with(src, code, 300, Some(&path));
+    let _ = std::fs::remove_file(&path);
+    report
+}
+
 #[test]
 fn steps_redact_secret_locator_literals() {
     let src = "token = secret(\"hunter2-step\")\nport = 8080\n";
@@ -538,12 +555,12 @@ fn reduction_never_deletes_a_malformed_secret_call() {
         "loc = \"hunter2-KEEP\"\ntoken = secret env(loc)\nbad = 1 + true\n",
         "loc = \"hunter2-KEEP\"\ntoken = secret.env(\"NAME\" default = loc)\nbad = 1 + true\n",
     ] {
-        let (reduced, _) = debug::reduce(src, "T001", 250);
+        let report = minimal_with_file(src, "T001");
+        let reduced = report["reduced"].as_str().unwrap_or("");
         assert!(
             reduced.contains("secret"),
             "secret call was deleted for {src:?}: {reduced:?}"
         );
-        let report = debug::minimal_case(src, "T001", 250);
         assert!(
             !report.to_string().contains("hunter2"),
             "leak for {src:?}: {report}"
@@ -574,6 +591,80 @@ fn reduction_is_case_insensitive_and_protects_dotted_calls() {
         assert!(
             reduced.to_ascii_lowercase().contains("secret"),
             "secret call was deleted for {src:?}: {reduced:?}"
+        );
+    }
+}
+
+#[test]
+fn step_trace_marks_material_leaves_in_let_containers() {
+    let module = parse(
+        "let p = 42\nlet t = { a = p, b = 7 }\nk = secret(p)\n",
+        "debug-let",
+    )
+    .expect("parse");
+    let (_, _, steps) = Engine::new()
+        .evaluate_with_steps(&module)
+        .expect("evaluate");
+    let table = steps
+        .iter()
+        .find(|step| step.path.as_deref() == Some("t"))
+        .expect("t step");
+    assert_eq!(table.value["a"], "***SECRET***", "{:?}", table.value);
+    assert_eq!(table.value["b"], 7, "{:?}", table.value);
+    assert!(table.tainted);
+    let rendered = serde_json::to_string(&steps).expect("json");
+    assert!(
+        !rendered.contains("42"),
+        "let-container material leaked: {rendered}"
+    );
+}
+
+#[test]
+fn step_trace_marks_every_read_of_a_secret_bound_env_var() {
+    use std::collections::HashMap;
+    let mut env = HashMap::new();
+    env.insert("R13SAME".to_string(), "ENVSECRET-same".to_string());
+    let module = parse(
+        "s = env.R13SAME\ny = env.R13SAME\nk = secret(s)\n",
+        "debug-env-alias",
+    )
+    .expect("parse");
+    let (_, _, steps) = Engine::hermetic()
+        .with_env(env)
+        .evaluate_with_steps(&module)
+        .expect("evaluate");
+    let rendered = serde_json::to_string(&steps).expect("json");
+    assert!(
+        !rendered.contains("ENVSECRET"),
+        "an aliased env read leaked: {rendered}"
+    );
+    for path in ["s", "y"] {
+        let step = steps
+            .iter()
+            .find(|step| step.path.as_deref() == Some(path))
+            .unwrap_or_else(|| panic!("{path} step"));
+        assert_eq!(step.value, "***SECRET***", "{path}: {step:?}");
+        assert!(step.tainted, "{path} must be tainted");
+    }
+}
+
+#[test]
+fn reduction_fails_closed_for_bare_case_variants_and_env_calls() {
+    for src in [
+        "loc = \"hunter2-CASE\" + 1\ntoken = Secret(loc)\nbad = 1 + true\n",
+        "loc = \"hunter2-UP\" + 1\ntoken = SECRET(loc)\nbad = 1 + true\n",
+        "loc = \"hunter2-SELF4\" + 1\ntoken = secret.env(f(loc))\nbad = 1 + true\n",
+    ] {
+        let report = minimal_with_file(src, "T001");
+        let rendered = report.to_string();
+        assert!(
+            !rendered.contains("hunter2"),
+            "leak for {src:?}: {rendered}"
+        );
+        let reduced = report["reduced"].as_str().unwrap_or("");
+        assert!(
+            reduced.to_ascii_lowercase().contains("secret"),
+            "call line was deleted for {src:?}: {reduced:?}"
         );
     }
 }

@@ -25,6 +25,44 @@ fn doc_10k() -> String {
     out
 }
 
+#[test]
+fn memo_invalidates_when_a_blob_media_type_becomes_material() {
+    // The media-material bit rides the ContentAddressed fingerprint:
+    // adding `secret(m)` elsewhere must not serve a memoized untainted
+    // blob (the LSP reuses this memo across edits).
+    let mut env = HashMap::new();
+    env.insert("R13MEMO".to_string(), "ENVSECRET-media".to_string());
+    let engine = Engine::hermetic().with_env(env);
+    let first = parse("m = env.R13MEMO\nf = blob(m, \"data\")\n", "memo-blob").expect("parse");
+    let mut memo = IncrementalMemo::default();
+    let (before, _) = engine
+        .evaluate_incremental(&first, &mut memo)
+        .expect("evaluate");
+    let before_json = active_core::convert::value_to_json(&before);
+    assert_eq!(
+        before_json["f"]["$active.blob"]["tainted"], false,
+        "{before_json}"
+    );
+
+    let second = parse(
+        "m = env.R13MEMO\nf = blob(m, \"data\")\nk = secret(m)\n",
+        "memo-blob-tainted",
+    )
+    .expect("parse");
+    let (after, _) = engine
+        .evaluate_incremental(&second, &mut memo)
+        .expect("evaluate");
+    let after_json = active_core::convert::value_to_json(&after);
+    assert_eq!(
+        after_json["f"]["$active.blob"]["tainted"], true,
+        "stale memo served an untainted blob: {after_json}"
+    );
+    assert_eq!(
+        after_json["f"]["$active.blob"]["media_type"], "***SECRET***",
+        "{after_json}"
+    );
+}
+
 fn nested<'v>(value: &'v Value, table: &str, key: &str) -> &'v Value {
     match value {
         Value::Table(map) => match map.get(table) {

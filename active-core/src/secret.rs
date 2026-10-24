@@ -190,6 +190,113 @@ impl SecretRedactor {
     }
 }
 
+/// The media type a consumer may see. A tainted identity redacts its
+/// media type (the wire shape is shared by JSON, YAML, TOML, `Debug`,
+/// and inspect).
+pub fn exposed_media_type(tainted: bool, media_type: &str) -> &str {
+    if tainted {
+        MARKER
+    } else {
+        media_type
+    }
+}
+
+/// Remove one path and everything below it.
+fn remove_subtree(paths: &mut HashMap<String, NodeId>, path: &str) {
+    if path.is_empty() {
+        paths.clear();
+        return;
+    }
+    let dotted = format!("{path}.");
+    let indexed = format!("{path}[");
+    paths.retain(|key, _| key != path && !key.starts_with(&dotted) && !key.starts_with(&indexed));
+}
+
+/// Walk a value subtree from `root` under `base`, registering every
+/// table field, array element, and reference target.
+///
+/// * `overwrite` values replace a mapping at the same path (transforms
+///   win); otherwise the first mapping wins (a table field beats a
+///   `let` binding, exactly like the evaluator).
+/// * `replace_subtree` clears the path's existing descendants first: a
+///   patch `Set` replaces the value wholesale.
+fn walk_paths(
+    module: &Module,
+    root: NodeId,
+    base: &str,
+    paths: &mut HashMap<String, NodeId>,
+    overwrite: bool,
+    replace_subtree: bool,
+) {
+    if replace_subtree {
+        remove_subtree(paths, base);
+    }
+    let mut stack = vec![(root, base.to_string())];
+    let mut seen: HashSet<(NodeId, String)> = HashSet::new();
+    while let Some((id, path)) = stack.pop() {
+        if !seen.insert((id, path.clone())) {
+            continue;
+        }
+        if overwrite {
+            paths.insert(path.clone(), id);
+        } else {
+            paths.entry(path.clone()).or_insert(id);
+        }
+        match module.get(id) {
+            Some(Node::Table { fields }) => {
+                for (key, child) in fields {
+                    let child_path = if path.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{path}.{key}")
+                    };
+                    stack.push((*child, child_path));
+                }
+            }
+            Some(Node::Array { elements }) => {
+                for (index, child) in elements.iter().enumerate() {
+                    stack.push((*child, format!("{path}[{index}]")));
+                }
+            }
+            Some(Node::Ref(target)) => stack.push((*target, path)),
+            _ => {}
+        }
+    }
+}
+
+/// Whether a value is a table after following references (profile
+/// merges recurse into tables; they replace scalars).
+fn is_table_like(module: &Module, id: NodeId) -> bool {
+    let mut current = id;
+    for _ in 0..8 {
+        match module.get(current) {
+            Some(Node::Table { .. }) => return true,
+            Some(Node::Ref(target)) => current = *target,
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// The profile the module selects for itself (`active_profile = "…"`),
+/// following a reference. A server/CLI override is not visible here;
+/// inspecting an overridden profile is documented as over-approximate.
+fn active_profile_name(module: &Module) -> Option<String> {
+    let root = module.root?;
+    let Node::Table { fields } = module.get(root)? else {
+        return None;
+    };
+    let mut id = *fields.get("active_profile")?;
+    for _ in 0..8 {
+        match module.get(id) {
+            Some(Node::Literal(Value::String(name))) => return Some(name.clone()),
+            Some(Node::Ref(target)) => id = *target,
+            _ => return None,
+        }
+    }
+    None
+}
+
 /// Map schema-default paths to their default expression nodes. Runs
 /// after explicit values, so a document value always wins.
 fn collect_default_paths(
@@ -211,7 +318,7 @@ fn collect_default_paths(
         }
         Some(Node::SchemaField { field }) => {
             if let Some(default) = field.default {
-                paths.entry(prefix.to_string()).or_insert(default);
+                walk_paths(module, default, prefix, paths, false, false);
             }
         }
         Some(Node::SchemaArray { element }) => {
@@ -238,6 +345,25 @@ impl SecretProfile {
         for node in &module.arena {
             if let Node::Secret { locator } = node {
                 secret_subtree(module, *locator, &mut nodes);
+            }
+        }
+
+        // A variable that feeds a secret anywhere is secret everywhere
+        // (spec/reproducibility.md §2): every `env` read of the same
+        // name is material, even a later, unrelated-looking one.
+        let mut env_names: HashSet<String> = HashSet::new();
+        for id in &nodes {
+            if let Some(Node::Env { name, .. }) = module.get(*id) {
+                env_names.insert(name.clone());
+            }
+        }
+        if !env_names.is_empty() {
+            for (index, node) in module.arena.iter().enumerate() {
+                if let Node::Env { name, .. } = node {
+                    if env_names.contains(name) {
+                        nodes.insert(NodeId(index as u32));
+                    }
+                }
             }
         }
 
@@ -281,60 +407,40 @@ impl SecretProfile {
         // Paths for every value node reachable from the root: tables,
         // array elements, and references (which keep the referrer's
         // path). The root walk runs FIRST: a table field wins ties
-        // against a `let` binding, exactly like the evaluator.
+        // against a `let` binding, exactly like the evaluator. Binding
+        // subtrees are walked too, so `t.a` inside a `let t = {…}` is
+        // addressable and taint-checkable.
         let mut paths: HashMap<String, NodeId> = HashMap::new();
         if let Some(root) = module.root {
-            let mut stack = vec![(root, String::new())];
-            let mut seen: HashSet<(NodeId, String)> = HashSet::new();
-            while let Some((id, path)) = stack.pop() {
-                if !seen.insert((id, path.clone())) {
-                    continue;
-                }
-                paths.entry(path.clone()).or_insert(id);
-                match module.get(id) {
-                    Some(Node::Table { fields }) => {
-                        for (key, child) in fields {
-                            let child_path = if path.is_empty() {
-                                key.clone()
-                            } else {
-                                format!("{path}.{key}")
-                            };
-                            stack.push((*child, child_path));
-                        }
+            walk_paths(module, root, "", &mut paths, true, false);
+        }
+        for (name, id) in &module.bindings {
+            walk_paths(module, *id, name, &mut paths, false, false);
+        }
+        // Evaluation applies the selected profile first, then patches.
+        // Profile tables merge (their fields override per key); a
+        // profile scalar replaces. Patches `Set` replace the value at
+        // the target path wholesale.
+        if let Some(name) = active_profile_name(module) {
+            if let Some(id) = module.profiles.get(&name) {
+                if let Some(Node::Table { fields }) = module.get(*id) {
+                    for (key, child) in fields {
+                        let merge = is_table_like(module, *child);
+                        walk_paths(module, *child, key, &mut paths, true, !merge);
                     }
-                    Some(Node::Array { elements }) => {
-                        for (index, child) in elements.iter().enumerate() {
-                            stack.push((*child, format!("{path}[{index}]")));
-                        }
-                    }
-                    Some(Node::Ref(target)) => stack.push((*target, path)),
-                    _ => {}
                 }
             }
         }
-        for (name, id) in &module.bindings {
-            paths.entry(name.clone()).or_insert(*id);
-        }
-        // Transforms replace the evaluated tree, so their paths map to
-        // the transform's expression: `@patch("out", p)` and a selected
-        // profile field both carry material into the final document.
         for id in &module.patches {
             if let Some(Node::PatchDirective {
                 op: PatchOp::Set { path, value },
             }) = module.get(*id)
             {
-                paths.insert(path.clone(), *value);
-            }
-        }
-        for id in module.profiles.values() {
-            if let Some(Node::Table { fields }) = module.get(*id) {
-                for (key, child) in fields {
-                    paths.insert(key.clone(), *child);
-                }
+                walk_paths(module, *value, path, &mut paths, true, true);
             }
         }
         // Schema defaults fill absent paths during evaluation; explicit
-        // values (inserted above) win.
+        // values and transforms (inserted above) win.
         if let Some(schema) = module.schema {
             collect_default_paths(module, schema, "", &mut paths);
         }

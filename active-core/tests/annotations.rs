@@ -382,7 +382,7 @@ fn secret_actuals_render_as_secret() {
         assert!(!d.message.contains("s3cr3t"), "{d:?}");
         assert!(!d.message.contains("hunter2"), "{d:?}");
     }
-    assert!(diags[0].message.contains("secret"), "{:?}", diags[0]);
+    assert!(diags[0].message.contains("***SECRET***"), "{:?}", diags[0]);
 }
 
 #[test]

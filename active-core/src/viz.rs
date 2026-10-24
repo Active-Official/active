@@ -4,6 +4,7 @@
 //! through the canonical redactor.
 
 use serde_json::{json, Value as JsonValue};
+use std::collections::HashSet;
 
 use crate::ir::{Module, Value};
 use crate::Budget;
@@ -18,6 +19,7 @@ pub fn taint_data(module: &Module, value: &Value) -> JsonValue {
     // A plain value used as a secret locator is material even without
     // a `Value::Secret` marker; the same profile backs inspect/hover.
     let profile = crate::secret::SecretProfile::analyze(module);
+    let mut emitted: HashSet<String> = HashSet::new();
     walk_taint(value, "", None, &mut |path, node_value, parent| {
         let structural = profile.path_is_secret(path);
         if contains_secret(node_value) || structural {
@@ -30,12 +32,17 @@ pub fn taint_data(module: &Module, value: &Value) -> JsonValue {
                 "kind": kind_name(node_value),
                 "secret": leaf,
             }));
+            emitted.insert(path.to_string());
             if leaf {
                 sources.push(path.to_string());
                 export_points.push(path.to_string());
             }
+            // Edges run between emitted nodes only: a transform can
+            // materialize `out.a` while `out` itself is harmless.
             if let Some(parent) = parent {
-                edges.push(json!({"from": parent, "to": path}));
+                if emitted.contains(parent) {
+                    edges.push(json!({"from": parent, "to": path}));
+                }
             }
         }
     });

@@ -586,8 +586,9 @@ impl std::fmt::Debug for Value {
                 ..
             } => write!(
                 f,
-                "Blob(blake3:{}, size={size}, media={media_type:?}, tainted={tainted})",
-                crate::blob::hash_hex(hash)
+                "Blob(blake3:{}, size={size}, media={:?}, tainted={tainted})",
+                crate::blob::hash_hex(hash),
+                crate::secret::exposed_media_type(*tainted, media_type)
             ),
         }
     }

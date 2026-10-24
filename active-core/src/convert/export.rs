@@ -134,7 +134,9 @@ fn build_toml_value(v: &Value, path: &str, diags: &mut Vec<Diagnostic>) -> Optio
             map.insert("size".to_string(), toml::Value::Integer(*size as i64));
             map.insert(
                 "media_type".to_string(),
-                toml::Value::String(media_type.clone()),
+                toml::Value::String(
+                    crate::secret::exposed_media_type(*tainted, media_type).to_string(),
+                ),
             );
             map.insert("tainted".to_string(), toml::Value::Boolean(*tainted));
             if let Some(bytes) = payload {

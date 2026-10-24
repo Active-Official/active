@@ -182,10 +182,12 @@ fn value_to_toml_literal(v: &Value) -> String {
             hash,
             size,
             media_type,
+            tainted,
             ..
         } => format!(
-            "\"$active.blob(blake3:{}, size={size}, media={media_type})\"",
-            crate::blob::hash_hex(hash)
+            "\"$active.blob(blake3:{}, size={size}, media={})\"",
+            crate::blob::hash_hex(hash),
+            crate::secret::exposed_media_type(*tainted, media_type)
         ),
         Value::Array(arr) => {
             let parts: Vec<String> = arr.iter().map(value_to_toml_literal).collect();

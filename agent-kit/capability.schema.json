@@ -186,6 +186,7 @@
     "codegen-jsonschema",
     "codegen-typescript-zod",
     "codegen-go",
+    "codegen-rust",
     "codegen-python",
     "content-addressed-blobs",
     "multi-step-repair",

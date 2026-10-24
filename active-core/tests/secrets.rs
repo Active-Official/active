@@ -205,6 +205,61 @@ fn blob_media_diagnostics_and_inspection_redact_material() {
 }
 
 #[test]
+fn constraint_diagnostics_redact_non_string_material() {
+    let src = "let x = 4242\nk = secret(x)\n# @constraint: value == 7\nt = x\n";
+    let module = parse(src, "t006-number").expect("must parse");
+    let mut engine = Engine::new();
+    engine.resilient = false;
+    let failure = engine.evaluate(&module).expect_err("constraint fails");
+    let active_core::EvalError::ValidationFailed { diagnostics } = failure else {
+        panic!("expected validation failure, got {failure}");
+    };
+    let t006 = diagnostics
+        .iter()
+        .find(|d| d.code == "T006")
+        .expect("T006 diagnostic");
+    let actual = t006
+        .message
+        .split("actual: ")
+        .nth(1)
+        .unwrap_or_else(|| panic!("no actual value in {}", t006.message))
+        .trim_end_matches(')');
+    assert_eq!(
+        actual, "***SECRET***",
+        "non-string material leaked into T006: {}",
+        t006.message
+    );
+}
+
+#[test]
+fn tainted_blob_media_is_redacted_in_every_export() {
+    use std::collections::HashMap;
+    let src = "m = env.R13BLOB\nk = secret(m)\nf = blob(m, \"data\")\n";
+    let module = parse(src, "blob-media-exports").expect("must parse");
+    let mut env = HashMap::new();
+    env.insert("R13BLOB".to_string(), "ENVSECRET-media".to_string());
+    let (value, _) = Engine::hermetic()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("evaluate");
+    let json = active_core::convert::value_to_json(&value);
+    // The root also carries the authored `m` value (source-visible);
+    // the blob identity is the publishing surface under test.
+    assert!(!json["f"].to_string().contains("ENVSECRET"), "{json}");
+    let active_core::Value::Table(map) = &value else {
+        panic!("expected a table");
+    };
+    let blob = map.get("f").expect("blob value");
+    let toml = active_core::convert::value_to_toml_string(blob)
+        .expect("toml")
+        .0;
+    assert!(!toml.contains("ENVSECRET"), "{toml}");
+    assert!(toml.contains("***SECRET***"), "{toml}");
+    let debug = format!("{blob:?}");
+    assert!(!debug.contains("ENVSECRET"), "Debug leaked: {debug}");
+}
+
+#[test]
 fn constraint_diagnostics_redact_interpolated_material() {
     // T006 renders the actual value; an interpolation over a secret
     // source is material even though the string has no marker.

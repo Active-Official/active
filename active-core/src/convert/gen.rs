@@ -559,7 +559,7 @@ impl TsGen<'_> {
                 "number".to_string()
             }
             ActiveType::String | ActiveType::Secret => "string".to_string(),
-            ActiveType::Blob => "{ \"$active.blob\": { hash: string; size: number; media_type: string; tainted: boolean } }".to_string(),
+            ActiveType::Blob => "{ \"$active.blob\": { hash: string; size: number; media_type: string; tainted: boolean; payload_b64?: string } }".to_string(),
             ActiveType::Table { .. } => "Record<string, unknown>".to_string(),
             ActiveType::Enum(members) => members
                 .iter()
@@ -664,7 +664,7 @@ impl TsGen<'_> {
             ActiveType::Float => "z.number()".to_string(),
             ActiveType::Duration | ActiveType::Bytes => "z.number().int()".to_string(),
             ActiveType::Secret => "z.string()".to_string(),
-            ActiveType::Blob => "z.object({ \"$active.blob\": z.object({ hash: z.string(), size: z.number(), media_type: z.string(), tainted: z.boolean() }) })".to_string(),
+            ActiveType::Blob => "z.object({ \"$active.blob\": z.object({ hash: z.string(), size: z.number(), media_type: z.string(), tainted: z.boolean(), payload_b64: z.string().optional() }) })".to_string(),
             ActiveType::Table { .. } => "z.record(z.string(), z.unknown())".to_string(),
             ActiveType::Any => "z.unknown()".to_string(),
             ActiveType::Enum(members) => {
@@ -809,6 +809,13 @@ pub fn schema_to_go(module: &Module, root_name: &str) -> Result<String, String> 
                 "Tainted".to_string(),
                 "bool".to_string(),
                 "`json:\"tainted\"`".to_string(),
+            ),
+            (
+                // Present only on an explicitly materialised,
+                // untainted blob (spec/blob.md §5).
+                "PayloadB64".to_string(),
+                "string".to_string(),
+                "`json:\"payload_b64,omitempty\"`".to_string(),
             ),
         ];
         flush_go_run(&mut run, &mut gen.out);
@@ -1122,7 +1129,7 @@ pub fn schema_to_rust(module: &Module, root_name: &str) -> Result<String, String
         // renames its single field to that key. The inner identity
         // type stays payload-free.
         gen.out.push_str(
-            "\n#[derive(Debug, Clone, Serialize, Deserialize)]\npub struct ActiveBlob {\n    #[serde(rename = \"$active.blob\")]\n    pub active_blob: ActiveBlobValue,\n}\n\n#[derive(Debug, Clone, Serialize, Deserialize)]\npub struct ActiveBlobValue {\n    pub hash: String,\n    pub size: u64,\n    pub media_type: String,\n    pub tainted: bool,\n}\n",
+            "\n#[derive(Debug, Clone, Serialize, Deserialize)]\npub struct ActiveBlob {\n    #[serde(rename = \"$active.blob\")]\n    pub active_blob: ActiveBlobValue,\n}\n\n#[derive(Debug, Clone, Serialize, Deserialize)]\npub struct ActiveBlobValue {\n    pub hash: String,\n    pub size: u64,\n    pub media_type: String,\n    pub tainted: bool,\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub payload_b64: Option<String>,\n}\n",
         );
     }
     Ok(gen.out)
@@ -1331,7 +1338,7 @@ pub fn schema_to_python(module: &Module, root_name: &str) -> Result<String, Stri
     // The wrapper comes FIRST: annotations resolve at class creation.
     if has_blob {
         gen.out.push_str(
-            "ActiveBlobValue = TypedDict(\"ActiveBlobValue\", {\"hash\": str, \"size\": int, \"media_type\": str, \"tainted\": bool})\nActiveBlob = TypedDict(\"ActiveBlob\", {\"$active.blob\": ActiveBlobValue})\n\n\n",
+            "ActiveBlobValue = TypedDict(\"ActiveBlobValue\", {\"hash\": str, \"size\": int, \"media_type\": str, \"tainted\": bool, \"payload_b64\": NotRequired[str]})\nActiveBlob = TypedDict(\"ActiveBlob\", {\"$active.blob\": ActiveBlobValue})\n\n\n",
         );
     }
     gen.emit_table(&root_name, root);

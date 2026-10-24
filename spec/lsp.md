@@ -146,7 +146,9 @@ from comments or string contents.
   binding's expression, its type (`: Int`); durations and
   quantities append the normalized form (`: Duration = 5000 ms`,
   `: Int = 5242880 MiB` — byte quantities evaluate to integers,
-  so the unit reads from the source Quantity node). Positions come
+  so the unit reads from the source Quantity node). A material node
+  (a value used as a secret locator, or built from one) hints its
+  kind only: the normalized value is withheld. Positions come
   from value/expression span ends (same-document nodes only).
   Types prefer the schema type at the path, else the evaluated
   value kind; `let` hints use the binding expression's static kind
@@ -221,11 +223,12 @@ determinism.
    cap) with the buffer's own file context, so an included schema
    plans the same repair `active repair` does. When the plan contains
    at least one safe step, offer the repaired source as one document
-   edit. The action and `active repair` share the engine, so their
-   plans cannot drift. Include declarations and keys are never copied
-   into the buffer; a repair may write a value derived from an
-   included schema (for example its default), exactly as
-   `active repair` does.
+   edit. The action and `active repair` share the planner, so their
+   plans cannot drift; the server runs it hermetically, so
+   ambient-environment-dependent inputs are absent there. Include
+   declarations and keys are never copied into the buffer; a repair
+   may write a value derived from an included schema (for example its
+   default), exactly as `active repair` does.
 
 ## 5.1 Formatting
 

@@ -152,9 +152,10 @@ impl Engine {
             overlay_values(module, root, result, &mut overlay);
         }
         let mut local: Vec<Diagnostic> = Vec::new();
-        // Material strings are only needed when a constraint actually
-        // fails, so the analysis is lazy (the common case pays nothing).
-        let mut material: Option<crate::secret::SecretRedactor> = None;
+        // Material is only needed when a constraint actually fails, so
+        // the analysis is lazy (the common case pays nothing).
+        let mut material: Option<(crate::secret::SecretProfile, crate::secret::SecretRedactor)> =
+            None;
         for (node_id, ann) in items {
             // Wall-clock sampling for long annotation lists.
             if let Some(end) = deadline {
@@ -189,15 +190,27 @@ impl Engine {
             match predicate_value(module, &overlay, values, *expr) {
                 Some(Value::Bool(true)) => {}
                 Some(Value::Bool(false)) => {
-                    let redactor = material
-                        .get_or_insert_with(|| runtime_secret_redactor(module, values));
+                    let (profile, redactor) = material.get_or_insert_with(|| {
+                        let profile = crate::secret::SecretProfile::analyze(module);
+                        let redactor = runtime_secret_redactor(values, &profile);
+                        (profile, redactor)
+                    });
+                    // A material actual of any kind renders the marker;
+                    // a string that merely contains a known secret is
+                    // redacted in place.
+                    let actual = if profile.node_is_secret(node_id)
+                        || profile.path_is_secret(&ann.path)
+                    {
+                        crate::secret::MARKER.to_string()
+                    } else {
+                        render_constrained(value, redactor)
+                    };
                     local.push(Diagnostic {
                         severity: Severity::Error,
                         code: "T006".into(),
                         message: format!(
-                            "constraint violation at '{}': {shown_source} does not hold (actual: {})",
+                            "constraint violation at '{}': {shown_source} does not hold (actual: {actual})",
                             display_path(&ann.path),
-                            render_constrained(value, redactor),
                         ),
                         path: Some(ann.path.clone()),
                         span,
@@ -1753,10 +1766,9 @@ fn subtree_has_secret(module: &Module, expr: NodeId) -> bool {
 /// environment lookup is not visible in the module, so its value must
 /// come from the walk).
 fn runtime_secret_redactor(
-    module: &Module,
     values: &HashMap<NodeId, Value>,
+    profile: &crate::secret::SecretProfile,
 ) -> crate::secret::SecretRedactor {
-    let profile = crate::secret::SecretProfile::analyze(module);
     let mut redactor = profile.literals().clone();
     for (id, value) in values {
         if profile.node_is_secret(*id) {

@@ -469,7 +469,8 @@ assert set(_mod.ActiveBlob.__annotations__) == set(blob_doc["logo"]), (
     _mod.ActiveBlob.__annotations__
 )
 assert _mod.ActiveBlob.__annotations__["$active.blob"] is _mod.ActiveBlobValue
-assert set(_mod.ActiveBlobValue.__annotations__) == set(blob_inner)
+assert set(blob_inner) <= set(_mod.ActiveBlobValue.__annotations__)
+assert set(_mod.ActiveBlobValue.__annotations__) - set(blob_inner) == {"payload_b64"}
 results.append(
     "blob: evaluated document decodes in jsonschema/ts/go/rust/python (wire wrapper)"
 )

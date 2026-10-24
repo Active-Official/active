@@ -93,6 +93,25 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
 - **LSP hermeticity.** Non-file buffers never read the working
   directory for includes; the repair action's ambient-environment
   isolation is regression-tested.
+- **Structural model completion.** Inspect maps nested transform
+  subtrees (a patch table, a nested profile table) and applies
+  profiles before patches, matching evaluation order; inactive
+  profiles no longer taint. Every `env` read of a secret-bound name
+  is material (the lockfile rule, now shared). `let`-bound containers
+  keep addressable paths, so step traces and inlay hints mark their
+  material leaves. A container report is `tainted: true` whenever a
+  child was marked, and viz emits containment edges only between
+  emitted nodes.
+- **Reduction spellings.** Bare case variants (`Secret(`/`SECRET(`)
+  and an env call whose first argument is not a name
+  (`secret.env(f(loc))`) are protected and fail closed.
+- **Diagnostics.** T006 marks a material actual of any kind; B004
+  echoes only the schema-authored expectation.
+- **Blob exports.** JSON, YAML, TOML, `Debug`, and inspect share one
+  tainted-media rule. The incremental memo hashes media material as
+  well as data material, so an LSP edit cannot serve a stale
+  untainted identity. Codegen models the optional `payload_b64` on
+  every target, and the capability descriptor lists `codegen-rust`.
 
 ### SOLID → Active rename
 

@@ -328,6 +328,100 @@ fn inspect_provenance_keeps_real_node_prefixed_keys() {
 }
 
 #[test]
+fn inspect_taint_model_covers_nested_transforms_and_precedence() {
+    fn check(src: &str, var: &str, value: &str, path: &str) {
+        let module = active_core::parse(src, "inspect-nested").expect("parse");
+        let mut env = std::collections::HashMap::new();
+        env.insert(var.to_string(), value.to_string());
+        let (evaluated, _) = active_core::Engine::hermetic()
+            .with_env(env)
+            .evaluate(&module)
+            .expect("evaluate");
+        let report =
+            active_core::convert::inspect_path(&module, &evaluated, path).expect("inspect");
+        assert_eq!(report["tainted"], true, "{src} path {path}: {report}");
+        assert!(!report.to_string().contains(value), "{src}: {report}");
+    }
+    // A patch value that is a table: the subtree is addressable.
+    check(
+        "let p = env.R13P\nk = secret(p)\n@patch(\"out\", { a = p })\nout = { a = \"orig\" }\n",
+        "R13P",
+        "ENVSECRET-patch-table",
+        "out.a",
+    );
+    check(
+        "let p = env.R13N\nk = secret(p)\n@patch(\"newblock\", { a = p })\n",
+        "R13N",
+        "ENVSECRET-newblock",
+        "newblock.a",
+    );
+    // A profile nested table.
+    check(
+        "let p = env.R13PR\nk = secret(p)\nactive_profile = \"prod\"\nprofile \"prod\" { server { extra = p } }\nserver = { extra = \"orig\" }\n",
+        "R13PR",
+        "ENVSECRET-profile-nested",
+        "server.extra",
+    );
+    // Patches apply after profiles, so the patch value wins.
+    check(
+        "let p = env.R13PX\nk = secret(p)\nactive_profile = \"prod\"\nprofile \"prod\" { x = \"benign\" }\n@patch(\"x\", p)\nx = \"orig\"\n",
+        "R13PX",
+        "ENVSECRET-patch-wins",
+        "x",
+    );
+}
+
+#[test]
+fn inspect_does_not_taint_from_an_inactive_profile() {
+    let src = "let p = env.R13DEV\nk = secret(p)\nactive_profile = \"dev\"\nprofile \"dev\" { y = \"ok\" }\nprofile \"prod\" { x = p }\nx = \"benign2\"\n";
+    let module = active_core::parse(src, "inspect-profile").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("R13DEV".to_string(), "ENVSECRET-dev".to_string());
+    let (evaluated, _) = active_core::Engine::hermetic()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("evaluate");
+    let report = active_core::convert::inspect_path(&module, &evaluated, "x").expect("inspect");
+    assert_eq!(report["tainted"], false, "{report}");
+    assert_eq!(report["value"], "benign2", "{report}");
+}
+
+#[test]
+fn inspect_container_flag_reflects_marked_children() {
+    let src =
+        "let p = env.R13FLAG\nk = secret(p)\n@patch(\"out.a\", p)\nout = { a = \"orig\", b = 2 }\n";
+    let module = active_core::parse(src, "inspect-flag").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("R13FLAG".to_string(), "ENVSECRET-flag".to_string());
+    let (evaluated, _) = active_core::Engine::hermetic()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("evaluate");
+    let report = active_core::convert::inspect_path(&module, &evaluated, "out").expect("inspect");
+    assert_eq!(report["tainted"], true, "{report}");
+    assert_eq!(report["value"]["a"], "***SECRET***", "{report}");
+    assert_eq!(report["value"]["b"], 2, "{report}");
+}
+
+#[test]
+fn inspect_redacts_the_media_of_a_data_tainted_blob() {
+    let src = "p = env.R13BLOB\nk = secret(p)\nf = blob(\"text/plain\", p)\n";
+    let module = active_core::parse(src, "inspect-blob-data").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("R13BLOB".to_string(), "ENVSECRET-blob".to_string());
+    let (evaluated, _) = active_core::Engine::hermetic()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("evaluate");
+    let report = active_core::convert::inspect_path(&module, &evaluated, "f").expect("inspect");
+    assert_eq!(report["tainted"], true, "{report}");
+    assert_eq!(
+        report["content_addressed"]["media_type"], "***SECRET***",
+        "{report}"
+    );
+}
+
+#[test]
 fn inspect_reports_a_tainted_blob_as_tainted() {
     let src = "f = blob(\"text/plain\", secret(\"hunter2-blob\"))\n";
     let module = active_core::parse(src, "inspect-blob").expect("parse");

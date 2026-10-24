@@ -458,25 +458,27 @@ fn blob_codegen_emits_identity_shape_on_all_targets() {
     assert_eq!(schema["properties"]["logo"]["x-active-max-size"], 100);
     let ts = schema_to_typescript(&module, "Cfg").expect("ts");
     assert!(ts.contains("$active.blob"), "{ts}");
-    assert!(!ts.contains("payload"), "{ts}");
+    assert!(ts.contains("payload_b64?: string"), "{ts}");
     let go = schema_to_go(&module, "Cfg").expect("go");
     assert!(go.contains("ActiveBlob"), "{go}");
     assert!(
         go.contains("`json:\"$active.blob\"`") && go.contains("type ActiveBlobValue struct"),
         "go must model the wire wrapper:\n{go}"
     );
-    assert!(!go.contains("payload"), "{go}");
+    assert!(go.contains("`json:\"payload_b64,omitempty\"`"), "{go}");
     let rs = schema_to_rust(&module, "Cfg").expect("rs");
     assert!(
         rs.contains("pub struct ActiveBlob")
             && rs.contains("rename = \"$active.blob\"")
-            && rs.contains("pub struct ActiveBlobValue"),
+            && rs.contains("pub struct ActiveBlobValue")
+            && rs.contains("pub payload_b64: Option<String>"),
         "rust must model the wire wrapper:\n{rs}"
     );
     let py = schema_to_python(&module, "Cfg").expect("py");
     assert!(
         py.contains("ActiveBlob = TypedDict(\"ActiveBlob\", {\"$active.blob\": ActiveBlobValue})")
-            && py.contains("ActiveBlobValue = TypedDict"),
+            && py.contains("ActiveBlobValue = TypedDict")
+            && py.contains("\"payload_b64\": NotRequired[str]"),
         "python must model the wire wrapper:\n{py}"
     );
 }

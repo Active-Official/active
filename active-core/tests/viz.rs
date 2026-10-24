@@ -90,6 +90,32 @@ fn taint_data_includes_plain_locator_sources() {
 }
 
 #[test]
+fn taint_edges_never_dangle_to_unemitted_parents() {
+    use std::collections::HashSet;
+    let src = "let p = env.R13V\nk = secret(p)\n@patch(\"out.a\", p)\nout = { a = \"orig\" }\n";
+    let module = parse(src, "viz-dangling").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("R13V".to_string(), "ENVSECRET-viz".to_string());
+    let (value, _) = Engine::hermetic()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("evaluate");
+    let data = viz::taint_data(&module, &value);
+    let ids: HashSet<String> = data["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .filter_map(|node| node["id"].as_str().map(str::to_string))
+        .collect();
+    for edge in data["edges"].as_array().expect("edges") {
+        let from = edge["from"].as_str().unwrap_or("");
+        let to = edge["to"].as_str().unwrap_or("");
+        assert!(ids.contains(from), "dangling from '{from}': {data}");
+        assert!(ids.contains(to), "dangling to '{to}': {data}");
+    }
+}
+
+#[test]
 fn budget_data_reports_limits_usage_and_headroom() {
     let (module, value, diags) = fixture();
     let budget = Budget::strict();

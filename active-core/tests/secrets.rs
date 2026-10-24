@@ -1098,3 +1098,90 @@ fn profile_replacement_does_not_taint_shared_binding_targets() {
         "benign binding hidden: {json}"
     );
 }
+
+#[test]
+fn binding_shared_env_at_a_material_path_is_withheld_by_provenance() {
+    // F1 (review 29): a profile may name a binding that reads env.LIVE
+    // at a material path. The env value must be withheld even though
+    // the same node is also a benign binding.
+    let src = "let e = env.ACTIVE_R29_LIVE\nlet p = env.ACTIVE_R29_SRC\nk = secret(p)\nn = p\nactive_profile = \"p\"\nprofile \"p\" { n = e }\n";
+    let module = parse(src, "env-binding").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("ACTIVE_R29_LIVE".to_string(), "live-r29".to_string());
+    env.insert("ACTIVE_R29_SRC".to_string(), "source-r29".to_string());
+    let engine = Engine::new().with_env(env.clone());
+    let _ = engine.evaluate(&module).expect("evaluate");
+    let provenance = active_core::provenance::collect_provenance(&module, &env, None, Some("p"))
+        .expect("provenance");
+    let live = provenance
+        .env
+        .iter()
+        .find(|input| input.name == "ACTIVE_R29_LIVE")
+        .expect("live recorded");
+    assert!(live.secret, "env at a material path is secret-bound");
+    assert_eq!(live.value, None, "value withheld");
+}
+
+#[test]
+fn data_node_shared_with_a_profile_value_stays_visible() {
+    // F2 (review 29): a benign data key referenced from a material
+    // profile path is not globally tainted; only the profile path is.
+    let raw = "shared-data-s3cr3t-r29";
+    std::env::set_var("ACTIVE_R29_SHARE", raw);
+    let src = "let s = env.ACTIVE_R29_SHARE\nk = secret(s)\nn = s\ny = \"BENIGN-DATA\"\nactive_profile = \"p\"\nprofile \"p\" { n = y }\n";
+    let module = parse(src, "shared-data").expect("parse");
+    let mut engine = Engine::new();
+    engine.profile_override = Some("p".to_string());
+    let (value, _) = engine.evaluate(&module).expect("evaluate");
+    let profile = active_core::secret::SecretProfile::analyze_with_profile(&module, Some("p"));
+    assert!(profile.path_is_secret("n"));
+    assert!(!profile.path_is_secret("y"), "data node must stay visible");
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(json.contains("BENIGN-DATA"), "benign data hidden: {json}");
+    assert!(!json.contains(raw), "source leaked: {json}");
+}
+
+#[test]
+fn computed_selector_rename_from_an_unselected_profile_does_not_move_taint() {
+    // F3 (review 29): a rename source that only an unselected profile
+    // defines does not exist in the evaluated tree; the destination
+    // keeps its materiality.
+    let raw = "computed-rename-s3cr3t-r29";
+    std::env::set_var("ACTIVE_R29_REN", raw);
+    std::env::set_var("ACTIVE_R29_SEL", "a");
+    let src = "let s = env.ACTIVE_R29_REN\nk = secret(s)\ny = s\nlet x = \"B\"\nsel = env.ACTIVE_R29_SEL\nactive_profile = sel\nprofile \"b\" { x = \"B\" }\n@rename(\"x\", \"y\")\n";
+    let module = parse(src, "computed-rename").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("ACTIVE_R29_REN".to_string(), raw.to_string());
+    env.insert("ACTIVE_R29_SEL".to_string(), "a".to_string());
+    let mut engine = Engine::new().with_env(env);
+    engine.profile_override = None;
+    let (value, _) = engine.evaluate(&module).expect("resilient evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    assert!(profile.path_is_secret("y"));
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(raw), "computed rename leaked: {json}");
+}
+
+#[test]
+fn computed_selector_does_not_suppress_a_material_default_fill() {
+    // F4 (review 29): an unselected profile key must not count as an
+    // export value, or the material default fill is skipped and a
+    // benign binding is published.
+    let raw = "computed-default-s3cr3t-r29";
+    std::env::set_var("ACTIVE_R29_DEF", raw);
+    std::env::set_var("ACTIVE_R29_SEL2", "a");
+    let src = "let s = env.ACTIVE_R29_DEF\nk = secret(s)\nlet z = \"B\"\nschema = { z = String(default = s) }\nsel = env.ACTIVE_R29_SEL2\nactive_profile = sel\nprofile \"b\" { z = \"B\" }\n";
+    let module = parse(src, "computed-default").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("ACTIVE_R29_DEF".to_string(), raw.to_string());
+    env.insert("ACTIVE_R29_SEL2".to_string(), "a".to_string());
+    let (value, _) = Engine::new()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("resilient evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    assert!(profile.path_is_secret("z"), "filled path is material");
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(raw), "default fill leaked: {json}");
+}

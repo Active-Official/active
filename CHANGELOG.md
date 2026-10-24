@@ -215,6 +215,14 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   an absent defaulted key) is material only when its own expression
   is. Inherited paths stay path-based, so marking a replacement no
   longer hides an unrelated binding that shares its literal target.
+- **Traces and provenance honor path taint.** Debug steps render a
+  material profile path with the marker (including internal profile
+  containers), while a benign data node shared with that path stays
+  visible in its own step; `lock` withholds env reads that are only
+  path-tainted. A computed selector's unselected profiles no longer
+  count as export or rename candidates, so a rename cannot clear a
+  destination's taint and an unselected key cannot suppress a material
+  default fill.
 - **Material values never auto-rename.** Resilient H005 skips a source
   path that is structurally material: the taint map follows the source
   path, and moving the value would publish it. The typo degrades to a

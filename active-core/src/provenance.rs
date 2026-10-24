@@ -132,7 +132,9 @@ pub fn collect_provenance(
     let profile_analysis = crate::secret::SecretProfile::analyze_with_profile(module, profile);
     for (index, node) in module.arena.iter().enumerate() {
         if let Node::Env { name, .. } = node {
-            if profile_analysis.node_is_secret(NodeId(index as u32)) {
+            if profile_analysis.node_is_secret(NodeId(index as u32))
+                || profile_analysis.env_is_material(name)
+            {
                 secret.insert(name.clone());
             }
         }

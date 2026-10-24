@@ -1079,7 +1079,7 @@ fn render_step_value(
             }
             serde_json::Value::Object(out)
         }
-        _ if sensitive => marker(),
+        _ if sensitive || path.is_some_and(|path| profile.path_is_secret(path)) => marker(),
         _ => crate::convert::value_to_json(value),
     }
 }
@@ -1683,25 +1683,37 @@ impl Engine {
             }
 
             if let Some(list) = steps.as_deref_mut() {
-                let sensitive = secret_profile
+                let material_path = secret_profile
+                    .as_ref()
+                    .and_then(|profile| profile.material_path_for(node_id));
+                // A profile selection can be material at its path
+                // without the shared node being globally tainted.
+                let node_material = secret_profile
                     .as_ref()
                     .is_some_and(|profile| profile.node_is_secret(node_id));
+                let sensitive = node_material || material_path.is_some();
                 if sensitive {
-                    // The evaluated text of a material scalar (an env
-                    // lookup, a binding) is material too; register it so
-                    // a later container rendering redacts it even though
-                    // the container holds no `Value::Secret`.
+                    // Register the evaluated text of a material scalar
+                    // so a container rendering redacts it. Only
+                    // intrinsically material nodes and env reads do so:
+                    // a benign literal that merely also appears at a
+                    // profile path must stay visible in its own step.
+                    let env_read = matches!(module.get(node_id), Some(Node::Env { .. }));
                     if let Value::String(text) = &value {
-                        sensitive_values.insert(text.clone());
+                        if node_material || env_read {
+                            sensitive_values.insert(text.clone());
+                        }
                     }
                 }
                 // Containers keep their shape (the trace stays useful),
                 // and every material leaf is marked by path: a number
                 // used as a locator is material too.
-                let step_path = step_paths
-                    .as_ref()
-                    .and_then(|paths| paths.get(&node_id))
-                    .cloned();
+                let step_path = material_path.map(str::to_string).or_else(|| {
+                    step_paths
+                        .as_ref()
+                        .and_then(|paths| paths.get(&node_id))
+                        .cloned()
+                });
                 let mut rendered = match secret_profile.as_ref() {
                     Some(profile) => {
                         render_step_value(profile, step_path.as_deref(), &value, sensitive)

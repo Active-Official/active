@@ -709,3 +709,51 @@ fn malformed_secret_punctuation_still_redacts() {
         );
     }
 }
+
+#[test]
+fn steps_redact_a_profile_selected_env_read() {
+    // A profile may place a binding's env read at a material path. The
+    // step at that path (and the internal profile containers) redact
+    // it even though the shared node is not globally marked.
+    let src = "let e = env.R29_TRACE_LIVE\nlet p = env.R29_TRACE_SRC\nk = secret(p)\nn = p\nactive_profile = \"p\"\nprofile \"p\" { n = e }\n";
+    let mut env = std::collections::HashMap::new();
+    env.insert("R29_TRACE_LIVE".to_string(), "trace-live-r29".to_string());
+    env.insert("R29_TRACE_SRC".to_string(), "trace-source-r29".to_string());
+    let (_, _, steps) = Engine::new()
+        .with_env(env)
+        .evaluate_with_steps(&module(src))
+        .expect("evaluate");
+    let rendered = serde_json::to_string(&steps).expect("json");
+    assert!(
+        !rendered.contains("trace-live-r29"),
+        "profile env leaked: {rendered}"
+    );
+    assert!(
+        steps
+            .iter()
+            .any(|step| step.path.as_deref() == Some("n") && step.tainted),
+        "material step marked: {rendered}"
+    );
+}
+
+#[test]
+fn steps_keep_a_shared_benign_data_node_visible() {
+    // The same node used as a benign data value stays visible in its
+    // own step; only the material profile path redacts.
+    let src = "let s = env.R29_TRACE_SRC2\nk = secret(s)\nn = s\ny = \"BENIGN-DATA\"\nactive_profile = \"p\"\nprofile \"p\" { n = y }\n";
+    let mut env = std::collections::HashMap::new();
+    env.insert("R29_TRACE_SRC2".to_string(), "trace-source-r29".to_string());
+    let (_, _, steps) = Engine::new()
+        .with_env(env)
+        .evaluate_with_steps(&module(src))
+        .expect("evaluate");
+    let rendered = serde_json::to_string(&steps).expect("json");
+    assert!(
+        rendered.contains("BENIGN-DATA"),
+        "benign data hidden: {rendered}"
+    );
+    assert!(
+        !rendered.contains("trace-source-r29"),
+        "source leaked: {rendered}"
+    );
+}

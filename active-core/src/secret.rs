@@ -757,6 +757,14 @@ pub struct SecretProfile {
     /// A bound stopped the walk, so unknown paths must fail closed.
     truncated: bool,
     literals: SecretRedactor,
+    /// Environment names whose read sits at a material path (including
+    /// profile-selected values). Provenance withholds these values even
+    /// when the node itself is not globally tainted.
+    material_envs: HashSet<String>,
+    /// A material path for a node that is only path-tainted (a profile
+    /// selection). Step traces use it so a shared benign node stays
+    /// visible in the export while its material step redacts.
+    material_node_paths: HashMap<NodeId, String>,
 }
 
 impl SecretProfile {
@@ -770,6 +778,8 @@ impl SecretProfile {
     pub fn analyze_with_profile(module: &Module, override_profile: Option<&str>) -> Self {
         // Seeds: every node reachable from a `secret(...)` locator.
         let mut nodes: HashSet<NodeId> = HashSet::new();
+        let mut material_envs: HashSet<String> = HashSet::new();
+        let mut material_node_paths: HashMap<NodeId, String> = HashMap::new();
         for node in &module.arena {
             if let Node::Secret { locator } = node {
                 secret_subtree(module, *locator, &mut nodes);
@@ -856,15 +866,6 @@ impl SecretProfile {
         for (name, id) in &module.bindings {
             truncated |= walk_paths(module, *id, name, &mut paths, false, false);
         }
-        // Nodes that exist only because a binding references them. A
-        // profile path inheriting materiality may mark its own node for
-        // traces/provenance, but not a literal shared with a benign
-        // binding (that would hide an unrelated export).
-        let binding_nodes: HashSet<NodeId> = paths
-            .iter()
-            .filter(|(path, _)| !data_paths.contains(*path))
-            .map(|(_, id)| *id)
-            .collect();
         // A schema default may itself be material (an env locator) and
         // a profile may override that path before the fill runs.
         // Collect defaults into a scratch map before materiality is
@@ -987,14 +988,16 @@ impl SecretProfile {
                                 if own {
                                     nodes.insert(*node);
                                     fallback_secret_paths.insert(path.clone());
+                                    material_node_paths.insert(*node, path.clone());
                                 } else if inherited || under {
                                     // Path-inherited materiality stays
-                                    // path-based, plus the node itself
-                                    // for traces/provenance unless a
-                                    // binding shares that exact node.
+                                    // path-based: exports and debug
+                                    // consult the path, so a shared
+                                    // literal is not globally marked.
                                     fallback_secret_paths.insert(path.clone());
-                                    if !binding_nodes.contains(node) {
-                                        nodes.insert(*node);
+                                    material_node_paths.insert(*node, path.clone());
+                                    if let Some(Node::Env { name, .. }) = module.get(*node) {
+                                        material_envs.insert(name.clone());
                                     }
                                 }
                             }
@@ -1025,7 +1028,10 @@ impl SecretProfile {
                                 fallback_secret_paths.insert(key.clone());
                                 continue;
                             }
-                            export_paths.extend(profile_paths.keys().cloned());
+                            // A computed selector is a fail-closed
+                            // union for materiality, but it does not
+                            // prove any one profile ran: profile paths
+                            // are not export/rename candidates.
                             let mut replacement_prefixes: Vec<String> = Vec::new();
                             for (path, node) in &profile_paths {
                                 let path_merge = is_table_like(module, *node)
@@ -1049,12 +1055,14 @@ impl SecretProfile {
                                     .iter()
                                     .any(|prefix| path_under(&path, prefix));
                                 if own || inherited || under {
-                                    // A computed selector is a
-                                    // fail-closed union: any profile
-                                    // could be selected, so both the
-                                    // path and the node are marked.
+                                    material_node_paths.insert(node, path.clone());
                                     fallback_secret_paths.insert(path);
-                                    nodes.insert(node);
+                                    if let Some(Node::Env { name, .. }) = module.get(node) {
+                                        material_envs.insert(name.clone());
+                                    }
+                                    if own {
+                                        nodes.insert(node);
+                                    }
                                 }
                             }
                         }
@@ -1162,17 +1170,42 @@ impl SecretProfile {
             }
         }
 
+        // Environment reads that are material anywhere (node-level
+        // seeds or a path-tainted profile selection) are withheld by
+        // provenance even when their node is shared with a benign read.
+        for (index, node) in module.arena.iter().enumerate() {
+            if let Node::Env { name, .. } = node {
+                if nodes.contains(&NodeId(index as u32)) {
+                    material_envs.insert(name.clone());
+                }
+            }
+        }
         Self {
             nodes,
             paths,
             fallback_secret_paths,
             truncated,
             literals,
+            material_envs,
+            material_node_paths,
         }
     }
 
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
+    }
+
+    /// True when an environment read of this name is material at any
+    /// path, including a profile-selected value that is only
+    /// path-tainted.
+    pub fn env_is_material(&self, name: &str) -> bool {
+        self.material_envs.contains(name)
+    }
+
+    /// The path at which a node is material without being globally
+    /// marked (a profile selection), for step-trace rendering.
+    pub fn material_path_for(&self, id: NodeId) -> Option<&str> {
+        self.material_node_paths.get(&id).map(String::as_str)
     }
 
     /// True when the node's value is secret material or derives from it.

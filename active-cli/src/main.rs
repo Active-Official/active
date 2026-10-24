@@ -747,6 +747,22 @@ fn parse_input(
     })
 }
 
+/// Join a list for a diagnostic, capping untrusted length. A hostile
+/// capability declaration must not become a megabyte error line.
+fn capped_list(items: &[&str]) -> String {
+    const SHOWN: usize = 20;
+    let mut text = items
+        .iter()
+        .take(SHOWN)
+        .copied()
+        .collect::<Vec<_>>()
+        .join(", ");
+    if items.len() > SHOWN {
+        text.push_str(&format!(" (+{} more)", items.len() - SHOWN));
+    }
+    text
+}
+
 /// Negotiation handshake (PROPOSAL §6.3, CHECKLIST CAP.003): verify a
 /// document's declared capabilities against the host's advertised
 /// tools. Anything declared but not offered is refused, fail-closed,
@@ -773,14 +789,23 @@ fn check_declared_against(
         if module.capabilities.is_empty() {
             println!("capabilities ok (none declared)");
         } else {
-            println!("capabilities ok: {}", module.capabilities.join(", "));
+            println!(
+                "capabilities ok: {}",
+                capped_list(
+                    &module
+                        .capabilities
+                        .iter()
+                        .map(String::as_str)
+                        .collect::<Vec<_>>()
+                )
+            );
         }
         let _ = name;
         Ok(())
     } else {
         Err(anyhow::anyhow!(
             "host refuses capabilities: {} (document {name} declares them, this host does not offer them)",
-            refused.join(", ")
+            capped_list(&refused)
         ))
     }
 }
@@ -791,11 +816,65 @@ fn check_declared_against(
 /// values or secrets. Written on success and on validation failure
 /// alike (the outcome field tells them apart); fatal engine errors
 /// return before any value exists, so they carry no audit trail.
+/// Drop retained blob payloads for hashing: the audit result must be
+/// stable across `--materialise-blobs` (identity is the content).
+fn strip_blob_payloads(value: &active_core::Value) -> active_core::Value {
+    use active_core::Value;
+    match value {
+        Value::Blob {
+            hash,
+            size,
+            media_type,
+            tainted,
+            ..
+        } => Value::Blob {
+            hash: *hash,
+            size: *size,
+            media_type: media_type.clone(),
+            tainted: *tainted,
+            payload: None,
+        },
+        Value::Array(items) => Value::Array(items.iter().map(strip_blob_payloads).collect()),
+        Value::Table(map) => Value::Table(
+            map.iter()
+                .map(|(key, item)| (key.clone(), strip_blob_payloads(item)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// Evaluate an in-memory source in the given file context and report
+/// whether it is clean plus its sorted diagnostic codes. Used by partial
+/// repair so the reported verdict describes the applied subset.
+fn source_verdict(engine: &Engine, source: &str, file: &std::path::Path) -> (bool, Vec<String>) {
+    let options = ParseOptions {
+        enable_includes: true,
+        ..Default::default()
+    };
+    let name = file.to_string_lossy();
+    let (module, parse_diags) =
+        active_core::parse_text_recovering_with_file(source, &name, options, file);
+    let mut codes: Vec<String> = parse_diags.iter().map(|d| d.code.clone()).collect();
+    if parse_diags.is_empty() {
+        match engine.evaluate(&module) {
+            Ok((_, diags)) => codes.extend(diags.iter().map(|d| d.code.clone())),
+            Err(e) => codes.push(e.code().to_string()),
+        }
+    }
+    codes.sort();
+    codes.dedup();
+    (codes.is_empty(), codes)
+}
+
+/// Write the audit trail (spec/audit-trail.md): a valid Active document
+/// with stable, value-free fields. `value` is the redacted full tree;
+/// `None` marks a failed evaluation with no result.
 fn write_audit_trail(
     path: &std::path::Path,
     file: &std::path::Path,
     module: &active_core::Module,
-    value: &active_core::Value,
+    value: Option<&active_core::Value>,
     diags: &[active_core::Diagnostic],
     resilient: bool,
 ) -> anyhow::Result<()> {
@@ -823,10 +902,16 @@ fn write_audit_trail(
         .collect::<Vec<_>>()
         .join(", ");
     // Outcome mirrors had_failure exactly: strict fails on any
-    // warning; resilient tolerates warnings but never errors.
+    // warning; resilient tolerates warnings but never errors. A strict
+    // validation failure has no result tree; `result = null` keeps the
+    // audit valid Active.
     let failed = had_failure(diags, resilient);
+    let result = match value {
+        Some(value) => format!("\"{}\"", active_core::provenance::content_hash(value)),
+        None => "null".to_string(),
+    };
     let doc = format!(
-        "audit = {{\n  tool = \"active\",\n  version = {},\n  source = {},\n  mode = \"{}\",\n  nodes = {},\n  diagnostics = [{}],\n  result = \"{}\",\n  outcome = \"{}\"\n}}\n",
+        "audit = {{\n  tool = \"active\",\n  version = {},\n  source = {},\n  mode = \"{}\",\n  nodes = {},\n  diagnostics = [{}],\n  result = {},\n  outcome = \"{}\"\n}}\n",
         quote(env!("CARGO_PKG_VERSION")),
         quote(&file.to_string_lossy()),
         match module.mode {
@@ -835,7 +920,7 @@ fn write_audit_trail(
         },
         module.arena.len(),
         codes_list,
-        active_core::provenance::content_hash(value),
+        result,
         if failed { "failed" } else { "clean" },
     );
     std::fs::write(path, doc).map_err(|e| anyhow::anyhow!("cannot write {}: {e}", path.display()))
@@ -1136,7 +1221,7 @@ fn main() -> anyhow::Result<()> {
                 if !refused.is_empty() {
                     anyhow::bail!(
                         "sandbox '{sandbox}' refuses capabilities: {}",
-                        refused.join(", ")
+                        capped_list(&refused)
                     );
                 }
             }
@@ -1152,6 +1237,21 @@ fn main() -> anyhow::Result<()> {
                 }
                 Err(e) => {
                     dump_trail(trace);
+                    // A strict validation failure still produces an
+                    // audit with outcome "failed" and the collected
+                    // codes; there is no result tree.
+                    if let Some(audit_path) = audit_trail.as_ref() {
+                        if let active_core::EvalError::ValidationFailed { diagnostics } = &e {
+                            write_audit_trail(
+                                audit_path,
+                                &file,
+                                &module,
+                                None,
+                                diagnostics,
+                                resilient,
+                            )?;
+                        }
+                    }
                     report_eval_error(&e, &name);
                     return Err(anyhow::anyhow!("evaluation failed"));
                 }
@@ -1162,28 +1262,39 @@ fn main() -> anyhow::Result<()> {
 
             // Demanded cone selection (PROPOSAL §2.2): project AFTER the
             // full budgeted evaluation, so safety stays whole-document
-            // while agents fetch only what they need. The cone is owned
-            // (cloned out) so downstream borrows stay single-level.
-            // Materialisation demand applies to the cone, not the whole
-            // tree: undemanded tainted blobs cannot fail a cone fetch
-            // (budgets still guarded the full walk).
-            let value = match path.as_deref() {
+            // while agents fetch only what they need. Structural
+            // material is redacted on the FULL tree before projection,
+            // so a cone keeps the document's path-relative taint.
+            // Explicit materialisation demand (spec/blob.md §5) runs
+            // on the RAW cone, before redaction, so a tainted blob
+            // still fails closed (B003) instead of turning into the
+            // marker.
+            let cone_for_demand = match path.as_deref() {
                 Some(p) => active_core::convert::project_path(&value, p)
                     .map_err(|e| anyhow::anyhow!("{e}"))?
                     .clone(),
-                None => value,
+                None => value.clone(),
             };
-
-            // Explicit materialisation demand (spec/blob.md §5): fail
-            // closed on tainted (B003) or payload-less (B005) blobs
-            // inside the emitted cone instead of silently emitting
-            // identity.
             if materialise_blobs {
-                active_core::convert::require_materialised(&value).map_err(|e| {
+                active_core::convert::require_materialised(&cone_for_demand).map_err(|e| {
                     report_eval_error(&e, &name);
                     anyhow::anyhow!("evaluation failed")
                 })?;
             }
+            // Structural material is redacted on the FULL tree, then
+            // projected: the cone is already redacted at document
+            // paths, so it must NOT be re-rooted and redacted again.
+            let profile = active_core::secret::SecretProfile::analyze_with_profile(
+                &module,
+                engine.profile_override.as_deref(),
+            );
+            let full_value = active_core::convert::redact_value(&profile, &value);
+            let value = match path.as_deref() {
+                Some(p) => active_core::convert::project_path(&full_value, p)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?
+                    .clone(),
+                None => full_value.clone(),
+            };
 
             match format.as_str() {
                 "json" => println!("{}", value_to_pretty_json(&value)),
@@ -1203,7 +1314,15 @@ fn main() -> anyhow::Result<()> {
                 other => anyhow::bail!("unsupported format: {}", other),
             }
             if let Some(audit_path) = audit_trail {
-                write_audit_trail(&audit_path, &file, &module, &value, &diags, resilient)?;
+                let audited = strip_blob_payloads(&full_value);
+                write_audit_trail(
+                    &audit_path,
+                    &file,
+                    &module,
+                    Some(&audited),
+                    &diags,
+                    resilient,
+                )?;
             }
             if had_failure(&diags, resilient) {
                 std::process::exit(1);
@@ -1398,13 +1517,20 @@ fn main() -> anyhow::Result<()> {
             for d in &diags {
                 report(d, &name);
             }
+            let profile = active_core::secret::SecretProfile::analyze_with_profile(
+                &module,
+                engine.profile_override.as_deref(),
+            );
             match to.as_str() {
-                "json" => println!("{}", value_to_pretty_json(&value)),
-                "yaml" => match value_to_yaml_string(&value) {
+                "json" => println!(
+                    "{}",
+                    active_core::convert::value_to_pretty_json_with(&profile, &value)
+                ),
+                "yaml" => match active_core::convert::value_to_yaml_string_with(&profile, &value) {
                     Ok(yaml) => println!("{yaml}"),
                     Err(e) => anyhow::bail!("yaml export failed: {e}"),
                 },
-                "toml" => match value_to_toml_string(&value) {
+                "toml" => match active_core::convert::value_to_toml_string_with(&profile, &value) {
                     Ok((toml, export_diags)) => {
                         for d in &export_diags {
                             report(d, &name);
@@ -1977,6 +2103,14 @@ fn main() -> anyhow::Result<()> {
             let mut eng = engine(false, &profile, budget.resolve()?);
             eng.materialise_blobs = false;
             if browser {
+                if apply_step.is_some() || cherry_pick.is_some() || output.is_some() {
+                    anyhow::bail!(
+                        "--browser emits the JSON model and cannot be combined with --apply-step, --cherry-pick, or --output"
+                    );
+                }
+                if format != "text" && format != "json" {
+                    anyhow::bail!("--browser always emits JSON (--format json|text)");
+                }
                 let model = active_core::convert::repair::browser_model_with(
                     &source,
                     goal_parsed.clone(),
@@ -2031,17 +2165,40 @@ fn main() -> anyhow::Result<()> {
             };
             // PreserveKey carries its paths inside the goal for the
             // plan record; the loop itself used the raw list.
+            // A partial apply reports the APPLIED subset: unselected
+            // steps are skipped and the source/hash/verdict describe
+            // the document that was actually written.
+            let mut display = outcome.clone();
+            if partial {
+                let selected: std::collections::HashSet<&str> =
+                    applied_directives.iter().map(String::as_str).collect();
+                display.repaired_source = target_source.clone();
+                for step in &mut display.steps {
+                    if matches!(
+                        step.status,
+                        active_core::convert::repair::StepStatus::Applied
+                    ) && !selected.contains(step.directive.as_str())
+                    {
+                        step.status = active_core::convert::repair::StepStatus::Skipped {
+                            reason: "not selected by --apply-step/--cherry-pick".to_string(),
+                        };
+                    }
+                }
+                let (clean, codes) = source_verdict(&eng, &target_source, &from);
+                display.clean = clean;
+                display.final_codes = codes;
+            }
             match format.as_str() {
                 "json" => println!(
                     "{}",
-                    serde_json::to_string_pretty(&outcome)
+                    serde_json::to_string_pretty(&display)
                         .map_err(|e| anyhow::anyhow!("repair serialize failed: {e}"))?
                 ),
                 "text" => {
-                    if outcome.clean {
+                    if display.clean {
                         println!("repair: clean");
                     }
-                    for step in &outcome.steps {
+                    for step in &display.steps {
                         match &step.status {
                             active_core::convert::repair::StepStatus::Applied => {
                                 println!("applied {} {}", step.kind, step.directive)
@@ -2051,11 +2208,11 @@ fn main() -> anyhow::Result<()> {
                             }
                         }
                     }
-                    for finding in &outcome.findings {
+                    for finding in &display.findings {
                         report(finding, &from.to_string_lossy());
                     }
-                    if !outcome.clean {
-                        println!("repair: not clean ({})", outcome.final_codes.join(", "));
+                    if !display.clean {
+                        println!("repair: not clean ({})", display.final_codes.join(", "));
                     }
                     if partial {
                         println!("selected: {} directives", applied_directives.len());
@@ -2118,7 +2275,11 @@ fn main() -> anyhow::Result<()> {
             for d in &diags {
                 report(d, &filename);
             }
-            let items = collect_items(&module, &value);
+            let profile = active_core::secret::SecretProfile::analyze(&module);
+            let items = collect_items(
+                &module,
+                &active_core::convert::redact_value(&profile, &value),
+            );
             match to.as_str() {
                 "markdown" | "md" => println!("{}", doc_to_markdown(&title, &items)),
                 "html" => println!("{}", doc_to_html(&title, &items)),
@@ -2148,16 +2309,12 @@ fn main() -> anyhow::Result<()> {
             // The effective profile, when one is active: selection
             // changes values, so it joins the provenance (override
             // wins, else the document's own valid selector).
-            let effective = profile.clone().or_else(|| match &value {
-                active_core::Value::Table(map) => match map.get("active_profile") {
-                    Some(active_core::Value::String(name))
-                        if module.profiles.contains_key(name) =>
-                    {
-                        Some(name.clone())
-                    }
-                    _ => None,
-                },
-                _ => None,
+            let effective = profile.clone().or_else(|| {
+                // Read the document's own literal selector BEFORE
+                // patches: a patch must not be able to rename the
+                // provenance profile.
+                active_core::secret::active_profile_name(&module)
+                    .filter(|name| module.profiles.contains_key(name))
             });
             let provenance = active_core::provenance::collect_provenance(
                 &module,
@@ -2172,7 +2329,13 @@ fn main() -> anyhow::Result<()> {
                     env!("CARGO_PKG_VERSION"),
                     active_core::VERSION
                 ),
-                &value,
+                &active_core::convert::redact_value(
+                    &active_core::secret::SecretProfile::analyze_with_profile(
+                        &module,
+                        engine.profile_override.as_deref(),
+                    ),
+                    &value,
+                ),
                 provenance,
             );
             let rendered = manifest.render();

@@ -116,6 +116,46 @@ fn taint_edges_never_dangle_to_unemitted_parents() {
 }
 
 #[test]
+fn budget_size_counts_redacted_strings() {
+    // The byte estimate describes the exported (redacted) document: a
+    // material string reports the marker length, not its own length.
+    let src = "let t = env.R20TOK\nk = secret(t)\nleak = t\n";
+    let module = parse(src, "viz-size").expect("parse");
+    let measure = |value: &str| {
+        let mut env = std::collections::HashMap::new();
+        env.insert("R20TOK".to_string(), value.to_string());
+        let (evaluated, diags) = Engine::hermetic()
+            .with_env(env)
+            .evaluate(&module)
+            .expect("evaluate");
+        let data = viz::budget_data(&module, &evaluated, &Budget::default(), &diags);
+        data["usage"]["value_size"].as_u64().expect("value_size")
+    };
+    assert_eq!(
+        measure("short"),
+        measure("a-much-longer-secret-value"),
+        "the size estimate must not reveal material length"
+    );
+}
+
+#[test]
+fn taint_data_with_profile_honors_an_override() {
+    let src = "n = 4242\nk = secret(n)\nactive_profile = \"a\"\nprofile \"a\" { x = 1 }\nprofile \"b\" { x = n }\nx = 0\n";
+    let module = parse(src, "viz-override").expect("parse");
+    let mut engine = Engine::hermetic();
+    engine.profile_override = Some("b".to_string());
+    let (value, _) = engine.evaluate(&module).expect("evaluate");
+    let sources = viz::taint_data_with_profile(&module, &value, Some("b"))["sources"]
+        .as_array()
+        .expect("sources")
+        .clone();
+    assert!(
+        sources.iter().any(|s| s == "x"),
+        "override material missing: {sources:?}"
+    );
+}
+
+#[test]
 fn budget_data_reports_limits_usage_and_headroom() {
     let (module, value, diags) = fixture();
     let budget = Budget::strict();

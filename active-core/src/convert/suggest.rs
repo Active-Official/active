@@ -146,6 +146,28 @@ fn rename_for(
     ))
 }
 
+/// Single-quoted source form: `${…}` stays literal. Only `\\` and `\'`
+/// are escapes in this form; every other character is verbatim, so
+/// callers must reject control characters first.
+fn escape_single_quoted(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\'' => out.push_str("\\'"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Control characters outside the escape table (`\n`, `\r`, `\t`) have
+/// no faithful Active source form.
+fn has_unrepresentable_control(s: &str) -> bool {
+    s.chars()
+        .any(|c| (c as u32) < 0x20 && !matches!(c, '\n' | '\r' | '\t'))
+}
+
 /// Source-text escaping for directive strings: backslashes first,
 /// then quotes and control characters. Shared by fill values and
 /// rename endpoints so neither can break out of the directive string.
@@ -194,7 +216,19 @@ fn fill_for(module: &Module, d: &Diagnostic) -> Option<(String, String)> {
         // has no one-line source form here and yields no patch by
         // design. Shared escaper with rename endpoints.
         Some(Node::Literal(Value::String(s))) => {
-            format!("\"{}\"", escape_directive_str(s))
+            if has_unrepresentable_control(s) {
+                return None;
+            }
+            if s.contains("${") {
+                // A double-quoted directive would interpolate: single
+                // quotes keep `${…}` literal (spec §2.5).
+                if s.chars().any(|c| (c as u32) < 0x20) {
+                    return None;
+                }
+                format!("'{}'", escape_single_quoted(s))
+            } else {
+                format!("\"{}\"", escape_directive_str(s))
+            }
         }
         Some(Node::Literal(Value::Int(i))) => i.to_string(),
         // Debug formatting preserves the decimal point, so 1.0 never

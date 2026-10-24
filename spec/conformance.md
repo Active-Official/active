@@ -28,6 +28,11 @@ Two suites serve different jobs and must both stay green:
   C ABI, WASM, and binding paths. Its normalization contract is
   `conformance/NORMALIZATION.md`; the differential gate
   (`conformance/harness/diff_vectors.py`) is the strictest proof.
+  The shared manifest predates Blob and mode; those surfaces are
+  pinned by the Rust suites, `agent-kit/vectors/`, and the codegen
+  gate instead, because the pinned external partner suite rejects
+  syntax it does not know until it is re-pinned (documented
+  deviation, not a silent gap).
 
 ### 2.1 Harness contract (what "passing" means)
 
@@ -62,6 +67,9 @@ passes by reproducing it exactly:
   contract (spec/converters.md).
 - Secrets → the exact string `"***SECRET***"` (audited: raw values
   never appear).
+- Blobs → `{"$active.blob": {hash, size, media_type, tainted}}`
+  (spec/blob.md §5); a tainted identity redacts `media_type`, and
+  `payload_b64` appears only under an explicit materialisation.
 - Arrays → JSON arrays in order; null → `null`; booleans as-is.
 
 ### 2.3 Suite versioning

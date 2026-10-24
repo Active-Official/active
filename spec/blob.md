@@ -83,6 +83,7 @@ Blobs evaluate to an identity object; the payload is absent unless explicitly ma
 
 - Materialisation (`active eval --materialise-blobs`, or `eval --path` demanding the blob cone with the flag) adds `"payload_b64"`: base64 of the payload bytes. Tainted blobs (including a blob whose media type is material) fail the demand with **B003**; blobs without retained payload fail with **B005** — both fail closed rather than silently emitting identity. With `--path`, the demand applies to the emitted cone: undemanded subtrees stay identities and cannot fail the fetch (budgets still guarded the full walk).
 - Payload bytes are charged against `max_value_size` / `max_total_value_size` at materialisation time; breach aborts with the standard **X006** (materialisation consumes the existing budgets, it does not bypass them).
+- String interpolation of a blob renders the display form `$active.blob(blake3:<hex>)`; a tainted blob's interpolation is structural material and is redacted on every export path. The form is display-only: consumers read the identity object, not the interpolated string.
 
 ## 6. Budget integration (CA.007)
 

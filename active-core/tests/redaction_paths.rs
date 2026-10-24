@@ -95,6 +95,52 @@ fn tooling_surfaces_redact_derived_material() {
 }
 
 #[test]
+fn structural_material_never_reaches_exports_or_the_content_hash() {
+    use std::collections::HashMap;
+    // A plain env read used as a secret locator, its aliases, a
+    // container, and an interpolation are all material. Exports must
+    // mark them, and the content hash must be stable across the
+    // material value itself.
+    let src = "let t = env.R20SECRET\nk = secret(t)\nleak = t\ntable = { inner = t }\ncomposed = \"pre-${t}\"\n";
+    let module = parse(src, "export-sweep").expect("must parse");
+    let evaluate = |value: &str| {
+        let mut env = HashMap::new();
+        env.insert("R20SECRET".to_string(), value.to_string());
+        Engine::hermetic()
+            .with_env(env)
+            .evaluate(&module)
+            .expect("must evaluate")
+            .0
+    };
+    let first = evaluate("ENVSECRET-export");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    let redacted = active_core::convert::redact_value(&profile, &first);
+    let json = active_core::convert::value_to_json(&redacted);
+    let yaml = active_core::convert::value_to_yaml_string(&redacted).expect("yaml");
+    let toml = active_core::convert::value_to_toml_string(&redacted)
+        .expect("toml")
+        .0;
+    for (label, text) in [("json", json.to_string()), ("yaml", yaml), ("toml", toml)] {
+        assert!(
+            !text.contains("ENVSECRET"),
+            "{label} leaked structural material: {text}"
+        );
+        assert!(
+            text.contains("***SECRET***"),
+            "{label} lost markers: {text}"
+        );
+    }
+    let first_hash = active_core::provenance::content_hash(&redacted);
+    let second = evaluate("OTHER-SECRET-999");
+    let second_redacted = active_core::convert::redact_value(&profile, &second);
+    assert_eq!(
+        first_hash,
+        active_core::provenance::content_hash(&second_redacted),
+        "the content hash must not depend on material values"
+    );
+}
+
+#[test]
 fn formatter_keeps_source_locator_but_value_redacts() {
     // Source fidelity: the formatter reprints what the user wrote,
     // including the secret locator (formatters echo source; `cat`

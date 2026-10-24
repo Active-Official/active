@@ -194,7 +194,12 @@ fn eval_inner(source: &str) -> String {
     let engine = Engine::hermetic();
     match engine.evaluate(&module) {
         Ok((value, diags)) => {
-            let json = active_core::convert::value_to_pretty_json(&value);
+            // Structural material (plain locator sources and derived
+            // values) is redacted before serialization, matching the
+            // CLI and FFI exporters.
+            let profile = active_core::secret::SecretProfile::analyze(&module);
+            let redacted = active_core::convert::redact_value(&profile, &value);
+            let json = active_core::convert::value_to_pretty_json(&redacted);
             let lines: Vec<String> = diags
                 .iter()
                 .map(|d| format!("[{}] {}", d.code, d.message))

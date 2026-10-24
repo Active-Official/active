@@ -608,6 +608,22 @@ fn transform_work_bound_fails_closed() {
 }
 
 #[test]
+fn inspect_with_profile_honors_an_engine_override() {
+    let src = "n = 4242\nk = secret(n)\nactive_profile = \"a\"\nprofile \"a\" { x = 1 }\nprofile \"b\" { x = n }\nx = 0\n";
+    let module = active_core::parse(src, "inspect-override").expect("parse");
+    let mut engine = active_core::Engine::hermetic();
+    engine.profile_override = Some("b".to_string());
+    let (value, _) = engine.evaluate(&module).expect("evaluate");
+    let with = active_core::convert::inspect_path_with_profile(&module, &value, "x", Some("b"))
+        .expect("inspect");
+    assert_eq!(with["tainted"], true, "{with}");
+    assert_eq!(with["value"], "***SECRET***", "{with}");
+    // Without the override the document selects profile a (benign).
+    let without = active_core::convert::inspect_path(&module, &value, "x").expect("inspect");
+    assert_eq!(without["tainted"], false, "{without}");
+}
+
+#[test]
 fn inspect_reports_a_tainted_blob_as_tainted() {
     let src = "f = blob(\"text/plain\", secret(\"hunter2-blob\"))\n";
     let module = active_core::parse(src, "inspect-blob").expect("parse");

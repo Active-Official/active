@@ -1,7 +1,8 @@
 # Tooling guide (human + agent)
 
-One page per surface. Every command below is covered by tests and its
-JSON shape is pinned in `docs/schemas/` (validated in CI).
+One page per surface. Every command below is covered by tests; the
+machine-output shapes with a committed schema are pinned in
+`docs/schemas/` and validated in CI.
 
 ## Language server
 

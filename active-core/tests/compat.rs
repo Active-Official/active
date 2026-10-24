@@ -28,6 +28,70 @@ fn identical_schemas_are_compatible() {
 }
 
 #[test]
+fn array_fields_are_compared() {
+    // Removal of a required array field is C041, not "no changes".
+    let old = "schema = { tags = Array<String>, n = Int }\ntags = []\nn = 1\n";
+    let new = "schema = { n = Int }\nn = 1\n";
+    let findings = compare_docs(old, new);
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.code == code::REMOVED_FIELD && f.path == "tags" && f.is_breaking()),
+        "{findings:?}"
+    );
+    // Addition of a required array field is C040.
+    let findings = compare_docs(new, old);
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.code == code::ADDED_REQUIRED && f.path == "tags"),
+        "{findings:?}"
+    );
+    // Element type change is C042.
+    let changed = "schema = { tags = Array<Int>, n = Int }\ntags = []\nn = 1\n";
+    let findings = compare_docs(old, changed);
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.code == code::TYPE_CHANGED && f.path == "tags"),
+        "{findings:?}"
+    );
+}
+
+#[test]
+fn nested_table_fields_are_compared() {
+    let old = "schema = { server = Table { host = String, port = Int } }\nserver = { host = \"h\", port = 1 }\n";
+    // A removed nested field is C041 at its dotted path.
+    let removed = "schema = { server = Table { host = String } }\nserver = { host = \"h\" }\n";
+    let findings = compare_docs(old, removed);
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.code == code::REMOVED_FIELD && f.path == "server.port"),
+        "{findings:?}"
+    );
+    // An added required nested field is C040.
+    let added = "schema = { server = Table { host = String, port = Int, tls = Bool } }\nserver = { host = \"h\", port = 1, tls = true }\n";
+    let findings = compare_docs(old, added);
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.code == code::ADDED_REQUIRED && f.path == "server.tls"),
+        "{findings:?}"
+    );
+    // A nested type change is C042.
+    let changed =
+        "schema = { server = Table { host = Int, port = Int } }\nserver = { host = 1, port = 1 }\n";
+    let findings = compare_docs(old, changed);
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.code == code::TYPE_CHANGED && f.path == "server.host"),
+        "{findings:?}"
+    );
+}
+
+#[test]
 fn added_required_field_is_breaking_c040() {
     let old = "schema = { host = String }\nhost = \"x\"\n";
     let new = "schema = { host = String, port = Int }\nhost = \"x\"\nport = 1\n";

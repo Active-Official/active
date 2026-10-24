@@ -96,6 +96,28 @@ fn preserved_paths_are_skipped_not_touched() {
 }
 
 #[test]
+fn preserve_protects_descendants_and_ancestors() {
+    // Preserve is a subtree contract, not an exact-path list: a fill on
+    // `server.port` is blocked by `--preserve server`.
+    let src = "schema = { server = Table { port = Int(default = 8080) } }\nserver = {}\n";
+    let out = repair_document(src, RepairGoal::Validate, &["server".to_string()], 8);
+    assert!(
+        !out.repaired_source.contains("@patch(\"server.port\""),
+        "{out:?}"
+    );
+    assert!(
+        out.steps
+            .iter()
+            .any(|step| matches!(step.status, StepStatus::Skipped { .. })),
+        "{out:?}"
+    );
+    // A preserved child also blocks touching its parent.
+    let src = "schema = { a = Table { x = Int(default = 1) } }\nb = 1\n";
+    let out = repair_document(src, RepairGoal::Validate, &["a.x".to_string()], 8);
+    assert!(!out.repaired_source.contains("@patch(\"a\""), "{out:?}");
+}
+
+#[test]
 fn preserve_goal_unions_with_explicit_preserve_list() {
     // Goal-carried paths and the explicit list protect identically: a
     // step touching either is skipped, never applied.

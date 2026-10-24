@@ -1015,10 +1015,15 @@ impl GoGen<'_> {
                         _ => {}
                     }
                 }
-                // Spaces or commas in a member would make oneof
-                // ambiguous; the `// one of:` comment still documents
-                // them, and the JSON Schema target stays exact.
-                ActiveType::Enum(members) if !members.iter().any(|m| m.contains([' ', ','])) => {
+                // Spaces, commas, or struct-tag delimiters in a member
+                // would make oneof ambiguous or truncate the tag; the
+                // `// one of:` comment still documents them, and the
+                // JSON Schema target stays exact.
+                ActiveType::Enum(members)
+                    if !members
+                        .iter()
+                        .any(|m| m.contains([' ', ',', '`', '"', '\\'])) =>
+                {
                     rules.push(format!("oneof={}", members.join(" ")));
                 }
                 _ => {}

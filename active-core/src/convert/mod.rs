@@ -1,6 +1,7 @@
 //! Conversion between Active Value and JSON / simple map representations
 
 use crate::ir::Value;
+use crate::secret::SecretProfile;
 use serde_json::{json, Value as JsonValue};
 
 pub mod capability;
@@ -38,7 +39,9 @@ pub use import::{
 };
 pub use inspect::{schema_inspect, INSPECT_VERSION};
 pub use suggest::{suggest_patches, suggest_patches_structured, PatchKind, PatchSuggestion};
-pub use value_inspect::{inspect_path, render_text as render_inspection_text};
+pub use value_inspect::{
+    inspect_path, inspect_path_with_profile, render_text as render_inspection_text,
+};
 
 pub fn value_to_json(v: &Value) -> JsonValue {
     match v {
@@ -102,6 +105,68 @@ pub fn value_to_json(v: &Value) -> JsonValue {
 
 pub fn value_to_pretty_json(v: &Value) -> String {
     serde_json::to_string_pretty(&value_to_json(v)).unwrap_or_else(|_| "{}".into())
+}
+
+/// Deep copy with every structurally material leaf replaced by a
+/// `Secret` value (which every exporter renders as the marker).
+/// Containers keep their shape; a benign sibling stays visible, while
+/// a material scalar of any kind is hidden. A string that merely
+/// contains a known secret substring is redacted in place.
+pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
+    fn walk(profile: &SecretProfile, path: &str, value: &Value) -> Value {
+        match value {
+            Value::Array(items) => Value::Array(
+                items
+                    .iter()
+                    .enumerate()
+                    .map(|(index, item)| walk(profile, &format!("{path}[{index}]"), item))
+                    .collect(),
+            ),
+            Value::Table(map) => {
+                let mut out = indexmap::IndexMap::new();
+                for (key, item) in map {
+                    let child = if path.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{path}.{key}")
+                    };
+                    out.insert(key.clone(), walk(profile, &child, item));
+                }
+                Value::Table(out)
+            }
+            _ if profile.path_is_secret(path) => Value::Secret(String::new()),
+            Value::String(text) => match profile.redact_text(text) {
+                Some(redacted) => Value::String(redacted),
+                None => value.clone(),
+            },
+            _ => value.clone(),
+        }
+    }
+    walk(profile, "", value)
+}
+
+/// JSON export with structural-material redaction.
+pub fn value_to_json_with(profile: &SecretProfile, value: &Value) -> JsonValue {
+    value_to_json(&redact_value(profile, value))
+}
+
+/// Pretty JSON export with structural-material redaction.
+pub fn value_to_pretty_json_with(profile: &SecretProfile, value: &Value) -> String {
+    serde_json::to_string_pretty(&value_to_json_with(profile, value))
+        .unwrap_or_else(|_| "{}".into())
+}
+
+/// YAML export with structural-material redaction.
+pub fn value_to_yaml_string_with(profile: &SecretProfile, value: &Value) -> Result<String, String> {
+    export::value_to_yaml_string(&redact_value(profile, value))
+}
+
+/// TOML export with structural-material redaction.
+pub fn value_to_toml_string_with(
+    profile: &SecretProfile,
+    value: &Value,
+) -> Result<(String, Vec<crate::diag::Diagnostic>), String> {
+    export::value_to_toml_string(&redact_value(profile, value))
 }
 
 /// Enforce a materialisation demand (spec/blob.md §5, `--materialise-blobs`):

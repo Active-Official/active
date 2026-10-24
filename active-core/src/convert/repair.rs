@@ -100,6 +100,22 @@ fn unrepairable_finding(detail: &str) -> Diagnostic {
     }
 }
 
+/// Whether `path` is `base` or sits below it.
+fn path_within(path: &str, base: &str) -> bool {
+    path == base
+        || path
+            .strip_prefix(base)
+            .is_some_and(|rest| rest.starts_with('.') || rest.starts_with('['))
+}
+
+/// Preserve is a subtree contract: a step touching a preserved path, an
+/// ancestor of one, or a descendant of one is skipped.
+fn touches_preserved_path(path: &str, preserve: &[String]) -> bool {
+    preserve
+        .iter()
+        .any(|protected| path_within(path, protected) || path_within(protected, path))
+}
+
 /// Run the repair loop over `source` toward `goal`.
 ///
 /// * `preserve` lists dotted paths the loop must never touch: steps
@@ -287,11 +303,16 @@ pub fn repair_with_engine_and_options(
                 if applied.contains(&directive) {
                     continue;
                 }
-                // Preserve blocks the path AND both rename endpoints: a
-                // rename onto a preserved path still touches it.
-                let touches_preserved = protected.iter().any(|p| {
-                    p == &s.path || s.from.as_ref() == Some(p) || s.to.as_ref() == Some(p)
-                });
+                // Preserve blocks the path, its ancestors, and its
+                // descendants, plus both rename endpoints: renaming a
+                // parent of a preserved path still touches it.
+                let touches_preserved = touches_preserved_path(&s.path, &protected)
+                    || s.from
+                        .as_ref()
+                        .is_some_and(|p| touches_preserved_path(p, &protected))
+                    || s.to
+                        .as_ref()
+                        .is_some_and(|p| touches_preserved_path(p, &protected));
                 if touches_preserved {
                     steps.push(PlannedStep {
                         kind: format!("{:?}", s.kind).to_lowercase(),

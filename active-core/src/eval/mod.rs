@@ -1870,6 +1870,13 @@ impl Engine {
             };
             match op {
                 PatchOp::Set { path, value } => {
+                    if is_document_metadata(&path) {
+                        return Err(EvalError::patch_error(
+                            format!("patch cannot rewrite document metadata `{path}`"),
+                            module,
+                            patch_id,
+                        ));
+                    }
                     Self::check_immutable(module, patch_id, &[&path])?;
                     let segs = validate_patch_path(&path).map_err(|why| {
                         EvalError::patch_error(
@@ -1901,6 +1908,13 @@ impl Engine {
                     }
                 }
                 PatchOp::Remove { path } => {
+                    if is_document_metadata(&path) {
+                        return Err(EvalError::patch_error(
+                            format!("patch cannot rewrite document metadata `{path}`"),
+                            module,
+                            patch_id,
+                        ));
+                    }
                     Self::check_immutable(module, patch_id, &[&path])?;
                     let segs = validate_patch_path(&path).map_err(|why| {
                         EvalError::patch_error(
@@ -1914,6 +1928,13 @@ impl Engine {
                     }
                 }
                 PatchOp::Rename { from, to } => {
+                    if is_document_metadata(&from) || is_document_metadata(&to) {
+                        return Err(EvalError::patch_error(
+                            format!("patch cannot rewrite document metadata `{from}` -> `{to}`"),
+                            module,
+                            patch_id,
+                        ));
+                    }
                     Self::check_immutable(module, patch_id, &[&from, &to])?;
                     let segs = validate_patch_path(&from).map_err(|why| {
                         EvalError::patch_error(
@@ -2078,6 +2099,18 @@ impl Engine {
             });
             return Ok(result);
         };
+        // Document metadata is fixed at parse; a profile must not
+        // rewrite the mode or capability declaration after the
+        // handshake read them.
+        if let Some(Node::Table { fields, .. }) = module.get(profile_id) {
+            if let Some(key) = fields.keys().find(|key| is_document_metadata(key)) {
+                return Err(EvalError::patch_error(
+                    format!("profile cannot rewrite document metadata `{key}`"),
+                    module,
+                    profile_id,
+                ));
+            }
+        }
         let profile_value = values.get(&profile_id).cloned().unwrap_or(Value::Null);
         // Merging copies the profile subtree into the result: charge
         // its measured size (over-approximates replacement as
@@ -2098,6 +2131,16 @@ impl Engine {
         );
         Ok(Value::Table(merged))
     }
+}
+
+/// Root metadata keys the parser resolves before evaluation. Patches
+/// and profiles may not rewrite them: the exported marker must match
+/// the mode/capability/profile set the host saw.
+fn is_document_metadata(key: &str) -> bool {
+    matches!(
+        key,
+        "active_mode" | "active_capabilities" | "active_profile"
+    )
 }
 
 /// Diagnostic-safe profile selector: the literal the document spells,

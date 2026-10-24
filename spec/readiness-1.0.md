@@ -51,8 +51,8 @@ escape clause is vacuously satisfied — stronger than required.
 
 Ships and works: parser, evaluator, formatter (`ACTIVE fmt`,
 3 styles + `--check`), linter (`ACTIVE lint`, independent rules),
-converters both directions + schema codegen (5 targets:
-`jsonschema`, `openapi`, `typescript`, `go`, `rust`),
+converters both directions + schema codegen (6 targets:
+`jsonschema`, `openapi`, `typescript`, `go`, `rust`, `python`),
 documentation generator (Markdown/HTML/man), language server
 (stdio LSP 3.17 — boots and answers `initialize`, pinned by the
 stdio initialize e2e in `active-lsp/tests/lsp.rs`), CI checker

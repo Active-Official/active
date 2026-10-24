@@ -116,3 +116,18 @@ fn code_profiles_match_descriptor() {
         }
     }
 }
+
+#[test]
+fn capabilities_marker_is_exempt_from_a_closed_root() {
+    // Agent-interchange envelopes require the key; a closed root
+    // contract must not reject its own metadata.
+    let src = "schema = { closed = true, a = Int }\na = 1\nactive_capabilities = [\"check\"]\n";
+    let module = parse(src, "capabilities-closed").expect("must parse");
+    let (_, diagnostics) = active_core::Engine::new()
+        .evaluate(&module)
+        .expect("must evaluate");
+    assert!(
+        !diagnostics.iter().any(|d| d.code == "T005"),
+        "{diagnostics:?}"
+    );
+}

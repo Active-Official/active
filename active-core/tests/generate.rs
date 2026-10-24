@@ -372,6 +372,17 @@ fn blob_helper_names_never_collide_with_user_types() {
 }
 
 #[test]
+fn go_oneof_skips_tag_hostile_members() {
+    // A member containing a quote/backslash/backtick would truncate or
+    // break the Go struct tag; the comment still documents it.
+    let module = parse("schema = { c = Enum(\"b\\\"c\", \"ok\") }\n", "generate")
+        .expect("schema must parse");
+    let go = schema_to_go(&module, "Cfg").expect("go");
+    assert!(!go.contains("oneof="), "{go}");
+    assert!(go.contains("one of: b\"c, ok"), "{go}");
+}
+
+#[test]
 fn codegen_artifacts_carry_version_stamps() {
     use active_core::convert::CODEGEN_VERSION;
     assert_eq!(CODEGEN_VERSION, 4);

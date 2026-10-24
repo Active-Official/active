@@ -61,8 +61,9 @@ active viz schema --from svc.active > schema.json
 active viz repair --from svc.active > repair.json
 ```
 
-All four shapes are pinned in `docs/schemas/`; `viz/index.html` renders
-them with no network access.
+The four shapes with committed schemas (graph, taint, budget, mode) are
+pinned in `docs/schemas/`; `viz/index.html` renders them with no network
+access. Tool JSON without a committed schema is covered by CLI tests.
 
 ## 6. Editor-free verification
 

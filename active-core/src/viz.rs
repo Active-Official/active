@@ -12,13 +12,23 @@ use crate::Budget;
 /// Taint flow: secret sources, the containment edges that carry taint,
 /// and the paths that would export it (all redacted on emission).
 pub fn taint_data(module: &Module, value: &Value) -> JsonValue {
+    taint_data_with_profile(module, value, None)
+}
+
+/// Taint flow with an explicit profile override, so a caller that
+/// evaluated under `--profile` gets the matching material set.
+pub fn taint_data_with_profile(
+    module: &Module,
+    value: &Value,
+    override_profile: Option<&str>,
+) -> JsonValue {
     let mut nodes: Vec<JsonValue> = Vec::new();
     let mut edges: Vec<JsonValue> = Vec::new();
     let mut sources: Vec<String> = Vec::new();
     let mut export_points: Vec<String> = Vec::new();
     // A plain value used as a secret locator is material even without
     // a `Value::Secret` marker; the same profile backs inspect/hover.
-    let profile = crate::secret::SecretProfile::analyze(module);
+    let profile = crate::secret::SecretProfile::analyze_with_profile(module, override_profile);
     let mut emitted: HashSet<String> = HashSet::new();
     walk_taint(value, "", None, &mut |path, node_value, parent| {
         let structural = profile.path_is_secret(path);
@@ -72,7 +82,12 @@ pub fn budget_data(
     // One post-order pass: each node's estimated serialized size is
     // computed from its children, so a large document stays O(n)
     // instead of re-serializing every subtree.
+    // Sizes describe the redacted export: a material string reports
+    // the marker length, not the material's length.
+    let profile = crate::secret::SecretProfile::analyze(module);
     let total_size = shape_size(
+        &profile,
+        "",
         value,
         1,
         &mut keys,
@@ -221,7 +236,10 @@ fn walk_taint<'a>(
 /// Post-order size/shape walk. Returns the estimated serialized byte
 /// size of this subtree (keys, separators, and scalar widths), while
 /// recording global maxima. O(nodes) with saturating arithmetic.
+#[allow(clippy::too_many_arguments)]
 fn shape_size(
+    profile: &crate::secret::SecretProfile,
+    path: &str,
     value: &Value,
     level: u64,
     keys: &mut u64,
@@ -230,21 +248,25 @@ fn shape_size(
     max_value_size: &mut u64,
 ) -> u64 {
     *depth = (*depth).max(level);
+    let material = profile.path_is_secret(path);
+    let marker = "***SECRET***".len() as u64 + 2;
     let size = match value {
-        Value::Null => 4,
-        Value::Bool(_) => 5,
-        Value::Int(_) | Value::Float(_) | Value::DurationMs(_) => 8,
-        Value::String(text) => text.len() as u64 + 2,
-        Value::Quantity(_, _) => 16,
-        Value::Secret(_) => "***SECRET***".len() as u64 + 2,
-        Value::Blob { .. } => 96,
         Value::Array(items) => {
             *max_array = (*max_array).max(items.len() as u64);
             let mut total = 2u64;
-            for child in items {
+            for (index, child) in items.iter().enumerate() {
                 total = total.saturating_add(
-                    shape_size(child, level + 1, keys, max_array, depth, max_value_size)
-                        .saturating_add(2),
+                    shape_size(
+                        profile,
+                        &format!("{path}[{index}]"),
+                        child,
+                        level + 1,
+                        keys,
+                        max_array,
+                        depth,
+                        max_value_size,
+                    )
+                    .saturating_add(2),
                 );
             }
             total
@@ -253,9 +275,16 @@ fn shape_size(
             *keys = keys.saturating_add(map.len() as u64);
             let mut total = 2u64;
             for (key, child) in map {
+                let child_path = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{path}.{key}")
+                };
                 total = total
                     .saturating_add(key.len() as u64 + 4)
                     .saturating_add(shape_size(
+                        profile,
+                        &child_path,
                         child,
                         level + 1,
                         keys,
@@ -267,6 +296,17 @@ fn shape_size(
             }
             total
         }
+        _ if material => marker,
+        Value::String(text) => match profile.redact_text(text) {
+            Some(redacted) => redacted.len() as u64 + 2,
+            None => text.len() as u64 + 2,
+        },
+        Value::Null => 4,
+        Value::Bool(_) => 5,
+        Value::Int(_) | Value::Float(_) | Value::DurationMs(_) => 8,
+        Value::Quantity(_, _) => 16,
+        Value::Secret(_) => marker,
+        Value::Blob { .. } => 96,
     };
     *max_value_size = (*max_value_size).max(size);
     size

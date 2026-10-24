@@ -148,6 +148,33 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
 - **Computed `requires`.** T004 echoes a `requires` target only when
   the schema spells a literal; a computed target stays value-free.
   The graph `secret-tainted-cone` query honors `--profile`.
+- **Structural material stays inside.** `eval`, `convert`, `doc`,
+  `lock`, the audit trail, the C ABI, and WASM redact structurally
+  material values (plain locator sources, aliases, interpolations,
+  containers) before serialization; content hashes are over the
+  redacted tree, so a material value change no longer changes the
+  hash. Audit results hash the full redacted tree before projection
+  and payload stripping, and a strict validation failure writes an
+  audit with `result = null` and `outcome = "failed"`.
+- **Metadata is immutable after parse.** Patches and profiles cannot
+  rewrite `active_mode`, `active_capabilities`, or `active_profile`
+  (E019), so the exported marker always matches what the host
+  resolved. `active_capabilities` is exempt from a closed root table.
+- **Compatibility sees the whole schema.** Nested tables and arrays
+  are compared at dotted paths (add/remove/type change), so a removed
+  required array or a changed nested field is no longer "no changes".
+- **Repair and formatter fidelity.** `--preserve` covers ancestors
+  and descendants; partial repair JSON reports only the applied
+  subset (unselected steps skipped, verdict re-evaluated); fill
+  directives keep `${…}` literal via single quotes and refuse
+  unrepresentable control characters; `active fmt` preserves
+  `min_reader`/`min_writer` without a version.
+- **Editor and query polish.** The `@ai_immutable` action skips
+  multi-line string bodies, the mode marker inserts after a BOM,
+  capability lists are linear to parse and print capped,
+  `inspect`/`viz taint` accept a profile override, viz byte sizes
+  count redacted strings, and `--browser` rejects flags it cannot
+  honor. The C ABI's secret predicate is recursive.
 
 ### SOLID → Active rename
 

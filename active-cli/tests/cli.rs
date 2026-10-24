@@ -1948,6 +1948,136 @@ fn inspect_path_reports_text_and_redacts() {
 }
 
 #[test]
+fn partial_repair_json_describes_the_applied_subset() {
+    let f = fixture(
+        "partial_json.active",
+        "schema = { a = Int(default = 1), b = Int(default = 2) }\nx = 1\n",
+    );
+    let out = active()
+        .args(["repair", "--from"])
+        .arg(&f)
+        .args(["--apply-step", "0", "--format", "json"])
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("repair JSON");
+    assert_eq!(report["steps"][0]["status"], "applied", "{report}");
+    assert!(
+        report["steps"][1]["status"].get("skipped").is_some(),
+        "unselected step must be skipped: {report}"
+    );
+    let source = report["repaired_source"].as_str().expect("source");
+    assert_eq!(
+        source.matches("@patch").count(),
+        1,
+        "only the selected directive may be reported: {source}"
+    );
+    assert_eq!(report["clean"], false, "{report}");
+}
+
+#[test]
+fn exports_redact_structural_material() {
+    let f = fixture(
+        "export_redact.active",
+        "let t = env.R20SECRET\nk = secret(t)\nleak = t\ntable = { inner = t }\ncomposed = \"pre-${t}\"\n",
+    );
+    for (label, args) in [
+        ("eval-json", vec!["eval", "--format", "json"]),
+        ("convert-toml", vec!["convert", "--to", "toml"]),
+        ("doc-md", vec!["doc", "--to", "markdown", "--from"]),
+        ("lock", vec!["lock"]),
+    ] {
+        let out = active()
+            .args(&args)
+            .arg(&f)
+            .env("R20SECRET", "ENVSECRET-export")
+            .output()
+            .expect("run active");
+        assert!(
+            out.status.success(),
+            "{label}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            !text.contains("ENVSECRET"),
+            "{label} leaked structural material: {text}"
+        );
+    }
+    // The content hash is over the redacted tree: changing the material
+    // value must not change it.
+    let hash = |value: &str| {
+        let out = active()
+            .arg("lock")
+            .arg(&f)
+            .env("R20SECRET", value)
+            .output()
+            .expect("run active");
+        let text = String::from_utf8_lossy(&out.stdout);
+        text.lines()
+            .find(|line| line.starts_with("content_hash"))
+            .unwrap_or_else(|| panic!("no hash: {text}"))
+            .to_string()
+    };
+    assert_eq!(hash("A-MATERIAL-VALUE"), hash("B-MATERIAL-VALUE"));
+}
+
+#[test]
+fn audit_hashes_the_full_redacted_tree_and_records_failures() {
+    let f = fixture("audit_scope.active", "a = { b = 1 }\nc = 2\n");
+    let audit = std::env::temp_dir().join(format!("audit-scope-{}.active", std::process::id()));
+    let out = active()
+        .args(["eval", "--path", "a.b", "--audit-trail"])
+        .arg(&audit)
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = std::fs::read_to_string(&audit).expect("audit written");
+    let hash = text
+        .split("result = \"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap_or_else(|| panic!("no result hash: {text}"));
+    let replay = active()
+        .args(["debug", "--from"])
+        .arg(&f)
+        .args(["--replay", "--expect", hash])
+        .output()
+        .expect("run active");
+    let report: serde_json::Value = serde_json::from_slice(&replay.stdout).expect("replay JSON");
+    assert_eq!(report["ok"], true, "{report}");
+
+    // A strict validation failure still writes an audit with no result.
+    let bad = fixture("audit_bad.active", "schema = { n = Int }\nn = \"x\"\n");
+    let bad_audit = std::env::temp_dir().join(format!("audit-bad-{}.active", std::process::id()));
+    let out = active()
+        .arg("eval")
+        .arg("--audit-trail")
+        .arg(&bad_audit)
+        .arg(&bad)
+        .output()
+        .expect("run active");
+    assert_eq!(out.status.code(), Some(1));
+    let text = std::fs::read_to_string(&bad_audit).expect("failed audit written");
+    assert!(text.contains("outcome = \"failed\""), "{text}");
+    assert!(text.contains("result = null"), "{text}");
+    assert!(text.contains("T002"), "{text}");
+}
+
+#[test]
 fn debug_and_inspect_redact_interpolated_secret_sources() {
     let f = fixture(
         "debug_interp.active",

@@ -2560,6 +2560,7 @@ impl Parser {
             return;
         }
         let mut caps = Vec::new();
+        let mut seen = std::collections::HashSet::new();
         let mut ok = true;
         match self.module.get(marker) {
             Some(Node::Array { elements }) => {
@@ -2569,7 +2570,7 @@ impl Parser {
                         Some(Node::Literal(Value::String(s))) => {
                             // Deduplicate at parse: repeats are the same
                             // declaration, and downstream diffing stays clean.
-                            if !caps.contains(s) {
+                            if seen.insert(s.clone()) {
                                 caps.push(s.clone());
                             }
                         }

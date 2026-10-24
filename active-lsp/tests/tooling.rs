@@ -205,6 +205,75 @@ fn formatting_refuses_broken_documents() {
 }
 
 #[test]
+fn annotation_action_skips_multiline_string_bodies() {
+    let doc = open("sql = \"\"\"\nselect a = b\n\"\"\"\n");
+    let body = analysis::code_actions(
+        &doc,
+        Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 0,
+            },
+        },
+    );
+    assert!(
+        !body.iter().any(|a| a.title.contains("ai_immutable")),
+        "annotating a string body rewrites the value: {body:?}"
+    );
+    let opening = analysis::code_actions(
+        &doc,
+        Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 0,
+            },
+        },
+    );
+    assert!(
+        opening.iter().any(|a| a.title.contains("ai_immutable")),
+        "the binding line stays annotatable: {opening:?}"
+    );
+}
+
+#[test]
+fn mode_marker_action_respects_a_bom() {
+    let doc = open("\u{feff}port = 1\n");
+    let actions = analysis::code_actions(
+        &doc,
+        Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 0,
+            },
+        },
+    );
+    let action = actions
+        .iter()
+        .find(|a| a.title.contains("active_mode"))
+        .expect("mode action");
+    let edit = action
+        .edit
+        .as_ref()
+        .and_then(|workspace| workspace.changes.as_ref())
+        .and_then(|changes| changes.values().next())
+        .and_then(|edits| edits.first())
+        .expect("edit");
+    assert_eq!(edit.range.start.character, 1, "insert after the BOM");
+}
+
+#[test]
 fn formatting_preserves_includes_without_inlining() {
     let dir = std::env::temp_dir().join(format!("active-lsp-fmt-inc-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("temp dir");

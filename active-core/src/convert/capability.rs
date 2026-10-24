@@ -91,9 +91,12 @@ pub fn profile(name: &str) -> Option<SandboxProfile> {
 /// Declared capabilities the host does not offer, in document order
 /// without duplicates. Empty means the handshake passes.
 pub fn refused<'a>(declared: &'a [String], host_tools: &[&str]) -> Vec<&'a str> {
+    // Hash lookups: a hostile 1 MB declaration list must stay linear.
+    let host: std::collections::HashSet<&str> = host_tools.iter().copied().collect();
+    let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     for cap in declared {
-        if !host_tools.iter().any(|t| t == cap) && !out.contains(&cap.as_str()) {
+        if !host.contains(cap.as_str()) && seen.insert(cap.as_str()) {
             out.push(cap.as_str());
         }
     }

@@ -441,11 +441,13 @@ impl<'a> Validator<'a> {
                 if fields.contains_key(key) {
                     continue;
                 }
-                // The mode marker is metadata, not data (Phase M): at the
-                // document root it never counts as an unexpected key.
-                // Nested tables keep the strict rule — a nested
-                // `active_mode` is an ordinary key there.
-                if key == "active_mode" && segments.is_empty() {
+                // The mode and capability markers are metadata, not
+                // data (Phase M / CAP): at the document root they never
+                // count as unexpected keys. Nested tables keep the
+                // strict rule — a nested marker is an ordinary key.
+                if segments.is_empty()
+                    && matches!(key.as_str(), "active_mode" | "active_capabilities")
+                {
                     continue;
                 }
                 segments.push(PathSeg::Key(key.clone()));

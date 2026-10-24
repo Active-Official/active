@@ -323,3 +323,16 @@ fn precedence_needs_no_extra_parentheses_but_keeps_meaning() {
         "explicit grouping must survive:\n{out}"
     );
 }
+
+#[test]
+fn schema_evolution_metadata_survives_formatting() {
+    // An empty schema with min_reader/min_writer (no version) must not
+    // collapse to `{}` and lose its contract.
+    let src = "schema = { min_reader = \"1.0.0\", min_writer = \"1.1.0\" }\n";
+    let module = parse_ok(src);
+    for style in [Style::Brace, Style::Indent, Style::Preserve] {
+        let out = format(&module, style);
+        assert!(out.contains("min_reader = \"1.0.0\""), "{style:?}: {out}");
+        assert!(out.contains("min_writer = \"1.1.0\""), "{style:?}: {out}");
+    }
+}

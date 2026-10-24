@@ -81,18 +81,85 @@ fn field_required(field: &SchemaField) -> bool {
     !matches!(field.typ, crate::types::ActiveType::Null) && field.default.is_none()
 }
 
-/// Collect top-level schema fields: (name, field) in source order.
-fn collect_fields(module: &Module, root: crate::ir::NodeId) -> Vec<(String, SchemaField)> {
-    match module.get(root) {
-        Some(Node::SchemaTable { fields, .. }) => fields
-            .iter()
-            .filter_map(|(name, id)| match module.get(*id) {
-                Some(Node::SchemaField { field }) => Some((name.clone(), field.clone())),
-                _ => None,
-            })
-            .collect(),
-        _ => Vec::new(),
+/// One comparable schema entry: a scalar field, a table, or an array.
+/// Nested tables/arrays are expanded to dotted paths so a change deep
+/// in the tree can never hide behind an unchanged parent signature.
+#[derive(Clone)]
+struct Row {
+    path: String,
+    signature: String,
+    required: bool,
+    removed_in: Option<String>,
+    blob: Option<(Option<i64>, Option<String>)>,
+}
+
+fn node_signature(module: &Module, id: crate::ir::NodeId) -> String {
+    match module.get(id) {
+        Some(Node::SchemaField { field }) => field.typ.name(),
+        Some(Node::SchemaTable { .. }) => "Table".to_string(),
+        Some(Node::SchemaArray { element }) => {
+            format!("Array<{}>", node_signature(module, *element))
+        }
+        _ => "unknown".to_string(),
     }
+}
+
+fn row_for_field(module: &Module, path: &str, field: &SchemaField) -> Row {
+    let blob = matches!(field.typ, crate::types::ActiveType::Blob).then(|| {
+        (
+            literal_int(module, field.blob_max_size),
+            literal_string(module, field.blob_media_type),
+        )
+    });
+    Row {
+        path: path.to_string(),
+        signature: field.typ.name(),
+        required: field_required(field),
+        removed_in: field.removed_in.clone(),
+        blob,
+    }
+}
+
+/// Collect every schema entry (tables and arrays included) as dotted
+/// rows in source order.
+fn collect_rows(module: &Module, root: crate::ir::NodeId, prefix: &str, out: &mut Vec<Row>) {
+    let Some(Node::SchemaTable { fields, .. }) = module.get(root) else {
+        return;
+    };
+    for (key, id) in fields {
+        let path = if prefix.is_empty() {
+            key.clone()
+        } else {
+            format!("{prefix}.{key}")
+        };
+        match module.get(*id) {
+            Some(Node::SchemaField { field }) => out.push(row_for_field(module, &path, field)),
+            Some(Node::SchemaTable { .. }) => {
+                out.push(Row {
+                    path: path.clone(),
+                    signature: "Table".to_string(),
+                    required: true,
+                    removed_in: None,
+                    blob: None,
+                });
+                collect_rows(module, *id, &path, out);
+            }
+            Some(Node::SchemaArray { element }) => out.push(Row {
+                path,
+                signature: format!("Array<{}>", node_signature(module, *element)),
+                required: true,
+                removed_in: None,
+                blob: None,
+            }),
+            _ => {}
+        }
+    }
+}
+
+fn collect_fields(module: &Module, root: crate::ir::NodeId) -> Vec<Row> {
+    let mut out = Vec::new();
+    collect_rows(module, root, "", &mut out);
+    out
 }
 
 fn schema_meta(module: &Module) -> crate::ir::SchemaMeta {
@@ -134,8 +201,8 @@ pub fn compare(old: &Module, new: &Module) -> Result<Vec<CompatFinding>, String>
     // Removed fields: breaking unless the removal was scheduled at or
     // before the new version (removed_in <= new version).
     let new_version = schema_meta(new).version;
-    for (name, old_field) in &old_fields {
-        if new_fields.iter().any(|(n, _)| n == name) {
+    for old_field in &old_fields {
+        if new_fields.iter().any(|row| row.path == old_field.path) {
             continue;
         }
         let scheduled = match (&old_field.removed_in, &new_version) {
@@ -149,56 +216,67 @@ pub fn compare(old: &Module, new: &Module) -> Result<Vec<CompatFinding>, String>
             }
             _ => false,
         };
+        let path = &old_field.path;
         if scheduled {
             findings.push(CompatFinding::info(
                 code::REMOVED_FIELD,
-                name,
-                format!("field '{name}' removed on schedule (removed_in matches new version)"),
+                path,
+                format!("field '{path}' removed on schedule (removed_in matches new version)"),
             ));
         } else {
             findings.push(CompatFinding::error(
                 code::REMOVED_FIELD,
-                name,
-                format!("field '{name}' removed: old readers and writers lose data"),
+                path,
+                format!("field '{path}' removed: old readers and writers lose data"),
             ));
         }
     }
 
-    // Added fields and type changes.
-    for (name, new_field) in &new_fields {
-        match old_fields.iter().find(|(n, _)| n == name) {
+    // Added fields, type changes, and blob tightening.
+    for new_field in &new_fields {
+        match old_fields.iter().find(|row| row.path == new_field.path) {
             None => {
-                if field_required(new_field) {
+                let path = &new_field.path;
+                if new_field.required {
                     findings.push(CompatFinding::error(
                         code::ADDED_REQUIRED,
-                        name,
+                        path,
                         format!(
-                            "field '{name}' added without a default: old documents fail the new schema"
+                            "field '{path}' added without a default: old documents fail the new schema"
                         ),
                     ));
                 } else {
                     findings.push(CompatFinding::info(
                         code::ADDED_REQUIRED,
-                        name,
+                        path,
                         format!(
-                            "field '{name}' added with a default or Null type: old documents still validate"
+                            "field '{path}' added with a default or Null type: old documents still validate"
                         ),
                     ));
                 }
             }
-            Some((_, old_field)) => {
-                if old_field.typ.name() != new_field.typ.name() {
+            Some(old_field) => {
+                let path = &new_field.path;
+                if old_field.signature != new_field.signature {
                     findings.push(CompatFinding::error(
                         code::TYPE_CHANGED,
-                        name,
+                        path,
                         format!(
-                            "field '{name}' type changed from {} to {}",
-                            old_field.typ.name(),
-                            new_field.typ.name()
+                            "field '{path}' type changed from {} to {}",
+                            old_field.signature, new_field.signature
                         ),
                     ));
-                } else if matches!(new_field.typ, crate::types::ActiveType::Blob) {
-                    check_blob_tightening(old, old_field, new, new_field, name, &mut findings);
+                } else if let (Some((old_max, old_media)), Some((new_max, new_media))) =
+                    (&old_field.blob, &new_field.blob)
+                {
+                    check_blob_tightening(
+                        path,
+                        old_max,
+                        old_media,
+                        new_max,
+                        new_media,
+                        &mut findings,
+                    );
                 }
             }
         }
@@ -213,15 +291,13 @@ pub fn compare(old: &Module, new: &Module) -> Result<Vec<CompatFinding>, String>
 /// Blob constraint tightening is breaking for existing payloads:
 /// `max_size` lowered or `media_type` changed (or newly pinned).
 fn check_blob_tightening(
-    old_module: &Module,
-    old_field: &SchemaField,
-    new_module: &Module,
-    new_field: &SchemaField,
     path: &str,
+    old_max: &Option<i64>,
+    old_media: &Option<String>,
+    new_max: &Option<i64>,
+    new_media: &Option<String>,
     findings: &mut Vec<CompatFinding>,
 ) {
-    let old_max = literal_int(old_module, old_field.blob_max_size);
-    let new_max = literal_int(new_module, new_field.blob_max_size);
     if let (Some(old), Some(new)) = (old_max, new_max) {
         if new < old {
             findings.push(CompatFinding::error(
@@ -231,8 +307,6 @@ fn check_blob_tightening(
             ));
         }
     }
-    let old_media = literal_string(old_module, old_field.blob_media_type);
-    let new_media = literal_string(new_module, new_field.blob_media_type);
     if old_media != new_media {
         findings.push(CompatFinding::error(
             code::TYPE_CHANGED,

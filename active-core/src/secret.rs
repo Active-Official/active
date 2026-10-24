@@ -76,11 +76,14 @@ pub fn secret_subtree(module: &Module, root: NodeId, set: &mut HashSet<NodeId>) 
     }
 }
 
-/// A deterministic set of secret strings. Insertion keeps the list
-/// sorted longest-first so overlapping secrets redact consistently.
+/// A deterministic set of secret strings. Insertion is O(1) amortized
+/// (a HashSet guards duplicates); the longest-first order is materialized
+/// once, lazily, before a redaction pass.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SecretRedactor {
-    values: Vec<String>,
+    values: std::cell::RefCell<Vec<String>>,
+    seen: HashSet<String>,
+    sorted: std::cell::Cell<bool>,
 }
 
 impl SecretRedactor {
@@ -92,28 +95,34 @@ impl SecretRedactor {
         let text = text.into();
         // Empty strings would match every position; they are not
         // material.
-        if text.is_empty() || self.values.iter().any(|known| known == &text) {
-            return;
+        if !text.is_empty() && self.seen.insert(text.clone()) {
+            self.values.borrow_mut().push(text);
+            self.sorted.set(false);
         }
-        self.values.push(text);
-        self.values
-            .sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    }
+
+    fn ensure_sorted(&self) -> std::cell::Ref<'_, Vec<String>> {
+        if !self.sorted.get() {
+            {
+                let mut values = self.values.borrow_mut();
+                values.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+            }
+            self.sorted.set(true);
+        }
+        self.values.borrow()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
+        self.values.borrow().is_empty()
     }
 
     pub fn len(&self) -> usize {
-        self.values.len()
-    }
-
-    pub fn values(&self) -> &[String] {
-        &self.values
+        self.values.borrow().len()
     }
 
     pub fn merge(&mut self, other: &SecretRedactor) {
-        for value in &other.values {
+        let values = other.ensure_sorted();
+        for value in values.iter() {
             self.insert(value.clone());
         }
     }
@@ -127,7 +136,8 @@ impl SecretRedactor {
     /// the marker itself cannot be expressed without ambiguity; the
     /// marker wins, deterministically.
     pub fn redact_text(&self, text: &str) -> Option<String> {
-        if self.values.is_empty() || text == MARKER {
+        let values = self.ensure_sorted();
+        if values.is_empty() || text == MARKER {
             return None;
         }
         let mut out = String::with_capacity(text.len());
@@ -139,8 +149,7 @@ impl SecretRedactor {
             let mut cursor = 0usize;
             while cursor < segment.len() {
                 let rest = &segment[cursor..];
-                match self
-                    .values
+                match values
                     .iter()
                     .find(|secret| rest.starts_with(secret.as_str()))
                 {

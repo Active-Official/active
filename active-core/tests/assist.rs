@@ -119,6 +119,31 @@ fn suggest_emits_safe_rename_and_static_fill() {
 }
 
 #[test]
+fn suggest_fill_preserves_literal_interpolation_syntax() {
+    // A single-quoted schema default is literal; the fill directive
+    // must keep `${…}` literal too, not turn it into interpolation.
+    let (module, diags) = strict_diags("schema = { path = String(default = '${HOME}/bin') }\n");
+    let patches = suggest_patches(&module, &diags);
+    assert!(
+        patches
+            .iter()
+            .any(|p| p == "@patch(\"path\", '${HOME}/bin')"),
+        "{patches:?}"
+    );
+}
+
+#[test]
+fn suggest_refuses_unrepresentable_control_characters() {
+    let src = format!("schema = {{ path = String(default = '{}') }}\n", '\u{1}');
+    let (module, diags) = strict_diags(&src);
+    let patches = suggest_patches(&module, &diags);
+    assert!(
+        !patches.iter().any(|p| p.contains("@patch")),
+        "a control character has no faithful directive form: {patches:?}"
+    );
+}
+
+#[test]
 fn suggest_float_fill_keeps_decimal_point() {
     // A Float default must fill with a parseable float literal: the
     // `{f:?}` formatting keeps the decimal point so 1.5 never degrades

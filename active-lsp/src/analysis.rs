@@ -2594,6 +2594,8 @@ fn mode_marker_action(doc: &Doc, range: Range) -> Vec<CodeAction> {
     if doc.module.mode_marker {
         return Vec::new();
     }
+    // A BOM occupies character 0: insert after it, never before.
+    let character = u32::from(doc.text.starts_with('\u{feff}'));
     vec![CodeAction {
         title: "Set active_mode = \"data\"".to_string(),
         kind: Some(CodeActionKind::QUICKFIX),
@@ -2601,14 +2603,8 @@ fn mode_marker_action(doc: &Doc, range: Range) -> Vec<CodeAction> {
             doc.uri.clone(),
             TextEdit {
                 range: Range {
-                    start: Position {
-                        line: 0,
-                        character: 0,
-                    },
-                    end: Position {
-                        line: 0,
-                        character: 0,
-                    },
+                    start: Position { line: 0, character },
+                    end: Position { line: 0, character },
                 },
                 new_text: "active_mode = \"data\"\n\n".to_string(),
             },
@@ -2617,9 +2613,57 @@ fn mode_marker_action(doc: &Doc, range: Range) -> Vec<CodeAction> {
     }]
 }
 
+/// Whether `target` (0-based) sits inside an open multi-line string.
+/// The opening line itself is not inside; continuation lines are.
+fn inside_multiline_string(text: &str, target: u32) -> bool {
+    let mut open: Option<&str> = None;
+    for (index, line) in text.split('\n').enumerate() {
+        if index as u32 == target {
+            return open.is_some();
+        }
+        let mut rest = line;
+        loop {
+            match open {
+                Some(delim) => match rest.find(delim) {
+                    Some(pos) => {
+                        rest = &rest[pos + 3..];
+                        open = None;
+                    }
+                    None => break,
+                },
+                None => {
+                    let double = rest.find("\"\"\"");
+                    let single = rest.find("'''");
+                    match (double, single) {
+                        (Some(d), Some(s)) if s < d => {
+                            open = Some("'''");
+                            rest = &rest[s + 3..];
+                        }
+                        (Some(d), _) => {
+                            open = Some("\"\"\"");
+                            rest = &rest[d + 3..];
+                        }
+                        (None, Some(s)) => {
+                            open = Some("'''");
+                            rest = &rest[s + 3..];
+                        }
+                        (None, None) => break,
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Offer `@ai_immutable: true` above the statement under the cursor.
 /// The action inserts a comment; it never rewrites the value.
 fn annotation_action(doc: &Doc, range: Range) -> Vec<CodeAction> {
+    // A continuation line of a multi-line string is value text, not a
+    // statement: annotating it would rewrite the value.
+    if inside_multiline_string(&doc.text, range.start.line) {
+        return Vec::new();
+    }
     let Some(line) = doc.text.split('\n').nth(range.start.line as usize) else {
         return Vec::new();
     };

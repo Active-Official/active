@@ -14,9 +14,20 @@ use crate::types::ActiveType;
 
 /// Inspect one dotted/index path of an evaluated document.
 pub fn inspect_path(module: &Module, root: &Value, path: &str) -> Result<JsonValue, String> {
+    inspect_path_with_profile(module, root, path, None)
+}
+
+/// Inspect with an explicit profile override (the engine's `--profile`
+/// selection). Taint must follow the profile that produced the tree.
+pub fn inspect_path_with_profile(
+    module: &Module,
+    root: &Value,
+    path: &str,
+    override_profile: Option<&str>,
+) -> Result<JsonValue, String> {
     let cone = crate::convert::project_path(root, path)
         .map_err(|why| format!("cannot inspect `{path}`: {why}"))?;
-    let profile = SecretProfile::analyze(module);
+    let profile = SecretProfile::analyze_with_profile(module, override_profile);
     let kind = kind_name(cone);
     // A media type sourced from material (an env lookup used as a
     // secret locator) is not publishable, even when the blob's data is

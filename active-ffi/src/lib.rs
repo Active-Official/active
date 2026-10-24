@@ -524,6 +524,14 @@ pub unsafe extern "C" fn active_eval(
         match engine.evaluate(&parsed) {
             Ok((value, _)) => {
                 set_last(ACTIVE_ERR_OK);
+                // Structural material (a plain env read used as a secret
+                // locator, and anything built from it) is redacted before
+                // it crosses the boundary, matching the CLI exporters.
+                let profile = active_core::secret::SecretProfile::analyze_with_profile(
+                    &parsed,
+                    engine.profile_override.as_deref(),
+                );
+                let value = active_core::convert::redact_value(&profile, &value);
                 Box::into_raw(Box::new(ActiveValue { value }))
             }
             Err(EvalError::ValidationFailed { .. }) => {
@@ -734,7 +742,17 @@ pub unsafe extern "C" fn active_value_is_secret(value: *const ActiveValue) -> bo
         }
         // SAFETY: live handle per docs/FFI.md section 1.
         let value = unsafe { &*value };
-        matches!(value.value, Value::Secret(_))
+        // Nested secrets count too: a table/array carrying a secret is
+        // secret-tainted as a whole (docs/FFI.md section 8).
+        fn contains_secret(value: &Value) -> bool {
+            match value {
+                Value::Secret(_) => true,
+                Value::Array(items) => items.iter().any(contains_secret),
+                Value::Table(map) => map.values().any(contains_secret),
+                _ => false,
+            }
+        }
+        contains_secret(&value.value)
     })
 }
 
@@ -1298,6 +1316,21 @@ mod tests {
     }
 
     #[test]
+    fn nested_secret_is_reported_as_secret() {
+        // A container carrying a secret is secret-tainted as a whole.
+        unsafe {
+            let src = b"n = 1\nt = { inner = secret(\"x\") }\n";
+            let module = active_module_parse(src.as_ptr(), src.len(), std::ptr::null());
+            assert!(!module.is_null());
+            let value = active_eval(module, std::ptr::null());
+            assert!(!value.is_null());
+            assert!(active_value_is_secret(value));
+            active_value_free(value);
+            active_module_free(module);
+        }
+    }
+
+    #[test]
     fn eval_json_redacts_secrets_and_taint_reports() {
         unsafe {
             let src = b"let pw = secret(\"hunter2\")\n[out]\npass = pw\n";
@@ -1314,7 +1347,10 @@ mod tests {
                 .into_owned();
             assert!(json.contains("***SECRET***"), "{json}");
             assert!(!json.contains("hunter2"), "{json}");
-            assert!(!active_value_is_secret(value));
+            assert!(
+                active_value_is_secret(value),
+                "a table carrying a secret is secret-tainted as a whole"
+            );
             active_string_free(json_ptr);
             active_value_free(value);
             active_module_free(module);
@@ -1377,7 +1413,10 @@ mod tests {
             assert!(!module.is_null());
             let value = active_eval(module, std::ptr::null());
             assert!(!value.is_null());
-            assert!(!active_value_is_secret(value));
+            assert!(
+                active_value_is_secret(value),
+                "a table carrying a secret is secret-tainted as a whole"
+            );
             assert_eq!(active_value_type(value), 8);
             // Single ownership: the returned string is freed exactly once
             // (Model A); calling the getter twice would leak the first copy.

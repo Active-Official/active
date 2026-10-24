@@ -356,7 +356,12 @@ impl<'a> Formatter<'a> {
             }) => (fields.clone(), *closed, meta.clone()),
             _ => return,
         };
-        if fields.is_empty() && !closed && meta.version.is_none() {
+        if fields.is_empty()
+            && !closed
+            && meta.version.is_none()
+            && meta.min_reader.is_none()
+            && meta.min_writer.is_none()
+        {
             let indent = INDENT.repeat(depth);
             self.out.push_str(&format!("{indent}schema = {{}}"));
             self.emit_trailing("schema");

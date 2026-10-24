@@ -48,8 +48,14 @@ pub fn replay(module: &Module, expected: Option<&str>) -> Result<JsonValue, Stri
         .evaluate_with_steps(module)
         .map_err(|e| e.to_string())?;
 
-    let first_hash = crate::provenance::content_hash(&first);
-    let second_hash = crate::provenance::content_hash(&second);
+    // Hash the structurally redacted tree: the audit trail and replay
+    // must agree on the same document, and a secret value change must
+    // not alter the content identity.
+    let profile = crate::secret::SecretProfile::analyze(module);
+    let first_hash =
+        crate::provenance::content_hash(&crate::convert::redact_value(&profile, &first));
+    let second_hash =
+        crate::provenance::content_hash(&crate::convert::redact_value(&profile, &second));
     let first_codes: Vec<&str> = first_diags.iter().map(|d| d.code.as_str()).collect();
     let second_codes: Vec<&str> = second_diags.iter().map(|d| d.code.as_str()).collect();
     let steps_match = first_steps == second_steps;

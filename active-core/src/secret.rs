@@ -515,10 +515,9 @@ fn wildcard_indices(path: &str) -> String {
 fn patch_destination_applies(module: &Module, paths: &HashMap<String, NodeId>, path: &str) -> bool {
     let is_scalar = |known: &str| {
         paths.get(known).is_some_and(|id| {
-            !matches!(
-                module.get(*id),
-                Some(Node::Table { .. }) | Some(Node::Array { .. })
-            )
+            // An env-fallback value can evaluate to a table; follow it
+            // (`is_table_like`) instead of trusting the node kind.
+            !matches!(module.get(*id), Some(Node::Array { .. })) && !is_table_like(module, *id)
         })
     };
     let Ok(segments) = crate::parser::validate_patch_path(path) else {

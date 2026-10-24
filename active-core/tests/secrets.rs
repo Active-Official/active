@@ -1414,3 +1414,24 @@ fn defaults_expand_over_a_patch_introduced_container() {
     assert!(!json.contains(raw), "patch container leaked: {json}");
     assert!(json.contains("benign-element"), "sibling hidden: {json}");
 }
+
+#[test]
+fn successful_set_into_an_env_fallback_table_is_a_rename_candidate() {
+    // F1 (review 35): `env.M ?: {…}` evaluates to a table, so a Set
+    // into it succeeds and its path is a rename candidate.
+    let raw = "fallback-set-r35";
+    std::env::set_var("ACTIVE_R35_P", raw);
+    std::env::remove_var("ACTIVE_R35_M");
+    let src = "let p = env.ACTIVE_R35_P\nk = secret(p)\nx = env.ACTIVE_R35_M ?: { a = 1 }\n@patch(\"x.b\", p)\n@rename(\"x.b\", \"c\")\n";
+    let module = parse(src, "fallback-set").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("ACTIVE_R35_P".to_string(), raw.to_string());
+    let (value, _) = Engine::new()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("resilient evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    assert!(profile.path_is_secret("x.c"), "fallback Set rename path");
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(raw), "fallback Set leaked: {json}");
+}

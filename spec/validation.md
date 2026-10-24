@@ -130,8 +130,10 @@ required key`) unless:
 - the field is absent **and** its `requires` target is absent or
   disabled — the conditional does not trigger. When the target is
   present and enabled (`true`, non-empty, non-zero; secrets count),
-  the missing field is T004 naming both paths (`missing required key
-  (required by present '<target>')`), unless a resilient default fill
+  the missing field is T004 naming both paths
+  (`missing required key (required by present '<target>')`) for a
+  literal target; a computed target renders `(required by a computed
+  requires target)` and is never echoed. A resilient default fill
   satisfies presence (spec/schema-extensions.md section 4).
 
 The span is the schema field's own span (there is no value to point

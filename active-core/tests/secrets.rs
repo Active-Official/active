@@ -284,10 +284,10 @@ fn constraint_redaction_honors_the_profile_override() {
 #[test]
 fn computed_requires_target_is_not_echoed() {
     use std::collections::HashMap;
-    let src = "req = env.R15REQ\nk = secret(req)\nschema = { s = String(requires = req), other = Int }\nother = 1\n";
+    let src = "req = env.R15REQ\nk = secret(req)\nschema = { s = String(requires = req), tls = Bool }\ntls = true\n";
     let module = parse(src, "t004-computed").expect("must parse");
     let mut env = HashMap::new();
-    env.insert("R15REQ".to_string(), "ENVSECRET-requires".to_string());
+    env.insert("R15REQ".to_string(), "tls".to_string());
     let (_, diagnostics) = Engine::hermetic()
         .with_env(env)
         .evaluate(&module)
@@ -297,8 +297,13 @@ fn computed_requires_target_is_not_echoed() {
         .find(|d| d.code == "T004")
         .expect("T004 missing required key");
     assert!(
-        !t004.message.contains("ENVSECRET"),
+        !t004.message.contains("'tls'"),
         "T004 echoed a computed requires target: {}",
+        t004.message
+    );
+    assert!(
+        t004.message.contains("computed requires target"),
+        "T004 did not take the computed branch: {}",
         t004.message
     );
 }

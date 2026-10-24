@@ -526,6 +526,13 @@ fn inspect_follows_nested_renames_and_array_removals() {
             "a.b[0]",
             "R15NEST",
         ),
+        (
+            // Renaming an array element is a no-op in the evaluator;
+            // the taint map must not move it to a fabricated key.
+            "let p = env.R16AR\nk = secret(p)\na = [p, \"benign\"]\n@rename(\"a[0]\", \"z\")\n",
+            "a[0]",
+            "R16AR",
+        ),
     ] {
         let module = active_core::parse(src, "inspect-transform").expect("parse");
         let mut env = std::collections::HashMap::new();
@@ -567,6 +574,37 @@ fn computed_profile_selector_survives_patches() {
         assert_eq!(report["tainted"], true, "{src}: {report}");
         assert!(!report.to_string().contains("ENVSECRET"), "{src}: {report}");
     }
+}
+
+#[test]
+fn transform_work_bound_fails_closed() {
+    // More patches than the work bound allows must discard the map and
+    // keep unknown paths material; schema defaults must not re-register
+    // a path the abandoned transforms could have changed.
+    let mut src =
+        String::from("p = env.R16WB\nx = p\nschema = { x = String(default = \"\") }\na = [");
+    for i in 0..1000 {
+        if i > 0 {
+            src.push(',');
+        }
+        src.push('0');
+    }
+    src.push_str("]\n");
+    for i in 0..2000 {
+        src.push_str(&format!("@remove(\"missing{i}\")\n"));
+    }
+    let module = active_core::parse(&src, "inspect-work-bound").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("R16WB".to_string(), "ENVSECRET-work-bound".to_string());
+    let mut engine = active_core::Engine::hermetic().with_env(env);
+    engine.budget.max_wall_ms = 10_000;
+    let (evaluated, _) = engine.evaluate(&module).expect("evaluate");
+    let report = active_core::convert::inspect_path(&module, &evaluated, "x").expect("inspect");
+    assert_eq!(report["tainted"], true, "{report}");
+    assert!(
+        !report.to_string().contains("ENVSECRET"),
+        "work-bound reset leaked: {report}"
+    );
 }
 
 #[test]

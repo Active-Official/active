@@ -54,7 +54,9 @@ values are Deferred (below) so no evaluation semantics change now.
 `requires = "<dotted-path>"`: the field must be present when the named
 sibling path is present *and enabled* (true, non-empty, non-zero;
 a provided secret counts as enabled; `false`, `""`, `0`, empties, and
-null do not trigger). Violation is T004 naming both paths. Rationale:
+null do not trigger). Violation is T004 naming both paths for a
+literal target; a computed target renders `(required by a computed
+requires target)` and is never echoed. Rationale:
 the smallest conditional that covers real contracts (TLS cert required
 when TLS is on, replicas required when prod mode is on) without an
 expression language in the schema. Full `when`/`then` expressions are

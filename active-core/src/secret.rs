@@ -274,6 +274,11 @@ fn remove_path(paths: &mut HashMap<String, NodeId>, path: &str) {
 /// missing source is a no-op (the evaluator warns W004 and leaves the
 /// tree intact).
 fn rename_subtree(paths: &mut HashMap<String, NodeId>, from: &str, to: &str) {
+    // Renaming an array element is a no-op in the evaluator (W004):
+    // never relocate taint to a fabricated key.
+    if split_parent(from).1.starts_with('[') {
+        return;
+    }
     let dotted = format!("{from}.");
     let indexed = format!("{from}[");
     let source_exists = paths.contains_key(from)
@@ -354,6 +359,9 @@ fn remove_from_set(set: &mut HashSet<String>, path: &str) {
 /// Move a path set's entries with the evaluator's same-parent rename
 /// rule.
 fn rename_set(set: &mut HashSet<String>, from: &str, to: &str) {
+    if split_parent(from).1.starts_with('[') {
+        return;
+    }
     if !set.iter().any(|key| path_under(key, from)) {
         return;
     }
@@ -679,6 +687,7 @@ impl SecretProfile {
             ProfileSelection::None => {}
         }
         let mut work = 0usize;
+        let mut transforms_abandoned = false;
         for id in &module.patches {
             work = work.saturating_add(
                 paths
@@ -688,10 +697,13 @@ impl SecretProfile {
             );
             if work > MAX_TRANSFORM_WORK {
                 // Fail closed: known paths may now be stale, so forget
-                // them and let unknown paths report material.
+                // them and let unknown paths report material. Defaults
+                // must not re-register paths the abandoned transforms
+                // could have made material.
                 paths.clear();
                 fallback_secret_paths.clear();
                 truncated = true;
+                transforms_abandoned = true;
                 break;
             }
             match module.get(*id) {
@@ -727,9 +739,13 @@ impl SecretProfile {
             }
         }
         // Schema defaults fill absent paths during evaluation; explicit
-        // values and transforms (inserted above) win.
-        if let Some(schema) = module.schema {
-            truncated |= collect_default_paths(module, schema, "", &mut paths);
+        // values and transforms (inserted above) win. When transforms
+        // were abandoned, skip them: a benign default mapping would
+        // defeat the fail-closed reset.
+        if !transforms_abandoned {
+            if let Some(schema) = module.schema {
+                truncated |= collect_default_paths(module, schema, "", &mut paths);
+            }
         }
 
         Self {

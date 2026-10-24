@@ -670,6 +670,28 @@ fn reduction_fails_closed_for_bare_case_variants_and_env_calls() {
 }
 
 #[test]
+fn reduction_fails_closed_when_the_literal_line_must_survive() {
+    // The schema violation lives on the literal line, so the reducer
+    // must keep it; only the fail-closed sweep can protect the value.
+    for src in [
+        "schema = { loc = Int }\nloc = \"hunter2-X\"\ntoken = SECRET(loc)\n",
+        "schema = { loc = Int }\nloc = \"hunter2-Y\"\ntoken = secret.env(loc)\n",
+    ] {
+        let report = minimal_with_file(src, "T002");
+        let rendered = report.to_string();
+        assert!(
+            !rendered.contains("hunter2"),
+            "leak for {src:?}: {rendered}"
+        );
+        let reduced = report["reduced"].as_str().unwrap_or("");
+        assert!(
+            reduced.contains("loc"),
+            "the target line must survive: {reduced:?}"
+        );
+    }
+}
+
+#[test]
 fn malformed_secret_punctuation_still_redacts() {
     let cases = [
         "token = secret..env(\"NAME\", default = \"hunter2-A\")\nnoise = 1\n",

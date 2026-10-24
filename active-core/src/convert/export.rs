@@ -126,21 +126,25 @@ fn build_toml_value(v: &Value, path: &str, diags: &mut Vec<Diagnostic>) -> Optio
             media_type,
             payload,
         } => {
-            let mut map = toml::map::Map::new();
-            map.insert(
-                "$active.blob".to_string(),
+            // Same wire wrapper as JSON/YAML: `{"$active.blob": {…}}`
+            // (spec/blob.md §5), so one identity shape holds across
+            // every converter. A tainted identity redacts its media
+            // type.
+            let mut inner = toml::map::Map::new();
+            inner.insert(
+                "hash".to_string(),
                 toml::Value::String(format!("blake3:{}", crate::blob::hash_hex(hash))),
             );
-            map.insert("size".to_string(), toml::Value::Integer(*size as i64));
-            map.insert(
+            inner.insert("size".to_string(), toml::Value::Integer(*size as i64));
+            inner.insert(
                 "media_type".to_string(),
                 toml::Value::String(
                     crate::secret::exposed_media_type(*tainted, media_type).to_string(),
                 ),
             );
-            map.insert("tainted".to_string(), toml::Value::Boolean(*tainted));
+            inner.insert("tainted".to_string(), toml::Value::Boolean(*tainted));
             if let Some(bytes) = payload {
-                map.insert(
+                inner.insert(
                     "payload_b64".to_string(),
                     toml::Value::String(base64::Engine::encode(
                         &base64::engine::general_purpose::STANDARD,
@@ -148,6 +152,8 @@ fn build_toml_value(v: &Value, path: &str, diags: &mut Vec<Diagnostic>) -> Optio
                     )),
                 );
             }
+            let mut map = toml::map::Map::new();
+            map.insert("$active.blob".to_string(), toml::Value::Table(inner));
             Some(toml::Value::Table(map))
         }
         Value::Array(items) => {

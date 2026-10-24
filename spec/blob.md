@@ -92,7 +92,7 @@ The dependency-pass treats `ContentAddressed` as a leaf of known size (`size` by
 
 The structural taint bit travels with the blob on every export path (JSON identity, materialised JSON, lockfiles, provenance, graph queries, repair plans, audit trail): a tainted blob's identity object carries `"tainted": true`, and its payload is never emitted. A media type that is itself material (for example an `env` lookup used as a secret locator) taints the identity as well, and a tainted identity renders `"media_type": "***SECRET***"`: the identity's media field is never allowed to carry material. Redaction obligations are identical to secrets: any raw tainted byte in any output is a gate failure.
 
-Known limitation (documented, not hidden): the identity hash of a tainted blob is deterministic over the secret bytes, so a low-entropy secret is theoretically subject to an offline dictionary check by anyone who can already see the identity object. B002 also reports the payload size (needed to explain `max_size`), a length oracle for a secret-derived payload; schemas that set `max_size` already publish a bound. Mitigations in force: tainted payloads are never emitted anywhere, hashes never appear in source, and high-entropy secret material (tokens, keys) is not dictionary-enumerable. If a deployment needs identity-hiding for tainted blobs, the extension point is a per-document salt in the canonical bytes (domain `active-blob/v2`) — a deliberate future change, never a silent one.
+Known limitation (documented, not hidden): the identity hash of a tainted blob is deterministic over the secret bytes, so a low-entropy secret is theoretically subject to an offline dictionary check by anyone who can already see the identity object. B002 also reports the payload size (needed to explain `max_size`), a length oracle for a secret-derived payload (the reported length lies outside the schema bound, so the bound does not hide it). Mitigations in force: tainted payloads are never emitted anywhere, hashes never appear in source, and high-entropy secret material (tokens, keys) is not dictionary-enumerable. If a deployment needs identity-hiding for tainted blobs, the extension point is a per-document salt in the canonical bytes (domain `active-blob/v2`) — a deliberate future change, never a silent one.
 
 ## 8. Diagnostic family B00x (CA.010)
 
@@ -104,7 +104,7 @@ Known limitation (documented, not hidden): the identity hash of a tainted blob i
 | B004 | Blob media type mismatches schema `media_type` | validation |
 | B005 | Materialisation impossible: payload not retained | eval (`--materialise-blobs` / demanded cone) |
 
-All messages are stable and value-free (sizes and media types are metadata, never secret material — but messages never include payload bytes regardless).
+All messages are stable and value-free (sizes are metadata; an evaluated media type may be material, so B004 echoes only the schema-authored expectation and every identity redacts a tainted `media_type` — but messages never include payload bytes regardless).
 
 ## 9. Lockfile / provenance
 

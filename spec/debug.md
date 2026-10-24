@@ -26,7 +26,10 @@ StepEvent { node: u32, path: Option<String>, kind: String,
   directives, and schema-default fills apply to the final tree, so
   the root step shows the walked document; `eval` shows the
   post-transform tree. Inspect and hover resolve transform paths
-  explicitly (the structural profile maps them).
+  explicitly (the structural profile maps Set/Remove/Rename and
+  schema defaults). A computed `active_profile` selector cannot be
+  resolved statically, so the taint check consults a union of every
+  profile and fails closed.
 
 Determinism: same source, environment, profile, mode, and budget →
 byte-identical step arrays.

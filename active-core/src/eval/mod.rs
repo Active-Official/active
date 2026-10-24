@@ -1994,7 +1994,10 @@ impl Engine {
                 diagnostics.push(Diagnostic {
                     severity: Severity::Warning,
                     code: "W002".into(),
-                    message: format!("unknown profile '{name}'"),
+                    message: format!(
+                        "unknown profile {}",
+                        profile_selector_label(module, &name, self.profile_override.is_some())
+                    ),
                     path: Some("active_profile".into()),
                     span: if self.profile_override.is_some() {
                         None
@@ -2055,7 +2058,10 @@ impl Engine {
             diagnostics.push(Diagnostic {
                 severity: Severity::Warning,
                 code: "W002".into(),
-                message: format!("unknown profile '{name}'"),
+                message: format!(
+                    "unknown profile {}",
+                    profile_selector_label(module, &name, self.profile_override.is_some())
+                ),
                 path: Some("active_profile".into()),
                 span: if self.profile_override.is_some() {
                     None
@@ -2078,16 +2084,30 @@ impl Engine {
         // addition — fail-safe direction).
         account.charge(module, Some(profile_id), measure_value(&profile_value))?;
         let mut merged = base_table;
+        // A computed selector's value may be material: never echo it
+        // into a diagnostic (W003 uses this label).
+        let profile_label = profile_selector_label(module, &name, self.profile_override.is_some());
         merge_profile_value(
             &mut merged,
             profile_value,
-            &name,
+            &profile_label,
             String::new(),
             module.node_spans.get(&profile_id).cloned(),
             module.node_files.get(&profile_id).cloned(),
             diagnostics,
         );
         Ok(Value::Table(merged))
+    }
+}
+
+/// Diagnostic-safe profile selector: the literal the document spells,
+/// a CLI override, or `(computed selector)`. A computed selector's
+/// value may be material, so it is never echoed.
+fn profile_selector_label(module: &Module, name: &str, override_active: bool) -> String {
+    if override_active || crate::secret::active_profile_name(module).as_deref() == Some(name) {
+        format!("'{name}'")
+    } else {
+        "(computed selector)".to_string()
     }
 }
 
@@ -2182,7 +2202,7 @@ fn merge_profile_value(
                             severity: Severity::Warning,
                             code: "W003".into(),
                             message: format!(
-                                "profile '{profile}' overrides '{child}' with a different type"
+                                "profile {profile} overrides '{child}' with a different type"
                             ),
                             path: Some(child),
                             span: span.clone(),

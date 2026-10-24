@@ -18,6 +18,10 @@ from the value tree with the same shapes:
   (e.g. `{"MiB": 5}`).
 - Array/Table → JSON array/object, recursively.
 - Secret(_) → `"***SECRET***"` (never the value, C-036).
+- Blob → `{"$active.blob": {hash, size, media_type, tainted}}`, the
+  same nested wrapper in YAML and TOML (`[f."$active.blob"]`). A
+  tainted identity redacts `media_type`; `payload_b64` appears only
+  for an explicit materialisation demand.
 
 ## 2. YAML export
 

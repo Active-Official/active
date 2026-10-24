@@ -185,7 +185,7 @@ fn value_to_toml_literal(v: &Value) -> String {
             tainted,
             ..
         } => format!(
-            "\"$active.blob(blake3:{}, size={size}, media={})\"",
+            "{{ \"$active.blob\" = {{ hash = \"blake3:{}\", size = {size}, media_type = {:?}, tainted = {tainted} }} }}",
             crate::blob::hash_hex(hash),
             crate::secret::exposed_media_type(*tainted, media_type)
         ),

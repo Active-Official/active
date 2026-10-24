@@ -422,6 +422,73 @@ fn inspect_redacts_the_media_of_a_data_tainted_blob() {
 }
 
 #[test]
+fn analysis_terminates_on_a_cyclic_binding() {
+    // A self-referential `let` container must not grow paths forever;
+    // the LSP analyzes every keystroke.
+    use std::sync::mpsc;
+    use std::time::Duration;
+    let (module, _) = active_core::parse_recovering(
+        "let t = { a = t }\n",
+        "cycle",
+        active_core::ParseOptions::default(),
+    );
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = active_core::secret::SecretProfile::analyze(&module);
+        let _ = tx.send(());
+    });
+    rx.recv_timeout(Duration::from_secs(10))
+        .expect("analysis must terminate on a cyclic binding");
+}
+
+#[test]
+fn inspect_fails_closed_on_a_computed_profile_selector() {
+    // `active_profile` from an env read cannot be resolved statically,
+    // so the profile's paths join a taint-only fallback: a base value
+    // that the selected profile replaces must not certify as benign.
+    for src in [
+        "let p = env.R14COMP\nk = secret(p)\nactive_profile = env.R14PROF\nprofile \"prod\" { x = p }\nx = \"benign\"\n",
+        "let p = env.R14COMP\nlet suffix = \"od\"\nk = secret(p)\nactive_profile = \"pr${suffix}\"\nprofile \"prod\" { x = p }\nx = \"benign\"\n",
+    ] {
+        let module = active_core::parse(src, "inspect-computed-profile").expect("parse");
+        let mut env = std::collections::HashMap::new();
+        env.insert("R14COMP".to_string(), "ENVSECRET-computed".to_string());
+        env.insert("R14PROF".to_string(), "prod".to_string());
+        let (evaluated, _) = active_core::Engine::hermetic()
+            .with_env(env)
+            .evaluate(&module)
+            .expect("evaluate");
+        let report =
+            active_core::convert::inspect_path(&module, &evaluated, "x").expect("inspect");
+        assert_eq!(report["tainted"], true, "{src}: {report}");
+        assert!(
+            !report.to_string().contains("ENVSECRET"),
+            "{src}: {report}"
+        );
+    }
+}
+
+#[test]
+fn inspect_follows_rename_targets() {
+    let src = "let p = env.R14REN\nk = secret(p)\na = p\n@rename(\"a\", \"b\")\n";
+    let module = active_core::parse(src, "inspect-rename").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("R14REN".to_string(), "ENVSECRET-rename".to_string());
+    let (evaluated, _) = active_core::Engine::hermetic()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("evaluate");
+    let report = active_core::convert::inspect_path(&module, &evaluated, "b").expect("inspect");
+    assert_eq!(report["tainted"], true, "{report}");
+    assert_eq!(report["value"], "***SECRET***", "{report}");
+    // The old path no longer resolves in the evaluated tree.
+    assert!(
+        active_core::convert::inspect_path(&module, &evaluated, "a").is_err(),
+        "renamed source path must be gone"
+    );
+}
+
+#[test]
 fn inspect_reports_a_tainted_blob_as_tainted() {
     let src = "f = blob(\"text/plain\", secret(\"hunter2-blob\"))\n";
     let module = active_core::parse(src, "inspect-blob").expect("parse");

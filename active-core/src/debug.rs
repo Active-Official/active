@@ -464,7 +464,7 @@ fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
         // The gap was normalized to spaces, so the call opens at the
         // next token; `secret.env("NAME")` is a name (metadata), so its
         // first string is exempt but later arguments are still scanned.
-        let Some(call) = call_opening(tokens, index + 1, true) else {
+        let Some(call) = call_opening(tokens, index + 1, tokens[index].text == "secret") else {
             index += 1;
             continue;
         };

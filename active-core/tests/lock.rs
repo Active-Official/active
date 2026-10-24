@@ -31,6 +31,28 @@ fn eval_with(src: &str, env: HashMap<String, String>) -> active_core::Value {
 // ------------------------------------------------------------------
 
 #[test]
+fn lockfile_records_blob_identities_and_redacts_tainted_media() {
+    let src = "m = env.R14BLOB\nk = secret(m)\ntainted = blob(m, \"data\")\nplain = blob(\"text/plain\", \"hi\")\n";
+    let module = parse(src, "lock-blobs").expect("must parse");
+    let env = env_map(&[("R14BLOB", "ENVSECRET-media")]);
+    let engine = Engine::hermetic().with_env(env.clone());
+    let (value, _) = engine.evaluate(&module).expect("must evaluate");
+    let provenance = collect_provenance(&module, &engine.env, None, None).expect("provenance");
+    let rendered = LockManifest::new("active-test".to_string(), &value, provenance).render();
+    assert!(rendered.contains("[[blobs]]"), "{rendered}");
+    assert!(rendered.contains("path = \"plain\""), "{rendered}");
+    assert!(rendered.contains("path = \"tainted\""), "{rendered}");
+    assert!(
+        rendered.contains("media_type = \"***SECRET***\""),
+        "tainted media not redacted: {rendered}"
+    );
+    assert!(
+        !rendered.contains("ENVSECRET"),
+        "lockfile leaked material: {rendered}"
+    );
+}
+
+#[test]
 fn ambient_environment_is_invisible_under_an_explicit_snapshot() {
     // Even with the variable set in the process ambient, an empty
     // snapshot evaluates the default: no implicit reads, ever.

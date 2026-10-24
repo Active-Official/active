@@ -88,6 +88,23 @@ class CapabilityTest(unittest.TestCase):
         for shape in ("path list", "shortest-path", "content-addressed-above-size"):
             self.assertIn(shape, graph_output, f"graph output omits {shape}")
 
+    def test_codegen_targets_and_features(self) -> None:
+        # Every shipped target is discoverable, and each has a feature
+        # flag: the Rust target was gate-tested but unlisted before.
+        tools = {t.get("name"): t for t in self.doc.get("tools", [])}
+        target = tools["generate"]["input"]["target"]
+        for name in ("jsonschema", "openapi", "typescript", "go", "rust", "python"):
+            self.assertIn(name, target, f"generate input omits {name}")
+        features = self.doc.get("features", [])
+        for feature in (
+            "codegen-jsonschema",
+            "codegen-typescript-zod",
+            "codegen-go",
+            "codegen-rust",
+            "codegen-python",
+        ):
+            self.assertIn(feature, features, f"feature list omits {feature}")
+
     def test_every_tool_described(self) -> None:
         for tool in self.doc.get("tools", []):
             self.assertTrue(tool.get("name"), "nameless tool")

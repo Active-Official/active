@@ -120,9 +120,11 @@ AnnotationKind::AiImmutable(bool)
   (actual: <rendered>)` — `<source>` is the raw payload, truncated at
   120 characters; predicates containing `secret(…)` render as the
   generic `constraint` so no locator or literal can leak. `<rendered>`
-  is the actual value rendered safely: secrets render as `secret`,
-  strings quote with debug escaping, output truncates at 120
-  characters with an ellipsis.
+  is the actual value rendered safely: a material actual of any kind
+  (a value used as a secret locator, or built from one) renders
+  `***SECRET***`; a string merely containing a known secret is
+  redacted in place; otherwise strings quote with debug escaping and
+  output truncates at 120 characters with an ellipsis.
 - T006 `constraint violation at '<path>': <source> must evaluate to
   a boolean, got <kind>` — non-boolean predicate result.
 - E019 `patch target '<path>' overlaps ai_immutable '<apath>'` —

@@ -215,7 +215,58 @@ pub fn content_hash(value: &crate::ir::Value) -> String {
     format!("sha256:{}", sha256_hex(canonical.as_bytes()))
 }
 
-/// A complete lockfile record: hash, toolchain, and provenance.
+/// One content-addressed identity recorded in a lockfile
+/// (spec/blob.md §7/§11): path, hash, size, media type, taint. A
+/// tainted identity redacts its media type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlobRecord {
+    pub path: String,
+    pub hash: String,
+    pub size: u64,
+    pub media_type: String,
+    pub tainted: bool,
+}
+
+/// Collect every blob identity in an evaluated tree (post-order,
+/// deterministic by construction: tables iterate in source order and
+/// the caller sorts by path).
+fn collect_blobs(value: &crate::ir::Value, path: &str, out: &mut Vec<BlobRecord>) {
+    use crate::ir::Value;
+    match value {
+        Value::Blob {
+            hash,
+            size,
+            media_type,
+            tainted,
+            ..
+        } => out.push(BlobRecord {
+            path: path.to_string(),
+            hash: format!("blake3:{}", crate::blob::hash_hex(hash)),
+            size: *size,
+            media_type: crate::secret::exposed_media_type(*tainted, media_type).to_string(),
+            tainted: *tainted,
+        }),
+        Value::Array(items) => {
+            for (index, item) in items.iter().enumerate() {
+                collect_blobs(item, &format!("{path}[{index}]"), out);
+            }
+        }
+        Value::Table(map) => {
+            for (key, item) in map {
+                let child = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{path}.{key}")
+                };
+                collect_blobs(item, &child, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// A complete lockfile record: hash, toolchain, provenance, and blob
+/// identities.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LockManifest {
     pub toolchain: String,
@@ -224,11 +275,15 @@ pub struct LockManifest {
     pub main: Option<FileInput>,
     pub env: Vec<EnvInput>,
     pub includes: Vec<FileInput>,
+    pub blobs: Vec<BlobRecord>,
 }
 
 impl LockManifest {
     pub fn new(toolchain: String, value: &crate::ir::Value, provenance: Provenance) -> Self {
         let profile = provenance.profile.clone();
+        let mut blobs = Vec::new();
+        collect_blobs(value, "", &mut blobs);
+        blobs.sort_by(|a, b| a.path.cmp(&b.path));
         Self {
             toolchain,
             content_hash: content_hash(value),
@@ -236,6 +291,7 @@ impl LockManifest {
             main: provenance.main,
             env: provenance.env,
             includes: provenance.includes,
+            blobs,
         }
     }
 
@@ -265,6 +321,22 @@ impl LockManifest {
                 toml::Value::String(main.sha256.clone()),
             );
             doc.insert("main".to_string(), toml::Value::Table(table));
+        }
+        if !self.blobs.is_empty() {
+            let mut array = Vec::new();
+            for blob in &self.blobs {
+                let mut entry = toml::map::Map::new();
+                entry.insert("path".to_string(), toml::Value::String(blob.path.clone()));
+                entry.insert("hash".to_string(), toml::Value::String(blob.hash.clone()));
+                entry.insert("size".to_string(), toml::Value::Integer(blob.size as i64));
+                entry.insert(
+                    "media_type".to_string(),
+                    toml::Value::String(blob.media_type.clone()),
+                );
+                entry.insert("tainted".to_string(), toml::Value::Boolean(blob.tainted));
+                array.push(toml::Value::Table(entry));
+            }
+            doc.insert("blobs".to_string(), toml::Value::Array(array));
         }
         let mut provenance = toml::map::Map::new();
         if !self.env.is_empty() {

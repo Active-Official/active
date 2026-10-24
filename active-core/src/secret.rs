@@ -212,6 +212,35 @@ fn remove_subtree(paths: &mut HashMap<String, NodeId>, path: &str) {
     paths.retain(|key, _| key != path && !key.starts_with(&dotted) && !key.starts_with(&indexed));
 }
 
+/// Move one path and everything below it from `from` to `to`.
+fn rename_subtree(paths: &mut HashMap<String, NodeId>, from: &str, to: &str) {
+    remove_subtree(paths, to);
+    let dotted = format!("{from}.");
+    let indexed = format!("{from}[");
+    let mut moved: Vec<(String, NodeId)> = Vec::new();
+    paths.retain(|key, value| {
+        if key == from {
+            moved.push((to.to_string(), *value));
+            false
+        } else if let Some(suffix) = key.strip_prefix(&dotted) {
+            moved.push((format!("{to}.{suffix}"), *value));
+            false
+        } else if let Some(suffix) = key.strip_prefix(&indexed) {
+            moved.push((format!("{to}[{suffix}"), *value));
+            false
+        } else {
+            true
+        }
+    });
+    paths.extend(moved);
+}
+
+/// Bound the path walk: a cyclic `let` container (`let t = { a = t }`)
+/// would otherwise mint a new path on every hop. A bounded map is
+/// fail-closed: an unregistered path can never certify a value benign.
+const MAX_PATH_DEPTH: usize = 256;
+const MAX_PATHS: usize = 100_000;
+
 /// Walk a value subtree from `root` under `base`, registering every
 /// table field, array element, and reference target.
 ///
@@ -231,9 +260,17 @@ fn walk_paths(
     if replace_subtree {
         remove_subtree(paths, base);
     }
-    let mut stack = vec![(root, base.to_string())];
+    let base_depth = if base.is_empty() {
+        0
+    } else {
+        base.matches(['.', '[']).count() + 1
+    };
+    let mut stack = vec![(root, base.to_string(), base_depth)];
     let mut seen: HashSet<(NodeId, String)> = HashSet::new();
-    while let Some((id, path)) = stack.pop() {
+    while let Some((id, path, depth)) = stack.pop() {
+        if depth > MAX_PATH_DEPTH || paths.len() >= MAX_PATHS {
+            continue;
+        }
         if !seen.insert((id, path.clone())) {
             continue;
         }
@@ -250,15 +287,15 @@ fn walk_paths(
                     } else {
                         format!("{path}.{key}")
                     };
-                    stack.push((*child, child_path));
+                    stack.push((*child, child_path, depth + 1));
                 }
             }
             Some(Node::Array { elements }) => {
                 for (index, child) in elements.iter().enumerate() {
-                    stack.push((*child, format!("{path}[{index}]")));
+                    stack.push((*child, format!("{path}[{index}]"), depth + 1));
                 }
             }
-            Some(Node::Ref(target)) => stack.push((*target, path)),
+            Some(Node::Ref(target)) => stack.push((*target, path, depth)),
             _ => {}
         }
     }
@@ -278,23 +315,46 @@ fn is_table_like(module: &Module, id: NodeId) -> bool {
     false
 }
 
-/// The profile the module selects for itself (`active_profile = "…"`),
-/// following a reference. A server/CLI override is not visible here;
-/// inspecting an overridden profile is documented as over-approximate.
-fn active_profile_name(module: &Module) -> Option<String> {
-    let root = module.root?;
-    let Node::Table { fields } = module.get(root)? else {
-        return None;
+/// The profile selector the document carries: absent, statically
+/// named, or computed (a value expression we cannot resolve).
+enum ProfileSelection {
+    None,
+    Named(String),
+    Computed,
+}
+
+/// Follow the root `active_profile` node. A literal (or a reference to
+/// one) is statically named; any other expression is computed.
+fn profile_selection(module: &Module) -> ProfileSelection {
+    let Some(root) = module.root else {
+        return ProfileSelection::None;
     };
-    let mut id = *fields.get("active_profile")?;
+    let Some(Node::Table { fields }) = module.get(root) else {
+        return ProfileSelection::None;
+    };
+    let Some(id) = fields.get("active_profile") else {
+        return ProfileSelection::None;
+    };
+    let mut current = *id;
     for _ in 0..8 {
-        match module.get(id) {
-            Some(Node::Literal(Value::String(name))) => return Some(name.clone()),
-            Some(Node::Ref(target)) => id = *target,
-            _ => return None,
+        match module.get(current) {
+            Some(Node::Literal(Value::String(name))) => {
+                return ProfileSelection::Named(name.clone())
+            }
+            Some(Node::Ref(target)) => current = *target,
+            _ => return ProfileSelection::Computed,
         }
     }
-    None
+    ProfileSelection::Computed
+}
+
+/// Public helper for diagnostics: the selector's literal value when the
+/// document spells one (never a computed value, which may be material).
+pub fn active_profile_name(module: &Module) -> Option<String> {
+    match profile_selection(module) {
+        ProfileSelection::Named(name) => Some(name),
+        _ => None,
+    }
 }
 
 /// Map schema-default paths to their default expression nodes. Runs
@@ -333,6 +393,10 @@ fn collect_default_paths(
 pub struct SecretProfile {
     nodes: HashSet<NodeId>,
     paths: HashMap<String, NodeId>,
+    /// Paths from **all** profiles, used only when the selector is
+    /// computed: we cannot know which profile applies, so taint fails
+    /// closed (value rendering still follows the evaluated tree).
+    fallback_paths: HashMap<String, NodeId>,
     literals: SecretRedactor,
 }
 
@@ -419,24 +483,55 @@ impl SecretProfile {
         }
         // Evaluation applies the selected profile first, then patches.
         // Profile tables merge (their fields override per key); a
-        // profile scalar replaces. Patches `Set` replace the value at
-        // the target path wholesale.
-        if let Some(name) = active_profile_name(module) {
-            if let Some(id) = module.profiles.get(&name) {
-                if let Some(Node::Table { fields }) = module.get(*id) {
-                    for (key, child) in fields {
-                        let merge = is_table_like(module, *child);
-                        walk_paths(module, *child, key, &mut paths, true, !merge);
+        // profile scalar replaces. Patches run in source order:
+        // `Set` replaces, `Remove` deletes, `Rename` moves the
+        // subtree. A computed selector cannot be resolved, so every
+        // profile's paths join a taint-only fallback map.
+        let mut fallback_paths: HashMap<String, NodeId> = HashMap::new();
+        match profile_selection(module) {
+            ProfileSelection::Named(name) => {
+                if let Some(id) = module.profiles.get(&name) {
+                    if let Some(Node::Table { fields }) = module.get(*id) {
+                        for (key, child) in fields {
+                            let merge = is_table_like(module, *child);
+                            walk_paths(module, *child, key, &mut paths, true, !merge);
+                        }
                     }
                 }
             }
+            ProfileSelection::Computed => {
+                for id in module.profiles.values() {
+                    if let Some(Node::Table { fields }) = module.get(*id) {
+                        for (key, child) in fields {
+                            let merge = is_table_like(module, *child);
+                            walk_paths(module, *child, key, &mut fallback_paths, true, !merge);
+                        }
+                    }
+                }
+            }
+            ProfileSelection::None => {}
         }
         for id in &module.patches {
-            if let Some(Node::PatchDirective {
-                op: PatchOp::Set { path, value },
-            }) = module.get(*id)
-            {
-                walk_paths(module, *value, path, &mut paths, true, true);
+            match module.get(*id) {
+                Some(Node::PatchDirective {
+                    op: PatchOp::Set { path, value },
+                }) => {
+                    walk_paths(module, *value, path, &mut paths, true, true);
+                    walk_paths(module, *value, path, &mut fallback_paths, true, true);
+                }
+                Some(Node::PatchDirective {
+                    op: PatchOp::Remove { path },
+                }) => {
+                    remove_subtree(&mut paths, path);
+                    remove_subtree(&mut fallback_paths, path);
+                }
+                Some(Node::PatchDirective {
+                    op: PatchOp::Rename { from, to },
+                }) => {
+                    rename_subtree(&mut paths, from, to);
+                    rename_subtree(&mut fallback_paths, from, to);
+                }
+                _ => {}
             }
         }
         // Schema defaults fill absent paths during evaluation; explicit
@@ -448,6 +543,7 @@ impl SecretProfile {
         Self {
             nodes,
             paths,
+            fallback_paths,
             literals,
         }
     }
@@ -468,8 +564,15 @@ impl SecretProfile {
 
     /// True when the path's value is secret material or derives from it.
     pub fn path_is_secret(&self, path: &str) -> bool {
-        self.path_node(path)
-            .is_some_and(|id| self.nodes.contains(&id))
+        let primary = self
+            .paths
+            .get(path)
+            .is_some_and(|id| self.nodes.contains(id));
+        primary
+            || self
+                .fallback_paths
+                .get(path)
+                .is_some_and(|id| self.nodes.contains(id))
     }
 
     /// Authored literal strings inside material nodes.

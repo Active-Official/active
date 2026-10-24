@@ -178,7 +178,9 @@ fn reserved_blob_names(has_blob: bool) -> HashSet<String> {
 /// v3: Blob types model the `{"$active.blob": {...}}` wire wrapper on
 ///     Go/Rust/Python (TypeScript already did), so real evaluated
 ///     documents decode.
-pub const CODEGEN_VERSION: u32 = 3;
+/// v4: Blob types carry the optional `payload_b64` materialisation
+///     field on every target.
+pub const CODEGEN_VERSION: u32 = 4;
 
 /// Single-line generated-file header for text targets (`prefix` is the
 /// comment marker: `//` for TS/Go/Rust, `#` for Python).

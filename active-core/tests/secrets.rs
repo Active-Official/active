@@ -205,6 +205,30 @@ fn blob_media_diagnostics_and_inspection_redact_material() {
 }
 
 #[test]
+fn unknown_computed_profile_selector_is_not_echoed() {
+    use std::collections::HashMap;
+    let src =
+        "p = env.R14W\nk = secret(p)\nactive_profile = env.R14W\nprofile \"prod\" { x = 1 }\n";
+    let module = parse(src, "w002-computed").expect("must parse");
+    let mut env = HashMap::new();
+    env.insert("R14W".to_string(), "ENVSECRET-profname".to_string());
+    let (_, diagnostics) = Engine::hermetic()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("resilient evaluate");
+    let w002 = diagnostics
+        .iter()
+        .find(|d| d.code == "W002")
+        .expect("W002 unknown profile");
+    assert!(
+        !w002.message.contains("ENVSECRET"),
+        "W002 echoed a computed selector: {}",
+        w002.message
+    );
+    assert!(w002.message.contains("computed"), "{}", w002.message);
+}
+
+#[test]
 fn constraint_diagnostics_redact_non_string_material() {
     let src = "let x = 4242\nk = secret(x)\n# @constraint: value == 7\nt = x\n";
     let module = parse(src, "t006-number").expect("must parse");

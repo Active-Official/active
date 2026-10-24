@@ -112,6 +112,19 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   well as data material, so an LSP edit cannot serve a stale
   untainted identity. Codegen models the optional `payload_b64` on
   every target, and the capability descriptor lists `codegen-rust`.
+- **Path analysis is bounded.** A cyclic `let` container
+  (`let t = { a = t }`) can no longer grow the structural path map
+  without limit; the walk is depth- and size-capped, so every editor
+  request terminates. `@rename`/`@remove` participate in the taint
+  map, and a computed `active_profile` selector (an env read or
+  interpolation) uses a taint-only union of every profile, failing
+  closed. W002/W003 never echo a computed selector's value.
+- **Lockfiles record blobs.** `active lock` emits a deterministic
+  `[[blobs]]` array (path, hash, size, media type, taint) with a
+  tainted identity's media type redacted. TOML uses the same nested
+  `$active.blob` wrapper as JSON/YAML.
+- **Codegen v4.** The optional `payload_b64` field changes every
+  target's Blob shape, so the pipeline version is bumped.
 
 ### SOLID → Active rename
 

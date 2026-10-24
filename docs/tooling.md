@@ -25,6 +25,7 @@ strict budget; a trip publishes an X0xx diagnostic instead of hanging.
 active inspect --from svc.active                    # schema contract (INSPECT v2)
 active inspect --from svc.active --path server.port # one value
 active inspect --from svc.active --path token --format text
+active inspect --from svc.active --path token --profile production
 ```
 
 Path reports carry kind, redacted value, taint, size, content-addressed
@@ -56,7 +57,9 @@ the target code survives. Spec: `spec/debug.md`.
 ```sh
 active viz graph  --from svc.active --format mermaid
 active viz taint  --from svc.active
+active viz taint  --from svc.active --profile production
 active viz budget --from svc.active
+active viz budget --from svc.active --profile production
 active viz schema --from svc.active
 active viz repair --from svc.active
 ```

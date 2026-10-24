@@ -74,6 +74,21 @@ pub fn budget_data(
     budget: &Budget,
     diagnostics: &[crate::Diagnostic],
 ) -> JsonValue {
+    budget_data_with_profile(module, value, budget, diagnostics, None)
+}
+
+/// Profile-aware budget dashboard. `profile_override` must be the same
+/// selector the evaluation used (`Engine::profile_override`), so the
+/// reported sizes describe the tree the caller actually received. An
+/// embedder that evaluated under an override and then called the
+/// unprofiled form would leak material length through `usage.value_size`.
+pub fn budget_data_with_profile(
+    module: &Module,
+    value: &Value,
+    budget: &Budget,
+    diagnostics: &[crate::Diagnostic],
+    profile_override: Option<&str>,
+) -> JsonValue {
     let nodes = module.arena.len() as u64;
     let mut keys = 0u64;
     let mut max_array = 0u64;
@@ -84,7 +99,7 @@ pub fn budget_data(
     // instead of re-serializing every subtree.
     // Sizes describe the redacted export: a material string reports
     // the marker length, not the material's length.
-    let profile = crate::secret::SecretProfile::analyze(module);
+    let profile = crate::secret::SecretProfile::analyze_with_profile(module, profile_override);
     let total_size = shape_size(
         &profile,
         "",

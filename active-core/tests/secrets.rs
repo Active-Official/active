@@ -554,3 +554,40 @@ fn generic_debug_and_serialize_never_emit_secrets() {
     assert_eq!(format!("{:?}", active_core::Value::Int(7)), "7");
     assert_eq!(format!("{:?}", active_core::Value::Null), "Null");
 }
+
+#[test]
+fn profile_override_marks_the_selected_locator_source() {
+    // A profile override replaces the value at a material path. The
+    // selected node is the locator source under that selector, so it is
+    // material even though the base-tree node set only knows the
+    // unprofiled literal. Exports must redact the selected value.
+    let raw = "profile-s3cr3t-override";
+    std::env::set_var("ACTIVE_PROFILE_SOURCE_TEST", raw);
+    let src = "active_profile = \"a\"\nprofile \"a\" { n = \"benign\" }\nprofile \"b\" { n = env.ACTIVE_PROFILE_SOURCE_TEST }\nn = \"default\"\nk = secret(n)\n";
+    let module = parse(src, "profile-source").expect("parse");
+    let mut engine = Engine::new();
+    engine.profile_override = Some("b".to_string());
+    let (value, _) = engine.evaluate(&module).expect("evaluate");
+    let profile = active_core::secret::SecretProfile::analyze_with_profile(&module, Some("b"));
+    assert!(
+        profile.path_is_secret("n"),
+        "selected source must be material"
+    );
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(raw), "selected material leaked: {json}");
+    assert!(json.contains("***SECRET***"), "{json}");
+}
+
+#[test]
+fn computed_selector_unions_override_material_paths() {
+    // A computed selector cannot be resolved, so every profile
+    // contributes material paths; an override-only material path must
+    // stay material (fail closed) instead of reading as benign.
+    let src = "active_profile = env.ACTIVE_PROFILE_SELECTOR_TEST\nprofile \"benign\" { n = \"public\" }\nprofile \"material\" { n = secret(\"computed-s3cr3t\") }\nn = \"default\"\nk = n\n";
+    let module = parse(src, "profile-computed").expect("parse");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    assert!(
+        profile.path_is_secret("n"),
+        "computed selector must union override material"
+    );
+}

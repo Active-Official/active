@@ -1804,6 +1804,17 @@ impl Parser {
         inc_id: NodeId,
         spliced: &mut std::collections::HashSet<String>,
     ) {
+        // Included root metadata never enters the composed tree: the
+        // host resolves mode/capabilities/profile from the main file
+        // only (spec/mode.md §1; includes inherit nothing). A root
+        // `schema` IS composable: included schemas are a supported
+        // contract-sharing feature (spec §2.7).
+        if matches!(
+            key.as_str(),
+            "active_mode" | "active_capabilities" | "active_profile"
+        ) {
+            return;
+        }
         match fields.get(&key) {
             None => {
                 fields.insert(key.clone(), inc_id);

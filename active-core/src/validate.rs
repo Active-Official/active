@@ -495,7 +495,13 @@ impl<'a> Validator<'a> {
                     _ => None,
                 };
                 let mut renamed = false;
-                if self.resilient {
+                // Never auto-rename into (or out of) root metadata.
+                let metadata_key = segments.len() == 1
+                    && (crate::eval::is_document_metadata(key)
+                        || suggestion.as_ref().is_some_and(|(suggested, _)| {
+                            crate::eval::is_document_metadata(suggested)
+                        }));
+                if self.resilient && !metadata_key {
                     if let (Some((field_id, true)), Some((suggested, score))) =
                         (candidate, &suggestion)
                     {
@@ -707,6 +713,10 @@ impl<'a> Validator<'a> {
                 _ => (None, false, None, None, false),
             };
         let path = render_path(segments);
+        // A resilient fill or auto-rename must never fabricate root
+        // metadata the host did not resolve.
+        let root_metadata = segments.len() == 1
+            && matches!(&segments[0], PathSeg::Key(key) if crate::eval::is_document_metadata(key));
         let (span, file) =
             match field_span.or_else(|| self.module.node_spans.get(&field_id).cloned()) {
                 Some(s) => (Some(s), self.module.node_files.get(&field_id).cloned()),
@@ -743,7 +753,7 @@ impl<'a> Validator<'a> {
             }
         }
         if let Some(default_id) = default_arg {
-            if self.resilient {
+            if self.resilient && !root_metadata {
                 self.fills.push(FillRequest {
                     segments: segments.to_vec(),
                     field_id,
@@ -759,7 +769,7 @@ impl<'a> Validator<'a> {
             // W005; explicit use still warns via L005). All other
             // defaulted fields stay strict-explicit (spec/validation.md
             // §9): every value in the tree is written by someone.
-            if !is_deprecated {
+            if !is_deprecated || root_metadata {
                 self.push(
                     "T004",
                     format!(

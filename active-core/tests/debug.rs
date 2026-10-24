@@ -73,13 +73,13 @@ fn breakpoints_select_by_taint_path_and_code() {
 fn replay_is_deterministic_and_honors_expected_hash() {
     let src = "port = 8080\nname = \"svc\"\n";
     let module = module(src);
-    let report = debug::replay(&module, None).expect("replay");
+    let report = debug::replay(&module, None, None).expect("replay");
     assert_eq!(report["ok"], true);
     assert_eq!(report["steps_match"], true);
     let hash = report["hash"].as_str().expect("hash").to_string();
-    let expected = debug::replay(&module, Some(&hash)).expect("replay");
+    let expected = debug::replay(&module, Some(&hash), None).expect("replay");
     assert_eq!(expected["expected_match"], true);
-    let mismatch = debug::replay(&module, Some("sha256:00")).expect("replay");
+    let mismatch = debug::replay(&module, Some("sha256:00"), None).expect("replay");
     assert_eq!(mismatch["ok"], false);
     assert_eq!(mismatch["expected_match"], false);
 }

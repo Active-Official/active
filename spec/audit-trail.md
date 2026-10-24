@@ -17,6 +17,7 @@ audit = {
   version = "1.4.0",
   source = "svc.active",
   mode = "config",
+  profile = "production",
   nodes = 42,
   diagnostics = ["T004@host"],
   result = "sha256:<hex of canonical redacted JSON>",
@@ -25,11 +26,19 @@ audit = {
 ```
 
 - `nodes`: IR arena size (evaluation scale proxy).
+- `mode`: the resolved mode (`config` or `data`), recorded after
+  includes and the root marker are resolved.
+- `profile`: the effective profile selector, when one applies —
+  either the literal `active_profile` value or a `--profile`
+  override. The field is omitted when no selector is active. It is
+  recorded so `active debug --replay --profile <name> --expect
+  <result>` can reproduce the hash.
 - `diagnostics`: sorted, deduped `CODE@path` items (bare codes for
   fatal loop-terminal errors, same convention as the repair plan's
   `final_codes`).
 - `result`: `content_hash` of the evaluated value — computed over the
   canonical redacted form, so raw secrets can never enter the log.
+  On a failed evaluation with no value, `result` is `null` (see §2).
 - `outcome`: `clean` or `failed` (mirrors the process exit contract).
 
 ## 2. Properties
@@ -40,8 +49,16 @@ audit = {
   boundary. Payload and secret bytes never appear (enforced by the
   failing-if-leaking audit test).
 - **Available on failure too:** validation failures still emit the
-  audit with `outcome = "failed"` and the collected codes. Fatal
-  engine errors (no value produced) carry no audit trail.
+  audit with `outcome = "failed"` and the collected codes.
+- **Null result on failure:** when evaluation fails before producing
+  a value (strict validation failure, budget trip, parse error), the
+  audit is still written with `outcome = "failed"` and `result =
+  null`. `null` is a valid Active value, so the audit stays
+  re-validatable; consumers must treat `null` as "no value was
+  produced" and never as an empty document hash.
+- **Fatal engine errors** (no redacted tree and no collected
+  diagnostics) carry no audit trail.
+
 
 ## 3. Agent use
 

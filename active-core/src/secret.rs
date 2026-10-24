@@ -652,6 +652,18 @@ impl SecretProfile {
         for (name, id) in &module.bindings {
             truncated |= walk_paths(module, *id, name, &mut paths, false, false);
         }
+        // Paths that are material in the base tree (before any profile
+        // selection). A profile override replaces the value at a path;
+        // when that path is a locator source (or derives from one), the
+        // replacement is material too, whatever node the override names
+        // (`n = env.X` under one profile, a literal under another). The
+        // selected node therefore inherits the path's materiality; the
+        // root-only node set cannot know about it.
+        let material_paths: HashSet<String> = paths
+            .iter()
+            .filter(|(_, id)| nodes.contains(*id))
+            .map(|(path, _)| path.clone())
+            .collect();
         // Evaluation applies the selected profile first, then patches.
         // Profile tables merge (their fields override per key); a
         // profile scalar replaces. A computed selector cannot be
@@ -671,7 +683,24 @@ impl SecretProfile {
                     if let Some(Node::Table { fields }) = module.get(*id) {
                         for (key, child) in fields {
                             let merge = is_table_like(module, *child);
-                            truncated |= walk_paths(module, *child, key, &mut paths, true, !merge);
+                            let mut profile_paths = HashMap::new();
+                            truncated |=
+                                walk_paths(module, *child, key, &mut profile_paths, true, !merge);
+                            if !merge {
+                                remove_subtree(&mut paths, key);
+                            }
+                            // A selected override at a material path is
+                            // material itself (the locator resolves through
+                            // the profile). Mark the exact selected node:
+                            // container ancestors inherit only through
+                            // their own material leaves, so marking a
+                            // whole subtree would redact benign siblings.
+                            for (path, node) in &profile_paths {
+                                if material_paths.contains(path) {
+                                    nodes.insert(*node);
+                                }
+                            }
+                            paths.extend(profile_paths);
                         }
                     }
                 }
@@ -685,7 +714,7 @@ impl SecretProfile {
                             truncated |=
                                 walk_paths(module, *child, key, &mut profile_paths, true, !merge);
                             for (path, node) in profile_paths {
-                                if nodes.contains(&node) {
+                                if nodes.contains(&node) || material_paths.contains(&path) {
                                     fallback_secret_paths.insert(path);
                                 }
                             }

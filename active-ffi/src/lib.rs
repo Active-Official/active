@@ -774,10 +774,17 @@ pub unsafe extern "C" fn active_value_is_tainted(value: *const ActiveValue) -> b
         }
         // SAFETY: live handle per docs/FFI.md section 1.
         let value = unsafe { &*value };
-        matches!(
-            value.value,
-            Value::Secret(_) | Value::Blob { tainted: true, .. }
-        )
+        // Taint is the superset: a container carrying a secret or a
+        // tainted blob is tainted as a whole (docs/FFI.md section 8).
+        fn tainted(value: &Value) -> bool {
+            match value {
+                Value::Secret(_) | Value::Blob { tainted: true, .. } => true,
+                Value::Array(items) => items.iter().any(tainted),
+                Value::Table(map) => map.values().any(tainted),
+                _ => false,
+            }
+        }
+        tainted(&value.value)
     })
 }
 
@@ -1325,6 +1332,7 @@ mod tests {
             let value = active_eval(module, std::ptr::null());
             assert!(!value.is_null());
             assert!(active_value_is_secret(value));
+            assert!(active_value_is_tainted(value));
             active_value_free(value);
             active_module_free(module);
         }

@@ -47,10 +47,12 @@ same bytes.
 
 ## 3. CLI
 
-- `ACTIVE graph [--format text|mermaid|dot|json] <file>` (default
-  text, the pre-C-049 shape preserved).
-- `ACTIVE graph query --from <file> <query> [--key K] [--min-size N]
-  [--format text|json]`: the decidable named queries below.
+- `ACTIVE graph [--format text|mermaid|dot|json] [--profile P] <file>`
+  (default text, the pre-C-049 shape preserved).
+- `ACTIVE graph query --from <file> --query <name> [--key K]
+  [--min-size N] [--format text|json] [--profile P]`: the decidable
+  named queries below. `--profile` is accepted on the outer `graph`
+  command as well; the inner flag wins when both are given.
 - `ACTIVE impact <key> [--format text|json] <file>`.
 - `ACTIVE why <key> [--format text|json] <file>`.
 - Unknown keys and unparseable files exit non-zero; queries need
@@ -62,8 +64,8 @@ same bytes.
 
 | Query | Answer |
 |---|---|
-| `dependents` | transitive dependents of `--key`, sorted |
-| `dependencies` | transitive dependencies of `--key`, sorted |
+| `dependents-of` | transitive dependents of `--key`, sorted |
+| `dependencies-of` | transitive dependencies of `--key`, sorted |
 | `shortest-path` | node labels from `--key <from>,<to>` (hard error when absent) |
 | `secret-tainted-cone` | paths whose subtree is structural secret material (the `inspect`/hover profile, including plain locator sources); `--profile` selects the override |
 | `content-addressed-above-size` | `(path, size, blake3)` for blobs at or above `--min-size`; identity metadata only, never payload bytes |

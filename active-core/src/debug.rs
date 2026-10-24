@@ -40,18 +40,24 @@ pub fn breakpoint_index(steps: &[StepEvent], selector: &str) -> Option<usize> {
 /// content hash, the diagnostic code lists, and the step traces. When
 /// `expected` is given, the first hash must equal it (the audit
 /// trail's `result` value).
-pub fn replay(module: &Module, expected: Option<&str>) -> Result<JsonValue, String> {
-    let (first, first_diags, first_steps) = Engine::new()
+pub fn replay(
+    module: &Module,
+    expected: Option<&str>,
+    override_profile: Option<&str>,
+) -> Result<JsonValue, String> {
+    let mut engine = Engine::new();
+    engine.profile_override = override_profile.map(str::to_string);
+    let (first, first_diags, first_steps) = engine
         .evaluate_with_steps(module)
         .map_err(|e| e.to_string())?;
-    let (second, second_diags, second_steps) = Engine::new()
+    let (second, second_diags, second_steps) = engine
         .evaluate_with_steps(module)
         .map_err(|e| e.to_string())?;
 
     // Hash the structurally redacted tree: the audit trail and replay
     // must agree on the same document, and a secret value change must
     // not alter the content identity.
-    let profile = crate::secret::SecretProfile::analyze(module);
+    let profile = crate::secret::SecretProfile::analyze_with_profile(module, override_profile);
     let first_hash =
         crate::provenance::content_hash(&crate::convert::redact_value(&profile, &first));
     let second_hash =

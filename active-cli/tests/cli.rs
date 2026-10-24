@@ -1977,6 +1977,49 @@ fn partial_repair_json_describes_the_applied_subset() {
         "only the selected directive may be reported: {source}"
     );
     assert_eq!(report["clean"], false, "{report}");
+    assert!(
+        report["final_codes"]
+            .as_array()
+            .expect("final_codes")
+            .iter()
+            .any(|code| code.as_str().is_some_and(|c| c.starts_with("T004@"))),
+        "codes must carry their paths: {report}"
+    );
+}
+
+#[test]
+fn audit_hash_reproduces_under_the_profile_override() {
+    let f = fixture(
+        "audit_profile.active",
+        "active_profile = \"a\"\nprofile \"a\" { x = 1 }\nprofile \"b\" { x = 42 }\nx = 0\n",
+    );
+    let audit = std::env::temp_dir().join(format!("audit-profile-{}.active", std::process::id()));
+    let out = active()
+        .args(["eval", "--profile", "b", "--audit-trail"])
+        .arg(&audit)
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = std::fs::read_to_string(&audit).expect("audit written");
+    assert!(text.contains("profile = \"b\""), "{text}");
+    let hash = text
+        .split("result = \"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap_or_else(|| panic!("no result hash: {text}"));
+    let replay = active()
+        .args(["debug", "--from"])
+        .arg(&f)
+        .args(["--replay", "--profile", "b", "--expect", hash])
+        .output()
+        .expect("run active");
+    let report: serde_json::Value = serde_json::from_slice(&replay.stdout).expect("replay JSON");
+    assert_eq!(report["ok"], true, "{report}");
 }
 
 #[test]
@@ -2888,4 +2931,148 @@ fn debug_rejects_inapplicable_flags() {
         String::from_utf8_lossy(&attempts.stderr)
     );
     assert!(String::from_utf8_lossy(&attempts.stderr).contains("--minimize"));
+}
+
+#[test]
+fn graph_query_accepts_inner_profile_flag() {
+    // F11: the documented grammar puts `--profile` after the query
+    // name, not only on the outer `graph` command.
+    let f = fixture(
+        "gq_profile.active",
+        "active_profile = \"a\"\nprofile \"a\" { n = \"benign\" }\nprofile \"b\" { n = env.ACTIVE_GQ_TOKEN }\nn = \"default\"\nk = secret(n)\n",
+    );
+    let query = |profile: &str| {
+        active()
+            .args(["graph", "query", "--from"])
+            .arg(&f)
+            .args(["--query", "secret-tainted-cone", "--profile", profile])
+            .env("ACTIVE_GQ_TOKEN", "s3cr3t-gq")
+            .output()
+            .expect("run active")
+    };
+    let material = query("b");
+    assert!(
+        material.status.success(),
+        "{}",
+        String::from_utf8_lossy(&material.stderr)
+    );
+    let text = String::from_utf8_lossy(&material.stdout);
+    assert!(
+        text.lines().any(|line| line == "n"),
+        "override b must taint the selected locator source: {text}"
+    );
+    assert!(!text.contains("s3cr3t-gq"), "secret leaked: {text}");
+    let benign = query("a");
+    assert!(benign.status.success());
+    assert!(!String::from_utf8_lossy(&benign.stdout).contains("s3cr3t-gq"));
+}
+
+#[test]
+fn inspect_accepts_profile_override() {
+    // F12: `inspect --path` renders through the structural profile the
+    // evaluation used, and the CLI exposes the selector.
+    let f = fixture(
+        "inspect_profile.active",
+        "active_profile = \"a\"\nprofile \"a\" { n = \"benign\" }\nprofile \"b\" { n = env.ACTIVE_INSPECT_TOKEN }\nn = \"default\"\nk = secret(n)\n",
+    );
+    let run = |profile: &str| {
+        active()
+            .args(["inspect", "--from"])
+            .arg(&f)
+            .args(["--path", "n", "--profile", profile])
+            .env("ACTIVE_INSPECT_TOKEN", "s3cr3t-inspect")
+            .output()
+            .expect("run active")
+    };
+    let material = run("b");
+    assert!(
+        material.status.success(),
+        "{}",
+        String::from_utf8_lossy(&material.stderr)
+    );
+    let text = String::from_utf8_lossy(&material.stdout);
+    assert!(text.contains("***SECRET***"), "{text}");
+    assert!(!text.contains("s3cr3t-inspect"), "secret leaked: {text}");
+    // The selected profile is the locator source under every selector,
+    // so `a` is material there too; the value it names must still be
+    // redacted rather than published.
+    let benign = run("a");
+    assert!(benign.status.success());
+    let text = String::from_utf8_lossy(&benign.stdout);
+    assert!(!text.contains("benign"), "selected source leaked: {text}");
+}
+
+#[test]
+fn viz_taint_accepts_profile_override() {
+    // F12: viz taint shares the inspect model and honors the selector.
+    let f = fixture(
+        "viz_profile.active",
+        "active_profile = \"a\"\nprofile \"a\" { n = \"benign\" }\nprofile \"b\" { n = env.ACTIVE_VIZ_TOKEN }\nn = \"default\"\nk = secret(n)\n",
+    );
+    let out = active()
+        .args(["viz", "taint", "--from"])
+        .arg(&f)
+        .args(["--profile", "b"])
+        .env("ACTIVE_VIZ_TOKEN", "s3cr3t-viz")
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("\"id\": \"n\""),
+        "override b must mark the selected locator source: {text}"
+    );
+    assert!(!text.contains("s3cr3t-viz"), "secret leaked: {text}");
+}
+
+#[test]
+fn budget_explain_profile_hides_material_length() {
+    // F13: the dashboard is a redacted-size view; a profile override
+    // must not leak the length of the selected material.
+    let f = fixture(
+        "budget_profile.active",
+        "active_profile = \"a\"\nprofile \"a\" { n = \"benign\" }\nprofile \"b\" { n = env.ACTIVE_BUDGET_MATERIAL }\nn = \"default\"\nk = secret(n)\n",
+    );
+    let size_of = |material: &str| {
+        let out = active()
+            .args(["budget", "explain", "--from"])
+            .arg(&f)
+            .args(["--profile", "b", "--format", "json"])
+            .env("ACTIVE_BUDGET_MATERIAL", material)
+            .output()
+            .expect("run active");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let body: serde_json::Value = serde_json::from_slice(&out.stdout).expect("budget JSON");
+        body["usage"]["value_size"].as_u64().expect("value_size")
+    };
+    assert_eq!(
+        size_of("abcde"),
+        size_of("0123456789012345678901234567890123456789"),
+        "material length must not change the reported size"
+    );
+}
+
+#[test]
+fn viz_profile_is_rejected_for_kinds_without_values() {
+    let f = fixture("viz_profile_reject.active", "port = 1\n");
+    let out = active()
+        .args(["viz", "schema", "--from"])
+        .arg(&f)
+        .args(["--profile", "b"])
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("--profile only applies"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }

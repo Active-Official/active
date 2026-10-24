@@ -2133,13 +2133,14 @@ impl Engine {
     }
 }
 
-/// Root metadata keys the parser resolves before evaluation. Patches
-/// and profiles may not rewrite them: the exported marker must match
-/// the mode/capability/profile set the host saw.
-fn is_document_metadata(key: &str) -> bool {
+/// Root metadata keys the parser resolves before evaluation. Patches,
+/// profiles, and resilient fills may not rewrite them: the exported
+/// marker must match the mode/capability/profile set the host saw, and
+/// `schema` is the contract, not data.
+pub(crate) fn is_document_metadata(key: &str) -> bool {
     matches!(
         key,
-        "active_mode" | "active_capabilities" | "active_profile"
+        "active_mode" | "active_capabilities" | "active_profile" | "schema"
     )
 }
 

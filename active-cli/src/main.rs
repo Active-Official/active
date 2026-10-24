@@ -137,6 +137,10 @@ enum GraphQuery {
         /// Output format (defaults to the outer `--format`)
         #[arg(long)]
         format: Option<String>,
+        /// Select a profile by name, overriding the active_profile key
+        /// (accepted here as well as on the outer `graph` command)
+        #[arg(long)]
+        profile: Option<String>,
     },
 }
 
@@ -329,6 +333,9 @@ enum Commands {
         /// Require sibling signatures on includes (C-052)
         #[arg(long)]
         trust_keys: Option<PathBuf>,
+        /// Select a profile by name, overriding the active_profile key
+        #[arg(long)]
+        profile: Option<String>,
     },
     /// Step, breakpoint, replay, or reduce a document (debugger)
     Debug {
@@ -355,6 +362,9 @@ enum Commands {
         /// Output format: json (default) or text
         #[arg(long, default_value = "json")]
         format: String,
+        /// Profile override for replay evaluation (audit reproducibility)
+        #[arg(long)]
+        profile: Option<String>,
         /// Require sibling signatures on includes (C-052)
         #[arg(long)]
         trust_keys: Option<PathBuf>,
@@ -384,6 +394,9 @@ enum Commands {
         /// Require sibling signatures on includes (C-052)
         #[arg(long)]
         trust_keys: Option<PathBuf>,
+        /// Select a profile by name, overriding the active_profile key
+        #[arg(long)]
+        profile: Option<String>,
     },
     /// Explain every diagnostic in a file with stable repair guidance
     Explain {
@@ -627,6 +640,9 @@ enum SchemaAction {
         /// Require sibling signatures on includes (C-052)
         #[arg(long)]
         trust_keys: Option<PathBuf>,
+        /// Select a profile by name, overriding the active_profile key
+        #[arg(long)]
+        profile: Option<String>,
     },
 }
 
@@ -641,6 +657,9 @@ enum BudgetAction {
         /// Output format: text (default) or json
         #[arg(long, default_value = "text")]
         format: String,
+        /// Select a profile by name, overriding the active_profile key
+        #[arg(long)]
+        profile: Option<String>,
     },
 }
 
@@ -669,6 +688,7 @@ fn run_inspect(
     path: Option<&str>,
     format: &str,
     trust_keys: &Option<PathBuf>,
+    profile: &Option<String>,
 ) -> anyhow::Result<()> {
     let trust = load_trust(trust_keys)?;
     let module = parse_input(from, false, false, &trust)?;
@@ -684,11 +704,18 @@ fn run_inspect(
             );
         }
         Some(path) => {
-            let (value, _) = Engine::new()
+            let mut evaluation_engine = Engine::new();
+            evaluation_engine.profile_override = profile.clone();
+            let (value, _) = evaluation_engine
                 .evaluate(&module)
                 .map_err(|e| anyhow::anyhow!("cannot evaluate for inspection: {e}"))?;
-            let report = active_core::convert::inspect_path(&module, &value, path)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let report = active_core::convert::inspect_path_with_profile(
+                &module,
+                &value,
+                path,
+                profile.as_deref(),
+            )
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
             match format {
                 "json" => println!(
                     "{}",
@@ -848,6 +875,16 @@ fn strip_blob_payloads(value: &active_core::Value) -> active_core::Value {
 /// whether it is clean plus its sorted diagnostic codes. Used by partial
 /// repair so the reported verdict describes the applied subset.
 fn source_verdict(engine: &Engine, source: &str, file: &std::path::Path) -> (bool, Vec<String>) {
+    fn code_of(d: &active_core::Diagnostic) -> String {
+        format!(
+            "{}{}",
+            d.code,
+            d.path
+                .as_deref()
+                .map(|p| format!("@{p}"))
+                .unwrap_or_default()
+        )
+    }
     let options = ParseOptions {
         enable_includes: true,
         ..Default::default()
@@ -855,10 +892,16 @@ fn source_verdict(engine: &Engine, source: &str, file: &std::path::Path) -> (boo
     let name = file.to_string_lossy();
     let (module, parse_diags) =
         active_core::parse_text_recovering_with_file(source, &name, options, file);
-    let mut codes: Vec<String> = parse_diags.iter().map(|d| d.code.clone()).collect();
+    let mut codes: Vec<String> = parse_diags.iter().map(code_of).collect();
     if parse_diags.is_empty() {
         match engine.evaluate(&module) {
-            Ok((_, diags)) => codes.extend(diags.iter().map(|d| d.code.clone())),
+            Ok((_, diags)) => codes.extend(diags.iter().map(code_of)),
+            // Strict validation surfaces its diagnostics inside the
+            // error; keep their paths so the verdict names the failing
+            // location, exactly as the Ok path does.
+            Err(active_core::EvalError::ValidationFailed { diagnostics }) => {
+                codes.extend(diagnostics.iter().map(code_of));
+            }
             Err(e) => codes.push(e.code().to_string()),
         }
     }
@@ -877,6 +920,7 @@ fn write_audit_trail(
     value: Option<&active_core::Value>,
     diags: &[active_core::Diagnostic],
     resilient: bool,
+    profile: Option<&str>,
 ) -> anyhow::Result<()> {
     fn quote(s: &str) -> String {
         format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
@@ -910,14 +954,18 @@ fn write_audit_trail(
         Some(value) => format!("\"{}\"", active_core::provenance::content_hash(value)),
         None => "null".to_string(),
     };
+    let profile_line = profile
+        .map(|name| format!("  profile = {},\n", quote(name)))
+        .unwrap_or_default();
     let doc = format!(
-        "audit = {{\n  tool = \"active\",\n  version = {},\n  source = {},\n  mode = \"{}\",\n  nodes = {},\n  diagnostics = [{}],\n  result = {},\n  outcome = \"{}\"\n}}\n",
+        "audit = {{\n  tool = \"active\",\n  version = {},\n  source = {},\n  mode = \"{}\",\n{}  nodes = {},\n  diagnostics = [{}],\n  result = {},\n  outcome = \"{}\"\n}}\n",
         quote(env!("CARGO_PKG_VERSION")),
         quote(&file.to_string_lossy()),
         match module.mode {
             active_core::Mode::Data => "data",
             active_core::Mode::Config => "config",
         },
+        profile_line,
         module.arena.len(),
         codes_list,
         result,
@@ -1229,6 +1277,13 @@ fn main() -> anyhow::Result<()> {
             let mut eng = engine(resilient, &profile, budget);
             eng.materialise_blobs = materialise_blobs;
             let engine = eng;
+            // The effective profile (override wins, else the document's
+            // literal selector) is recorded in the audit so replay can
+            // reproduce the same hash.
+            let effective_profile = engine.profile_override.clone().or_else(|| {
+                active_core::secret::active_profile_name(&module)
+                    .filter(|name| module.profiles.contains_key(name))
+            });
             active_core::trace::set_tracing(trace);
             let (value, diags) = match engine.evaluate(&module) {
                 Ok(out) => {
@@ -1249,6 +1304,7 @@ fn main() -> anyhow::Result<()> {
                                 None,
                                 diagnostics,
                                 resilient,
+                                effective_profile.as_deref(),
                             )?;
                         }
                     }
@@ -1322,6 +1378,7 @@ fn main() -> anyhow::Result<()> {
                     Some(&audited),
                     &diags,
                     resilient,
+                    effective_profile.as_deref(),
                 )?;
             }
             if had_failure(&diags, resilient) {
@@ -1385,6 +1442,7 @@ fn main() -> anyhow::Result<()> {
                 key,
                 min_size,
                 format: qformat,
+                profile: qprofile,
             }) = command
             {
                 let resolved = sub_from.or(file).ok_or_else(|| {
@@ -1395,6 +1453,10 @@ fn main() -> anyhow::Result<()> {
                 // pass through so the query path cannot bypass the
                 // same gates as `active graph`.
                 let effective_format = qformat.unwrap_or_else(|| format.clone());
+                // The inner flag wins when both are given; the outer
+                // form keeps working for scripts written before the
+                // documented `graph query … --profile` grammar.
+                let selected_profile = qprofile.or(profile);
                 return run_graph_query(
                     &resolved,
                     &query,
@@ -1404,7 +1466,7 @@ fn main() -> anyhow::Result<()> {
                     resilient,
                     allow_parent_escapes,
                     &trust_keys,
-                    &profile,
+                    &selected_profile,
                 );
             }
             let file = file.ok_or_else(|| {
@@ -1598,8 +1660,9 @@ fn main() -> anyhow::Result<()> {
             path,
             format,
             trust_keys,
+            profile,
         } => {
-            run_inspect(&from, path.as_deref(), &format, &trust_keys)?;
+            run_inspect(&from, path.as_deref(), &format, &trust_keys, &profile)?;
         }
         Commands::Schema { action } => {
             let SchemaAction::Inspect {
@@ -1607,8 +1670,9 @@ fn main() -> anyhow::Result<()> {
                 path,
                 format,
                 trust_keys,
+                profile,
             } = action;
-            run_inspect(&from, path.as_deref(), &format, &trust_keys)?;
+            run_inspect(&from, path.as_deref(), &format, &trust_keys, &profile)?;
         }
         Commands::Mode { from, format } => {
             let module = parse_input(&from, false, false, &None)?;
@@ -1640,13 +1704,24 @@ fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Budget { action } => {
-            let BudgetAction::Explain { from, format } = action;
+            let BudgetAction::Explain {
+                from,
+                format,
+                profile,
+            } = action;
             let module = parse_input(&from, false, false, &None)?;
-            let engine = Engine::new();
-            let (value, diagnostics) = engine
+            let mut evaluation_engine = Engine::new();
+            evaluation_engine.profile_override = profile.clone();
+            let (value, diagnostics) = evaluation_engine
                 .evaluate(&module)
                 .map_err(|e| anyhow::anyhow!("cannot evaluate: {e}"))?;
-            let data = active_core::viz::budget_data(&module, &value, &engine.budget, &diagnostics);
+            let data = active_core::viz::budget_data_with_profile(
+                &module,
+                &value,
+                &evaluation_engine.budget,
+                &diagnostics,
+                profile.as_deref(),
+            );
             if format == "text" {
                 let limits = &data["limits"];
                 let usage = &data["usage"];
@@ -1685,6 +1760,7 @@ fn main() -> anyhow::Result<()> {
             minimize,
             max_attempts,
             format,
+            profile,
             trust_keys,
         } => {
             if minimize.is_some() && trust_keys.is_some() {
@@ -1731,8 +1807,9 @@ fn main() -> anyhow::Result<()> {
             }
             let module = parse_input(&from, false, false, &trust)?;
             if replay {
-                let report = active_core::debug::replay(&module, expect.as_deref())
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                let report =
+                    active_core::debug::replay(&module, expect.as_deref(), profile.as_deref())
+                        .map_err(|e| anyhow::anyhow!("{e}"))?;
                 if format == "text" {
                     println!(
                         "replay: {} hash={} steps={} steps_match={}",
@@ -1800,6 +1877,7 @@ fn main() -> anyhow::Result<()> {
             max_steps,
             allow_parent_escapes,
             trust_keys,
+            profile,
         } => {
             let trust = load_trust(&trust_keys)?;
             // Reject flags that do not apply to this kind instead of
@@ -1809,6 +1887,9 @@ fn main() -> anyhow::Result<()> {
             }
             if kind != "repair" && (goal != "validate" || !preserve.is_empty() || max_steps != 8) {
                 anyhow::bail!("--goal/--preserve/--max-steps only apply to `viz repair`");
+            }
+            if profile.is_some() && kind != "taint" && kind != "budget" {
+                anyhow::bail!("--profile only applies to `viz taint` and `viz budget`");
             }
             if kind == "repair" {
                 if max_steps > 64 {
@@ -1877,29 +1958,35 @@ fn main() -> anyhow::Result<()> {
                     }
                 },
                 "taint" => {
-                    let (value, _) = Engine::new()
+                    let mut evaluation_engine = Engine::new();
+                    evaluation_engine.profile_override = profile.clone();
+                    let (value, _) = evaluation_engine
                         .evaluate(&module)
                         .map_err(|e| anyhow::anyhow!("cannot evaluate: {e}"))?;
                     println!(
                         "{}",
-                        serde_json::to_string_pretty(&active_core::viz::taint_data(
-                            &module, &value
+                        serde_json::to_string_pretty(&active_core::viz::taint_data_with_profile(
+                            &module,
+                            &value,
+                            profile.as_deref()
                         ))
                         .map_err(|e| anyhow::anyhow!("{e}"))?
                     );
                 }
                 "budget" => {
-                    let engine = Engine::new();
-                    let (value, diagnostics) = engine
+                    let mut evaluation_engine = Engine::new();
+                    evaluation_engine.profile_override = profile.clone();
+                    let (value, diagnostics) = evaluation_engine
                         .evaluate(&module)
                         .map_err(|e| anyhow::anyhow!("cannot evaluate: {e}"))?;
                     println!(
                         "{}",
-                        serde_json::to_string_pretty(&active_core::viz::budget_data(
+                        serde_json::to_string_pretty(&active_core::viz::budget_data_with_profile(
                             &module,
                             &value,
-                            &engine.budget,
-                            &diagnostics
+                            &evaluation_engine.budget,
+                            &diagnostics,
+                            profile.as_deref()
                         ))
                         .map_err(|e| anyhow::anyhow!("{e}"))?
                     );

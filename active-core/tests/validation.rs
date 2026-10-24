@@ -687,3 +687,34 @@ fn description_metadata_is_ignored_by_verdicts() {
     assert_eq!(v["host"], "example.com");
     assert!(diags.is_empty(), "{diags:?}");
 }
+
+#[test]
+fn resilient_repair_never_fabricates_root_metadata() {
+    // A schema default must not inject active_mode the host never
+    // resolved, and a typo heal must not rename into it.
+    let module = parse(
+        "schema = { active_mode = String(default = \"data\"), port = Int(default = 1) }\n",
+        "metadata-fill",
+    )
+    .expect("must parse");
+    let mut engine = Engine::hermetic();
+    engine.resilient = true;
+    let (value, _) = engine.evaluate(&module).expect("must evaluate");
+    let active_core::Value::Table(map) = value else {
+        panic!("expected a root table");
+    };
+    assert!(!map.contains_key("active_mode"), "{map:?}");
+    assert!(matches!(map.get("port"), Some(active_core::Value::Int(1))));
+
+    let module = parse(
+        "schema = { closed = true, active_mode = String }\nactive_mod = \"config\"\n",
+        "metadata-rename",
+    )
+    .expect("must parse");
+    let (value, _) = engine.evaluate(&module).expect("must evaluate");
+    let active_core::Value::Table(map) = value else {
+        panic!("expected a root table");
+    };
+    assert!(!map.contains_key("active_mode"), "{map:?}");
+    assert!(map.contains_key("active_mod"), "{map:?}");
+}

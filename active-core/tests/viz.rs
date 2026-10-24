@@ -216,3 +216,26 @@ fn taint_data_surfaces_secret_bearing_blobs() {
     assert!(sources.contains(&"f"), "{sources:?}");
     assert!(!data.to_string().contains("hunter2"));
 }
+
+#[test]
+fn budget_data_with_profile_hides_selected_material_length() {
+    // F13: the dashboard reports redacted sizes. An embedder that
+    // evaluated under a profile override must pass the same selector,
+    // or a long material literal leaks through `usage.value_size`.
+    let src = "active_profile = \"a\"\nprofile \"a\" { n = \"benign\" }\nprofile \"b\" { n = env.ACTIVE_VIZ_BUDGET_MATERIAL }\nn = \"default\"\nk = secret(n)\n";
+    let module = parse(src, "viz-budget-profile").expect("parse");
+    let size_of = |material: &str| {
+        std::env::set_var("ACTIVE_VIZ_BUDGET_MATERIAL", material);
+        let mut engine = Engine::new();
+        engine.profile_override = Some("b".to_string());
+        let (value, diags) = engine.evaluate(&module).expect("evaluate");
+        let data =
+            viz::budget_data_with_profile(&module, &value, &engine.budget, &diags, Some("b"));
+        data["usage"]["value_size"].as_u64().expect("value_size")
+    };
+    assert_eq!(
+        size_of("abcde"),
+        size_of("0123456789012345678901234567890123456789"),
+        "material length must not change the reported size"
+    );
+}

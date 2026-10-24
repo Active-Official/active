@@ -1,0 +1,4 @@
+active_mode = "data"
+active_capabilities = ["eval"]
+active_profile = "p"
+schema = { a = Int }

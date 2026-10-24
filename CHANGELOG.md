@@ -172,9 +172,25 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
 - **Editor and query polish.** The `@ai_immutable` action skips
   multi-line string bodies, the mode marker inserts after a BOM,
   capability lists are linear to parse and print capped,
-  `inspect`/`viz taint` accept a profile override, viz byte sizes
-  count redacted strings, and `--browser` rejects flags it cannot
-  honor. The C ABI's secret predicate is recursive.
+  `inspect`, `schema inspect`, `viz taint`, `viz budget`, and
+  `budget explain` accept a `--profile` override (and `graph query`
+  accepts it after the subcommand), viz byte sizes count redacted
+  strings, and `--browser` rejects flags it cannot honor. The C ABI's
+  secret predicate is recursive.
+- **Profile overrides keep their material.** A profile may replace a
+  locator source with a different value. The selected node now
+  inherits the path's materiality, so `eval`, `inspect`, `viz taint`,
+  `budget`, and the content hash redact the override-selected value;
+  before, an override could publish the selected material while the
+  base literal stayed redacted. A computed selector unions every
+  profile's material paths for the same reason.
+- **Audit replay is complete.** The audit trail records the effective
+  `profile` selector, `debug --replay` takes `--profile` and feeds it
+  to both evaluation and redaction, and a failed evaluation writes
+  `result = null` with `outcome = "failed"` (spec/audit-trail.md §1–2).
+- **Repair verdict paths.** Partial-repair `final_codes` keep the
+  `CODE@path` shape from the full plan, including validation
+  diagnostics surfaced through `EvalError::ValidationFailed`.
 
 ### SOLID → Active rename
 

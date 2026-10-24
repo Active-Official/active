@@ -92,6 +92,36 @@ fn nested_table_fields_are_compared() {
 }
 
 #[test]
+fn array_table_element_fields_are_compared() {
+    let old = "schema = { servers = Array<Table { host = String, port = Int }> }\nservers = []\n";
+    let removed = "schema = { servers = Array<Table { host = String }> }\nservers = []\n";
+    let findings = compare_docs(old, removed);
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.code == code::REMOVED_FIELD && f.path == "servers[].port"),
+        "{findings:?}"
+    );
+    let changed = "schema = { servers = Array<Table { host = Int, port = Int }> }\nservers = []\n";
+    let findings = compare_docs(old, changed);
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.code == code::TYPE_CHANGED && f.path == "servers[].host"),
+        "{findings:?}"
+    );
+    let added =
+        "schema = { servers = Array<Table { host = String, port = Int, tls = Bool }> }\nservers = []\n";
+    let findings = compare_docs(old, added);
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.code == code::ADDED_REQUIRED && f.path == "servers[].tls"),
+        "{findings:?}"
+    );
+}
+
+#[test]
 fn added_required_field_is_breaking_c040() {
     let old = "schema = { host = String }\nhost = \"x\"\n";
     let new = "schema = { host = String, port = Int }\nhost = \"x\"\nport = 1\n";

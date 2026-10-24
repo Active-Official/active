@@ -274,6 +274,49 @@ fn mode_marker_action_respects_a_bom() {
 }
 
 #[test]
+fn annotation_action_handles_escaped_delimiters_and_comments() {
+    // `\"""` is an escaped quote plus two quotes, not a closing fence:
+    // the lexer keeps the body open, and the action must skip it.
+    let doc = open("sql = \"\"\"\nselect '\\\"\"\"' as q\nport = 1\n\"\"\"\n");
+    let body = analysis::code_actions(
+        &doc,
+        Range {
+            start: Position {
+                line: 2,
+                character: 0,
+            },
+            end: Position {
+                line: 2,
+                character: 0,
+            },
+        },
+    );
+    assert!(
+        !body.iter().any(|a| a.title.contains("ai_immutable")),
+        "escaped quote must not close the string: {body:?}"
+    );
+    // A fence inside a comment does not open a string.
+    let doc = open("# use \"\"\" fences\nport = 1\n");
+    let actions = analysis::code_actions(
+        &doc,
+        Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 0,
+            },
+        },
+    );
+    assert!(
+        actions.iter().any(|a| a.title.contains("ai_immutable")),
+        "a comment fence must not suppress the action: {actions:?}"
+    );
+}
+
+#[test]
 fn formatting_preserves_includes_without_inlining() {
     let dir = std::env::temp_dir().join(format!("active-lsp-fmt-inc-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("temp dir");

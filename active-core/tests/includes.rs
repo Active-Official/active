@@ -155,3 +155,24 @@ fn secret_through_include_redacts_everywhere() {
         assert!(!out.contains("test/db/password"), "{fmt} leak: {out}");
     }
 }
+
+#[test]
+fn included_root_metadata_inherits_nothing() {
+    let path = fixture("meta_main.active");
+    let module = parse_file(&path, ParseOptions::default()).expect("parse");
+    assert_eq!(module.mode, active_core::Mode::Config);
+    assert!(module.capabilities.is_empty(), "{:?}", module.capabilities);
+    let (value, _) = Engine::new().evaluate(&module).expect("evaluate");
+    let active_core::Value::Table(map) = value else {
+        panic!("expected a root table");
+    };
+    for key in [
+        "active_mode",
+        "active_capabilities",
+        "active_profile",
+        "schema",
+    ] {
+        assert!(!map.contains_key(key), "included {key} leaked: {map:?}");
+    }
+    assert!(matches!(map.get("x"), Some(active_core::Value::Int(1))));
+}

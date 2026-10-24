@@ -134,6 +134,34 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
                 }
                 Value::Table(out)
             }
+            // A material (or already tainted) blob keeps its identity
+            // shape: only the media type is redacted and the payload is
+            // dropped. Exports must always carry `$active.blob`.
+            Value::Blob {
+                hash,
+                size,
+                media_type,
+                tainted,
+                payload,
+            } => {
+                if *tainted || profile.path_is_secret(path) {
+                    Value::Blob {
+                        hash: *hash,
+                        size: *size,
+                        media_type: crate::secret::MARKER.to_string(),
+                        tainted: true,
+                        payload: None,
+                    }
+                } else {
+                    Value::Blob {
+                        hash: *hash,
+                        size: *size,
+                        media_type: media_type.clone(),
+                        tainted: false,
+                        payload: payload.clone(),
+                    }
+                }
+            }
             _ if profile.path_is_secret(path) => Value::Secret(String::new()),
             Value::String(text) => match profile.redact_text(text) {
                 Some(redacted) => Value::String(redacted),

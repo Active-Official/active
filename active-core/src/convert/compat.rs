@@ -144,13 +144,23 @@ fn collect_rows(module: &Module, root: crate::ir::NodeId, prefix: &str, out: &mu
                 });
                 collect_rows(module, *id, &path, out);
             }
-            Some(Node::SchemaArray { element }) => out.push(Row {
-                path,
-                signature: format!("Array<{}>", node_signature(module, *element)),
-                required: true,
-                removed_in: None,
-                blob: None,
-            }),
+            Some(Node::SchemaArray { element }) => {
+                out.push(Row {
+                    path: path.clone(),
+                    signature: format!("Array<{}>", node_signature(module, *element)),
+                    required: true,
+                    removed_in: None,
+                    blob: None,
+                });
+                // Table elements have addressable fields; recurse so a
+                // nested add/remove/type change is never invisible.
+                if matches!(
+                    module.get(*element),
+                    Some(Node::SchemaTable { .. }) | Some(Node::SchemaArray { .. })
+                ) {
+                    collect_element_rows(module, *element, &format!("{path}[]"), out);
+                }
+            }
             _ => {}
         }
     }
@@ -160,6 +170,30 @@ fn collect_fields(module: &Module, root: crate::ir::NodeId) -> Vec<Row> {
     let mut out = Vec::new();
     collect_rows(module, root, "", &mut out);
     out
+}
+
+/// Rows inside an array element. Table elements expand to
+/// `path[].field`; nested arrays recurse with another `[]` segment.
+fn collect_element_rows(
+    module: &Module,
+    element: crate::ir::NodeId,
+    prefix: &str,
+    out: &mut Vec<Row>,
+) {
+    match module.get(element) {
+        Some(Node::SchemaTable { .. }) => collect_rows(module, element, prefix, out),
+        Some(Node::SchemaArray { element: inner }) => {
+            out.push(Row {
+                path: prefix.to_string(),
+                signature: format!("Array<{}>", node_signature(module, *inner)),
+                required: true,
+                removed_in: None,
+                blob: None,
+            });
+            collect_element_rows(module, *inner, &format!("{prefix}[]"), out);
+        }
+        _ => {}
+    }
 }
 
 fn schema_meta(module: &Module) -> crate::ir::SchemaMeta {

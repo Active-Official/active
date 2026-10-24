@@ -463,6 +463,12 @@ fn walk_paths(
                 }
             }
             Some(Node::Ref(target)) => stack.push((*target, path, depth, insert)),
+            // Defensive: the parser folds constraints into
+            // `module.annotations` today, but the IR variant is public
+            // and preserves the value shape.
+            Some(Node::ApplyConstraint { target, .. }) => {
+                stack.push((*target, path, depth, insert));
+            }
             Some(Node::Semantic { inner, .. }) => {
                 stack.push((*inner, path, depth, insert));
             }
@@ -548,6 +554,55 @@ fn add_default_material_paths(path: &str, data_paths: &HashSet<String>, out: &mu
     }
 }
 
+/// Canonical spelling of a patch path: parse and render through the
+/// same `PathSeg` machinery the evaluator uses, so `arr[00]` and
+/// `arr[0]` address one map entry. Invalid paths yield `None` (the
+/// evaluator rejects them; analysis skips the transform).
+fn canonical_patch_path(path: &str) -> Option<String> {
+    let segments = crate::parser::validate_patch_path(path).ok()?;
+    Some(crate::validate::render_path(&segments))
+}
+
+/// Canonical decimal spelling for concrete array indices in a query
+/// path (`arr[00]` → `arr[0]`), matching the map keys the walk and
+/// patch code produce.
+fn canonical_indices(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let mut out = String::with_capacity(path.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'[' {
+            let mut j = i + 1;
+            if j < bytes.len() && bytes[j] == b'+' {
+                j += 1;
+            }
+            let start = j;
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                j += 1;
+            }
+            if j > start && j < bytes.len() && bytes[j] == b']' {
+                if let Ok(value) = path[start..j].parse::<usize>() {
+                    out.push('[');
+                    out.push_str(&value.to_string());
+                    out.push(']');
+                    i = j + 1;
+                    continue;
+                }
+            }
+        }
+        let ch = path[i..].chars().next().unwrap_or('\0');
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+/// Whether `from` names a path the evaluated tree owns (or a table
+/// containing one). Bindings are not tree paths.
+fn tree_path_exists(export_paths: &HashSet<String>, from: &str) -> bool {
+    export_paths.contains(from) || export_paths.iter().any(|path| path_under(path, from))
+}
+
 /// Whether a path is material in the base tree, accepting the array
 /// wildcard spelling on either side (`arr[].a` vs `arr[0].a`).
 fn path_is_material(material_paths: &HashSet<String>, path: &str) -> bool {
@@ -577,6 +632,7 @@ fn is_table_like(module: &Module, id: NodeId) -> bool {
                 default: Some(default),
                 ..
             }) => current = *default,
+            Some(Node::ApplyConstraint { target, .. }) => current = *target,
             Some(Node::Semantic { inner, .. }) => current = *inner,
             _ => return false,
         }
@@ -996,13 +1052,16 @@ impl SecretProfile {
                 Some(Node::PatchDirective {
                     op: PatchOp::Set { path, value },
                 }) => {
-                    truncated |= walk_paths(module, *value, path, &mut paths, true, true);
+                    let Some(path) = canonical_patch_path(path) else {
+                        continue;
+                    };
+                    truncated |= walk_paths(module, *value, &path, &mut paths, true, true);
                     // A patch replaces the evaluated value; old
                     // fallback paths at/under it are stale, and the
                     // patch expression's material paths take over.
-                    fallback_secret_paths.retain(|known| !path_under(known, path));
+                    fallback_secret_paths.retain(|known| !path_under(known, &path));
                     let mut patched = HashMap::new();
-                    truncated |= walk_paths(module, *value, path, &mut patched, true, true);
+                    truncated |= walk_paths(module, *value, &path, &mut patched, true, true);
                     export_paths.extend(patched.keys().cloned());
                     for (known, node) in patched {
                         if nodes.contains(&node) {
@@ -1013,16 +1072,31 @@ impl SecretProfile {
                 Some(Node::PatchDirective {
                     op: PatchOp::Remove { path },
                 }) => {
-                    remove_path(&mut paths, path);
-                    remove_from_set(&mut fallback_secret_paths, path);
-                    remove_from_set(&mut export_paths, path);
+                    let Some(path) = canonical_patch_path(path) else {
+                        continue;
+                    };
+                    remove_path(&mut paths, &path);
+                    remove_from_set(&mut fallback_secret_paths, &path);
+                    remove_from_set(&mut export_paths, &path);
                 }
                 Some(Node::PatchDirective {
                     op: PatchOp::Rename { from, to },
                 }) => {
-                    rename_subtree(&mut paths, from, to);
-                    rename_set(&mut fallback_secret_paths, from, to);
-                    rename_set(&mut export_paths, from, to);
+                    let (Some(from), Some(to)) =
+                        (canonical_patch_path(from), canonical_patch_path(to))
+                    else {
+                        continue;
+                    };
+                    // Renames touch evaluated-tree keys only. A binding
+                    // is not a tree key: the evaluator warns W004 and
+                    // leaves the destination in place, so the taint map
+                    // must not move the destination's materiality.
+                    if !tree_path_exists(&export_paths, &from) {
+                        continue;
+                    }
+                    rename_subtree(&mut paths, &from, &to);
+                    rename_set(&mut fallback_secret_paths, &from, &to);
+                    rename_set(&mut export_paths, &from, &to);
                 }
                 _ => {}
             }
@@ -1079,6 +1153,10 @@ impl SecretProfile {
 
     /// True when the path's value is secret material or derives from it.
     pub fn path_is_secret(&self, path: &str) -> bool {
+        // Patch paths and caller queries may spell indices loosely
+        // (`arr[00]`, `arr[+0]`); the map uses canonical decimals.
+        let canonical = canonical_indices(path);
+        let path = canonical.as_str();
         // The union set wins over a benign base mapping (computed
         // selectors must fail closed).
         if self.fallback_secret_paths.contains(path) {

@@ -1934,7 +1934,7 @@ fn table_has(table: &indexmap::IndexMap<String, Value>, dotted: &str) -> bool {
 
 /// Render structured walk segments in patch-path format (`a.b[0].c`),
 /// the same shape everywhere: messages, diagnostic paths, and fills.
-fn render_path(segments: &[PathSeg]) -> String {
+pub(crate) fn render_path(segments: &[PathSeg]) -> String {
     let mut out = String::new();
     for segment in segments {
         match segment {

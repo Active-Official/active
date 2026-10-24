@@ -203,6 +203,10 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   name never shadows a schema fill in the export map, and wildcard
   defaults expand per element so an explicitly written array element
   stays visible.
+- **Patch paths are canonical and tree-only.** `arr[00]`/`arr[+0]`
+  canonicalize to the index the evaluator uses before touching the
+  taint map, and a `@rename` whose source is a binding (a W004 no-op in
+  the evaluator) no longer moves the destination's materiality.
 - **Material values never auto-rename.** Resilient H005 skips a source
   path that is structurally material: the taint map follows the source
   path, and moving the value would publish it. The typo degrades to a

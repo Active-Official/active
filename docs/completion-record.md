@@ -94,6 +94,7 @@ playground remains the browser evaluator; the headless walkthrough is in
 | Editor smoke | 6 commands, redaction probe pass |
 | Neovim package determinism | identical hashes |
 | Dual-push CI | recorded in `conformance/evidence/ci.log` |
+| Independent review | DeepSeek V4.1 Flash (BYOK, `--reasoning-effort max`) rounds 22–26; every finding fixed with a regression test; final round reports no open findings (`conformance/evidence/review-final.log`) |
 
 ## 6. Accepted, documented gaps
 
@@ -103,6 +104,13 @@ playground remains the browser evaluator; the headless walkthrough is in
   prove green in the all-toolchain container.
 - Registry publication is live at 1.4.0; future releases follow the
   tag-driven release checklist.
+- Branch protection on the two remotes is an owner-controlled setting;
+  the workflows gate every push and PR, and the final CI verdicts are
+  recorded in `conformance/evidence/ci.log`.
+- Secret analysis is deliberately conservative: a material schema
+  default that a resilient rename preempts can keep the healed key
+  marked material (the value is hidden, never exposed;
+  spec/secrets.md).
 - `master-program/` working copies are local-only by owner decision and
   are excluded from repository history.
 

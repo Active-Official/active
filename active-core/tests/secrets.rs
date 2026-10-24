@@ -949,3 +949,67 @@ fn explicit_array_element_stays_visible_under_a_material_default() {
     assert!(json.contains("EXPLICIT-BENIGN"), "element hidden: {json}");
     assert!(!json.contains(raw), "source leaked: {json}");
 }
+
+#[test]
+fn explicit_value_wins_over_default_materiality() {
+    // F4 (round 24): a default only fills an absent path, so its
+    // materiality must not redact an explicit value overridden by a
+    // benign profile.
+    let raw = "default-src-r24";
+    std::env::set_var("ACTIVE_R24_DEFAULT", raw);
+    let src = "let s = env.ACTIVE_R24_DEFAULT\nk = secret(s)\nschema = { a = String(default = s) }\na = \"EXPLICIT-BENIGN\"\nactive_profile = \"a\"\nprofile \"a\" { a = \"PROFILE-BENIGN\" }\n";
+    let module = parse(src, "default-covered").expect("parse");
+    let mut engine = Engine::new();
+    engine.profile_override = Some("a".to_string());
+    let (value, _) = engine.evaluate(&module).expect("evaluate");
+    let profile = active_core::secret::SecretProfile::analyze_with_profile(&module, Some("a"));
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(
+        json.contains("PROFILE-BENIGN"),
+        "benign override hidden: {json}"
+    );
+    assert!(!json.contains(raw), "source leaked: {json}");
+}
+
+#[test]
+fn binding_rename_source_does_not_clear_tree_materiality() {
+    // F1 (round 26): a `@rename` whose source is a binding is a W004
+    // no-op in the evaluator. The taint map must not move the
+    // destination value (which stays material).
+    let raw = "rename-binding-s3cr3t-r26";
+    std::env::set_var("ACTIVE_R26_REN", raw);
+    let src = "let s = env.ACTIVE_R26_REN\nk = secret(s)\nlet typo = \"BENIGN\"\nreal = s\n@rename(\"typo\", \"real\")\n";
+    let module = parse(src, "rename-binding").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("ACTIVE_R26_REN".to_string(), raw.to_string());
+    let (value, _) = Engine::new()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("resilient evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    assert!(profile.path_is_secret("real"), "destination stays material");
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(raw), "binding rename leaked: {json}");
+}
+
+#[test]
+fn non_canonical_patch_indices_stay_mapped() {
+    // F2 (round 26): `arr[00]`/`arr[+0]` are accepted by the evaluator
+    // and canonicalize to index 0. The taint map keys the same
+    // canonical path, so the patched value stays material.
+    let raw = "noncanonical-s3cr3t-r26";
+    std::env::set_var("ACTIVE_R26_IDX", raw);
+    let src = "let s = env.ACTIVE_R26_IDX\nk = secret(s)\narr = [\"BASE-BENIGN\"]\n@patch(\"arr[00]\", s)\n";
+    let module = parse(src, "noncanonical").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("ACTIVE_R26_IDX".to_string(), raw.to_string());
+    let (value, _) = Engine::new()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    assert!(profile.path_is_secret("arr[0]"), "canonical path material");
+    assert!(profile.path_is_secret("arr[00]"), "query canonicalizes");
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(raw), "non-canonical patch leaked: {json}");
+}

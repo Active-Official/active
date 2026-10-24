@@ -241,9 +241,14 @@ applied there. Renames additionally require the high band
   missing-key T004 for the healed path is retracted, queued
   default fills for it are cancelled, and the renamed subtree
   is revalidated like a written value — constraints still bite,
-  and nested typos queue further renames to a fixpoint. Otherwise
-  (low score, mistyped value, or taken target) the T005 is
-  collected with its suggestion and the tree is kept as-is.
+  and nested typos queue further renames to a fixpoint. A value at
+  a structurally material path (a secret locator source, its
+  aliases, a profile selection, or a fallback container) is never
+  renamed: the taint map follows the source path, so moving the
+  value would publish it. The T005 is collected with its suggestion
+  and the tree is kept as-is. Otherwise (low score, mistyped value,
+  or taken target) the T005 is collected with its suggestion and the
+  tree is kept as-is.
 
 ### 10.2 String coercion (C-016 phase 3, wired here)
 

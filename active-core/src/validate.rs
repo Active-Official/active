@@ -50,6 +50,7 @@ impl Engine {
             wall_limit: cx.wall_limit,
             ticks: 0,
             account: cx.account,
+            material_guard: None,
         };
         validator.validate_node(schema_id, module.root, result, &mut Vec::new())?;
         if self.resilient {
@@ -67,6 +68,16 @@ impl Engine {
                     && validator.fills.is_empty()
                 {
                     break;
+                }
+                // Renames are the only repair that moves a value to a
+                // new path. Build the structural map once, on demand,
+                // and refuse to move material values.
+                if validator.material_guard.is_none() && !validator.renames.is_empty() {
+                    validator.material_guard =
+                        Some(crate::secret::SecretProfile::analyze_with_profile(
+                            module,
+                            self.profile_override.as_deref(),
+                        ));
                 }
                 validator.apply_renames(result)?;
                 validator.apply_coercions(result)?;
@@ -332,6 +343,10 @@ struct Validator<'a> {
     /// its measured size before insertion (many filled defaults of one
     /// large value trip like many aliases do).
     account: &'a mut Accountant,
+    /// Structural material map, computed lazily when a rename is
+    /// pending: a rename may not move a material value to a target
+    /// path the taint walk cannot follow.
+    material_guard: Option<crate::secret::SecretProfile>,
 }
 
 impl<'a> Validator<'a> {
@@ -944,6 +959,18 @@ impl<'a> Validator<'a> {
                 // taken the target since the walk (two typos, one
                 // field) — first wins, the other degrades.
                 if map.contains_key(&req.to) {
+                    self.rename_fallback(&req);
+                    continue;
+                }
+                // A material value stays at its source path: the taint
+                // map follows that path, and moving the value to a new
+                // key would publish it unredacted. Degrade to the
+                // suggestion-only T005 instead.
+                let material = self
+                    .material_guard
+                    .as_ref()
+                    .is_some_and(|guard| guard.path_is_secret(&render_path(&req.segments)));
+                if material {
                     self.rename_fallback(&req);
                     continue;
                 }

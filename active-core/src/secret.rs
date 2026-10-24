@@ -423,21 +423,28 @@ fn walk_paths(
     } else {
         base.matches(['.', '[']).count() + 1
     };
-    let mut stack = vec![(root, base.to_string(), base_depth)];
-    let mut seen: HashSet<(NodeId, String)> = HashSet::new();
+    // `insert` is false while descending an `env.X ?: fallback`
+    // expression: the path keeps the Env node (which the taint seeds
+    // may mark), but the fallback's children are real value paths and
+    // must be registered, or a material child inside a fallback table
+    // or array has no path and exports raw.
+    let mut stack = vec![(root, base.to_string(), base_depth, true)];
+    let mut seen: HashSet<(NodeId, String, bool)> = HashSet::new();
     let mut truncated = false;
-    while let Some((id, path, depth)) = stack.pop() {
+    while let Some((id, path, depth, insert)) = stack.pop() {
         if depth > MAX_PATH_DEPTH || paths.len() >= MAX_PATHS {
             truncated = true;
             continue;
         }
-        if !seen.insert((id, path.clone())) {
+        if !seen.insert((id, path.clone(), insert)) {
             continue;
         }
-        if overwrite {
-            paths.insert(path.clone(), id);
-        } else {
-            paths.entry(path.clone()).or_insert(id);
+        if insert {
+            if overwrite {
+                paths.insert(path.clone(), id);
+            } else {
+                paths.entry(path.clone()).or_insert(id);
+            }
         }
         match module.get(id) {
             Some(Node::Table { fields }) => {
@@ -447,15 +454,19 @@ fn walk_paths(
                     } else {
                         format!("{path}.{key}")
                     };
-                    stack.push((*child, child_path, depth + 1));
+                    stack.push((*child, child_path, depth + 1, true));
                 }
             }
             Some(Node::Array { elements }) => {
                 for (index, child) in elements.iter().enumerate() {
-                    stack.push((*child, format!("{path}[{index}]"), depth + 1));
+                    stack.push((*child, format!("{path}[{index}]"), depth + 1, true));
                 }
             }
-            Some(Node::Ref(target)) => stack.push((*target, path, depth)),
+            Some(Node::Ref(target)) => stack.push((*target, path, depth, insert)),
+            Some(Node::Env {
+                default: Some(default),
+                ..
+            }) => stack.push((*default, path, depth, false)),
             _ => {}
         }
     }
@@ -510,6 +521,13 @@ fn is_table_like(module: &Module, id: NodeId) -> bool {
         match module.get(current) {
             Some(Node::Table { .. }) => return true,
             Some(Node::Ref(target)) => current = *target,
+            // The fallback of `env.X ?: expr` is the value when the
+            // variable is unset; treat a table fallback as a table so a
+            // profile merge matches what the evaluator can produce.
+            Some(Node::Env {
+                default: Some(default),
+                ..
+            }) => current = *default,
             _ => return false,
         }
     }
@@ -716,8 +734,13 @@ impl SecretProfile {
         // addressable and taint-checkable.
         let mut truncated = false;
         let mut paths: HashMap<String, NodeId> = HashMap::new();
+        // Data paths are the exportable tree. Bindings are a separate
+        // namespace: a `let` name colliding with a profile key must not
+        // make that key look material.
+        let mut data_paths: HashSet<String> = HashSet::new();
         if let Some(root) = module.root {
             truncated |= walk_paths(module, root, "", &mut paths, true, false);
+            data_paths.extend(paths.keys().cloned());
         }
         for (name, id) in &module.bindings {
             truncated |= walk_paths(module, *id, name, &mut paths, false, false);
@@ -746,12 +769,20 @@ impl SecretProfile {
         // node set cannot know about it.
         let mut material_paths: HashSet<String> = paths
             .iter()
-            .filter(|(_, id)| nodes.contains(*id))
+            .filter(|(path, id)| data_paths.contains(*path) && nodes.contains(*id))
             .map(|(path, _)| path.clone())
             .collect();
         if !defaults_truncated {
             for (path, id) in &default_paths {
                 if nodes.contains(id) {
+                    // A default only fills an absent path; when an
+                    // explicit value covers this exact path, the default
+                    // never materializes, so its materiality must not
+                    // leak onto a profile override of that value.
+                    let covered = !path.contains("[]") && data_paths.contains(path);
+                    if covered {
+                        continue;
+                    }
                     material_paths.insert(path.clone());
                     material_paths.insert(wildcard_indices(path));
                 }

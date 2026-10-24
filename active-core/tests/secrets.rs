@@ -810,3 +810,94 @@ fn profile_override_of_a_material_default_is_material() {
     let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
     assert!(!json.contains(live), "default override leaked: {json}");
 }
+
+#[test]
+fn env_fallback_container_children_are_material_paths() {
+    // F1 (round 24): `env.X ?: {…}` keeps the Env node at the path but
+    // its fallback's children are real value paths. A material child
+    // inside the fallback must be mapped or it exports raw.
+    let raw = "env-default-s3cr3t-r24";
+    std::env::set_var("ACTIVE_R24_SRC", raw);
+    std::env::remove_var("ACTIVE_R24_UNSET");
+    let src = "let p = env.ACTIVE_R24_SRC\nk = secret(p)\nx = env.ACTIVE_R24_UNSET ?: { s = p, b = \"VISIBLE-SIBLING\" }\ny = env.ACTIVE_R24_UNSET ?: [p, \"VISIBLE-ELEMENT\"]\n";
+    let module = parse(src, "env-default").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("ACTIVE_R24_SRC".to_string(), raw.to_string());
+    let (value, _) = Engine::new()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    assert!(profile.path_is_secret("x.s"), "fallback child mapped");
+    assert!(profile.path_is_secret("y[0]"), "fallback element mapped");
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(raw), "fallback leaked: {json}");
+    assert!(json.contains("VISIBLE-SIBLING"), "sibling hidden: {json}");
+    assert!(json.contains("VISIBLE-ELEMENT"), "element hidden: {json}");
+}
+
+#[test]
+fn material_key_is_not_auto_renamed_by_resilient_healing() {
+    // F2 (round 24): H005 may not move a material value to a target
+    // path the taint walk cannot follow. The rename degrades to a
+    // suggestion and the value stays redacted at its source path.
+    let raw = "h005-s3cr3t-r24";
+    std::env::set_var("ACTIVE_R24_H005", raw);
+    let src = "let p = env.ACTIVE_R24_H005\nk = secret(p)\nschema = { closed = true, password = String, k = Secret }\npasswrod = p\n";
+    let module = parse(src, "h005-material").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("ACTIVE_R24_H005".to_string(), raw.to_string());
+    let (value, _) = Engine::new()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("resilient evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    assert!(profile.path_is_secret("passwrod"), "source stays material");
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(raw), "H005 rename leaked: {json}");
+    assert!(
+        !json.contains("\"password\""),
+        "material key was renamed: {json}"
+    );
+}
+
+#[test]
+fn binding_names_do_not_make_profile_keys_material() {
+    // F3 (round 24): bindings are a separate namespace. A profile key
+    // colliding with a `let` name is a legitimate new data key.
+    let raw = "collision-s3cr3t-r24";
+    std::env::set_var("ACTIVE_R24_COLL", raw);
+    let src = "let p = env.ACTIVE_R24_COLL\nk = secret(p)\nactive_profile = \"a\"\nprofile \"a\" { p = \"PROFILE-P-VISIBLE\" }\n";
+    let module = parse(src, "binding-collision").expect("parse");
+    let mut engine = Engine::new();
+    engine.profile_override = Some("a".to_string());
+    let (value, _) = engine.evaluate(&module).expect("evaluate");
+    let profile = active_core::secret::SecretProfile::analyze_with_profile(&module, Some("a"));
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(
+        json.contains("PROFILE-P-VISIBLE"),
+        "benign key hidden: {json}"
+    );
+    assert!(!json.contains(raw), "source leaked: {json}");
+}
+
+#[test]
+fn explicit_value_wins_over_default_materiality() {
+    // F4 (round 24): a default only fills an absent path, so its
+    // materiality must not redact an explicit value overridden by a
+    // benign profile.
+    let raw = "default-src-r24";
+    std::env::set_var("ACTIVE_R24_DEFAULT", raw);
+    let src = "let s = env.ACTIVE_R24_DEFAULT\nk = secret(s)\nschema = { a = String(default = s) }\na = \"EXPLICIT-BENIGN\"\nactive_profile = \"a\"\nprofile \"a\" { a = \"PROFILE-BENIGN\" }\n";
+    let module = parse(src, "default-covered").expect("parse");
+    let mut engine = Engine::new();
+    engine.profile_override = Some("a".to_string());
+    let (value, _) = engine.evaluate(&module).expect("evaluate");
+    let profile = active_core::secret::SecretProfile::analyze_with_profile(&module, Some("a"));
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(
+        json.contains("PROFILE-BENIGN"),
+        "benign override hidden: {json}"
+    );
+    assert!(!json.contains(raw), "source leaked: {json}");
+}

@@ -28,7 +28,8 @@ error message, or an export** — only redaction markers do.
 | Arithmetic `+ - * /`, ordering `< <= > >=`, negation `!`/`-` | **Prohibited** (T001): the message names operand *kinds* only, so no operand text (secret or otherwise) can be carried |
 | Equality `==` / `!=` | Allowed, pure: secrets never equal anything, **including themselves** (`value_eq` has no `Secret` arm). No oracle — a guess can never be confirmed |
 | Tables / arrays | Structural containment: secrets ride inside composites and redact recursively on every export path |
-| Profiles / patches / fills / defaults | Structural: merged, patched-in, and filled secrets stay `Secret`-kinded end to end |
+| Profiles / patches / fills / defaults | Structural: merged, patched-in, and filled secrets stay `Secret`-kinded end to end. A profile override at a material path is material too (including container replacements and env-fallback children) |
+| Resilient H005 renames | Refused at a material source path: moving the value would detach it from the taint map. The typo stays a suggestion-only T005 |
 | `@constraint` predicates | May read secrets (equality tests, boolean logic); violation rendering redacts actuals to `secret` and secret-bearing sources to generic (spec/annotations.md §6) |
 | Schema `min`/`max`/bounds | Readable as values; never echoed (spec/validation.md §7) |
 | `Bytes` / units | Orthogonal: byte-ness is erased at evaluation and has no taint interaction |

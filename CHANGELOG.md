@@ -193,6 +193,16 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
 - **Provenance is profile-aware.** `active lock` withholds an env value
   that a profile places at a material path and records its drift hash
   instead (the graph walk alone cannot see the selection).
+- **Env fallbacks are mapped.** `env.X ?: {…}` and `env.X ?: […]` keep
+  the `Env` node at the path while registering the fallback's children,
+  so a material child inside a fallback table or array redacts instead
+  of exporting raw. Merge-vs-replace treats a table fallback as a table.
+- **Material values never auto-rename.** Resilient H005 skips a source
+  path that is structurally material: the taint map follows the source
+  path, and moving the value would publish it. The typo degrades to a
+  suggestion-only T005. Binding names no longer pollute data-path
+  materiality, and a default's materiality applies only when the
+  default can actually fill (an explicit value wins).
 - **Metadata is immutable at every depth.** Patches targeting
   `schema.x`, `active_mode.x`, `active_capabilities.x`, or
   `active_profile.x` are rejected with E019, so descendants cannot

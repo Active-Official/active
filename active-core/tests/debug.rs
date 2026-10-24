@@ -144,3 +144,24 @@ fn minimal_case_redacts_authored_secret_literals() {
         report["reduced"]
     );
 }
+
+#[test]
+fn minimal_case_redacts_every_secret_spelling_without_duplication() {
+    let cases = [
+        "schema = { token = Int }\ntoken = secret (\"hunter2-a\")\nnoise = 1\n",
+        "schema = { token = Int }\ntoken = secret((\"hunter2-b\"))\nnoise = 1\n",
+        "schema = { token = Int }\ntoken = secret(\"\"\"hunter2-c\"\"\")\nnoise = 1\n",
+        "schema = { token = Int }\nlet p = \"hunter2-d\"\ntoken = secret(p)\nnoise = 1\n",
+        "schema = { token = Int }\ntoken = secret(\"hunter2-e\nnoise = 1\n",
+    ];
+    for src in cases {
+        let report = debug::minimal_case(src, "T002", 100);
+        let reduced = report["reduced"].as_str().expect("reduced");
+        assert!(!reduced.contains("hunter2"), "leak for {src:?}: {reduced}");
+        assert_eq!(
+            reduced.matches("schema = {").count(),
+            1,
+            "duplicated content for {src:?}: {reduced}"
+        );
+    }
+}

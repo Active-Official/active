@@ -36,7 +36,7 @@
         "file": "path to a .active source file"
       },
       "output": {
-        "value": "redacted JSON document"
+        "document": "redacted document in JSON, YAML, or TOML (per --format)"
       }
     },
     {
@@ -71,7 +71,8 @@
         "key": "optional dotted key"
       },
       "output": {
-        "graph": "text, Mermaid, DOT, or JSON per flags"
+        "graph": "text, Mermaid, DOT, or JSON graph per flags",
+        "query": "path lists, a [from, to] path for shortest-path, or {path,size,hash} blob records for content-addressed-above-size"
       }
     },
     {

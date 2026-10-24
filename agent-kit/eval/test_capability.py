@@ -79,6 +79,15 @@ class CapabilityTest(unittest.TestCase):
             "trusted matches the agent tool surface",
         )
 
+    def test_output_descriptions_cover_formats_and_query_shapes(self) -> None:
+        tools = {t.get("name"): t for t in self.doc.get("tools", [])}
+        eval_text = json.dumps(tools["eval"])
+        for fmt in ("json", "yaml", "toml"):
+            self.assertIn(fmt, eval_text, f"eval descriptor omits {fmt}")
+        graph_text = json.dumps(tools["graph"])
+        for shape in ("path list", "shortest-path", "content-addressed-above-size"):
+            self.assertIn(shape, graph_text, f"graph descriptor omits {shape}")
+
     def test_every_tool_described(self) -> None:
         for tool in self.doc.get("tools", []):
             self.assertTrue(tool.get("name"), "nameless tool")

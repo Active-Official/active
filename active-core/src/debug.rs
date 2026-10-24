@@ -127,55 +127,174 @@ pub fn minimal_case(source: &str, target_code: &str, max_attempts: usize) -> Jso
     })
 }
 
-/// Replace the payload of `secret("…")` / `secret('…')` literals with a
-/// fixed marker, preserving the call shape. `secret.env(NAME)` and
-/// non-literal locators pass through unchanged (names are not material).
+/// Replace secret-bearing string literals in exported source with a
+/// fixed marker. Two passes:
+///
+/// 1. **Semantic** (recovering parse): every string literal that feeds a
+///    `secret(...)` locator — including through a `let`/table binding —
+///    is replaced by its source span.
+/// 2. **Lexical fallback** (unparseable source): the lexer stream finds
+///    `secret` followed by parentheses and a string token, handling
+///    whitespace, nested parentheses, triple-quoted strings, and
+///    unterminated strings.
+///
+/// `secret.env(NAME)` names are not material and pass through.
 fn redact_secret_literals(source: &str) -> String {
-    let mut out = String::with_capacity(source.len());
-    let mut rest = source;
-    while let Some(position) = rest.find("secret(") {
-        let split = position + "secret(".len();
-        out.push_str(&rest[..split]);
-        let tail = &rest[split..];
-        let trimmed = tail.trim_start();
-        let whitespace = tail.len() - trimmed.len();
-        let Some(quote) = trimmed.chars().next().filter(|c| *c == '"' || *c == '\'') else {
-            rest = tail;
-            continue;
-        };
-        out.push_str(&tail[..whitespace]);
-        out.push(quote);
-        let after = &trimmed[1..];
-        let mut escaped = false;
-        let mut end = None;
-        for (index, ch) in after.char_indices() {
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            if ch == '\\' {
-                escaped = true;
-                continue;
-            }
-            if ch == quote {
-                end = Some(index);
-                break;
-            }
-        }
-        match end {
-            Some(index) => {
-                out.push_str("***SECRET***");
-                out.push_str(&after[index..]);
-                rest = &after[index + 1..];
-            }
-            None => {
-                out.push_str(after);
-                rest = "";
+    let mut spans: Vec<crate::diag::Span> = Vec::new();
+    let (module, _) = crate::parse_recovering(source, "redact", crate::ParseOptions::default());
+    for node in &module.arena {
+        if let crate::ir::Node::Secret { locator } = node {
+            let mut set = std::collections::HashSet::new();
+            collect_for_redaction(&module, *locator, &mut set);
+            for id in set {
+                let is_string = matches!(
+                    module.get(id),
+                    Some(crate::ir::Node::Literal(crate::ir::Value::String(_)))
+                        | Some(crate::ir::Node::Interpolate { .. })
+                );
+                if is_string {
+                    if let Some(span) = module.node_spans.get(&id) {
+                        spans.push(span.clone());
+                    }
+                }
             }
         }
     }
-    out.push_str(rest);
+    if spans.is_empty() {
+        spans = lexical_secret_spans(source);
+    }
+    if spans.is_empty() {
+        return source.to_string();
+    }
+    let mut ranges: Vec<(usize, usize)> = spans
+        .iter()
+        .filter_map(|span| span_offsets(source, span))
+        .collect();
+    ranges.sort_unstable();
+    ranges.dedup();
+    let mut out = source.to_string();
+    for (start, end) in ranges.iter().rev() {
+        if *end <= *start || *end > out.len() {
+            continue;
+        }
+        out.replace_range(*start..*end, "\"***SECRET***\"");
+    }
     out
+}
+
+/// Collect a locator subtree (following references) for redaction.
+fn collect_for_redaction(
+    module: &crate::Module,
+    root: crate::NodeId,
+    set: &mut std::collections::HashSet<crate::NodeId>,
+) {
+    use crate::ir::Node;
+    let mut stack = vec![root];
+    while let Some(id) = stack.pop() {
+        if !set.insert(id) {
+            continue;
+        }
+        match module.get(id) {
+            Some(Node::Ref(target)) => stack.push(*target),
+            Some(Node::ApplyConstraint { target, .. }) => stack.push(*target),
+            Some(Node::Interpolate { parts }) => {
+                for part in parts {
+                    if let crate::ir::InterpPart::Expr(expr) = part {
+                        stack.push(*expr);
+                    }
+                }
+            }
+            Some(Node::Binary { lhs, rhs, .. }) => {
+                stack.push(*lhs);
+                stack.push(*rhs);
+            }
+            Some(Node::Unary { expr, .. }) => stack.push(*expr),
+            Some(Node::Array { elements }) => stack.extend(elements.iter().copied()),
+            Some(Node::Table { fields }) => stack.extend(fields.values().copied()),
+            Some(Node::Quantity { value, .. }) => stack.push(*value),
+            Some(Node::Semantic { inner, .. }) => stack.push(*inner),
+            Some(Node::ContentAddressed { media_type, data }) => {
+                stack.push(*media_type);
+                stack.push(*data);
+            }
+            Some(Node::Env {
+                default: Some(default),
+                ..
+            }) => stack.push(*default),
+            Some(Node::Secret { locator }) => stack.push(*locator),
+            _ => {}
+        }
+    }
+}
+
+/// Lexer-based fallback: find `secret` + parentheses + a string token.
+fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
+    use crate::parser::TokenKind as K;
+    let mut lexer = crate::parser::Lexer::new(source);
+    let lexed = lexer.tokenize();
+    let tokens = &lexed.tokens;
+    let mut spans = Vec::new();
+    let mut index = 0usize;
+    while index < tokens.len() {
+        let is_secret = matches!(tokens[index].kind, K::Ident) && tokens[index].text == "secret";
+        if !is_secret {
+            index += 1;
+            continue;
+        }
+        let mut cursor = index + 1;
+        while matches!(tokens.get(cursor).map(|t| &t.kind), Some(K::LParen)) {
+            cursor += 1;
+        }
+        if let Some(token) = tokens.get(cursor) {
+            if matches!(
+                token.kind,
+                K::String(_) | K::SingleString | K::MlString(_) | K::MlSingleString
+            ) {
+                spans.push(crate::diag::Span {
+                    line: token.line,
+                    column: token.col,
+                    end_line: token.end_line,
+                    end_column: token.end_col,
+                });
+            }
+        }
+        index = cursor.max(index + 1);
+    }
+    spans
+}
+
+/// Convert a 1-based core span into byte offsets in `text`.
+fn span_offsets(text: &str, span: &crate::diag::Span) -> Option<(usize, usize)> {
+    let line_starts = line_byte_starts(text);
+    let start = byte_at(&line_starts, text, span.line, span.column)?;
+    let end = byte_at(&line_starts, text, span.end_line, span.end_column)?;
+    (end > start).then_some((start, end))
+}
+
+fn line_byte_starts(text: &str) -> Vec<usize> {
+    let mut starts = vec![0usize];
+    for (index, byte) in text.bytes().enumerate() {
+        if byte == b'\n' {
+            starts.push(index + 1);
+        }
+    }
+    starts
+}
+
+fn byte_at(starts: &[usize], text: &str, line: u32, column: u32) -> Option<usize> {
+    let start = *starts.get(line.checked_sub(1)? as usize)?;
+    let rest = &text[start..];
+    let line_text = rest.split('\n').next().unwrap_or("");
+    let target = column.checked_sub(1)? as usize;
+    let mut seen = 0usize;
+    for (offset, ch) in line_text.char_indices() {
+        if seen == target {
+            return Some(start + offset);
+        }
+        seen += 1;
+        let _ = ch;
+    }
+    (seen == target).then_some(start + line_text.len())
 }
 
 /// Human rendering of a step trace (values redacted).

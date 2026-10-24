@@ -134,9 +134,9 @@ enum GraphQuery {
         /// Minimum blob size in bytes (content-addressed-above-size)
         #[arg(long, default_value_t = 1)]
         min_size: u64,
-        /// Output format
-        #[arg(long, default_value = "text")]
-        format: String,
+        /// Output format (defaults to the outer `--format`)
+        #[arg(long)]
+        format: Option<String>,
     },
 }
 
@@ -856,9 +856,11 @@ fn run_graph_query(
     resilient: bool,
     allow_parent_escapes: bool,
     trust_keys: &Option<PathBuf>,
+    profile: &Option<String>,
 ) -> anyhow::Result<()> {
     let trust = load_trust(trust_keys)?;
     let module = parse_input(from, resilient, allow_parent_escapes, &trust)?;
+    let evaluation_engine = engine(resilient, profile, Budget::default());
     let name = from.to_string_lossy().to_string();
     for d in &module.healing {
         report(d, &name);
@@ -912,7 +914,7 @@ fn run_graph_query(
             }
         }
         "secret-tainted-cone" | "content-addressed-above-size" => {
-            let (value, diags) = Engine::new()
+            let (value, diags) = evaluation_engine
                 .evaluate(&module)
                 .map_err(|e| anyhow::anyhow!("evaluation failed: {e}"))?;
             for d in &diags {
@@ -1249,7 +1251,7 @@ fn main() -> anyhow::Result<()> {
             resilient,
             allow_parent_escapes,
             trust_keys,
-            profile: _,
+            profile,
         } => {
             if let Some(GraphQuery::Query {
                 from: sub_from,
@@ -1262,15 +1264,11 @@ fn main() -> anyhow::Result<()> {
                 let resolved = sub_from.or(file).ok_or_else(|| {
                     anyhow::anyhow!("graph query needs a file: pass FILE or --from FILE")
                 })?;
-                // Outer flags apply to the query too: honor an outer
-                // --format when the subcommand kept its default, and
-                // pass trust/include/resilience through so the query
-                // path cannot bypass the same gates as `active graph`.
-                let effective_format = if qformat == "text" {
-                    format.clone()
-                } else {
-                    qformat
-                };
+                // An explicit inner --format wins; otherwise the outer
+                // --format applies. Trust/include/resilience/profile
+                // pass through so the query path cannot bypass the
+                // same gates as `active graph`.
+                let effective_format = qformat.unwrap_or_else(|| format.clone());
                 return run_graph_query(
                     &resolved,
                     &query,
@@ -1280,6 +1278,7 @@ fn main() -> anyhow::Result<()> {
                     resilient,
                     allow_parent_escapes,
                     &trust_keys,
+                    &profile,
                 );
             }
             let file = file.ok_or_else(|| {
@@ -1686,7 +1685,7 @@ fn main() -> anyhow::Result<()> {
                 // includes resolve exactly as `active repair` resolves
                 // them (spec/viz.md §3).
                 if trust.is_some() {
-                    parse_input(&from, false, false, &trust)?;
+                    parse_input(&from, false, allow_parent_escapes, &trust)?;
                 }
                 let source = std::fs::read_to_string(&from)
                     .map_err(|e| anyhow::anyhow!("cannot read source: {e}"))?;
@@ -1714,7 +1713,7 @@ fn main() -> anyhow::Result<()> {
                 );
                 return Ok(());
             }
-            let module = parse_input(&from, false, false, &trust)?;
+            let module = parse_input(&from, false, allow_parent_escapes, &trust)?;
             match kind.as_str() {
                 "graph" => match format.as_str() {
                     "json" => println!(

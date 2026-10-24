@@ -2347,3 +2347,78 @@ fn repair_browser_resolves_includes_like_repair() {
     );
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn graph_query_is_strict_like_eval() {
+    let f = fixture(
+        "graph_strict.active",
+        "schema = { port = Int }\nhost = \"x\"\n",
+    );
+    let out = active()
+        .args(["graph"])
+        .arg(&f)
+        .args(["query", "--query", "secret-tainted-cone"])
+        .output()
+        .expect("run active");
+    assert!(
+        !out.status.success(),
+        "strict validation must fail the query like eval"
+    );
+}
+
+#[test]
+fn inner_format_text_overrides_outer_json() {
+    let f = fixture("graph_inner_format.active", "[s]\na = 1\nb = a\n");
+    let out = active()
+        .args(["graph"])
+        .arg(&f)
+        .args([
+            "--format",
+            "json",
+            "query",
+            "--query",
+            "dependents-of",
+            "--key",
+            "s.a",
+            "--format",
+            "text",
+        ])
+        .output()
+        .expect("run active");
+    assert!(out.status.success());
+    let body = String::from_utf8_lossy(&out.stdout);
+    assert!(!body.trim_start().starts_with('{'), "text expected: {body}");
+    assert!(body.contains("s.b"), "{body}");
+}
+
+#[test]
+fn viz_honors_allow_parent_escapes() {
+    let dir = std::env::temp_dir().join(format!("active-viz-escape-{}", std::process::id()));
+    let sub = dir.join("sub");
+    std::fs::create_dir_all(&sub).expect("dirs");
+    std::fs::write(dir.join("inc.active"), "host = \"x\"\n").expect("include");
+    let main = sub.join("main.active");
+    std::fs::write(&main, "include \"../inc.active\"\n").expect("main");
+
+    let denied = active()
+        .args(["viz", "graph", "--from"])
+        .arg(&main)
+        .output()
+        .expect("run active");
+    assert!(
+        !denied.status.success(),
+        "escape must fail without the flag"
+    );
+    let allowed = active()
+        .args(["viz", "graph", "--from"])
+        .arg(&main)
+        .arg("--allow-parent-escapes")
+        .output()
+        .expect("run active");
+    assert!(
+        allowed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&allowed.stderr)
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}

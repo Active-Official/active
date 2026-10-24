@@ -419,46 +419,50 @@ pub fn browser_model_with(
         },
     };
     let (module, parse_diags) = parsed;
-    let mut diagnostics: Vec<serde_json::Value> = parse_diags
-        .into_iter()
-        .map(|d| {
-            serde_json::json!({
-                "code": d.code,
-                "severity": d.severity,
-                "message": d.message,
-                "path": d.path,
-                "span": d.span,
-            })
-        })
-        .collect();
-    match engine.evaluate(&module) {
-        Ok((_, diags)) => diagnostics.extend(diags.into_iter().map(|d| {
-            serde_json::json!({
-                "code": d.code,
-                "severity": d.severity,
-                "message": d.message,
-                "path": d.path,
-                "span": d.span,
-            })
-        })),
-        Err(crate::eval::EvalError::ValidationFailed { diagnostics: ds }) => {
-            diagnostics.extend(ds.into_iter().map(|d| {
-                serde_json::json!({
-                    "code": d.code,
-                    "severity": d.severity,
-                    "message": d.message,
-                    "path": d.path,
-                    "span": d.span,
-                })
-            }))
+    // Combine recovering parse diagnostics with evaluation diagnostics,
+    // deduping by rendered record: evaluation diagnostics may repeat a
+    // parse record, and neither source may be dropped (a parse error
+    // the plan still reports must show up in the browser).
+    let mut diagnostics: Vec<serde_json::Value> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let push = |rows: &mut Vec<serde_json::Value>,
+                seen: &mut std::collections::HashSet<String>,
+                diagnostic: crate::Diagnostic| {
+        let row = serde_json::json!({
+            "code": diagnostic.code,
+            "severity": diagnostic.severity,
+            "message": diagnostic.message,
+            "path": diagnostic.path,
+            "span": diagnostic.span,
+        });
+        let key = row.to_string();
+        if seen.insert(key) {
+            rows.push(row);
         }
-        Err(error) => diagnostics.push(serde_json::json!({
-            "code": error.code(),
-            "severity": "error",
-            "message": error.to_string(),
-            "path": null,
-            "span": null,
-        })),
+    };
+    for diagnostic in parse_diags {
+        push(&mut diagnostics, &mut seen, diagnostic);
+    }
+    match engine.evaluate(&module) {
+        Ok((_, diags)) => {
+            for diagnostic in diags {
+                push(&mut diagnostics, &mut seen, diagnostic);
+            }
+        }
+        Err(crate::eval::EvalError::ValidationFailed { diagnostics: ds }) => {
+            for diagnostic in ds {
+                push(&mut diagnostics, &mut seen, diagnostic);
+            }
+        }
+        Err(error) => {
+            diagnostics.push(serde_json::json!({
+                "code": error.code(),
+                "severity": "error",
+                "message": error.to_string(),
+                "path": null,
+                "span": null,
+            }));
+        }
     }
     let mut plan = serde_json::to_value(&outcome).unwrap_or(serde_json::Value::Null);
     if let Some(object) = plan.as_object_mut() {

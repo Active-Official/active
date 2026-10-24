@@ -63,10 +63,18 @@ fn repair_data_exposes_the_plan() {
     let steps = data["steps"].as_array().expect("steps");
     assert!(!steps.is_empty(), "{data}");
     assert_eq!(steps[0]["kind"], "fill");
-    assert!(data["repaired_source"]
-        .as_str()
-        .expect("source")
-        .contains("@patch"));
+    assert!(
+        data.get("repaired_source").is_none(),
+        "display plan must not carry source: {data}"
+    );
+    let secret_source = "schema = { token = Int }\ntoken = secret(\"hunter2-viz-repair\")\n";
+    let secret_data = viz::repair_data(
+        secret_source,
+        active_core::diag::RepairGoal::Validate,
+        &[],
+        8,
+    );
+    assert!(!secret_data.to_string().contains("hunter2"));
 }
 
 #[test]

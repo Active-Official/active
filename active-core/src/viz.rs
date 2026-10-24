@@ -126,7 +126,8 @@ pub fn schema_data(module: &Module) -> Result<JsonValue, String> {
     Ok(inspected)
 }
 
-/// Repair plan view: the shipped multi-step planner's outcome.
+/// Repair plan view: the shipped multi-step planner's outcome without
+/// `repaired_source` (source text can contain authored secrets).
 pub fn repair_data(
     source: &str,
     goal: crate::diag::RepairGoal,
@@ -134,7 +135,12 @@ pub fn repair_data(
     max_steps: usize,
 ) -> JsonValue {
     let outcome = crate::convert::repair_document(source, goal, preserve, max_steps);
-    serde_json::to_value(outcome).unwrap_or_else(|_| json!({"error": "unserializable plan"}))
+    let mut data =
+        serde_json::to_value(outcome).unwrap_or_else(|_| json!({"error": "unserializable plan"}));
+    if let Some(object) = data.as_object_mut() {
+        object.remove("repaired_source");
+    }
+    data
 }
 
 // ------------------------------------------------------------------

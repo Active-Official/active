@@ -1691,8 +1691,34 @@ impl Engine {
                 let node_material = secret_profile
                     .as_ref()
                     .is_some_and(|profile| profile.node_is_secret(node_id));
-                let sensitive = node_material;
-                if node_material || material_path.is_some() {
+                // Containers keep their shape (the trace stays useful),
+                // and every material leaf is marked by path: a number
+                // used as a locator is material too. A binding-only
+                // natural label yields to the material profile path so
+                // the step names the exported location.
+                let natural_path = step_paths
+                    .as_ref()
+                    .and_then(|paths| paths.get(&node_id))
+                    .cloned();
+                let step_path = match (&natural_path, material_path) {
+                    (Some(natural), Some(material))
+                        if !secret_profile
+                            .as_ref()
+                            .is_some_and(|profile| profile.is_data_path(natural)) =>
+                    {
+                        Some(material.to_string())
+                    }
+                    (Some(natural), _) => Some(natural.clone()),
+                    (None, Some(material)) => Some(material.to_string()),
+                    (None, None) => None,
+                };
+                // A step whose own path is material is a taint hit;
+                // a shared node rendered under its benign natural path
+                // is not (the material path redacts in the container).
+                let on_material_path =
+                    material_path.is_some_and(|path| step_path.as_deref() == Some(path));
+                let sensitive = node_material || on_material_path;
+                if node_material || on_material_path {
                     // Register the evaluated text of a material scalar
                     // so a container rendering redacts it. Only
                     // intrinsically material nodes and env reads do so:
@@ -1705,14 +1731,6 @@ impl Engine {
                         }
                     }
                 }
-                // Containers keep their shape (the trace stays useful),
-                // and every material leaf is marked by path: a number
-                // used as a locator is material too.
-                let step_path = step_paths
-                    .as_ref()
-                    .and_then(|paths| paths.get(&node_id))
-                    .cloned()
-                    .or_else(|| material_path.map(str::to_string));
                 let mut rendered = match secret_profile.as_ref() {
                     Some(profile) => {
                         render_step_value(profile, step_path.as_deref(), &value, sensitive)

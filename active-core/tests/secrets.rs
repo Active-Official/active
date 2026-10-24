@@ -1252,3 +1252,26 @@ fn computed_selector_rename_from_a_runtime_profile_keeps_the_target_material() {
     let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
     assert!(!json.contains(raw), "computed rename leaked: {json}");
 }
+
+#[test]
+fn computed_nested_rename_marks_the_same_parent_destination() {
+    // N1 (review 31): the evaluator renames within the same parent, so
+    // `a.x` -> `zz` lands at `a.zz`; the fail-closed overlay must use
+    // that destination, not a bare top-level key.
+    let raw = "nested-computed-rename-r31";
+    std::env::set_var("ACTIVE_R31_REN", raw);
+    std::env::set_var("ACTIVE_R31_SEL", "b");
+    let src = "let p = env.ACTIVE_R31_REN\nk = secret(p)\nsel = env.ACTIVE_R31_SEL\nactive_profile = sel\nprofile \"b\" { a = { x = p } }\n@rename(\"a.x\", \"zz\")\n";
+    let module = parse(src, "nested-computed-rename").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("ACTIVE_R31_REN".to_string(), raw.to_string());
+    env.insert("ACTIVE_R31_SEL".to_string(), "b".to_string());
+    let (value, _) = Engine::new()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("resilient evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    assert!(profile.path_is_secret("a.zz"), "same-parent destination");
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(raw), "nested computed rename leaked: {json}");
+}

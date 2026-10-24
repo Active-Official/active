@@ -780,3 +780,49 @@ fn steps_follow_a_renamed_material_path() {
     );
     // Steps are evaluation-order events; the pre-transform path for a\n    // node evaluated before the patch is expected, and the overlay for\n    // the renamed material path is m.\n
 }
+
+#[test]
+fn steps_mark_a_material_path_as_tainted() {
+    // N3 (review 31): a step whose own path is material reports the
+    // marker AND tainted=true, so `--break taint` still selects it.
+    let src = "let p = env.R31_TRACE\nk = secret(p)\nn = p\nactive_profile = \"p\"\nprofile \"p\" { n = \"BENIGN-PROFILE\" }\n";
+    let mut env = std::collections::HashMap::new();
+    env.insert("R31_TRACE".to_string(), "trace-source-r31".to_string());
+    let (_, _, steps) = Engine::new()
+        .with_env(env)
+        .evaluate_with_steps(&module(src))
+        .expect("evaluate");
+    let step = steps
+        .iter()
+        .find(|step| step.path.as_deref() == Some("n"))
+        .expect("material step");
+    assert_eq!(step.value, serde_json::json!("***SECRET***"), "{step:?}");
+    assert!(step.tainted, "material path must be a taint hit: {step:?}");
+}
+
+#[test]
+fn steps_follow_a_nested_rename() {
+    // N2 (review 31): the trace overlay renames within the same parent.
+    let src = "let p = env.R31_NEST\nk = secret(p)\nactive_profile = \"p\"\nprofile \"p\" { a = { x = p } }\n@rename(\"a.x\", \"zz\")\n";
+    let mut env = std::collections::HashMap::new();
+    env.insert("R31_NEST".to_string(), "nested-trace-r31".to_string());
+    let (_, _, steps) = Engine::new()
+        .with_env(env)
+        .evaluate_with_steps(&module(src))
+        .expect("evaluate");
+    let rendered = serde_json::to_string(&steps).expect("json");
+    assert!(
+        !rendered.contains("nested-trace-r31"),
+        "source leaked: {rendered}"
+    );
+    assert!(
+        steps
+            .iter()
+            .any(|step| step.path.as_deref() == Some("a.zz")),
+        "same-parent path missing: {rendered}"
+    );
+    assert!(
+        !steps.iter().any(|step| step.path.as_deref() == Some("zz")),
+        "bare destination fabricated: {rendered}"
+    );
+}

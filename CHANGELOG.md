@@ -229,9 +229,11 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   blobs, and env fallbacks; the upward expression closure is extended
   after the profile so embedded strings and containers redact. A
   computed selector's runtime rename carries the source's materiality
-  to the destination. `inspect` treats a path-material blob as tainted
-  and redacts its media type, and the step-path overlay follows
-  Set/Remove/Rename.
+  to the same-parent destination (`a.x` → `zz` marks `a.zz`). `inspect`
+  treats a path-material blob as tainted and redacts its media type,
+  and the step-path overlay follows Remove/Rename with the same-parent
+  rule. A step whose own path is material reports `tainted: true`, so
+  `--break taint` still selects it.
 - **Material values never auto-rename.** Resilient H005 skips a source
   path that is structurally material: the taint map follows the source
   path, and moving the value would publish it. The typo degrades to a

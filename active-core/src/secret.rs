@@ -611,10 +611,16 @@ fn path_is_material(material_paths: &HashSet<String>, path: &str) -> bool {
 
 /// Keep the trace-path overlay in step with a rename.
 fn rename_material_node_paths(map: &mut HashMap<NodeId, String>, from: &str, to: &str) {
+    let (parent, _) = split_parent(from);
+    let dest = if parent.is_empty() {
+        to.to_string()
+    } else {
+        format!("{parent}.{to}")
+    };
     for path in map.values_mut() {
         if path_under(path, from) {
             let suffix = &path[from.len()..];
-            *path = format!("{to}{suffix}");
+            *path = format!("{dest}{suffix}");
         }
     }
 }
@@ -798,6 +804,9 @@ pub struct SecretProfile {
     /// selection). Step traces use it so a shared benign node stays
     /// visible in the export while its material step redacts.
     material_node_paths: HashMap<NodeId, String>,
+    /// Export-tree paths (root and selected profile), so a trace can
+    /// tell a binding label from a data path.
+    data_paths: HashSet<String>,
 }
 
 impl SecretProfile {
@@ -1177,6 +1186,15 @@ impl SecretProfile {
                             )
                         });
                         if profile_defined {
+                            // Same-parent destination, matching the
+                            // evaluator (`a.x` renamed to `zz` becomes
+                            // `a.zz`, never a bare top-level key).
+                            let (parent, _) = split_parent(&from);
+                            let dest = if parent.is_empty() {
+                                to.clone()
+                            } else {
+                                format!("{parent}.{to}")
+                            };
                             let mut affected: Vec<String> = fallback_secret_paths
                                 .iter()
                                 .filter(|path| path_under(path, &from))
@@ -1189,10 +1207,10 @@ impl SecretProfile {
                             for path in affected {
                                 moved = true;
                                 let suffix = &path[from.len()..];
-                                fallback_secret_paths.insert(format!("{to}{suffix}"));
+                                fallback_secret_paths.insert(format!("{dest}{suffix}"));
                             }
                             if moved {
-                                fallback_secret_paths.insert(to.clone());
+                                fallback_secret_paths.insert(dest);
                             }
                         }
                         continue;
@@ -1288,6 +1306,7 @@ impl SecretProfile {
             literals,
             material_envs,
             material_node_paths,
+            data_paths,
         }
     }
 
@@ -1306,6 +1325,12 @@ impl SecretProfile {
     /// marked (a profile selection), for step-trace rendering.
     pub fn material_path_for(&self, id: NodeId) -> Option<&str> {
         self.material_node_paths.get(&id).map(String::as_str)
+    }
+
+    /// True for a path the exported tree owns (root or selected
+    /// profile), false for a binding-only label.
+    pub fn is_data_path(&self, path: &str) -> bool {
+        self.data_paths.contains(path)
     }
 
     /// True when the node's value is secret material or derives from it.

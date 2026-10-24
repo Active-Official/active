@@ -578,3 +578,56 @@ fn style_conversion_is_withheld_for_broken_documents() {
         actions.iter().map(|a| &a.title).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn annotation_action_skips_plain_string_bodies() {
+    // F7 (round 22): plain double-quoted strings may span physical
+    // lines too; a continuation line is value text, never a binding.
+    let doc = open("x = \"abc\nport = 1\ndef\"\n");
+    let actions = analysis::code_actions(
+        &doc,
+        Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 0,
+            },
+        },
+    );
+    assert!(
+        !actions
+            .iter()
+            .any(|action| action.title.contains("@ai_immutable")),
+        "annotating a string body rewrites the value: {actions:?}"
+    );
+}
+
+#[test]
+fn annotation_action_respects_a_bom() {
+    let doc = open("\u{feff}port = 1\n");
+    let actions = analysis::code_actions(
+        &doc,
+        Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 0,
+            },
+        },
+    );
+    let edit = actions
+        .iter()
+        .find(|action| action.title.contains("@ai_immutable"))
+        .and_then(|action| action.edit.as_ref())
+        .and_then(|edit| edit.changes.as_ref())
+        .and_then(|changes| changes.values().next())
+        .and_then(|edits| edits.first())
+        .expect("annotation edit");
+    assert_eq!(edit.range.start.character, 1, "insert after the BOM");
+}

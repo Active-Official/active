@@ -152,14 +152,11 @@ fn collect_rows(module: &Module, root: crate::ir::NodeId, prefix: &str, out: &mu
                     removed_in: None,
                     blob: None,
                 });
-                // Table elements have addressable fields; recurse so a
-                // nested add/remove/type change is never invisible.
-                if matches!(
-                    module.get(*element),
-                    Some(Node::SchemaTable { .. }) | Some(Node::SchemaArray { .. })
-                ) {
-                    collect_element_rows(module, *element, &format!("{path}[]"), out);
-                }
+                // Every element shape is addressable: tables expand to
+                // fields, nested arrays recurse, and a scalar element is
+                // a row at `path[]` (this is how Array<Blob> bounds and
+                // media changes become visible).
+                collect_element_rows(module, *element, &format!("{path}[]"), out);
             }
             _ => {}
         }
@@ -173,7 +170,8 @@ fn collect_fields(module: &Module, root: crate::ir::NodeId) -> Vec<Row> {
 }
 
 /// Rows inside an array element. Table elements expand to
-/// `path[].field`; nested arrays recurse with another `[]` segment.
+/// `path[].field`; scalar elements (including blobs) become one row at
+/// `path[]`; nested arrays recurse with another `[]` segment.
 fn collect_element_rows(
     module: &Module,
     element: crate::ir::NodeId,
@@ -192,6 +190,7 @@ fn collect_element_rows(
             });
             collect_element_rows(module, *inner, &format!("{prefix}[]"), out);
         }
+        Some(Node::SchemaField { field }) => out.push(row_for_field(module, prefix, field)),
         _ => {}
     }
 }
@@ -300,6 +299,17 @@ pub fn compare(old: &Module, new: &Module) -> Result<Vec<CompatFinding>, String>
                             old_field.signature, new_field.signature
                         ),
                     ));
+                } else if old_field.required != new_field.required && new_field.required {
+                    // Removing a default makes the field required
+                    // without changing its type: old documents that
+                    // omitted it now fail.
+                    findings.push(CompatFinding::error(
+                        code::TYPE_CHANGED,
+                        path,
+                        format!(
+                            "field '{path}' became required (default removed): old documents fail the new schema"
+                        ),
+                    ));
                 } else if let (Some((old_max, old_media)), Some((new_max, new_media))) =
                     (&old_field.blob, &new_field.blob)
                 {
@@ -340,6 +350,15 @@ fn check_blob_tightening(
                 format!("blob '{path}' max_size tightened from {old} to {new}: existing payloads may fail"),
             ));
         }
+    } else if old_max.is_none() && new_max.is_some() {
+        // Newly pinning a bound is a tightening: payloads that were
+        // acceptable before may now fail.
+        let new = new_max.unwrap_or(0);
+        findings.push(CompatFinding::error(
+            code::TYPE_CHANGED,
+            path,
+            format!("blob '{path}' max_size newly pinned to {new}: existing payloads may fail"),
+        ));
     }
     if old_media != new_media {
         findings.push(CompatFinding::error(

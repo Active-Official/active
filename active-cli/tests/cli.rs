@@ -3076,3 +3076,35 @@ fn viz_profile_is_rejected_for_kinds_without_values() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+#[test]
+fn audit_source_path_with_interpolation_markers_revalidates() {
+    // F11 (round 22): a source path containing `${…}` must not
+    // interpolate inside the audit document. `\$` keeps it literal, so
+    // the archived audit passes `active check`.
+    let f = fixture("${x}.active", "port = 1\n");
+    let audit = std::env::temp_dir().join(format!("audit-dollar-{}.active", std::process::id()));
+    let out = active()
+        .args(["eval", "--audit-trail"])
+        .arg(&audit)
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let body = std::fs::read_to_string(&audit).expect("audit file");
+    assert!(body.contains("\\${x}"), "dollar not escaped: {body}");
+    let checked = active()
+        .arg("check")
+        .arg(&audit)
+        .output()
+        .expect("run active");
+    assert!(
+        checked.status.success(),
+        "audit must re-validate: {}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+}

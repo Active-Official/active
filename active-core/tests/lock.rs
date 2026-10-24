@@ -256,3 +256,25 @@ fn lockfile_round_trips_through_toml() {
         .expect("hash")
         .starts_with("sha256:"));
 }
+
+#[test]
+fn profile_selected_env_value_is_withheld_from_provenance() {
+    // F4 (round 22): a profile may place `env.T` at a path the document
+    // marks material. The graph walk cannot see that, so provenance
+    // must consult the same profile-aware secret analysis as eval.
+    let src = "let p = env.R22_SOURCE\nk = secret(p)\nx = p\nactive_profile = \"b\"\nprofile \"b\" { x = env.R22_LIVE }\n";
+    let module = parse(src, "lock-profile").expect("must parse");
+    let env = env_map(&[("R22_SOURCE", "source-value"), ("R22_LIVE", "live-value")]);
+    let mut engine = Engine::new().with_env(env.clone());
+    engine.profile_override = Some("b".to_string());
+    let _ = engine.evaluate(&module).expect("must evaluate");
+    let provenance = collect_provenance(&module, &engine.env, None, Some("b")).expect("provenance");
+    let live = provenance
+        .env
+        .iter()
+        .find(|input| input.name == "R22_LIVE")
+        .expect("live input recorded");
+    assert!(live.secret, "profile-selected value is secret-bound");
+    assert_eq!(live.value, None, "value must be withheld");
+    assert!(live.value_hash.is_some(), "drift hash replaces the value");
+}

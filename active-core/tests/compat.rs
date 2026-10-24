@@ -222,3 +222,76 @@ fn malformed_versions_are_schema_bugs_not_silent() {
     );
     assert!(errors.iter().any(|d| d.code == "E020"), "{errors:?}");
 }
+
+#[test]
+fn optional_to_required_is_breaking() {
+    // F9 (round 22): removing a default changes required-ness without
+    // changing the type signature; old documents that omitted the key
+    // now fail.
+    let old = "schema = { x = Int(default = 1) }\nx = 1\n";
+    let new = "schema = { x = Int }\nx = 1\n";
+    let findings = compare_docs(old, new);
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.code == code::TYPE_CHANGED && f.path == "x" && f.is_breaking()),
+        "{findings:?}"
+    );
+    // The same change inside an array element table.
+    let old = "schema = { xs = Array<Table { a = Int(default = 1) }> }\nxs = []\n";
+    let new = "schema = { xs = Array<Table { a = Int }> }\nxs = []\n";
+    let findings = compare_docs(old, new);
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.path == "xs[].a" && f.is_breaking()),
+        "{findings:?}"
+    );
+}
+
+#[test]
+fn array_element_blob_bounds_and_media_are_compared() {
+    // F10 (round 22): the element row must carry blob constraints, so
+    // Array<Blob> tightening and media changes are visible.
+    let old = "schema = { files = Array<Blob(max_size = 1000)> }\nfiles = []\n";
+    let new = "schema = { files = Array<Blob(max_size = 10)> }\nfiles = []\n";
+    let findings = compare_docs(old, new);
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.path == "files[]" && f.is_breaking()),
+        "{findings:?}"
+    );
+
+    let new_media = "schema = { files = Array<Blob(max_size = 1000, media_type = \"text/plain\")> }\nfiles = []\n";
+    let findings = compare_docs(old, new_media);
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.path == "files[]" && f.is_breaking()),
+        "{findings:?}"
+    );
+
+    // Newly pinning a bound is a tightening.
+    let unpinned = "schema = { payload = Blob }\npayload = blob(\"text/plain\", \"x\")\n";
+    let pinned =
+        "schema = { payload = Blob(max_size = 1) }\npayload = blob(\"text/plain\", \"x\")\n";
+    let findings = compare_docs(unpinned, pinned);
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.path == "payload" && f.is_breaking()),
+        "{findings:?}"
+    );
+
+    // Nested arrays recurse to `path[][]`.
+    let outer_old = "schema = { groups = Array<Array<Blob(max_size = 100)>> }\ngroups = []\n";
+    let outer_new = "schema = { groups = Array<Array<Blob(max_size = 1)>> }\ngroups = []\n";
+    let findings = compare_docs(outer_old, outer_new);
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.path == "groups[][]" && f.is_breaking()),
+        "{findings:?}"
+    );
+}

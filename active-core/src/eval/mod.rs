@@ -1870,7 +1870,7 @@ impl Engine {
             };
             match op {
                 PatchOp::Set { path, value } => {
-                    if is_document_metadata(&path) {
+                    if path_targets_document_metadata(&path) {
                         return Err(EvalError::patch_error(
                             format!("patch cannot rewrite document metadata `{path}`"),
                             module,
@@ -1908,7 +1908,7 @@ impl Engine {
                     }
                 }
                 PatchOp::Remove { path } => {
-                    if is_document_metadata(&path) {
+                    if path_targets_document_metadata(&path) {
                         return Err(EvalError::patch_error(
                             format!("patch cannot rewrite document metadata `{path}`"),
                             module,
@@ -1928,7 +1928,8 @@ impl Engine {
                     }
                 }
                 PatchOp::Rename { from, to } => {
-                    if is_document_metadata(&from) || is_document_metadata(&to) {
+                    if path_targets_document_metadata(&from) || path_targets_document_metadata(&to)
+                    {
                         return Err(EvalError::patch_error(
                             format!("patch cannot rewrite document metadata `{from}` -> `{to}`"),
                             module,
@@ -2142,6 +2143,14 @@ pub(crate) fn is_document_metadata(key: &str) -> bool {
         key,
         "active_mode" | "active_capabilities" | "active_profile" | "schema"
     )
+}
+
+/// True when a patch path targets document metadata or anything under
+/// it. `schema.hacked` is not the key `schema`, but writing it still
+/// fabricates the metadata table the host resolved from the source.
+pub(crate) fn path_targets_document_metadata(path: &str) -> bool {
+    let root = path.split(['.', '[']).next().unwrap_or(path);
+    is_document_metadata(root)
 }
 
 /// Diagnostic-safe profile selector: the literal the document spells,

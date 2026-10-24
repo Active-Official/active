@@ -59,12 +59,13 @@ string       = '"' { string-char } '"'
              | "'" { char-char } "'"
 char-char    = any-but-'"' | escape
 char-char    = any-but-''' | escape            (single-quoted form)
-escape       = "\" ( "n" | "t" | "r" | "\" | '"' | "0" )
+escape       = "\" ( "n" | "t" | "r" | "\" | '"' | "0" | "$" )
              | "\" ( "'" | "\" )               (single-quoted form)
 ```
 
 Escape results: `\n` → LF, `\t` → TAB, `\r` → CR, `\\` → backslash, `\"` →
-quote, `\0` → NUL. An unknown escape in a double-quoted string keeps the
+quote, `\0` → NUL, `\$` → a literal `$` (the next characters never open
+interpolation). An unknown escape in a double-quoted string keeps the
 backslash (`\x` → `\x`); in a single-quoted string the same. **[impl note]**
 A string token terminates at the closing quote or end of input; an unclosed
 string consumes to EOF without error (see 4.2).

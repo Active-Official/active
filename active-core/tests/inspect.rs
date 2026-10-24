@@ -635,3 +635,18 @@ fn inspect_reports_a_tainted_blob_as_tainted() {
     assert_eq!(report["content_addressed"]["tainted"], true);
     assert!(!report.to_string().contains("hunter2"));
 }
+
+#[test]
+fn inspect_schema_type_for_nested_array_paths() {
+    // F14 (round 22): every bracket index descends one array level;
+    // the old one-index assumption reported `Table` for `arr[0][0].a`.
+    let src = "schema = { arr = Array<Array<Table { a = Int }>> }\narr = [[{ a = 1 }]]\n";
+    let module = parse(src, "inspect-nested-array").expect("parse");
+    let (value, _) = active_core::Engine::new()
+        .evaluate(&module)
+        .expect("evaluate");
+    let report = active_core::convert::inspect_path(&module, &value, "arr[0][0].a")
+        .expect("inspect nested path");
+    assert_eq!(report["kind"], "Int", "{report}");
+    assert_eq!(report["schema"]["type"], "Int", "{report}");
+}

@@ -50,14 +50,14 @@ audit = {
   failing-if-leaking audit test).
 - **Available on failure too:** validation failures still emit the
   audit with `outcome = "failed"` and the collected codes.
-- **Null result on failure:** when evaluation fails before producing
-  a value (strict validation failure, budget trip, parse error), the
-  audit is still written with `outcome = "failed"` and `result =
-  null`. `null` is a valid Active value, so the audit stays
-  re-validatable; consumers must treat `null` as "no value was
-  produced" and never as an empty document hash.
-- **Fatal engine errors** (no redacted tree and no collected
-  diagnostics) carry no audit trail.
+- **Null result on failure:** when strict validation fails before
+  producing a value, the audit is still written with `outcome =
+  "failed"` and `result = null`. `null` is a valid Active value, so the
+  audit stays re-validatable; consumers must treat `null` as "no value
+  was produced" and never as an empty document hash.
+- **Fatal engine errors** (parse failures, budget trips, and any error
+  that produces neither a value nor validation diagnostics) carry no
+  audit trail.
 
 
 ## 3. Agent use

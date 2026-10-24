@@ -923,7 +923,25 @@ fn write_audit_trail(
     profile: Option<&str>,
 ) -> anyhow::Result<()> {
     fn quote(s: &str) -> String {
-        format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+        let mut out = String::with_capacity(s.len() + 2);
+        out.push('"');
+        for c in s.chars() {
+            match c {
+                '\\' => out.push_str("\\\\"),
+                '"' => out.push_str("\\\""),
+                // A raw `$` opens interpolation; `\$` is the literal
+                // dollar escape, so a path like `${x}.active` stays
+                // data and the audit re-validates.
+                '$' => out.push_str("\\$"),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                '\0' => out.push_str("\\0"),
+                c => out.push(c),
+            }
+        }
+        out.push('"');
+        out
     }
     let mut codes: Vec<String> = diags
         .iter()

@@ -462,18 +462,51 @@ fn walk_paths(
     truncated
 }
 
+/// Normalize concrete array indices to `[]` (`arr[0][12].a` →
+/// `arr[][].a`). Schema-default paths use the wildcard because one fill
+/// expression can materialize at any element index.
+fn wildcard_indices(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let mut out = String::with_capacity(path.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'[' {
+            let mut j = i + 1;
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                j += 1;
+            }
+            if j > i + 1 && j < bytes.len() && bytes[j] == b']' {
+                out.push_str("[]");
+                i = j + 1;
+                continue;
+            }
+        }
+        let ch = path[i..].chars().next().unwrap_or('\0');
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
 /// Whether a value is a table after following references (profile
-/// merges recurse into tables; they replace scalars).
+/// merges recurse into tables; they replace scalars). Follows the whole
+/// chain with a visited set: an eight-hop cap would misclassify a deep
+/// alias as a scalar, and the profile branch would then delete live
+/// material paths the evaluator still merges. A reference cycle cannot
+/// evaluate; return `true` (conservative merge) rather than replace.
 fn is_table_like(module: &Module, id: NodeId) -> bool {
     let mut current = id;
-    for _ in 0..8 {
+    let mut seen = HashSet::new();
+    loop {
+        if !seen.insert(current) {
+            return true;
+        }
         match module.get(current) {
             Some(Node::Table { .. }) => return true,
             Some(Node::Ref(target)) => current = *target,
             _ => return false,
         }
     }
-    false
 }
 
 /// The profile selector the document carries: absent, statically
@@ -484,8 +517,37 @@ enum ProfileSelection {
     Computed,
 }
 
-/// Follow the root `active_profile` node. A literal (or a reference to
-/// one) is statically named; any other expression is computed.
+/// Resolve a value expression to a static string when it has one:
+/// a literal, an all-literal interpolation (an escaped `$` parses that
+/// way), or a reference chain to either. Never resolves through an
+/// expression part, which may be material.
+fn static_string(module: &Module, id: NodeId) -> Option<String> {
+    let mut current = id;
+    let mut seen = HashSet::new();
+    loop {
+        if !seen.insert(current) {
+            return None;
+        }
+        match module.get(current) {
+            Some(Node::Literal(Value::String(text))) => return Some(text.clone()),
+            Some(Node::Ref(target)) => current = *target,
+            Some(Node::Interpolate { parts }) => {
+                let mut out = String::new();
+                for part in parts {
+                    match part {
+                        InterpPart::Literal(text) => out.push_str(text),
+                        InterpPart::Expr(_) => return None,
+                    }
+                }
+                return Some(out);
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// Follow the root `active_profile` node. A static string is named; any
+/// other expression is computed.
 fn profile_selection(module: &Module) -> ProfileSelection {
     let Some(root) = module.root else {
         return ProfileSelection::None;
@@ -496,17 +558,10 @@ fn profile_selection(module: &Module) -> ProfileSelection {
     let Some(id) = fields.get("active_profile") else {
         return ProfileSelection::None;
     };
-    let mut current = *id;
-    for _ in 0..8 {
-        match module.get(current) {
-            Some(Node::Literal(Value::String(name))) => {
-                return ProfileSelection::Named(name.clone())
-            }
-            Some(Node::Ref(target)) => current = *target,
-            _ => return ProfileSelection::Computed,
-        }
+    match static_string(module, *id) {
+        Some(name) => ProfileSelection::Named(name),
+        None => ProfileSelection::Computed,
     }
-    ProfileSelection::Computed
 }
 
 /// Public helper for diagnostics: the selector's literal value when the
@@ -544,7 +599,16 @@ fn collect_default_paths(
             }
         }
         Some(Node::SchemaArray { element }) => {
-            truncated |= collect_default_paths(module, *element, prefix, paths);
+            // Fills materialise inside an array element, so their paths
+            // carry an index. Register a wildcard (`arr[].a`) and let
+            // `path_is_secret` normalize concrete indices: the evaluated
+            // tree has `arr[0].a`, which the map can never enumerate.
+            let element_prefix = if prefix.is_empty() {
+                "[]".to_string()
+            } else {
+                format!("{prefix}[]")
+            };
+            truncated |= collect_default_paths(module, *element, &element_prefix, paths);
         }
         _ => {}
     }
@@ -677,27 +741,51 @@ impl SecretProfile {
             Some(name) => ProfileSelection::Named(name.to_string()),
             None => profile_selection(module),
         };
+        // A bound that already stopped the base walk makes every known
+        // path unreliable. Profile paths must then stay unknown (fail
+        // closed) instead of registering as benign values.
+        let base_truncated = truncated;
         match selection {
             ProfileSelection::Named(name) => {
                 if let Some(id) = module.profiles.get(&name) {
                     if let Some(Node::Table { fields }) = module.get(*id) {
                         for (key, child) in fields {
-                            let merge = is_table_like(module, *child);
+                            let base_node = paths.get(key).copied();
+                            // Merge only when BOTH sides are tables: a
+                            // profile table over a scalar replaces the
+                            // whole value, so its leaves are new.
+                            let merge = is_table_like(module, *child)
+                                && base_node.is_some_and(|b| is_table_like(module, b));
                             let mut profile_paths = HashMap::new();
-                            truncated |=
+                            let profile_truncated =
                                 walk_paths(module, *child, key, &mut profile_paths, true, !merge);
+                            truncated |= profile_truncated;
+                            if base_truncated || profile_truncated {
+                                // Fail closed: mark the whole selected
+                                // subtree and never publish its paths.
+                                for node in profile_paths.values() {
+                                    secret_subtree(module, *node, &mut nodes);
+                                }
+                                continue;
+                            }
                             if !merge {
                                 remove_subtree(&mut paths, key);
                             }
                             // A selected override at a material path is
                             // material itself (the locator resolves through
-                            // the profile). Mark the exact selected node:
-                            // container ancestors inherit only through
-                            // their own material leaves, so marking a
-                            // whole subtree would redact benign siblings.
-                            for (path, node) in &profile_paths {
-                                if material_paths.contains(path) {
-                                    nodes.insert(*node);
+                            // the profile). A replacement inherits the
+                            // whole subtree (the base value is gone); a
+                            // true merge marks exact material leaves only,
+                            // so benign siblings stay visible.
+                            if !merge && material_paths.contains(key) {
+                                if let Some(node) = profile_paths.get(key) {
+                                    secret_subtree(module, *node, &mut nodes);
+                                }
+                            } else {
+                                for (path, node) in &profile_paths {
+                                    if material_paths.contains(path) {
+                                        nodes.insert(*node);
+                                    }
                                 }
                             }
                             paths.extend(profile_paths);
@@ -709,12 +797,23 @@ impl SecretProfile {
                 for id in module.profiles.values() {
                     if let Some(Node::Table { fields }) = module.get(*id) {
                         for (key, child) in fields {
-                            let merge = is_table_like(module, *child);
+                            let base_node = paths.get(key).copied();
+                            let merge = is_table_like(module, *child)
+                                && base_node.is_some_and(|b| is_table_like(module, b));
                             let mut profile_paths = HashMap::new();
-                            truncated |=
+                            let profile_truncated =
                                 walk_paths(module, *child, key, &mut profile_paths, true, !merge);
+                            truncated |= profile_truncated;
+                            if base_truncated || profile_truncated {
+                                fallback_secret_paths.extend(profile_paths.keys().cloned());
+                                continue;
+                            }
+                            let replacing_material = !merge && material_paths.contains(key);
                             for (path, node) in profile_paths {
-                                if nodes.contains(&node) || material_paths.contains(&path) {
+                                if nodes.contains(&node)
+                                    || material_paths.contains(&path)
+                                    || replacing_material
+                                {
                                     fallback_secret_paths.insert(path);
                                 }
                             }
@@ -809,17 +908,26 @@ impl SecretProfile {
 
     /// True when the path's value is secret material or derives from it.
     pub fn path_is_secret(&self, path: &str) -> bool {
-        if self
-            .paths
-            .get(path)
-            .is_some_and(|id| self.nodes.contains(id))
-            || self.fallback_secret_paths.contains(path)
-        {
+        if self.path_at_is_secret(path) {
+            return true;
+        }
+        // Schema fills inside arrays register their paths with an index
+        // wildcard (`arr[].a`); the evaluated tree spells `arr[0].a`.
+        // Normalize both directions so neither shape hides material.
+        let wildcard = wildcard_indices(path);
+        if wildcard != path && self.path_at_is_secret(&wildcard) {
             return true;
         }
         // A path the walk registered and did not mark is benign; an
         // unknown path after a bound stopped the walk fails closed.
-        !self.paths.contains_key(path) && self.truncated
+        !self.paths.contains_key(path) && !self.paths.contains_key(&wildcard) && self.truncated
+    }
+
+    fn path_at_is_secret(&self, path: &str) -> bool {
+        self.paths
+            .get(path)
+            .is_some_and(|id| self.nodes.contains(id))
+            || self.fallback_secret_paths.contains(path)
     }
 
     /// Authored literal strings inside material nodes.

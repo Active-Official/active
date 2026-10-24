@@ -250,3 +250,26 @@ fn repair_keeps_a_leading_bom_at_byte_zero() {
     );
     assert!(outcome.repaired_source.contains("@patch(\"port\", 8080)"));
 }
+
+#[test]
+fn metadata_defaults_are_not_repair_candidates() {
+    // F8 (round 22): a root-metadata fill is rejected by the engine
+    // (E019). The planner must not suggest it, mark it applied, or
+    // claim a partial write that cannot evaluate.
+    let src = "schema = { active_mode = String(default = \"data\"), port = Int(default = 1) }\n";
+    let out = validate(src);
+    assert!(
+        out.steps
+            .iter()
+            .all(|step| !step.path.starts_with("active_mode")),
+        "metadata directive suggested: {:?}",
+        out.steps
+    );
+    assert!(!out.clean);
+    if let Some(step) = out.steps.first() {
+        assert!(
+            matches!(step.status, StepStatus::Applied),
+            "unsafe status: {step:?}"
+        );
+    }
+}

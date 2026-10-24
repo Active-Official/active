@@ -2613,21 +2613,31 @@ fn mode_marker_action(doc: &Doc, range: Range) -> Vec<CodeAction> {
     }]
 }
 
-/// Whether `line` (0-based) sits inside a multi-line string token. The
-/// opening line itself is not inside; continuation lines are. Token
-/// spans honor escapes, comments, and single-line strings, which a raw
-/// text scan cannot.
-fn inside_multiline_string(doc: &Doc, line: u32) -> bool {
+/// Whether `line` (0-based) sits inside a string token. The opening
+/// line itself is not inside; continuation lines are. Token spans honor
+/// escapes, comments, and single-line strings, which a raw text scan
+/// cannot. Plain `"…"`/`'…'` strings may span physical lines too, so
+/// all four kinds participate.
+fn inside_string_literal(doc: &Doc, line: u32) -> bool {
     use active_core::parser::{Lexer, TokenKind};
     let lexed = Lexer::new(&doc.text).tokenize();
     let target = line + 1;
     lexed.tokens.iter().any(|token| {
         matches!(
             token.kind,
-            TokenKind::MlString(_) | TokenKind::MlSingleString
+            TokenKind::String(_)
+                | TokenKind::SingleString
+                | TokenKind::MlString(_)
+                | TokenKind::MlSingleString
         ) && token.line < target
             && token.end_line >= target
     })
+}
+
+/// Insertion column for a line-0 edit: a BOM is not addressable
+/// content, so every zero-width insert must land after it.
+fn line_zero_column(doc: &Doc) -> u32 {
+    u32::from(doc.text.starts_with('\u{feff}'))
 }
 
 /// Offer `@ai_immutable: true` above the statement under the cursor.
@@ -2635,7 +2645,7 @@ fn inside_multiline_string(doc: &Doc, line: u32) -> bool {
 fn annotation_action(doc: &Doc, range: Range) -> Vec<CodeAction> {
     // A continuation line of a multi-line string is value text, not a
     // statement: annotating it would rewrite the value.
-    if inside_multiline_string(doc, range.start.line) {
+    if inside_string_literal(doc, range.start.line) {
         return Vec::new();
     }
     let Some(line) = doc.text.split('\n').nth(range.start.line as usize) else {
@@ -2659,11 +2669,19 @@ fn annotation_action(doc: &Doc, range: Range) -> Vec<CodeAction> {
                 range: Range {
                     start: Position {
                         line: range.start.line,
-                        character: 0,
+                        character: if range.start.line == 0 {
+                            line_zero_column(doc)
+                        } else {
+                            0
+                        },
                     },
                     end: Position {
                         line: range.start.line,
-                        character: 0,
+                        character: if range.start.line == 0 {
+                            line_zero_column(doc)
+                        } else {
+                            0
+                        },
                     },
                 },
                 new_text: "# @ai_immutable: true\n".to_string(),
@@ -2986,7 +3004,7 @@ fn extract_action(doc: &Doc, range: Range) -> Vec<CodeAction> {
         None => (
             Position {
                 line: 0,
-                character: 0,
+                character: line_zero_column(doc),
             },
             format!("let {name} = {selected}\n"),
         ),
@@ -3168,7 +3186,7 @@ fn depends_on_actions(doc: &Doc, range: Range) -> Vec<CodeAction> {
                 let at = if scope_path.is_empty() || !own_span {
                     Position {
                         line: 0,
-                        character: 0,
+                        character: line_zero_column(doc),
                     }
                 } else {
                     Position {

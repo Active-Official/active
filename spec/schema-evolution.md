@@ -51,8 +51,10 @@ schema = {
 | Removed field | C041 | error | Old readers/writers lose data |
 | Removed field with `removed_in` ≤ new version | C041 | info | Removal was scheduled |
 | Type changed | C042 | error | Existing values may fail |
-| Blob `max_size` lowered | C042 | error | Existing payloads may fail |
+| Field became required (default removed) | C042 | error | Old documents omitting the field fail |
+| Blob `max_size` lowered or newly pinned | C042 | error | Existing payloads may fail |
 | Blob `media_type` changed or newly pinned | C042 | error | Existing payloads mismatch |
+| Array element type/field/bounds changed | C041/C042 | error | Compared at `path[]` (nested arrays at `path[][]`) |
 | New `version` < old `version` | C043 | error | Versions only move forward |
 | New `min_reader` > old `version` | C044 | error | Old readers are dropped |
 | New `min_writer` > old `version` | C044 | error | Old writers are dropped |

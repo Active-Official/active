@@ -249,32 +249,25 @@ fn describe_schema(
 }
 
 /// Schema node for a dotted value path: table segments index
-/// `SchemaTable` fields; a `key[i]` segment descends into the array
-/// element, so `flags[0]` resolves to the element type (`Bool`,
-/// not `Array<Bool>`).
+/// `SchemaTable` fields; every index in a `key[i][j]` segment descends
+/// one array level, so `matrix[0][1].cell` resolves to `cell`'s field.
 fn schema_node_at(module: &Module, path: &str) -> Option<NodeId> {
     let mut id = module.schema?;
     for segment in path.split('.') {
-        let (key, indexed) = match segment.split_once('[') {
-            Some((key, _)) => (key, true),
-            None => (segment, false),
-        };
-        match module.get(id) {
-            Some(Node::SchemaTable { fields, .. }) => {
-                id = *fields.get(key)?;
-                if indexed {
-                    match module.get(id) {
-                        Some(Node::SchemaArray { element }) => id = *element,
-                        _ => return None,
-                    }
-                }
-            }
-            // Bare indices only arise from hand-built paths; the
-            // walker always brackets them onto the key.
-            Some(Node::SchemaArray { element }) => {
-                id = *element;
-            }
-            _ => return None,
+        let key_end = segment.find('[').unwrap_or(segment.len());
+        let key = &segment[..key_end];
+        if !key.is_empty() {
+            id = match module.get(id) {
+                Some(Node::SchemaTable { fields, .. }) => *fields.get(key)?,
+                Some(Node::SchemaArray { element }) => *element,
+                _ => return None,
+            };
+        }
+        for _ in segment.matches('[') {
+            let Some(Node::SchemaArray { element }) = module.get(id) else {
+                return None;
+            };
+            id = *element;
         }
     }
     Some(id)

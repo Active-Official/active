@@ -124,7 +124,19 @@ pub fn collect_provenance(
     main_file: Option<&Path>,
     profile: Option<&str>,
 ) -> Result<Provenance, String> {
-    let secret = secret_bound_names(module);
+    let mut secret = secret_bound_names(module);
+    // Profile selection is part of the secret analysis: a profile may
+    // place `env.T` at a path the document marks material, and the
+    // graph walk alone cannot see that. Every env read whose node is
+    // material under the effective selector withholds its value.
+    let profile_analysis = crate::secret::SecretProfile::analyze_with_profile(module, profile);
+    for (index, node) in module.arena.iter().enumerate() {
+        if let Node::Env { name, .. } = node {
+            if profile_analysis.node_is_secret(NodeId(index as u32)) {
+                secret.insert(name.clone());
+            }
+        }
+    }
     let mut names = BTreeMap::new();
     for node in &module.arena {
         if let Node::Env { name, .. } = node {

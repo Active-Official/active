@@ -8,7 +8,7 @@
 //! (patches apply post-merge) and includes, dependency-aware patch
 //! values, determinism, and formatter round-trips.
 
-use active_core::{parse_file, Engine, ParseOptions};
+use active_core::{parse, parse_file, Engine, ParseOptions};
 use std::path::{Path, PathBuf};
 
 fn fixture(name: &str) -> PathBuf {
@@ -184,5 +184,27 @@ fn fmt_preserves_include_patch_order() {
             first < inc && inc < y,
             "interleaving preserved in {style:?}: {out}"
         );
+    }
+}
+
+#[test]
+fn descendant_metadata_patch_paths_are_rejected() {
+    // F5 (round 22): `schema.hacked` is not the key `schema`, but
+    // writing it still fabricates the metadata table the host resolved
+    // from the source. Every metadata root and its descendants are
+    // immutable.
+    for path in [
+        "schema.hacked",
+        "active_mode.hacked",
+        "active_capabilities.hacked",
+        "active_profile.hacked",
+        "schema[0]",
+    ] {
+        let src = format!("x = 1\n@patch(\"{path}\", true)\n");
+        let module = parse(&src, "metadata-patch").expect("must parse");
+        let err = Engine::new()
+            .evaluate(&module)
+            .expect_err("metadata patch must be rejected");
+        assert_eq!(err.code(), "E019", "path {path}: {err}");
     }
 }

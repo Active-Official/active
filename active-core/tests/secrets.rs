@@ -591,3 +591,111 @@ fn computed_selector_unions_override_material_paths() {
         "computed selector must union override material"
     );
 }
+
+#[test]
+fn deep_profile_alias_chain_keeps_material_paths() {
+    // F1 (round 22): a profile value eight references deep is still a
+    // table, so the merge must keep the base material path. The old
+    // 8-hop cap classified it as a scalar, removed the path, and the
+    // evaluator's merge then exported the raw value.
+    let raw = "chain-s3cr3t-round22";
+    std::env::set_var("ACTIVE_CHAIN_SECRET", raw);
+    let mut src =
+        String::from("let p = env.ACTIVE_CHAIN_SECRET\nk = secret(p)\nlet r1 = { b = 2 }\n");
+    for i in 2..=8 {
+        src.push_str(&format!("let r{i} = r{}\n", i - 1));
+    }
+    src.push_str("x = { a = p, b = 1 }\nactive_profile = \"a\"\nprofile \"a\" { x = r8 }\n");
+    let module = parse(&src, "chain").expect("parse");
+    let mut engine = Engine::new();
+    engine.profile_override = Some("a".to_string());
+    let (value, _) = engine.evaluate(&module).expect("evaluate");
+    let profile = active_core::secret::SecretProfile::analyze_with_profile(&module, Some("a"));
+    assert!(
+        profile.path_is_secret("x.a"),
+        "merged base path stays material"
+    );
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(raw), "deep alias chain leaked: {json}");
+}
+
+#[test]
+fn array_element_schema_default_material_is_redacted() {
+    // F2 (round 22): a fill inside an array element lands at
+    // `arr[0].a`, not `arr.a`. The wildcard registration keeps the
+    // default expression material at every index.
+    let raw = "arr-default-s3cr3t-round22";
+    std::env::set_var("ACTIVE_ARR_DEFAULT", raw);
+    let src = "let s = env.ACTIVE_ARR_DEFAULT\nk = secret(s)\nschema = { arr = Array<Table { a = String(default = s) }> }\narr = [{}]\n";
+    let module = parse(src, "array-default").expect("parse");
+    let (value, _) = Engine::new().evaluate(&module).expect("resilient evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    assert!(
+        profile.path_is_secret("arr[0].a"),
+        "filled element is material"
+    );
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(raw), "array default leaked: {json}");
+    assert!(json.contains("***SECRET***"), "{json}");
+}
+
+#[test]
+fn profile_container_replacement_redacts_descendants() {
+    // F3 (round 22): a profile replaces a scalar material path with a
+    // table. Every descendant of that replacement is material; the old
+    // exact-node marking published the leaves.
+    let secret = "container-source-s3cr3t-round22";
+    let live = "container-value-s3cr3t-round22";
+    std::env::set_var("ACTIVE_CONTAINER_SOURCE", secret);
+    std::env::set_var("ACTIVE_CONTAINER_VALUE", live);
+    let src = "p = env.ACTIVE_CONTAINER_SOURCE\nk = secret(p)\nx = p\nactive_profile = \"a\"\nprofile \"a\" { x = { value = env.ACTIVE_CONTAINER_VALUE } }\n";
+    let module = parse(src, "container").expect("parse");
+    let mut engine = Engine::new();
+    engine.profile_override = Some("a".to_string());
+    let (value, _) = engine.evaluate(&module).expect("evaluate");
+    let profile = active_core::secret::SecretProfile::analyze_with_profile(&module, Some("a"));
+    assert!(
+        profile.path_is_secret("x"),
+        "replacement container is material"
+    );
+    assert!(profile.path_is_secret("x.value"), "descendant is material");
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(
+        !json.contains(live),
+        "replacement descendant leaked: {json}"
+    );
+    assert!(!json.contains(secret), "source leaked: {json}");
+}
+
+#[test]
+fn truncated_base_walk_stays_fail_closed_under_profile() {
+    // F6 (round 22): once the base walk hits MAX_PATHS, profile paths
+    // must not register as known-benign. The material override below
+    // sits past the cap and must still read as material.
+    let mut src = String::from("big = [");
+    for i in 0..100_005 {
+        if i > 0 {
+            src.push(',');
+        }
+        src.push('0');
+    }
+    src.push_str("]\nlet p = env.ACTIVE_TRUNCATED\nt = secret(p)\nx = \"benign\"\nactive_profile = \"a\"\nprofile \"a\" { y = \"MATERIAL-LEAK\" }\n");
+    let module = parse(&src, "truncated").expect("parse");
+    let profile = active_core::secret::SecretProfile::analyze_with_profile(&module, Some("a"));
+    assert!(
+        profile.path_is_secret("y"),
+        "profile path past a truncated walk must fail closed"
+    );
+}
+
+#[test]
+fn escaped_dollar_profile_name_is_static() {
+    // F13 (round 22): an escaped dollar parses as an all-literal
+    // interpolation; the selector is still static and recorded.
+    let src = "active_profile = \"\\$prod\"\nprofile \"$prod\" { x = 1 }\nx = 0\n";
+    let module = parse(src, "dollar-profile").expect("parse");
+    assert_eq!(
+        active_core::secret::active_profile_name(&module).as_deref(),
+        Some("$prod")
+    );
+}

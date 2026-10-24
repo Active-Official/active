@@ -180,14 +180,39 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
 - **Profile overrides keep their material.** A profile may replace a
   locator source with a different value. The selected node now
   inherits the path's materiality, so `eval`, `inspect`, `viz taint`,
-  `budget`, and the content hash redact the override-selected value;
-  before, an override could publish the selected material while the
-  base literal stayed redacted. A computed selector unions every
-  profile's material paths for the same reason.
+  `budget`, `lock`, and the content hash redact the override-selected
+  value; before, an override could publish the selected material while
+  the base literal stayed redacted. Container replacements mark their
+  whole subtree, deep alias chains merge instead of deleting live
+  paths, array-element schema defaults register a wildcard path, and a
+  truncated base walk keeps profile paths fail-closed. A computed
+  selector unions every profile's material paths for the same reason.
+- **Provenance is profile-aware.** `active lock` withholds an env value
+  that a profile places at a material path and records its drift hash
+  instead (the graph walk alone cannot see the selection).
+- **Metadata is immutable at every depth.** Patches targeting
+  `schema.x`, `active_mode.x`, `active_capabilities.x`, or
+  `active_profile.x` are rejected with E019, so descendants cannot
+  fabricate the metadata table the host resolved.
+- **Editor actions respect physical strings.** The `@ai_immutable`
+  action skips continuation lines of plain `"…"`/`'…'` strings as well
+  as triple-quoted bodies, and zero-width insertions land after a BOM.
+- **Repair never suggests metadata fills.** A schema default on a root
+  metadata key is excluded from the plan (the engine rejects it), so
+  every reported step is one the applier accepts.
+- **Compatibility covers requiredness and element blobs.** Removing a
+  default (optional → required) is C042, `Array<Blob>` element bounds
+  and media are compared at `path[]` (nested arrays at `path[][]`), and
+  newly pinning `max_size` is a breaking tightening.
+- **Inspect handles nested arrays.** Every bracket index descends one
+  schema level, so `arr[0][0].a` reports `Int`, not `Table`.
+- **Audit paths are inert.** `$` is escaped in audit strings, so a
+  source path containing `${…}` re-validates instead of interpolating.
 - **Audit replay is complete.** The audit trail records the effective
   `profile` selector, `debug --replay` takes `--profile` and feeds it
-  to both evaluation and redaction, and a failed evaluation writes
-  `result = null` with `outcome = "failed"` (spec/audit-trail.md §1–2).
+  to both evaluation and redaction, and a strict validation failure
+  writes `result = null` with `outcome = "failed"` (spec/audit-trail.md
+  §1–2); other fatal engine errors carry no audit, as documented.
 - **Repair verdict paths.** Partial-repair `final_codes` keep the
   `CODE@path` shape from the full plan, including validation
   diagnostics surfaced through `EvalError::ValidationFailed`.

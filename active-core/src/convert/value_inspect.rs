@@ -249,22 +249,27 @@ fn contains_secret(value: &Value) -> bool {
     }
 }
 
-/// Schema contract at a dotted path, when a schema covers it.
+/// Schema contract at a dotted path, when a schema covers it. Each
+/// segment may carry any number of indices (`arr[0][1].key`): the key
+/// selects the field, then every index descends one array level.
 fn schema_for_path(module: &Module, path: &str) -> Option<JsonValue> {
     let root = module.schema?;
     let mut current = root;
     for segment in path.split('.') {
-        let key = segment.split('[').next().unwrap_or(segment);
-        current = match module.get(current) {
-            Some(Node::SchemaTable { fields, .. }) => *fields.get(key)?,
-            Some(Node::SchemaArray { element }) => *element,
-            _ => return None,
-        };
-        // Indexed segments (a[0]) descend through the element schema.
-        if segment.contains('[') {
-            if let Some(Node::SchemaArray { element }) = module.get(current) {
-                current = *element;
-            }
+        let key_end = segment.find('[').unwrap_or(segment.len());
+        let key = &segment[..key_end];
+        if !key.is_empty() {
+            current = match module.get(current) {
+                Some(Node::SchemaTable { fields, .. }) => *fields.get(key)?,
+                Some(Node::SchemaArray { element }) => *element,
+                _ => return None,
+            };
+        }
+        for _ in segment.matches('[') {
+            let Some(Node::SchemaArray { element }) = module.get(current) else {
+                return None;
+            };
+            current = *element;
         }
     }
     match module.get(current) {

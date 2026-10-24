@@ -138,6 +138,14 @@ fn rename_for(
         }
     };
     let (path, from, to) = built?;
+    // Never suggest a rename into or out of root metadata: the applier
+    // rejects it (E019), and the plan must not claim an unappliable
+    // step.
+    if crate::eval::path_targets_document_metadata(&from)
+        || crate::eval::path_targets_document_metadata(&to)
+    {
+        return None;
+    }
     Some((
         path,
         from.clone(),
@@ -195,6 +203,12 @@ fn escape_directive_str(s: &str) -> String {
 fn fill_for(module: &Module, d: &Diagnostic) -> Option<(String, String)> {
     let path = d.path.as_ref()?;
     if path.contains('[') {
+        return None;
+    }
+    // Root metadata is resolved from the source, never from a fill:
+    // `@patch("active_mode", …)` is rejected with E019, so suggesting
+    // it would produce a plan step that cannot apply.
+    if crate::eval::path_targets_document_metadata(path) {
         return None;
     }
     let field = schema_field_at(module, path)?;

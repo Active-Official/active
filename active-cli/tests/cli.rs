@@ -2528,3 +2528,68 @@ fn repair_browser_keeps_per_file_diagnostics_distinct() {
     assert_eq!(errors, 2, "each included file keeps its own E002: {model}");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn debug_minimize_resolves_includes_and_rejects_trust() {
+    let dir = std::env::temp_dir().join(format!("active-debug-inc-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("dirs");
+    std::fs::write(dir.join("inc.active"), "bad = = 1\n").expect("include");
+    let main = dir.join("main.active");
+    std::fs::write(&main, "include \"inc.active\"\nok = 1\n").expect("main");
+
+    let out = active()
+        .args(["debug", "--from"])
+        .arg(&main)
+        .args(["--minimize", "E002", "--format", "text"])
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let body = String::from_utf8_lossy(&out.stdout);
+    assert!(body.contains("include \"inc.active\""), "{body}");
+
+    let missing = dir.join("missing.toml");
+    let trust = active()
+        .args(["debug", "--from"])
+        .arg(&main)
+        .args(["--minimize", "E002", "--trust-keys"])
+        .arg(&missing)
+        .output()
+        .expect("run active");
+    assert!(!trust.status.success(), "signed reduction is unsupported");
+    assert!(String::from_utf8_lossy(&trust.stderr).contains("not supported"));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn repair_browser_fatal_errors_keep_file_and_span() {
+    let dir = std::env::temp_dir().join(format!("active-browser-fatal-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("dirs");
+    std::fs::write(dir.join("inc.active"), "a = 1 + \"x\"\n").expect("include");
+    let main = dir.join("main.active");
+    std::fs::write(&main, "include \"inc.active\"\nport = 8080\n").expect("main");
+
+    let out = active()
+        .args(["repair", "--from"])
+        .arg(&main)
+        .arg("--browser")
+        .output()
+        .expect("run active");
+    assert!(out.status.success());
+    let model: serde_json::Value = serde_json::from_slice(&out.stdout).expect("model");
+    let fatal = model["diagnostics"]
+        .as_array()
+        .expect("diagnostics")
+        .iter()
+        .find(|d| d["code"] == "T001")
+        .expect("type error row");
+    assert!(
+        fatal["file"].as_str().unwrap_or("").ends_with("inc.active"),
+        "include file lost: {fatal}"
+    );
+    assert!(!fatal["span"].is_null(), "span lost: {fatal}");
+    let _ = std::fs::remove_dir_all(dir);
+}

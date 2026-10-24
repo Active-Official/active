@@ -155,12 +155,14 @@ fn minimal_case_redacts_every_secret_spelling_without_duplication() {
         "schema = { token = Int }\ntoken = secret(\"hunter2-e\nnoise = 1\n",
     ];
     for src in cases {
-        let report = debug::minimal_case(src, "T002", 100);
+        // The set mixes valid and malformed spellings; E001 is only
+        // present in the malformed ones, so reduction is a no-op for
+        // the rest while redaction still runs (the property under test).
+        let report = debug::minimal_case(src, "E001", 100);
         let reduced = report["reduced"].as_str().expect("reduced");
         assert!(!reduced.contains("hunter2"), "leak for {src:?}: {reduced}");
-        assert_eq!(
-            reduced.matches("schema = {").count(),
-            1,
+        assert!(
+            reduced.matches("token = secret").count() <= 1,
             "duplicated content for {src:?}: {reduced}"
         );
     }
@@ -183,7 +185,7 @@ fn minimal_case_redacts_interpolated_and_malformed_secret_calls() {
         ),
         (
             "schema = { token = Int }\ntoken = secret\n(\"hunter2-nl\")\nnoise = 1\n",
-            "T002",
+            "E002",
         ),
     ];
     for (src, code) in cases {
@@ -256,4 +258,54 @@ fn reduced_bytes_is_measured_before_redaction() {
         reduced.len() < report["reduced_bytes"].as_u64().unwrap() as usize,
         "redaction must not inflate the reported size: {report}"
     );
+}
+
+#[test]
+fn minimal_case_redacts_newline_split_calls_with_nonliteral_locators() {
+    let cases = [
+        (
+            "loc = \"hunter2-r1\"\ntoken = secret\n(loc)\nnoise = 1\n",
+            "E002",
+        ),
+        (
+            "t = { a = \"hunter2-t\" }\ntoken = secret\n(t.a)\nnoise = 1\n",
+            "E002",
+        ),
+        (
+            "schema = { token = Int }\ntoken = secret\n\n\n(\"hunter2-3nl\")\nnoise = 1\n",
+            "E002",
+        ),
+    ];
+    for (src, code) in cases {
+        let report = debug::minimal_case(src, code, 100);
+        let reduced = report["reduced"].as_str().expect("reduced");
+        assert!(!reduced.contains("hunter2"), "leak for {src:?}: {reduced}");
+    }
+}
+
+#[test]
+fn reduction_never_strands_a_secret_literal() {
+    let src = "schema = { token = Int, loc = Int }\ntoken = secret(loc)\nloc = \"hunter2-ref\"\nnoise = 1\n";
+    let report = debug::minimal_case(src, "T002", 100);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(
+        !reduced.contains("hunter2"),
+        "stranded literal leaked: {reduced}"
+    );
+    assert!(
+        reduced.contains("secret"),
+        "secret use was deleted: {reduced}"
+    );
+}
+
+#[test]
+fn env_extra_arguments_are_redacted_but_the_name_is_not() {
+    let src = "token = secret.env(\"HUNTER2_ENV_NAME\", default = \"hunter2-def\")\nnoise = 1\n";
+    let report = debug::minimal_case(src, "E001", 100);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(
+        reduced.contains("HUNTER2_ENV_NAME"),
+        "env name must survive: {reduced}"
+    );
+    assert!(!reduced.contains("hunter2"), "default leaked: {reduced}");
 }

@@ -461,8 +461,8 @@ pub fn browser_model_with(
                 "severity": "error",
                 "message": error.to_string(),
                 "path": null,
-                "span": null,
-                "file": null,
+                "span": error.span(),
+                "file": error.file(),
             }));
         }
     }

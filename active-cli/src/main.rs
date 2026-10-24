@@ -1554,6 +1554,11 @@ fn main() -> anyhow::Result<()> {
             format,
             trust_keys,
         } => {
+            if minimize.is_some() && trust_keys.is_some() {
+                anyhow::bail!(
+                    "--trust-keys is not supported with --minimize (signed-include reduction)"
+                );
+            }
             let trust = load_trust(&trust_keys)?;
             if format != "json" && format != "text" {
                 anyhow::bail!("unknown debug format `{format}` (want json|text)");
@@ -1564,7 +1569,12 @@ fn main() -> anyhow::Result<()> {
             if let Some(code) = minimize {
                 let source = std::fs::read_to_string(&from)
                     .map_err(|e| anyhow::anyhow!("cannot read source: {e}"))?;
-                let report = active_core::debug::minimal_case(&source, &code, max_attempts);
+                let report = active_core::debug::minimal_case_with(
+                    &source,
+                    &code,
+                    max_attempts,
+                    Some(&from),
+                );
                 if format == "text" {
                     println!(
                         "reduced {} -> {} bytes ({} attempts) keeping {}",

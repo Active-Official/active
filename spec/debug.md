@@ -50,8 +50,13 @@ the full step arrays. `--expect sha256:...` additionally pins the hash
 
 `debug::reduce(source, code, max_attempts)` deletes lines one at a time
 while the target diagnostic code survives, through the real
-parse/evaluate path. The result is always a subsequence of the original
-lines; the attempt count is bounded and reported. `debug::minimal_case`
+parse/evaluate path. Lines that participate in a `secret(...)` call are
+never deleted, so reduction cannot strand a secret literal outside a
+redactable call. With a file context the reducer resolves includes, so
+a code that lives in an included file is reproducible; signed reduction
+(`--trust-keys` with `--minimize`) is rejected rather than silently
+ignored. The result is always a subsequence of the original lines; the
+attempt count is bounded and reported. `debug::minimal_case`
 wraps it with sizes for a regression bundle.
 
 ## 5. CLI
@@ -70,6 +75,9 @@ step, then the breakpoint verdict.
 No step, breakpoint, replay report, or reduction bundle contains raw
 secret material: the value mapping redacts Secret values, locator
 subtrees are replaced structurally, and `--minimize` rewrites authored
-`secret("…")` literal payloads to `secret("***SECRET***")` in the
-exported source. Regression tests pin the locator case, the
-let/env-backed case, tainted blobs, and the CLI text output.
+secret literals to `"***SECRET***"`. A line break between `secret` and
+`(` (which the parser rejects) is normalized for redaction only, so
+malformed calls still redact. `secret.env(NAME)` names are metadata and
+survive; later arguments (such as a default) are redacted. Regression
+tests pin the locator, let/env-backed, tainted-blob, newline, table-ref,
+and reduction-stranding cases.

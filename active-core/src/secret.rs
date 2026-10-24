@@ -212,21 +212,93 @@ fn remove_subtree(paths: &mut HashMap<String, NodeId>, path: &str) {
     paths.retain(|key, _| key != path && !key.starts_with(&dotted) && !key.starts_with(&indexed));
 }
 
-/// Move one path and everything below it from `from` to `to`.
+/// Split a path into its parent and last segment:
+/// `outer.a` → (`outer`, `a`), `a[2]` → (`a`, `[2]`), `a` → (``, `a`).
+fn split_parent(path: &str) -> (&str, &str) {
+    if let Some(index) = path.rfind('.') {
+        (&path[..index], &path[index + 1..])
+    } else if let Some(index) = path.rfind('[') {
+        (&path[..index], &path[index..])
+    } else {
+        ("", path)
+    }
+}
+
+/// Remove a path, shifting later array indices down when the path names
+/// an element (the evaluator's `Remove` semantics).
+fn remove_path(paths: &mut HashMap<String, NodeId>, path: &str) {
+    let (array, last) = split_parent(path);
+    let Some(rest) = last.strip_prefix('[') else {
+        remove_subtree(paths, path);
+        return;
+    };
+    let Some((digits, _)) = rest.split_once(']') else {
+        remove_subtree(paths, path);
+        return;
+    };
+    let Ok(index) = digits.parse::<usize>() else {
+        remove_subtree(paths, path);
+        return;
+    };
+    if array.is_empty() {
+        remove_subtree(paths, path);
+        return;
+    }
+    remove_subtree(paths, path);
+    let prefix = format!("{array}[");
+    let mut moved: Vec<(String, NodeId)> = Vec::new();
+    paths.retain(|key, value| {
+        let Some(rest) = key.strip_prefix(&prefix) else {
+            return true;
+        };
+        let Some((digits, tail)) = rest.split_once(']') else {
+            return true;
+        };
+        let Ok(current) = digits.parse::<usize>() else {
+            return true;
+        };
+        if current > index {
+            moved.push((format!("{array}[{}]{tail}", current - 1), *value));
+            false
+        } else {
+            true
+        }
+    });
+    paths.extend(moved);
+}
+
+/// Move one path and everything below it. The evaluator's `@rename`
+/// treats `to` as a plain key in the **same parent** as `from`
+/// (spec/patches.md), so the destination is `parent(from)` + `to`. A
+/// missing source is a no-op (the evaluator warns W004 and leaves the
+/// tree intact).
 fn rename_subtree(paths: &mut HashMap<String, NodeId>, from: &str, to: &str) {
-    remove_subtree(paths, to);
     let dotted = format!("{from}.");
     let indexed = format!("{from}[");
+    let source_exists = paths.contains_key(from)
+        || paths
+            .keys()
+            .any(|key| key.starts_with(&dotted) || key.starts_with(&indexed));
+    if !source_exists {
+        return;
+    }
+    let (parent, _) = split_parent(from);
+    let dest = if parent.is_empty() {
+        to.to_string()
+    } else {
+        format!("{parent}.{to}")
+    };
+    remove_subtree(paths, &dest);
     let mut moved: Vec<(String, NodeId)> = Vec::new();
     paths.retain(|key, value| {
         if key == from {
-            moved.push((to.to_string(), *value));
+            moved.push((dest.clone(), *value));
             false
         } else if let Some(suffix) = key.strip_prefix(&dotted) {
-            moved.push((format!("{to}.{suffix}"), *value));
+            moved.push((format!("{dest}.{suffix}"), *value));
             false
         } else if let Some(suffix) = key.strip_prefix(&indexed) {
-            moved.push((format!("{to}[{suffix}"), *value));
+            moved.push((format!("{dest}[{suffix}"), *value));
             false
         } else {
             true
@@ -236,13 +308,17 @@ fn rename_subtree(paths: &mut HashMap<String, NodeId>, from: &str, to: &str) {
 }
 
 /// Bound the path walk: a cyclic `let` container (`let t = { a = t }`)
-/// would otherwise mint a new path on every hop. A bounded map is
-/// fail-closed: an unregistered path can never certify a value benign.
+/// would otherwise mint a new path on every hop. The caller records
+/// truncation and fails closed for paths it could not register.
 const MAX_PATH_DEPTH: usize = 256;
 const MAX_PATHS: usize = 100_000;
+/// Bound transform maintenance: orphan patches on a huge document must
+/// not turn analysis quadratic.
+const MAX_TRANSFORM_WORK: usize = 2_000_000;
 
 /// Walk a value subtree from `root` under `base`, registering every
-/// table field, array element, and reference target.
+/// table field, array element, and reference target. Returns true when
+/// a bound stopped the walk (the map is incomplete).
 ///
 /// * `overwrite` values replace a mapping at the same path (transforms
 ///   win); otherwise the first mapping wins (a table field beats a
@@ -256,7 +332,7 @@ fn walk_paths(
     paths: &mut HashMap<String, NodeId>,
     overwrite: bool,
     replace_subtree: bool,
-) {
+) -> bool {
     if replace_subtree {
         remove_subtree(paths, base);
     }
@@ -267,8 +343,10 @@ fn walk_paths(
     };
     let mut stack = vec![(root, base.to_string(), base_depth)];
     let mut seen: HashSet<(NodeId, String)> = HashSet::new();
+    let mut truncated = false;
     while let Some((id, path, depth)) = stack.pop() {
         if depth > MAX_PATH_DEPTH || paths.len() >= MAX_PATHS {
+            truncated = true;
             continue;
         }
         if !seen.insert((id, path.clone())) {
@@ -299,6 +377,7 @@ fn walk_paths(
             _ => {}
         }
     }
+    truncated
 }
 
 /// Whether a value is a table after following references (profile
@@ -364,7 +443,8 @@ fn collect_default_paths(
     id: NodeId,
     prefix: &str,
     paths: &mut HashMap<String, NodeId>,
-) {
+) -> bool {
+    let mut truncated = false;
     match module.get(id) {
         Some(Node::SchemaTable { fields, .. }) => {
             for (key, child) in fields {
@@ -373,19 +453,20 @@ fn collect_default_paths(
                 } else {
                     format!("{prefix}.{key}")
                 };
-                collect_default_paths(module, *child, &child_path, paths);
+                truncated |= collect_default_paths(module, *child, &child_path, paths);
             }
         }
         Some(Node::SchemaField { field }) => {
             if let Some(default) = field.default {
-                walk_paths(module, default, prefix, paths, false, false);
+                truncated |= walk_paths(module, default, prefix, paths, false, false);
             }
         }
         Some(Node::SchemaArray { element }) => {
-            collect_default_paths(module, *element, prefix, paths);
+            truncated |= collect_default_paths(module, *element, prefix, paths);
         }
         _ => {}
     }
+    truncated
 }
 
 /// Structural view of the secret material in one module.
@@ -393,17 +474,24 @@ fn collect_default_paths(
 pub struct SecretProfile {
     nodes: HashSet<NodeId>,
     paths: HashMap<String, NodeId>,
-    /// Paths from **all** profiles, used only when the selector is
-    /// computed: we cannot know which profile applies, so taint fails
-    /// closed (value rendering still follows the evaluated tree).
-    fallback_paths: HashMap<String, NodeId>,
+    /// Paths from **all** profiles that are material, used when the
+    /// selector is computed: a set, never a last-wins map, so a later
+    /// benign profile cannot hide an earlier material one.
+    fallback_secret_paths: HashSet<String>,
+    /// A bound stopped the walk, so unknown paths must fail closed.
+    truncated: bool,
     literals: SecretRedactor,
 }
 
 impl SecretProfile {
-    /// Analyze a module. Costs one pass over the arena plus one walk of
-    /// the value tree; callers analyze once per document.
+    /// Analyze a module with the document's own profile selector.
     pub fn analyze(module: &Module) -> Self {
+        Self::analyze_with_profile(module, None)
+    }
+
+    /// Analyze a module, optionally with an engine/CLI profile override.
+    /// Costs one pass over the arena plus one walk of the value tree.
+    pub fn analyze_with_profile(module: &Module, override_profile: Option<&str>) -> Self {
         // Seeds: every node reachable from a `secret(...)` locator.
         let mut nodes: HashSet<NodeId> = HashSet::new();
         for node in &module.arena {
@@ -474,27 +562,34 @@ impl SecretProfile {
         // against a `let` binding, exactly like the evaluator. Binding
         // subtrees are walked too, so `t.a` inside a `let t = {…}` is
         // addressable and taint-checkable.
+        let mut truncated = false;
         let mut paths: HashMap<String, NodeId> = HashMap::new();
         if let Some(root) = module.root {
-            walk_paths(module, root, "", &mut paths, true, false);
+            truncated |= walk_paths(module, root, "", &mut paths, true, false);
         }
         for (name, id) in &module.bindings {
-            walk_paths(module, *id, name, &mut paths, false, false);
+            truncated |= walk_paths(module, *id, name, &mut paths, false, false);
         }
         // Evaluation applies the selected profile first, then patches.
         // Profile tables merge (their fields override per key); a
-        // profile scalar replaces. Patches run in source order:
-        // `Set` replaces, `Remove` deletes, `Rename` moves the
-        // subtree. A computed selector cannot be resolved, so every
-        // profile's paths join a taint-only fallback map.
-        let mut fallback_paths: HashMap<String, NodeId> = HashMap::new();
-        match profile_selection(module) {
+        // profile scalar replaces. A computed selector cannot be
+        // resolved, so **every** profile contributes material paths to
+        // a taint-only set: the union never lets a later benign profile
+        // hide an earlier material one. Patches run in source order:
+        // `Set` replaces, `Remove` deletes (shifting array indices),
+        // `Rename` moves within the same parent.
+        let mut fallback_secret_paths: HashSet<String> = HashSet::new();
+        let selection = match override_profile {
+            Some(name) => ProfileSelection::Named(name.to_string()),
+            None => profile_selection(module),
+        };
+        match selection {
             ProfileSelection::Named(name) => {
                 if let Some(id) = module.profiles.get(&name) {
                     if let Some(Node::Table { fields }) = module.get(*id) {
                         for (key, child) in fields {
                             let merge = is_table_like(module, *child);
-                            walk_paths(module, *child, key, &mut paths, true, !merge);
+                            truncated |= walk_paths(module, *child, key, &mut paths, true, !merge);
                         }
                     }
                 }
@@ -504,32 +599,64 @@ impl SecretProfile {
                     if let Some(Node::Table { fields }) = module.get(*id) {
                         for (key, child) in fields {
                             let merge = is_table_like(module, *child);
-                            walk_paths(module, *child, key, &mut fallback_paths, true, !merge);
+                            let mut profile_paths = HashMap::new();
+                            truncated |=
+                                walk_paths(module, *child, key, &mut profile_paths, true, !merge);
+                            for (path, node) in profile_paths {
+                                if nodes.contains(&node) {
+                                    fallback_secret_paths.insert(path);
+                                }
+                            }
                         }
                     }
                 }
             }
             ProfileSelection::None => {}
         }
+        let mut work = 0usize;
         for id in &module.patches {
+            work = work.saturating_add(paths.len().max(1));
+            if work > MAX_TRANSFORM_WORK {
+                truncated = true;
+                break;
+            }
             match module.get(*id) {
                 Some(Node::PatchDirective {
                     op: PatchOp::Set { path, value },
                 }) => {
-                    walk_paths(module, *value, path, &mut paths, true, true);
-                    walk_paths(module, *value, path, &mut fallback_paths, true, true);
+                    truncated |= walk_paths(module, *value, path, &mut paths, true, true);
+                    // A patch replaces the evaluated value; the
+                    // fallback's paths at/under it are stale.
+                    fallback_secret_paths.retain(|known| {
+                        known != path
+                            && !known.starts_with(&format!("{path}."))
+                            && !known.starts_with(&format!("{path}["))
+                    });
                 }
                 Some(Node::PatchDirective {
                     op: PatchOp::Remove { path },
                 }) => {
-                    remove_subtree(&mut paths, path);
-                    remove_subtree(&mut fallback_paths, path);
+                    remove_path(&mut paths, path);
+                    fallback_secret_paths.retain(|known| {
+                        known != path
+                            && !known.starts_with(&format!("{path}."))
+                            && !known.starts_with(&format!("{path}["))
+                    });
                 }
                 Some(Node::PatchDirective {
                     op: PatchOp::Rename { from, to },
                 }) => {
                     rename_subtree(&mut paths, from, to);
-                    rename_subtree(&mut fallback_paths, from, to);
+                    if fallback_secret_paths.contains(from) {
+                        fallback_secret_paths.remove(from);
+                        let (parent, _) = split_parent(from);
+                        let dest = if parent.is_empty() {
+                            to.to_string()
+                        } else {
+                            format!("{parent}.{to}")
+                        };
+                        fallback_secret_paths.insert(dest);
+                    }
                 }
                 _ => {}
             }
@@ -537,13 +664,14 @@ impl SecretProfile {
         // Schema defaults fill absent paths during evaluation; explicit
         // values and transforms (inserted above) win.
         if let Some(schema) = module.schema {
-            collect_default_paths(module, schema, "", &mut paths);
+            truncated |= collect_default_paths(module, schema, "", &mut paths);
         }
 
         Self {
             nodes,
             paths,
-            fallback_paths,
+            fallback_secret_paths,
+            truncated,
             literals,
         }
     }
@@ -564,15 +692,17 @@ impl SecretProfile {
 
     /// True when the path's value is secret material or derives from it.
     pub fn path_is_secret(&self, path: &str) -> bool {
-        let primary = self
+        if self
             .paths
             .get(path)
-            .is_some_and(|id| self.nodes.contains(id));
-        primary
-            || self
-                .fallback_paths
-                .get(path)
-                .is_some_and(|id| self.nodes.contains(id))
+            .is_some_and(|id| self.nodes.contains(id))
+            || self.fallback_secret_paths.contains(path)
+        {
+            return true;
+        }
+        // A path the walk registered and did not mark is benign; an
+        // unknown path after a bound stopped the walk fails closed.
+        !self.paths.contains_key(path) && self.truncated
     }
 
     /// Authored literal strings inside material nodes.

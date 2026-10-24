@@ -281,6 +281,19 @@ fn blob_toml_and_yaml_carry_identity_shape() {
     );
     let yaml = active_core::convert::value_to_yaml_string(&value).expect("yaml");
     assert!(yaml.contains("$active.blob"), "{yaml}");
+    // The TOML output must parse and carry the SAME nested wrapper;
+    // a flat `"$active.blob" = "blake3:…"` would pass the substring
+    // checks above but not this structural one.
+    let parsed: toml::Value = toml::from_str(&toml).expect("TOML parses");
+    let blob = &parsed["f"]["$active.blob"];
+    assert_eq!(
+        blob["hash"].as_str(),
+        Some("blake3:ef8a8525ffd1d32141916f461ccb49c92ee84d57279145268364fb7c1c179eea"),
+        "{toml}"
+    );
+    assert_eq!(blob["size"].as_integer(), Some(5), "{toml}");
+    assert_eq!(blob["media_type"].as_str(), Some("text/plain"), "{toml}");
+    assert_eq!(blob["tainted"].as_bool(), Some(false), "{toml}");
 }
 
 #[test]

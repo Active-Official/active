@@ -82,7 +82,7 @@ parses leave it unset and tools fall back to the input filename.
 | Code | Message | Span | Emitted when |
 |---|---|---|---|
 | B001 | `blob() takes a string media type and string (or secret) data: blob("text/plain", "...")` | call site | Malformed `blob()` call (spec/blob.md §8): non-literal arguments or wrong arity; the node is still built so evaluation reports instead of panicking |
-| B002 | `schema violation at '<path>': blob size <n> exceeds max_size <m>` | schema field span | Blob payload exceeds the schema `max_size` (spec/blob.md §4) |
+| B002 | `schema violation at '<path>': blob size <n> exceeds max_size <m>` (a computed bound omits `<m>`) | schema field span | Blob payload exceeds the schema `max_size` (spec/blob.md §4); the bound is echoed only when the schema spells a literal |
 | B003 | `blob materialisation refused (B003): tainted blob payloads are never emitted` | none (demand-time) | `--materialise-blobs` demanded a tainted blob; fail closed with identity withheld (spec/blob.md §5) |
 | B004 | `schema violation at '<path>': blob media type does not match expected '<b>'` | schema field span | Blob media type mismatches the schema `media_type` (exact match, spec/blob.md §4) |
 | B005 | `blob materialisation refused (B005): blob payload was not retained; re-evaluate from source with materialisation enabled` | none (demand-time) | `--materialise-blobs` demanded a payload-less blob; fail closed instead of silently emitting identity (spec/blob.md §5) |
@@ -117,8 +117,8 @@ parses leave it unset and tools fall back to the input filename.
 | Code | Message | Span | Emitted when |
 |---|---|---|---|
 | W001 | `unresolved identifier '<name>'` | node | An identifier matches no sibling key and no `let` binding; the value becomes `null` |
-| W002 | `unknown profile '<name>'` / `active_profile must be a string` | node | `active_profile` names no defined profile, or is not a string; no profile merges (C-027) |
-| W003 | `profile '<name>' overrides '<path>' with a different type` | node | A profile value wins over a base value of a different type (C-027) |
+| W002 | `unknown profile '<name>'` / `unknown profile (computed selector)` / `active_profile must be a string` | node | `active_profile` names no defined profile, or is not a string; no profile merges (C-027). A computed selector's value is never echoed |
+| W003 | `profile '<name>' overrides '<path>' with a different type` / `profile (computed selector) overrides '<path>' with a different type` | node | A profile value wins over a base value of a different type (C-027); a computed selector is not echoed |
 | W004 | `remove target '<path>' does not exist` / `rename source '<path>' does not exist` / `array index <i> out of bounds at '<path>'` | node | A patch target is missing; the operation succeeds idempotently (C-028) |
 | W005 | `filled missing key '<path>' from schema default` | schema field span | Resilient mode inserted an evaluated schema default for a missing key (C-032); the filled value is then validated like any written value |
 | W013 | `approaching <budget> (<used> of limit <limit>); hard ceilings apply in Data Mode exactly as in Config` | none (loop-level) | Data Mode progressive warning at 80% of any nonzero budget (M.004); informational only, evaluation continues; hard ceilings bind both modes |

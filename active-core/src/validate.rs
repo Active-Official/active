@@ -191,7 +191,10 @@ impl Engine {
                 Some(Value::Bool(true)) => {}
                 Some(Value::Bool(false)) => {
                     let (profile, redactor) = material.get_or_insert_with(|| {
-                        let profile = crate::secret::SecretProfile::analyze(module);
+                        let profile = crate::secret::SecretProfile::analyze_with_profile(
+                            module,
+                            self.profile_override.as_deref(),
+                        );
                         let redactor = runtime_secret_redactor(values, &profile);
                         (profile, redactor)
                     });
@@ -1127,8 +1130,9 @@ impl<'a> Validator<'a> {
     }
 
     /// Blob constraints (spec/blob.md §4, §8): `max_size` breach is
-    /// B002, `media_type` mismatch is B004. Both are value-free:
-    /// sizes and media types are metadata, never secret material.
+    /// B002, `media_type` mismatch is B004. The payload size is
+    /// metadata; a schema bound or media expectation may be an
+    /// expression, so each is echoed only when spelled as a literal.
     fn check_blob_bounds(
         &mut self,
         field: &SchemaField,
@@ -1142,17 +1146,26 @@ impl<'a> Validator<'a> {
             match self.values.get(&max_id) {
                 Some(Value::Int(max)) if *max >= 0 => {
                     if size > *max as u64 {
-                        self.push(
-                            crate::blob::code::TOO_LARGE,
+                        // Echo the bound only when the schema spells a
+                        // literal (a computed bound may be material).
+                        let message = if matches!(
+                            self.module.get(max_id),
+                            Some(Node::Literal(Value::Int(_)))
+                        ) {
                             format!(
                                 "schema violation at '{}': blob size {} exceeds max_size {}",
                                 display_path(path),
                                 size,
                                 max,
-                            ),
-                            path,
-                            spans.clone(),
-                        );
+                            )
+                        } else {
+                            format!(
+                                "schema violation at '{}': blob size {} exceeds the schema max_size",
+                                display_path(path),
+                                size,
+                            )
+                        };
+                        self.push(crate::blob::code::TOO_LARGE, message, path, spans.clone());
                     }
                 }
                 // Schema bug, reported once per field like a bad
@@ -1164,22 +1177,29 @@ impl<'a> Validator<'a> {
             }
         }
         if let Some(media_id) = field.blob_media_type {
+            // The expectation itself can be an expression (grammar
+            // allows it), so echo it only when the schema spells a
+            // literal; a computed value may be material.
+            let expected_is_literal = matches!(
+                self.module.get(media_id),
+                Some(Node::Literal(Value::String(_)))
+            );
             match self.values.get(&media_id) {
                 Some(Value::String(expected)) => {
                     if media_type != expected {
-                        // The actual media type may come from an env
-                        // lookup used as a secret locator; only the
-                        // schema-authored expectation is safe to echo.
-                        self.push(
-                            crate::blob::code::MEDIA_MISMATCH,
+                        let message = if expected_is_literal {
                             format!(
                                 "schema violation at '{}': blob media type does not match expected '{}'",
                                 display_path(path),
                                 expected,
-                            ),
-                            path,
-                            spans,
-                        );
+                            )
+                        } else {
+                            format!(
+                                "schema violation at '{}': blob media type does not match the schema's computed media_type",
+                                display_path(path),
+                            )
+                        };
+                        self.push(crate::blob::code::MEDIA_MISMATCH, message, path, spans);
                     }
                 }
                 // Schema bug, reported once per field: media_type must
@@ -1492,7 +1512,17 @@ impl<'a> Validator<'a> {
         match formats.iter().find(|(known, _)| known == &name) {
             None => {
                 if self.bug_once(field_id, "format") {
-                    self.violation(path, &format!("unknown format '{name}' in schema"), spans);
+                    // A computed format string may be material; echo
+                    // only an authored literal.
+                    let message = if matches!(
+                        self.module.get(format_id),
+                        Some(Node::Literal(Value::String(_)))
+                    ) {
+                        format!("unknown format '{name}' in schema")
+                    } else {
+                        "unknown format in schema".to_string()
+                    };
+                    self.violation(path, &message, spans);
                 }
             }
             Some((_, re)) => {

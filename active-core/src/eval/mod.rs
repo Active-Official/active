@@ -1335,8 +1335,8 @@ impl Engine {
             .arena
             .iter()
             .any(|node| matches!(node, Node::ContentAddressed { .. }));
-        let secret_profile: Option<SecretProfile> =
-            (steps.is_some() || has_blobs).then(|| SecretProfile::analyze(module));
+        let secret_profile: Option<SecretProfile> = (steps.is_some() || has_blobs)
+            .then(|| SecretProfile::analyze_with_profile(module, self.profile_override.as_deref()));
         // Evaluated values of sensitive nodes, so a container step can
         // redact the same bytes even though the container itself is
         // not Secret-kinded (topological order means children are

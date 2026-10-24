@@ -100,7 +100,18 @@ value_hash = "sha256:…"
 [[provenance.includes]]
 path = "/deploy/base.active"
 sha256 = "…"
+
+[[blobs]]
+path = "logo"
+hash = "blake3:…"
+size = 5
+media_type = "text/plain"   # "***SECRET***" when the identity is tainted
+tainted = false
 ```
+
+Blob records are emitted for every identity in the evaluated tree,
+sorted by path (deterministic). A tainted identity's `media_type` is
+redacted on the same rule as every other export path (spec/blob.md §7).
 
 - `ACTIVE lock <file> [-o out.lock]` (default stdout):
   parses, evaluates, collects provenance, prints. Parse/eval

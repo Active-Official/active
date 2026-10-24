@@ -216,8 +216,8 @@ pub fn content_hash(value: &crate::ir::Value) -> String {
 }
 
 /// One content-addressed identity recorded in a lockfile
-/// (spec/blob.md §7/§11): path, hash, size, media type, taint. A
-/// tainted identity redacts its media type.
+/// (spec/blob.md §7, spec/reproducibility.md §4): path, hash, size,
+/// media type, taint. A tainted identity redacts its media type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlobRecord {
     pub path: String,
@@ -227,9 +227,8 @@ pub struct BlobRecord {
     pub tainted: bool,
 }
 
-/// Collect every blob identity in an evaluated tree (post-order,
-/// deterministic by construction: tables iterate in source order and
-/// the caller sorts by path).
+/// Collect every blob identity in an evaluated tree (pre-order;
+/// tables iterate in source order and the caller sorts by path).
 fn collect_blobs(value: &crate::ir::Value, path: &str, out: &mut Vec<BlobRecord>) {
     use crate::ir::Value;
     match value {
@@ -266,7 +265,9 @@ fn collect_blobs(value: &crate::ir::Value, path: &str, out: &mut Vec<BlobRecord>
 }
 
 /// A complete lockfile record: hash, toolchain, provenance, and blob
-/// identities.
+/// identities. Non-exhaustive: consumers construct it through
+/// [`LockManifest::new`], and future fields stay additive.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LockManifest {
     pub toolchain: String,

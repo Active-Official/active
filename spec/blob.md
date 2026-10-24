@@ -104,7 +104,7 @@ Known limitation (documented, not hidden): the identity hash of a tainted blob i
 | B004 | Blob media type mismatches schema `media_type` | validation |
 | B005 | Materialisation impossible: payload not retained | eval (`--materialise-blobs` / demanded cone) |
 
-All messages are stable and value-free (sizes are metadata; an evaluated media type may be material, so B004 echoes only the schema-authored expectation and every identity redacts a tainted `media_type` — but messages never include payload bytes regardless).
+All messages are stable and value-free (sizes are metadata; an evaluated media type or schema bound may be material, so B004/B002 echo only values the schema spells as literals and every identity redacts a tainted `media_type` — but messages never include payload bytes regardless).
 
 ## 9. Lockfile / provenance
 

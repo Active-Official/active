@@ -38,7 +38,8 @@ fn lockfile_records_blob_identities_and_redacts_tainted_media() {
     let engine = Engine::hermetic().with_env(env.clone());
     let (value, _) = engine.evaluate(&module).expect("must evaluate");
     let provenance = collect_provenance(&module, &engine.env, None, None).expect("provenance");
-    let rendered = LockManifest::new("active-test".to_string(), &value, provenance).render();
+    let manifest = LockManifest::new("active-test".to_string(), &value, provenance);
+    let rendered = manifest.render();
     assert!(rendered.contains("[[blobs]]"), "{rendered}");
     assert!(rendered.contains("path = \"plain\""), "{rendered}");
     assert!(rendered.contains("path = \"tainted\""), "{rendered}");
@@ -50,6 +51,12 @@ fn lockfile_records_blob_identities_and_redacts_tainted_media() {
         !rendered.contains("ENVSECRET"),
         "lockfile leaked material: {rendered}"
     );
+    // The lockfile must reparse and be byte-identical on a rerun.
+    let parsed: toml::Value = toml::from_str(&rendered).expect("lockfile parses");
+    let blobs = parsed["blobs"].as_array().expect("[[blobs]] array");
+    assert_eq!(blobs.len(), 2, "{rendered}");
+    assert!(blobs.iter().any(|b| b["path"].as_str() == Some("plain")));
+    assert_eq!(manifest.render(), rendered, "render must be deterministic");
 }
 
 #[test]

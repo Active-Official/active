@@ -125,6 +125,21 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   `$active.blob` wrapper as JSON/YAML.
 - **Codegen v4.** The optional `payload_b64` field changes every
   target's Blob shape, so the pipeline version is bumped.
+- **Transform and selector fidelity.** `@rename` destinations resolve
+  in the source parent (with missing sources left untouched), and
+  `@remove` shifts array indices in the taint map exactly as the
+  evaluator does. A computed `active_profile` selector unions every
+  profile's *material paths* into a set, so a later benign profile
+  cannot hide an earlier material one; engine profile overrides feed
+  the same analysis. Transform maintenance is work-bounded.
+- **Truncation fails closed.** When the path walk hits its depth or
+  size cap, unknown paths report material rather than benign.
+- **Schema-expression diagnostics.** B002/B004 and unknown-format
+  T003 echo an expectation only when the schema spells a literal;
+  a computed value is never echoed.
+- **TOML block records and escaping.** `active lock` documents its
+  deterministic `[[blobs]]` records, and the simple TOML literal
+  escapes a blob media type as a JSON string (valid TOML).
 
 ### SOLID → Active rename
 

@@ -446,14 +446,26 @@ fn inspect_fails_closed_on_a_computed_profile_selector() {
     // `active_profile` from an env read cannot be resolved statically,
     // so the profile's paths join a taint-only fallback: a base value
     // that the selected profile replaces must not certify as benign.
-    for src in [
-        "let p = env.R14COMP\nk = secret(p)\nactive_profile = env.R14PROF\nprofile \"prod\" { x = p }\nx = \"benign\"\n",
-        "let p = env.R14COMP\nlet suffix = \"od\"\nk = secret(p)\nactive_profile = \"pr${suffix}\"\nprofile \"prod\" { x = p }\nx = \"benign\"\n",
+    for (src, selected) in [
+        (
+            "let p = env.R14COMP\nk = secret(p)\nactive_profile = env.R14PROF\nprofile \"prod\" { x = p }\nx = \"benign\"\n",
+            "prod",
+        ),
+        (
+            "let p = env.R14COMP\nlet suffix = \"od\"\nk = secret(p)\nactive_profile = \"pr${suffix}\"\nprofile \"prod\" { x = p }\nx = \"benign\"\n",
+            "unused",
+        ),
+        // Two profiles, benign LAST: the union must not let the last
+        // write hide the earlier material path.
+        (
+            "let p = env.R14COMP\nk = secret(p)\nactive_profile = env.R14PROF\nprofile \"b\" { x = p }\nprofile \"a\" { x = \"benign\" }\nx = \"base\"\n",
+            "b",
+        ),
     ] {
         let module = active_core::parse(src, "inspect-computed-profile").expect("parse");
         let mut env = std::collections::HashMap::new();
         env.insert("R14COMP".to_string(), "ENVSECRET-computed".to_string());
-        env.insert("R14PROF".to_string(), "prod".to_string());
+        env.insert("R14PROF".to_string(), selected.to_string());
         let (evaluated, _) = active_core::Engine::hermetic()
             .with_env(env)
             .evaluate(&module)
@@ -486,6 +498,42 @@ fn inspect_follows_rename_targets() {
         active_core::convert::inspect_path(&module, &evaluated, "a").is_err(),
         "renamed source path must be gone"
     );
+}
+
+#[test]
+fn inspect_follows_nested_renames_and_array_removals() {
+    // The evaluator resolves `@rename` destinations in the source
+    // parent and shifts array indices on `@remove`; the taint map must
+    // mirror both.
+    for (src, path, env_name) in [
+        (
+            "let p = env.R15REN\nk = secret(p)\nouter = { a = p, z = 1 }\n@rename(\"outer.a\", \"b\")\n",
+            "outer.b",
+            "R15REN",
+        ),
+        (
+            "let p = env.R15MISS\nk = secret(p)\na = { x = p }\n@rename(\"nope\", \"a\")\n",
+            "a.x",
+            "R15MISS",
+        ),
+        (
+            "let p = env.R15ARR\nk = secret(p)\na = [\"benign\", p]\n@remove(\"a[0]\")\n",
+            "a[0]",
+            "R15ARR",
+        ),
+    ] {
+        let module = active_core::parse(src, "inspect-transform").expect("parse");
+        let mut env = std::collections::HashMap::new();
+        env.insert(env_name.to_string(), "ENVSECRET-transform".to_string());
+        let (evaluated, _) = active_core::Engine::hermetic()
+            .with_env(env)
+            .evaluate(&module)
+            .expect("evaluate");
+        let report =
+            active_core::convert::inspect_path(&module, &evaluated, path).expect("inspect");
+        assert_eq!(report["tainted"], true, "{src}: {report}");
+        assert_eq!(report["value"], "***SECRET***", "{src}: {report}");
+    }
 }
 
 #[test]

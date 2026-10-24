@@ -205,6 +205,83 @@ fn blob_media_diagnostics_and_inspection_redact_material() {
 }
 
 #[test]
+fn computed_schema_expressions_are_not_echoed() {
+    use std::collections::HashMap;
+    // A schema `media_type` can be an expression; B004 must not echo
+    // its evaluated (possibly material) value.
+    let src = "media = env.R15MEDIA\nk = secret(media)\nschema = { f = Blob(media_type = media) }\nf = blob(\"text/plain\", \"hi\")\n";
+    let module = parse(src, "b004-computed").expect("must parse");
+    let mut env = HashMap::new();
+    env.insert(
+        "R15MEDIA".to_string(),
+        "ENVSECRET-expected-media".to_string(),
+    );
+    let (_, diagnostics) = Engine::hermetic()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("resilient evaluate");
+    let b004 = diagnostics
+        .iter()
+        .find(|d| d.code == "B004")
+        .expect("B004 media mismatch");
+    assert!(
+        !b004.message.contains("ENVSECRET"),
+        "B004 echoed a computed expectation: {}",
+        b004.message
+    );
+
+    // The same rule for a computed `format` string (T003).
+    let src =
+        "fmt = env.R15FMT\nk = secret(fmt)\nschema = { s = String(format = fmt) }\ns = \"x\"\n";
+    let module = parse(src, "t003-computed").expect("must parse");
+    let mut env = HashMap::new();
+    env.insert("R15FMT".to_string(), "ENVSECRET-format".to_string());
+    let (_, diagnostics) = Engine::hermetic()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("resilient evaluate");
+    let t003 = diagnostics
+        .iter()
+        .find(|d| d.code == "T003")
+        .expect("T003 unknown format");
+    assert!(
+        !t003.message.contains("ENVSECRET"),
+        "T003 echoed a computed format: {}",
+        t003.message
+    );
+}
+
+#[test]
+fn constraint_redaction_honors_the_profile_override() {
+    // The engine override selects a profile the document does not name;
+    // taint analysis must follow the override, not the literal selector.
+    let src = "n = 4242\nk = secret(n)\nactive_profile = \"a\"\nprofile \"a\" { x = 1 }\nprofile \"b\" { x = n }\n# @constraint: value == 7\nx = 0\n";
+    let module = parse(src, "t006-override").expect("must parse");
+    let mut engine = Engine::hermetic();
+    engine.profile_override = Some("b".to_string());
+    engine.resilient = false;
+    let failure = engine.evaluate(&module).expect_err("constraint fails");
+    let active_core::EvalError::ValidationFailed { diagnostics } = failure else {
+        panic!("expected validation failure, got {failure}");
+    };
+    let t006 = diagnostics
+        .iter()
+        .find(|d| d.code == "T006")
+        .expect("T006 diagnostic");
+    let actual = t006
+        .message
+        .split("actual: ")
+        .nth(1)
+        .unwrap_or_else(|| panic!("no actual value in {}", t006.message))
+        .trim_end_matches(')');
+    assert_eq!(
+        actual, "***SECRET***",
+        "override material leaked into T006: {}",
+        t006.message
+    );
+}
+
+#[test]
 fn unknown_computed_profile_selector_is_not_echoed() {
     use std::collections::HashMap;
     let src =

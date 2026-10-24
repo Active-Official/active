@@ -184,11 +184,15 @@ fn value_to_toml_literal(v: &Value) -> String {
             media_type,
             tainted,
             ..
-        } => format!(
-            "{{ \"$active.blob\" = {{ hash = \"blake3:{}\", size = {size}, media_type = {:?}, tainted = {tainted} }} }}",
-            crate::blob::hash_hex(hash),
-            crate::secret::exposed_media_type(*tainted, media_type)
-        ),
+        } => {
+            let media =
+                serde_json::to_string(crate::secret::exposed_media_type(*tainted, media_type))
+                    .unwrap_or_else(|_| "\"\"".to_string());
+            format!(
+                "{{ \"$active.blob\" = {{ hash = \"blake3:{}\", size = {size}, media_type = {media}, tainted = {tainted} }} }}",
+                crate::blob::hash_hex(hash),
+            )
+        }
         Value::Array(arr) => {
             let parts: Vec<String> = arr.iter().map(value_to_toml_literal).collect();
             format!("[{}]", parts.join(", "))

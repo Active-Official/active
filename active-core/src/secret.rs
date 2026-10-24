@@ -508,6 +508,69 @@ fn wildcard_indices(path: &str) -> String {
     out
 }
 
+/// Whether a patch Set destination is reachable in the current tree:
+/// an existing scalar blocks a key/index descent, an index needs an
+/// array container and an in-bounds slot, and a new final key needs a
+/// table parent (patch application creates intermediate tables).
+fn patch_destination_applies(module: &Module, paths: &HashMap<String, NodeId>, path: &str) -> bool {
+    let is_scalar = |known: &str| {
+        paths.get(known).is_some_and(|id| {
+            !matches!(
+                module.get(*id),
+                Some(Node::Table { .. }) | Some(Node::Array { .. })
+            )
+        })
+    };
+    let Ok(segments) = crate::parser::validate_patch_path(path) else {
+        return false;
+    };
+    let mut current = String::new();
+    for (index, segment) in segments.iter().enumerate() {
+        let last = index + 1 == segments.len();
+        match segment {
+            crate::parser::PathSeg::Key(key) => {
+                if !current.is_empty() && is_scalar(&current) {
+                    return false;
+                }
+                if last {
+                    return true;
+                }
+                current = if current.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{current}.{key}")
+                };
+            }
+            crate::parser::PathSeg::Index(wanted) => {
+                let stem = format!("{current}[");
+                let mut max_index: Option<usize> = None;
+                for known in paths.keys() {
+                    let Some(rest) = known.strip_prefix(&stem) else {
+                        continue;
+                    };
+                    let Some(end) = rest.find(']') else {
+                        continue;
+                    };
+                    if let Ok(value) = rest[..end].parse::<usize>() {
+                        max_index = Some(max_index.map_or(value, |m| m.max(value)));
+                    }
+                }
+                let Some(max_index) = max_index else {
+                    return false;
+                };
+                if *wanted > max_index {
+                    return false;
+                }
+                if last {
+                    return true;
+                }
+                current = format!("{current}[{wanted}]");
+            }
+        }
+    }
+    false
+}
+
 /// Expand a default-path pattern (`arr[].a[0]`) over the known element
 /// containers (`arr[0]`, `arr[1]`, …). No wildcard alias is emitted:
 /// one alias for several concrete sub-paths would make materiality
@@ -620,6 +683,64 @@ fn set_material_path(map: &mut HashMap<NodeId, String>, node: NodeId, path: &str
             map.insert(node, path.to_string());
         }
     }
+}
+
+/// Rename destinations inside a computed-profile path record.
+fn rename_computed_paths(entries: &mut [(String, NodeId)], from: &str, to: &str) {
+    if split_parent(from).1.starts_with('[') {
+        return;
+    }
+    let (parent, _) = split_parent(from);
+    let dest = if parent.is_empty() {
+        to.to_string()
+    } else {
+        format!("{parent}.{to}")
+    };
+    for (path, _) in entries.iter_mut() {
+        if path_under(path, from) {
+            let suffix = &path[from.len()..];
+            *path = format!("{dest}{suffix}");
+        }
+    }
+}
+
+/// Drop removed computed-profile paths and shift later array indices.
+fn remove_computed_paths(entries: &mut Vec<(String, NodeId)>, path: &str) {
+    let (array, last) = split_parent(path);
+    let Some(rest) = last.strip_prefix('[') else {
+        entries.retain(|(known, _)| !path_under(known, path));
+        return;
+    };
+    let Some((digits, _)) = rest.split_once(']') else {
+        entries.retain(|(known, _)| !path_under(known, path));
+        return;
+    };
+    let Ok(index) = digits.parse::<usize>() else {
+        entries.retain(|(known, _)| !path_under(known, path));
+        return;
+    };
+    let prefix = format!("{array}[");
+    entries.retain_mut(|(known, _)| {
+        if path_under(known, path) {
+            return false;
+        }
+        if array.is_empty() {
+            return true;
+        }
+        let Some(tail) = known.strip_prefix(&prefix) else {
+            return true;
+        };
+        let Some((digits, rest)) = tail.split_once(']') else {
+            return true;
+        };
+        let Ok(current) = digits.parse::<usize>() else {
+            return true;
+        };
+        if current > index {
+            *known = format!("{prefix}{}]{}", current - 1, rest);
+        }
+        true
+    });
 }
 
 /// Keep the trace-path overlay in step with a rename.
@@ -1169,6 +1290,52 @@ impl SecretProfile {
             }
             ProfileSelection::None => {}
         }
+        // A variable that is material at one read is material at every
+        // read (spec/reproducibility.md §2): propagate profile-selected
+        // env names to all of their Env nodes before the final scan.
+        let mut propagated_envs: HashSet<NodeId> = HashSet::new();
+        for (index, node) in module.arena.iter().enumerate() {
+            if let Node::Env { name, .. } = node {
+                if material_envs.contains(name) {
+                    let id = NodeId(index as u32);
+                    if nodes.insert(id) {
+                        propagated_envs.insert(id);
+                    }
+                }
+            }
+        }
+        // An expression that embeds a newly material env read is
+        // material too (interpolation, operator, quantity, blob). The
+        // upward closure ran before the profile, so extend it now.
+        if !propagated_envs.is_empty() {
+            let mut parents: Vec<Vec<NodeId>> = vec![Vec::new(); module.arena.len()];
+            for (index, node) in module.arena.iter().enumerate() {
+                let parent = NodeId(index as u32);
+                for child in node_children(node) {
+                    if let Some(slot) = parents.get_mut(child.0 as usize) {
+                        slot.push(parent);
+                    }
+                }
+            }
+            let mut stack: Vec<NodeId> = propagated_envs.into_iter().collect();
+            while let Some(id) = stack.pop() {
+                if let Some(list) = parents.get(id.0 as usize) {
+                    for parent in list {
+                        if nodes.insert(*parent) {
+                            stack.push(*parent);
+                        }
+                    }
+                }
+            }
+        }
+        // A path from a computed-selector profile whose node became
+        // material late (a second profile placed the same env name at
+        // a material path) is material too.
+        for (path, node) in &computed_profile_paths {
+            if nodes.contains(node) {
+                fallback_secret_paths.insert(path.clone());
+            }
+        }
         let mut work = 0usize;
         for id in &module.patches {
             work = work.saturating_add(
@@ -1194,6 +1361,11 @@ impl SecretProfile {
                     let Some(path) = canonical_patch_path(path) else {
                         continue;
                     };
+                    // Model success before registering: a failed Set
+                    // (W004) does not create the path, while a
+                    // successful one is a real rename/default
+                    // candidate.
+                    let applies = patch_destination_applies(module, &paths, &path);
                     truncated |= walk_paths(module, *value, &path, &mut paths, true, true);
                     // A patch replaces the evaluated value; old
                     // fallback paths at/under it are stale, and the
@@ -1201,9 +1373,12 @@ impl SecretProfile {
                     fallback_secret_paths.retain(|known| !path_under(known, &path));
                     let mut patched = HashMap::new();
                     truncated |= walk_paths(module, *value, &path, &mut patched, true, true);
-                    // A failed Set (W004) never reaches the tree; do
-                    // not let its phantom paths count as rename
-                    // sources or default coverage.
+                    if applies {
+                        export_paths.extend(patched.keys().cloned());
+                        // A Set replaces the subtree: profile paths
+                        // under it are stale.
+                        computed_profile_paths.retain(|(known, _)| !path_under(known, &path));
+                    }
                     for (known, node) in patched {
                         if nodes.contains(&node) {
                             fallback_secret_paths.insert(known);
@@ -1220,6 +1395,7 @@ impl SecretProfile {
                     remove_from_set(&mut fallback_secret_paths, &path);
                     remove_from_set(&mut export_paths, &path);
                     remove_material_node_paths(&mut material_node_paths, &path);
+                    remove_computed_paths(&mut computed_profile_paths, &path);
                 }
                 Some(Node::PatchDirective {
                     op: PatchOp::Rename { from, to },
@@ -1281,6 +1457,7 @@ impl SecretProfile {
                     rename_set(&mut fallback_secret_paths, &from, &to);
                     rename_set(&mut export_paths, &from, &to);
                     rename_material_node_paths(&mut material_node_paths, &from, &to);
+                    rename_computed_paths(&mut computed_profile_paths, &from, &to);
                 }
                 _ => {}
             }
@@ -1292,8 +1469,13 @@ impl SecretProfile {
         // pattern expands over known element containers, so materiality
         // is per element and never depends on map iteration order.
         if !truncated {
+            // Containers may be introduced by profiles or successful
+            // patch Sets, not only by the root walk: expand defaults
+            // over every container the evaluated tree can have.
+            let mut expansion_paths: HashSet<String> = paths.keys().cloned().collect();
+            expansion_paths.extend(computed_profile_paths.iter().map(|(path, _)| path.clone()));
             for (path, node) in default_paths {
-                for concrete in expand_default_path(&path, &export_paths) {
+                for concrete in expand_default_path(&path, &expansion_paths) {
                     if export_paths.contains(&concrete) {
                         // Explicit values, profile overrides, and patch
                         // destinations win over a fill.
@@ -1308,52 +1490,6 @@ impl SecretProfile {
             }
         }
 
-        // A variable that is material at one read is material at every
-        // read (spec/reproducibility.md §2): propagate profile-selected
-        // env names to all of their Env nodes before the final scan.
-        let mut propagated_envs: HashSet<NodeId> = HashSet::new();
-        for (index, node) in module.arena.iter().enumerate() {
-            if let Node::Env { name, .. } = node {
-                if material_envs.contains(name) {
-                    let id = NodeId(index as u32);
-                    if nodes.insert(id) {
-                        propagated_envs.insert(id);
-                    }
-                }
-            }
-        }
-        // An expression that embeds a newly material env read is
-        // material too (interpolation, operator, quantity, blob). The
-        // upward closure ran before the profile, so extend it now.
-        if !propagated_envs.is_empty() {
-            let mut parents: Vec<Vec<NodeId>> = vec![Vec::new(); module.arena.len()];
-            for (index, node) in module.arena.iter().enumerate() {
-                let parent = NodeId(index as u32);
-                for child in node_children(node) {
-                    if let Some(slot) = parents.get_mut(child.0 as usize) {
-                        slot.push(parent);
-                    }
-                }
-            }
-            let mut stack: Vec<NodeId> = propagated_envs.into_iter().collect();
-            while let Some(id) = stack.pop() {
-                if let Some(list) = parents.get(id.0 as usize) {
-                    for parent in list {
-                        if nodes.insert(*parent) {
-                            stack.push(*parent);
-                        }
-                    }
-                }
-            }
-        }
-        // A path from a computed-selector profile whose node became
-        // material late (a second profile placed the same env name at
-        // a material path) is material too.
-        for (path, node) in &computed_profile_paths {
-            if nodes.contains(node) {
-                fallback_secret_paths.insert(path.clone());
-            }
-        }
         // Environment reads that are material anywhere (node-level
         // seeds or a path-tainted profile selection) are withheld by
         // provenance even when their node is shared with a benign read.

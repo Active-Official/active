@@ -1346,3 +1346,71 @@ fn nested_array_default_materiality_is_per_element_and_deterministic() {
     assert!(!json.contains(raw), "material element leaked: {json}");
     assert!(json.contains("benign-element"), "sibling hidden: {json}");
 }
+
+#[test]
+fn successful_patch_set_path_is_a_rename_candidate() {
+    // N1 (review 34): a Set that applies creates a real path; a later
+    // same-parent rename moves its taint to the destination.
+    let raw = "set-rename-r34";
+    std::env::set_var("ACTIVE_R34_SET", raw);
+    let src = "let p = env.ACTIVE_R34_SET\nk = secret(p)\na = {}\n@patch(\"a.moved\", p)\n@rename(\"a.moved\", \"w\")\n";
+    let module = parse(src, "set-rename").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("ACTIVE_R34_SET".to_string(), raw.to_string());
+    let (value, _) = Engine::new()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("resilient evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    assert!(
+        profile.path_is_secret("a.w"),
+        "renamed Set path is material"
+    );
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(raw), "Set rename leaked: {json}");
+}
+
+#[test]
+fn computed_late_materiality_follows_a_rename() {
+    // N2 (review 34): the computed late path record is rewritten by a
+    // later rename, so the destination is material.
+    let raw = "late-rename-r34";
+    std::env::set_var("ACTIVE_R34_LATE", raw);
+    std::env::set_var("ACTIVE_R34_SEL", "a");
+    let src = "let e = env.ACTIVE_R34_LATE\nlet p = env.ACTIVE_R34_SRC\nk = secret(p)\nsel = env.ACTIVE_R34_SEL\nn = p\nactive_profile = sel\nprofile \"a\" { q = e }\nprofile \"b\" { n = e }\n@rename(\"q\", \"w\")\n";
+    let module = parse(src, "late-rename").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("ACTIVE_R34_LATE".to_string(), raw.to_string());
+    env.insert("ACTIVE_R34_SRC".to_string(), "source-r34".to_string());
+    env.insert("ACTIVE_R34_SEL".to_string(), "a".to_string());
+    let (value, _) = Engine::new()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("resilient evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    assert!(profile.path_is_secret("w"), "renamed late path is material");
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(raw), "late rename leaked: {json}");
+}
+
+#[test]
+fn defaults_expand_over_a_patch_introduced_container() {
+    // N3 (review 34): a Set may add elements; the material default
+    // fills inside them and must be marked per element.
+    let raw = "patch-array-default-r34";
+    std::env::set_var("ACTIVE_R34_ARR", raw);
+    let src = "let s = env.ACTIVE_R34_ARR\nk = secret(s)\nschema = { arr = Array<Table { a = Any(default = [s, \"benign-element\"]) }> }\narr = [{}]\n@patch(\"arr\", [{}, {}])\n";
+    let module = parse(src, "patch-array-default").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("ACTIVE_R34_ARR".to_string(), raw.to_string());
+    let (value, _) = Engine::new()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("resilient evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    assert!(profile.path_is_secret("arr[1].a[0]"), "new element fill");
+    assert!(!profile.path_is_secret("arr[1].a[1]"), "benign sibling");
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(raw), "patch container leaked: {json}");
+    assert!(json.contains("benign-element"), "sibling hidden: {json}");
+}

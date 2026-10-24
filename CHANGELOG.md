@@ -223,6 +223,12 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   count as export or rename candidates, so a rename cannot clear a
   destination's taint and an unselected key cannot suppress a material
   default fill.
+- **Patch and transform modeling is structural.** A successful
+  `@patch` Set registers its destination as a rename/default candidate;
+  a failed Set (W004) registers nothing. Computed-selector profile
+  paths are materialized before transforms and rewritten by Remove
+  (index shift) and Rename, and schema defaults expand over containers
+  introduced by profiles or successful Sets, per element.
 - **Traces and materialisation follow path taint.** A step whose
   rendered path is material reports `tainted: true`, including a
   profile override of a base data path; the trace overlay follows

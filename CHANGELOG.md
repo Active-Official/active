@@ -197,12 +197,20 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   the `Env` node at the path while registering the fallback's children,
   so a material child inside a fallback table or array redacts instead
   of exporting raw. Merge-vs-replace treats a table fallback as a table.
+- **Taint paths survive partial walks and namespace collisions.** A
+  profile walk that trips the path bound invalidates the overridden
+  key as a whole (no partially registered benign base paths), a binding
+  name never shadows a schema fill in the export map, and wildcard
+  defaults expand per element so an explicitly written array element
+  stays visible.
 - **Material values never auto-rename.** Resilient H005 skips a source
   path that is structurally material: the taint map follows the source
   path, and moving the value would publish it. The typo degrades to a
   suggestion-only T005. Binding names no longer pollute data-path
   materiality, and a default's materiality applies only when the
-  default can actually fill (an explicit value wins).
+  default can actually fill (an explicit value wins). A canceled fill
+  may keep the healed key conservatively marked (hidden, never
+  exposed).
 - **Metadata is immutable at every depth.** Patches targeting
   `schema.x`, `active_mode.x`, `active_capabilities.x`, or
   `active_profile.x` are rejected with E019, so descendants cannot

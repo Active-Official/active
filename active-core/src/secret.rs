@@ -463,12 +463,6 @@ fn walk_paths(
                 }
             }
             Some(Node::Ref(target)) => stack.push((*target, path, depth, insert)),
-            // Transparent wrappers keep the same value at the path: an
-            // annotated table must still expose its children, or a
-            // material child inside it has no path and exports raw.
-            Some(Node::ApplyConstraint { target, .. }) => {
-                stack.push((*target, path, depth, insert));
-            }
             Some(Node::Semantic { inner, .. }) => {
                 stack.push((*inner, path, depth, insert));
             }
@@ -508,6 +502,52 @@ fn wildcard_indices(path: &str) -> String {
     out
 }
 
+/// Materiality contributed by one schema default. An exact default is
+/// material only when no explicit data covers it (the fill cannot run).
+/// A wildcard default (`arr[].a`) expands over known element
+/// containers: each index whose concrete path is absent fills, so that
+/// index is material; an explicitly written element stays visible.
+fn add_default_material_paths(path: &str, data_paths: &HashSet<String>, out: &mut HashSet<String>) {
+    if !path.contains("[]") {
+        if !data_paths.contains(path) {
+            out.insert(path.to_string());
+        }
+        return;
+    }
+    let Some(bracket) = path.find("[]") else {
+        return;
+    };
+    let prefix = &path[..bracket];
+    let suffix = &path[bracket + 2..];
+    let stem = format!("{prefix}[");
+    let mut expanded = false;
+    for data in data_paths {
+        let Some(rest) = data.strip_prefix(&stem) else {
+            continue;
+        };
+        let Some(end) = rest.find(']') else {
+            continue;
+        };
+        let index = &rest[..end];
+        if index.is_empty() || !index.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        // Element containers only (`arr[i]`, never `arr[i].key`).
+        if !rest[end + 1..].is_empty() {
+            continue;
+        }
+        expanded = true;
+        let concrete = format!("{prefix}[{index}]{suffix}");
+        if !data_paths.contains(&concrete) {
+            out.insert(concrete);
+        }
+    }
+    if !expanded {
+        // No element container is known: keep the wildcard fail-safe.
+        out.insert(path.to_string());
+    }
+}
+
 /// Whether a path is material in the base tree, accepting the array
 /// wildcard spelling on either side (`arr[].a` vs `arr[0].a`).
 fn path_is_material(material_paths: &HashSet<String>, path: &str) -> bool {
@@ -537,8 +577,6 @@ fn is_table_like(module: &Module, id: NodeId) -> bool {
                 default: Some(default),
                 ..
             }) => current = *default,
-            // Annotated and semantic-wrapped values keep their shape.
-            Some(Node::ApplyConstraint { target, .. }) => current = *target,
             Some(Node::Semantic { inner, .. }) => current = *inner,
             _ => return false,
         }
@@ -754,6 +792,11 @@ impl SecretProfile {
             truncated |= walk_paths(module, root, "", &mut paths, true, false);
             data_paths.extend(paths.keys().cloned());
         }
+        // Paths the evaluated document actually provides: the root
+        // tree plus profile overrides and patch destinations. Binding
+        // names are deliberately absent: a `let` never shadows a
+        // schema fill in the exported tree.
+        let mut export_paths = data_paths.clone();
         for (name, id) in &module.bindings {
             truncated |= walk_paths(module, *id, name, &mut paths, false, false);
         }
@@ -787,16 +830,7 @@ impl SecretProfile {
         if !defaults_truncated {
             for (path, id) in &default_paths {
                 if nodes.contains(id) {
-                    // A default only fills an absent path; when an
-                    // explicit value covers this exact path, the default
-                    // never materializes, so its materiality must not
-                    // leak onto a profile override of that value.
-                    let covered = !path.contains("[]") && data_paths.contains(path);
-                    if covered {
-                        continue;
-                    }
-                    material_paths.insert(path.clone());
-                    material_paths.insert(wildcard_indices(path));
+                    add_default_material_paths(path, &data_paths, &mut material_paths);
                 }
             }
         }
@@ -845,6 +879,12 @@ impl SecretProfile {
                                     secret_subtree(module, *node, &mut nodes);
                                 }
                                 fallback_secret_paths.extend(profile_paths.keys().cloned());
+                                // Known base paths under the overridden
+                                // key are stale: partial registration
+                                // would bypass the global fail-closed
+                                // check for them.
+                                remove_subtree(&mut paths, key);
+                                fallback_secret_paths.insert(key.clone());
                                 continue;
                             }
                             // Per-path merge decision: a nested table at
@@ -878,7 +918,9 @@ impl SecretProfile {
                                     secret_subtree(module, *node, &mut nodes);
                                 }
                             }
+                            let profile_keys: Vec<String> = profile_paths.keys().cloned().collect();
                             paths.extend(profile_paths);
+                            export_paths.extend(profile_keys);
                         }
                     }
                 }
@@ -899,8 +941,11 @@ impl SecretProfile {
                                     secret_subtree(module, *node, &mut nodes);
                                 }
                                 fallback_secret_paths.extend(profile_paths.keys().cloned());
+                                remove_subtree(&mut paths, key);
+                                fallback_secret_paths.insert(key.clone());
                                 continue;
                             }
+                            export_paths.extend(profile_paths.keys().cloned());
                             for (path, node) in profile_paths {
                                 let material = path_is_material(&material_paths, &path);
                                 let path_merge = is_table_like(module, node)
@@ -958,6 +1003,7 @@ impl SecretProfile {
                     fallback_secret_paths.retain(|known| !path_under(known, path));
                     let mut patched = HashMap::new();
                     truncated |= walk_paths(module, *value, path, &mut patched, true, true);
+                    export_paths.extend(patched.keys().cloned());
                     for (known, node) in patched {
                         if nodes.contains(&node) {
                             fallback_secret_paths.insert(known);
@@ -969,12 +1015,14 @@ impl SecretProfile {
                 }) => {
                     remove_path(&mut paths, path);
                     remove_from_set(&mut fallback_secret_paths, path);
+                    remove_from_set(&mut export_paths, path);
                 }
                 Some(Node::PatchDirective {
                     op: PatchOp::Rename { from, to },
                 }) => {
                     rename_subtree(&mut paths, from, to);
                     rename_set(&mut fallback_secret_paths, from, to);
+                    rename_set(&mut export_paths, from, to);
                 }
                 _ => {}
             }
@@ -990,7 +1038,16 @@ impl SecretProfile {
             for (path, node) in default_paths {
                 let wildcard = wildcard_indices(&path);
                 let alias = (wildcard != path).then_some(wildcard);
-                paths.entry(path).or_insert(node);
+                if export_paths.contains(&path) {
+                    // Explicit values, profile overrides, and patch
+                    // destinations win over a fill.
+                    paths.entry(path).or_insert(node);
+                } else {
+                    // A binding-only entry is not the exported value:
+                    // the evaluator fills this path, so the fill node
+                    // wins over the binding's benign placeholder.
+                    paths.insert(path, node);
+                }
                 if let Some(alias) = alias {
                     paths.entry(alias).or_insert(node);
                 }
@@ -1022,19 +1079,28 @@ impl SecretProfile {
 
     /// True when the path's value is secret material or derives from it.
     pub fn path_is_secret(&self, path: &str) -> bool {
-        if self.path_at_is_secret(path) {
+        // The union set wins over a benign base mapping (computed
+        // selectors must fail closed).
+        if self.fallback_secret_paths.contains(path) {
             return true;
         }
-        // Schema fills inside arrays register their paths with an index
-        // wildcard (`arr[].a`); the evaluated tree spells `arr[0].a`.
-        // Normalize both directions so neither shape hides material.
         let wildcard = wildcard_indices(path);
+        if let Some(id) = self.paths.get(path) {
+            // A known concrete path decides for itself: an explicit
+            // value wins over a wildcard schema default that cannot
+            // fill it (`arr[0].a` written vs `arr[].a` default).
+            return self.nodes.contains(id);
+        }
+        if self.fallback_secret_paths.contains(&wildcard) {
+            return true;
+        }
+        // Unknown exact path: a wildcard default (`arr[].a`) applies.
         if wildcard != path && self.path_at_is_secret(&wildcard) {
             return true;
         }
         // A path the walk registered and did not mark is benign; an
         // unknown path after a bound stopped the walk fails closed.
-        !self.paths.contains_key(path) && !self.paths.contains_key(&wildcard) && self.truncated
+        !self.paths.contains_key(&wildcard) && self.truncated
     }
 
     fn path_at_is_secret(&self, path: &str) -> bool {

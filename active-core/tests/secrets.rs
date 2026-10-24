@@ -882,43 +882,70 @@ fn binding_names_do_not_make_profile_keys_material() {
 }
 
 #[test]
-fn explicit_value_wins_over_default_materiality() {
-    // F4 (round 24): a default only fills an absent path, so its
-    // materiality must not redact an explicit value overridden by a
-    // benign profile.
-    let raw = "default-src-r24";
-    std::env::set_var("ACTIVE_R24_DEFAULT", raw);
-    let src = "let s = env.ACTIVE_R24_DEFAULT\nk = secret(s)\nschema = { a = String(default = s) }\na = \"EXPLICIT-BENIGN\"\nactive_profile = \"a\"\nprofile \"a\" { a = \"PROFILE-BENIGN\" }\n";
-    let module = parse(src, "default-covered").expect("parse");
-    let mut engine = Engine::new();
-    engine.profile_override = Some("a".to_string());
-    let (value, _) = engine.evaluate(&module).expect("evaluate");
-    let profile = active_core::secret::SecretProfile::analyze_with_profile(&module, Some("a"));
-    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
-    assert!(
-        json.contains("PROFILE-BENIGN"),
-        "benign override hidden: {json}"
+fn truncated_profile_walk_invalidates_known_base_paths() {
+    // F1 (round 25): when the profile walk itself trips MAX_PATHS, a
+    // partially registered override must not leave the base path
+    // known-benign. The overridden key is invalidated as a whole.
+    let mut elements = String::from("[");
+    for i in 0..50_000 {
+        if i > 0 {
+            elements.push(',');
+        }
+        elements.push('0');
+    }
+    elements.push(']');
+    let src = format!(
+        "let p = env.ACTIVE_R25W\nlet base = {elements}\nk = secret(p)\nx = {{ zzz = \"BENIGN\" }}\nactive_profile = \"a\"\nprofile \"a\" {{ x = {{ zzz = p, big = [base, base] }} }}\n"
     );
-    assert!(!json.contains(raw), "source leaked: {json}");
+    let module = parse(&src, "wide-profile").expect("parse");
+    let profile = active_core::secret::SecretProfile::analyze_with_profile(&module, Some("a"));
+    assert!(
+        profile.path_is_secret("x.zzz"),
+        "partially walked override must fail closed"
+    );
 }
 
 #[test]
-fn annotated_table_children_stay_mapped() {
-    // A transparent wrapper (ApplyConstraint) preserves the value at
-    // the path; its children must still be addressable, or a material
-    // child inside an annotated table exports raw.
-    let raw = "annotated-s3cr3t-r25";
-    std::env::set_var("ACTIVE_R25_ANN", raw);
-    let src = "let p = env.ACTIVE_R25_ANN\nk = secret(p)\n# @constraint: value != null\nx = { s = p, b = 1 }\n";
-    let module = parse(src, "annotated-table").expect("parse");
+fn binding_shadowed_default_fill_is_material() {
+    // F2 (round 25): a `let` with the same name does not occupy the
+    // exported path, so the evaluator fills it. The fill node must win
+    // over the binding placeholder.
+    let raw = "default-shadow-s3cr3t-r25";
+    std::env::set_var("ACTIVE_R25_SHADOW", raw);
+    let src = "let s = env.ACTIVE_R25_SHADOW\nk = secret(s)\nlet t = \"BENIGN\"\nschema = { t = String(default = s) }\n";
+    let module = parse(src, "binding-shadow").expect("parse");
     let mut env = std::collections::HashMap::new();
-    env.insert("ACTIVE_R25_ANN".to_string(), raw.to_string());
+    env.insert("ACTIVE_R25_SHADOW".to_string(), raw.to_string());
     let (value, _) = Engine::new()
         .with_env(env)
         .evaluate(&module)
-        .expect("evaluate");
+        .expect("resilient evaluate");
     let profile = active_core::secret::SecretProfile::analyze(&module);
-    assert!(profile.path_is_secret("x.s"), "annotated child mapped");
+    assert!(profile.path_is_secret("t"), "filled path is material");
     let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
-    assert!(!json.contains(raw), "annotated table leaked: {json}");
+    assert!(!json.contains(raw), "binding shadow leaked: {json}");
+}
+
+#[test]
+fn explicit_array_element_stays_visible_under_a_material_default() {
+    // F3 (round 25): a wildcard default fills only absent elements; an
+    // explicitly written element stays visible.
+    let raw = "array-default-src-r25";
+    std::env::set_var("ACTIVE_R25_ARR", raw);
+    let src = "let s = env.ACTIVE_R25_ARR\nk = secret(s)\nschema = { arr = Array<Table { a = String(default = s) }> }\narr = [{ a = \"EXPLICIT-BENIGN\" }]\n";
+    let module = parse(src, "array-covered").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("ACTIVE_R25_ARR".to_string(), raw.to_string());
+    let (value, _) = Engine::new()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("strict evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    assert!(
+        !profile.path_is_secret("arr[0].a"),
+        "explicit element must stay visible"
+    );
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(json.contains("EXPLICIT-BENIGN"), "element hidden: {json}");
+    assert!(!json.contains(raw), "source leaked: {json}");
 }

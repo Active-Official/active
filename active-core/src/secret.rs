@@ -687,7 +687,6 @@ impl SecretProfile {
             ProfileSelection::None => {}
         }
         let mut work = 0usize;
-        let mut transforms_abandoned = false;
         for id in &module.patches {
             work = work.saturating_add(
                 paths
@@ -703,7 +702,6 @@ impl SecretProfile {
                 paths.clear();
                 fallback_secret_paths.clear();
                 truncated = true;
-                transforms_abandoned = true;
                 break;
             }
             match module.get(*id) {
@@ -739,10 +737,10 @@ impl SecretProfile {
             }
         }
         // Schema defaults fill absent paths during evaluation; explicit
-        // values and transforms (inserted above) win. When transforms
-        // were abandoned, skip them: a benign default mapping would
-        // defeat the fail-closed reset.
-        if !transforms_abandoned {
+        // values and transforms (inserted above) win. When any bound
+        // stopped the walk, skip defaults: registering an unvisited
+        // path as a benign default would defeat fail-closed analysis.
+        if !truncated {
             if let Some(schema) = module.schema {
                 truncated |= collect_default_paths(module, schema, "", &mut paths);
             }

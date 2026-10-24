@@ -97,7 +97,8 @@ Checked only after the type accepts the value:
   anchored full match checked after `pattern`. Mismatch is T003
   `does not match format '<name>'`. An unknown name or a non-string
   argument is a once-per-field T003 schema bug
-  (`unknown format '<name>' in schema`,
+  (`unknown format '<name>' in schema` for a literal name;
+  `unknown format in schema` when the name is computed,
   `incomparable format bound for String fields`).
   Only the closed registry above is accepted so validators stay total
   (spec/schema-extensions.md section 1).
@@ -107,8 +108,9 @@ Checked only after the type accepts the value:
 
 Detail strings are structural (`below minimum`, `above maximum`,
 `too short`, `too long`, `does not match pattern`, …): evaluated
-values and bounds are **never** echoed into messages (secret
-invariant, §7).
+values and **computed** bounds are never echoed into messages (secret
+invariant, §7). A bound or expectation the schema spells as a literal
+is source text and may be quoted.
 
 ## 5. Missing keys (T004)
 
@@ -156,10 +158,10 @@ the engine so the default invocation is strict.
 ## 7. Security and determinism
 
 - Messages quote only schema-authored literals (paths, type names,
-  enum members) and kinds. Actual values, bounds, and patterns never
-  appear — a `secret()` value, an environment value, or any computed
-  bound cannot reach a diagnostic, a log, or an export through
-  validation.
+  enum members, and literal bounds/expectations) and kinds. Actual
+  values and computed bounds never appear — a `secret()` value, an
+  environment value, or any computed bound cannot reach a diagnostic,
+  a log, or an export through validation.
 - Same input → same diagnostics in the same order: schema field order
   drives the walk, message templates are fixed, and spans resolve
   deterministically (§8).

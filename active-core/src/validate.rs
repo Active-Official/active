@@ -718,16 +718,24 @@ impl<'a> Validator<'a> {
             if let Some(target) = target {
                 let filled = default_arg.is_some() && self.resilient;
                 if !filled && table_has(table, &target) {
-                    self.push(
-                        "T004",
+                    // A computed `requires` target may be material;
+                    // echo only a literal spelling.
+                    let message = if matches!(
+                        self.module.get(requires_id),
+                        Some(Node::Literal(Value::String(_)))
+                    ) {
                         format!(
                             "schema violation at '{}': missing required key (required by present '{}')",
                             display_path(&path),
                             target,
-                        ),
-                        &path,
-                        (span, file),
-                    );
+                        )
+                    } else {
+                        format!(
+                            "schema violation at '{}': missing required key (required by a computed requires target)",
+                            display_path(&path),
+                        )
+                    };
+                    self.push("T004", message, &path, (span, file));
                     return;
                 }
             }

@@ -282,6 +282,39 @@ fn constraint_redaction_honors_the_profile_override() {
 }
 
 #[test]
+fn computed_requires_target_is_not_echoed() {
+    use std::collections::HashMap;
+    let src = "req = env.R15REQ\nk = secret(req)\nschema = { s = String(requires = req), other = Int }\nother = 1\n";
+    let module = parse(src, "t004-computed").expect("must parse");
+    let mut env = HashMap::new();
+    env.insert("R15REQ".to_string(), "ENVSECRET-requires".to_string());
+    let (_, diagnostics) = Engine::hermetic()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("resilient evaluate");
+    let t004 = diagnostics
+        .iter()
+        .find(|d| d.code == "T004")
+        .expect("T004 missing required key");
+    assert!(
+        !t004.message.contains("ENVSECRET"),
+        "T004 echoed a computed requires target: {}",
+        t004.message
+    );
+}
+
+#[test]
+fn simple_toml_blob_media_is_escaped() {
+    let module = parse("f = blob(\"text/pl\\\"ain\", \"hi\")\n", "toml-escape").expect("parse");
+    let (value, _) = Engine::new().evaluate(&module).expect("evaluate");
+    let out = active_core::convert::value_to_simple_toml(&value, "");
+    assert!(
+        out.contains("media_type = \"text/pl\\\"ain\""),
+        "blob media not escaped as a TOML string: {out}"
+    );
+}
+
+#[test]
 fn unknown_computed_profile_selector_is_not_echoed() {
     use std::collections::HashMap;
     let src =

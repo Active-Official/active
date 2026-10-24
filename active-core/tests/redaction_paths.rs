@@ -73,7 +73,7 @@ fn tooling_surfaces_redact_derived_material() {
         .expect("must step");
     let taint = viz::taint_data(&module, &value);
     let budget = viz::budget_data(&module, &value, &Budget::default(), &diags);
-    let graph = active_core::graph::secret_tainted_paths_with(&module, &value);
+    let graph = active_core::graph::secret_tainted_paths_with(&module, &value, None);
     let inspect_x = active_core::convert::inspect_path(&module, &value, "x").expect("inspect x");
     let inspect_msg =
         active_core::convert::inspect_path(&module, &value, "msg").expect("inspect msg");

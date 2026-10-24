@@ -521,6 +521,11 @@ fn inspect_follows_nested_renames_and_array_removals() {
             "a[0]",
             "R15ARR",
         ),
+        (
+            "let p = env.R15NEST\nk = secret(p)\na = { b = [\"benign\", p] }\n@remove(\"a.b[0]\")\n",
+            "a.b[0]",
+            "R15NEST",
+        ),
     ] {
         let module = active_core::parse(src, "inspect-transform").expect("parse");
         let mut env = std::collections::HashMap::new();
@@ -533,6 +538,34 @@ fn inspect_follows_nested_renames_and_array_removals() {
             active_core::convert::inspect_path(&module, &evaluated, path).expect("inspect");
         assert_eq!(report["tainted"], true, "{src}: {report}");
         assert_eq!(report["value"], "***SECRET***", "{src}: {report}");
+    }
+}
+
+#[test]
+fn computed_profile_selector_survives_patches() {
+    // A computed selector's material union must follow Set and Rename.
+    for (src, path) in [
+        (
+            "let p = env.R15PATCH\nk = secret(p)\nactive_profile = env.R15PROF\nprofile \"b\" { x = p }\nx = \"base\"\n@patch(\"x\", p)\n",
+            "x",
+        ),
+        (
+            "let p = env.R15PATCH\nk = secret(p)\nactive_profile = env.R15PROF\nprofile \"b\" { x = p }\nx = \"base\"\n@rename(\"x\", \"z\")\n",
+            "z",
+        ),
+    ] {
+        let module = active_core::parse(src, "inspect-patch-union").expect("parse");
+        let mut env = std::collections::HashMap::new();
+        env.insert("R15PATCH".to_string(), "ENVSECRET-patch-union".to_string());
+        env.insert("R15PROF".to_string(), "b".to_string());
+        let (evaluated, _) = active_core::Engine::hermetic()
+            .with_env(env)
+            .evaluate(&module)
+            .expect("evaluate");
+        let report =
+            active_core::convert::inspect_path(&module, &evaluated, path).expect("inspect");
+        assert_eq!(report["tainted"], true, "{src}: {report}");
+        assert!(!report.to_string().contains("ENVSECRET"), "{src}: {report}");
     }
 }
 

@@ -140,6 +140,14 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
 - **TOML block records and escaping.** `active lock` documents its
   deterministic `[[blobs]]` records, and the simple TOML literal
   escapes a blob media type as a JSON string (valid TOML).
+- **Transform union completeness.** Nested-array `@remove` addresses
+  shift in the taint map (`a.b[0]`), and the computed-selector union
+  follows `@patch` Set, Remove, and Rename. If transform maintenance
+  exceeds its work bound, the map is discarded and unknown paths
+  report material (fail closed) instead of trusting stale entries.
+- **Computed `requires`.** T004 echoes a `requires` target only when
+  the schema spells a literal; a computed target stays value-free.
+  The graph `secret-tainted-cone` query honors `--profile`.
 
 ### SOLID → Active rename
 

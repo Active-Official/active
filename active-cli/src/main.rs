@@ -923,7 +923,11 @@ fn run_graph_query(
             if query.starts_with("secret") {
                 print_paths(
                     query,
-                    &active_core::graph::secret_tainted_paths_with(&module, &value),
+                    &active_core::graph::secret_tainted_paths_with(
+                        &module,
+                        &value,
+                        profile.as_deref(),
+                    ),
                 )
             } else {
                 let blobs = active_core::graph::blobs_above_size(&value, min_size);

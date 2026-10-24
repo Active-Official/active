@@ -192,8 +192,12 @@ pub fn secret_tainted_paths(value: &crate::ir::Value) -> Vec<String> {
 /// as a `secret(...)` locator (and anything built from it) is material
 /// even without a `Value::Secret` marker. The same profile backs
 /// `inspect` and step traces, so the query agrees with them.
-pub fn secret_tainted_paths_with(module: &Module, value: &crate::ir::Value) -> Vec<String> {
-    let profile = crate::secret::SecretProfile::analyze(module);
+pub fn secret_tainted_paths_with(
+    module: &Module,
+    value: &crate::ir::Value,
+    override_profile: Option<&str>,
+) -> Vec<String> {
+    let profile = crate::secret::SecretProfile::analyze_with_profile(module, override_profile);
     fn walk(
         value: &crate::ir::Value,
         path: String,

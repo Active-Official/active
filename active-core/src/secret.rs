@@ -213,14 +213,15 @@ fn remove_subtree(paths: &mut HashMap<String, NodeId>, path: &str) {
 }
 
 /// Split a path into its parent and last segment:
-/// `outer.a` → (`outer`, `a`), `a[2]` → (`a`, `[2]`), `a` → (``, `a`).
+/// `outer.a` → (`outer`, `a`), `a.b[0]` → (`a.b`, `[0]`), `a` → (``, `a`).
 fn split_parent(path: &str) -> (&str, &str) {
-    if let Some(index) = path.rfind('.') {
-        (&path[..index], &path[index + 1..])
-    } else if let Some(index) = path.rfind('[') {
-        (&path[..index], &path[index..])
-    } else {
-        ("", path)
+    let dot = path.rfind('.');
+    let bracket = path.rfind('[');
+    match (dot, bracket) {
+        (Some(d), Some(b)) if d > b => (&path[..d], &path[d + 1..]),
+        (_, Some(b)) => (&path[..b], &path[b..]),
+        (Some(d), None) => (&path[..d], &path[d + 1..]),
+        (None, None) => ("", path),
     }
 }
 
@@ -307,9 +308,73 @@ fn rename_subtree(paths: &mut HashMap<String, NodeId>, from: &str, to: &str) {
     paths.extend(moved);
 }
 
-/// Bound the path walk: a cyclic `let` container (`let t = { a = t }`)
-/// would otherwise mint a new path on every hop. The caller records
-/// truncation and fails closed for paths it could not register.
+/// Whether `key` is `base` or sits below it.
+fn path_under(key: &str, base: &str) -> bool {
+    key == base
+        || key
+            .strip_prefix(base)
+            .is_some_and(|rest| rest.starts_with('.') || rest.starts_with('['))
+}
+
+/// Remove a path from a path set, shifting later array indices when the
+/// path names an element.
+fn remove_from_set(set: &mut HashSet<String>, path: &str) {
+    let (array, last) = split_parent(path);
+    if let Some(rest) = last.strip_prefix('[') {
+        if let Some((digits, _)) = rest.split_once(']') {
+            if let Ok(index) = digits.parse::<usize>() {
+                if !array.is_empty() {
+                    let prefix = format!("{array}[");
+                    let mut moved = Vec::new();
+                    set.retain(|key| {
+                        if path_under(key, path) {
+                            return false;
+                        }
+                        if let Some(rest) = key.strip_prefix(&prefix) {
+                            if let Some((digits, tail)) = rest.split_once(']') {
+                                if let Ok(current) = digits.parse::<usize>() {
+                                    if current > index {
+                                        moved.push(format!("{array}[{}]{tail}", current - 1));
+                                        return false;
+                                    }
+                                }
+                            }
+                        }
+                        true
+                    });
+                    set.extend(moved);
+                    return;
+                }
+            }
+        }
+    }
+    set.retain(|key| !path_under(key, path));
+}
+
+/// Move a path set's entries with the evaluator's same-parent rename
+/// rule.
+fn rename_set(set: &mut HashSet<String>, from: &str, to: &str) {
+    if !set.iter().any(|key| path_under(key, from)) {
+        return;
+    }
+    let (parent, _) = split_parent(from);
+    let dest = if parent.is_empty() {
+        to.to_string()
+    } else {
+        format!("{parent}.{to}")
+    };
+    set.retain(|key| !path_under(key, &dest));
+    let moved: Vec<String> = set
+        .iter()
+        .filter(|key| path_under(key, from))
+        .cloned()
+        .collect();
+    for key in moved {
+        set.remove(&key);
+        let suffix = &key[from.len()..];
+        set.insert(format!("{dest}{suffix}"));
+    }
+}
 const MAX_PATH_DEPTH: usize = 256;
 const MAX_PATHS: usize = 100_000;
 /// Bound transform maintenance: orphan patches on a huge document must
@@ -615,8 +680,17 @@ impl SecretProfile {
         }
         let mut work = 0usize;
         for id in &module.patches {
-            work = work.saturating_add(paths.len().max(1));
+            work = work.saturating_add(
+                paths
+                    .len()
+                    .saturating_add(fallback_secret_paths.len())
+                    .max(1),
+            );
             if work > MAX_TRANSFORM_WORK {
+                // Fail closed: known paths may now be stale, so forget
+                // them and let unknown paths report material.
+                paths.clear();
+                fallback_secret_paths.clear();
                 truncated = true;
                 break;
             }
@@ -625,38 +699,29 @@ impl SecretProfile {
                     op: PatchOp::Set { path, value },
                 }) => {
                     truncated |= walk_paths(module, *value, path, &mut paths, true, true);
-                    // A patch replaces the evaluated value; the
-                    // fallback's paths at/under it are stale.
-                    fallback_secret_paths.retain(|known| {
-                        known != path
-                            && !known.starts_with(&format!("{path}."))
-                            && !known.starts_with(&format!("{path}["))
-                    });
+                    // A patch replaces the evaluated value; old
+                    // fallback paths at/under it are stale, and the
+                    // patch expression's material paths take over.
+                    fallback_secret_paths.retain(|known| !path_under(known, path));
+                    let mut patched = HashMap::new();
+                    truncated |= walk_paths(module, *value, path, &mut patched, true, true);
+                    for (known, node) in patched {
+                        if nodes.contains(&node) {
+                            fallback_secret_paths.insert(known);
+                        }
+                    }
                 }
                 Some(Node::PatchDirective {
                     op: PatchOp::Remove { path },
                 }) => {
                     remove_path(&mut paths, path);
-                    fallback_secret_paths.retain(|known| {
-                        known != path
-                            && !known.starts_with(&format!("{path}."))
-                            && !known.starts_with(&format!("{path}["))
-                    });
+                    remove_from_set(&mut fallback_secret_paths, path);
                 }
                 Some(Node::PatchDirective {
                     op: PatchOp::Rename { from, to },
                 }) => {
                     rename_subtree(&mut paths, from, to);
-                    if fallback_secret_paths.contains(from) {
-                        fallback_secret_paths.remove(from);
-                        let (parent, _) = split_parent(from);
-                        let dest = if parent.is_empty() {
-                            to.to_string()
-                        } else {
-                            format!("{parent}.{to}")
-                        };
-                        fallback_secret_paths.insert(dest);
-                    }
+                    rename_set(&mut fallback_secret_paths, from, to);
                 }
                 _ => {}
             }

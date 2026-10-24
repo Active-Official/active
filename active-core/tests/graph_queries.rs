@@ -18,7 +18,7 @@ fn secret_tainted_cone_includes_plain_locator_sources() {
     // A plain string used as a secret locator and an interpolation over
     // it are material without a `Value::Secret` marker.
     let (module, value) = evaluated("x = \"hunter2-gq\"\nmsg = \"prefix ${x}\"\nk = secret(x)\n");
-    let paths = active_core::graph::secret_tainted_paths_with(&module, &value);
+    let paths = active_core::graph::secret_tainted_paths_with(&module, &value, None);
     for p in ["x", "msg", "k"] {
         assert!(paths.contains(&p.to_string()), "{paths:?}");
     }

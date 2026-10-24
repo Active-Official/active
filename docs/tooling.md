@@ -107,3 +107,13 @@ active lint --format text|json|sarif --disable-lint <rule> file.active
 
 Ten rules (catalog: `docs/lint-rules.md`); JSON and SARIF shapes are
 pinned by `docs/schemas/lint.json` and SARIF 2.1.0.
+
+## Playground loop
+
+`playground/loop/` runs the full agent loop against the shipped CLI:
+generate a JSON Schema contract, check the failing document, plan the
+repair, apply one step (and see the truthful partial verdict), then
+apply the plan and evaluate the clean result. `run.ps1` and `run.sh`
+execute it; `cargo test -p active-cli --test loop_demo` asserts the same
+pipeline so the transcript stays honest.
+

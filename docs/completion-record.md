@@ -1,10 +1,12 @@
 # Master Program completion record
 
-**Date:** 2026-10-23
+**Date:** 2026-10-24
 **Version:** 1.4.0 (workspace, all crates and language packages)
 **Tree:** the commit that adds this record (see `git log -- docs/completion-record.md`)
 **Programs:** Master (`PROPOSAL.md` / `CHECKLIST.md`) and Tooling
 (`tooling/TOOLING-PROPOSAL.md` / `TOOLING-CHECKLIST.md`).
+**Close-out register:** `master-program/GAPS-AND-DRIFT.md` (every row
+marked FIXED / STILL PRESENT / ACCEPTED with evidence).
 
 ## 1. Declaration
 
@@ -50,7 +52,7 @@ the baseline rule (no parallel rewrites).
 | REPAIR-UI | browser model, partial apply, cherry-pick | `active-core/tests/repair.rs`, `spec/repair-ui.md` |
 | QUERY | schema/mode/budget CLIs, committed JSON schemas | `docs/schemas/`, `conformance/evidence/output_schema_check.py` |
 | EDITOR | VS Code status/commands/webview, Neovim Lua layer, gap notes | `editors/vscode/scripts/smoke.js`, `editors/neovim/lua/active.lua`, `editors/README.md` |
-| QUALITY | fuzz CI job, property tests, benches, golden CLI tests | `.github/workflows/conformance.yml`, `active-lsp/tests/properties.rs`, `active-lsp/benches/analysis.rs` |
+| QUALITY | fuzz CI job, property tests, benches, golden CLI tests | `.github/workflows/fuzz.yml`, `fuzz/Cargo.toml` (three libFuzzer targets), `active-lsp/tests/properties.rs`, `active-lsp/benches/analysis.rs`, `active-core/benches/tooling.rs` |
 | DOCS-TOOLING | tooling guide, headless flows, descriptor features | `docs/tooling.md`, `docs/agent-headless.md` |
 | TOOLING-FINAL | version alignment, VSIX + Neovim + docs artifacts | `release.yml` jobs, `packaging/test_package_neovim.py` |
 
@@ -65,10 +67,13 @@ productized; debugger; visualizers; capability descriptor (13 tools,
 normative in `spec/agent-interchange-profile.md` and
 `spec/tool-result-envelope.md`, with a conforming example
 (`examples/agent-interchange/tool-result.active`) and conformance test
-(`active-core/tests/agent_interchange.rs`). Playground remains the
-browser evaluator; the full generate→check→repair→partial-eval loop is
-demonstrated headlessly in `docs/agent-headless.md` (the hosted
-playground is a separate optional surface).
+(`active-core/tests/agent_interchange.rs`). The playground now ships the
+full generate → check → repair plan → partial apply → eval → full repair
+loop in `playground/loop/` (`run.ps1`, `run.sh`, README transcript);
+`cargo test -p active-cli --test loop_demo` drives the same pipeline
+through the shipped binary so the demo cannot drift. The hosted
+playground remains the browser evaluator; the headless walkthrough is in
+`docs/agent-headless.md`.
 
 ## 5. Verification battery (this tree)
 
@@ -83,7 +88,7 @@ playground is a separate optional surface).
 | Miri (trace + blob units) | pass, no UB |
 | Codegen equivalence | `CODEGEN: ALL PASS` |
 | Agent-kit eval | `ok: true`, 5 improved per loop, mean 1.5 |
-| Catalog diff | 78 emitted, 79 catalogued, 0 missing |
+| Catalog diff | 83 emitted, 84 catalogued, 0 missing (E009 intentionally unassigned) |
 | Prompt pack | 14/14 copilot, 12/14 direct |
 | Output schemas | 8/8 documents validate |
 | Editor smoke | 6 commands, redaction probe pass |

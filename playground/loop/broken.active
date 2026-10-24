@@ -1,0 +1,9 @@
+schema = {
+  closed = true,
+  application_database_port = Int,
+  application_database_host = String,
+  application_cache_ttl_seconds = Int,
+}
+application_database_prt = 8080
+application_database_hots = "localhost"
+application_cache_ttl_seconds = 30

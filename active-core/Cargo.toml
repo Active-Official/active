@@ -42,3 +42,7 @@ codspeed-criterion-compat = "2"
 [[bench]]
 name = "eval"
 harness = false
+
+[[bench]]
+name = "tooling"
+harness = false

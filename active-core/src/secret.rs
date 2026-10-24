@@ -856,6 +856,15 @@ impl SecretProfile {
         for (name, id) in &module.bindings {
             truncated |= walk_paths(module, *id, name, &mut paths, false, false);
         }
+        // Nodes that exist only because a binding references them. A
+        // profile path inheriting materiality may mark its own node for
+        // traces/provenance, but not a literal shared with a benign
+        // binding (that would hide an unrelated export).
+        let binding_nodes: HashSet<NodeId> = paths
+            .iter()
+            .filter(|(path, _)| !data_paths.contains(*path))
+            .map(|(_, id)| *id)
+            .collect();
         // A schema default may itself be material (an env locator) and
         // a profile may override that path before the fill runs.
         // Collect defaults into a scratch map before materiality is
@@ -958,8 +967,7 @@ impl SecretProfile {
                                     // material value is material; a
                                     // profile-provided value at an
                                     // absent path answers for itself.
-                                    let provided_only = !base_paths.contains_key(path)
-                                        && !data_paths.contains(path);
+                                    let provided_only = !data_paths.contains(path);
                                     if !provided_only && path_is_material(&material_paths, path) {
                                         replacement_prefixes.push(path.clone());
                                     }
@@ -969,8 +977,7 @@ impl SecretProfile {
                                 remove_subtree(&mut paths, path);
                             }
                             for (path, node) in &profile_paths {
-                                let provided_only =
-                                    !base_paths.contains_key(path) && !data_paths.contains(path);
+                                let provided_only = !data_paths.contains(path);
                                 let own = nodes.contains(node);
                                 let inherited =
                                     !provided_only && path_is_material(&material_paths, path);
@@ -982,10 +989,13 @@ impl SecretProfile {
                                     fallback_secret_paths.insert(path.clone());
                                 } else if inherited || under {
                                     // Path-inherited materiality stays
-                                    // path-based: marking the resolved
-                                    // node would taint shared binding
-                                    // targets (`u = b` hiding `u`).
+                                    // path-based, plus the node itself
+                                    // for traces/provenance unless a
+                                    // binding shares that exact node.
                                     fallback_secret_paths.insert(path.clone());
+                                    if !binding_nodes.contains(node) {
+                                        nodes.insert(*node);
+                                    }
                                 }
                             }
                             let profile_keys: Vec<String> = profile_paths.keys().cloned().collect();
@@ -1025,15 +1035,13 @@ impl SecretProfile {
                                 if path_merge {
                                     continue;
                                 }
-                                let provided_only =
-                                    !base_paths.contains_key(path) && !data_paths.contains(path);
+                                let provided_only = !data_paths.contains(path);
                                 if !provided_only && path_is_material(&material_paths, path) {
                                     replacement_prefixes.push(path.clone());
                                 }
                             }
                             for (path, node) in profile_paths {
-                                let provided_only =
-                                    !base_paths.contains_key(&path) && !data_paths.contains(&path);
+                                let provided_only = !data_paths.contains(&path);
                                 let own = nodes.contains(&node);
                                 let inherited =
                                     !provided_only && path_is_material(&material_paths, &path);

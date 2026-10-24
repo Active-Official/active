@@ -248,7 +248,10 @@ applied there. Renames additionally require the high band
   value would publish it. The T005 is collected with its suggestion
   and the tree is kept as-is. Otherwise (low score, mistyped value,
   or taken target) the T005 is collected with its suggestion and the
-  tree is kept as-is.
+  tree is kept as-is. A rename target is applied verbatim; a target
+  that is not a valid dotted path segment (for example a numeric key)
+  is reachable by evaluation but not by later `@patch`/`inspect` paths,
+  so identifier targets are the portable choice.
 
 ### 10.2 String coercion (C-016 phase 3, wired here)
 

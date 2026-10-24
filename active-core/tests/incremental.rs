@@ -512,3 +512,37 @@ fn store_clear_fires_and_recovers_under_version_churn() {
         .expect("must evaluate");
     assert_eq!(memo.last_eval_count, 0, "store broken after clear");
 }
+
+#[test]
+fn memo_does_not_serve_a_lazy_env_fallback_across_engines() {
+    // A fallback value cannot be hashed; the memo must not serve one
+    // engine's answer to another (or to an engine without a fallback).
+    use std::sync::Arc;
+    let module = parse("x = env.MEMO_FALLBACK_MISSING\n", "memo-fallback").expect("parse");
+    let mut memo = IncrementalMemo::default();
+    let x_of = |value: &Value| match value {
+        Value::Table(map) => map.get("x").cloned().expect("x"),
+        other => panic!("expected table, got {other:?}"),
+    };
+    let first = Engine::hermetic()
+        .with_env_fallback(Arc::new(|name: &str| {
+            (name == "MEMO_FALLBACK_MISSING").then(|| "FIRST".to_string())
+        }))
+        .evaluate_incremental(&module, &mut memo)
+        .expect("first")
+        .0;
+    assert!(matches!(x_of(&first), Value::String(s) if s == "FIRST"));
+    let second = Engine::hermetic()
+        .with_env_fallback(Arc::new(|name: &str| {
+            (name == "MEMO_FALLBACK_MISSING").then(|| "SECOND".to_string())
+        }))
+        .evaluate_incremental(&module, &mut memo)
+        .expect("second")
+        .0;
+    assert!(matches!(x_of(&second), Value::String(s) if s == "SECOND"));
+    let none = Engine::hermetic()
+        .evaluate_incremental(&module, &mut memo)
+        .expect("none")
+        .0;
+    assert!(matches!(x_of(&none), Value::Null));
+}

@@ -734,7 +734,7 @@ pub struct IncrementalMemo {
     // any configuration change clears the store before the walk, so a
     // flag flip or mode change can never serve a stale tree (or a
     // warning-less diagnostic set) across modes.
-    config: Option<(bool, Option<String>, Budget, bool, Mode)>,
+    config: Option<(bool, Option<String>, Budget, bool, Mode, bool)>,
     salt: u64,
     pub last_eval_count: u64,
     pub last_memo_hits: u64,
@@ -915,6 +915,12 @@ fn fingerprint_one(
             fp_value(&mut hasher, v);
         }
         Node::Env { name, default } => {
+            // A lazy host fallback can answer for an absent key with a
+            // value this engine cannot hash. Never memoize that node
+            // (or anything depending on it) across engines.
+            if engine.env_fallback.is_some() && !engine.env.contains_key(name) {
+                return None;
+            }
             1u8.hash(&mut hasher);
             name.hash(&mut hasher);
             engine.env.get(name).hash(&mut hasher);
@@ -1188,6 +1194,7 @@ impl Engine {
             self.budget,
             self.materialise_blobs,
             module.mode,
+            self.env_fallback.is_some(),
         );
         if memo.config.as_ref() != Some(&token) {
             memo.map.clear();

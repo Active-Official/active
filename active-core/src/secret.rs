@@ -574,7 +574,15 @@ fn patch_destination_applies(module: &Module, paths: &HashMap<String, NodeId>, p
 /// containers (`arr[0]`, `arr[1]`, …). No wildcard alias is emitted:
 /// one alias for several concrete sub-paths would make materiality
 /// depend on map iteration order.
-fn expand_default_path(pattern: &str, data_paths: &HashSet<String>) -> Vec<String> {
+fn expand_default_path(
+    pattern: &str,
+    data_paths: &HashSet<String>,
+    work: &mut usize,
+) -> Vec<String> {
+    *work = work.saturating_add(data_paths.len().max(1));
+    if *work > MAX_TRANSFORM_WORK {
+        return vec![pattern.to_string()];
+    }
     let Some(bracket) = pattern.find("[]") else {
         return vec![pattern.to_string()];
     };
@@ -597,7 +605,7 @@ fn expand_default_path(pattern: &str, data_paths: &HashSet<String>) -> Vec<Strin
             continue;
         }
         let concrete = format!("{prefix}[{index}]{suffix}");
-        out.extend(expand_default_path(&concrete, data_paths));
+        out.extend(expand_default_path(&concrete, data_paths, work));
     }
     if out.is_empty() {
         vec![pattern.to_string()]
@@ -609,8 +617,13 @@ fn expand_default_path(pattern: &str, data_paths: &HashSet<String>) -> Vec<Strin
 /// Materiality contributed by one schema default: each concrete
 /// expansion is material when no explicit data covers that exact path
 /// (the fill cannot run).
-fn add_default_material_paths(path: &str, data_paths: &HashSet<String>, out: &mut HashSet<String>) {
-    for concrete in expand_default_path(path, data_paths) {
+fn add_default_material_paths(
+    path: &str,
+    data_paths: &HashSet<String>,
+    out: &mut HashSet<String>,
+    work: &mut usize,
+) {
+    for concrete in expand_default_path(path, data_paths, work) {
         if !data_paths.contains(&concrete) {
             out.insert(concrete);
         }
@@ -1108,9 +1121,15 @@ impl SecretProfile {
             .map(|(path, _)| path.clone())
             .collect();
         if !defaults_truncated {
+            let mut default_work = 0usize;
             for (path, id) in &default_paths {
                 if nodes.contains(id) {
-                    add_default_material_paths(path, &data_paths, &mut material_paths);
+                    add_default_material_paths(
+                        path,
+                        &data_paths,
+                        &mut material_paths,
+                        &mut default_work,
+                    );
                 }
             }
         }
@@ -1141,6 +1160,10 @@ impl SecretProfile {
         // material even though the profile was processed first (map
         // iteration order must not decide taint).
         let mut computed_profile_paths: Vec<(String, NodeId)> = Vec::new();
+        // Shared work bound across profile fields: each field walks a
+        // fresh map, so the per-map MAX_PATHS alone cannot bound the
+        // merged analysis. On exhaustion, fail closed for the document.
+        let mut profile_work = 0usize;
         match selection {
             ProfileSelection::Named(name) => {
                 if let Some(id) = module.profiles.get(&name) {
@@ -1156,6 +1179,15 @@ impl SecretProfile {
                             let profile_truncated =
                                 walk_paths(module, *child, key, &mut profile_paths, true, !merge);
                             truncated |= profile_truncated;
+                            profile_work = profile_work
+                                .saturating_add(profile_paths.len())
+                                .saturating_add(paths.len());
+                            if profile_work > MAX_TRANSFORM_WORK {
+                                truncated = true;
+                                paths.clear();
+                                fallback_secret_paths.clear();
+                                break;
+                            }
                             if base_truncated || profile_truncated {
                                 // Fail closed: mark the whole selected
                                 // subtree, keep every path material, and
@@ -1193,6 +1225,14 @@ impl SecretProfile {
                                     }
                                 }
                             }
+                            profile_work = profile_work
+                                .saturating_add(replaces.len().saturating_mul(paths.len()));
+                            if profile_work > MAX_TRANSFORM_WORK {
+                                truncated = true;
+                                paths.clear();
+                                fallback_secret_paths.clear();
+                                break;
+                            }
                             for path in &replaces {
                                 remove_subtree(&mut paths, path);
                             }
@@ -1227,7 +1267,7 @@ impl SecretProfile {
                 }
             }
             ProfileSelection::Computed => {
-                for id in module.profiles.values() {
+                'profiles: for id in module.profiles.values() {
                     if let Some(Node::Table { fields }) = module.get(*id) {
                         for (key, child) in fields {
                             let base_node = base_paths.get(key).copied();
@@ -1237,6 +1277,15 @@ impl SecretProfile {
                             let profile_truncated =
                                 walk_paths(module, *child, key, &mut profile_paths, true, !merge);
                             truncated |= profile_truncated;
+                            profile_work = profile_work
+                                .saturating_add(profile_paths.len())
+                                .saturating_add(paths.len());
+                            if profile_work > MAX_TRANSFORM_WORK {
+                                truncated = true;
+                                paths.clear();
+                                fallback_secret_paths.clear();
+                                break 'profiles;
+                            }
                             if base_truncated || profile_truncated {
                                 for node in profile_paths.values() {
                                     secret_subtree(module, *node, &mut nodes);
@@ -1473,8 +1522,9 @@ impl SecretProfile {
             // over every container the evaluated tree can have.
             let mut expansion_paths: HashSet<String> = paths.keys().cloned().collect();
             expansion_paths.extend(computed_profile_paths.iter().map(|(path, _)| path.clone()));
+            let mut expansion_work = 0usize;
             for (path, node) in default_paths {
-                for concrete in expand_default_path(&path, &expansion_paths) {
+                for concrete in expand_default_path(&path, &expansion_paths, &mut expansion_work) {
                     if export_paths.contains(&concrete) {
                         // Explicit values, profile overrides, and patch
                         // destinations win over a fill.

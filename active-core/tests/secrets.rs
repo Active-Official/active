@@ -1435,3 +1435,32 @@ fn successful_set_into_an_env_fallback_table_is_a_rename_candidate() {
     let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
     assert!(!json.contains(raw), "fallback Set leaked: {json}");
 }
+
+#[test]
+fn profile_analysis_work_is_bounded_and_fails_closed() {
+    // F1 (review 36): many profile fields sharing a large table must
+    // not run an unbounded merge; the shared work bound trips and the
+    // document fails closed (unknown paths are material).
+    let mut big = String::from("let big = {");
+    for i in 0..200 {
+        if i > 0 {
+            big.push(',');
+        }
+        big.push_str(&format!("k{i} = 1"));
+    }
+    big.push_str("}\n");
+    let mut src = String::from("let p = env.R36_SRC\nk = secret(p)\n");
+    src.push_str(&big);
+    src.push_str("z = \"benign\"\nactive_profile = \"p\"\nprofile \"p\" {\n");
+    for i in 0..600 {
+        src.push_str(&format!("  f{i} = big\n"));
+    }
+    src.push_str("}\n");
+    std::env::set_var("R36_SRC", "bounded-source-r36");
+    let module = parse(&src, "profile-work-bound").expect("parse");
+    let profile = active_core::secret::SecretProfile::analyze_with_profile(&module, Some("p"));
+    assert!(
+        profile.path_is_secret("z"),
+        "work-bound trip must fail closed"
+    );
+}

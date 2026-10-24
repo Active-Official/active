@@ -223,6 +223,12 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   count as export or rename candidates, so a rename cannot clear a
   destination's taint and an unselected key cannot suppress a material
   default fill.
+- **Analysis stays bounded.** Profile merging shares one work bound
+  across fields and replacements (a pathological profile fails closed
+  instead of running an unbounded merge), and nested default expansion
+  charges a work budget and degrades to a fail-closed wildcard.
+  Incremental evaluation never memoizes a lazy env fallback answer, and
+  the memo config token records the fallback presence.
 - **Patch and transform modeling is structural.** A successful
   `@patch` Set registers its destination as a rename/default candidate;
   a failed Set (W004) registers nothing. Computed-selector profile

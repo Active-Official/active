@@ -419,6 +419,30 @@ fn first_code(src: &str) -> Option<String> {
 }
 
 #[test]
+fn container_steps_mark_non_string_material_leaves() {
+    // A number used as a secret locator is material. Containers keep
+    // their shape but the material leaf is marked by path, not by the
+    // runtime string sweep (which only sees strings).
+    let module =
+        parse("let x = 42\nk = secret(x)\nt = { a = x }\n", "debug-number").expect("parse");
+    let (_, _, steps) = Engine::new()
+        .evaluate_with_steps(&module)
+        .expect("evaluate");
+    let table = steps
+        .iter()
+        .find(|step| step.path.as_deref() == Some("t"))
+        .expect("t step");
+    assert_eq!(table.value["a"], "***SECRET***", "{:?}", table.value);
+    let root = steps.last().expect("root step");
+    assert_eq!(root.value["t"]["a"], "***SECRET***", "{:?}", root.value);
+    let rendered = serde_json::to_string(&steps).expect("json");
+    assert!(
+        !rendered.contains("42"),
+        "non-string material leaked into a step: {rendered}"
+    );
+}
+
+#[test]
 fn step_trace_redacts_interpolated_secret_sources() {
     // A plain string used as a locator stays material through an
     // interpolation: the step must render the marker and report taint,
@@ -505,18 +529,50 @@ fn reduction_fails_closed_for_dotted_and_malformed_env_calls() {
 
 #[test]
 fn reduction_never_deletes_a_malformed_secret_call() {
-    // If the call line were deletable, the reducer could keep the
-    // binding literal and strand it. The call's lines are protected.
+    // The target lives on an independent line, so removing the call
+    // line would not break the target by itself — only the protected
+    // line set keeps the call (and its fail-closed redaction) present.
     for src in [
-        "loc = \"hunter2-KEEP\"\ntoken = secret.env.(loc)\nnoise = 1\n",
-        "loc = \"hunter2-KEEP\"\ntoken = secret..(loc)\nnoise = 1\n",
-        "loc = \"hunter2-KEEP\"\ntoken = secret env(loc)\nnoise = 1\n",
-        "loc = \"hunter2-KEEP\"\ntoken = secret.env(\"NAME\" default = loc)\nnoise = 1\n",
+        "loc = \"hunter2-KEEP\"\ntoken = secret.env.(loc)\nbad = 1 + true\n",
+        "loc = \"hunter2-KEEP\"\ntoken = secret..(loc)\nbad = 1 + true\n",
+        "loc = \"hunter2-KEEP\"\ntoken = secret env(loc)\nbad = 1 + true\n",
+        "loc = \"hunter2-KEEP\"\ntoken = secret.env(\"NAME\" default = loc)\nbad = 1 + true\n",
     ] {
-        let code = first_code(src).unwrap_or_else(|| "E001".to_string());
-        let (reduced, _) = debug::reduce(src, &code, 250);
+        let (reduced, _) = debug::reduce(src, "T001", 250);
         assert!(
             reduced.contains("secret"),
+            "secret call was deleted for {src:?}: {reduced:?}"
+        );
+        let report = debug::minimal_case(src, "T001", 250);
+        assert!(
+            !report.to_string().contains("hunter2"),
+            "leak for {src:?}: {report}"
+        );
+    }
+}
+
+#[test]
+fn reduction_is_case_insensitive_and_protects_dotted_calls() {
+    for (src, code) in [
+        ("token = Secret(\"hunter2-CAP\")\nbad = 1 + true\n", "E002"),
+        (
+            "loc = \"hunter2-STR\" extra\ntoken = secret.Env(loc)\nbad = 1 + true\n",
+            "E003",
+        ),
+        (
+            "loc = \"hunter2-MIX\" extra\ntoken = Secret.Env(loc)\nbad = 1 + true\n",
+            "E002",
+        ),
+    ] {
+        let report = debug::minimal_case(src, code, 250);
+        let rendered = report.to_string();
+        assert!(
+            !rendered.contains("hunter2"),
+            "leak for {src:?}: {rendered}"
+        );
+        let reduced = report["reduced"].as_str().unwrap_or("");
+        assert!(
+            reduced.to_ascii_lowercase().contains("secret"),
             "secret call was deleted for {src:?}: {reduced:?}"
         );
     }

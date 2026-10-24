@@ -297,6 +297,77 @@ fn repair_action_uses_included_schema_and_stays_in_the_buffer() {
 }
 
 #[test]
+fn untitled_buffers_do_not_read_includes_from_disk() {
+    let doc = analysis::open_doc(
+        Url::parse("untitled:hermetic").expect("url"),
+        "include \"definitely-not-here.active\"\nlocal = 1\n".to_string(),
+        1,
+        None,
+    );
+    assert!(
+        doc.parse_diags.is_empty(),
+        "an untitled include must not be loaded: {:?}",
+        doc.parse_diags
+    );
+    let value = doc.value.as_ref().expect("value");
+    let active_core::Value::Table(map) = value else {
+        panic!("expected a table, got {value:?}");
+    };
+    assert!(matches!(map.get("local"), Some(active_core::Value::Int(1))));
+    assert!(!map.contains_key("included_key"), "{map:?}");
+}
+
+#[test]
+fn analysis_and_repair_ignore_ambient_environment() {
+    // H3 regression: the server engine is hermetic. Setting a process
+    // variable must not change the evaluated tree or a repair action.
+    std::env::set_var("ACTIVE_LSP_REPAIR_PROBE", "from-ambient");
+    let doc = open("p = env.ACTIVE_LSP_REPAIR_PROBE\nname = p ?: \"fallback\"\n");
+    let value = doc.value.as_ref().expect("evaluated value");
+    let active_core::Value::Table(map) = value else {
+        panic!("expected a table, got {value:?}");
+    };
+    assert!(
+        matches!(map.get("p"), Some(active_core::Value::Null)),
+        "ambient environment reached analysis: {map:?}"
+    );
+    let actions = analysis::code_actions(
+        &doc,
+        Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 0,
+            },
+        },
+    );
+    for action in &actions {
+        let rendered = format!("{action:?}");
+        assert!(
+            !rendered.contains("from-ambient"),
+            "repair action used ambient state: {rendered}"
+        );
+    }
+    std::env::remove_var("ACTIVE_LSP_REPAIR_PROBE");
+}
+
+#[test]
+fn inlay_hints_withhold_material_values() {
+    // A plain number used as a secret locator must not publish its
+    // normalized value in a hint.
+    let doc = open("let x = 42\nk = secret(x)\nq = 1ms * x\n");
+    let hints = analysis::inlay_hints(&doc, None);
+    for hint in &hints {
+        let label = format!("{:?}", hint.label);
+        assert!(!label.contains("42"), "inlay hint leaked material: {label}");
+    }
+    assert!(!hints.is_empty(), "hints expected for a valid document");
+}
+
+#[test]
 fn document_symbols_exclude_included_files() {
     let dir = std::env::temp_dir().join(format!("active-lsp-symbols-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("temp dir");

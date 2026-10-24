@@ -344,6 +344,34 @@ fn codegen_is_byte_stable_across_runs() {
 }
 
 #[test]
+fn blob_helper_names_never_collide_with_user_types() {
+    let module = parse(
+        "schema = { logo = Blob(media_type = \"image/png\") }\n",
+        "generate",
+    )
+    .expect("schema must parse");
+    let go = schema_to_go(&module, "ActiveBlob").expect("go");
+    assert_eq!(
+        go.matches("type ActiveBlob struct").count(),
+        1,
+        "helper name duplicated:\n{go}"
+    );
+    assert!(go.contains("type ActiveBlob_ struct"), "{go}");
+    let rs = schema_to_rust(&module, "ActiveBlob").expect("rs");
+    assert_eq!(
+        rs.matches("pub struct ActiveBlob {").count(),
+        1,
+        "helper name duplicated:\n{rs}"
+    );
+    assert!(rs.contains("pub struct ActiveBlob_"), "{rs}");
+    let py = schema_to_python(&module, "ActiveBlob").expect("py");
+    assert!(
+        py.contains("class ActiveBlob_(TypedDict)"),
+        "root type was shadowed:\n{py}"
+    );
+}
+
+#[test]
 fn codegen_artifacts_carry_version_stamps() {
     use active_core::convert::CODEGEN_VERSION;
     assert_eq!(CODEGEN_VERSION, 3);
@@ -410,6 +438,19 @@ fn blob_codegen_emits_identity_shape_on_all_targets() {
     .expect("schema must parse");
     let schema = schema_to_json_schema(&module).expect("jsonschema");
     assert_eq!(schema["properties"]["logo"]["x-active-blob"], true);
+    let wrapper = &schema["properties"]["logo"]["properties"]["$active.blob"];
+    assert_eq!(wrapper["type"], "object", "{schema}");
+    assert_eq!(
+        wrapper["required"],
+        serde_json::json!(["hash", "size", "media_type", "tainted"]),
+        "{schema}"
+    );
+    assert_eq!(wrapper["additionalProperties"], false, "{schema}");
+    assert_eq!(
+        schema["properties"]["logo"]["required"],
+        serde_json::json!(["$active.blob"]),
+        "{schema}"
+    );
     assert_eq!(
         schema["properties"]["logo"]["x-active-media-type"],
         "image/png"

@@ -1154,12 +1154,14 @@ impl<'a> Validator<'a> {
             match self.values.get(&media_id) {
                 Some(Value::String(expected)) => {
                     if media_type != expected {
+                        // The actual media type may come from an env
+                        // lookup used as a secret locator; only the
+                        // schema-authored expectation is safe to echo.
                         self.push(
                             crate::blob::code::MEDIA_MISMATCH,
                             format!(
-                                "schema violation at '{}': blob media type '{}' does not match expected '{}'",
+                                "schema violation at '{}': blob media type does not match expected '{}'",
                                 display_path(path),
-                                media_type,
                                 expected,
                             ),
                             path,

@@ -206,6 +206,67 @@ fn blob_aliases_are_charged_per_clone() {
 }
 
 #[test]
+fn blob_data_or_media_from_a_secret_source_is_tainted() {
+    use std::collections::HashMap;
+    fn engine(env_name: &str, value: &str) -> Engine {
+        let mut env = HashMap::new();
+        env.insert(env_name.to_string(), value.to_string());
+        Engine::hermetic().with_env(env)
+    }
+    // Data material: public media type, secret-derived bytes.
+    let data_src = "p = env.BLOB_DATA\nk = secret(p)\nf = blob(\"text/plain\", p)\n";
+    let module = parse(data_src, "blob-data").expect("must parse");
+    let (value, _) = engine("BLOB_DATA", "ENVSECRET-data")
+        .evaluate(&module)
+        .expect("must evaluate");
+    let json = value_to_json(&value);
+    assert_eq!(json["f"]["$active.blob"]["tainted"], true, "{json}");
+    assert!(
+        json["f"]["$active.blob"].get("payload_b64").is_none(),
+        "tainted blob kept a payload: {json}"
+    );
+    assert_eq!(
+        json["f"]["$active.blob"]["media_type"], "***SECRET***",
+        "a tainted identity redacts its media type: {json}"
+    );
+    let mut demanding = engine("BLOB_DATA", "ENVSECRET-data");
+    demanding.materialise_blobs = true;
+    let (value, _) = demanding.evaluate(&module).expect("evaluate");
+    assert_eq!(
+        require_materialised(&value)
+            .expect_err("tainted demand")
+            .code(),
+        "B003"
+    );
+
+    // Media material: public data, secret-derived media type.
+    let media_src = "m = env.BLOB_MEDIA\nk = secret(m)\nf = blob(m, \"data\")\n";
+    let module = parse(media_src, "blob-media").expect("must parse");
+    let (value, _) = engine("BLOB_MEDIA", "ENVSECRET-media")
+        .evaluate(&module)
+        .expect("must evaluate");
+    let json = value_to_json(&value);
+    assert_eq!(json["f"]["$active.blob"]["tainted"], true, "{json}");
+    assert_eq!(
+        json["f"]["$active.blob"]["media_type"], "***SECRET***",
+        "a material media type must be redacted: {json}"
+    );
+    assert!(
+        !json["f"].to_string().contains("ENVSECRET"),
+        "the blob identity leaked its media type: {json}"
+    );
+    let mut demanding = engine("BLOB_MEDIA", "ENVSECRET-media");
+    demanding.materialise_blobs = true;
+    let (value, _) = demanding.evaluate(&module).expect("evaluate");
+    assert_eq!(
+        require_materialised(&value)
+            .expect_err("tainted demand")
+            .code(),
+        "B003"
+    );
+}
+
+#[test]
 fn blob_toml_and_yaml_carry_identity_shape() {
     let (value, _) = evaluated("f = blob(\"text/plain\", \"hello\")\n");
     let (toml, _) = active_core::convert::value_to_toml_string(&value).expect("toml");

@@ -921,7 +921,10 @@ fn run_graph_query(
                 report(d, &name);
             }
             if query.starts_with("secret") {
-                print_paths(query, &active_core::graph::secret_tainted_paths(&value))
+                print_paths(
+                    query,
+                    &active_core::graph::secret_tainted_paths_with(&module, &value),
+                )
             } else {
                 let blobs = active_core::graph::blobs_above_size(&value, min_size);
                 match format {

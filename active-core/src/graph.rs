@@ -188,6 +188,62 @@ pub fn secret_tainted_paths(value: &crate::ir::Value) -> Vec<String> {
     out
 }
 
+/// Structural variant of [`secret_tainted_paths`]: a plain value used
+/// as a `secret(...)` locator (and anything built from it) is material
+/// even without a `Value::Secret` marker. The same profile backs
+/// `inspect` and step traces, so the query agrees with them.
+pub fn secret_tainted_paths_with(module: &Module, value: &crate::ir::Value) -> Vec<String> {
+    let profile = crate::secret::SecretProfile::analyze(module);
+    fn walk(
+        value: &crate::ir::Value,
+        path: String,
+        profile: &crate::secret::SecretProfile,
+        out: &mut Vec<String>,
+    ) -> bool {
+        use crate::ir::Value;
+        let structural = profile.path_is_secret(&path);
+        let tainted = match value {
+            Value::Secret(_) => true,
+            Value::Blob { tainted: true, .. } => true,
+            Value::Blob { .. } => structural,
+            Value::Array(items) => {
+                let mut any = structural;
+                for (i, item) in items.iter().enumerate() {
+                    let child = if path.is_empty() {
+                        format!("[{i}]")
+                    } else {
+                        format!("{path}[{i}]")
+                    };
+                    any |= walk(item, child, profile, out);
+                }
+                any
+            }
+            Value::Table(map) => {
+                let mut any = structural;
+                for (key, val) in map {
+                    let child = if path.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{path}.{key}")
+                    };
+                    any |= walk(val, child, profile, out);
+                }
+                any
+            }
+            _ => structural,
+        };
+        if tainted && !path.is_empty() {
+            out.push(path);
+        }
+        tainted
+    }
+    let mut out = Vec::new();
+    walk(value, String::new(), &profile, &mut out);
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// Blobs at or above a size floor in an evaluated value: `(path,
 /// size, blake3-hex)` triples. Identity metadata only — payloads
 /// never enter the output.

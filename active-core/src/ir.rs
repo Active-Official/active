@@ -643,9 +643,16 @@ impl Serialize for Value {
                     serde_json::Value::from(format!("blake3:{}", crate::blob::hash_hex(hash))),
                 );
                 inner.insert("size".to_string(), serde_json::Value::from(*size));
+                // A tainted identity may carry a material media type
+                // (an env lookup used as a locator); fail closed and
+                // redact it. `tainted` itself tells consumers why.
                 inner.insert(
                     "media_type".to_string(),
-                    serde_json::Value::from(media_type.clone()),
+                    serde_json::Value::from(if *tainted {
+                        crate::secret::MARKER.to_string()
+                    } else {
+                        media_type.clone()
+                    }),
                 );
                 inner.insert("tainted".to_string(), serde_json::Value::from(*tainted));
                 if let Some(bytes) = payload {

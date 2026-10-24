@@ -23,7 +23,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::Value as JsonValue;
 
-use crate::ir::{InterpPart, Module, Node, NodeId, Value};
+use crate::ir::{InterpPart, Module, Node, NodeId, PatchOp, Value};
 
 /// Replacement text for redacted material. Shared with the evaluator's
 /// JSON mapping so every surface emits the same marker.
@@ -121,13 +121,40 @@ impl SecretRedactor {
     /// Replace every known secret substring. Returns the redacted text,
     /// or None when nothing matched (so callers can keep their fast
     /// path and report taint honestly).
+    ///
+    /// Existing markers are opaque: the text is split on [`MARKER`] and
+    /// only the non-marker segments are scanned. A secret containing
+    /// the marker itself cannot be expressed without ambiguity; the
+    /// marker wins, deterministically.
     pub fn redact_text(&self, text: &str) -> Option<String> {
-        let mut out = text.to_string();
+        if self.values.is_empty() || text == MARKER {
+            return None;
+        }
+        let mut out = String::with_capacity(text.len());
         let mut hit = false;
-        for secret in &self.values {
-            if out.contains(secret.as_str()) {
-                out = out.replace(secret.as_str(), MARKER);
-                hit = true;
+        for (index, segment) in text.split(MARKER).enumerate() {
+            if index > 0 {
+                out.push_str(MARKER);
+            }
+            let mut cursor = 0usize;
+            while cursor < segment.len() {
+                let rest = &segment[cursor..];
+                match self
+                    .values
+                    .iter()
+                    .find(|secret| rest.starts_with(secret.as_str()))
+                {
+                    Some(secret) => {
+                        out.push_str(MARKER);
+                        cursor += secret.len();
+                        hit = true;
+                    }
+                    None => {
+                        let ch = rest.chars().next().expect("non-empty remainder");
+                        out.push(ch);
+                        cursor += ch.len_utf8();
+                    }
+                }
             }
         }
         hit.then_some(out)
@@ -160,6 +187,37 @@ impl SecretRedactor {
             }
             _ => false,
         }
+    }
+}
+
+/// Map schema-default paths to their default expression nodes. Runs
+/// after explicit values, so a document value always wins.
+fn collect_default_paths(
+    module: &Module,
+    id: NodeId,
+    prefix: &str,
+    paths: &mut HashMap<String, NodeId>,
+) {
+    match module.get(id) {
+        Some(Node::SchemaTable { fields, .. }) => {
+            for (key, child) in fields {
+                let child_path = if prefix.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{prefix}.{key}")
+                };
+                collect_default_paths(module, *child, &child_path, paths);
+            }
+        }
+        Some(Node::SchemaField { field }) => {
+            if let Some(default) = field.default {
+                paths.entry(prefix.to_string()).or_insert(default);
+            }
+        }
+        Some(Node::SchemaArray { element }) => {
+            collect_default_paths(module, *element, prefix, paths);
+        }
+        _ => {}
     }
 }
 
@@ -222,18 +280,11 @@ impl SecretProfile {
 
         // Paths for every value node reachable from the root: tables,
         // array elements, and references (which keep the referrer's
-        // path). `let` bindings resolve by name at the top level, like
-        // the evaluator.
+        // path). The root walk runs FIRST: a table field wins ties
+        // against a `let` binding, exactly like the evaluator.
         let mut paths: HashMap<String, NodeId> = HashMap::new();
-        let mut roots: Vec<(NodeId, String)> = Vec::new();
         if let Some(root) = module.root {
-            roots.push((root, String::new()));
-        }
-        for (name, id) in &module.bindings {
-            roots.push((*id, name.clone()));
-        }
-        {
-            let mut stack = roots;
+            let mut stack = vec![(root, String::new())];
             let mut seen: HashSet<(NodeId, String)> = HashSet::new();
             while let Some((id, path)) = stack.pop() {
                 if !seen.insert((id, path.clone())) {
@@ -260,6 +311,32 @@ impl SecretProfile {
                     _ => {}
                 }
             }
+        }
+        for (name, id) in &module.bindings {
+            paths.entry(name.clone()).or_insert(*id);
+        }
+        // Transforms replace the evaluated tree, so their paths map to
+        // the transform's expression: `@patch("out", p)` and a selected
+        // profile field both carry material into the final document.
+        for id in &module.patches {
+            if let Some(Node::PatchDirective {
+                op: PatchOp::Set { path, value },
+            }) = module.get(*id)
+            {
+                paths.insert(path.clone(), *value);
+            }
+        }
+        for id in module.profiles.values() {
+            if let Some(Node::Table { fields }) = module.get(*id) {
+                for (key, child) in fields {
+                    paths.insert(key.clone(), *child);
+                }
+            }
+        }
+        // Schema defaults fill absent paths during evaluation; explicit
+        // values (inserted above) win.
+        if let Some(schema) = module.schema {
+            collect_default_paths(module, schema, "", &mut paths);
         }
 
         Self {

@@ -143,6 +143,68 @@ fn arithmetic_and_ordering_on_secrets_fail_redacted() {
 }
 
 #[test]
+fn redaction_markers_are_opaque_and_stable() {
+    // A secret whose text is a substring of the marker ("SECRET") or
+    // the marker's padding ("*") must not rewrite the marker itself.
+    let src = "x = \"SECRET\"\nk = secret(x)\nstar = \"*\"\nj = secret(star)\n";
+    let module = parse(src, "marker").expect("must parse");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    assert_eq!(
+        profile.redact_text("***SECRET***"),
+        None,
+        "an existing marker must be opaque"
+    );
+    assert_eq!(
+        profile.redact_text("prefix ***SECRET*** suffix"),
+        None,
+        "markers inside text stay intact"
+    );
+    let (value, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    for path in ["x", "star"] {
+        let report = active_core::convert::inspect_path(&module, &value, path).expect("inspect");
+        assert_eq!(report["value"], "***SECRET***", "path {path}: {report}");
+    }
+    let (_, _, steps) = Engine::new()
+        .evaluate_with_steps(&module)
+        .expect("must evaluate");
+    let rendered = serde_json::to_string(&steps).expect("json");
+    assert!(
+        !rendered.contains("******"),
+        "marker was corrupted by redaction: {rendered}"
+    );
+}
+
+#[test]
+fn blob_media_diagnostics_and_inspection_redact_material() {
+    use std::collections::HashMap;
+    let src = "schema = { f = Blob(media_type = \"image/png\") }\nm = env.BLOB_MEDIA\nk = secret(m)\nf = blob(m, \"data\")\n";
+    let module = parse(src, "blob-media-redact").expect("must parse");
+    let mut env = HashMap::new();
+    env.insert("BLOB_MEDIA".to_string(), "ENVSECRET-media".to_string());
+    let (value, diagnostics) = Engine::hermetic()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("resilient evaluate");
+    let b004 = diagnostics
+        .iter()
+        .find(|d| d.code == "B004")
+        .expect("B004 media mismatch");
+    assert!(
+        !b004.message.contains("ENVSECRET-media"),
+        "B004 leaked the evaluated media type: {}",
+        b004.message
+    );
+    let report =
+        active_core::convert::inspect_path(&module, &value, "f").expect("inspect the blob");
+    assert_eq!(report["tainted"], true, "{report}");
+    assert_eq!(
+        report["content_addressed"]["media_type"], "***SECRET***",
+        "{report}"
+    );
+    assert!(!report.to_string().contains("ENVSECRET"), "{report}");
+}
+
+#[test]
 fn constraint_diagnostics_redact_interpolated_material() {
     // T006 renders the actual value; an interpolation over a secret
     // source is material even though the string has no marker.

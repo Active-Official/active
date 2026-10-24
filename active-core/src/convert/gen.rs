@@ -159,6 +159,18 @@ fn sanitize_ident(s: &str, fallback: &str) -> String {
     clean
 }
 
+/// Reserve the shared Blob helper names so a user type can never
+/// collide with them (`--name ActiveBlob` gets a deterministic suffix
+/// instead of a duplicate declaration).
+fn reserved_blob_names(has_blob: bool) -> HashSet<String> {
+    let mut taken = HashSet::new();
+    if has_blob {
+        taken.insert("ActiveBlob".to_string());
+        taken.insert("ActiveBlobValue".to_string());
+    }
+    taken
+}
+
 /// Codegen pipeline version (CHECKLIST C.008): bump on any output-shape
 /// change in any target. Emitters stamp it into every artifact next to
 /// the workspace version so agents can detect stale bindings.
@@ -336,9 +348,35 @@ fn json_schema_field(module: &Module, field: &SchemaField) -> JsonValue {
                 JsonValue::String("secret value, redacted as ***SECRET*** on export".to_string()),
             );
         }
-        // Blobs export as their identity object (spec/blob.md §5).
+        // Blobs export as the wire wrapper `{"$active.blob": {…}}`
+        // (spec/blob.md §5), so the generated schema models it exactly:
+        // the inner identity is closed, and the materialised payload is
+        // the only optional key.
         ActiveType::Blob => {
+            let mut inner = serde_json::Map::new();
+            inner.insert("type".to_string(), JsonValue::String("object".to_string()));
+            inner.insert(
+                "properties".to_string(),
+                serde_json::json!({
+                    "hash": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" },
+                    "size": { "type": "integer", "minimum": 0 },
+                    "media_type": { "type": "string" },
+                    "tainted": { "type": "boolean" },
+                    "payload_b64": { "type": "string" },
+                }),
+            );
+            inner.insert(
+                "required".to_string(),
+                serde_json::json!(["hash", "size", "media_type", "tainted"]),
+            );
+            inner.insert("additionalProperties".to_string(), JsonValue::Bool(false));
             obj.insert("type".to_string(), JsonValue::String("object".to_string()));
+            obj.insert(
+                "properties".to_string(),
+                serde_json::json!({ "$active.blob": JsonValue::Object(inner) }),
+            );
+            obj.insert("required".to_string(), serde_json::json!(["$active.blob"]));
+            obj.insert("additionalProperties".to_string(), JsonValue::Bool(false));
             obj.insert("x-active-blob".to_string(), JsonValue::Bool(true));
             if let Some(media) = literal_string(module, field.blob_media_type) {
                 obj.insert("x-active-media-type".to_string(), JsonValue::String(media));
@@ -713,20 +751,9 @@ pub fn schema_to_go(module: &Module, root_name: &str) -> Result<String, String> 
     if !matches!(module.get(root), Some(Node::SchemaTable { .. })) {
         return Err("schema block must be a table for code generation".to_string());
     }
-    let mut gen = GoGen {
-        module,
-        out: format!(
-            "{}// Validation tags follow go-playground/validator conventions.\n",
-            version_header("//")
-        ),
-        names: HashMap::new(),
-        taken: HashSet::new(),
-    };
-    let root_name = gen.type_name(root, pascal_case(&sanitize_ident(root_name, "Config")));
-    gen.emit_table(&root_name, root);
-    if module.arena.iter().any(|n| {
+    let has_blob = module.arena.iter().any(|node| {
         matches!(
-            n,
+            node,
             Node::SchemaField {
                 field: SchemaField {
                     typ: ActiveType::Blob,
@@ -734,7 +761,19 @@ pub fn schema_to_go(module: &Module, root_name: &str) -> Result<String, String> 
                 },
             }
         )
-    }) {
+    });
+    let mut gen = GoGen {
+        module,
+        out: format!(
+            "{}// Validation tags follow go-playground/validator conventions.\n",
+            version_header("//")
+        ),
+        names: HashMap::new(),
+        taken: reserved_blob_names(has_blob),
+    };
+    let root_name = gen.type_name(root, pascal_case(&sanitize_ident(root_name, "Config")));
+    gen.emit_table(&root_name, root);
+    if has_blob {
         // Shared wire shape for Blob fields (spec/blob.md §5): the
         // document carries `{"$active.blob": {hash, size, media_type,
         // tainted}}`, so the generated type models that wrapper rather
@@ -1054,6 +1093,17 @@ pub fn schema_to_rust(module: &Module, root_name: &str) -> Result<String, String
     if !matches!(module.get(root), Some(Node::SchemaTable { .. })) {
         return Err("schema block must be a table for code generation".to_string());
     }
+    let has_blob = module.arena.iter().any(|node| {
+        matches!(
+            node,
+            Node::SchemaField {
+                field: SchemaField {
+                    typ: ActiveType::Blob,
+                    ..
+                },
+            }
+        )
+    });
     let mut gen = RustGen {
         module,
         out: format!(
@@ -1062,21 +1112,11 @@ pub fn schema_to_rust(module: &Module, root_name: &str) -> Result<String, String
             version_header("//")
         ),
         names: HashMap::new(),
-        taken: HashSet::new(),
+        taken: reserved_blob_names(has_blob),
     };
     let root_name = gen.type_name(root, pascal_case(&sanitize_ident(root_name, "Config")));
     gen.emit_table(&root_name, root);
-    if module.arena.iter().any(|n| {
-        matches!(
-            n,
-            Node::SchemaField {
-                field: SchemaField {
-                    typ: ActiveType::Blob,
-                    ..
-                },
-            }
-        )
-    }) {
+    if has_blob {
         // Wire shape for Blob fields (spec/blob.md §5): evaluated
         // documents carry `{"$active.blob": {...}}`, so the struct
         // renames its single field to that key. The inner identity
@@ -1265,22 +1305,9 @@ pub fn schema_to_python(module: &Module, root_name: &str) -> Result<String, Stri
     if !matches!(module.get(root), Some(Node::SchemaTable { .. })) {
         return Err("schema block must be a table for code generation".to_string());
     }
-    let mut gen = PythonGen {
-        module,
-        out: format!(
-            "{}from typing import Any, Literal, NotRequired, TypedDict\n\n\n",
-            version_header("#")
-        ),
-        names: HashMap::new(),
-        taken: HashSet::new(),
-    };
-    let root_name = gen.type_name(root, pascal_case(&sanitize_ident(root_name, "Config")));
-    // Wire shape for Blob fields (spec/blob.md §5): class syntax cannot
-    // spell `$active.blob`, so both TypedDicts use the functional form.
-    // The wrapper comes FIRST: annotations resolve at class creation.
-    if module.arena.iter().any(|n| {
+    let has_blob = module.arena.iter().any(|node| {
         matches!(
-            n,
+            node,
             Node::SchemaField {
                 field: SchemaField {
                     typ: ActiveType::Blob,
@@ -1288,7 +1315,21 @@ pub fn schema_to_python(module: &Module, root_name: &str) -> Result<String, Stri
                 },
             }
         )
-    }) {
+    });
+    let mut gen = PythonGen {
+        module,
+        out: format!(
+            "{}from typing import Any, Literal, NotRequired, TypedDict\n\n\n",
+            version_header("#")
+        ),
+        names: HashMap::new(),
+        taken: reserved_blob_names(has_blob),
+    };
+    let root_name = gen.type_name(root, pascal_case(&sanitize_ident(root_name, "Config")));
+    // Wire shape for Blob fields (spec/blob.md §5): class syntax cannot
+    // spell `$active.blob`, so both TypedDicts use the functional form.
+    // The wrapper comes FIRST: annotations resolve at class creation.
+    if has_blob {
         gen.out.push_str(
             "ActiveBlobValue = TypedDict(\"ActiveBlobValue\", {\"hash\": str, \"size\": int, \"media_type\": str, \"tainted\": bool})\nActiveBlob = TypedDict(\"ActiveBlob\", {\"$active.blob\": ActiveBlobValue})\n\n\n",
         );

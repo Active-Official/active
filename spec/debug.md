@@ -89,17 +89,20 @@ secret literals to `"***SECRET***"`. Taint is structural, so a plain
 value used as a locator (a `let`, a table field, an environment lookup)
 and any interpolation, reference, or container built from it are
 material even without a `Value::Secret` marker; containers keep their
-shape and their material leaves carry the marker. Known secret
-substrings are redacted longest-first, so a prefixed/suffixed
-interpolation cannot reconstruct the literal. A line break between
-`secret` and `(` (which the parser rejects) is normalized for
-redaction only, so malformed calls still redact. `secret.env(NAME)`
-names are metadata and survive; later arguments (such as a default)
-are redacted. If a call has any shape other than `secret(` or
-`secret.env(` — stray dots beside `env`, `secret env(`, a
-dot-separated env name — or an env call carries anything past its
-name, the redactor fails closed by redacting every string literal in
-the document except the canonical `secret.env("NAME")` names.
+shape and every material leaf carries the marker, whatever its kind
+(a number used as a locator is material too). Known secret substrings
+are redacted longest-first, and an existing marker is opaque, so a
+secret whose text overlaps the marker cannot rewrite it. A line break
+between `secret` and `(` (which the parser rejects) is normalized for
+redaction only, so malformed calls still redact. The `secret` keyword
+matches case-insensitively, so `Secret(` and `secret.Env(` are still
+calls. `secret.env(NAME)` names are metadata and survive; later
+arguments (such as a default) are redacted. If a call has any shape
+other than `secret(` or `secret.env(` — stray dots beside `env`,
+`secret env(`, a dotted identifier run, a case variant — or an env
+call carries anything past its name, the redactor fails closed by
+redacting every string literal in the document except the canonical
+`secret.env("NAME")` names, and the reducer protects those call lines.
 Regression tests pin the locator, let/env-backed, interpolation,
 tainted-blob, newline, table-ref, reduction-stranding, and
 malformed-punctuation cases.

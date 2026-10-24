@@ -18,7 +18,9 @@ ACTIVE-core directly (parse recovering, evaluate, lint, format).
   with an empty environment snapshot and the strict budget preset,
   so ambient host values never leak into hover/completion and a
   pathological document fails closed as an X0xx diagnostic instead
-  of hanging the editor.
+  of hanging the editor. Non-file buffers (`untitled:`) record
+  `include` statements without resolving them, so the server never
+  reads its working directory on their behalf.
 - `textDocument/didOpen` (full text, `languageId: ACTIVE`),
   `didChange` (full sync), `didSave` (acknowledged; full sync means
   no state change), `didClose` (drop state, clear
@@ -220,8 +222,10 @@ determinism.
    plans the same repair `active repair` does. When the plan contains
    at least one safe step, offer the repaired source as one document
    edit. The action and `active repair` share the engine, so their
-   plans cannot drift, and included content is never copied into the
-   buffer.
+   plans cannot drift. Include declarations and keys are never copied
+   into the buffer; a repair may write a value derived from an
+   included schema (for example its default), exactly as
+   `active repair` does.
 
 ## 5.1 Formatting
 

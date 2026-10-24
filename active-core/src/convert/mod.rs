@@ -75,7 +75,16 @@ pub fn value_to_json(v: &Value) -> JsonValue {
                 json!(format!("blake3:{}", crate::blob::hash_hex(hash))),
             );
             inner.insert("size".to_string(), json!(size));
-            inner.insert("media_type".to_string(), json!(media_type));
+            inner.insert(
+                "media_type".to_string(),
+                // A tainted identity may carry a material media type;
+                // fail closed and redact it (spec/blob.md §5).
+                json!(if *tainted {
+                    crate::secret::MARKER
+                } else {
+                    media_type
+                }),
+            );
             inner.insert("tainted".to_string(), json!(tainted));
             if let Some(bytes) = payload {
                 inner.insert(

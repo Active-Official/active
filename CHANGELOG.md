@@ -71,6 +71,28 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   empty-string parent, and inspect provenance keeps real keys such as
   `node_id`. `--max-attempts` requires `--minimize` (clap usage
   error otherwise).
+- **Structural taint reaches transforms.** `inspect` resolves table
+  fields ahead of `let` names, and maps `@patch` Set targets, profile
+  fields, and schema defaults to their expressions, so a value that
+  arrived through a transform is tainted exactly like an authored one.
+  `viz taint` and the `secret-tainted-cone` graph query use the same
+  model, so plain locator sources appear there too.
+- **Secret-call spellings are case-insensitive.** `Secret(`,
+  `secret.Env(`, and dotted identifier runs are recognized as calls,
+  protected from reduction, and redacted fail-closed.
+- **Blob identity taint follows the structural model.** Data or media
+  material (including an `env` lookup used as a locator) taints the
+  blob, refuses materialisation with B003, and redacts `media_type` in
+  every export; B004 messages no longer echo the evaluated media type.
+- **Redaction markers are opaque.** A secret whose text overlaps
+  `***SECRET***` can no longer rewrite the marker.
+- **Codegen v3 completion.** JSON Schema and OpenAPI model the
+  `$active.blob` wrapper with a closed inner identity; the codegen gate
+  rejects inner-only shapes and runs the Rust decode test for real.
+  Helper type names are reserved so a user type can never collide.
+- **LSP hermeticity.** Non-file buffers never read the working
+  directory for includes; the repair action's ambient-environment
+  isolation is regression-tested.
 
 ### SOLID → Active rename
 

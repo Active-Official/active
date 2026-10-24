@@ -72,6 +72,24 @@ fn taint_edges_use_containment_for_array_elements() {
 }
 
 #[test]
+fn taint_data_includes_plain_locator_sources() {
+    let src = "x = \"hunter2-loc\"\nmsg = \"prefix ${x}\"\nk = secret(x)\n";
+    let module = parse(src, "viz-source").expect("parse");
+    let (value, _) = Engine::new().evaluate(&module).expect("evaluate");
+    let data = viz::taint_data(&module, &value);
+    let sources: Vec<&str> = data["sources"]
+        .as_array()
+        .expect("sources")
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(sources.contains(&"x"), "{sources:?}");
+    assert!(sources.contains(&"msg"), "{sources:?}");
+    assert!(sources.contains(&"k"), "{sources:?}");
+    assert!(!data.to_string().contains("hunter2"), "{data}");
+}
+
+#[test]
 fn budget_data_reports_limits_usage_and_headroom() {
     let (module, value, diags) = fixture();
     let budget = Budget::strict();

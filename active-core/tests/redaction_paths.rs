@@ -10,7 +10,8 @@ use active_core::convert::{
     value_to_toml_string, value_to_yaml_string,
 };
 use active_core::fmt::format;
-use active_core::{parse, Engine, Style};
+use active_core::viz;
+use active_core::{parse, Budget, Engine, Style};
 
 const RAW: &str = "s3cr3t-sweep-9z";
 const DOC: &str = "token = secret(\"s3cr3t-sweep-9z\")\nport = 8080\n[server]\nhost = \"h\"\n";
@@ -54,6 +55,41 @@ fn docgen_all_formats_redact() {
         assert!(
             text.contains("***SECRET***"),
             "{label} lost marker:\n{text}"
+        );
+    }
+}
+
+#[test]
+fn tooling_surfaces_redact_derived_material() {
+    // A plain value used as a secret locator (and an interpolation over
+    // it) is material without a `Value::Secret` marker. Sweep every
+    // tooling emitter over one such document so a new surface cannot
+    // regress the invariant silently.
+    let src = "x = \"s3cr3t-derived\"\nmsg = \"pre-${x}\"\nk = secret(x)\nt = { a = x }\n";
+    let module = parse(src, "sweep-derived").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    let (_, _, steps) = Engine::new()
+        .evaluate_with_steps(&module)
+        .expect("must step");
+    let taint = viz::taint_data(&module, &value);
+    let budget = viz::budget_data(&module, &value, &Budget::default(), &diags);
+    let graph = active_core::graph::secret_tainted_paths_with(&module, &value);
+    let inspect_x = active_core::convert::inspect_path(&module, &value, "x").expect("inspect x");
+    let inspect_msg =
+        active_core::convert::inspect_path(&module, &value, "msg").expect("inspect msg");
+    assert_eq!(inspect_x["tainted"], true, "{inspect_x}");
+    assert_eq!(inspect_msg["tainted"], true, "{inspect_msg}");
+    for (label, text) in [
+        ("steps", serde_json::to_string(&steps).expect("step json")),
+        ("taint", taint.to_string()),
+        ("budget", budget.to_string()),
+        ("graph", graph.join(",")),
+        ("inspect-x", inspect_x.to_string()),
+        ("inspect-msg", inspect_msg.to_string()),
+    ] {
+        assert!(
+            !text.contains("s3cr3t-derived"),
+            "{label} leaked derived material: {text}"
         );
     }
 }

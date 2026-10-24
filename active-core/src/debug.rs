@@ -253,7 +253,6 @@ fn redact_secret_literals(source: &str) -> String {
 /// so the recovering parser accepts a call broken across lines and span
 /// offsets stay valid against the original text.
 fn normalize_secret_gaps(source: &str) -> String {
-    use crate::parser::TokenKind as K;
     let lexed = crate::parser::Lexer::new(source).tokenize();
     let tokens = &lexed.tokens;
     let mut bytes = source.as_bytes().to_vec();
@@ -276,7 +275,7 @@ fn normalize_secret_gaps(source: &str) -> String {
         end_column: token.end_col,
     };
     for index in 0..tokens.len() {
-        if !matches!(tokens[index].kind, K::Secret) {
+        if !is_secret_token(tokens, index) {
             continue;
         }
         let Some(call) = call_opening(tokens, index + 1) else {
@@ -338,9 +337,7 @@ fn secret_call_lines(source: &str) -> std::collections::HashSet<u32> {
     let mut lines = std::collections::HashSet::new();
     let mut index = 0usize;
     while index < tokens.len() {
-        let is_secret =
-            matches!(tokens[index].kind, K::Secret | K::Ident) && tokens[index].text == "secret";
-        if !is_secret {
+        if !is_secret_token(tokens, index) {
             index += 1;
             continue;
         }
@@ -436,7 +433,7 @@ fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
     let mut canonical_env_names: std::collections::HashSet<(u32, u32, u32, u32)> =
         std::collections::HashSet::new();
     for probe in 0..tokens.len() {
-        if !matches!(tokens[probe].kind, K::Secret) {
+        if !is_secret_token(tokens, probe) {
             continue;
         }
         let Some(call) = call_opening(tokens, probe + 1) else {
@@ -460,9 +457,7 @@ fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
     }
     let mut index = 0usize;
     while index < tokens.len() {
-        let is_secret =
-            matches!(tokens[index].kind, K::Secret | K::Ident) && tokens[index].text == "secret";
-        if !is_secret {
+        if !is_secret_token(tokens, index) {
             index += 1;
             continue;
         }
@@ -593,12 +588,22 @@ struct CallOpen {
     malformed: bool,
 }
 
+/// Case-insensitive `secret` keyword or identifier. Malformed spellings
+/// (`Secret(`) are still secret calls for display purposes.
+fn is_secret_token(tokens: &[crate::parser::Token], index: usize) -> bool {
+    use crate::parser::TokenKind as K;
+    tokens.get(index).is_some_and(|token| {
+        matches!(token.kind, K::Secret | K::Ident) && token.text.eq_ignore_ascii_case("secret")
+    })
+}
+
 fn call_opening(tokens: &[crate::parser::Token], start: usize) -> Option<CallOpen> {
     use crate::parser::TokenKind as K;
     let mut probe = skip_layout(tokens, start);
     let mut dots_before_env = 0usize;
     let mut dots_after_env = 0usize;
     let mut env = false;
+    let mut ident_run = false;
     loop {
         match tokens.get(probe).map(|t| &t.kind) {
             Some(K::Dot) => {
@@ -613,20 +618,27 @@ fn call_opening(tokens: &[crate::parser::Token], start: usize) -> Option<CallOpe
                 env = true;
                 probe = skip_layout(tokens, probe + 1);
             }
+            // Any identifier between `secret` and `(` (a case variant
+            // such as `Env`, or a dotted member run) still opens a
+            // reader-plausible call. It is malformed, not ignored.
+            Some(K::Ident) => {
+                ident_run = true;
+                probe = skip_layout(tokens, probe + 1);
+            }
             _ => break,
         }
     }
     if !matches!(tokens.get(probe).map(|t| &t.kind), Some(K::LParen)) {
         return None;
     }
-    let canonical_env = env && dots_before_env == 1 && dots_after_env == 0;
-    // Whitespace is not a malformation; stray dots on either side of
-    // `env` are. A malformed shape still opens a call (the parenthesis
-    // is there), so callers can protect and fail closed.
+    let canonical_env = env && dots_before_env == 1 && dots_after_env == 0 && !ident_run;
+    // Whitespace is not a malformation; stray dots or identifiers
+    // around `env` are. A malformed shape still opens a call (the
+    // parenthesis is there), so callers can protect and fail closed.
     let malformed = if env {
         !canonical_env
     } else {
-        dots_before_env != 0
+        dots_before_env != 0 || ident_run
     };
     Some(CallOpen {
         open: probe,

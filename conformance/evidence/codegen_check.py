@@ -334,6 +334,35 @@ blob_json = json.dumps(blob_doc)
 
 blob_schema = json.loads(gen_from(blob_path, "jsonschema", WORK / "gen-blob.json"))
 jsonschema.Draft202012Validator(blob_schema).validate(blob_doc)
+# The schema must model the wrapper, not merely accept everything:
+# the inner identity without `$active.blob` and a wrapper missing a
+# required key are both rejected.
+blob_validator = jsonschema.Draft202012Validator(blob_schema)
+inner_only = {
+    "logo": {
+        "hash": blob_inner["hash"],
+        "size": blob_inner["size"],
+        "media_type": blob_inner["media_type"],
+        "tainted": blob_inner["tainted"],
+    }
+}
+for bad in (
+    inner_only,
+    {"logo": {"$active.blob": {"hash": blob_inner["hash"], "size": 7}}},
+    {"logo": {"$active.blob": dict(blob_inner, extra="no")}},
+):
+    try:
+        blob_validator.validate(bad)
+    except jsonschema.ValidationError:
+        pass
+    else:
+        raise SystemExit(f"FAIL: blob schema accepted a non-wrapper shape: {bad}")
+
+blob_openapi = json.loads(
+    gen_from(blob_path, "openapi", WORK / "gen-blob-openapi.json")
+)
+openapi_logo = blob_openapi["components"]["schemas"]["Config"]["properties"]["logo"]
+assert "$active.blob" in openapi_logo.get("properties", {}), openapi_logo
 
 ts_blob = gen_from(blob_path, "typescript", WORK / "gen-blob.ts")
 assert "export interface Config" in ts_blob, ts_blob
@@ -394,7 +423,11 @@ assert p.returncode == 0, (
 )
 
 rblob = WORK / "rblob"
-(rblob / "src" / "tests").mkdir(parents=True)
+# Cargo's integration-test discovery needs `tests/` at the crate root;
+# a `src/tests/` module is never compiled, which made an earlier gate
+# run 0 tests.
+(rblob / "tests").mkdir(parents=True)
+(rblob / "src").mkdir(parents=True, exist_ok=True)
 (rblob / "Cargo.toml").write_text(
     '[package]\nname = "genblob"\nversion = "0.0.0"\nedition = "2021"\n\n'
     '[dependencies]\nserde = { version = "1", features = ["derive"] }\n'
@@ -406,7 +439,7 @@ rs_blob = gen_from(blob_path, "rust", WORK / "gen-blob.rs")
 (rblob / "src" / "lib.rs").write_text(
     rs_blob.replace("\r\n", "\n"), encoding="utf-8", newline="\n"
 )
-(rblob / "src" / "tests" / "decode.rs").write_text(
+(rblob / "tests" / "decode.rs").write_text(
     "#[test]\n"
     "fn decodes_evaluated_blob_document() {\n"
     f'    const BLOB: &str = r#"{blob_json}"#;\n'
@@ -418,10 +451,11 @@ rs_blob = gen_from(blob_path, "rust", WORK / "gen-blob.rs")
     encoding="utf-8",
     newline="\n",
 )
-p = run(["cargo", "test", "--quiet"], cwd=rblob, timeout=600)
+p = run(["cargo", "test", "--quiet", "--test", "decode"], cwd=rblob, timeout=600)
 assert p.returncode == 0, (
     f"rust blob decode failed:\n{p.stdout[-2000:]}\n{p.stderr[-2000:]}"
 )
+assert "1 passed" in p.stdout, f"rust decode test did not run:\n{p.stdout[-2000:]}"
 
 py_blob = gen_from(blob_path, "python", WORK / "gen_blob_types.py")
 import importlib.util as _importlib_util

@@ -271,6 +271,63 @@ fn inspect_path_keeps_benign_siblings_of_a_secret() {
 }
 
 #[test]
+fn inspect_taint_model_covers_shadowing_and_transforms() {
+    // Fields win ties against `let` names; patch/profile/schema-default
+    // paths carry the transform expression into the evaluated tree.
+    fn check(src: &str, var: &str, value: &str, path: &str) {
+        let module = active_core::parse(src, "inspect-transform").expect("parse");
+        let mut env = std::collections::HashMap::new();
+        env.insert(var.to_string(), value.to_string());
+        let (evaluated, _) = active_core::Engine::hermetic()
+            .with_env(env)
+            .evaluate(&module)
+            .expect("evaluate");
+        let report =
+            active_core::convert::inspect_path(&module, &evaluated, path).expect("inspect");
+        assert_eq!(report["tainted"], true, "{src}: {report}");
+        assert_eq!(report["value"], "***SECRET***", "{src}: {report}");
+        assert!(!report.to_string().contains(value), "{src}: {report}");
+    }
+    check(
+        "let x = \"safe\"\nx = env.R12SHADOW\nk = secret(x)\n",
+        "R12SHADOW",
+        "ENVSECRET-shadow",
+        "x",
+    );
+    check(
+        "p = env.R12PASS\nk = secret(p)\n@patch(\"out\", p)\nout = \"original\"\n",
+        "R12PASS",
+        "ENVSECRET-patch",
+        "out",
+    );
+    check(
+        "p = env.R12PROF\nk = secret(p)\nactive_profile = \"prod\"\nprofile \"prod\" { extra = p }\n",
+        "R12PROF",
+        "ENVSECRET-prof",
+        "extra",
+    );
+    check(
+        "p = env.R12FILL\nk = secret(p)\nschema = { extra = String(default = p) }\n",
+        "R12FILL",
+        "ENVSECRET-fill",
+        "extra",
+    );
+}
+
+#[test]
+fn inspect_provenance_keeps_real_node_prefixed_keys() {
+    let src = "node1 = 1\nnode_id = 2\nport = node1\nid = node_id\n";
+    let module = active_core::parse(src, "inspect-node-keys").expect("parse");
+    let (value, _) = active_core::Engine::new()
+        .evaluate(&module)
+        .expect("evaluate");
+    let port = active_core::convert::inspect_path(&module, &value, "port").expect("inspect");
+    assert_eq!(port["dependencies"], serde_json::json!(["node1"]), "{port}");
+    let id = active_core::convert::inspect_path(&module, &value, "id").expect("inspect");
+    assert_eq!(id["dependencies"], serde_json::json!(["node_id"]), "{id}");
+}
+
+#[test]
 fn inspect_reports_a_tainted_blob_as_tainted() {
     let src = "f = blob(\"text/plain\", secret(\"hunter2-blob\"))\n";
     let module = active_core::parse(src, "inspect-blob").expect("parse");

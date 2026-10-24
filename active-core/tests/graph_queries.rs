@@ -14,6 +14,18 @@ fn evaluated(src: &str) -> (active_core::Module, active_core::Value) {
 }
 
 #[test]
+fn secret_tainted_cone_includes_plain_locator_sources() {
+    // A plain string used as a secret locator and an interpolation over
+    // it are material without a `Value::Secret` marker.
+    let (module, value) = evaluated("x = \"hunter2-gq\"\nmsg = \"prefix ${x}\"\nk = secret(x)\n");
+    let paths = active_core::graph::secret_tainted_paths_with(&module, &value);
+    for p in ["x", "msg", "k"] {
+        assert!(paths.contains(&p.to_string()), "{paths:?}");
+    }
+    assert!(!paths.iter().any(|p| p.contains("hunter2")), "{paths:?}");
+}
+
+#[test]
 fn shortest_path_follows_dependency_direction() {
     let (module, _) = evaluated("a = 1\nb = a\nc = b\n");
     let id = |k: &str| active_core::graph::resolve_key(&module, k).expect("key");

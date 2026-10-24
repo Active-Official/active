@@ -904,6 +904,7 @@ fn fingerprint_one(
     id: NodeId,
     cache: &[Option<u64>],
     salt: u64,
+    materials: Option<&SecretProfile>,
 ) -> Option<u64> {
     use std::hash::{Hash, Hasher};
     let child = |dep: &NodeId| cache.get(dep.0 as usize).copied().flatten();
@@ -990,6 +991,12 @@ fn fingerprint_one(
             12u8.hash(&mut hasher);
             child(media_type)?.hash(&mut hasher);
             child(data)?.hash(&mut hasher);
+            // Structural taint is an input to the value: adding a
+            // `secret(data)` elsewhere in the document must not serve a
+            // memoized untainted blob.
+            materials
+                .is_some_and(|profile| profile.node_is_secret(*data))
+                .hash(&mut hasher);
         }
         _ => return None,
     }
@@ -1009,6 +1016,69 @@ pub struct StepEvent {
     pub tainted: bool,
     pub value: serde_json::Value,
     pub codes: Vec<String>,
+}
+
+/// Render one step value with path-aware material marking: a container
+/// keeps its shape, and every material leaf (string, number, whatever
+/// the kind) becomes the marker. Without a path an internal container
+/// fails closed to the marker when it is material at all.
+fn render_step_value(
+    profile: &SecretProfile,
+    path: Option<&str>,
+    value: &Value,
+    sensitive: bool,
+) -> serde_json::Value {
+    let marker = || serde_json::Value::String(crate::secret::MARKER.to_string());
+    match value {
+        Value::Array(items) => {
+            let Some(base) = path else {
+                return if sensitive {
+                    marker()
+                } else {
+                    crate::convert::value_to_json(value)
+                };
+            };
+            serde_json::Value::Array(
+                items
+                    .iter()
+                    .enumerate()
+                    .map(|(index, item)| {
+                        let child = format!("{base}[{index}]");
+                        render_step_value(
+                            profile,
+                            Some(&child),
+                            item,
+                            profile.path_is_secret(&child),
+                        )
+                    })
+                    .collect(),
+            )
+        }
+        Value::Table(map) => {
+            let Some(base) = path else {
+                return if sensitive {
+                    marker()
+                } else {
+                    crate::convert::value_to_json(value)
+                };
+            };
+            let mut out = serde_json::Map::new();
+            for (key, item) in map {
+                let child = if base.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{base}.{key}")
+                };
+                out.insert(
+                    key.clone(),
+                    render_step_value(profile, Some(&child), item, profile.path_is_secret(&child)),
+                );
+            }
+            serde_json::Value::Object(out)
+        }
+        _ if sensitive => marker(),
+        _ => crate::convert::value_to_json(value),
+    }
 }
 
 fn value_has_secret(value: &Value) -> bool {
@@ -1243,18 +1313,27 @@ impl Engine {
         // Step paths are built once, only when the caller asked for a
         // stepper; plain evaluation pays nothing.
         let step_paths: Option<HashMap<NodeId, String>> = steps.as_ref().map(|_| {
-            module
-                .value_paths()
-                .into_iter()
-                .collect::<HashMap<NodeId, String>>()
+            let mut paths: HashMap<NodeId, String> = module.value_paths();
+            // `value_paths` names document values but not the root
+            // itself; the root step still needs a path so its container
+            // keeps its shape.
+            if let Some(root) = module.root {
+                paths.insert(root, String::new());
+            }
+            paths
         });
         // Structural secret material: locator subtrees plus every node
         // derived from one (containers, interpolations, references).
-        // Computed once, only when a stepper asked for a trace. The
-        // same analysis backs `inspect` and hover, so all three
+        // Computed once when a stepper asked for a trace or the module
+        // builds blobs (their structural taint must match the tooling
+        // model). The same analysis backs `inspect` and hover, so all
         // surfaces agree on what is material.
+        let has_blobs = module
+            .arena
+            .iter()
+            .any(|node| matches!(node, Node::ContentAddressed { .. }));
         let secret_profile: Option<SecretProfile> =
-            steps.as_ref().map(|_| SecretProfile::analyze(module));
+            (steps.is_some() || has_blobs).then(|| SecretProfile::analyze(module));
         // Evaluated values of sensitive nodes, so a container step can
         // redact the same bytes even though the container itself is
         // not Secret-kinded (topological order means children are
@@ -1310,7 +1389,14 @@ impl Engine {
             let mut memo_fp = None;
             if let Some(memo) = memo.as_mut() {
                 let salt = memo.salt;
-                if let Some(fp) = fingerprint_one(self, module, node_id, &fp_cache, salt) {
+                if let Some(fp) = fingerprint_one(
+                    self,
+                    module,
+                    node_id,
+                    &fp_cache,
+                    salt,
+                    secret_profile.as_ref(),
+                ) {
                     if let Ok(index) = usize::try_from(node_id.0) {
                         if let Some(slot) = fp_cache.get_mut(index) {
                             *slot = Some(fp);
@@ -1407,17 +1493,25 @@ impl Engine {
                             ));
                         }
                     };
-                    let (bytes, tainted) = match values.get(data).cloned().unwrap_or(Value::Null) {
-                        Value::String(s) => (s.into_bytes(), false),
-                        Value::Secret(s) => (s.into_bytes(), true),
-                        _ => {
-                            return Err(EvalError::type_error(
-                                "blob() data must be a string or secret locator",
-                                module,
-                                node_id,
-                            ));
-                        }
-                    };
+                    let structurally_material = secret_profile.as_ref().is_some_and(|profile| {
+                        profile.node_is_secret(*data) || profile.node_is_secret(*media_type)
+                    });
+                    let (bytes, mut tainted) =
+                        match values.get(data).cloned().unwrap_or(Value::Null) {
+                            Value::String(s) => (s.into_bytes(), false),
+                            Value::Secret(s) => (s.into_bytes(), true),
+                            _ => {
+                                return Err(EvalError::type_error(
+                                    "blob() data must be a string or secret locator",
+                                    module,
+                                    node_id,
+                                ));
+                            }
+                        };
+                    // A plain value used as a secret locator is material
+                    // even without a `Value::Secret` marker: the blob is
+                    // structurally tainted and can never materialise.
+                    tainted |= structurally_material;
                     let size = bytes.len() as u64;
                     account.charge(module, Some(node_id), size)?;
                     // Record the actual for reference deltas below:
@@ -1598,20 +1692,23 @@ impl Engine {
                         sensitive_values.insert(text.clone());
                     }
                 }
-                // Containers keep their shape (the trace stays useful);
-                // their material leaves are redacted by the sweep below.
-                let mut rendered =
-                    if sensitive && !matches!(value, Value::Array(_) | Value::Table(_)) {
-                        serde_json::Value::String(crate::secret::MARKER.to_string())
-                    } else {
-                        crate::convert::value_to_json(&value)
-                    };
+                // Containers keep their shape (the trace stays useful),
+                // and every material leaf is marked by path: a number
+                // used as a locator is material too.
+                let step_path = step_paths
+                    .as_ref()
+                    .and_then(|paths| paths.get(&node_id))
+                    .cloned();
+                let mut rendered = match secret_profile.as_ref() {
+                    Some(profile) => {
+                        render_step_value(profile, step_path.as_deref(), &value, sensitive)
+                    }
+                    None => crate::convert::value_to_json(&value),
+                };
                 let replaced = redact_json_strings(&mut rendered, &sensitive_values);
                 list.push(StepEvent {
                     node: node_id.0,
-                    path: step_paths
-                        .as_ref()
-                        .and_then(|paths| paths.get(&node_id).cloned()),
+                    path: step_path,
                     kind: value_kind_name(&value),
                     tainted: sensitive || replaced || value_has_secret(&value),
                     value: rendered,

@@ -15,10 +15,15 @@ pub fn taint_data(module: &Module, value: &Value) -> JsonValue {
     let mut edges: Vec<JsonValue> = Vec::new();
     let mut sources: Vec<String> = Vec::new();
     let mut export_points: Vec<String> = Vec::new();
+    // A plain value used as a secret locator is material even without
+    // a `Value::Secret` marker; the same profile backs inspect/hover.
+    let profile = crate::secret::SecretProfile::analyze(module);
     walk_taint(value, "", None, &mut |path, node_value, parent| {
-        if contains_secret(node_value) {
+        let structural = profile.path_is_secret(path);
+        if contains_secret(node_value) || structural {
             let leaf = matches!(node_value, Value::Secret(_))
-                || matches!(node_value, Value::Blob { tainted: true, .. });
+                || matches!(node_value, Value::Blob { tainted: true, .. })
+                || (structural && !matches!(node_value, Value::Array(_) | Value::Table(_)));
             nodes.push(json!({
                 "id": path,
                 "label": if path.is_empty() { "(root)" } else { path },
@@ -34,7 +39,6 @@ pub fn taint_data(module: &Module, value: &Value) -> JsonValue {
             }
         }
     });
-    let _ = module;
     json!({
         "version": 1,
         "nodes": nodes,

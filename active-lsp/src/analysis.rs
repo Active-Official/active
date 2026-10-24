@@ -64,17 +64,25 @@ pub fn open_doc(
     version: i32,
     memo: Option<active_core::IncrementalMemo>,
 ) -> Doc {
-    let options = ParseOptions {
+    let file_options = ParseOptions {
         enable_includes: true,
+        ..Default::default()
+    };
+    // A non-file buffer has no directory to resolve against: record
+    // include statements (the formatter reprints them) but never read
+    // the server's working directory.
+    let memory_options = ParseOptions {
+        enable_includes: true,
+        resolve_includes: false,
         ..Default::default()
     };
     let (module, parse_diags) = match uri.to_file_path() {
         // File context is preserved on every path — including the
         // error path — so includes never fall back to resolving from
         // the server's working directory.
-        Ok(path) => parse_text_recovering_with_file(&text, uri.as_str(), options, &path),
+        Ok(path) => parse_text_recovering_with_file(&text, uri.as_str(), file_options, &path),
         Err(_) => {
-            let (module, diags) = parse_recovering(&text, uri.as_str(), options);
+            let (module, diags) = parse_recovering(&text, uri.as_str(), memory_options);
             (module, diags)
         }
     };
@@ -2444,6 +2452,9 @@ fn static_node_kind(module: &Module, id: NodeId) -> Option<&'static str> {
 /// Hints outside `range` (when given) are withheld (spec/lsp.md §4).
 pub fn inlay_hints(doc: &Doc, range: Option<Range>) -> Vec<InlayHint> {
     let mut out = Vec::new();
+    // Structural material never gets a normalized value hint: a plain
+    // binding used as a secret locator is still material.
+    let profile = SecretProfile::analyze(&doc.module);
     let mut push = |position: Position, label: String| {
         if let Some(filter) = range {
             if position < filter.start || position > filter.end {
@@ -2486,18 +2497,20 @@ pub fn inlay_hints(doc: &Doc, range: Option<Range>) -> Vec<InlayHint> {
         // Byte quantities evaluate to plain integers, so the source
         // unit comes from the Quantity node when the value no longer
         // carries it.
-        if let Some(root) = doc.value.as_ref() {
-            match value_at_path(root, &path) {
-                Some(Value::DurationMs(ms)) => label.push_str(&format!(" = {ms} ms")),
-                Some(Value::Quantity(n, unit)) => {
-                    label.push_str(&format!(" = {n} {}", unit.suffix()));
-                }
-                Some(Value::Int(n)) => {
-                    if let Some(Node::Quantity { unit, .. }) = doc.module.get(id) {
+        if !profile.node_is_secret(id) {
+            if let Some(root) = doc.value.as_ref() {
+                match value_at_path(root, &path) {
+                    Some(Value::DurationMs(ms)) => label.push_str(&format!(" = {ms} ms")),
+                    Some(Value::Quantity(n, unit)) => {
                         label.push_str(&format!(" = {n} {}", unit.suffix()));
                     }
+                    Some(Value::Int(n)) => {
+                        if let Some(Node::Quantity { unit, .. }) = doc.module.get(id) {
+                            label.push_str(&format!(" = {n} {}", unit.suffix()));
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
         push(position, label);

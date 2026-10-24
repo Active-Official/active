@@ -15,10 +15,14 @@ Every emitter returns redacted JSON. Taint and budget carry
 
 ### Taint
 
-Nodes are every path whose subtree contains a secret; `secret: true`
-marks the Secret leaf itself. Edges run containment parent → child
-(`""` is the root). `sources` and `export_points` are the secret paths;
-no value, locator, or payload is emitted.
+Nodes are every path whose subtree contains material, where material
+includes a plain value used as a `secret(...)` locator and anything
+built from one (the same structural model as `inspect` and step
+traces); `secret: true` marks a material leaf. Edges run containment
+parent → child between named paths only: the document root has no
+path, so top-level nodes have no incoming edge. `sources` and
+`export_points` are the material paths; no value, locator, or payload
+is emitted.
 
 ### Budget
 

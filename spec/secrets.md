@@ -25,7 +25,7 @@ error message, or an export** — only redaction markers do.
 | Construct | Rule |
 |---|---|
 | Interpolation `"…${secret}…"` | **Refused** (S004, fatal): secrets never enter strings. Stronger than tainting — no tainted string ever exists to leak later |
-| Arithmetic `+ - * /`, ordering `< <= > >=`, negation `!`/`-` | **Prohibited** (T001): operands render through the recursive redactor, so the error carries the `Secret(***)` marker, never content |
+| Arithmetic `+ - * /`, ordering `< <= > >=`, negation `!`/`-` | **Prohibited** (T001): the message names operand *kinds* only, so no operand text (secret or otherwise) can be carried |
 | Equality `==` / `!=` | Allowed, pure: secrets never equal anything, **including themselves** (`value_eq` has no `Secret` arm). No oracle — a guess can never be confirmed |
 | Tables / arrays | Structural containment: secrets ride inside composites and redact recursively on every export path |
 | Profiles / patches / fills / defaults | Structural: merged, patched-in, and filled secrets stay `Secret`-kinded end to end |
@@ -47,8 +47,10 @@ error message, or an export** — only redaction markers do.
   input direction cannot leak.
 - `ACTIVE fmt` re-emits `secret(…)` source calls (source-derived
   locators, never evaluated values).
-- Debug/error rendering uses the recursive redactor with the
-  `Secret(***)` marker (T001 messages, quantity errors).
+- Debug/error rendering is value-free for type errors: T001 and quantity
+  errors name operand kinds (`secret`, `number`, `string`, …), never
+  values or markers. Structural material assembled from a plain locator
+  therefore has no path into a message.
 - No unlock API exists in this phase: there is no audited path that
   emits raw secrets. (Deferred to enterprise work, with P-032's
   explicit-audit requirement noted.)
@@ -61,7 +63,7 @@ Every message constructor was audited for evaluated-value echo:
   exist yet at parse time.
 - W001–W004: identifier names, profile names, key paths — all
   source-authored, never values.
-- T001: operands via the recursive redactor (`Secret(***)`).
+- T001: operand kind names only (value-free: no content, no marker).
 - T002–T006: kinds and schema-authored literals only
   (spec/validation.md §7, spec/annotations.md §6). W005 (default
   fills) carries the key path only — filled values are never quoted.

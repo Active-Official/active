@@ -18,13 +18,20 @@ pub fn inspect_path(module: &Module, root: &Value, path: &str) -> Result<JsonVal
         .map_err(|why| format!("cannot inspect `{path}`: {why}"))?;
     let profile = SecretProfile::analyze(module);
     let kind = kind_name(cone);
+    // A media type sourced from material (an env lookup used as a
+    // secret locator) is not publishable, even when the blob's data is
+    // public; the identity is material as a whole.
+    let media_secret = matches!(
+        profile.path_node(path).and_then(|id| module.get(id)),
+        Some(Node::ContentAddressed { media_type, .. }) if profile.node_is_secret(*media_type)
+    );
     // A value used as a secret locator (or built from one) carries no
     // `Value::Secret` marker, so taint is structural. Render with the
     // profile's path map, then sweep authored literals out of any
     // string that embedded one.
     let mut value = render_cone(&profile, path, cone);
     let redacted = profile.redact_json(&mut value);
-    let tainted = profile.path_is_secret(path) || contains_secret(cone) || redacted;
+    let tainted = profile.path_is_secret(path) || contains_secret(cone) || redacted || media_secret;
     // Size of the REDACTED rendering (the bytes a consumer actually
     // receives). Secret payloads therefore report the marker length,
     // never the material's length.
@@ -38,7 +45,7 @@ pub fn inspect_path(module: &Module, root: &Value, path: &str) -> Result<JsonVal
         // Internal arena labels (`nodeN`) are noise for a consumer;
         // only named paths answer "where did this come from". A real
         // key such as `node_id` is not an internal label.
-        .filter(|label| !is_internal_label(label))
+        .filter(|label| !is_internal_label(module, label))
         .collect();
     dependencies.dedup();
     let mut report = json!({
@@ -72,10 +79,17 @@ pub fn inspect_path(module: &Module, root: &Value, path: &str) -> Result<JsonVal
         ..
     } = cone
     {
+        // A media type sourced from material (an env lookup used as a
+        // secret locator) is not publishable, even though the blob's
+        // data taint flag is separate.
+        let media_secret = matches!(
+            profile.path_node(path).and_then(|id| module.get(id)),
+            Some(Node::ContentAddressed { media_type, .. }) if profile.node_is_secret(*media_type)
+        );
         report["content_addressed"] = json!({
             "hash": format!("blake3:{}", crate::blob::hash_hex(hash)),
             "size": blob_size,
-            "media_type": media_type,
+            "media_type": if media_secret { MARKER } else { media_type },
             "tainted": blob_tainted,
         });
     }
@@ -112,10 +126,15 @@ fn render_cone(profile: &SecretProfile, path: &str, value: &Value) -> JsonValue 
     }
 }
 
-/// Arena labels are exactly `node` followed by ASCII digits.
-fn is_internal_label(label: &str) -> bool {
-    label
-        .strip_prefix("node")
+/// Arena labels are `node` followed by ASCII digits AND resolve to no
+/// real path or binding. A genuine key named `node1` stays provenance.
+fn is_internal_label(module: &Module, label: &str) -> bool {
+    let base = label.split('.').next().unwrap_or(label);
+    let base = base.split('[').next().unwrap_or(base);
+    if module.resolve_value_path(base).is_some() || module.bindings.contains_key(base) {
+        return false;
+    }
+    base.strip_prefix("node")
         .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
 }
 

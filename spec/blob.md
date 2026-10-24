@@ -81,7 +81,7 @@ Blobs evaluate to an identity object; the payload is absent unless explicitly ma
 { "logo": { "$active.blob": { "hash": "blake3:<64-hex>", "size": 5, "media_type": "text/plain" } } }
 ```
 
-- Materialisation (`active eval --materialise-blobs`, or `eval --path` demanding the blob cone with the flag) adds `"payload_b64"`: base64 of the payload bytes. Tainted blobs fail the demand with **B003**; blobs without retained payload fail with **B005** — both fail closed rather than silently emitting identity. With `--path`, the demand applies to the emitted cone: undemanded subtrees stay identities and cannot fail the fetch (budgets still guarded the full walk).
+- Materialisation (`active eval --materialise-blobs`, or `eval --path` demanding the blob cone with the flag) adds `"payload_b64"`: base64 of the payload bytes. Tainted blobs (including a blob whose media type is material) fail the demand with **B003**; blobs without retained payload fail with **B005** — both fail closed rather than silently emitting identity. With `--path`, the demand applies to the emitted cone: undemanded subtrees stay identities and cannot fail the fetch (budgets still guarded the full walk).
 - Payload bytes are charged against `max_value_size` / `max_total_value_size` at materialisation time; breach aborts with the standard **X006** (materialisation consumes the existing budgets, it does not bypass them).
 
 ## 6. Budget integration (CA.007)
@@ -90,7 +90,7 @@ The dependency-pass treats `ContentAddressed` as a leaf of known size (`size` by
 
 ## 7. Taint integration (CA.008)
 
-The structural taint bit travels with the blob on every export path (JSON identity, materialised JSON, lockfiles, provenance, graph queries, repair plans, audit trail): a tainted blob's identity object carries `"tainted": true`, and its payload is never emitted. Redaction obligations are identical to secrets: any raw tainted byte in any output is a gate failure.
+The structural taint bit travels with the blob on every export path (JSON identity, materialised JSON, lockfiles, provenance, graph queries, repair plans, audit trail): a tainted blob's identity object carries `"tainted": true`, and its payload is never emitted. A media type that is itself material (for example an `env` lookup used as a secret locator) taints the identity as well, and a tainted identity renders `"media_type": "***SECRET***"`: the identity's media field is never allowed to carry material. Redaction obligations are identical to secrets: any raw tainted byte in any output is a gate failure.
 
 Known limitation (documented, not hidden): the identity hash of a tainted blob is deterministic over the secret bytes, so a low-entropy secret is theoretically subject to an offline dictionary check by anyone who can already see the identity object. Mitigations in force: tainted payloads are never emitted anywhere, hashes never appear in source, and high-entropy secret material (tokens, keys) is not dictionary-enumerable. If a deployment needs identity-hiding for tainted blobs, the extension point is a per-document salt in the canonical bytes (domain `active-blob/v2`) — a deliberate future change, never a silent one.
 

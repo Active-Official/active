@@ -258,7 +258,9 @@ evaluate(module):
 - `Quantity(f64, Unit)`: equality requires equal value **and** equal unit.
 - `==`/`!=` are structural for all values (see `value_eq`).
 - Any unsupported operator/operand combination is a `TypeError` (T001) with
-  the operator and both operand values in the message.
+  the operator and both operand *kinds* in the message. Values never
+  appear, so material assembled from a plain secret locator cannot leak
+  through a diagnostic.
 
 ### 3.4 Cycle rejection
 

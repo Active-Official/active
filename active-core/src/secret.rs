@@ -488,6 +488,12 @@ fn wildcard_indices(path: &str) -> String {
     out
 }
 
+/// Whether a path is material in the base tree, accepting the array
+/// wildcard spelling on either side (`arr[].a` vs `arr[0].a`).
+fn path_is_material(material_paths: &HashSet<String>, path: &str) -> bool {
+    material_paths.contains(path) || material_paths.contains(&wildcard_indices(path))
+}
+
 /// Whether a value is a table after following references (profile
 /// merges recurse into tables; they replace scalars). Follows the whole
 /// chain with a visited set: an eight-hop cap would misclassify a deep
@@ -716,18 +722,41 @@ impl SecretProfile {
         for (name, id) in &module.bindings {
             truncated |= walk_paths(module, *id, name, &mut paths, false, false);
         }
-        // Paths that are material in the base tree (before any profile
-        // selection). A profile override replaces the value at a path;
-        // when that path is a locator source (or derives from one), the
-        // replacement is material too, whatever node the override names
-        // (`n = env.X` under one profile, a literal under another). The
-        // selected node therefore inherits the path's materiality; the
-        // root-only node set cannot know about it.
-        let material_paths: HashSet<String> = paths
+        // A schema default may itself be material (an env locator) and
+        // a profile may override that path before the fill runs.
+        // Collect defaults into a scratch map before materiality is
+        // computed; merge them into the path map after transforms so
+        // patches still win.
+        let mut default_paths: HashMap<String, NodeId> = HashMap::new();
+        let defaults_truncated = match module.schema {
+            Some(schema) => collect_default_paths(module, schema, "", &mut default_paths),
+            None => false,
+        };
+        if defaults_truncated {
+            truncated = true;
+            default_paths.clear();
+        }
+        // Paths that are material in the base tree (explicit values and
+        // schema defaults, before any profile selection). A profile
+        // override replaces the value at a path; when that path is a
+        // locator source (or derives from one), the replacement is
+        // material too, whatever node the override names (`n = env.X`
+        // under one profile, a literal under another). The selected
+        // node therefore inherits the path's materiality; the root-only
+        // node set cannot know about it.
+        let mut material_paths: HashSet<String> = paths
             .iter()
             .filter(|(_, id)| nodes.contains(*id))
             .map(|(path, _)| path.clone())
             .collect();
+        if !defaults_truncated {
+            for (path, id) in &default_paths {
+                if nodes.contains(id) {
+                    material_paths.insert(path.clone());
+                    material_paths.insert(wildcard_indices(path));
+                }
+            }
+        }
         // Evaluation applies the selected profile first, then patches.
         // Profile tables merge (their fields override per key); a
         // profile scalar replaces. A computed selector cannot be
@@ -745,12 +774,17 @@ impl SecretProfile {
         // path unreliable. Profile paths must then stay unknown (fail
         // closed) instead of registering as benign values.
         let base_truncated = truncated;
+        // Base values per path, before any profile field overwrites
+        // them: merge-vs-replace is decided per path, not only at the
+        // profile field's top level (a nested replacement under a
+        // merged table still replaces its own value).
+        let base_paths = paths.clone();
         match selection {
             ProfileSelection::Named(name) => {
                 if let Some(id) = module.profiles.get(&name) {
                     if let Some(Node::Table { fields }) = module.get(*id) {
                         for (key, child) in fields {
-                            let base_node = paths.get(key).copied();
+                            let base_node = base_paths.get(key).copied();
                             // Merge only when BOTH sides are tables: a
                             // profile table over a scalar replaces the
                             // whole value, so its leaves are new.
@@ -762,30 +796,43 @@ impl SecretProfile {
                             truncated |= profile_truncated;
                             if base_truncated || profile_truncated {
                                 // Fail closed: mark the whole selected
-                                // subtree and never publish its paths.
+                                // subtree, keep every path material, and
+                                // never publish them as known-benign.
                                 for node in profile_paths.values() {
                                     secret_subtree(module, *node, &mut nodes);
                                 }
+                                fallback_secret_paths.extend(profile_paths.keys().cloned());
                                 continue;
                             }
-                            if !merge {
-                                remove_subtree(&mut paths, key);
-                            }
-                            // A selected override at a material path is
-                            // material itself (the locator resolves through
-                            // the profile). A replacement inherits the
-                            // whole subtree (the base value is gone); a
-                            // true merge marks exact material leaves only,
-                            // so benign siblings stay visible.
-                            if !merge && material_paths.contains(key) {
-                                if let Some(node) = profile_paths.get(key) {
-                                    secret_subtree(module, *node, &mut nodes);
+                            // Per-path merge decision: a nested table at
+                            // a scalar base path replaces that value.
+                            let mut replaces: Vec<String> = Vec::new();
+                            for (path, node) in &profile_paths {
+                                let path_merge = is_table_like(module, *node)
+                                    && base_paths
+                                        .get(path)
+                                        .is_some_and(|b| is_table_like(module, *b));
+                                if !path_merge {
+                                    replaces.push(path.clone());
                                 }
-                            } else {
-                                for (path, node) in &profile_paths {
-                                    if material_paths.contains(path) {
-                                        nodes.insert(*node);
-                                    }
+                            }
+                            for path in &replaces {
+                                remove_subtree(&mut paths, path);
+                            }
+                            for (path, node) in &profile_paths {
+                                if !path_is_material(&material_paths, path) {
+                                    continue;
+                                }
+                                let path_merge = is_table_like(module, *node)
+                                    && base_paths
+                                        .get(path)
+                                        .is_some_and(|b| is_table_like(module, *b));
+                                if path_merge {
+                                    nodes.insert(*node);
+                                } else {
+                                    // A replacement inherits the whole
+                                    // subtree (the base value is gone).
+                                    secret_subtree(module, *node, &mut nodes);
                                 }
                             }
                             paths.extend(profile_paths);
@@ -797,7 +844,7 @@ impl SecretProfile {
                 for id in module.profiles.values() {
                     if let Some(Node::Table { fields }) = module.get(*id) {
                         for (key, child) in fields {
-                            let base_node = paths.get(key).copied();
+                            let base_node = base_paths.get(key).copied();
                             let merge = is_table_like(module, *child)
                                 && base_node.is_some_and(|b| is_table_like(module, b));
                             let mut profile_paths = HashMap::new();
@@ -805,16 +852,32 @@ impl SecretProfile {
                                 walk_paths(module, *child, key, &mut profile_paths, true, !merge);
                             truncated |= profile_truncated;
                             if base_truncated || profile_truncated {
+                                for node in profile_paths.values() {
+                                    secret_subtree(module, *node, &mut nodes);
+                                }
                                 fallback_secret_paths.extend(profile_paths.keys().cloned());
                                 continue;
                             }
-                            let replacing_material = !merge && material_paths.contains(key);
                             for (path, node) in profile_paths {
-                                if nodes.contains(&node)
-                                    || material_paths.contains(&path)
-                                    || replacing_material
-                                {
+                                let material = path_is_material(&material_paths, &path);
+                                let path_merge = is_table_like(module, node)
+                                    && base_paths
+                                        .get(&path)
+                                        .is_some_and(|b| is_table_like(module, *b));
+                                if material {
                                     fallback_secret_paths.insert(path);
+                                    if path_merge {
+                                        nodes.insert(node);
+                                    } else {
+                                        secret_subtree(module, node, &mut nodes);
+                                    }
+                                } else if nodes.contains(&node) {
+                                    // The override value is material on
+                                    // its own; node-based consumers
+                                    // (step traces, provenance) must
+                                    // agree with the path set.
+                                    fallback_secret_paths.insert(path);
+                                    nodes.insert(node);
                                 }
                             }
                         }
@@ -875,11 +938,19 @@ impl SecretProfile {
         }
         // Schema defaults fill absent paths during evaluation; explicit
         // values and transforms (inserted above) win. When any bound
-        // stopped the walk, skip defaults: registering an unvisited
-        // path as a benign default would defeat fail-closed analysis.
+        // stopped a walk, skip defaults: registering an unvisited path
+        // as a benign default would defeat fail-closed analysis. The
+        // wildcard alias lets `arr[0].a` match a default registered at
+        // `arr[].a`, and defaults that contain their own arrays
+        // (`arr[].a[0]`) register `arr[].a[]` as well.
         if !truncated {
-            if let Some(schema) = module.schema {
-                truncated |= collect_default_paths(module, schema, "", &mut paths);
+            for (path, node) in default_paths {
+                let wildcard = wildcard_indices(&path);
+                let alias = (wildcard != path).then_some(wildcard);
+                paths.entry(path).or_insert(node);
+                if let Some(alias) = alias {
+                    paths.entry(alias).or_insert(node);
+                }
             }
         }
 

@@ -183,10 +183,13 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   `budget`, `lock`, and the content hash redact the override-selected
   value; before, an override could publish the selected material while
   the base literal stayed redacted. Container replacements mark their
-  whole subtree, deep alias chains merge instead of deleting live
-  paths, array-element schema defaults register a wildcard path, and a
-  truncated base walk keeps profile paths fail-closed. A computed
-  selector unions every profile's material paths for the same reason.
+  whole subtree (including a nested replacement under a merged table),
+  deep alias chains merge instead of deleting live paths, schema
+  defaults join the base material map and register wildcard paths
+  (including defaults that contain arrays), and a truncated base walk
+  keeps both new and overridden profile paths material. A computed
+  selector marks its nodes as well as its paths, so step traces and
+  lock provenance agree with the value redactor.
 - **Provenance is profile-aware.** `active lock` withholds an env value
   that a profile places at a material path and records its drift hash
   instead (the graph walk alone cannot see the selection).

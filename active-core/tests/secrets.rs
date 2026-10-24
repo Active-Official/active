@@ -699,3 +699,114 @@ fn escaped_dollar_profile_name_is_static() {
         Some("$prod")
     );
 }
+
+#[test]
+fn nested_profile_replacement_under_a_merge_redacts_descendants() {
+    // N1 (round 23): the top-level field merges, but a nested value
+    // replaces a scalar material path. Its subtree is material.
+    let src_secret = "nested-source-r23";
+    let live = "nested-live-r23";
+    std::env::set_var("ACTIVE_N1_SRC", src_secret);
+    std::env::set_var("ACTIVE_N1_LIVE", live);
+    let src = "let p = env.ACTIVE_N1_SRC\nk = secret(p)\nx = { a = p }\nactive_profile = \"a\"\nprofile \"a\" { x = { a = { value = env.ACTIVE_N1_LIVE } } }\n";
+    let module = parse(src, "nested-profile").expect("parse");
+    let mut engine = Engine::new();
+    engine.profile_override = Some("a".to_string());
+    let (value, _) = engine.evaluate(&module).expect("evaluate");
+    let profile = active_core::secret::SecretProfile::analyze_with_profile(&module, Some("a"));
+    assert!(
+        profile.path_is_secret("x.a"),
+        "nested replacement is material"
+    );
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(live), "nested replacement leaked: {json}");
+    assert!(!json.contains(src_secret), "source leaked: {json}");
+}
+
+#[test]
+fn array_inside_a_schema_default_is_material_at_every_index() {
+    // N2 (round 23): a default that itself contains an array registers
+    // concrete sub-indices; the wildcard alias must match the query.
+    let raw = "default-array-r23";
+    std::env::set_var("ACTIVE_N2_ARR", raw);
+    let src = "let s = env.ACTIVE_N2_ARR\nk = secret(s)\nschema = { arr = Array<Table { a = Any(default = [s]) }> }\narr = [{}]\n";
+    let module = parse(src, "default-array").expect("parse");
+    let (value, _) = Engine::new().evaluate(&module).expect("resilient evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    assert!(
+        profile.path_is_secret("arr[0].a[0]"),
+        "array default element is material"
+    );
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(raw), "array default leaked: {json}");
+}
+
+#[test]
+fn computed_selector_marks_nodes_for_provenance_and_traces() {
+    // N5 (round 23): path-only fallback left `node_is_secret` false, so
+    // provenance and step traces published the computed selection.
+    let src = "let p = env.ACTIVE_N5_SRC\nk = secret(p)\nsel = env.ACTIVE_N5_SEL\nx = p\nactive_profile = sel\nprofile \"b\" { x = env.ACTIVE_N5_LIVE }\n";
+    let module = parse(src, "computed-nodes").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("ACTIVE_N5_SRC".to_string(), "source-r23".to_string());
+    env.insert("ACTIVE_N5_SEL".to_string(), "b".to_string());
+    env.insert(
+        "ACTIVE_N5_LIVE".to_string(),
+        "computed-live-r23".to_string(),
+    );
+    let engine = Engine::new().with_env(env.clone());
+    let _ = engine.evaluate(&module).expect("evaluate");
+    let provenance =
+        active_core::provenance::collect_provenance(&module, &env, None, None).expect("provenance");
+    let live = provenance
+        .env
+        .iter()
+        .find(|input| input.name == "ACTIVE_N5_LIVE")
+        .expect("live recorded");
+    assert!(live.secret, "computed selection is secret-bound");
+    assert_eq!(live.value, None, "computed selection value withheld");
+}
+
+#[test]
+fn truncated_profile_override_of_an_existing_path_stays_material() {
+    // N3 (round 23): the base path already exists and is benign, so
+    // only the fallback set can keep the override material after a
+    // truncated walk.
+    let mut src = String::from("big = [");
+    for i in 0..100_005 {
+        if i > 0 {
+            src.push(',');
+        }
+        src.push('0');
+    }
+    src.push_str("]\nlet p = env.ACTIVE_N3\nt = secret(p)\nx = \"benign\"\nactive_profile = \"a\"\nprofile \"a\" { x = \"MATERIAL-LEAK\" }\n");
+    let module = parse(&src, "truncated-existing").expect("parse");
+    let profile = active_core::secret::SecretProfile::analyze_with_profile(&module, Some("a"));
+    assert!(
+        profile.path_is_secret("x"),
+        "existing path overridden past a truncated walk must stay material"
+    );
+}
+
+#[test]
+fn profile_override_of_a_material_default_is_material() {
+    // N4 (round 23): a schema default can be the material source; a
+    // profile that overrides that path before the fill runs replaces a
+    // material value, so the default's materiality joins the base map.
+    let source = "default-source-r23";
+    let live = "default-live-r23";
+    std::env::set_var("ACTIVE_N4_SRC", source);
+    std::env::set_var("ACTIVE_N4_LIVE", live);
+    let src = "let s = env.ACTIVE_N4_SRC\nk = secret(s)\nschema = { a = String(default = s) }\nactive_profile = \"a\"\nprofile \"a\" { a = env.ACTIVE_N4_LIVE }\n";
+    let module = parse(src, "default-override").expect("parse");
+    let mut engine = Engine::new();
+    engine.profile_override = Some("a".to_string());
+    let (value, _) = engine.evaluate(&module).expect("evaluate");
+    let profile = active_core::secret::SecretProfile::analyze_with_profile(&module, Some("a"));
+    assert!(
+        profile.path_is_secret("a"),
+        "material default path is material"
+    );
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(live), "default override leaked: {json}");
+}

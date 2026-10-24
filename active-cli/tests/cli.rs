@@ -3108,3 +3108,22 @@ fn audit_source_path_with_interpolation_markers_revalidates() {
         String::from_utf8_lossy(&checked.stderr)
     );
 }
+
+#[test]
+fn materialise_blobs_fails_closed_on_a_path_material_blob() {
+    // N3 (review 32): a profile places a blob at an inherited material
+    // path. The demand must fail with B003, not silently drop payload.
+    let f = fixture(
+        "materialise_path_taint.active",
+        "let s = env.ACTIVE_MAT_R32\nk = secret(s)\nn = s\nb = blob(\"text/plain\", \"public\")\nactive_profile = \"p\"\nprofile \"p\" { n = b }\n",
+    );
+    let out = active()
+        .args(["eval", "--materialise-blobs", "--profile", "p"])
+        .arg(&f)
+        .env("ACTIVE_MAT_R32", "mat-secret-r32")
+        .output()
+        .expect("run active");
+    assert!(!out.status.success(), "path-material demand must fail");
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(text.contains("B003"), "{text}");
+}

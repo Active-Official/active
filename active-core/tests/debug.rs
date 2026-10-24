@@ -826,3 +826,95 @@ fn steps_follow_a_nested_rename() {
         "bare destination fabricated: {rendered}"
     );
 }
+
+#[test]
+fn steps_flag_a_profile_override_of_a_base_path_as_tainted() {
+    // N3 residual (review 32): a profile overrides a base data path
+    // with a material value; the natural data path wins, and the step
+    // must still report tainted=true.
+    let src = "k = secret(\"S3\")\nm = \"benign-base\"\nactive_profile = \"p\"\nprofile \"p\" { m = secret(\"S3\") }\n";
+    let (_, _, steps) = Engine::new()
+        .evaluate_with_steps(&module(src))
+        .expect("evaluate");
+    let step = steps
+        .iter()
+        .find(|step| step.path.as_deref() == Some("m"))
+        .expect("base path step");
+    assert_eq!(step.value, serde_json::json!("***SECRET***"), "{step:?}");
+    assert!(step.tainted, "marker step must be a taint hit: {step:?}");
+}
+
+#[test]
+fn steps_follow_a_nested_computed_profile_rename() {
+    // N2a residual (review 32): the fail-closed computed branch also
+    // updates the trace overlay to the same-parent destination.
+    let src = "let p = env.R32_NEST\nk = secret(p)\nsel = env.R32_SEL\nactive_profile = sel\nprofile \"b\" { a = { b = { x = p } } }\n@rename(\"a.b.x\", \"q\")\n";
+    let mut env = std::collections::HashMap::new();
+    env.insert("R32_NEST".to_string(), "nested-trace-r32".to_string());
+    env.insert("R32_SEL".to_string(), "b".to_string());
+    let (_, _, steps) = Engine::new()
+        .with_env(env)
+        .evaluate_with_steps(&module(src))
+        .expect("evaluate");
+    let rendered = serde_json::to_string(&steps).expect("json");
+    assert!(
+        !rendered.contains("nested-trace-r32"),
+        "source leaked: {rendered}"
+    );
+    assert!(
+        steps
+            .iter()
+            .any(|step| step.path.as_deref() == Some("a.b.q")),
+        "same-parent destination missing: {rendered}"
+    );
+}
+
+#[test]
+fn steps_do_not_fabricate_an_array_element_rename() {
+    // N2b residual (review 32): renaming an array element is a W004
+    // no-op; the overlay must not move it to `arr.zz`.
+    let src =
+        "let p = env.R32_ARR\nk = secret(p)\narr = [{ x = p }]\n@rename(\"arr[0]\", \"zz\")\n";
+    let mut env = std::collections::HashMap::new();
+    env.insert("R32_ARR".to_string(), "array-trace-r32".to_string());
+    let (_, _, steps) = Engine::new()
+        .with_env(env)
+        .evaluate_with_steps(&module(src))
+        .expect("resilient evaluate");
+    assert!(
+        !steps.iter().any(
+            |step| step.path.as_deref() == Some("arr.zz") || step.path.as_deref() == Some("zz")
+        ),
+        "array-element rename fabricated a path: {steps:?}"
+    );
+}
+
+#[test]
+fn steps_shift_material_paths_after_an_array_remove() {
+    // N2c residual (review 32): removing an element shifts later
+    // indices; the trace overlay follows.
+    let src = "let p = env.R32_SHIFT\nk = secret(p)\narr = [{ x = \"A\" }, { y = \"B\" }]\nactive_profile = \"p\"\nprofile \"p\" { arr = [{ x = \"A\" }, { y = p }] }\n@remove(\"arr[0]\")\n";
+    let mut env = std::collections::HashMap::new();
+    env.insert("R32_SHIFT".to_string(), "shift-trace-r32".to_string());
+    let (_, _, steps) = Engine::new()
+        .with_env(env)
+        .evaluate_with_steps(&module(src))
+        .expect("resilient evaluate");
+    let rendered = serde_json::to_string(&steps).expect("json");
+    assert!(
+        !rendered.contains("shift-trace-r32"),
+        "source leaked: {rendered}"
+    );
+    assert!(
+        steps
+            .iter()
+            .any(|step| step.path.as_deref() == Some("arr[0].y")),
+        "shifted material path missing: {rendered}"
+    );
+    assert!(
+        !steps
+            .iter()
+            .any(|step| step.path.as_deref() == Some("arr[1].y")),
+        "stale index kept: {rendered}"
+    );
+}

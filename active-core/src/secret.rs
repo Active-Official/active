@@ -611,6 +611,10 @@ fn path_is_material(material_paths: &HashSet<String>, path: &str) -> bool {
 
 /// Keep the trace-path overlay in step with a rename.
 fn rename_material_node_paths(map: &mut HashMap<NodeId, String>, from: &str, to: &str) {
+    // Renaming an array element is a W004 no-op in the evaluator.
+    if split_parent(from).1.starts_with('[') {
+        return;
+    }
     let (parent, _) = split_parent(from);
     let dest = if parent.is_empty() {
         to.to_string()
@@ -625,9 +629,44 @@ fn rename_material_node_paths(map: &mut HashMap<NodeId, String>, from: &str, to:
     }
 }
 
-/// Keep the trace-path overlay in step with a removal.
+/// Keep the trace-path overlay in step with a removal, including the
+/// evaluator's array-index shift.
 fn remove_material_node_paths(map: &mut HashMap<NodeId, String>, path: &str) {
-    map.retain(|_, known| !path_under(known, path));
+    let (array, last) = split_parent(path);
+    let Some(rest) = last.strip_prefix('[') else {
+        map.retain(|_, known| !path_under(known, path));
+        return;
+    };
+    let Some((digits, _)) = rest.split_once(']') else {
+        map.retain(|_, known| !path_under(known, path));
+        return;
+    };
+    let Ok(index) = digits.parse::<usize>() else {
+        map.retain(|_, known| !path_under(known, path));
+        return;
+    };
+    let prefix = format!("{array}[");
+    map.retain(|_, known| {
+        if path_under(known, path) {
+            return false;
+        }
+        if array.is_empty() {
+            return true;
+        }
+        let Some(tail) = known.strip_prefix(&prefix) else {
+            return true;
+        };
+        let Some((digits, rest)) = tail.split_once(']') else {
+            return true;
+        };
+        let Ok(current) = digits.parse::<usize>() else {
+            return true;
+        };
+        if current > index {
+            *known = format!("{prefix}{}]{}", current - 1, rest);
+        }
+        true
+    });
 }
 
 /// Names of every env read anywhere in a value subtree, including
@@ -1212,6 +1251,7 @@ impl SecretProfile {
                             if moved {
                                 fallback_secret_paths.insert(dest);
                             }
+                            rename_material_node_paths(&mut material_node_paths, &from, &to);
                         }
                         continue;
                     }

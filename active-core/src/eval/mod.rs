@@ -1717,7 +1717,14 @@ impl Engine {
                 // is not (the material path redacts in the container).
                 let on_material_path =
                     material_path.is_some_and(|path| step_path.as_deref() == Some(path));
-                let sensitive = node_material || on_material_path;
+                // The renderer also marks a step by its path; the flag
+                // must agree or `--break taint` misses a marker step.
+                let path_material = step_path.as_deref().is_some_and(|path| {
+                    secret_profile
+                        .as_ref()
+                        .is_some_and(|profile| profile.path_is_secret(path))
+                });
+                let sensitive = node_material || on_material_path || path_material;
                 if node_material || on_material_path {
                     // Register the evaluated text of a material scalar
                     // so a container rendering redacts it. Only

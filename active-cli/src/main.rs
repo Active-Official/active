@@ -1339,22 +1339,6 @@ fn main() -> anyhow::Result<()> {
             // while agents fetch only what they need. Structural
             // material is redacted on the FULL tree before projection,
             // so a cone keeps the document's path-relative taint.
-            // Explicit materialisation demand (spec/blob.md §5) runs
-            // on the RAW cone, before redaction, so a tainted blob
-            // still fails closed (B003) instead of turning into the
-            // marker.
-            let cone_for_demand = match path.as_deref() {
-                Some(p) => active_core::convert::project_path(&value, p)
-                    .map_err(|e| anyhow::anyhow!("{e}"))?
-                    .clone(),
-                None => value.clone(),
-            };
-            if materialise_blobs {
-                active_core::convert::require_materialised(&cone_for_demand).map_err(|e| {
-                    report_eval_error(&e, &name);
-                    anyhow::anyhow!("evaluation failed")
-                })?;
-            }
             // Structural material is redacted on the FULL tree, then
             // projected: the cone is already redacted at document
             // paths, so it must NOT be re-rooted and redacted again.
@@ -1369,6 +1353,16 @@ fn main() -> anyhow::Result<()> {
                     .clone(),
                 None => full_value.clone(),
             };
+            // Explicit materialisation demand (spec/blob.md §5) runs on
+            // the redacted cone: a tainted blob (node- or path-material)
+            // is marked tainted there, so the demand fails closed with
+            // B003 instead of silently dropping the payload.
+            if materialise_blobs {
+                active_core::convert::require_materialised(&value).map_err(|e| {
+                    report_eval_error(&e, &name);
+                    anyhow::anyhow!("evaluation failed")
+                })?;
+            }
 
             match format.as_str() {
                 "json" => println!("{}", value_to_pretty_json(&value)),

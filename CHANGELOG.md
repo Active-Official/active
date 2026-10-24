@@ -223,6 +223,13 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   count as export or rename candidates, so a rename cannot clear a
   destination's taint and an unselected key cannot suppress a material
   default fill.
+- **Traces and materialisation follow path taint.** A step whose
+  rendered path is material reports `tainted: true`, including a
+  profile override of a base data path; the trace overlay follows
+  same-parent renames, array-element no-ops, and index shifts after a
+  removal. `--materialise-blobs` runs the demand on the redacted cone,
+  so a node- or path-material blob fails closed with B003 instead of
+  silently dropping its payload.
 - **Env materiality follows the name.** An env read placed at a
   material profile path makes every read of that name material,
   including reads nested under interpolations, operators, quantities,

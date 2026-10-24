@@ -9,7 +9,7 @@ semantics, and terminal states shared with `active repair`.
 
 ```json
 {
-  "diagnostics": [{"code", "severity", "message", "path", "span"}],
+  "diagnostics": [{"code", "severity", "message", "path", "span", "file"}],
   "plan": {"goal", "steps", "clean", "stuck", "unrepairable",
            "final_codes", "findings"}
 }

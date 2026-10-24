@@ -434,6 +434,7 @@ pub fn browser_model_with(
             "message": diagnostic.message,
             "path": diagnostic.path,
             "span": diagnostic.span,
+            "file": diagnostic.file,
         });
         let key = row.to_string();
         if seen.insert(key) {

@@ -117,12 +117,13 @@ fn still_fails(text: &str, target_code: &str) -> bool {
 /// is display data, never a secret carrier.
 pub fn minimal_case(source: &str, target_code: &str, max_attempts: usize) -> JsonValue {
     let (reduced, attempts) = reduce(source, target_code, max_attempts);
+    let reduced_bytes = reduced.len();
     let reduced = redact_secret_literals(&reduced);
     json!({
         "target_code": target_code,
         "attempts": attempts,
         "original_bytes": source.len(),
-        "reduced_bytes": reduced.len(),
+        "reduced_bytes": reduced_bytes,
         "reduced": reduced,
     })
 }
@@ -141,7 +142,8 @@ pub fn minimal_case(source: &str, target_code: &str, max_attempts: usize) -> Jso
 /// `secret.env(NAME)` names are not material and pass through.
 fn redact_secret_literals(source: &str) -> String {
     let mut spans: Vec<crate::diag::Span> = Vec::new();
-    let (module, _) = crate::parse_recovering(source, "redact", crate::ParseOptions::default());
+    let (module, parse_diags) =
+        crate::parse_recovering(source, "redact", crate::ParseOptions::default());
     for node in &module.arena {
         if let crate::ir::Node::Secret { locator } = node {
             let mut set = std::collections::HashSet::new();
@@ -160,8 +162,11 @@ fn redact_secret_literals(source: &str) -> String {
             }
         }
     }
-    if spans.is_empty() {
-        spans = lexical_secret_spans(source);
+    // The lexical pass also covers malformed calls and recovering-parse
+    // documents where the semantic pass cannot see a Secret node.
+    // Overlaps are unioned below, so running both is safe.
+    if !parse_diags.is_empty() || spans.is_empty() {
+        spans.extend(lexical_secret_spans(source));
     }
     if spans.is_empty() {
         return source.to_string();
@@ -171,12 +176,24 @@ fn redact_secret_literals(source: &str) -> String {
         .filter_map(|span| span_offsets(source, span))
         .collect();
     ranges.sort_unstable();
-    ranges.dedup();
-    let mut out = source.to_string();
-    for (start, end) in ranges.iter().rev() {
-        if *end <= *start || *end > out.len() {
+    // Coalesce overlapping/adjacent ranges (an interpolated string
+    // contains its literal parts; replacing both with stale offsets
+    // would corrupt the text and can split a UTF-8 boundary).
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (start, end) in ranges {
+        if start >= end || end > source.len() {
             continue;
         }
+        if !source.is_char_boundary(start) || !source.is_char_boundary(end) {
+            continue;
+        }
+        match merged.last_mut() {
+            Some(last) if start <= last.1 => last.1 = last.1.max(end),
+            _ => merged.push((start, end)),
+        }
+    }
+    let mut out = source.to_string();
+    for (start, end) in merged.iter().rev() {
         out.replace_range(*start..*end, "\"***SECRET***\"");
     }
     out
@@ -227,7 +244,11 @@ fn collect_for_redaction(
     }
 }
 
-/// Lexer-based fallback: find `secret` + parentheses + a string token.
+/// Lexer-based fallback: from every `secret` keyword, find the call's
+/// opening parenthesis (tolerating malformed punctuation) and redact
+/// every string token up to its matching close parenthesis. This covers
+/// `secret ("x")`, `secret(("x"))`, triple-quoted strings, extra
+/// arguments, and unterminated strings (the lexer heals them).
 fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
     use crate::parser::TokenKind as K;
     let mut lexer = crate::parser::Lexer::new(source);
@@ -236,27 +257,50 @@ fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
     let mut spans = Vec::new();
     let mut index = 0usize;
     while index < tokens.len() {
-        let is_secret = matches!(tokens[index].kind, K::Ident) && tokens[index].text == "secret";
+        let is_secret =
+            matches!(tokens[index].kind, K::Secret | K::Ident) && tokens[index].text == "secret";
         if !is_secret {
             index += 1;
             continue;
         }
-        let mut cursor = index + 1;
-        while matches!(tokens.get(cursor).map(|t| &t.kind), Some(K::LParen)) {
-            cursor += 1;
-        }
-        if let Some(token) = tokens.get(cursor) {
-            if matches!(
-                token.kind,
-                K::String(_) | K::SingleString | K::MlString(_) | K::MlSingleString
-            ) {
-                spans.push(crate::diag::Span {
-                    line: token.line,
-                    column: token.col,
-                    end_line: token.end_line,
-                    end_column: token.end_col,
-                });
+        // Allow a few malformed tokens between the keyword and `(`.
+        let mut open = None;
+        for (probe, token) in tokens.iter().enumerate().skip(index + 1).take(3) {
+            if matches!(token.kind, K::LParen) {
+                open = Some(probe);
+                break;
             }
+            if matches!(token.kind, K::Newline | K::Eof) {
+                break;
+            }
+        }
+        let Some(open) = open else {
+            index += 1;
+            continue;
+        };
+        let mut depth = 0i32;
+        let mut cursor = open;
+        while cursor < tokens.len() {
+            match tokens[cursor].kind {
+                K::LParen => depth += 1,
+                K::RParen => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                K::String(_) | K::SingleString | K::MlString(_) | K::MlSingleString => {
+                    let token = &tokens[cursor];
+                    spans.push(crate::diag::Span {
+                        line: token.line,
+                        column: token.col,
+                        end_line: token.end_line,
+                        end_column: token.end_col,
+                    });
+                }
+                _ => {}
+            }
+            cursor += 1;
         }
         index = cursor.max(index + 1);
     }
@@ -272,7 +316,10 @@ fn span_offsets(text: &str, span: &crate::diag::Span) -> Option<(usize, usize)> 
 }
 
 fn line_byte_starts(text: &str) -> Vec<usize> {
-    let mut starts = vec![0usize];
+    // The lexer skips a leading BOM, so line-1 columns count from after
+    // it; start the first line at the BOM's byte length.
+    let bom = if text.starts_with('\u{feff}') { 3 } else { 0 };
+    let mut starts = vec![bom];
     for (index, byte) in text.bytes().enumerate() {
         if byte == b'\n' {
             starts.push(index + 1);

@@ -81,12 +81,12 @@ class CapabilityTest(unittest.TestCase):
 
     def test_output_descriptions_cover_formats_and_query_shapes(self) -> None:
         tools = {t.get("name"): t for t in self.doc.get("tools", [])}
-        eval_text = json.dumps(tools["eval"])
+        eval_output = json.dumps(tools["eval"].get("output", {})).lower()
         for fmt in ("json", "yaml", "toml"):
-            self.assertIn(fmt, eval_text, f"eval descriptor omits {fmt}")
-        graph_text = json.dumps(tools["graph"])
+            self.assertIn(fmt, eval_output, f"eval output omits {fmt}")
+        graph_output = json.dumps(tools["graph"].get("output", {})).lower()
         for shape in ("path list", "shortest-path", "content-addressed-above-size"):
-            self.assertIn(shape, graph_text, f"graph descriptor omits {shape}")
+            self.assertIn(shape, graph_output, f"graph output omits {shape}")
 
     def test_every_tool_described(self) -> None:
         for tool in self.doc.get("tools", []):

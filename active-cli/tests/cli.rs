@@ -2422,3 +2422,109 @@ fn viz_honors_allow_parent_escapes() {
     );
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn viz_repair_honors_allow_parent_escapes() {
+    let dir = std::env::temp_dir().join(format!("active-viz-repair-escape-{}", std::process::id()));
+    let sub = dir.join("sub");
+    std::fs::create_dir_all(&sub).expect("dirs");
+    std::fs::write(dir.join("inc.active"), "host = \"x\"\n").expect("include");
+    let main = sub.join("main.active");
+    std::fs::write(
+        &main,
+        "include \"../inc.active\"\nschema = { port = Int(default = 8080) }\n",
+    )
+    .expect("main");
+
+    let denied = active()
+        .args(["viz", "repair", "--from"])
+        .arg(&main)
+        .output()
+        .expect("run active");
+    assert!(denied.status.success(), "viz export still prints the plan");
+    let denied_plan: serde_json::Value = serde_json::from_slice(&denied.stdout).expect("plan JSON");
+    assert_eq!(denied_plan["clean"], false, "{denied_plan}");
+    assert!(
+        denied_plan["final_codes"]
+            .as_array()
+            .expect("codes")
+            .iter()
+            .any(|c| c.as_str().unwrap_or("").starts_with("E015")),
+        "escape must surface as E015: {denied_plan}"
+    );
+    let allowed = active()
+        .args(["viz", "repair", "--from"])
+        .arg(&main)
+        .arg("--allow-parent-escapes")
+        .output()
+        .expect("run active");
+    assert!(
+        allowed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&allowed.stderr)
+    );
+    let plan: serde_json::Value = serde_json::from_slice(&allowed.stdout).expect("plan");
+    assert_eq!(plan["clean"], true, "{plan}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn graph_query_threads_the_profile_override() {
+    let f = fixture(
+        "graph_profile.active",
+        "profile \"prod\" { token = secret(\"hunter2-profile\") }\n",
+    );
+    let out = active()
+        .args(["graph"])
+        .arg(&f)
+        .args([
+            "--profile",
+            "prod",
+            "query",
+            "--query",
+            "secret-tainted-cone",
+        ])
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let body = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        body.contains("token"),
+        "profile value not evaluated: {body}"
+    );
+    assert!(
+        !body.contains("hunter2"),
+        "raw secret in query output: {body}"
+    );
+}
+
+#[test]
+fn repair_browser_keeps_per_file_diagnostics_distinct() {
+    let dir = std::env::temp_dir().join(format!("active-browser-dedup-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("dirs");
+    std::fs::write(dir.join("a.active"), "x = = 1\n").expect("a");
+    std::fs::write(dir.join("b.active"), "x = = 1\n").expect("b");
+    let main = dir.join("main.active");
+    std::fs::write(&main, "include \"a.active\"\ninclude \"b.active\"\n").expect("main");
+
+    let out = active()
+        .args(["repair", "--from"])
+        .arg(&main)
+        .arg("--browser")
+        .output()
+        .expect("run active");
+    assert!(out.status.success());
+    let model: serde_json::Value = serde_json::from_slice(&out.stdout).expect("model");
+    let errors = model["diagnostics"]
+        .as_array()
+        .expect("diagnostics")
+        .iter()
+        .filter(|d| d["code"] == "E002")
+        .count();
+    assert_eq!(errors, 2, "each included file keeps its own E002: {model}");
+    let _ = std::fs::remove_dir_all(dir);
+}

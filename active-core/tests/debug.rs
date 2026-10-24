@@ -165,3 +165,53 @@ fn minimal_case_redacts_every_secret_spelling_without_duplication() {
         );
     }
 }
+
+#[test]
+fn minimal_case_redacts_interpolated_and_malformed_secret_calls() {
+    let cases = [
+        (
+            "schema = { token = Int }\ntoken = secret(\"hunter2-a-${'x'}-hunter3-b\")\nnoise = 1\n",
+            "T002",
+        ),
+        (
+            "schema = { token = Int }\ntoken = secret(\"hunter2-${'aaaaaaaaaa'}-é\")\nnoise = 1\n",
+            "T002",
+        ),
+        (
+            "schema = { token = Int }\ntoken = secret(\"hunter2-a\", \"hunter2-b\")\nnoise = 1\n",
+            "B001",
+        ),
+    ];
+    for (src, code) in cases {
+        let report = debug::minimal_case(src, code, 100);
+        let rendered = report.to_string();
+        assert!(
+            !rendered.contains("hunter2"),
+            "leak for {src:?}: {rendered}"
+        );
+        assert!(
+            !rendered.contains("hunter3"),
+            "leak for {src:?}: {rendered}"
+        );
+        assert!(
+            report["reduced_bytes"].as_u64().unwrap() <= report["original_bytes"].as_u64().unwrap(),
+            "reduced size must not be measured after redaction: {report}"
+        );
+    }
+}
+
+#[test]
+fn minimal_case_handles_a_bom_prefixed_first_line() {
+    let src = "\u{feff}schema = { token = Int }\ntoken = secret(\"hunter2-bom\")\nnoise = 1\n";
+    let report = debug::minimal_case(src, "T002", 100);
+    let rendered = report.to_string();
+    assert!(!rendered.contains("hunter2"), "{rendered}");
+    assert!(
+        report["reduced"]
+            .as_str()
+            .unwrap()
+            .contains("secret(\"***SECRET***\")"),
+        "{}",
+        report["reduced"]
+    );
+}

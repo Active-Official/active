@@ -4,6 +4,7 @@ OUTPUT-SCHEMA budget ok
 OUTPUT-SCHEMA inspect-value ok
 OUTPUT-SCHEMA mode ok
 OUTPUT-SCHEMA lint ok
+OUTPUT-SCHEMA sarif ok
 OUTPUT-SCHEMA repair-plan ok
 OUTPUT-SCHEMA debug-steps ok
-OUTPUT-SCHEMA: OK (8 outputs)
+OUTPUT-SCHEMA: OK (9 outputs)

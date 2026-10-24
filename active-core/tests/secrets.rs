@@ -1464,3 +1464,30 @@ fn profile_analysis_work_is_bounded_and_fails_closed() {
         "work-bound trip must fail closed"
     );
 }
+
+#[test]
+fn work_bound_trip_marks_node_and_env_surfaces_material() {
+    // N1 (review 37): on a profile work-bound trip the document fails
+    // closed for node/name-based consumers too, not only path exports.
+    let mut src = String::from("let s = env.R37_SRC\nk = secret(s)\n");
+    src.push_str("let big = {");
+    for i in 0..200 {
+        if i > 0 {
+            src.push(',');
+        }
+        src.push_str(&format!("k{i} = 1"));
+    }
+    src.push_str("}\nz = \"benign\"\nactive_profile = \"p\"\nprofile \"p\" {\n");
+    for i in 0..3000 {
+        src.push_str(&format!("  f{i} = big\n"));
+    }
+    src.push_str("  z = env.R37_TRACE\n}\n");
+    std::env::set_var("R37_SRC", "bound-source-r37");
+    let module = parse(&src, "work-bound-node").expect("parse");
+    let profile = active_core::secret::SecretProfile::analyze_with_profile(&module, Some("p"));
+    assert!(profile.path_is_secret("z"), "path fails closed");
+    assert!(
+        profile.env_is_material("R37_TRACE"),
+        "env name fails closed for provenance"
+    );
+}

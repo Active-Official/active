@@ -815,11 +815,34 @@ fn remove_material_node_paths(map: &mut HashMap<NodeId, String>, path: &str) {
     });
 }
 
+/// Fail closed after an analysis bound: every node and env read is
+/// treated as material, so node-based surfaces (traces, provenance)
+/// cannot publish an unprocessed profile value.
+fn mark_all_material(module: &Module, nodes: &mut HashSet<NodeId>, envs: &mut HashSet<String>) {
+    for (index, node) in module.arena.iter().enumerate() {
+        nodes.insert(NodeId(index as u32));
+        if let Node::Env { name, .. } = node {
+            envs.insert(name.clone());
+        }
+    }
+}
+
 /// Names of every env read anywhere in a value subtree, including
 /// operands, interpolation parts, quantities, blob media/data, and env
 /// fallbacks. A material profile value makes every read it contains
-/// material under the env-name rule.
-fn collect_env_names(module: &Module, root: NodeId, names: &mut HashSet<String>) {
+/// material under the env-name rule. Results are cached per node: a
+/// profile may reference one large shared subtree many times.
+fn collect_env_names(
+    module: &Module,
+    root: NodeId,
+    names: &mut HashSet<String>,
+    cache: &mut HashMap<NodeId, HashSet<String>>,
+) {
+    if let Some(found) = cache.get(&root) {
+        names.extend(found.iter().cloned());
+        return;
+    }
+    let mut found: HashSet<String> = HashSet::new();
     let mut stack = vec![root];
     let mut seen: HashSet<NodeId> = HashSet::new();
     while let Some(id) = stack.pop() {
@@ -827,10 +850,12 @@ fn collect_env_names(module: &Module, root: NodeId, names: &mut HashSet<String>)
             continue;
         }
         if let Some(Node::Env { name, .. }) = module.get(id) {
-            names.insert(name.clone());
+            found.insert(name.clone());
         }
         stack.extend(value_children(module, id));
     }
+    names.extend(found.iter().cloned());
+    cache.insert(root, found);
 }
 
 /// Whether a value is a table after following references (profile
@@ -1164,6 +1189,7 @@ impl SecretProfile {
         // fresh map, so the per-map MAX_PATHS alone cannot bound the
         // merged analysis. On exhaustion, fail closed for the document.
         let mut profile_work = 0usize;
+        let mut env_name_cache: HashMap<NodeId, HashSet<String>> = HashMap::new();
         match selection {
             ProfileSelection::Named(name) => {
                 if let Some(id) = module.profiles.get(&name) {
@@ -1186,6 +1212,7 @@ impl SecretProfile {
                                 truncated = true;
                                 paths.clear();
                                 fallback_secret_paths.clear();
+                                mark_all_material(module, &mut nodes, &mut material_envs);
                                 break;
                             }
                             if base_truncated || profile_truncated {
@@ -1231,6 +1258,7 @@ impl SecretProfile {
                                 truncated = true;
                                 paths.clear();
                                 fallback_secret_paths.clear();
+                                mark_all_material(module, &mut nodes, &mut material_envs);
                                 break;
                             }
                             for path in &replaces {
@@ -1248,7 +1276,12 @@ impl SecretProfile {
                                     nodes.insert(*node);
                                     fallback_secret_paths.insert(path.clone());
                                     set_material_path(&mut material_node_paths, *node, path);
-                                    collect_env_names(module, *node, &mut material_envs);
+                                    collect_env_names(
+                                        module,
+                                        *node,
+                                        &mut material_envs,
+                                        &mut env_name_cache,
+                                    );
                                 } else if inherited || under {
                                     // Path-inherited materiality stays
                                     // path-based: exports and debug
@@ -1256,7 +1289,12 @@ impl SecretProfile {
                                     // literal is not globally marked.
                                     fallback_secret_paths.insert(path.clone());
                                     set_material_path(&mut material_node_paths, *node, path);
-                                    collect_env_names(module, *node, &mut material_envs);
+                                    collect_env_names(
+                                        module,
+                                        *node,
+                                        &mut material_envs,
+                                        &mut env_name_cache,
+                                    );
                                 }
                             }
                             let profile_keys: Vec<String> = profile_paths.keys().cloned().collect();
@@ -1284,6 +1322,7 @@ impl SecretProfile {
                                 truncated = true;
                                 paths.clear();
                                 fallback_secret_paths.clear();
+                                mark_all_material(module, &mut nodes, &mut material_envs);
                                 break 'profiles;
                             }
                             if base_truncated || profile_truncated {
@@ -1326,7 +1365,12 @@ impl SecretProfile {
                                 if own || inherited || under {
                                     set_material_path(&mut material_node_paths, node, &path);
                                     fallback_secret_paths.insert(path);
-                                    collect_env_names(module, node, &mut material_envs);
+                                    collect_env_names(
+                                        module,
+                                        node,
+                                        &mut material_envs,
+                                        &mut env_name_cache,
+                                    );
                                     if own {
                                         nodes.insert(node);
                                     }
@@ -1399,6 +1443,7 @@ impl SecretProfile {
                 // could have made material.
                 paths.clear();
                 fallback_secret_paths.clear();
+                mark_all_material(module, &mut nodes, &mut material_envs);
                 truncated = true;
                 break;
             }

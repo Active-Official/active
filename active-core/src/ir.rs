@@ -67,6 +67,10 @@ pub struct Module {
     /// documents); the field lets the engine budget progressively
     /// without re-reading the tree.
     pub mode: Mode,
+    /// Whether the ROOT document itself declares `active_mode` (a
+    /// marker merged from an include, or a nested key with the same
+    /// name, does not count). Tools report marker presence from this.
+    pub mode_marker: bool,
     /// Declared capabilities (PROPOSAL §3.5, CHECKLIST CAP.001): the
     /// root-level `active_capabilities = [...]` string list a document
     /// asks the host for. Hosts may refuse excess requests (the
@@ -266,6 +270,7 @@ impl Module {
             annotations: HashMap::new(),
             depends_on: HashMap::new(),
             mode: Mode::default(),
+            mode_marker: false,
             capabilities: Vec::new(),
         }
     }

@@ -2209,3 +2209,38 @@ fn viz_rejects_flags_that_do_not_apply() {
         .expect("run active");
     assert!(!goal.status.success());
 }
+
+#[test]
+fn viz_repair_handles_unparseable_source_and_reports_outcome() {
+    let f = fixture("viz_repair_broken.active", "port = = 2\nnoise = 1\n");
+    let out = active()
+        .args(["viz", "repair", "--from"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let plan: serde_json::Value = serde_json::from_slice(&out.stdout).expect("plan JSON");
+    assert_eq!(plan["unrepairable"], true);
+}
+
+#[test]
+fn nested_active_mode_is_not_a_root_marker() {
+    let f = fixture(
+        "mode_nested.active",
+        "[server]\nactive_mode = \"data\"\nport = 1\n",
+    );
+    let out = active()
+        .args(["mode", "--from"])
+        .arg(&f)
+        .args(["--format", "json"])
+        .output()
+        .expect("run active");
+    assert!(out.status.success());
+    let doc: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    assert_eq!(doc["marker"], false);
+    assert_eq!(doc["mode"], "config");
+}

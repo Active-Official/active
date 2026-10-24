@@ -116,9 +116,16 @@ Module._load = originalLoad;
 	]) {
 		assert.ok(registered.includes(command), `missing command ${command}`);
 	}
-	// Let the async refresh settle; the CLI may be absent in CI, which
-	// must degrade to the warning state rather than throw.
-	await new Promise((resolve) => setTimeout(resolve, 600));
+	// Let the async refresh settle; poll so a cold runner does not flake.
+	for (let i = 0; i < 50; i += 1) {
+		if (
+			statusItem.text.includes("Active config") ||
+			statusItem.text.includes("Active data")
+		) {
+			break;
+		}
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
 	assert.ok(
 		statusItem.text.includes("Active config") ||
 			statusItem.text.includes("Active data"),

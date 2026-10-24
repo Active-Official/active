@@ -26,8 +26,9 @@ full `--max-*` budget family.
 - `active graph <file> [--format text|mermaid|dot|json]` - dependency graph.
 - `active impact <key> <file>` / `active why <key> <file>` - transitive
   dependents and dependencies.
-- `active graph query <file> <kind> ...` - `dependents`, `dependencies`,
-  `shortest-path`, `secret-cone`, `ca-above-size`.
+- `active graph [FILE] query --query <name> [--key KEY] [--min-size N]` -
+  `dependents-of`, `dependencies-of`, `shortest-path`,
+  `secret-tainted-cone`, `content-addressed-above-size`.
 - `active inspect --from <file> [--path a.b] [--format json|text]` - schema
   introspection (default) or one value path: kind, redacted value, taint,
   size, content-addressed identity, schema contract with constraints, and

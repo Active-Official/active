@@ -30,7 +30,7 @@
     },
     {
       "name": "eval",
-      "entry": "active eval <file> [--format json|pretty] [--path a.b[0]] [--materialise-blobs] [--audit-trail FILE] [--resilient] [--profile NAME] [--trace] [--sandbox strict|data|agent|trusted]",
+      "entry": "active eval <file> [--format json|yaml|toml] [--path a.b[0]] [--materialise-blobs] [--audit-trail FILE] [--resilient] [--profile NAME] [--trace] [--sandbox strict|data|agent|trusted]",
       "description": "Evaluate a file and print redacted JSON. Secrets always render as ***SECRET***; a raw secret in output is a defect, never data. --path emits only the demanded cone, --materialise-blobs includes blob payloads (refused for tainted blobs), and --audit-trail writes a re-validatable redacted audit document.",
       "input": {
         "file": "path to a .active source file"
@@ -64,8 +64,8 @@
     },
     {
       "name": "graph",
-      "entry": "active graph <file> [--format text|mermaid|dot|json]; active impact|why <KEY> <file> [--format text|json]; active graph query <file> <dependents|dependencies|shortest-path|secret-cone|ca-above-size> ...",
-      "description": "Query the dependency graph: render it, list what breaks if a key changes, list what a key is built from, or run decisive queries (dependents, dependencies, shortest path, secret cone, content-addressed values above a size).",
+      "entry": "active graph [FILE] [--format text|mermaid|dot|json]; active impact|why <KEY> <FILE> [--format text|json]; active graph [FILE] query --query <dependents-of|dependencies-of|shortest-path|secret-tainted-cone|content-addressed-above-size> [--key KEY] [--min-size N] [--format text|json]",
+      "description": "Query the dependency graph: render it, list what breaks if a key changes, list what a key is built from, or run a named decisive query (dependents-of, dependencies-of, shortest-path, secret-tainted-cone, content-addressed-above-size).",
       "input": {
         "file": "path to a .active source file",
         "key": "optional dotted key"

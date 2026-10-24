@@ -26,7 +26,7 @@ syntax match activeTableName "[A-Za-z_][A-Za-z0-9_]*" contained
 syntax keyword activeKeyword let profile include schema active_profile active_mode active_capabilities depends_on as private closed
 syntax match activeFunction "\<\(env\|secret\|blob\)\>\ze\s*[.(]"
 
-syntax match activeNumber "\<-\=\(\d\+\.\d\+\|\d\+\)\(req/s\|req/m\|req/h\|ktokens\|Mtokens\|tokens\|tok/s\|TFLOPS\|PFLOPS\|FLOPS\|Kbps\|Mbps\|Gbps\|bps\|MB/s\|KB\|MB\|GB\|TB\|KiB\|MiB\|GiB\|TiB\|PiB\|EiB\|kHz\|MHz\|GHz\|THz\|Hz\|week\|sec\|min\|meter\|Cel\|Fahr\|rpm\|deg\|rad\|kWh\|bar\|psi\|Pa\|ns\|us\|µs\|ms\|s\|m\|h\|d\|B\|b\|Kb\|Mb\|Gb\|V\|A\|W\|J\|N\|km\|kg\|g\|K\|dB\)\=\>"
+syntax match activeNumber "\<-\=\(\d\+\.\d\+\|\d\+\)\(req/s\|req/m\|req/h\|/req/s\|/req/m\|/req/h\|/s\|/m\|/h\|ktokens\|Mtokens\|tokens\|tok/s\|TFLOPS\|PFLOPS\|FLOPS\|Kbps\|Mbps\|Gbps\|bps\|MB/s\|KB\|MB\|GB\|TB\|KiB\|MiB\|GiB\|TiB\|PiB\|EiB\|kHz\|MHz\|GHz\|THz\|Hz\|week\|sec\|min\|meter\|Cel\|Fahr\|rpm\|deg\|rad\|kWh\|bar\|psi\|Pa\|ns\|us\|µs\|ms\|s\|m\|h\|d\|B\|b\|Kb\|Mb\|Gb\|V\|A\|W\|J\|N\|km\|kg\|g\|K\|dB\)\=\>"
 syntax keyword activeBool true false null
 
 highlight default link activeComment Comment

@@ -699,18 +699,6 @@ fn run_inspect(
     Ok(())
 }
 
-/// Whether a line declares the root `active_mode` key (not a longer
-/// key such as `active_mode_extra`).
-fn declares_active_mode(line: &str) -> bool {
-    line.trim_start()
-        .strip_prefix("active_mode")
-        .is_some_and(|rest| {
-            rest.is_empty()
-                || rest.starts_with(|c: char| c.is_whitespace())
-                || rest.starts_with('=')
-        })
-}
-
 fn options(resilient: bool, allow_parent_escapes: bool) -> ParseOptions {
     ParseOptions {
         resilient,
@@ -1467,10 +1455,8 @@ fn main() -> anyhow::Result<()> {
             run_inspect(&from, path.as_deref(), &format, &trust_keys)?;
         }
         Commands::Mode { from, format } => {
-            let source = std::fs::read_to_string(&from)
-                .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", from.display()))?;
             let module = parse_input(&from, false, false, &None)?;
-            let marker = source.lines().any(declares_active_mode);
+            let marker = module.mode_marker;
             let mode = match module.mode {
                 active_core::Mode::Data => "data",
                 active_core::Mode::Config => "config",
@@ -1643,7 +1629,6 @@ fn main() -> anyhow::Result<()> {
             trust_keys,
         } => {
             let trust = load_trust(&trust_keys)?;
-            let module = parse_input(&from, false, false, &trust)?;
             // Reject flags that do not apply to this kind instead of
             // accepting and silently ignoring them.
             if kind != "graph" && format != "json" {
@@ -1652,6 +1637,47 @@ fn main() -> anyhow::Result<()> {
             if kind != "repair" && (goal != "validate" || !preserve.is_empty() || max_steps != 8) {
                 anyhow::bail!("--goal/--preserve/--max-steps only apply to `viz repair`");
             }
+            if kind == "repair" {
+                let parsed_goal = match goal.as_str() {
+                    "validate" => active_core::diag::RepairGoal::Validate,
+                    "preserve-key" => {
+                        if preserve.is_empty() {
+                            anyhow::bail!("preserve-key goal needs at least one --preserve <path>");
+                        }
+                        active_core::diag::RepairGoal::PreserveKey(preserve.clone())
+                    }
+                    "minimize-diff" => active_core::diag::RepairGoal::MinimizeDiff,
+                    other => anyhow::bail!(
+                        "unknown repair goal `{other}` (want validate|preserve-key|minimize-diff)"
+                    ),
+                };
+                // Repair plans raw source with the file context, so an
+                // unparseable document still yields the H008 outcome and
+                // includes resolve exactly as `active repair` resolves
+                // them (spec/viz.md §3).
+                if trust.is_some() {
+                    parse_input(&from, false, false, &trust)?;
+                }
+                let source = std::fs::read_to_string(&from)
+                    .map_err(|e| anyhow::anyhow!("cannot read source: {e}"))?;
+                let mut engine = Engine::new();
+                engine.resilient = false;
+                let outcome = active_core::convert::repair::repair_with_engine_and_options(
+                    &source,
+                    parsed_goal,
+                    &preserve,
+                    max_steps,
+                    &engine,
+                    Some(&from),
+                    false,
+                );
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&outcome).map_err(|e| anyhow::anyhow!("{e}"))?
+                );
+                return Ok(());
+            }
+            let module = parse_input(&from, false, false, &trust)?;
             match kind.as_str() {
                 "graph" => match format.as_str() {
                     "json" => println!(
@@ -1701,23 +1727,7 @@ fn main() -> anyhow::Result<()> {
                         serde_json::to_string_pretty(&data).map_err(|e| anyhow::anyhow!("{e}"))?
                     );
                 }
-                "repair" => {
-                    let source = std::fs::read_to_string(&from)
-                        .map_err(|e| anyhow::anyhow!("cannot read source: {e}"))?;
-                    let goal = match goal.as_str() {
-                        "validate" => active_core::diag::RepairGoal::Validate,
-                        "preserve-key" => active_core::diag::RepairGoal::PreserveKey(preserve.clone()),
-                        "minimize-diff" => active_core::diag::RepairGoal::MinimizeDiff,
-                        other => anyhow::bail!(
-                            "unknown repair goal `{other}` (want validate|preserve-key|minimize-diff)"
-                        ),
-                    };
-                    let data = active_core::viz::repair_data(&source, goal, &preserve, max_steps);
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&data).map_err(|e| anyhow::anyhow!("{e}"))?
-                    );
-                }
+                "repair" => unreachable!("repair handled before parsing"),
                 other => anyhow::bail!(
                     "unknown viz kind `{other}` (want graph|taint|budget|schema|repair)"
                 ),

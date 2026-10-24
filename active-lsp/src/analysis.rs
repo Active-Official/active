@@ -2549,7 +2549,7 @@ fn mode_marker_action(doc: &Doc, range: Range) -> Vec<CodeAction> {
     if range.start.line > 0 || range.start.character > 0 {
         return Vec::new();
     }
-    if doc.text.lines().any(declares_active_mode) {
+    if doc.module.mode_marker {
         return Vec::new();
     }
     vec![CodeAction {
@@ -2573,18 +2573,6 @@ fn mode_marker_action(doc: &Doc, range: Range) -> Vec<CodeAction> {
         )),
         ..Default::default()
     }]
-}
-
-/// Whether a line declares the root `active_mode` key (not a key whose
-/// name merely starts with it, like `active_mode_extra`).
-fn declares_active_mode(line: &str) -> bool {
-    line.trim_start()
-        .strip_prefix("active_mode")
-        .is_some_and(|rest| {
-            rest.is_empty()
-                || rest.starts_with(|c: char| c.is_whitespace())
-                || rest.starts_with('=')
-        })
 }
 
 /// Offer `@ai_immutable: true` above the statement under the cursor.
@@ -2966,6 +2954,16 @@ fn extract_action(doc: &Doc, range: Range) -> Vec<CodeAction> {
 /// Style-conversion actions: each direction offered only when it
 /// would change the text, through the exact formatter.
 fn convert_actions(doc: &Doc) -> Vec<CodeAction> {
+    // Style conversion formats the whole file; never offer it for a
+    // buffer with parse errors (the recovering IR is partial, and the
+    // rewrite would corrupt the user's broken text).
+    if doc
+        .parse_diags
+        .iter()
+        .any(|d| d.severity == Severity::Error)
+    {
+        return Vec::new();
+    }
     let mut out = Vec::new();
     let lines: Vec<&str> = doc.text.split('\n').collect();
     let full = Range {

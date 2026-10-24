@@ -259,4 +259,47 @@ fn mode_marker_action_uses_exact_key() {
         },
     );
     assert!(!actions.iter().any(|a| a.title.contains("Set active_mode")));
+
+    // A nested key with the same name is data, not a root marker.
+    let nested = open("[server]\nactive_mode = \"data\"\n");
+    let actions = analysis::code_actions(
+        &nested,
+        Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 0,
+            },
+        },
+    );
+    assert!(
+        actions.iter().any(|a| a.title.contains("active_mode")),
+        "nested marker must not suppress the root action"
+    );
+}
+
+#[test]
+fn style_conversion_is_withheld_for_broken_documents() {
+    let doc = open("port=8080\nbad = = 2\n");
+    let actions = analysis::code_actions(
+        &doc,
+        Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 6,
+            },
+        },
+    );
+    assert!(
+        !actions.iter().any(|a| a.title.starts_with("Convert to")),
+        "style conversion must not rewrite a broken buffer: {:?}",
+        actions.iter().map(|a| &a.title).collect::<Vec<_>>()
+    );
 }

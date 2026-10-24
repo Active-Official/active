@@ -73,7 +73,7 @@ safe steps inside the index bound or path prefix. Spec:
 ## Query CLIs
 
 ```sh
-active graph query svc.active dependents server.port
+active graph svc.active query --query dependents-of --key server.port
 active schema inspect --from svc.active --path port
 active compatibility old.active new.active --format json
 active capability --require-major 1

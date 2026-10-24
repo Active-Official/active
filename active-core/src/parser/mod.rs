@@ -2490,6 +2490,9 @@ impl Parser {
         if self.module.node_files.get(marker).cloned() != here {
             return;
         }
+        // The marker is local to the root document (nested keys and
+        // included markers never reach this point).
+        self.module.mode_marker = true;
         let (text, tok) = match self.module.get(*marker) {
             Some(Node::Literal(Value::String(s))) => (s.clone(), *marker),
             _ => {

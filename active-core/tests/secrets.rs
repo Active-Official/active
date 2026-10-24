@@ -789,10 +789,11 @@ fn truncated_profile_override_of_an_existing_path_stays_material() {
 }
 
 #[test]
-fn profile_override_of_a_material_default_is_material() {
-    // N4 (round 23): a schema default can be the material source; a
-    // profile that overrides that path before the fill runs replaces a
-    // material value, so the default's materiality joins the base map.
+fn profile_override_of_a_material_default_answers_for_itself() {
+    // A profile that overrides a defaulted path replaces the fill, so
+    // the value's own materiality decides. A plain env read is benign;
+    // a material expression at the same path is still redacted (the
+    // sibling tests cover that direction).
     let source = "default-source-r23";
     let live = "default-live-r23";
     std::env::set_var("ACTIVE_N4_SRC", source);
@@ -804,11 +805,12 @@ fn profile_override_of_a_material_default_is_material() {
     let (value, _) = engine.evaluate(&module).expect("evaluate");
     let profile = active_core::secret::SecretProfile::analyze_with_profile(&module, Some("a"));
     assert!(
-        profile.path_is_secret("a"),
-        "material default path is material"
+        !profile.path_is_secret("a"),
+        "the profile answer is a benign env read"
     );
     let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
-    assert!(!json.contains(live), "default override leaked: {json}");
+    assert!(json.contains(live), "benign answer hidden: {json}");
+    assert!(!json.contains(source), "the default source leaked: {json}");
 }
 
 #[test]
@@ -1012,4 +1014,87 @@ fn non_canonical_patch_indices_stay_mapped() {
     assert!(profile.path_is_secret("arr[00]"), "query canonicalizes");
     let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
     assert!(!json.contains(raw), "non-canonical patch leaked: {json}");
+}
+
+#[test]
+fn profile_override_with_a_material_expression_is_redacted() {
+    // The converse of the benign-answer case: a profile that names the
+    // material source itself is material on its own.
+    let source = "default-source-r27";
+    std::env::set_var("ACTIVE_R27_SRC", source);
+    let src = "let s = env.ACTIVE_R27_SRC\nk = secret(s)\nschema = { a = String(default = \"x\") }\nactive_profile = \"a\"\nprofile \"a\" { a = s }\n";
+    let module = parse(src, "default-override-material").expect("parse");
+    let mut engine = Engine::new();
+    engine.profile_override = Some("a".to_string());
+    let (value, _) = engine.evaluate(&module).expect("evaluate");
+    let profile = active_core::secret::SecretProfile::analyze_with_profile(&module, Some("a"));
+    assert!(profile.path_is_secret("a"), "material override is material");
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(source), "material override leaked: {json}");
+}
+
+#[test]
+fn rename_to_a_numeric_key_keeps_materiality() {
+    // F1 (round 27): the evaluator accepts a numeric target key.
+    // Canonicalization must not drop the rename and clear the taint.
+    let raw = "numeric-target-s3cr3t-r27";
+    std::env::set_var("ACTIVE_R27_NUM", raw);
+    let src = "let s = env.ACTIVE_R27_NUM\nk = secret(s)\na = s\n@rename(\"a\", \"123\")\n";
+    let module = parse(src, "rename-numeric").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("ACTIVE_R27_NUM".to_string(), raw.to_string());
+    let (value, _) = Engine::new()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    assert!(profile.path_is_secret("123"), "renamed target is material");
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(raw), "numeric rename leaked: {json}");
+}
+
+#[test]
+fn profile_created_array_keeps_explicit_elements_visible() {
+    // F2 (round 27): a profile that supplies the whole array answers
+    // for its own elements; a material default for absent elements
+    // must not hide an explicitly written benign leaf.
+    let raw = "profile-array-src-r27";
+    std::env::set_var("ACTIVE_R27_ARR", raw);
+    let src = "let s = env.ACTIVE_R27_ARR\nk = secret(s)\nschema = { arr = Array<Table { a = String(default = s) }> }\nactive_profile = \"p\"\nprofile \"p\" { arr = [{}, { a = \"EXPLICIT-BENIGN\" }] }\n";
+    let module = parse(src, "profile-array").expect("parse");
+    let mut engine = Engine::new();
+    engine.profile_override = Some("p".to_string());
+    let (value, _) = engine.evaluate(&module).expect("resilient evaluate");
+    let profile = active_core::secret::SecretProfile::analyze_with_profile(&module, Some("p"));
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(
+        json.contains("EXPLICIT-BENIGN"),
+        "explicit element hidden: {json}"
+    );
+    assert!(!json.contains(raw), "source leaked: {json}");
+}
+
+#[test]
+fn profile_replacement_does_not_taint_shared_binding_targets() {
+    // F3 (round 27): marking a replacement must not walk a shared Ref
+    // target and hide an unrelated benign binding.
+    let src = "let b = \"BENIGN\"\nlet s = env.ACTIVE_R27_SHARE\nk = secret(s)\nt = s\nu = b\nactive_profile = \"p\"\nprofile \"p\" { t = b }\n";
+    let module = parse(src, "shared-binding").expect("parse");
+    let mut engine = Engine::new();
+    engine.profile_override = Some("p".to_string());
+    let (value, _) = engine.evaluate(&module).expect("evaluate");
+    let profile = active_core::secret::SecretProfile::analyze_with_profile(&module, Some("p"));
+    assert!(
+        profile.path_is_secret("t"),
+        "replacement path stays material"
+    );
+    assert!(
+        !profile.path_is_secret("u"),
+        "shared binding must stay visible"
+    );
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(
+        json.contains("\"u\": \"BENIGN\""),
+        "benign binding hidden: {json}"
+    );
 }

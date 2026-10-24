@@ -946,6 +946,7 @@ impl SecretProfile {
                             // Per-path merge decision: a nested table at
                             // a scalar base path replaces that value.
                             let mut replaces: Vec<String> = Vec::new();
+                            let mut replacement_prefixes: Vec<String> = Vec::new();
                             for (path, node) in &profile_paths {
                                 let path_merge = is_table_like(module, *node)
                                     && base_paths
@@ -953,25 +954,38 @@ impl SecretProfile {
                                         .is_some_and(|b| is_table_like(module, *b));
                                 if !path_merge {
                                     replaces.push(path.clone());
+                                    // A replacement of an existing
+                                    // material value is material; a
+                                    // profile-provided value at an
+                                    // absent path answers for itself.
+                                    let provided_only = !base_paths.contains_key(path)
+                                        && !data_paths.contains(path);
+                                    if !provided_only && path_is_material(&material_paths, path) {
+                                        replacement_prefixes.push(path.clone());
+                                    }
                                 }
                             }
                             for path in &replaces {
                                 remove_subtree(&mut paths, path);
                             }
                             for (path, node) in &profile_paths {
-                                if !path_is_material(&material_paths, path) {
-                                    continue;
-                                }
-                                let path_merge = is_table_like(module, *node)
-                                    && base_paths
-                                        .get(path)
-                                        .is_some_and(|b| is_table_like(module, *b));
-                                if path_merge {
+                                let provided_only =
+                                    !base_paths.contains_key(path) && !data_paths.contains(path);
+                                let own = nodes.contains(node);
+                                let inherited =
+                                    !provided_only && path_is_material(&material_paths, path);
+                                let under = replacement_prefixes
+                                    .iter()
+                                    .any(|prefix| path_under(path, prefix));
+                                if own {
                                     nodes.insert(*node);
-                                } else {
-                                    // A replacement inherits the whole
-                                    // subtree (the base value is gone).
-                                    secret_subtree(module, *node, &mut nodes);
+                                    fallback_secret_paths.insert(path.clone());
+                                } else if inherited || under {
+                                    // Path-inherited materiality stays
+                                    // path-based: marking the resolved
+                                    // node would taint shared binding
+                                    // targets (`u = b` hiding `u`).
+                                    fallback_secret_paths.insert(path.clone());
                                 }
                             }
                             let profile_keys: Vec<String> = profile_paths.keys().cloned().collect();
@@ -1002,24 +1016,35 @@ impl SecretProfile {
                                 continue;
                             }
                             export_paths.extend(profile_paths.keys().cloned());
-                            for (path, node) in profile_paths {
-                                let material = path_is_material(&material_paths, &path);
-                                let path_merge = is_table_like(module, node)
+                            let mut replacement_prefixes: Vec<String> = Vec::new();
+                            for (path, node) in &profile_paths {
+                                let path_merge = is_table_like(module, *node)
                                     && base_paths
-                                        .get(&path)
+                                        .get(path)
                                         .is_some_and(|b| is_table_like(module, *b));
-                                if material {
-                                    fallback_secret_paths.insert(path);
-                                    if path_merge {
-                                        nodes.insert(node);
-                                    } else {
-                                        secret_subtree(module, node, &mut nodes);
-                                    }
-                                } else if nodes.contains(&node) {
-                                    // The override value is material on
-                                    // its own; node-based consumers
-                                    // (step traces, provenance) must
-                                    // agree with the path set.
+                                if path_merge {
+                                    continue;
+                                }
+                                let provided_only =
+                                    !base_paths.contains_key(path) && !data_paths.contains(path);
+                                if !provided_only && path_is_material(&material_paths, path) {
+                                    replacement_prefixes.push(path.clone());
+                                }
+                            }
+                            for (path, node) in profile_paths {
+                                let provided_only =
+                                    !base_paths.contains_key(&path) && !data_paths.contains(&path);
+                                let own = nodes.contains(&node);
+                                let inherited =
+                                    !provided_only && path_is_material(&material_paths, &path);
+                                let under = replacement_prefixes
+                                    .iter()
+                                    .any(|prefix| path_under(&path, prefix));
+                                if own || inherited || under {
+                                    // A computed selector is a
+                                    // fail-closed union: any profile
+                                    // could be selected, so both the
+                                    // path and the node are marked.
                                     fallback_secret_paths.insert(path);
                                     nodes.insert(node);
                                 }
@@ -1082,11 +1107,12 @@ impl SecretProfile {
                 Some(Node::PatchDirective {
                     op: PatchOp::Rename { from, to },
                 }) => {
-                    let (Some(from), Some(to)) =
-                        (canonical_patch_path(from), canonical_patch_path(to))
-                    else {
-                        continue;
-                    };
+                    // Canonicalize the source (indices); the target is
+                    // a key the evaluator accepts verbatim (`123` is a
+                    // valid key, though not a segment shape accepted by
+                    // `validate_patch_path`).
+                    let from = canonical_patch_path(from).unwrap_or_else(|| from.clone());
+                    let to = to.clone();
                     // Renames touch evaluated-tree keys only. A binding
                     // is not a tree key: the evaluator warns W004 and
                     // leaves the destination in place, so the taint map

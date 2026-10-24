@@ -205,8 +205,15 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   stays visible.
 - **Patch paths are canonical and tree-only.** `arr[00]`/`arr[+0]`
   canonicalize to the index the evaluator uses before touching the
-  taint map, and a `@rename` whose source is a binding (a W004 no-op in
-  the evaluator) no longer moves the destination's materiality.
+  taint map, a rename target stays verbatim (numeric keys are valid),
+  and a `@rename` whose source is a binding (a W004 no-op in the
+  evaluator) no longer moves the destination's materiality.
+- **Profile replacements answer for themselves.** A profile value at a
+  path covered by an explicit value or fill inherits that path's
+  materiality; a profile that supplies a new value (an array element,
+  an absent defaulted key) is material only when its own expression
+  is. Inherited paths stay path-based, so marking a replacement no
+  longer hides an unrelated binding that shares its literal target.
 - **Material values never auto-rename.** Resilient H005 skips a source
   path that is structurally material: the taint map follows the source
   path, and moving the value would publish it. The typo degrades to a

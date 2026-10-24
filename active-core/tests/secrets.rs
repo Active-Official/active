@@ -901,3 +901,24 @@ fn explicit_value_wins_over_default_materiality() {
     );
     assert!(!json.contains(raw), "source leaked: {json}");
 }
+
+#[test]
+fn annotated_table_children_stay_mapped() {
+    // A transparent wrapper (ApplyConstraint) preserves the value at
+    // the path; its children must still be addressable, or a material
+    // child inside an annotated table exports raw.
+    let raw = "annotated-s3cr3t-r25";
+    std::env::set_var("ACTIVE_R25_ANN", raw);
+    let src = "let p = env.ACTIVE_R25_ANN\nk = secret(p)\n# @constraint: value != null\nx = { s = p, b = 1 }\n";
+    let module = parse(src, "annotated-table").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("ACTIVE_R25_ANN".to_string(), raw.to_string());
+    let (value, _) = Engine::new()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    assert!(profile.path_is_secret("x.s"), "annotated child mapped");
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(raw), "annotated table leaked: {json}");
+}

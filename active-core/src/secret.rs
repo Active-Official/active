@@ -463,6 +463,15 @@ fn walk_paths(
                 }
             }
             Some(Node::Ref(target)) => stack.push((*target, path, depth, insert)),
+            // Transparent wrappers keep the same value at the path: an
+            // annotated table must still expose its children, or a
+            // material child inside it has no path and exports raw.
+            Some(Node::ApplyConstraint { target, .. }) => {
+                stack.push((*target, path, depth, insert));
+            }
+            Some(Node::Semantic { inner, .. }) => {
+                stack.push((*inner, path, depth, insert));
+            }
             Some(Node::Env {
                 default: Some(default),
                 ..
@@ -528,6 +537,9 @@ fn is_table_like(module: &Module, id: NodeId) -> bool {
                 default: Some(default),
                 ..
             }) => current = *default,
+            // Annotated and semantic-wrapped values keep their shape.
+            Some(Node::ApplyConstraint { target, .. }) => current = *target,
+            Some(Node::Semantic { inner, .. }) => current = *inner,
             _ => return false,
         }
     }

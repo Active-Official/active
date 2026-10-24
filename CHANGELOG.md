@@ -223,6 +223,15 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   count as export or rename candidates, so a rename cannot clear a
   destination's taint and an unselected key cannot suppress a material
   default fill.
+- **Env materiality follows the name.** An env read placed at a
+  material profile path makes every read of that name material,
+  including reads nested under interpolations, operators, quantities,
+  blobs, and env fallbacks; the upward expression closure is extended
+  after the profile so embedded strings and containers redact. A
+  computed selector's runtime rename carries the source's materiality
+  to the destination. `inspect` treats a path-material blob as tainted
+  and redacts its media type, and the step-path overlay follows
+  Set/Remove/Rename.
 - **Material values never auto-rename.** Resilient H005 skips a source
   path that is structurally material: the taint map follows the source
   path, and moving the value would publish it. The typo degrades to a

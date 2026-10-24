@@ -609,6 +609,39 @@ fn path_is_material(material_paths: &HashSet<String>, path: &str) -> bool {
     material_paths.contains(path) || material_paths.contains(&wildcard_indices(path))
 }
 
+/// Keep the trace-path overlay in step with a rename.
+fn rename_material_node_paths(map: &mut HashMap<NodeId, String>, from: &str, to: &str) {
+    for path in map.values_mut() {
+        if path_under(path, from) {
+            let suffix = &path[from.len()..];
+            *path = format!("{to}{suffix}");
+        }
+    }
+}
+
+/// Keep the trace-path overlay in step with a removal.
+fn remove_material_node_paths(map: &mut HashMap<NodeId, String>, path: &str) {
+    map.retain(|_, known| !path_under(known, path));
+}
+
+/// Names of every env read anywhere in a value subtree, including
+/// operands, interpolation parts, quantities, blob media/data, and env
+/// fallbacks. A material profile value makes every read it contains
+/// material under the env-name rule.
+fn collect_env_names(module: &Module, root: NodeId, names: &mut HashSet<String>) {
+    let mut stack = vec![root];
+    let mut seen: HashSet<NodeId> = HashSet::new();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        if let Some(Node::Env { name, .. }) = module.get(id) {
+            names.insert(name.clone());
+        }
+        stack.extend(value_children(module, id));
+    }
+}
+
 /// Whether a value is a table after following references (profile
 /// merges recurse into tables; they replace scalars). Follows the whole
 /// chain with a visited set: an eight-hop cap would misclassify a deep
@@ -989,6 +1022,7 @@ impl SecretProfile {
                                     nodes.insert(*node);
                                     fallback_secret_paths.insert(path.clone());
                                     material_node_paths.insert(*node, path.clone());
+                                    collect_env_names(module, *node, &mut material_envs);
                                 } else if inherited || under {
                                     // Path-inherited materiality stays
                                     // path-based: exports and debug
@@ -996,9 +1030,7 @@ impl SecretProfile {
                                     // literal is not globally marked.
                                     fallback_secret_paths.insert(path.clone());
                                     material_node_paths.insert(*node, path.clone());
-                                    if let Some(Node::Env { name, .. }) = module.get(*node) {
-                                        material_envs.insert(name.clone());
-                                    }
+                                    collect_env_names(module, *node, &mut material_envs);
                                 }
                             }
                             let profile_keys: Vec<String> = profile_paths.keys().cloned().collect();
@@ -1057,9 +1089,7 @@ impl SecretProfile {
                                 if own || inherited || under {
                                     material_node_paths.insert(node, path.clone());
                                     fallback_secret_paths.insert(path);
-                                    if let Some(Node::Env { name, .. }) = module.get(node) {
-                                        material_envs.insert(name.clone());
-                                    }
+                                    collect_env_names(module, node, &mut material_envs);
                                     if own {
                                         nodes.insert(node);
                                     }
@@ -1119,6 +1149,7 @@ impl SecretProfile {
                     remove_path(&mut paths, &path);
                     remove_from_set(&mut fallback_secret_paths, &path);
                     remove_from_set(&mut export_paths, &path);
+                    remove_material_node_paths(&mut material_node_paths, &path);
                 }
                 Some(Node::PatchDirective {
                     op: PatchOp::Rename { from, to },
@@ -1134,11 +1165,42 @@ impl SecretProfile {
                     // leaves the destination in place, so the taint map
                     // must not move the destination's materiality.
                     if !tree_path_exists(&export_paths, &from) {
+                        // A computed selector may resolve to a profile
+                        // that defines the source at runtime. Fail
+                        // closed: carry the source's materiality to the
+                        // destination instead of clearing it.
+                        let root = from.split(['.', '[']).next().unwrap_or(from.as_str());
+                        let profile_defined = module.profiles.values().any(|id| {
+                            matches!(
+                                module.get(*id),
+                                Some(Node::Table { fields, .. }) if fields.contains_key(root)
+                            )
+                        });
+                        if profile_defined {
+                            let mut affected: Vec<String> = fallback_secret_paths
+                                .iter()
+                                .filter(|path| path_under(path, &from))
+                                .cloned()
+                                .collect();
+                            if paths.get(&from).is_some_and(|id| nodes.contains(id)) {
+                                affected.push(from.clone());
+                            }
+                            let mut moved = false;
+                            for path in affected {
+                                moved = true;
+                                let suffix = &path[from.len()..];
+                                fallback_secret_paths.insert(format!("{to}{suffix}"));
+                            }
+                            if moved {
+                                fallback_secret_paths.insert(to.clone());
+                            }
+                        }
                         continue;
                     }
                     rename_subtree(&mut paths, &from, &to);
                     rename_set(&mut fallback_secret_paths, &from, &to);
                     rename_set(&mut export_paths, &from, &to);
+                    rename_material_node_paths(&mut material_node_paths, &from, &to);
                 }
                 _ => {}
             }
@@ -1170,6 +1232,44 @@ impl SecretProfile {
             }
         }
 
+        // A variable that is material at one read is material at every
+        // read (spec/reproducibility.md §2): propagate profile-selected
+        // env names to all of their Env nodes before the final scan.
+        let mut propagated_envs: HashSet<NodeId> = HashSet::new();
+        for (index, node) in module.arena.iter().enumerate() {
+            if let Node::Env { name, .. } = node {
+                if material_envs.contains(name) {
+                    let id = NodeId(index as u32);
+                    if nodes.insert(id) {
+                        propagated_envs.insert(id);
+                    }
+                }
+            }
+        }
+        // An expression that embeds a newly material env read is
+        // material too (interpolation, operator, quantity, blob). The
+        // upward closure ran before the profile, so extend it now.
+        if !propagated_envs.is_empty() {
+            let mut parents: Vec<Vec<NodeId>> = vec![Vec::new(); module.arena.len()];
+            for (index, node) in module.arena.iter().enumerate() {
+                let parent = NodeId(index as u32);
+                for child in node_children(node) {
+                    if let Some(slot) = parents.get_mut(child.0 as usize) {
+                        slot.push(parent);
+                    }
+                }
+            }
+            let mut stack: Vec<NodeId> = propagated_envs.into_iter().collect();
+            while let Some(id) = stack.pop() {
+                if let Some(list) = parents.get(id.0 as usize) {
+                    for parent in list {
+                        if nodes.insert(*parent) {
+                            stack.push(*parent);
+                        }
+                    }
+                }
+            }
+        }
         // Environment reads that are material anywhere (node-level
         // seeds or a path-tainted profile selection) are withheld by
         // provenance even when their node is shared with a benign read.

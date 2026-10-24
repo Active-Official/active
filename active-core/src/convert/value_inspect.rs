@@ -31,11 +31,14 @@ pub fn inspect_path_with_profile(
     let kind = kind_name(cone);
     // A media type sourced from material (an env lookup used as a
     // secret locator) is not publishable, even when the blob's data is
-    // public; the identity is material as a whole.
-    let media_secret = matches!(
-        profile.path_node(path).and_then(|id| module.get(id)),
-        Some(Node::ContentAddressed { media_type, .. }) if profile.node_is_secret(*media_type)
-    );
+    // public; the identity is material as a whole. A path-material blob
+    // (a profile selection) is material for the same reason.
+    let path_material = profile.path_is_secret(path);
+    let media_secret = path_material
+        || matches!(
+            profile.path_node(path).and_then(|id| module.get(id)),
+            Some(Node::ContentAddressed { media_type, .. }) if profile.node_is_secret(*media_type)
+        );
     // A value used as a secret locator (or built from one) carries no
     // `Value::Secret` marker, so taint is structural. Render with the
     // profile's path map, then sweep authored literals out of any
@@ -94,17 +97,18 @@ pub fn inspect_path_with_profile(
         // A media type sourced from material (an env lookup used as a
         // secret locator) is not publishable, even though the blob's
         // data taint flag is separate.
-        let media_secret = matches!(
-            profile.path_node(path).and_then(|id| module.get(id)),
-            Some(Node::ContentAddressed { media_type, .. }) if profile.node_is_secret(*media_type)
-        );
+        let media_secret = path_material
+            || matches!(
+                profile.path_node(path).and_then(|id| module.get(id)),
+                Some(Node::ContentAddressed { media_type, .. }) if profile.node_is_secret(*media_type)
+            );
         report["content_addressed"] = json!({
             "hash": format!("blake3:{}", crate::blob::hash_hex(hash)),
             "size": blob_size,
             // A tainted identity redacts its media type (spec/blob.md
             // §5/§7), matching every other export path.
             "media_type": if *blob_tainted || media_secret { MARKER } else { media_type },
-            "tainted": blob_tainted,
+            "tainted": *blob_tainted || path_material,
         });
     }
     Ok(report)

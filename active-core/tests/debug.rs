@@ -757,3 +757,26 @@ fn steps_keep_a_shared_benign_data_node_visible() {
         "source leaked: {rendered}"
     );
 }
+
+#[test]
+fn steps_follow_a_renamed_material_path() {
+    // F4 (review 30): the trace path overlay follows Set/Remove/Rename;
+    // a renamed material profile path is labeled with its new name.
+    let src = "let p = env.R30_TRACE\nk = secret(p)\nn = p\nactive_profile = \"p\"\nprofile \"p\" { n = \"BENIGN-PROFILE\" }\n@rename(\"n\", \"m\")\n";
+    let mut env = std::collections::HashMap::new();
+    env.insert("R30_TRACE".to_string(), "trace-source-r30".to_string());
+    let (_, _, steps) = Engine::new()
+        .with_env(env)
+        .evaluate_with_steps(&module(src))
+        .expect("evaluate");
+    let rendered = serde_json::to_string(&steps).expect("json");
+    assert!(
+        !rendered.contains("trace-source-r30"),
+        "source leaked: {rendered}"
+    );
+    assert!(
+        steps.iter().any(|step| step.path.as_deref() == Some("m")),
+        "renamed path missing from steps: {rendered}"
+    );
+    // Steps are evaluation-order events; the pre-transform path for a\n    // node evaluated before the patch is expected, and the overlay for\n    // the renamed material path is m.\n
+}

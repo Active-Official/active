@@ -1185,3 +1185,70 @@ fn computed_selector_does_not_suppress_a_material_default_fill() {
     let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
     assert!(!json.contains(raw), "default fill leaked: {json}");
 }
+
+#[test]
+fn env_name_is_material_at_every_read_after_a_profile_selection() {
+    // F1 (review 30): a profile places env.LIVE at a material path.
+    // Every read of that name is material, including plain reads and
+    // expression operands.
+    let live = "env-name-leak-r30";
+    std::env::set_var("ACTIVE_R30_LIVE", live);
+    let src = "let e = env.ACTIVE_R30_LIVE\nlet p = env.ACTIVE_R30_SRC\nk = secret(p)\nn = p\nm = e\nmsg = \"pre-${e}\"\nactive_profile = \"p\"\nprofile \"p\" { n = e }\n";
+    let module = parse(src, "env-name-everywhere").expect("parse");
+    let mut engine = Engine::new();
+    engine.profile_override = Some("p".to_string());
+    let (value, _) = engine.evaluate(&module).expect("evaluate");
+    let profile = active_core::secret::SecretProfile::analyze_with_profile(&module, Some("p"));
+    assert!(profile.path_is_secret("m"), "second read is material");
+    assert!(
+        profile.path_is_secret("msg"),
+        "expression embedding is material"
+    );
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(live), "env name leaked: {json}");
+}
+
+#[test]
+fn nested_env_in_a_material_profile_expression_is_material() {
+    // F2 (review 30): an env read nested under an interpolation or an
+    // env fallback inside a material profile value is material even
+    // though no profile path points at it directly.
+    let live = "nested-env-r30";
+    std::env::set_var("ACTIVE_R30_NEST", live);
+    std::env::remove_var("ACTIVE_R30_UNSET");
+    let src = "let e = env.ACTIVE_R30_NEST\nlet p = env.ACTIVE_R30_SRC\nk = secret(p)\nn = p\nw = env.ACTIVE_R30_UNSET ?: e\ntext = \"x-${e}\"\nactive_profile = \"p\"\nprofile \"p\" { n = \"pre-${e}\" }\n";
+    let module = parse(src, "nested-env").expect("parse");
+    let mut engine = Engine::new();
+    engine.profile_override = Some("p".to_string());
+    let (value, _) = engine.evaluate(&module).expect("evaluate");
+    let profile = active_core::secret::SecretProfile::analyze_with_profile(&module, Some("p"));
+    assert!(profile.path_is_secret("w"), "fallback read is material");
+    assert!(profile.path_is_secret("text"), "interpolation is material");
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(live), "nested env leaked: {json}");
+}
+
+#[test]
+fn computed_selector_rename_from_a_runtime_profile_keeps_the_target_material() {
+    // F3 (review 30): the runtime selector may select the profile that
+    // defines the rename source; the destination must stay material.
+    let raw = "computed-runtime-rename-r30";
+    std::env::set_var("ACTIVE_R30_REN", raw);
+    std::env::set_var("ACTIVE_R30_SEL", "b");
+    let src = "let p = env.ACTIVE_R30_REN\nk = secret(p)\ny = p\nsel = env.ACTIVE_R30_SEL\nactive_profile = sel\nprofile \"b\" { x = p }\n@rename(\"x\", \"zz\")\n";
+    let module = parse(src, "computed-runtime-rename").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("ACTIVE_R30_REN".to_string(), raw.to_string());
+    env.insert("ACTIVE_R30_SEL".to_string(), "b".to_string());
+    let (value, _) = Engine::new()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("resilient evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    assert!(
+        profile.path_is_secret("zz"),
+        "renamed target stays material"
+    );
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(raw), "computed rename leaked: {json}");
+}

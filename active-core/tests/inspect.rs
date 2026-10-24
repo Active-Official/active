@@ -650,3 +650,30 @@ fn inspect_schema_type_for_nested_array_paths() {
     assert_eq!(report["kind"], "Int", "{report}");
     assert_eq!(report["schema"]["type"], "Int", "{report}");
 }
+
+#[test]
+fn inspect_redacts_a_path_material_blob_media() {
+    // F5 (review 30): a profile-supplied blob at an inherited material
+    // path is path-tainted; inspect must redact its media type and
+    // report the identity as tainted.
+    let media = "application/x-secret-r30";
+    std::env::set_var("ACTIVE_R30_MEDIA", media);
+    std::env::set_var("ACTIVE_R30_SRC", "blob-source-r30");
+    let src = "let s = env.ACTIVE_R30_SRC\nk = secret(s)\nn = s\nmedia = env.ACTIVE_R30_MEDIA\nb = blob(media, \"data\")\nactive_profile = \"p\"\nprofile \"p\" { n = b }\n";
+    let module = parse(src, "inspect-blob-profile").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("ACTIVE_R30_MEDIA".to_string(), media.to_string());
+    env.insert("ACTIVE_R30_SRC".to_string(), "blob-source-r30".to_string());
+    let mut engine = active_core::Engine::new().with_env(env);
+    engine.profile_override = Some("p".to_string());
+    let (value, _) = engine.evaluate(&module).expect("evaluate");
+    let report = active_core::convert::inspect_path_with_profile(&module, &value, "n", Some("p"))
+        .expect("inspect");
+    assert_eq!(report["tainted"], true, "{report}");
+    assert_eq!(report["content_addressed"]["tainted"], true, "{report}");
+    assert_eq!(
+        report["content_addressed"]["media_type"], "***SECRET***",
+        "{report}"
+    );
+    assert!(!report.to_string().contains(media), "{report}");
+}

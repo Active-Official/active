@@ -179,11 +179,19 @@ fn minimal_case_redacts_interpolated_and_malformed_secret_calls() {
         ),
         (
             "schema = { token = Int }\ntoken = secret(\"hunter2-a\", \"hunter2-b\")\nnoise = 1\n",
-            "B001",
+            "E002",
+        ),
+        (
+            "schema = { token = Int }\ntoken = secret\n(\"hunter2-nl\")\nnoise = 1\n",
+            "T002",
         ),
     ];
     for (src, code) in cases {
         let report = debug::minimal_case(src, code, 100);
+        assert!(
+            report["attempts"].as_u64().unwrap() > 0,
+            "target {code} never exercised for {src:?}: {report}"
+        );
         let rendered = report.to_string();
         assert!(
             !rendered.contains("hunter2"),
@@ -202,7 +210,7 @@ fn minimal_case_redacts_interpolated_and_malformed_secret_calls() {
 
 #[test]
 fn minimal_case_handles_a_bom_prefixed_first_line() {
-    let src = "\u{feff}schema = { token = Int }\ntoken = secret(\"hunter2-bom\")\nnoise = 1\n";
+    let src = "\u{feff}token = secret(\"hunter2-bom\")\nschema = { token = Int }\nnoise = 1\n";
     let report = debug::minimal_case(src, "T002", 100);
     let rendered = report.to_string();
     assert!(!rendered.contains("hunter2"), "{rendered}");
@@ -213,5 +221,39 @@ fn minimal_case_handles_a_bom_prefixed_first_line() {
             .contains("secret(\"***SECRET***\")"),
         "{}",
         report["reduced"]
+    );
+}
+
+#[test]
+fn minimal_case_does_not_redact_env_names_or_unrelated_strings() {
+    let env_src = "schema = { token = Int }\ntoken = secret.env(\"HUNTER2_ENV_NAME\")\nnoise = 1\n";
+    let report = debug::minimal_case(env_src, "T002", 100);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(
+        reduced.contains("HUNTER2_ENV_NAME"),
+        "env names are metadata, not material: {reduced}"
+    );
+    let malformed = "schema = { token = Int }\ntoken = secret + (\"NOT_A_SECRET\")\nnoise = 1\n";
+    let report = debug::minimal_case(malformed, "E002", 100);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(
+        reduced.contains("NOT_A_SECRET"),
+        "a string outside a secret call is not material: {reduced}"
+    );
+}
+
+#[test]
+fn reduced_bytes_is_measured_before_redaction() {
+    let long = "A".repeat(200);
+    let src = format!("token = secret(\"{long}\")\n");
+    let report = debug::minimal_case(&src, "T999", 10);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert_eq!(
+        report["reduced_bytes"].as_u64().unwrap(),
+        report["original_bytes"].as_u64().unwrap()
+    );
+    assert!(
+        reduced.len() < report["reduced_bytes"].as_u64().unwrap() as usize,
+        "redaction must not inflate the reported size: {report}"
     );
 }

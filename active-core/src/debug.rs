@@ -263,16 +263,38 @@ fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
             index += 1;
             continue;
         }
-        // Allow a few malformed tokens between the keyword and `(`.
+        // Allow a bounded number of newlines between the keyword and
+        // `(` (a line break is legal whitespace), but require either a
+        // run of `(` or nothing else. `secret.env("NAME")` is a name,
+        // not material, so a `.` before `env` skips the call entirely.
         let mut open = None;
-        for (probe, token) in tokens.iter().enumerate().skip(index + 1).take(3) {
-            if matches!(token.kind, K::LParen) {
-                open = Some(probe);
-                break;
+        let mut probe = index + 1;
+        let mut newlines = 0usize;
+        while probe < tokens.len() {
+            match tokens[probe].kind {
+                K::Newline => {
+                    newlines += 1;
+                    if newlines > 2 {
+                        break;
+                    }
+                    probe += 1;
+                }
+                K::LParen => {
+                    open = Some(probe);
+                    break;
+                }
+                K::Dot => break,
+                _ => break,
             }
-            if matches!(token.kind, K::Newline | K::Eof) {
-                break;
-            }
+        }
+        if open.is_none()
+            && matches!(tokens.get(index + 1).map(|t| &t.kind), Some(K::Dot))
+            && matches!(tokens.get(index + 2).map(|t| &t.kind), Some(K::Env))
+        {
+            // `secret.env(NAME)`: variable names are metadata, not
+            // secret material.
+            index += 3;
+            continue;
         }
         let Some(open) = open else {
             index += 1;

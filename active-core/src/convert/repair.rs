@@ -462,6 +462,7 @@ pub fn browser_model_with(
                 "message": error.to_string(),
                 "path": null,
                 "span": null,
+                "file": null,
             }));
         }
     }
@@ -488,6 +489,7 @@ fn model_with_diagnostics(
                 "message": d.message,
                 "path": d.path,
                 "span": d.span,
+                "file": d.file,
             })
         })
         .collect();

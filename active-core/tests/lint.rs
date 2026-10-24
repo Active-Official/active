@@ -521,3 +521,11 @@ fn sarif_uris_are_forward_slash_and_percent_encoded() {
     assert_eq!(uri, "C:/tmp/a%20b.active");
     assert!(!uri.contains('\\'));
 }
+
+#[test]
+fn unicode_literals_do_not_panic_the_url_check() {
+    // The L004 URL heuristic must never slice a multi-byte character.
+    let diags = lint(&parse_ok("token = \"éé\"\n"));
+    assert!(diags.iter().all(|d| d.code == "L004"), "{diags:?}");
+    let _ = lint(&parse_ok("token = \"éé://x\"\n"));
+}

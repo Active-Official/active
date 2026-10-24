@@ -341,7 +341,7 @@ enum Commands {
         break_at: Option<String>,
         /// Deterministic replay: evaluate twice and compare hashes,
         /// codes, and step traces
-        #[arg(long)]
+        #[arg(long, conflicts_with = "minimize")]
         replay: bool,
         /// Expected content hash for --replay (sha256:...)
         #[arg(long, requires = "replay")]

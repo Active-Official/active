@@ -395,7 +395,40 @@ fn env_exemption_is_positionally_strict_and_dot_layout_is_handled() {
         "token = secret\n.\nenv(\"NAME\", default = \"hunter2-DOT\")\nnoise = 1\n",
     ];
     for src in cases {
-        let report = debug::minimal_case(src, "E001", 200);
+        let code = first_code(src).unwrap_or_else(|| "E001".to_string());
+        assert!(emits(src, &code), "target {code} missing for {src:?}");
+        let report = debug::minimal_case(src, &code, 200);
+        let rendered = report.to_string();
+        assert!(
+            !rendered.contains("hunter2"),
+            "leak for {src:?}: {rendered}"
+        );
+    }
+}
+
+fn first_code(src: &str) -> Option<String> {
+    let (module, parse_diags) =
+        active_core::parse_recovering(src, "first-code", active_core::ParseOptions::default());
+    if let Some(diagnostic) = parse_diags.first() {
+        return Some(diagnostic.code.clone());
+    }
+    match active_core::Engine::new().evaluate(&module) {
+        Ok((_, diagnostics)) => diagnostics.first().map(|d| d.code.clone()),
+        Err(error) => Some(error.code().to_string()),
+    }
+}
+
+#[test]
+fn malformed_secret_punctuation_still_redacts() {
+    let cases = [
+        "token = secret..env(\"NAME\", default = \"hunter2-A\")\nnoise = 1\n",
+        "token = secret..(\"hunter2-D\")\nnoise = 1\n",
+        "token = secret env(\"hunter2-E\")\nnoise = 1\n",
+    ];
+    for src in cases {
+        let code = first_code(src).unwrap_or_else(|| "E001".to_string());
+        assert!(emits(src, &code), "target {code} missing for {src:?}");
+        let report = debug::minimal_case(src, &code, 100);
         let rendered = report.to_string();
         assert!(
             !rendered.contains("hunter2"),

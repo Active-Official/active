@@ -56,7 +56,11 @@ redactable call. With a file context the reducer resolves includes, so
 a code that lives in an included file is reproducible; signed reduction
 (`--trust-keys` with `--minimize`) is rejected rather than silently
 ignored. The result is always a subsequence of the original lines; the
-attempt count is bounded and reported. `debug::minimal_case`
+attempt count is bounded and reported.
+
+The bundle also reports `target_present` (whether the original source
+emits the code at all); the CLI exits 1 when it is false, so an absent
+target is never reported as a successful reduction. `debug::minimal_case`
 wraps it with sizes for a regression bundle.
 
 ## 5. CLI
@@ -70,6 +74,11 @@ Default action prints the step trace. JSON output wraps
 `{breakpoint, matched, total_steps, steps}`; text output is one line per
 step, then the breakpoint verdict.
 
+Flag combinations are constrained: `--expect` requires `--replay`;
+`--break` conflicts with `--replay` and `--minimize`; `--replay`
+conflicts with `--minimize`. An invalid combination is a clap usage
+error (exit 2), never a silently ignored flag.
+
 ## 6. Secret guarantee
 
 No step, breakpoint, replay report, or reduction bundle contains raw
@@ -78,6 +87,9 @@ subtrees are replaced structurally, and `--minimize` rewrites authored
 secret literals to `"***SECRET***"`. A line break between `secret` and
 `(` (which the parser rejects) is normalized for redaction only, so
 malformed calls still redact. `secret.env(NAME)` names are metadata and
-survive; later arguments (such as a default) are redacted. Regression
-tests pin the locator, let/env-backed, tainted-blob, newline, table-ref,
-and reduction-stranding cases.
+survive; later arguments (such as a default) are redacted. If an env
+call carries extra arguments, the redactor fails closed by redacting
+every string literal in the document except the canonical
+`secret.env("NAME")` names. Regression tests pin the locator,
+let/env-backed, tainted-blob, newline, table-ref,
+reduction-stranding, and malformed-punctuation cases.

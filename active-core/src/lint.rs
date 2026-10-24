@@ -677,7 +677,9 @@ fn has_url_scheme(value: &str) -> bool {
             i += 1;
         }
     }
-    value.len() > i + 2 && &value[i..i + 3] == "://"
+    // `get` returns None when the range would split a character, so a
+    // non-ASCII suffix can never panic here.
+    value.get(i..i + 3) == Some("://")
 }
 
 /// Shannon entropy in bits per character (unigram distribution).

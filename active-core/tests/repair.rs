@@ -214,3 +214,17 @@ fn apply_selected_honors_index_and_prefix() {
     assert!(applied.is_empty());
     assert_eq!(none, src);
 }
+
+#[test]
+fn repair_keeps_a_leading_bom_at_byte_zero() {
+    let src = "\u{feff}schema = { port = Int(default = 8080) }\n";
+    let outcome =
+        active_core::convert::repair::repair(src, active_core::diag::RepairGoal::Validate, &[], 8);
+    assert!(outcome.clean, "{outcome:?}");
+    assert!(
+        outcome.repaired_source.starts_with('\u{feff}'),
+        "BOM moved: {:?}",
+        outcome.repaired_source
+    );
+    assert!(outcome.repaired_source.contains("@patch(\"port\", 8080)"));
+}

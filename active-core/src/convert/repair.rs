@@ -346,14 +346,9 @@ pub fn repair_with_engine_and_options(
             break;
         }
         // Rebuild the candidate: applied directives prepended to the
-        // ORIGINAL source, in application order (deterministic).
-        let mut next = String::new();
-        for d in &applied {
-            next.push_str(d);
-            next.push('\n');
-        }
-        next.push_str(source);
-        current = next;
+        // ORIGINAL source, in application order (deterministic), with a
+        // leading BOM kept at byte 0 (directives after it).
+        current = prepend_directives(source, &applied);
     }
 
     RepairOutcome {
@@ -519,11 +514,21 @@ pub fn apply_selected(
             applied.push(step.directive.clone());
         }
     }
-    let mut out = String::new();
-    for directive in &applied {
+    (prepend_directives(source, &applied), applied)
+}
+
+/// Prepend directives to source while keeping a leading BOM at byte 0
+/// (the lexer skips it only at the start of input).
+fn prepend_directives(source: &str, directives: &[String]) -> String {
+    let (bom, body) = match source.strip_prefix('\u{feff}') {
+        Some(rest) => ("\u{feff}", rest),
+        None => ("", source),
+    };
+    let mut out = String::from(bom);
+    for directive in directives {
         out.push_str(directive);
         out.push('\n');
     }
-    out.push_str(source);
-    (out, applied)
+    out.push_str(body);
+    out
 }

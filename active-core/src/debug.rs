@@ -279,16 +279,10 @@ fn normalize_secret_gaps(source: &str) -> String {
         if !matches!(tokens[index].kind, K::Secret) {
             continue;
         }
-        let mut probe = skip_layout(tokens, index + 1);
-        if matches!(tokens.get(probe).map(|t| &t.kind), Some(K::Dot)) {
-            probe = skip_layout(tokens, probe + 1);
-            if matches!(tokens.get(probe).map(|t| &t.kind), Some(K::Env)) {
-                probe = skip_layout(tokens, probe + 1);
-            }
-        }
-        if !matches!(tokens.get(probe).map(|t| &t.kind), Some(K::LParen)) {
+        let Some(call) = call_opening(tokens, index + 1) else {
             continue;
-        }
+        };
+        let probe = call.open;
         let Some((_, gap_start)) = span_offsets(source, &span_of(&tokens[index])) else {
             continue;
         };
@@ -351,17 +345,11 @@ fn secret_call_lines(source: &str) -> std::collections::HashSet<u32> {
             continue;
         }
         let start_line = tokens[index].line;
-        let mut probe = skip_layout(tokens, index + 1);
-        if matches!(tokens.get(probe).map(|t| &t.kind), Some(K::Dot)) {
-            probe = skip_layout(tokens, probe + 1);
-            if matches!(tokens.get(probe).map(|t| &t.kind), Some(K::Env)) {
-                probe = skip_layout(tokens, probe + 1);
-            }
-        }
-        if !matches!(tokens.get(probe).map(|t| &t.kind), Some(K::LParen)) {
+        let Some(call) = call_opening(tokens, index + 1) else {
             index += 1;
             continue;
-        }
+        };
+        let mut probe = call.open;
         let mut depth = 0i32;
         let mut end_line = start_line;
         while probe < tokens.len() {
@@ -443,6 +431,33 @@ fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
     let lexed = lexer.tokenize();
     let tokens = &lexed.tokens;
     let mut spans = Vec::new();
+    // Names of canonical `secret.env("NAME", …)` calls across the
+    // document: the fail-closed sweep below keeps them visible.
+    let mut canonical_env_names: std::collections::HashSet<(u32, u32, u32, u32)> =
+        std::collections::HashSet::new();
+    for probe in 0..tokens.len() {
+        if !matches!(tokens[probe].kind, K::Secret) {
+            continue;
+        }
+        let Some(call) = call_opening(tokens, probe + 1) else {
+            continue;
+        };
+        if !call.canonical_env {
+            continue;
+        }
+        let mut first = skip_layout(tokens, call.open + 1);
+        while matches!(tokens.get(first).map(|t| &t.kind), Some(K::LParen)) {
+            first = skip_layout(tokens, first + 1);
+        }
+        if let Some(token) = tokens.get(first) {
+            if matches!(
+                token.kind,
+                K::String(_) | K::SingleString | K::MlString(_) | K::MlSingleString
+            ) {
+                canonical_env_names.insert((token.line, token.col, token.end_line, token.end_col));
+            }
+        }
+    }
     let mut index = 0usize;
     while index < tokens.len() {
         let is_secret =
@@ -454,20 +469,12 @@ fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
         // The gap was normalized to spaces, so the call opens at the
         // next token; `secret.env("NAME")` is a name (metadata), so its
         // first string is exempt but later arguments are still scanned.
-        let mut probe = skip_layout(tokens, index + 1);
-        let mut skip_first_string = false;
-        if matches!(tokens.get(probe).map(|t| &t.kind), Some(K::Dot)) {
-            probe = skip_layout(tokens, probe + 1);
-            if matches!(tokens.get(probe).map(|t| &t.kind), Some(K::Env)) {
-                skip_first_string = true;
-                probe = skip_layout(tokens, probe + 1);
-            }
-        }
-        if !matches!(tokens.get(probe).map(|t| &t.kind), Some(K::LParen)) {
+        let Some(call) = call_opening(tokens, index + 1) else {
             index += 1;
             continue;
-        }
-        let open = probe;
+        };
+        let open = call.open;
+        let skip_first_string = call.canonical_env;
         // The env-name exemption applies only when the first argument
         // is itself a string (grouping parentheses allowed), so
         // `secret.env(default = "x", "NAME")` and
@@ -537,7 +544,12 @@ fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
                             && e.column == span.column
                             && e.end_line == span.end_line
                             && e.end_column == span.end_column
-                    });
+                    }) || canonical_env_names.contains(&(
+                        span.line,
+                        span.column,
+                        span.end_line,
+                        span.end_column,
+                    ));
                     if !is_exempt {
                         spans.push(span);
                     }
@@ -551,6 +563,48 @@ fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
 
 /// Skip layout trivia (newline/indent/dedent) before a punctuation
 /// token; a call can be broken across lines outside brackets.
+/// Shared call-opening scan: skip layout, tolerate any run of `.`
+/// tokens and one `env`, then require `(`. Returns the parenthesis
+/// index, whether the call is an env lookup, and whether it is the
+/// canonical single-dot `secret.env(...)` form (the only form whose
+/// first string argument is an exempt name).
+struct CallOpen {
+    open: usize,
+    canonical_env: bool,
+}
+
+fn call_opening(tokens: &[crate::parser::Token], start: usize) -> Option<CallOpen> {
+    use crate::parser::TokenKind as K;
+    let mut probe = skip_layout(tokens, start);
+    let mut dots = 0usize;
+    let mut env = false;
+    let mut env_after_single_dot = false;
+    loop {
+        match tokens.get(probe).map(|t| &t.kind) {
+            Some(K::Dot) => {
+                if env {
+                    return None;
+                }
+                dots += 1;
+                probe = skip_layout(tokens, probe + 1);
+            }
+            Some(K::Env) => {
+                env = true;
+                env_after_single_dot = dots == 1;
+                probe = skip_layout(tokens, probe + 1);
+            }
+            _ => break,
+        }
+    }
+    if !matches!(tokens.get(probe).map(|t| &t.kind), Some(K::LParen)) {
+        return None;
+    }
+    Some(CallOpen {
+        open: probe,
+        canonical_env: env && env_after_single_dot,
+    })
+}
+
 fn skip_layout(tokens: &[crate::parser::Token], mut index: usize) -> usize {
     use crate::parser::TokenKind as K;
     while index < tokens.len() && matches!(tokens[index].kind, K::Newline | K::Indent | K::Dedent) {

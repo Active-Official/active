@@ -2645,8 +2645,19 @@ fn debug_rejects_inapplicable_flags() {
         .args(["--break", "taint", "--minimize", "E001"])
         .output()
         .expect("run active");
-    assert!(
-        !break_minimize.status.success(),
-        "break conflicts with minimize"
+    assert_eq!(
+        break_minimize.status.code(),
+        Some(2),
+        "clap must reject the combination: {}",
+        String::from_utf8_lossy(&break_minimize.stderr)
     );
+    assert!(String::from_utf8_lossy(&break_minimize.stderr).contains("cannot be used with"));
+
+    let replay_minimize = active()
+        .args(["debug", "--from"])
+        .arg(&f)
+        .args(["--replay", "--minimize", "E001"])
+        .output()
+        .expect("run active");
+    assert_eq!(replay_minimize.status.code(), Some(2));
 }

@@ -918,3 +918,31 @@ fn steps_shift_material_paths_after_an_array_remove() {
         "stale index kept: {rendered}"
     );
 }
+
+#[test]
+fn steps_are_deterministic_for_a_node_material_at_two_paths() {
+    // F4 (review 33): the overlay picks the smallest path, so replay
+    // and trace labels do not depend on map iteration order.
+    let src = "let p = env.R33_SHARED\nk = secret(p)\nactive_profile = \"p\"\nprofile \"p\" { x = p, y = p }\n";
+    let mut env = std::collections::HashMap::new();
+    env.insert("R33_SHARED".to_string(), "shared-trace-r33".to_string());
+    let run = || {
+        let (_, _, steps) = Engine::new()
+            .with_env(env.clone())
+            .evaluate_with_steps(&module(src))
+            .expect("evaluate");
+        serde_json::to_string(&steps).expect("json")
+    };
+    let first = run();
+    for _ in 0..5 {
+        assert_eq!(first, run(), "trace must be byte-stable");
+    }
+    assert!(
+        first.contains("\"path\":\"x\""),
+        "smallest path wins: {first}"
+    );
+    assert!(
+        !first.contains("shared-trace-r33"),
+        "source leaked: {first}"
+    );
+}

@@ -1275,3 +1275,74 @@ fn computed_nested_rename_marks_the_same_parent_destination() {
     let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
     assert!(!json.contains(raw), "nested computed rename leaked: {json}");
 }
+
+#[test]
+fn failed_patch_set_cannot_poison_a_later_rename() {
+    // F1 (review 33): a failed Set (W004) never reaches the tree. Its
+    // phantom path must not make a rename source exist and clear a
+    // real material destination.
+    let raw = "phantom-set-r33";
+    std::env::set_var("ACTIVE_R33_PHANTOM", raw);
+    let src = "let p = env.ACTIVE_R33_PHANTOM\nk = secret(p)\na = { q = p }\n@patch(\"a.y[0]\", p)\n@rename(\"a.y\", \"q\")\n";
+    let module = parse(src, "phantom-set").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("ACTIVE_R33_PHANTOM".to_string(), raw.to_string());
+    let (value, _) = Engine::new()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("resilient evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    assert!(profile.path_is_secret("a.q"), "destination stays material");
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(raw), "phantom patch leaked: {json}");
+}
+
+#[test]
+fn computed_selector_applies_late_env_name_materiality_to_profile_paths() {
+    // F2 (review 33): the selected profile reads an env that another
+    // profile places at a material path. Every read is material,
+    // including profile-provided-only paths processed earlier.
+    let raw = "late-env-r33";
+    std::env::set_var("ACTIVE_R33_LATE", raw);
+    std::env::set_var("ACTIVE_R33_SEL", "a");
+    let src = "let e = env.ACTIVE_R33_LATE\nlet p = env.ACTIVE_R33_SRC\nk = secret(p)\nsel = env.ACTIVE_R33_SEL\nn = p\nactive_profile = sel\nprofile \"a\" { x = e }\nprofile \"b\" { n = e }\n";
+    let module = parse(src, "late-env").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("ACTIVE_R33_LATE".to_string(), raw.to_string());
+    env.insert("ACTIVE_R33_SRC".to_string(), "source-r33".to_string());
+    env.insert("ACTIVE_R33_SEL".to_string(), "a".to_string());
+    let (value, _) = Engine::new()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    assert!(profile.path_is_secret("x"), "late env read is material");
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(raw), "late env leaked: {json}");
+}
+
+#[test]
+fn nested_array_default_materiality_is_per_element_and_deterministic() {
+    // F3 (review 33): a default array registers one concrete path per
+    // element; a material element and a benign sibling never share a
+    // wildcard alias (which made the result iteration-order dependent).
+    let raw = "default-array-element-r33";
+    std::env::set_var("ACTIVE_R33_ARR", raw);
+    let src = "let s = env.ACTIVE_R33_ARR\nk = secret(s)\nschema = { arr = Array<Table { a = Any(default = [s, \"benign-element\"]) }> }\narr = [{}]\n";
+    let module = parse(src, "array-default-per-element").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("ACTIVE_R33_ARR".to_string(), raw.to_string());
+    let (value, _) = Engine::new()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("resilient evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    assert!(profile.path_is_secret("arr[0].a[0]"), "material element");
+    assert!(
+        !profile.path_is_secret("arr[0].a[1]"),
+        "benign sibling stays visible"
+    );
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(raw), "material element leaked: {json}");
+    assert!(json.contains("benign-element"), "sibling hidden: {json}");
+}

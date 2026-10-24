@@ -508,25 +508,18 @@ fn wildcard_indices(path: &str) -> String {
     out
 }
 
-/// Materiality contributed by one schema default. An exact default is
-/// material only when no explicit data covers it (the fill cannot run).
-/// A wildcard default (`arr[].a`) expands over known element
-/// containers: each index whose concrete path is absent fills, so that
-/// index is material; an explicitly written element stays visible.
-fn add_default_material_paths(path: &str, data_paths: &HashSet<String>, out: &mut HashSet<String>) {
-    if !path.contains("[]") {
-        if !data_paths.contains(path) {
-            out.insert(path.to_string());
-        }
-        return;
-    }
-    let Some(bracket) = path.find("[]") else {
-        return;
+/// Expand a default-path pattern (`arr[].a[0]`) over the known element
+/// containers (`arr[0]`, `arr[1]`, …). No wildcard alias is emitted:
+/// one alias for several concrete sub-paths would make materiality
+/// depend on map iteration order.
+fn expand_default_path(pattern: &str, data_paths: &HashSet<String>) -> Vec<String> {
+    let Some(bracket) = pattern.find("[]") else {
+        return vec![pattern.to_string()];
     };
-    let prefix = &path[..bracket];
-    let suffix = &path[bracket + 2..];
+    let prefix = &pattern[..bracket];
+    let suffix = &pattern[bracket + 2..];
     let stem = format!("{prefix}[");
-    let mut expanded = false;
+    let mut out = Vec::new();
     for data in data_paths {
         let Some(rest) = data.strip_prefix(&stem) else {
             continue;
@@ -535,22 +528,30 @@ fn add_default_material_paths(path: &str, data_paths: &HashSet<String>, out: &mu
             continue;
         };
         let index = &rest[..end];
-        if index.is_empty() || !index.bytes().all(|b| b.is_ascii_digit()) {
+        if index.is_empty()
+            || !index.bytes().all(|b| b.is_ascii_digit())
+            || !rest[end + 1..].is_empty()
+        {
             continue;
         }
-        // Element containers only (`arr[i]`, never `arr[i].key`).
-        if !rest[end + 1..].is_empty() {
-            continue;
-        }
-        expanded = true;
         let concrete = format!("{prefix}[{index}]{suffix}");
+        out.extend(expand_default_path(&concrete, data_paths));
+    }
+    if out.is_empty() {
+        vec![pattern.to_string()]
+    } else {
+        out
+    }
+}
+
+/// Materiality contributed by one schema default: each concrete
+/// expansion is material when no explicit data covers that exact path
+/// (the fill cannot run).
+fn add_default_material_paths(path: &str, data_paths: &HashSet<String>, out: &mut HashSet<String>) {
+    for concrete in expand_default_path(path, data_paths) {
         if !data_paths.contains(&concrete) {
             out.insert(concrete);
         }
-    }
-    if !expanded {
-        // No element container is known: keep the wildcard fail-safe.
-        out.insert(path.to_string());
     }
 }
 
@@ -607,6 +608,18 @@ fn tree_path_exists(export_paths: &HashSet<String>, from: &str) -> bool {
 /// wildcard spelling on either side (`arr[].a` vs `arr[0].a`).
 fn path_is_material(material_paths: &HashSet<String>, path: &str) -> bool {
     material_paths.contains(path) || material_paths.contains(&wildcard_indices(path))
+}
+
+/// Deterministic overlay entry: when one node is material at several
+/// paths, the lexicographically smallest wins (map iteration order must
+/// not decide a trace label).
+fn set_material_path(map: &mut HashMap<NodeId, String>, node: NodeId, path: &str) {
+    match map.get(&node) {
+        Some(existing) if existing.as_str() <= path => {}
+        _ => {
+            map.insert(node, path.to_string());
+        }
+    }
 }
 
 /// Keep the trace-path overlay in step with a rename.
@@ -1003,6 +1016,11 @@ impl SecretProfile {
         // profile field's top level (a nested replacement under a
         // merged table still replaces its own value).
         let base_paths = paths.clone();
+        // Every path contributed by a computed-selector profile: after
+        // env-name propagation, a later-material node makes its path
+        // material even though the profile was processed first (map
+        // iteration order must not decide taint).
+        let mut computed_profile_paths: Vec<(String, NodeId)> = Vec::new();
         match selection {
             ProfileSelection::Named(name) => {
                 if let Some(id) = module.profiles.get(&name) {
@@ -1069,7 +1087,7 @@ impl SecretProfile {
                                 if own {
                                     nodes.insert(*node);
                                     fallback_secret_paths.insert(path.clone());
-                                    material_node_paths.insert(*node, path.clone());
+                                    set_material_path(&mut material_node_paths, *node, path);
                                     collect_env_names(module, *node, &mut material_envs);
                                 } else if inherited || under {
                                     // Path-inherited materiality stays
@@ -1077,7 +1095,7 @@ impl SecretProfile {
                                     // consult the path, so a shared
                                     // literal is not globally marked.
                                     fallback_secret_paths.insert(path.clone());
-                                    material_node_paths.insert(*node, path.clone());
+                                    set_material_path(&mut material_node_paths, *node, path);
                                     collect_env_names(module, *node, &mut material_envs);
                                 }
                             }
@@ -1113,6 +1131,8 @@ impl SecretProfile {
                             // prove any one profile ran: profile paths
                             // are not export/rename candidates.
                             let mut replacement_prefixes: Vec<String> = Vec::new();
+                            computed_profile_paths
+                                .extend(profile_paths.iter().map(|(p, n)| (p.clone(), *n)));
                             for (path, node) in &profile_paths {
                                 let path_merge = is_table_like(module, *node)
                                     && base_paths
@@ -1135,7 +1155,7 @@ impl SecretProfile {
                                     .iter()
                                     .any(|prefix| path_under(&path, prefix));
                                 if own || inherited || under {
-                                    material_node_paths.insert(node, path.clone());
+                                    set_material_path(&mut material_node_paths, node, &path);
                                     fallback_secret_paths.insert(path);
                                     collect_env_names(module, node, &mut material_envs);
                                     if own {
@@ -1181,7 +1201,9 @@ impl SecretProfile {
                     fallback_secret_paths.retain(|known| !path_under(known, &path));
                     let mut patched = HashMap::new();
                     truncated |= walk_paths(module, *value, &path, &mut patched, true, true);
-                    export_paths.extend(patched.keys().cloned());
+                    // A failed Set (W004) never reaches the tree; do
+                    // not let its phantom paths count as rename
+                    // sources or default coverage.
                     for (known, node) in patched {
                         if nodes.contains(&node) {
                             fallback_secret_paths.insert(known);
@@ -1266,26 +1288,22 @@ impl SecretProfile {
         // Schema defaults fill absent paths during evaluation; explicit
         // values and transforms (inserted above) win. When any bound
         // stopped a walk, skip defaults: registering an unvisited path
-        // as a benign default would defeat fail-closed analysis. The
-        // wildcard alias lets `arr[0].a` match a default registered at
-        // `arr[].a`, and defaults that contain their own arrays
-        // (`arr[].a[0]`) register `arr[].a[]` as well.
+        // as a benign default would defeat fail-closed analysis. Each
+        // pattern expands over known element containers, so materiality
+        // is per element and never depends on map iteration order.
         if !truncated {
             for (path, node) in default_paths {
-                let wildcard = wildcard_indices(&path);
-                let alias = (wildcard != path).then_some(wildcard);
-                if export_paths.contains(&path) {
-                    // Explicit values, profile overrides, and patch
-                    // destinations win over a fill.
-                    paths.entry(path).or_insert(node);
-                } else {
-                    // A binding-only entry is not the exported value:
-                    // the evaluator fills this path, so the fill node
-                    // wins over the binding's benign placeholder.
-                    paths.insert(path, node);
-                }
-                if let Some(alias) = alias {
-                    paths.entry(alias).or_insert(node);
+                for concrete in expand_default_path(&path, &export_paths) {
+                    if export_paths.contains(&concrete) {
+                        // Explicit values, profile overrides, and patch
+                        // destinations win over a fill.
+                        paths.entry(concrete).or_insert(node);
+                    } else {
+                        // A binding-only entry is not the exported
+                        // value: the evaluator fills this path, so the
+                        // fill node wins over the placeholder.
+                        paths.insert(concrete, node);
+                    }
                 }
             }
         }
@@ -1326,6 +1344,14 @@ impl SecretProfile {
                         }
                     }
                 }
+            }
+        }
+        // A path from a computed-selector profile whose node became
+        // material late (a second profile placed the same env name at
+        // a material path) is material too.
+        for (path, node) in &computed_profile_paths {
+            if nodes.contains(node) {
+                fallback_secret_paths.insert(path.clone());
             }
         }
         // Environment reads that are material anywhere (node-level

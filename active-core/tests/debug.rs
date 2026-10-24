@@ -5,6 +5,18 @@
 use active_core::debug;
 use active_core::{parse, Engine};
 
+fn emits(src: &str, code: &str) -> bool {
+    let (module, parse_diags) =
+        active_core::parse_recovering(src, "target-check", active_core::ParseOptions::default());
+    if parse_diags.iter().any(|d| d.code == code) {
+        return true;
+    }
+    match active_core::Engine::new().evaluate(&module) {
+        Ok((_, diagnostics)) => diagnostics.iter().any(|d| d.code == code),
+        Err(error) => error.code() == code,
+    }
+}
+
 fn module(src: &str) -> active_core::Module {
     parse(src, "debug").expect("parse")
 }
@@ -170,11 +182,8 @@ fn minimal_case_redacts_every_secret_spelling_without_duplication() {
         ),
     ];
     for (src, code) in cases {
+        assert!(emits(src, code), "input does not emit {code}: {src:?}");
         let report = debug::minimal_case(src, code, 100);
-        assert!(
-            report["attempts"].as_u64().unwrap() > 0,
-            "target {code} not exercised for {src:?}: {report}"
-        );
         let reduced = report["reduced"].as_str().expect("reduced");
         assert!(!reduced.contains("hunter2"), "leak for {src:?}: {reduced}");
         assert_eq!(
@@ -206,11 +215,8 @@ fn minimal_case_redacts_interpolated_and_malformed_secret_calls() {
         ),
     ];
     for (src, code) in cases {
+        assert!(emits(src, code), "input does not emit {code}: {src:?}");
         let report = debug::minimal_case(src, code, 100);
-        assert!(
-            report["attempts"].as_u64().unwrap() > 0,
-            "target {code} never exercised for {src:?}: {report}"
-        );
         let rendered = report.to_string();
         assert!(
             !rendered.contains("hunter2"),
@@ -378,4 +384,22 @@ fn env_default_with_nonliteral_name_is_redacted() {
         "multiline env default leaked: {reduced}"
     );
     assert!(reduced.contains("NAME"), "env name must survive: {reduced}");
+}
+
+#[test]
+fn env_exemption_is_positionally_strict_and_dot_layout_is_handled() {
+    let cases = [
+        "token = secret.env(default = \"hunter2-NAMED\", \"NAME\")\nnoise = 1\n",
+        "token = secret.env(f(\"hunter2-NESTED\"))\nnoise = 1\n",
+        "loc = \"hunter2-ENVDEF\"\ntoken = secret.env(\"ENVNAME\", default = loc)\nnoise = 1\n",
+        "token = secret\n.\nenv(\"NAME\", default = \"hunter2-DOT\")\nnoise = 1\n",
+    ];
+    for src in cases {
+        let report = debug::minimal_case(src, "E001", 200);
+        let rendered = report.to_string();
+        assert!(
+            !rendered.contains("hunter2"),
+            "leak for {src:?}: {rendered}"
+        );
+    }
 }

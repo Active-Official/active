@@ -2602,3 +2602,51 @@ fn repair_browser_fatal_errors_keep_file_and_span() {
     assert!(!fatal["span"].is_null(), "span lost: {fatal}");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn debug_minimize_reports_an_absent_target() {
+    let f = fixture("debug_clean.active", "port = 8080\n");
+    let out = active()
+        .args(["debug", "--from"])
+        .arg(&f)
+        .args(["--minimize", "T999"])
+        .output()
+        .expect("run active");
+    assert!(!out.status.success(), "absent target must be reported");
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON");
+    assert_eq!(report["target_present"], false);
+}
+
+#[test]
+fn debug_rejects_inapplicable_flags() {
+    let f = fixture("debug_flags.active", "port = 8080\n");
+    let expect = active()
+        .args(["debug", "--from"])
+        .arg(&f)
+        .args(["--expect", "sha256:deadbeef"])
+        .output()
+        .expect("run active");
+    assert!(!expect.status.success(), "--expect requires --replay");
+
+    let break_replay = active()
+        .args(["debug", "--from"])
+        .arg(&f)
+        .args(["--break", "taint", "--replay"])
+        .output()
+        .expect("run active");
+    assert!(
+        !break_replay.status.success(),
+        "break conflicts with replay"
+    );
+
+    let break_minimize = active()
+        .args(["debug", "--from"])
+        .arg(&f)
+        .args(["--break", "taint", "--minimize", "E001"])
+        .output()
+        .expect("run active");
+    assert!(
+        !break_minimize.status.success(),
+        "break conflicts with minimize"
+    );
+}

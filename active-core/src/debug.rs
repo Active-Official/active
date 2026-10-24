@@ -183,10 +183,12 @@ pub fn minimal_case_with(
     file_ctx: Option<&std::path::Path>,
 ) -> JsonValue {
     let (reduced, attempts) = reduce_with(source, target_code, max_attempts, file_ctx);
+    let target_present = still_fails(source, target_code, file_ctx);
     let reduced_bytes = reduced.len();
     let reduced = redact_secret_literals(&reduced);
     json!({
         "target_code": target_code,
+        "target_present": target_present,
         "attempts": attempts,
         "original_bytes": source.len(),
         "reduced_bytes": reduced_bytes,
@@ -277,20 +279,11 @@ fn normalize_secret_gaps(source: &str) -> String {
         if !matches!(tokens[index].kind, K::Secret) {
             continue;
         }
-        let mut probe = index + 1;
-        while probe < tokens.len()
-            && matches!(tokens[probe].kind, K::Newline | K::Indent | K::Dedent)
-        {
-            probe += 1;
-        }
-        if matches!(tokens.get(probe).map(|t| &t.kind), Some(K::Dot))
-            && matches!(tokens.get(probe + 1).map(|t| &t.kind), Some(K::Env))
-        {
-            probe += 2;
-            while probe < tokens.len()
-                && matches!(tokens[probe].kind, K::Newline | K::Indent | K::Dedent)
-            {
-                probe += 1;
+        let mut probe = skip_layout(tokens, index + 1);
+        if matches!(tokens.get(probe).map(|t| &t.kind), Some(K::Dot)) {
+            probe = skip_layout(tokens, probe + 1);
+            if matches!(tokens.get(probe).map(|t| &t.kind), Some(K::Env)) {
+                probe = skip_layout(tokens, probe + 1);
             }
         }
         if !matches!(tokens.get(probe).map(|t| &t.kind), Some(K::LParen)) {
@@ -358,22 +351,11 @@ fn secret_call_lines(source: &str) -> std::collections::HashSet<u32> {
             continue;
         }
         let start_line = tokens[index].line;
-        let mut probe = index + 1;
-        // Skip layout trivia: a wrapped `(` outside brackets emits
-        // Indent/Dedent in addition to Newline.
-        while probe < tokens.len()
-            && matches!(tokens[probe].kind, K::Newline | K::Indent | K::Dedent)
-        {
-            probe += 1;
-        }
-        if matches!(tokens.get(probe).map(|t| &t.kind), Some(K::Dot))
-            && matches!(tokens.get(probe + 1).map(|t| &t.kind), Some(K::Env))
-        {
-            probe += 2;
-            while probe < tokens.len()
-                && matches!(tokens[probe].kind, K::Newline | K::Indent | K::Dedent)
-            {
-                probe += 1;
+        let mut probe = skip_layout(tokens, index + 1);
+        if matches!(tokens.get(probe).map(|t| &t.kind), Some(K::Dot)) {
+            probe = skip_layout(tokens, probe + 1);
+            if matches!(tokens.get(probe).map(|t| &t.kind), Some(K::Env)) {
+                probe = skip_layout(tokens, probe + 1);
             }
         }
         if !matches!(tokens.get(probe).map(|t| &t.kind), Some(K::LParen)) {
@@ -472,22 +454,13 @@ fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
         // The gap was normalized to spaces, so the call opens at the
         // next token; `secret.env("NAME")` is a name (metadata), so its
         // first string is exempt but later arguments are still scanned.
-        let mut probe = index + 1;
-        while probe < tokens.len()
-            && matches!(tokens[probe].kind, K::Newline | K::Indent | K::Dedent)
-        {
-            probe += 1;
-        }
+        let mut probe = skip_layout(tokens, index + 1);
         let mut skip_first_string = false;
-        if matches!(tokens.get(probe).map(|t| &t.kind), Some(K::Dot))
-            && matches!(tokens.get(probe + 1).map(|t| &t.kind), Some(K::Env))
-        {
-            skip_first_string = true;
-            probe += 2;
-            while probe < tokens.len()
-                && matches!(tokens[probe].kind, K::Newline | K::Indent | K::Dedent)
-            {
-                probe += 1;
+        if matches!(tokens.get(probe).map(|t| &t.kind), Some(K::Dot)) {
+            probe = skip_layout(tokens, probe + 1);
+            if matches!(tokens.get(probe).map(|t| &t.kind), Some(K::Env)) {
+                skip_first_string = true;
+                probe = skip_layout(tokens, probe + 1);
             }
         }
         if !matches!(tokens.get(probe).map(|t| &t.kind), Some(K::LParen)) {
@@ -495,10 +468,23 @@ fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
             continue;
         }
         let open = probe;
+        // The env-name exemption applies only when the first argument
+        // is itself a string (grouping parentheses allowed), so
+        // `secret.env(default = "x", "NAME")` and
+        // `secret.env(f("x"))` redact their nested strings.
+        let mut lookahead = skip_layout(tokens, open + 1);
+        while matches!(tokens.get(lookahead).map(|t| &t.kind), Some(K::LParen)) {
+            lookahead = skip_layout(tokens, lookahead + 1);
+        }
+        let first_arg_plain = matches!(
+            tokens.get(lookahead).map(|t| &t.kind),
+            Some(K::String(_) | K::SingleString | K::MlString(_) | K::MlSingleString)
+        );
         let mut depth = 0i32;
         let mut cursor = open;
         let mut seen_string = false;
         let mut seen_comma = false;
+        let mut exempt_span: Option<crate::diag::Span> = None;
         while cursor < tokens.len() {
             match tokens[cursor].kind {
                 K::LParen => depth += 1,
@@ -510,28 +496,67 @@ fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
                 }
                 K::Comma if depth == 1 => seen_comma = true,
                 K::String(_) | K::SingleString | K::MlString(_) | K::MlSingleString => {
-                    // Only the name argument (first string before any
-                    // top-level comma) is metadata; later arguments
-                    // (defaults, extras) are redacted.
-                    let exempt = skip_first_string && !seen_comma && !seen_string;
+                    let exempt =
+                        skip_first_string && first_arg_plain && !seen_comma && !seen_string;
                     seen_string = true;
-                    if !exempt {
-                        let token = &tokens[cursor];
-                        spans.push(crate::diag::Span {
-                            line: token.line,
-                            column: token.col,
-                            end_line: token.end_line,
-                            end_column: token.end_col,
-                        });
+                    let token = &tokens[cursor];
+                    let span = crate::diag::Span {
+                        line: token.line,
+                        column: token.col,
+                        end_line: token.end_line,
+                        end_column: token.end_col,
+                    };
+                    if exempt {
+                        exempt_span = Some(span);
+                    } else {
+                        spans.push(span);
                     }
                 }
                 _ => {}
             }
             cursor += 1;
         }
+        // An env call with extra arguments may reference a
+        // binding/table we cannot resolve lexically; fail closed by
+        // redacting every string literal in the document except the
+        // exempted name.
+        if skip_first_string && seen_comma {
+            for token in tokens {
+                if matches!(
+                    token.kind,
+                    K::String(_) | K::SingleString | K::MlString(_) | K::MlSingleString
+                ) {
+                    let span = crate::diag::Span {
+                        line: token.line,
+                        column: token.col,
+                        end_line: token.end_line,
+                        end_column: token.end_col,
+                    };
+                    let is_exempt = exempt_span.as_ref().is_some_and(|e| {
+                        e.line == span.line
+                            && e.column == span.column
+                            && e.end_line == span.end_line
+                            && e.end_column == span.end_column
+                    });
+                    if !is_exempt {
+                        spans.push(span);
+                    }
+                }
+            }
+        }
         index = cursor.max(index + 1);
     }
     spans
+}
+
+/// Skip layout trivia (newline/indent/dedent) before a punctuation
+/// token; a call can be broken across lines outside brackets.
+fn skip_layout(tokens: &[crate::parser::Token], mut index: usize) -> usize {
+    use crate::parser::TokenKind as K;
+    while index < tokens.len() && matches!(tokens[index].kind, K::Newline | K::Indent | K::Dedent) {
+        index += 1;
+    }
+    index
 }
 
 /// Convert a 1-based core span into byte offsets in `text`.

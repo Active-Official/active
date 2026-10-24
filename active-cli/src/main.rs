@@ -337,14 +337,14 @@ enum Commands {
         from: PathBuf,
         /// Stop at the first matching breakpoint: taint, path:<prefix>,
         /// code:<CODE>, or node:<n>
-        #[arg(long = "break")]
+        #[arg(long = "break", conflicts_with_all = ["replay", "minimize"])]
         break_at: Option<String>,
         /// Deterministic replay: evaluate twice and compare hashes,
         /// codes, and step traces
         #[arg(long)]
         replay: bool,
         /// Expected content hash for --replay (sha256:...)
-        #[arg(long)]
+        #[arg(long, requires = "replay")]
         expect: Option<String>,
         /// Reduce the document while the given diagnostic code survives
         #[arg(long)]
@@ -1587,6 +1587,12 @@ fn main() -> anyhow::Result<()> {
                         serde_json::to_string_pretty(&report)
                             .map_err(|e| anyhow::anyhow!("{e}"))?
                     );
+                }
+                if !report["target_present"].as_bool().unwrap_or(false) {
+                    if format == "text" {
+                        println!("target {code} not found in the document");
+                    }
+                    std::process::exit(1);
                 }
                 return Ok(());
             }

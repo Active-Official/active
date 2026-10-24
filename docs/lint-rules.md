@@ -52,7 +52,10 @@ id = blob("text/plain", "hello")
 - `sarif`: SARIF 2.1.0 (`runs[0].tool.driver.name = "active"`), suitable
   for code-scanning upload.
 
-All formats exit `1` when any enabled rule fires, `0` otherwise.
+All formats exit `1` when any enabled rule fires, `0` otherwise. A file
+that does not parse still fails the run: its parse diagnostics go to
+stderr, and the JSON/SARIF item list stays lint-only (the pinned schema
+admits `^L[0-9]{3}$` codes).
 
 ## Disablement
 

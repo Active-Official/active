@@ -9,15 +9,22 @@
 use serde_json::{json, Value as JsonValue};
 
 use crate::ir::{Module, Node, SchemaField, Value};
+use crate::secret::{SecretProfile, MARKER};
 use crate::types::ActiveType;
 
 /// Inspect one dotted/index path of an evaluated document.
 pub fn inspect_path(module: &Module, root: &Value, path: &str) -> Result<JsonValue, String> {
     let cone = crate::convert::project_path(root, path)
         .map_err(|why| format!("cannot inspect `{path}`: {why}"))?;
+    let profile = SecretProfile::analyze(module);
     let kind = kind_name(cone);
-    let tainted = contains_secret(cone);
-    let value = crate::convert::value_to_json(cone);
+    // A value used as a secret locator (or built from one) carries no
+    // `Value::Secret` marker, so taint is structural. Render with the
+    // profile's path map, then sweep authored literals out of any
+    // string that embedded one.
+    let mut value = render_cone(&profile, path, cone);
+    let redacted = profile.redact_json(&mut value);
+    let tainted = profile.path_is_secret(path) || contains_secret(cone) || redacted;
     // Size of the REDACTED rendering (the bytes a consumer actually
     // receives). Secret payloads therefore report the marker length,
     // never the material's length.
@@ -29,8 +36,9 @@ pub fn inspect_path(module: &Module, root: &Value, path: &str) -> Result<JsonVal
         .unwrap_or_default()
         .into_iter()
         // Internal arena labels (`nodeN`) are noise for a consumer;
-        // only named paths answer "where did this come from".
-        .filter(|label| !label.starts_with("node"))
+        // only named paths answer "where did this come from". A real
+        // key such as `node_id` is not an internal label.
+        .filter(|label| !is_internal_label(label))
         .collect();
     dependencies.dedup();
     let mut report = json!({
@@ -72,6 +80,43 @@ pub fn inspect_path(module: &Module, root: &Value, path: &str) -> Result<JsonVal
         });
     }
     Ok(report)
+}
+
+/// Render a selected cone, replacing material leaves with the marker.
+/// Containers keep their shape so non-secret siblings stay visible;
+/// every leaf carries its own path, including array indexes, so the
+/// structural taint set applies at the right granularity.
+fn render_cone(profile: &SecretProfile, path: &str, value: &Value) -> JsonValue {
+    match value {
+        Value::Array(items) => JsonValue::Array(
+            items
+                .iter()
+                .enumerate()
+                .map(|(index, item)| render_cone(profile, &format!("{path}[{index}]"), item))
+                .collect(),
+        ),
+        Value::Table(map) => {
+            let mut out = serde_json::Map::new();
+            for (key, item) in map {
+                let child = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{path}.{key}")
+                };
+                out.insert(key.clone(), render_cone(profile, &child, item));
+            }
+            JsonValue::Object(out)
+        }
+        _ if profile.path_is_secret(path) => JsonValue::String(MARKER.to_string()),
+        _ => crate::convert::value_to_json(value),
+    }
+}
+
+/// Arena labels are exactly `node` followed by ASCII digits.
+fn is_internal_label(label: &str) -> bool {
+    label
+        .strip_prefix("node")
+        .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Render an inspection report as a compact human tree.

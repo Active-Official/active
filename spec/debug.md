@@ -76,20 +76,30 @@ step, then the breakpoint verdict.
 
 Flag combinations are constrained: `--expect` requires `--replay`;
 `--break` conflicts with `--replay` and `--minimize`; `--replay`
-conflicts with `--minimize`. An invalid combination is a clap usage
-error (exit 2), never a silently ignored flag.
+conflicts with `--minimize`; `--max-attempts` requires `--minimize`.
+An invalid combination is a clap usage error (exit 2), never a
+silently ignored flag.
 
 ## 6. Secret guarantee
 
 No step, breakpoint, replay report, or reduction bundle contains raw
 secret material: the value mapping redacts Secret values, locator
 subtrees are replaced structurally, and `--minimize` rewrites authored
-secret literals to `"***SECRET***"`. A line break between `secret` and
-`(` (which the parser rejects) is normalized for redaction only, so
-malformed calls still redact. `secret.env(NAME)` names are metadata and
-survive; later arguments (such as a default) are redacted. If an env
-call carries extra arguments, the redactor fails closed by redacting
-every string literal in the document except the canonical
-`secret.env("NAME")` names. Regression tests pin the locator,
-let/env-backed, tainted-blob, newline, table-ref,
-reduction-stranding, and malformed-punctuation cases.
+secret literals to `"***SECRET***"`. Taint is structural, so a plain
+value used as a locator (a `let`, a table field, an environment lookup)
+and any interpolation, reference, or container built from it are
+material even without a `Value::Secret` marker; containers keep their
+shape and their material leaves carry the marker. Known secret
+substrings are redacted longest-first, so a prefixed/suffixed
+interpolation cannot reconstruct the literal. A line break between
+`secret` and `(` (which the parser rejects) is normalized for
+redaction only, so malformed calls still redact. `secret.env(NAME)`
+names are metadata and survive; later arguments (such as a default)
+are redacted. If a call has any shape other than `secret(` or
+`secret.env(` — stray dots beside `env`, `secret env(`, a
+dot-separated env name — or an env call carries anything past its
+name, the redactor fails closed by redacting every string literal in
+the document except the canonical `secret.env("NAME")` names.
+Regression tests pin the locator, let/env-backed, interpolation,
+tainted-blob, newline, table-ref, reduction-stranding, and
+malformed-punctuation cases.

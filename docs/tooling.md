@@ -28,7 +28,13 @@ active inspect --from svc.active --path token --format text
 
 Path reports carry kind, redacted value, taint, size, content-addressed
 identity (`blake3:…`, size, media type), schema constraints, and
-dependency provenance. Schema: `docs/schemas/inspect-value.json`.
+dependency provenance. Taint is structural: a plain value used as a
+`secret(...)` locator (a `let`, table field, or `env` lookup) and any
+interpolation or container built from it report `"***SECRET***"` with
+`tainted: true`, even though no `Value::Secret` marker exists at
+runtime. Containers keep their shape; only material leaves are
+replaced, and known secret substrings are redacted anywhere they
+appear. Schema: `docs/schemas/inspect-value.json`.
 
 ## Debugger
 

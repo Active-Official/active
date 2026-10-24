@@ -104,27 +104,47 @@ fn memo_separates_materialise_modes() {
 #[test]
 fn blob_aliases_charge_per_clone() {
     // PE.004: N materialised aliases charge N payloads (no silent 1GB).
-    let mut src = String::from("f = blob(\"text/plain\", \"hello\")\n");
-    for i in 0..10 {
-        src.push_str(&format!("a{i} = f\n"));
+    // Same discriminating budget as `blob.rs`: the payload fits alone,
+    // and only the cumulative clone charge trips.
+    fn evaluate(aliases: usize, limit: u64) -> Result<(), String> {
+        let mut src = String::from(
+            "f = blob(\"text/plain\", \"0123456789012345678901234567890123456789\
+012345678901234567890123456789012345678901234567890123456789\")\n",
+        );
+        for i in 0..aliases {
+            src.push_str(&format!("a{i} = f\n"));
+        }
+        let module = parse(&src, "partial").expect("must parse");
+        let mut engine = Engine::new();
+        engine.materialise_blobs = true;
+        engine.budget = active_core::Budget {
+            max_total_value_size: limit,
+            ..active_core::Budget::default()
+        };
+        engine
+            .evaluate(&module)
+            .map(|_| ())
+            .map_err(|e| e.code().to_string())
     }
-    let module = parse(&src, "partial").expect("must parse");
-    let mut engine = Engine::new();
-    engine.materialise_blobs = true;
-    engine.budget = active_core::Budget {
-        max_total_value_size: 20,
-        ..active_core::Budget::default()
-    };
-    let err = engine.evaluate(&module).expect_err("must trip total size");
-    assert_eq!(err.code(), "X006");
+    assert!(evaluate(0, 1600).is_ok(), "one blob must fit");
+    assert_eq!(evaluate(5, 1600), Err("X006".to_string()));
+    assert!(evaluate(5, 3200).is_ok());
+    assert_eq!(evaluate(10, 3200), Err("X006".to_string()));
 }
 
 #[test]
 fn cone_projection_never_leaks_secrets() {
-    // A demanded cone containing secrets still redacts on export.
-    let v = evaluated("token = secret(\"s3cr3t-cone\")\n[out]\npass = token\n");
+    // A demanded cone containing secrets still redacts on export. The
+    // binding lives in the demanded scope (a top-level `token` would
+    // not resolve there, leaving `pass` null and making the assertion
+    // vacuous).
+    let v = evaluated("let token = secret(\"s3cr3t-cone\")\nout = { pass = token }\n");
     let cone = project_path(&v, "out").expect("cone");
     let text = serde_json::to_string(&json(cone)).expect("valid json");
     assert!(!text.contains("s3cr3t-cone"), "leak: {text}");
-    assert_eq!(json(cone)["pass"], serde_json::Value::Null);
+    assert_eq!(
+        json(cone)["pass"],
+        serde_json::Value::String("***SECRET***".to_string()),
+        "the cone must carry the redaction marker, not null: {text}"
+    );
 }

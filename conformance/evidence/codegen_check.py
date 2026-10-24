@@ -51,7 +51,7 @@ def run(argv, cwd=ROOT, timeout=300):
     )
 
 
-def gen(target, out_path, extra_args=()):
+def gen_from(source_path, target, out_path, extra_args=()):
     first = run(
         [
             "cargo",
@@ -62,7 +62,7 @@ def gen(target, out_path, extra_args=()):
             "--",
             "generate",
             "--from",
-            str(WORK / "val-schema.active"),
+            str(source_path),
             "--to",
             target,
             *extra_args,
@@ -79,7 +79,7 @@ def gen(target, out_path, extra_args=()):
             "--",
             "generate",
             "--from",
-            str(WORK / "val-schema.active"),
+            str(source_path),
             "--to",
             target,
             *extra_args,
@@ -92,6 +92,10 @@ def gen(target, out_path, extra_args=()):
     with open(out_path, "w", encoding="utf-8", newline="") as f:
         f.write(first.stdout)
     return first.stdout
+
+
+def gen(target, out_path, extra_args=()):
+    return gen_from(WORK / "val-schema.active", target, out_path, extra_args)
 
 
 (WORK / "val-schema.active").write_text(FIXTURE, encoding="utf-8", newline="\n")
@@ -308,6 +312,132 @@ assert set(_get_args(genval.Config.__annotations__["color"])) == {"red", "green"
 results.append(
     f"python: compiles, imports, Config present "
     f"(fields: {sorted(genval.Config.__annotations__)[:6]}) deterministic=True"
+)
+
+# 5. Blob wire-wrapper parity (spec/blob.md §5): every target's Blob
+# type must decode the ACTUAL evaluation output. The evaluated document
+# is the oracle, so a generated type that models the inner object only
+# fails here even though it looks right in isolation.
+BLOB_DOC = (
+    'schema = { logo = Blob(media_type = "image/png") }\n'
+    'logo = blob("image/png", "pngdata")\n'
+)
+blob_path = WORK / "blob-doc.active"
+blob_path.write_text(BLOB_DOC, encoding="utf-8", newline="\n")
+p = run(["cargo", "run", "-q", "-p", "active-cli", "--", "eval", str(blob_path)])
+assert p.returncode == 0, f"eval blob doc failed:\n{p.stderr[-2000:]}"
+blob_doc = json.loads(p.stdout)
+blob_inner = blob_doc["logo"]["$active.blob"]
+assert blob_inner["size"] == 7, blob_doc
+assert blob_inner["media_type"] == "image/png", blob_doc
+blob_json = json.dumps(blob_doc)
+
+blob_schema = json.loads(gen_from(blob_path, "jsonschema", WORK / "gen-blob.json"))
+jsonschema.Draft202012Validator(blob_schema).validate(blob_doc)
+
+ts_blob = gen_from(blob_path, "typescript", WORK / "gen-blob.ts")
+assert "export interface Config" in ts_blob, ts_blob
+(WORK / "blob-type-check.ts").write_text(
+    'import type { Config } from "./gen-blob";\n'
+    f"const doc: Config = {blob_json};\n"
+    'console.log(doc.logo["$active.blob"].size);\n',
+    encoding="utf-8",
+    newline="\n",
+)
+p = run(
+    [
+        "node",
+        str(tsc_js),
+        "--noEmit",
+        "--strict",
+        "--target",
+        "es2020",
+        "--module",
+        "commonjs",
+        "--moduleResolution",
+        "node",
+        str(WORK / "blob-type-check.ts"),
+    ]
+)
+assert p.returncode == 0, (
+    f"blob tsc parity failed:\n{p.stdout[-2000:]}\n{p.stderr[-2000:]}"
+)
+
+gblob = WORK / "gblob"
+gblob.mkdir()
+(gblob / "go.mod").write_text(
+    "module genblob\n\ngo 1.21\n", encoding="utf-8", newline="\n"
+)
+go_blob = gen_from(blob_path, "go", WORK / "gen-blob.go.txt")
+(gblob / "gen.go").write_text(
+    "package genblob\n\n" + go_blob.replace("\r\n", "\n"),
+    encoding="utf-8",
+    newline="\n",
+)
+(gblob / "decode_test.go").write_text(
+    "package genblob\n\n"
+    'import (\n\t"encoding/json"\n\t"testing"\n)\n\n'
+    f"const blobJSON = `{blob_json}`\n\n"
+    "func TestDecodeEvaluatedBlob(t *testing.T) {\n"
+    "\tvar c Config\n"
+    "\tif err := json.Unmarshal([]byte(blobJSON), &c); err != nil { t.Fatal(err) }\n"
+    '\tif c.Logo.ActiveBlobValue.Size != 7 { t.Fatalf("size: %+v", c.Logo) }\n'
+    '\tif c.Logo.ActiveBlobValue.MediaType != "image/png" { t.Fatalf("media: %+v", c.Logo) }\n'
+    '\tif len(c.Logo.ActiveBlobValue.Hash) == 0 { t.Fatalf("hash: %+v", c.Logo) }\n'
+    "}\n",
+    encoding="utf-8",
+    newline="\n",
+)
+p = run(["go", "test", "./..."], cwd=gblob)
+assert p.returncode == 0, (
+    f"go blob decode failed:\n{p.stdout[-2000:]}\n{p.stderr[-2000:]}"
+)
+
+rblob = WORK / "rblob"
+(rblob / "src" / "tests").mkdir(parents=True)
+(rblob / "Cargo.toml").write_text(
+    '[package]\nname = "genblob"\nversion = "0.0.0"\nedition = "2021"\n\n'
+    '[dependencies]\nserde = { version = "1", features = ["derive"] }\n'
+    'serde_json = "1"\n',
+    encoding="utf-8",
+    newline="\n",
+)
+rs_blob = gen_from(blob_path, "rust", WORK / "gen-blob.rs")
+(rblob / "src" / "lib.rs").write_text(
+    rs_blob.replace("\r\n", "\n"), encoding="utf-8", newline="\n"
+)
+(rblob / "src" / "tests" / "decode.rs").write_text(
+    "#[test]\n"
+    "fn decodes_evaluated_blob_document() {\n"
+    f'    const BLOB: &str = r#"{blob_json}"#;\n'
+    '    let doc: genblob::Config = serde_json::from_str(BLOB).expect("decode");\n'
+    "    assert_eq!(doc.logo.active_blob.size, 7);\n"
+    '    assert_eq!(doc.logo.active_blob.media_type, "image/png");\n'
+    '    assert!(doc.logo.active_blob.hash.starts_with("blake3:"));\n'
+    "}\n",
+    encoding="utf-8",
+    newline="\n",
+)
+p = run(["cargo", "test", "--quiet"], cwd=rblob, timeout=600)
+assert p.returncode == 0, (
+    f"rust blob decode failed:\n{p.stdout[-2000:]}\n{p.stderr[-2000:]}"
+)
+
+py_blob = gen_from(blob_path, "python", WORK / "gen_blob_types.py")
+import importlib.util as _importlib_util
+
+_spec = _importlib_util.spec_from_file_location(
+    "gen_blob_types", WORK / "gen_blob_types.py"
+)
+_mod = _importlib_util.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+assert set(_mod.ActiveBlob.__annotations__) == set(blob_doc["logo"]), (
+    _mod.ActiveBlob.__annotations__
+)
+assert _mod.ActiveBlob.__annotations__["$active.blob"] is _mod.ActiveBlobValue
+assert set(_mod.ActiveBlobValue.__annotations__) == set(blob_inner)
+results.append(
+    "blob: evaluated document decodes in jsonschema/ts/go/rust/python (wire wrapper)"
 )
 
 print("\n".join("CODEGEN: " + r for r in results))

@@ -1948,6 +1948,79 @@ fn inspect_path_reports_text_and_redacts() {
 }
 
 #[test]
+fn debug_and_inspect_redact_interpolated_secret_sources() {
+    let f = fixture(
+        "debug_interp.active",
+        "x = \"hunter2-interp\"\nmsg = \"prefix ${x}\"\nk = secret(x)\n",
+    );
+    let debug = active()
+        .args(["debug", "--from"])
+        .arg(&f)
+        .args(["--format", "json"])
+        .output()
+        .expect("run active");
+    assert!(
+        debug.status.success(),
+        "{}",
+        String::from_utf8_lossy(&debug.stderr)
+    );
+    let body = String::from_utf8_lossy(&debug.stdout);
+    assert!(
+        !body.contains("hunter2"),
+        "interpolated secret in debug steps: {body}"
+    );
+    let report: serde_json::Value = serde_json::from_slice(&debug.stdout).expect("JSON");
+    let msg = report["steps"]
+        .as_array()
+        .expect("steps")
+        .iter()
+        .find(|step| step["path"] == "msg")
+        .unwrap_or_else(|| panic!("msg step missing: {body}"));
+    assert_eq!(msg["value"], "***SECRET***", "{body}");
+    assert_eq!(msg["tainted"], true, "{body}");
+
+    let inspect = active()
+        .args(["inspect", "--from"])
+        .arg(&f)
+        .args(["--path", "msg"])
+        .output()
+        .expect("run active");
+    assert!(
+        inspect.status.success(),
+        "{}",
+        String::from_utf8_lossy(&inspect.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&inspect.stdout).expect("JSON");
+    assert_eq!(report["tainted"], true, "{report}");
+    assert_eq!(report["value"], "***SECRET***", "{report}");
+    assert!(!report.to_string().contains("hunter2"), "{report}");
+}
+
+#[test]
+fn repair_browser_type_error_messages_are_value_free() {
+    let f = fixture(
+        "browser_t001.active",
+        "x = \"hunter2-LOC\"\nk = secret(x)\nbad = x < 1\n",
+    );
+    let out = active()
+        .args(["repair", "--from"])
+        .arg(&f)
+        .arg("--browser")
+        .output()
+        .expect("run active");
+    let body = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !body.contains("hunter2"),
+        "type error leaked a value: {body}"
+    );
+    assert!(body.contains("T001"), "expected a type diagnostic: {body}");
+}
+
+#[test]
 fn debug_steps_break_and_replay_are_secret_safe() {
     let f = fixture(
         "debug.active",
@@ -2000,6 +2073,10 @@ fn debug_steps_break_and_replay_are_secret_safe() {
     );
     let body = String::from_utf8_lossy(&reduce.stdout);
     assert!(body.contains("keeping T003"), "{body}");
+    assert!(
+        !body.contains("hunter2"),
+        "minimized body carries secret material: {body}"
+    );
 }
 
 #[test]
@@ -2612,7 +2689,12 @@ fn debug_minimize_reports_an_absent_target() {
         .args(["--minimize", "T999"])
         .output()
         .expect("run active");
-    assert!(!out.status.success(), "absent target must be reported");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "documented absent-target exit: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON");
     assert_eq!(report["target_present"], false);
 }
@@ -2660,4 +2742,20 @@ fn debug_rejects_inapplicable_flags() {
         .output()
         .expect("run active");
     assert_eq!(replay_minimize.status.code(), Some(2));
+
+    // --max-attempts is a reduction knob; without --minimize it would
+    // silently do nothing, so clap requires the flag.
+    let attempts = active()
+        .args(["debug", "--from"])
+        .arg(&f)
+        .args(["--max-attempts", "5"])
+        .output()
+        .expect("run active");
+    assert_eq!(
+        attempts.status.code(),
+        Some(2),
+        "clap must require --minimize: {}",
+        String::from_utf8_lossy(&attempts.stderr)
+    );
+    assert!(String::from_utf8_lossy(&attempts.stderr).contains("--minimize"));
 }

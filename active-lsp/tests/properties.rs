@@ -106,8 +106,40 @@ fn hover_and_inspection_never_reveal_generated_secrets() {
         }
         if let Some(value) = doc.value.as_ref() {
             for symbol in analysis::document_symbols(&doc) {
-                let _ = active_core::convert::inspect_path(&doc.module, value, &symbol.name);
+                // Inspection is a publishing surface too: when the path
+                // resolves, its report must not carry generated material.
+                if let Ok(report) =
+                    active_core::convert::inspect_path(&doc.module, value, &symbol.name)
+                {
+                    let rendered = report.to_string();
+                    assert!(
+                        !rendered.contains("hunter2"),
+                        "seed {seed}: inspection leaked for {}: {rendered}",
+                        symbol.name
+                    );
+                }
             }
         }
     }
+}
+
+#[test]
+fn hover_redacts_secret_locator_and_interpolation() {
+    let text = "x = \"hunter2-hover\"\nmsg = \"prefix ${x}\"\nk = secret(x)\n";
+    let doc = open(text);
+    for line in 0..3 {
+        if let Some(hover) = analysis::hover_at(&doc, line, 0) {
+            let rendered = format!("{hover:?}");
+            assert!(
+                !rendered.contains("hunter2"),
+                "hover leaked a secret on line {line}: {rendered}"
+            );
+        }
+    }
+    let hover = analysis::hover_at(&doc, 1, 0).expect("hover on msg");
+    let rendered = format!("{hover:?}");
+    assert!(
+        rendered.contains("SECRET"),
+        "interpolated secret must render the marker: {rendered}"
+    );
 }

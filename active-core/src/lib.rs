@@ -15,6 +15,7 @@ pub mod ir;
 pub mod lint;
 pub mod parser;
 pub mod provenance;
+pub mod secret;
 pub mod sign;
 pub mod trace;
 pub mod types;

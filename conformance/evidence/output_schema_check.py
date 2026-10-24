@@ -102,7 +102,34 @@ def main() -> int:
     for name, document in checks:
         validate(name, document)
         print(f"OUTPUT-SCHEMA {name} ok")
-    print(f"OUTPUT-SCHEMA: OK ({len(checks)} outputs)")
+
+    # A file that does not parse still fails the run, but its E-codes
+    # are not lint findings: the pinned schema admits `^L[0-9]{3}$`
+    # only, so the JSON array stays empty and stderr carries the parse
+    # diagnostics.
+    broken = work / "broken.active"
+    broken.write_text("port = \n", encoding="utf-8")
+    proc = subprocess.run(
+        [str(EXE), "lint", str(broken), "--format", "json"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
+    )
+    assert proc.returncode != 0, "a broken file must fail the lint run"
+    broken_report = json.loads(proc.stdout)
+    validate("lint", broken_report)
+    assert broken_report == [], (
+        f"parse diagnostics leaked into lint JSON: {broken_report}"
+    )
+    assert "E0" in proc.stderr, (
+        f"parse diagnostics missing from stderr: {proc.stderr!r}"
+    )
+    print("OUTPUT-SCHEMA lint-broken ok (parse errors on stderr, empty lint array)")
+
+    print(f"OUTPUT-SCHEMA: OK ({len(checks)} outputs + broken lint file)")
     return 0
 
 

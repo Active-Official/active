@@ -40842,7 +40842,10 @@ fn rb_1839_syn170_diag_has_no_values() {
     assert_eq!(err.code(), "T001", "{err}");
     let msg = err.to_string();
     assert!(!msg.contains(raw), "leak in T001 message: {msg}");
-    assert!(msg.contains("***"), "redaction missing: {msg}");
+    assert!(
+        msg.contains("secret") && msg.contains("number"),
+        "kind names missing: {msg}"
+    );
     // Positive control: unset yields the empty default, nothing to log.
     let prior2 = std::env::var("ACTIVE_RB1839_ENV").ok();
     std::env::remove_var("ACTIVE_RB1839_ENV");
@@ -41451,7 +41454,10 @@ fn rb_1858_syn172_redaction_everywhere() {
     assert_eq!(err.code(), "T001", "{err}");
     let msg = err.to_string();
     assert!(!msg.contains(raw), "leak in T001 message: {msg}");
-    assert!(msg.contains("***"), "redaction missing: {msg}");
+    assert!(
+        msg.contains("secret") && msg.contains("number"),
+        "kind names missing: {msg}"
+    );
 }
 
 /// RB-1859 — Taint twin: schema fails closed on secrets (SYN-0172-06 §H, HIGH).
@@ -41748,7 +41754,10 @@ fn rb_1867_syn173_redaction_everywhere() {
     assert_eq!(err.code(), "T001", "{err}");
     let msg = err.to_string();
     assert!(!msg.contains(raw), "leak in T001 message: {msg}");
-    assert!(msg.contains("***"), "redaction missing: {msg}");
+    assert!(
+        msg.contains("secret") && msg.contains("number"),
+        "kind names missing: {msg}"
+    );
 }
 
 /// RB-1868 — Taint twin: schema E014 plus T002 (SYN-0173-06 §H, HIGH).

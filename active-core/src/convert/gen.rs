@@ -163,7 +163,10 @@ fn sanitize_ident(s: &str, fallback: &str) -> String {
 /// change in any target. Emitters stamp it into every artifact next to
 /// the workspace version so agents can detect stale bindings.
 /// v2: Blob identity shape (x-active-blob / ActiveBlob) on all targets.
-pub const CODEGEN_VERSION: u32 = 2;
+/// v3: Blob types model the `{"$active.blob": {...}}` wire wrapper on
+///     Go/Rust/Python (TypeScript already did), so real evaluated
+///     documents decode.
+pub const CODEGEN_VERSION: u32 = 3;
 
 /// Single-line generated-file header for text targets (`prefix` is the
 /// comment marker: `//` for TS/Go/Rust, `#` for Python).
@@ -732,11 +735,21 @@ pub fn schema_to_go(module: &Module, root_name: &str) -> Result<String, String> 
             }
         )
     }) {
-        // Shared identity shape for Blob fields (spec/blob.md §5):
-        // hash, size, media type, taint. Payloads never cross codegen.
-        // Aligned through the same run formatter as tables so the
-        // output stays gofmt-clean (the equivalence gate checks).
+        // Shared wire shape for Blob fields (spec/blob.md §5): the
+        // document carries `{"$active.blob": {hash, size, media_type,
+        // tainted}}`, so the generated type models that wrapper rather
+        // than the inner object (which would never decode real output).
+        // Payloads never cross codegen. Aligned through the same run
+        // formatter as tables so the output stays gofmt-clean (the
+        // equivalence gate checks).
         gen.out.push_str("\ntype ActiveBlob struct {\n");
+        let mut run = vec![(
+            "ActiveBlobValue".to_string(),
+            "ActiveBlobValue".to_string(),
+            "`json:\"$active.blob\"`".to_string(),
+        )];
+        flush_go_run(&mut run, &mut gen.out);
+        gen.out.push_str("}\n\ntype ActiveBlobValue struct {\n");
         let mut run = vec![
             (
                 "Hash".to_string(),
@@ -1064,9 +1077,12 @@ pub fn schema_to_rust(module: &Module, root_name: &str) -> Result<String, String
             }
         )
     }) {
-        // Shared identity shape for Blob fields (spec/blob.md §5).
+        // Wire shape for Blob fields (spec/blob.md §5): evaluated
+        // documents carry `{"$active.blob": {...}}`, so the struct
+        // renames its single field to that key. The inner identity
+        // type stays payload-free.
         gen.out.push_str(
-            "\n#[derive(Debug, Clone, Serialize, Deserialize)]\npub struct ActiveBlob {\n    pub hash: String,\n    pub size: u64,\n    pub media_type: String,\n    pub tainted: bool,\n}\n",
+            "\n#[derive(Debug, Clone, Serialize, Deserialize)]\npub struct ActiveBlob {\n    #[serde(rename = \"$active.blob\")]\n    pub active_blob: ActiveBlobValue,\n}\n\n#[derive(Debug, Clone, Serialize, Deserialize)]\npub struct ActiveBlobValue {\n    pub hash: String,\n    pub size: u64,\n    pub media_type: String,\n    pub tainted: bool,\n}\n",
         );
     }
     Ok(gen.out)
@@ -1259,9 +1275,9 @@ pub fn schema_to_python(module: &Module, root_name: &str) -> Result<String, Stri
         taken: HashSet::new(),
     };
     let root_name = gen.type_name(root, pascal_case(&sanitize_ident(root_name, "Config")));
-    // Shared identity shape for Blob fields (spec/blob.md §5) comes
-    // FIRST: TypedDict field annotations resolve at class creation,
-    // so a use-before-definition would NameError at import.
+    // Wire shape for Blob fields (spec/blob.md §5): class syntax cannot
+    // spell `$active.blob`, so both TypedDicts use the functional form.
+    // The wrapper comes FIRST: annotations resolve at class creation.
     if module.arena.iter().any(|n| {
         matches!(
             n,
@@ -1274,7 +1290,7 @@ pub fn schema_to_python(module: &Module, root_name: &str) -> Result<String, Stri
         )
     }) {
         gen.out.push_str(
-            "class ActiveBlob(TypedDict):\n    hash: str\n    size: int\n    media_type: str\n    tainted: bool\n\n\n",
+            "ActiveBlobValue = TypedDict(\"ActiveBlobValue\", {\"hash\": str, \"size\": int, \"media_type\": str, \"tainted\": bool})\nActiveBlob = TypedDict(\"ActiveBlob\", {\"$active.blob\": ActiveBlobValue})\n\n\n",
         );
     }
     gen.emit_table(&root_name, root);

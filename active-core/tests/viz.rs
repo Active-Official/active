@@ -28,7 +28,47 @@ fn taint_data_lists_sources_without_values() {
     assert!(sources.contains(&"token"), "{sources:?}");
     let rendered = serde_json::to_string(&data).expect("json");
     assert!(!rendered.contains("hunter2"), "raw secret in taint data");
-    assert!(!data["edges"].as_array().expect("edges").is_empty());
+    // A flat document has no containment edges, and the root (no path)
+    // is never spelled as an empty-string parent.
+    assert!(
+        data["edges"]
+            .as_array()
+            .expect("edges")
+            .iter()
+            .all(|edge| edge["from"].as_str() != Some("")),
+        "anonymous parent edge: {data}"
+    );
+}
+
+#[test]
+fn taint_edges_use_containment_for_array_elements() {
+    let src = "a = [secret(\"x\"), { b = secret(\"y\") }]\n";
+    let module = parse(src, "viz-edges").expect("parse");
+    let (value, _) = Engine::new().evaluate(&module).expect("evaluate");
+    let data = viz::taint_data(&module, &value);
+    let edges: Vec<(String, String)> = data["edges"]
+        .as_array()
+        .expect("edges")
+        .iter()
+        .map(|edge| {
+            (
+                edge["from"].as_str().unwrap_or("").to_string(),
+                edge["to"].as_str().unwrap_or("").to_string(),
+            )
+        })
+        .collect();
+    assert!(
+        edges.contains(&("a".to_string(), "a[0]".to_string())),
+        "array element edge: {edges:?}"
+    );
+    assert!(
+        edges.contains(&("a".to_string(), "a[1]".to_string())),
+        "nested table edge: {edges:?}"
+    );
+    assert!(
+        edges.iter().all(|(from, _)| !from.is_empty()),
+        "no anonymous parent edges: {edges:?}"
+    );
 }
 
 #[test]

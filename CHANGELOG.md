@@ -36,6 +36,42 @@ Consumers pinning exact tool/feature sets should expect additions —
 any incompatible change ships under a new major version per the
 stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
 
+### Tooling hardening (review rounds)
+
+- **Structural secret taint.** A plain value used as a `secret(...)`
+  locator (a `let`, table field, or `env` lookup) and every
+  interpolation, reference, or container built from it are material
+  even without a `Value::Secret` marker. Step traces, `inspect`, and
+  hover share one analysis (`active-core/src/secret.rs`), redact
+  known secret substrings longest-first, and report `tainted: true`
+  wherever a replacement happened. Containers keep their shape;
+  material leaves carry the marker.
+- **Reduction fails closed.** `--minimize` now recognizes dot runs on
+  either side of `env`, `secret env(`, and env calls with anything
+  past the name (comma or not), and redacts every string literal in
+  the document except canonical `secret.env("NAME")` names. The
+  reducer also protects those call lines, so a binding literal can
+  never be stranded.
+- **Value-free type errors.** T001 and quantity messages render kind
+  names; repair-browser, LSP, and CLI diagnostics no longer embed
+  operands that may be material.
+- **LSP correctness.** Formatting parses the buffer's own text with
+  includes recorded but unresolved, so format-on-save never inlines
+  included keys. The repair action uses the hermetic engine, strict
+  budget, and the buffer's file context, so an included schema drives
+  the same plan the CLI does.
+- **Codegen v3.** Go, Rust, and Python Blob types model the
+  `{"$active.blob": {…}}` wire wrapper (TypeScript already did). The
+  codegen gate now decodes an actual `active eval` document in every
+  target instead of asserting a hand-written shape.
+- **Lint JSON stays lint-only.** Parse diagnostics for a broken file
+  go to stderr; the pinned `^L[0-9]{3}$` array schema is unchanged and
+  the gate covers the broken-file case.
+- **Taint edges** use containment (`a -> a[0]`), never an
+  empty-string parent, and inspect provenance keeps real keys such as
+  `node_id`. `--max-attempts` requires `--minimize` (clap usage
+  error otherwise).
+
 ### SOLID → Active rename
 
 The language is renamed SOLID → Active across code, packages, docs,

@@ -16,6 +16,7 @@ use crate::diag::Span;
 use crate::diag::{Diagnostic, Severity};
 use crate::ir::*;
 use crate::parser::{validate_patch_path, PathSeg};
+use crate::secret::{SecretProfile, SecretRedactor};
 use crate::types::Unit;
 
 /// Host-provided environment lookup (F-016): consulted on map miss before
@@ -1020,82 +1021,12 @@ fn value_has_secret(value: &Value) -> bool {
     }
 }
 
-/// Replace every string in a rendered JSON tree equal to a known
+/// Replace every string in a rendered JSON tree containing a known
 /// sensitive value. Returns true when anything was replaced, so the
-/// step can be marked tainted.
-fn redact_json_strings(
-    value: &mut serde_json::Value,
-    sensitive: &std::collections::HashSet<String>,
-) -> bool {
-    match value {
-        serde_json::Value::String(text) => {
-            if sensitive.contains(text.as_str()) {
-                *text = "***SECRET***".to_string();
-                true
-            } else {
-                false
-            }
-        }
-        serde_json::Value::Array(items) => {
-            let mut any = false;
-            for item in items {
-                any |= redact_json_strings(item, sensitive);
-            }
-            any
-        }
-        serde_json::Value::Object(map) => {
-            let mut any = false;
-            for item in map.values_mut() {
-                any |= redact_json_strings(item, sensitive);
-            }
-            any
-        }
-        _ => false,
-    }
-}
-
-/// Insert a node and every node reachable from it into `set` (used to
-/// mark `secret(...)` locator subtrees as sensitive in step traces).
-fn collect_subtree(module: &Module, root: NodeId, set: &mut std::collections::HashSet<NodeId>) {
-    let mut stack = vec![root];
-    while let Some(id) = stack.pop() {
-        if !set.insert(id) {
-            continue;
-        }
-        match module.get(id) {
-            Some(Node::Interpolate { parts }) => {
-                for part in parts {
-                    if let InterpPart::Expr(expr) = part {
-                        stack.push(*expr);
-                    }
-                }
-            }
-            Some(Node::Binary { lhs, rhs, .. }) => {
-                stack.push(*lhs);
-                stack.push(*rhs);
-            }
-            Some(Node::Unary { expr, .. }) => stack.push(*expr),
-            Some(Node::Array { elements }) => stack.extend(elements.iter().copied()),
-            Some(Node::Table { fields }) => stack.extend(fields.values().copied()),
-            Some(Node::Quantity { value, .. }) => stack.push(*value),
-            Some(Node::Semantic { inner, .. }) => stack.push(*inner),
-            Some(Node::ContentAddressed { media_type, data }) => {
-                stack.push(*media_type);
-                stack.push(*data);
-            }
-            Some(Node::Env {
-                default: Some(default),
-                ..
-            }) => stack.push(*default),
-            Some(Node::Secret { locator }) => stack.push(*locator),
-            // A locator that reaches through a binding (or a
-            // constraint target) is still secret material: follow the
-            // reference so the whole subtree is marked.
-            Some(Node::Ref(target)) => stack.push(*target),
-            Some(Node::ApplyConstraint { target, .. }) => stack.push(*target),
-            _ => {}
-        }
-    }
+/// step can be marked tainted. Delegates to the shared redactor so
+/// step traces and `inspect` agree on substring behavior.
+fn redact_json_strings(value: &mut serde_json::Value, sensitive: &SecretRedactor) -> bool {
+    sensitive.redact(value)
 }
 
 impl Engine {
@@ -1317,26 +1248,22 @@ impl Engine {
                 .into_iter()
                 .collect::<HashMap<NodeId, String>>()
         });
-        // Nodes inside a `secret(...)` locator expression are secret
-        // material even though they are not Secret-kinded themselves
-        // (a literal locator would otherwise appear verbatim in a
-        // step). Collect the transitive locator subtrees once, only
-        // when a stepper asked for a trace.
-        let secret_nodes: Option<std::collections::HashSet<NodeId>> = steps.as_ref().map(|_| {
-            let mut set = std::collections::HashSet::new();
-            for node in &module.arena {
-                if let Node::Secret { locator } = node {
-                    collect_subtree(module, *locator, &mut set);
-                }
-            }
-            set
-        });
+        // Structural secret material: locator subtrees plus every node
+        // derived from one (containers, interpolations, references).
+        // Computed once, only when a stepper asked for a trace. The
+        // same analysis backs `inspect` and hover, so all three
+        // surfaces agree on what is material.
+        let secret_profile: Option<SecretProfile> =
+            steps.as_ref().map(|_| SecretProfile::analyze(module));
         // Evaluated values of sensitive nodes, so a container step can
         // redact the same bytes even though the container itself is
         // not Secret-kinded (topological order means children are
-        // registered before their parents).
-        let mut sensitive_values: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        // registered before their parents). Seeded with authored
+        // literals so a value assembled elsewhere still redacts.
+        let mut sensitive_values: SecretRedactor = secret_profile
+            .as_ref()
+            .map(|profile| profile.literals().clone())
+            .unwrap_or_default();
 
         // Fingerprints for this call (arena-indexed cache, sized
         // once): computed inline during the walk below, which runs
@@ -1659,19 +1586,26 @@ impl Engine {
             }
 
             if let Some(list) = steps.as_deref_mut() {
-                let sensitive = secret_nodes
+                let sensitive = secret_profile
                     .as_ref()
-                    .is_some_and(|set| set.contains(&node_id));
+                    .is_some_and(|profile| profile.node_is_secret(node_id));
                 if sensitive {
+                    // The evaluated text of a material scalar (an env
+                    // lookup, a binding) is material too; register it so
+                    // a later container rendering redacts it even though
+                    // the container holds no `Value::Secret`.
                     if let Value::String(text) = &value {
                         sensitive_values.insert(text.clone());
                     }
                 }
-                let mut rendered = if sensitive {
-                    serde_json::Value::String("***SECRET***".to_string())
-                } else {
-                    crate::convert::value_to_json(&value)
-                };
+                // Containers keep their shape (the trace stays useful);
+                // their material leaves are redacted by the sweep below.
+                let mut rendered =
+                    if sensitive && !matches!(value, Value::Array(_) | Value::Table(_)) {
+                        serde_json::Value::String(crate::secret::MARKER.to_string())
+                    } else {
+                        crate::convert::value_to_json(&value)
+                    };
                 let replaced = redact_json_strings(&mut rendered, &sensitive_values);
                 list.push(StepEvent {
                     node: node_id.0,
@@ -2302,7 +2236,10 @@ fn normalize_quantity(v: &Value, unit: &Unit) -> Result<Value, String> {
         Value::Int(n) => *n as f64,
         Value::Float(f) => *f,
         _ => {
-            return Err(format!("quantity requires numeric value, got {v:?}"));
+            return Err(format!(
+                "quantity requires numeric value, got {}",
+                value_kind_name(v)
+            ));
         }
     };
 
@@ -2533,7 +2470,11 @@ pub(crate) fn eval_binary(op: BinOp, lhs: &Value, rhs: &Value) -> Result<Value, 
         (Or, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(*a || *b)),
 
         _ => Err(format!(
-            "unsupported binary op {op:?} on {lhs:?} and {rhs:?}"
+            // Kind names only: the operands may be material assembled
+            // from a secret source, so the message must be value-free.
+            "unsupported binary op {op:?} on {} and {}",
+            value_kind_name(lhs),
+            value_kind_name(rhs)
         )),
     }
 }
@@ -2552,7 +2493,11 @@ pub(crate) fn eval_unary(op: UnOp, v: &Value) -> Result<Value, String> {
         // (spec Ch. 4 §4.1). Durations intentionally do NOT get this arm.
         (UnOp::Neg, Value::Quantity(a, u)) => Ok(Value::Quantity(-a, u.clone())),
         (UnOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
-        _ => Err(format!("unsupported unary op {op:?} on {v:?}")),
+        _ => Err(format!(
+            // Kind name only, for the same reason as binary errors.
+            "unsupported unary op {op:?} on {}",
+            value_kind_name(v)
+        )),
     }
 }
 

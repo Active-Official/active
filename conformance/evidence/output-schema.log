@@ -7,4 +7,5 @@ OUTPUT-SCHEMA lint ok
 OUTPUT-SCHEMA sarif ok
 OUTPUT-SCHEMA repair-plan ok
 OUTPUT-SCHEMA debug-steps ok
-OUTPUT-SCHEMA: OK (9 outputs)
+OUTPUT-SCHEMA lint-broken ok (parse errors on stderr, empty lint array)
+OUTPUT-SCHEMA: OK (9 outputs + broken lint file)

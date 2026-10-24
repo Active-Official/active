@@ -122,7 +122,12 @@ fn secrets_never_appear_in_type_error_messages() {
         !rendered.contains("TOPSECRET"),
         "secret leaked into the error message: {rendered}"
     );
-    assert!(rendered.contains("***"), "expected a redaction marker");
+    // Messages are value-free by construction: operands render as kind
+    // names, so no redaction marker is needed (or present).
+    assert!(
+        rendered.contains("secret") && rendered.contains("number"),
+        "expected kind names in the message: {rendered}"
+    );
 }
 
 #[test]

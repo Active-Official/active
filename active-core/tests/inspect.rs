@@ -223,6 +223,54 @@ fn inspect_path_unknown_path_fails_closed() {
 }
 
 #[test]
+fn inspect_path_redacts_secret_sources_and_interpolations() {
+    use std::collections::HashMap;
+    let src = "x = \"hunter2-source\"\np = env.INSPECT_PASS\nk = secret(x)\nj = secret(p)\nmsg = \"prefix ${p}\"\nnode_id = 1\nport = node_id\n";
+    let module = active_core::parse(src, "inspect-source").expect("parse");
+    let mut env = HashMap::new();
+    env.insert("INSPECT_PASS".to_string(), "ENVSECRET-inspect".to_string());
+    let (value, _) = active_core::Engine::hermetic()
+        .with_env(env)
+        .evaluate(&module)
+        .expect("evaluate");
+    for path in ["x", "p", "msg"] {
+        let report = active_core::convert::inspect_path(&module, &value, path).expect("inspect");
+        assert_eq!(report["tainted"], true, "path {path}: {report}");
+        assert_eq!(report["value"], "***SECRET***", "path {path}: {report}");
+        let rendered = report.to_string();
+        assert!(
+            !rendered.contains("hunter2"),
+            "path {path} leaked: {rendered}"
+        );
+        assert!(
+            !rendered.contains("ENVSECRET"),
+            "path {path} leaked: {rendered}"
+        );
+    }
+    // A real key whose name starts with `node` is provenance, not an
+    // internal arena label.
+    let report = active_core::convert::inspect_path(&module, &value, "port").expect("inspect");
+    assert_eq!(report["value"], 1);
+    assert_eq!(
+        report["dependencies"],
+        serde_json::json!(["node_id"]),
+        "dependency provenance: {report}"
+    );
+}
+
+#[test]
+fn inspect_path_keeps_benign_siblings_of_a_secret() {
+    let src = "x = \"hunter2-sib\"\nk = secret(x)\nname = \"svc\"\n";
+    let module = active_core::parse(src, "inspect-siblings").expect("parse");
+    let (value, _) = active_core::Engine::new()
+        .evaluate(&module)
+        .expect("evaluate");
+    let report = active_core::convert::inspect_path(&module, &value, "name").expect("inspect");
+    assert_eq!(report["value"], "svc");
+    assert_eq!(report["tainted"], false);
+}
+
+#[test]
 fn inspect_reports_a_tainted_blob_as_tainted() {
     let src = "f = blob(\"text/plain\", secret(\"hunter2-blob\"))\n";
     let module = active_core::parse(src, "inspect-blob").expect("parse");

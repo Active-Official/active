@@ -492,6 +492,7 @@ fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
         let mut seen_string = false;
         let mut seen_comma = false;
         let mut exempt_span: Option<crate::diag::Span> = None;
+        let mut first_string_index: Option<usize> = None;
         while cursor < tokens.len() {
             match tokens[cursor].kind {
                 K::LParen => depth += 1,
@@ -514,6 +515,7 @@ fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
                         end_column: token.end_col,
                     };
                     if exempt {
+                        first_string_index = Some(cursor);
                         exempt_span = Some(span);
                     } else {
                         spans.push(span);
@@ -523,11 +525,25 @@ fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
             }
             cursor += 1;
         }
-        // An env call with extra arguments may reference a
-        // binding/table we cannot resolve lexically; fail closed by
-        // redacting every string literal in the document except the
-        // exempted name.
-        if skip_first_string && seen_comma {
+        // An env call with more tokens after the first argument — a
+        // comma, a named `default =`, anything — may reference a
+        // binding/table we cannot resolve lexically. Note that a
+        // missing comma is precisely the malformed shape a reader
+        // would still treat as a second argument, so count tokens, not
+        // separators.
+        let extra_env_args = skip_first_string
+            && first_string_index.is_some_and(|first| {
+                tokens[first + 1..cursor].iter().any(|token| {
+                    !matches!(
+                        token.kind,
+                        K::Comma | K::LParen | K::RParen | K::Newline | K::Indent | K::Dedent
+                    )
+                })
+            });
+        // Fail closed: a malformed spelling, or an env call carrying
+        // anything beyond its name, redacts every string literal in the
+        // document except canonical env names.
+        if call.malformed || (skip_first_string && (seen_comma || extra_env_args)) {
             for token in tokens {
                 if matches!(
                     token.kind,
@@ -571,26 +587,30 @@ fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
 struct CallOpen {
     open: usize,
     canonical_env: bool,
+    /// Anything other than exactly `secret(` or `secret.env(`: the
+    /// shape is not trustworthy, so redaction fails closed over the
+    /// whole document.
+    malformed: bool,
 }
 
 fn call_opening(tokens: &[crate::parser::Token], start: usize) -> Option<CallOpen> {
     use crate::parser::TokenKind as K;
     let mut probe = skip_layout(tokens, start);
-    let mut dots = 0usize;
+    let mut dots_before_env = 0usize;
+    let mut dots_after_env = 0usize;
     let mut env = false;
-    let mut env_after_single_dot = false;
     loop {
         match tokens.get(probe).map(|t| &t.kind) {
             Some(K::Dot) => {
                 if env {
-                    return None;
+                    dots_after_env += 1;
+                } else {
+                    dots_before_env += 1;
                 }
-                dots += 1;
                 probe = skip_layout(tokens, probe + 1);
             }
             Some(K::Env) => {
                 env = true;
-                env_after_single_dot = dots == 1;
                 probe = skip_layout(tokens, probe + 1);
             }
             _ => break,
@@ -599,9 +619,19 @@ fn call_opening(tokens: &[crate::parser::Token], start: usize) -> Option<CallOpe
     if !matches!(tokens.get(probe).map(|t| &t.kind), Some(K::LParen)) {
         return None;
     }
+    let canonical_env = env && dots_before_env == 1 && dots_after_env == 0;
+    // Whitespace is not a malformation; stray dots on either side of
+    // `env` are. A malformed shape still opens a call (the parenthesis
+    // is there), so callers can protect and fail closed.
+    let malformed = if env {
+        !canonical_env
+    } else {
+        dots_before_env != 0
+    };
     Some(CallOpen {
         open: probe,
-        canonical_env: env && env_after_single_dot,
+        canonical_env,
+        malformed,
     })
 }
 

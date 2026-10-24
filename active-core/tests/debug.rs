@@ -419,6 +419,110 @@ fn first_code(src: &str) -> Option<String> {
 }
 
 #[test]
+fn step_trace_redacts_interpolated_secret_sources() {
+    // A plain string used as a locator stays material through an
+    // interpolation: the step must render the marker and report taint,
+    // not the composed text.
+    let module = parse(
+        "x = \"hunter2-interp\"\nmsg = \"prefix ${x}\"\nk = secret(x)\n",
+        "debug-interp",
+    )
+    .expect("parse");
+    let (_, _, steps) = Engine::new()
+        .evaluate_with_steps(&module)
+        .expect("evaluate");
+    let rendered = serde_json::to_string(&steps).expect("json");
+    assert!(
+        !rendered.contains("hunter2"),
+        "interpolation leaked: {rendered}"
+    );
+    let msg = steps
+        .iter()
+        .find(|step| step.path.as_deref() == Some("msg"))
+        .expect("msg step");
+    assert_eq!(msg.value, "***SECRET***", "msg must render the marker");
+    assert!(msg.tainted, "msg step must be tainted");
+    let root = steps.last().expect("root step");
+    assert!(root.tainted, "container holding material is tainted");
+}
+
+#[test]
+fn step_trace_redacts_env_interpolation_and_substrings() {
+    use std::collections::HashMap;
+    let mut env = HashMap::new();
+    env.insert("INTERP_PASS".to_string(), "ENVSECRET-interp".to_string());
+    let module = parse(
+        "p = env.INTERP_PASS\nmsg = \"pre-${p}-post\"\nk = secret(p)\nname = \"svc\"\n",
+        "debug-interp-env",
+    )
+    .expect("parse");
+    let (_, _, steps) = Engine::hermetic()
+        .with_env(env)
+        .evaluate_with_steps(&module)
+        .expect("evaluate");
+    let rendered = serde_json::to_string(&steps).expect("json");
+    assert!(
+        !rendered.contains("ENVSECRET"),
+        "env interpolation leaked: {rendered}"
+    );
+    let msg = steps
+        .iter()
+        .find(|step| step.path.as_deref() == Some("msg"))
+        .expect("msg step");
+    assert_eq!(msg.value, "***SECRET***");
+    assert!(msg.tainted);
+    // Benign neighbours keep their value in the container render.
+    let root = steps.last().expect("root step");
+    assert_eq!(root.value["name"], "svc", "over-redacted: {:?}", root.value);
+}
+
+#[test]
+fn reduction_fails_closed_for_dotted_and_malformed_env_calls() {
+    // Shapes a reader still treats as a secret call but the canonical
+    // grammar does not: dot runs beside `env`, `secret env(`, and
+    // extra env arguments with or without a comma. The exported
+    // minimal case must never carry the binding literal.
+    let cases = [
+        "loc = \"hunter2-BIND\"\ntoken = secret.env.(loc)\nnoise = 1\n",
+        "loc = \"hunter2-BIND\"\ntoken = secret.env..(loc)\nnoise = 1\n",
+        "loc = \"hunter2-BIND\"\ntoken = secret..(loc)\nnoise = 1\n",
+        "loc = \"hunter2-BIND\"\ntoken = secret env(loc)\nnoise = 1\n",
+        "loc = \"hunter2-BIND\"\ntoken = secret..env(\"NAME\", default = loc)\nnoise = 1\n",
+        "loc = \"hunter2-BIND\"\ntoken = secret.env(\"NAME\" default = loc)\nnoise = 1\n",
+        "token = secret.env.(\"hunter2-A\")\nnoise = 1\n",
+        "token = secret..(\"hunter2-A\")\nnoise = 1\n",
+    ];
+    for src in cases {
+        let code = first_code(src).unwrap_or_else(|| "E001".to_string());
+        let report = debug::minimal_case(src, &code, 250);
+        let rendered = report.to_string();
+        assert!(
+            !rendered.contains("hunter2"),
+            "leak for {src:?}: {rendered}"
+        );
+    }
+}
+
+#[test]
+fn reduction_never_deletes_a_malformed_secret_call() {
+    // If the call line were deletable, the reducer could keep the
+    // binding literal and strand it. The call's lines are protected.
+    for src in [
+        "loc = \"hunter2-KEEP\"\ntoken = secret.env.(loc)\nnoise = 1\n",
+        "loc = \"hunter2-KEEP\"\ntoken = secret..(loc)\nnoise = 1\n",
+        "loc = \"hunter2-KEEP\"\ntoken = secret env(loc)\nnoise = 1\n",
+        "loc = \"hunter2-KEEP\"\ntoken = secret.env(\"NAME\" default = loc)\nnoise = 1\n",
+    ] {
+        let code = first_code(src).unwrap_or_else(|| "E001".to_string());
+        let (reduced, _) = debug::reduce(src, &code, 250);
+        assert!(
+            reduced.contains("secret"),
+            "secret call was deleted for {src:?}: {reduced:?}"
+        );
+    }
+}
+
+#[test]
 fn malformed_secret_punctuation_still_redacts() {
     let cases = [
         "token = secret..env(\"NAME\", default = \"hunter2-A\")\nnoise = 1\n",

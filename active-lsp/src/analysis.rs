@@ -12,8 +12,8 @@
 use std::collections::HashMap;
 
 use active_core::{
-    lint, parse_recovering, parse_text_recovering_with_file, AnnotationKind, Diagnostic, Engine,
-    Module, Node, NodeId, ParseOptions, RepairKind, Severity, Value,
+    lint, parse_recovering, parse_text_recovering_with_file, secret::SecretProfile, AnnotationKind,
+    Diagnostic, Engine, Module, Node, NodeId, ParseOptions, RepairKind, Severity, Value,
 };
 use lsp_types::{
     CodeAction, CodeActionKind, CompletionItem, CompletionItemKind, Hover, HoverContents,
@@ -908,12 +908,19 @@ fn value_kind(value: &Value) -> &'static str {
 }
 
 /// Short safe rendering for hover values: scalars inline (redacted),
-/// composites by kind only.
-fn render_hover_value(value: &Value) -> String {
+/// composites by kind only. `profile` names the material nodes so a
+/// scalar used as a secret locator (or an interpolation embedding one)
+/// renders the marker instead of its text.
+fn render_hover_value(profile: &SecretProfile, node: NodeId, value: &Value) -> String {
+    let composite = matches!(value, Value::Array(_) | Value::Table(_));
+    if !composite && profile.node_is_secret(node) {
+        return active_core::secret::MARKER.to_string();
+    }
     match value {
-        Value::Secret(_) => "***SECRET***".to_string(),
+        Value::Secret(_) => active_core::secret::MARKER.to_string(),
         Value::String(s) => {
-            let quoted = format!("{s:?}");
+            let redacted = profile.redact_text(s).unwrap_or_else(|| s.clone());
+            let quoted = format!("{redacted:?}");
             if quoted.chars().count() > 80 {
                 format!("{}…", quoted.chars().take(79).collect::<String>())
             } else {
@@ -1026,7 +1033,8 @@ pub fn hover_at(doc: &Doc, line: u32, character: u32) -> Option<Hover> {
     // Value at the path (redacted; lets have no tree value).
     if let Some(root) = doc.value.as_ref() {
         if let Some(value) = value_at_path(root, &path) {
-            lines.push(format!("= {}", render_hover_value(value)));
+            let profile = SecretProfile::analyze(&doc.module);
+            lines.push(format!("= {}", render_hover_value(&profile, node, value)));
         }
     }
     // Origin, include-aware.
@@ -2054,6 +2062,21 @@ fn document_end(text: &str) -> Position {
     Position { line, character }
 }
 
+/// Formatting sees only the buffer's own text. `open_doc` parses with
+/// includes enabled and resolved, so `doc.module` holds included keys;
+/// re-emitting that tree would inline private include content into the
+/// user's file. The formatter contract requires a single-file parse.
+fn formatting_module(doc: &Doc) -> Option<Module> {
+    let options = ParseOptions {
+        // Include statements are legal syntax in file context, but the
+        // merge is skipped: formatting re-emits the buffer's own text.
+        enable_includes: true,
+        resolve_includes: false,
+        ..Default::default()
+    };
+    active_core::parse_with(&doc.text, doc.uri.as_str(), options).ok()
+}
+
 /// Full-document formatting edit through the canonical engine. The
 /// source's own style is preserved (`Style::Preserve`); a canonical
 /// document yields no edit, so format-on-save is idempotent.
@@ -2069,7 +2092,10 @@ pub fn formatting_edits(doc: &Doc) -> Vec<TextEdit> {
     {
         return Vec::new();
     }
-    let formatted = active_core::fmt::format(&doc.module, active_core::Style::Preserve);
+    let Some(module) = formatting_module(doc) else {
+        return Vec::new();
+    };
+    let formatted = active_core::fmt::format(&module, active_core::Style::Preserve);
     if formatted == doc.text {
         return Vec::new();
     }
@@ -2098,7 +2124,10 @@ pub fn range_formatting_edits(doc: &Doc, range: Range) -> Vec<TextEdit> {
     {
         return Vec::new();
     }
-    let formatted = active_core::fmt::format(&doc.module, active_core::Style::Preserve);
+    let Some(module) = formatting_module(doc) else {
+        return Vec::new();
+    };
+    let formatted = active_core::fmt::format(&module, active_core::Style::Preserve);
     if formatted == doc.text {
         return Vec::new();
     }
@@ -2618,11 +2647,20 @@ fn annotation_action(doc: &Doc, range: Range) -> Vec<CodeAction> {
 /// bounded steps), so the action and `active repair` agree by
 /// construction (LSP.007, REPAIR-UI semantics).
 fn repair_plan_action(doc: &Doc) -> Vec<CodeAction> {
-    let outcome = active_core::convert::repair_document(
+    // Same engine contract as the rest of the server: hermetic (no
+    // ambient environment), strict budget, and the buffer's own
+    // include context so an included schema plans the same repair the
+    // CLI does.
+    let mut engine = Engine::hermetic();
+    engine.budget = active_core::Budget::strict();
+    let file_ctx = doc.uri.to_file_path().ok();
+    let outcome = active_core::convert::repair_with_engine(
         &doc.text,
         active_core::diag::RepairGoal::Validate,
         &[],
         8,
+        &engine,
+        file_ctx.as_deref(),
     );
     if outcome.steps.is_empty() || outcome.repaired_source == doc.text {
         return Vec::new();
@@ -2964,6 +3002,9 @@ fn convert_actions(doc: &Doc) -> Vec<CodeAction> {
     {
         return Vec::new();
     }
+    let Some(module) = formatting_module(doc) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
     let lines: Vec<&str> = doc.text.split('\n').collect();
     let full = Range {
@@ -2980,7 +3021,7 @@ fn convert_actions(doc: &Doc) -> Vec<CodeAction> {
         ("brace", active_core::Style::Brace),
         ("indent", active_core::Style::Indent),
     ] {
-        let converted = active_core::fmt::format(&doc.module, style);
+        let converted = active_core::fmt::format(&module, style);
         if converted == doc.text {
             continue;
         }

@@ -349,9 +349,9 @@ enum Commands {
         /// Reduce the document while the given diagnostic code survives
         #[arg(long)]
         minimize: Option<String>,
-        /// Maximum reduction attempts
-        #[arg(long, default_value_t = 200)]
-        max_attempts: usize,
+        /// Maximum reduction attempts (requires --minimize)
+        #[arg(long, requires = "minimize")]
+        max_attempts: Option<usize>,
         /// Output format: json (default) or text
         #[arg(long, default_value = "json")]
         format: String,
@@ -1572,7 +1572,7 @@ fn main() -> anyhow::Result<()> {
                 let report = active_core::debug::minimal_case_with(
                     &source,
                     &code,
-                    max_attempts,
+                    max_attempts.unwrap_or(200),
                     Some(&from),
                 );
                 if format == "text" {
@@ -2312,12 +2312,12 @@ fn main() -> anyhow::Result<()> {
                 let module = match parse_file(file, ParseOptions::default()) {
                     Ok(module) => module,
                     Err(diags) => {
+                        // Parse failures are not lint findings: the
+                        // pinned JSON/SARIF schema admits `^L[0-9]{3}$`
+                        // only. They still reach the user (stderr) and
+                        // still fail the run.
                         for d in &diags {
-                            if format == LintFormat::Text {
-                                report(d, &name);
-                            } else {
-                                items.push((name.clone(), d.clone()));
-                            }
+                            report(d, &name);
                         }
                         dirty = true;
                         continue;

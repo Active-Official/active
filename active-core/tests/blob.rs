@@ -165,19 +165,44 @@ fn blob_source_round_trips_through_fmt() {
 fn blob_aliases_are_charged_per_clone() {
     // N aliases of a materialised blob must charge N payloads:
     // the 1MB-payload-times-1000-aliases class dies here, not in OOM.
-    let mut src = String::from("f = blob(\"text/plain\", \"hello\")\n");
-    for i in 0..10 {
-        src.push_str(&format!("a{i} = f\n"));
+    // The budget is chosen so the SAME payload fits alone (and with
+    // five aliases at twice the limit) while ten aliases trip: only
+    // cumulative per-clone charging can explain the difference.
+    fn evaluate(aliases: usize, limit: u64) -> Result<(), String> {
+        let mut src = String::from(
+            "f = blob(\"text/plain\", \"0123456789012345678901234567890123456789\
+012345678901234567890123456789012345678901234567890123456789\")\n",
+        );
+        for i in 0..aliases {
+            src.push_str(&format!("a{i} = f\n"));
+        }
+        let module = parse(&src, "blob").expect("must parse");
+        let mut engine = Engine::new();
+        engine.materialise_blobs = true;
+        engine.budget = active_core::Budget {
+            max_total_value_size: limit,
+            ..active_core::Budget::default()
+        };
+        engine
+            .evaluate(&module)
+            .map(|_| ())
+            .map_err(|e| e.code().to_string())
     }
-    let module = parse(&src, "blob").expect("must parse");
-    let mut engine = Engine::new();
-    engine.materialise_blobs = true;
-    engine.budget = active_core::Budget {
-        max_total_value_size: 20,
-        ..active_core::Budget::default()
-    };
-    let err = engine.evaluate(&module).expect_err("must trip total size");
-    assert_eq!(err.code(), "X006");
+    assert!(evaluate(0, 1600).is_ok(), "one blob must fit");
+    assert_eq!(
+        evaluate(5, 1600),
+        Err("X006".to_string()),
+        "five clones trip"
+    );
+    assert!(
+        evaluate(5, 3200).is_ok(),
+        "five clones fit at twice the limit"
+    );
+    assert_eq!(
+        evaluate(10, 3200),
+        Err("X006".to_string()),
+        "ten clones trip"
+    );
 }
 
 #[test]

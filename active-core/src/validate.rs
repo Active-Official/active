@@ -152,6 +152,9 @@ impl Engine {
             overlay_values(module, root, result, &mut overlay);
         }
         let mut local: Vec<Diagnostic> = Vec::new();
+        // Material strings are only needed when a constraint actually
+        // fails, so the analysis is lazy (the common case pays nothing).
+        let mut material: Option<crate::secret::SecretRedactor> = None;
         for (node_id, ann) in items {
             // Wall-clock sampling for long annotation lists.
             if let Some(end) = deadline {
@@ -185,20 +188,24 @@ impl Engine {
             let shown_source = render_source(module, source, *expr);
             match predicate_value(module, &overlay, values, *expr) {
                 Some(Value::Bool(true)) => {}
-                Some(Value::Bool(false)) => local.push(Diagnostic {
-                    severity: Severity::Error,
-                    code: "T006".into(),
-                    message: format!(
-                        "constraint violation at '{}': {shown_source} does not hold (actual: {})",
-                        display_path(&ann.path),
-                        render_constrained(value),
-                    ),
-                    path: Some(ann.path.clone()),
-                    span,
-                    repair: None,
-                    confidence: 1.0,
-                    file,
-                }),
+                Some(Value::Bool(false)) => {
+                    let redactor = material
+                        .get_or_insert_with(|| runtime_secret_redactor(module, values));
+                    local.push(Diagnostic {
+                        severity: Severity::Error,
+                        code: "T006".into(),
+                        message: format!(
+                            "constraint violation at '{}': {shown_source} does not hold (actual: {})",
+                            display_path(&ann.path),
+                            render_constrained(value, redactor),
+                        ),
+                        path: Some(ann.path.clone()),
+                        span,
+                        repair: None,
+                        confidence: 1.0,
+                        file,
+                    });
+                }
                 Some(other) => local.push(Diagnostic {
                     severity: Severity::Error,
                     code: "T006".into(),
@@ -1739,14 +1746,37 @@ fn subtree_has_secret(module: &Module, expr: NodeId) -> bool {
     false
 }
 
+/// Runtime material for T006: authored literals inside secret locators
+/// plus the evaluated text of every structurally sensitive node (an
+/// environment lookup is not visible in the module, so its value must
+/// come from the walk).
+fn runtime_secret_redactor(
+    module: &Module,
+    values: &HashMap<NodeId, Value>,
+) -> crate::secret::SecretRedactor {
+    let profile = crate::secret::SecretProfile::analyze(module);
+    let mut redactor = profile.literals().clone();
+    for (id, value) in values {
+        if profile.node_is_secret(*id) {
+            if let Value::String(text) = value {
+                redactor.insert(text.clone());
+            }
+        }
+    }
+    redactor
+}
+
 /// Render an actual value for T006 (spec/annotations.md §6): secrets
-/// as `secret`, strings debug-quoted, scalars plain, containers by
-/// kind — truncated to 120 characters. Secret material can never
-/// reach a message through here.
-fn render_constrained(value: &Value) -> String {
+/// as `secret`, strings debug-quoted and material-redacted, scalars
+/// plain, containers by kind — truncated to 120 characters. Secret
+/// material can never reach a message through here.
+fn render_constrained(value: &Value, redactor: &crate::secret::SecretRedactor) -> String {
     let text = match value {
         Value::Secret(_) => "secret".to_string(),
-        Value::String(s) => format!("{s:?}"),
+        Value::String(s) => match redactor.redact_text(s) {
+            Some(redacted) => format!("{redacted:?}"),
+            None => format!("{s:?}"),
+        },
         Value::Int(i) => i.to_string(),
         Value::Float(f) => f.to_string(),
         Value::Bool(b) => b.to_string(),

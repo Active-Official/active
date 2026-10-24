@@ -15,7 +15,7 @@ pub fn taint_data(module: &Module, value: &Value) -> JsonValue {
     let mut edges: Vec<JsonValue> = Vec::new();
     let mut sources: Vec<String> = Vec::new();
     let mut export_points: Vec<String> = Vec::new();
-    walk_taint(value, "", &mut |path, node_value, parent| {
+    walk_taint(value, "", None, &mut |path, node_value, parent| {
         if contains_secret(node_value) {
             let leaf = matches!(node_value, Value::Secret(_))
                 || matches!(node_value, Value::Blob { tainted: true, .. });
@@ -174,18 +174,18 @@ fn kind_name(value: &Value) -> &'static str {
 }
 
 /// Depth-first walk carrying the dotted path; `visit` receives the node
-/// and its parent path.
+/// and its parent path. The parent is the container we descended from,
+/// never re-derived from the child path: `a[0]` is contained in `a`.
 fn walk_taint<'a>(
     value: &'a Value,
     path: &str,
+    parent: Option<&str>,
     visit: &mut dyn FnMut(&str, &'a Value, Option<&str>),
 ) {
-    let parent = if path.is_empty() {
-        None
-    } else {
-        Some(path.rsplit_once('.').map(|(p, _)| p).unwrap_or(""))
-    };
     visit(path, value, parent);
+    // The document root has no path, so its children have no parent
+    // edge to a named node.
+    let child_parent = if path.is_empty() { None } else { Some(path) };
     match value {
         Value::Table(map) => {
             for (key, child) in map {
@@ -194,13 +194,13 @@ fn walk_taint<'a>(
                 } else {
                     format!("{path}.{key}")
                 };
-                walk_taint(child, &child_path, visit);
+                walk_taint(child, &child_path, child_parent, visit);
             }
         }
         Value::Array(items) => {
             for (index, child) in items.iter().enumerate() {
                 let child_path = format!("{path}[{index}]");
-                walk_taint(child, &child_path, visit);
+                walk_taint(child, &child_path, child_parent, visit);
             }
         }
         _ => {}

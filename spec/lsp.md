@@ -215,17 +215,23 @@ determinism.
    containing `=`: insert `# @ai_immutable: true` above the
    statement. The value itself is never rewritten.
 7. **Apply safe repair plan** — run the shipped multi-step repair
-   engine (strict engine, validate goal, eight-step cap) and, when
-   the plan contains at least one safe step, offer the repaired
-   source as one document edit. The action and `active repair`
-   share the engine, so their plans cannot drift.
+   engine (hermetic engine, strict budget, validate goal, eight-step
+   cap) with the buffer's own file context, so an included schema
+   plans the same repair `active repair` does. When the plan contains
+   at least one safe step, offer the repaired source as one document
+   edit. The action and `active repair` share the engine, so their
+   plans cannot drift, and included content is never copied into the
+   buffer.
 
 ## 5.1 Formatting
 
 - **Full** (`textDocument/formatting`): the canonical formatter
   with `Style::Preserve`, returned as one full-document edit; a
   canonical document returns no edits, so format-on-save is
-  idempotent.
+  idempotent. Formatting parses the buffer's own text with includes
+  recorded but unresolved: the merged analysis tree carries included
+  keys, and re-emitting it would inline private include content.
+  `include` statements are preserved in place.
 - **Range** (`textDocument/rangeFormatting`): compute the single
   canonical diff hunk and return it only when it lies inside the
   requested line range. A hunk that spills past the selection

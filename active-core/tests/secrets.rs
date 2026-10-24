@@ -134,8 +134,47 @@ fn arithmetic_and_ordering_on_secrets_fail_redacted() {
         assert_eq!(err.code(), "T001");
         let message = err.to_string();
         assert!(!message.contains(raw), "raw secret in error: {message}");
-        assert!(message.contains("Secret(***)"), "{message}");
+        // Value-free by construction: operands render as kind names.
+        assert!(
+            message.contains("secret"),
+            "kind name missing in error: {message}"
+        );
     }
+}
+
+#[test]
+fn constraint_diagnostics_redact_interpolated_material() {
+    // T006 renders the actual value; an interpolation over a secret
+    // source is material even though the string has no marker.
+    let src = "x = \"hunter2-t006\"\nk = secret(x)\n# @constraint: value != \"prefix hunter2-t006\"\nmsg = \"prefix ${x}\"\n";
+    let module = parse(src, "t006").expect("must parse");
+    let mut engine = Engine::new();
+    engine.resilient = false;
+    let failure = engine.evaluate(&module).expect_err("constraint fails");
+    let active_core::EvalError::ValidationFailed { diagnostics } = failure else {
+        panic!("expected validation failure, got {failure}");
+    };
+    let t006 = diagnostics
+        .iter()
+        .find(|d| d.code == "T006")
+        .expect("T006 diagnostic");
+    // The predicate source is authored text (the author can read it in
+    // the file); the evaluated actual value is the publishing surface.
+    let actual = t006
+        .message
+        .split("actual: ")
+        .nth(1)
+        .unwrap_or_else(|| panic!("no actual value in {}", t006.message));
+    assert!(
+        !actual.contains("hunter2"),
+        "constraint message leaked material: {}",
+        t006.message
+    );
+    assert!(
+        actual.contains("***SECRET***"),
+        "constraint message must carry the marker: {}",
+        t006.message
+    );
 }
 
 #[test]

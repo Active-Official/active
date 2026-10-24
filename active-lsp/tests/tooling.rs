@@ -205,6 +205,98 @@ fn formatting_refuses_broken_documents() {
 }
 
 #[test]
+fn formatting_preserves_includes_without_inlining() {
+    let dir = std::env::temp_dir().join(format!("active-lsp-fmt-inc-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    std::fs::write(dir.join("inc.active"), "host = \"included\"\nport = 8080\n").expect("include");
+    let main = dir.join("main.active");
+    let text = "include \"inc.active\"\nlocal=1\n";
+    std::fs::write(&main, text).expect("main");
+    let uri = Url::from_file_path(&main).expect("file url");
+    let doc = analysis::open_doc(uri, text.to_string(), 1, None);
+    let edits = analysis::formatting_edits(&doc);
+    assert_eq!(edits.len(), 1, "unformatted local line needs one edit");
+    let formatted = &edits[0].new_text;
+    assert!(
+        formatted.contains("include \"inc.active\""),
+        "include statement preserved: {formatted:?}"
+    );
+    assert!(
+        !formatted.contains("host") && !formatted.contains("8080"),
+        "included keys must not be inlined into the buffer: {formatted:?}"
+    );
+    let range = Range {
+        start: Position {
+            line: 0,
+            character: 0,
+        },
+        end: Position {
+            line: 1,
+            character: 0,
+        },
+    };
+    for edit in analysis::range_formatting_edits(&doc, range) {
+        assert!(
+            !edit.new_text.contains("host") && !edit.new_text.contains("8080"),
+            "range formatting inlined includes: {:?}",
+            edit.new_text
+        );
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn repair_action_uses_included_schema_and_stays_in_the_buffer() {
+    let dir = std::env::temp_dir().join(format!("active-lsp-repair-inc-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    std::fs::write(
+        dir.join("schema.active"),
+        "schema = { port = Int(default = 8080) }\n",
+    )
+    .expect("include");
+    let main = dir.join("main.active");
+    let text = "include \"schema.active\"\nname = \"x\"\n";
+    std::fs::write(&main, text).expect("main");
+    let uri = Url::from_file_path(&main).expect("file url");
+    let doc = analysis::open_doc(uri, text.to_string(), 1, None);
+    let actions = analysis::code_actions(
+        &doc,
+        Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 0,
+            },
+        },
+    );
+    let repair = actions
+        .iter()
+        .find(|action| action.title.contains("repair plan"))
+        .unwrap_or_else(|| panic!("no repair plan from an included schema: {actions:?}"));
+    let edit = repair
+        .edit
+        .as_ref()
+        .and_then(|workspace| workspace.changes.as_ref())
+        .and_then(|changes| changes.values().next())
+        .and_then(|edits| edits.first())
+        .expect("repair edit");
+    assert!(
+        edit.new_text.contains("@patch(\"port\", 8080)"),
+        "included schema must drive the plan: {:?}",
+        edit.new_text
+    );
+    assert!(
+        !edit.new_text.contains("schema = {"),
+        "included schema must not be copied into the buffer: {:?}",
+        edit.new_text
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn document_symbols_exclude_included_files() {
     let dir = std::env::temp_dir().join(format!("active-lsp-symbols-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("temp dir");

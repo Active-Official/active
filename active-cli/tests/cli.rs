@@ -2540,7 +2540,7 @@ fn debug_minimize_resolves_includes_and_rejects_trust() {
     let out = active()
         .args(["debug", "--from"])
         .arg(&main)
-        .args(["--minimize", "E002", "--format", "text"])
+        .args(["--minimize", "E002"])
         .output()
         .expect("run active");
     assert!(
@@ -2548,8 +2548,17 @@ fn debug_minimize_resolves_includes_and_rejects_trust() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let body = String::from_utf8_lossy(&out.stdout);
-    assert!(body.contains("include \"inc.active\""), "{body}");
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("minimize JSON");
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(reduced.contains("include \"inc.active\""), "{reduced}");
+    assert!(
+        !reduced.contains("ok = 1"),
+        "unrelated line must be reduced away: {reduced}"
+    );
+    assert!(
+        report["reduced_bytes"].as_u64().unwrap() < report["original_bytes"].as_u64().unwrap(),
+        "reduction made no progress: {report}"
+    );
 
     let missing = dir.join("missing.toml");
     let trust = active()

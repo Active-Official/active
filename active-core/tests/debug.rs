@@ -148,22 +148,39 @@ fn minimal_case_redacts_authored_secret_literals() {
 #[test]
 fn minimal_case_redacts_every_secret_spelling_without_duplication() {
     let cases = [
-        "schema = { token = Int }\ntoken = secret (\"hunter2-a\")\nnoise = 1\n",
-        "schema = { token = Int }\ntoken = secret((\"hunter2-b\"))\nnoise = 1\n",
-        "schema = { token = Int }\ntoken = secret(\"\"\"hunter2-c\"\"\")\nnoise = 1\n",
-        "schema = { token = Int }\nlet p = \"hunter2-d\"\ntoken = secret(p)\nnoise = 1\n",
-        "schema = { token = Int }\ntoken = secret(\"hunter2-e\nnoise = 1\n",
+        (
+            "schema = { token = Int }\ntoken = secret (\"hunter2-a\")\nnoise = 1\n",
+            "T002",
+        ),
+        (
+            "schema = { token = Int }\ntoken = secret((\"hunter2-b\"))\nnoise = 1\n",
+            "T002",
+        ),
+        (
+            "schema = { token = Int }\ntoken = secret(\"\"\"hunter2-c\"\"\")\nnoise = 1\n",
+            "T002",
+        ),
+        (
+            "schema = { token = Int }\nlet p = \"hunter2-d\"\ntoken = secret(p)\nnoise = 1\n",
+            "T002",
+        ),
+        (
+            "schema = { token = Int }\ntoken = secret(\"hunter2-e\nnoise = 1\n",
+            "E001",
+        ),
     ];
-    for src in cases {
-        // The set mixes valid and malformed spellings; E001 is only
-        // present in the malformed ones, so reduction is a no-op for
-        // the rest while redaction still runs (the property under test).
-        let report = debug::minimal_case(src, "E001", 100);
+    for (src, code) in cases {
+        let report = debug::minimal_case(src, code, 100);
+        assert!(
+            report["attempts"].as_u64().unwrap() > 0,
+            "target {code} not exercised for {src:?}: {report}"
+        );
         let reduced = report["reduced"].as_str().expect("reduced");
         assert!(!reduced.contains("hunter2"), "leak for {src:?}: {reduced}");
-        assert!(
-            reduced.matches("token = secret").count() <= 1,
-            "duplicated content for {src:?}: {reduced}"
+        assert_eq!(
+            reduced.matches("token = secret").count(),
+            1,
+            "expected exactly one secret call for {src:?}: {reduced}"
         );
     }
 }
@@ -308,4 +325,57 @@ fn env_extra_arguments_are_redacted_but_the_name_is_not() {
         "env name must survive: {reduced}"
     );
     assert!(!reduced.contains("hunter2"), "default leaked: {reduced}");
+}
+
+#[test]
+fn comments_inside_secret_calls_do_not_hide_material() {
+    let array_src = "schema = { token = Int }\ntoken = secret([\n  # note secret\n  (\"hunter2-ARR3\")\n])\nnoise = 1\n";
+    let report = debug::minimal_case(array_src, "T002", 100);
+    let rendered = report.to_string();
+    assert!(!rendered.contains("hunter2"), "{rendered}");
+
+    let gap_src = "loc = \"hunter2-CMT\"\ntoken = secret # note\n(loc)\nnoise = 1\n";
+    let report = debug::minimal_case(gap_src, "E002", 100);
+    let rendered = report.to_string();
+    assert!(!rendered.contains("hunter2"), "{rendered}");
+}
+
+#[test]
+fn reduction_protects_indented_secret_calls_with_file_context() {
+    let src = "schema = { loc = Int }\nloc = \"hunter2-STRAND-SCHEMA\"\ntoken = secret\n  (loc)\n";
+    let report = debug::minimal_case_with(
+        src,
+        "T002",
+        100,
+        Some(std::path::Path::new("strand.active")),
+    );
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(
+        !reduced.contains("hunter2"),
+        "stranded literal leaked: {reduced}"
+    );
+    assert!(
+        reduced.contains("secret"),
+        "secret use was deleted: {reduced}"
+    );
+}
+
+#[test]
+fn env_default_with_nonliteral_name_is_redacted() {
+    let src = "token = secret.env(NAME, default = \"hunter2-ENVREF\")\nnoise = 1\n";
+    let report = debug::minimal_case(src, "E001", 100);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(
+        !reduced.contains("hunter2"),
+        "env default leaked: {reduced}"
+    );
+
+    let multiline = "token = secret.env\n(\"NAME\", default = \"hunter2-ML\")\nnoise = 1\n";
+    let report = debug::minimal_case(multiline, "E002", 100);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(
+        !reduced.contains("hunter2"),
+        "multiline env default leaked: {reduced}"
+    );
+    assert!(reduced.contains("NAME"), "env name must survive: {reduced}");
 }

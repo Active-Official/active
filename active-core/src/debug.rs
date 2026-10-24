@@ -251,27 +251,63 @@ fn redact_secret_literals(source: &str) -> String {
 /// so the recovering parser accepts a call broken across lines and span
 /// offsets stay valid against the original text.
 fn normalize_secret_gaps(source: &str) -> String {
+    use crate::parser::TokenKind as K;
+    let lexed = crate::parser::Lexer::new(source).tokenize();
+    let tokens = &lexed.tokens;
     let mut bytes = source.as_bytes().to_vec();
-    let mut index = 0usize;
-    while index + 6 <= bytes.len() {
-        let word = &bytes[index..index + 6];
-        let boundary_before =
-            index == 0 || !(bytes[index - 1].is_ascii_alphanumeric() || bytes[index - 1] == b'_');
-        if word == b"secret" && boundary_before {
-            let mut probe = index + 6;
-            while probe < bytes.len() && matches!(bytes[probe], b' ' | b'\t' | b'\r' | b'\n') {
-                probe += 1;
-            }
-            if probe < bytes.len() && bytes[probe] == b'(' {
-                for byte in &mut bytes[index + 6..probe] {
-                    if matches!(*byte, b'\n' | b'\r') {
-                        *byte = b' ';
-                    }
+    // Blank comment text first (preserving newlines): a comment inside
+    // a `secret`…`(` gap must not swallow the call when the newline is
+    // turned into a space.
+    for comment in &lexed.comments {
+        if let Some((start, end)) = span_offsets(source, &comment.1) {
+            for byte in &mut bytes[start..end] {
+                if !matches!(*byte, b'\n' | b'\r') {
+                    *byte = b' ';
                 }
             }
-            index = probe.max(index + 6);
-        } else {
-            index += 1;
+        }
+    }
+    let span_of = |token: &crate::parser::Token| crate::diag::Span {
+        line: token.line,
+        column: token.col,
+        end_line: token.end_line,
+        end_column: token.end_col,
+    };
+    for index in 0..tokens.len() {
+        if !matches!(tokens[index].kind, K::Secret) {
+            continue;
+        }
+        let mut probe = index + 1;
+        while probe < tokens.len()
+            && matches!(tokens[probe].kind, K::Newline | K::Indent | K::Dedent)
+        {
+            probe += 1;
+        }
+        if matches!(tokens.get(probe).map(|t| &t.kind), Some(K::Dot))
+            && matches!(tokens.get(probe + 1).map(|t| &t.kind), Some(K::Env))
+        {
+            probe += 2;
+            while probe < tokens.len()
+                && matches!(tokens[probe].kind, K::Newline | K::Indent | K::Dedent)
+            {
+                probe += 1;
+            }
+        }
+        if !matches!(tokens.get(probe).map(|t| &t.kind), Some(K::LParen)) {
+            continue;
+        }
+        let Some((_, gap_start)) = span_offsets(source, &span_of(&tokens[index])) else {
+            continue;
+        };
+        let Some((gap_end, _)) = span_offsets(source, &span_of(&tokens[probe])) else {
+            continue;
+        };
+        if gap_start < gap_end && gap_end <= bytes.len() {
+            for byte in &mut bytes[gap_start..gap_end] {
+                if matches!(*byte, b'\n' | b'\r') {
+                    *byte = b' ';
+                }
+            }
         }
     }
     String::from_utf8(bytes).unwrap_or_else(|_| source.to_string())
@@ -323,15 +359,22 @@ fn secret_call_lines(source: &str) -> std::collections::HashSet<u32> {
         }
         let start_line = tokens[index].line;
         let mut probe = index + 1;
-        // Skip newlines, then either `(` or `. env (` (env calls still
-        // have a line to protect; only their name is exempt).
-        while probe < tokens.len() && matches!(tokens[probe].kind, K::Newline) {
+        // Skip layout trivia: a wrapped `(` outside brackets emits
+        // Indent/Dedent in addition to Newline.
+        while probe < tokens.len()
+            && matches!(tokens[probe].kind, K::Newline | K::Indent | K::Dedent)
+        {
             probe += 1;
         }
         if matches!(tokens.get(probe).map(|t| &t.kind), Some(K::Dot))
             && matches!(tokens.get(probe + 1).map(|t| &t.kind), Some(K::Env))
         {
             probe += 2;
+            while probe < tokens.len()
+                && matches!(tokens[probe].kind, K::Newline | K::Indent | K::Dedent)
+            {
+                probe += 1;
+            }
         }
         if !matches!(tokens.get(probe).map(|t| &t.kind), Some(K::LParen)) {
             index += 1;
@@ -430,7 +473,9 @@ fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
         // next token; `secret.env("NAME")` is a name (metadata), so its
         // first string is exempt but later arguments are still scanned.
         let mut probe = index + 1;
-        while probe < tokens.len() && matches!(tokens[probe].kind, K::Newline) {
+        while probe < tokens.len()
+            && matches!(tokens[probe].kind, K::Newline | K::Indent | K::Dedent)
+        {
             probe += 1;
         }
         let mut skip_first_string = false;
@@ -439,6 +484,11 @@ fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
         {
             skip_first_string = true;
             probe += 2;
+            while probe < tokens.len()
+                && matches!(tokens[probe].kind, K::Newline | K::Indent | K::Dedent)
+            {
+                probe += 1;
+            }
         }
         if !matches!(tokens.get(probe).map(|t| &t.kind), Some(K::LParen)) {
             index += 1;
@@ -448,6 +498,7 @@ fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
         let mut depth = 0i32;
         let mut cursor = open;
         let mut seen_string = false;
+        let mut seen_comma = false;
         while cursor < tokens.len() {
             match tokens[cursor].kind {
                 K::LParen => depth += 1,
@@ -457,8 +508,12 @@ fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
                         break;
                     }
                 }
+                K::Comma if depth == 1 => seen_comma = true,
                 K::String(_) | K::SingleString | K::MlString(_) | K::MlSingleString => {
-                    let exempt = skip_first_string && !seen_string;
+                    // Only the name argument (first string before any
+                    // top-level comma) is metadata; later arguments
+                    // (defaults, extras) are redacted.
+                    let exempt = skip_first_string && !seen_comma && !seen_string;
                     seen_string = true;
                     if !exempt {
                         let token = &tokens[cursor];

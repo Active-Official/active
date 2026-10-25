@@ -96,6 +96,19 @@ playground remains the browser evaluator; the headless walkthrough is in
 | Dual-push CI | recorded in `conformance/evidence/ci.log` |
 | Independent review | DeepSeek V4.1 Flash (BYOK, `--reasoning-effort max`) rounds 12-71 (rounds 70 and 71 verification-only); every finding fixed with a regression test; the final verification round reports CLEAN with no open findings (`conformance/evidence/review-final.log`; summary in `docs/security-hardening.md`) |
 
+### Final CI (2026-10-25)
+
+Both remotes are green on the final tree `4d42249`:
+
+| Remote | CI | Conformance | CodSpeed |
+|---|---|---|---|
+| `RatioArtificiosa/active-lang` | success (40243628554) | success (40243628539) | success (40243628521) |
+| `Active-Official/active` | success (40243630861) | success (40243630825) | success (40243630863) |
+
+The Ubuntu conformance job also builds the OCaml binding; `ocaml_stubs.c`
+includes `<caml/fail.h>` so `caml_invalid_argument` is declared under
+modern compiler warnings. The full transcript is
+`conformance/evidence/ci.log`.
 ## 6. Accepted, documented gaps
 
 - Zed and JetBrains plugins are not implemented; the LSP host path and

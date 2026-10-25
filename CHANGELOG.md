@@ -62,12 +62,15 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   exported within its budget; `debug` accepts the same `--max-*`,
   `--budget-profile`, `--resilient`, and `--allow-parent-escapes`
   inputs as `eval`, defaults to strict like `eval`, and renders
-  identity-only steps. Replay runs a wall-bounded preflight that
-  mirrors `eval`, then two canonical step/hash passes without a wall
-  deadline. `--minimize` evaluates candidates under the same mode,
-  profile, parse options, and limits. The audit document records its
-  resolved budget and parse flags (limits above `i64::MAX` are
-  refused), so a non-default run is self-describing and replayable.
+  identity-only steps. Replay runs an identity-only wall-bounded
+  preflight that mirrors `eval`, then two canonical step/hash passes
+  without a wall deadline. `--minimize` parses and evaluates candidates
+  under the same mode, profile, parse options, and limits (wall-free
+  unless `X002` is the target) and redacts duplicate copies of a secret
+  value, not only the locator. The audit document records its resolved
+  budget and parse flags (including materialisation; limits above
+  `i64::MAX` are refused on the audit path only), so a non-default run
+  is self-describing and replayable.
 - **Reduction fails closed.** `--minimize` now recognizes dot runs on
   either side of `env`, `secret env(`, and env calls with anything
   past the name (comma or not), and redacts every string literal in

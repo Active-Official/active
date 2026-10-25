@@ -19,7 +19,7 @@ audit = {
   mode = "config",
   profile = "production",
   budget = { nodes = 100000, depth = 256, array_len = 100000, keys = 100000, wall_ms = 100, value_size = 10000000, total_size = 100000000 },
-  parse = { resilient = false, allow_parent_escapes = false },
+  parse = { resilient = false, allow_parent_escapes = false, materialise_blobs = false },
   nodes = 42,
   diagnostics = ["T004@host"],
   result = "sha256:<hex of canonical redacted JSON>",
@@ -38,9 +38,12 @@ audit = {
 - `budget`: the resolved resource limits `{ nodes, depth, array_len,
   keys, wall_ms, value_size, total_size }`. Replay must be given the
   same limits to reproduce `result`.
-- `parse`: `{ resilient, allow_parent_escapes }`, the parse/evaluation
-  mode the audited run used. Matching these on replay is part of the
-  contract.
+- `parse`: `{ resilient, allow_parent_escapes, materialise_blobs }`,
+  the parse/evaluation mode the audited run used. Matching these on
+  replay is part of the contract.
+- Limits are stored as Active integers, so any limit above
+  `i64::MAX` is refused before the audit is written (use `0` for
+  unlimited).
 - `diagnostics`: sorted, deduped `CODE@path` items (bare codes for
   fatal loop-terminal errors, same convention as the repair plan's
   `final_codes`).
@@ -73,8 +76,8 @@ audit = {
 ## 3. Agent use
 
 Agents archive one audit file per consequential evaluation for
-replay and review: same source + budget + profile + mode ⇒ same
-content hash. The fingerprint memo (PE.003) and the audit record
+replay and review: same source + budget + profile + mode + parse flags
+⇒ same content hash. The fingerprint memo (PE.003) and the audit record
 agree by construction (same redaction, same canonical form).
 
 **End of audit-trail.md — AUD.001 complete.**

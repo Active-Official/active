@@ -55,24 +55,23 @@ selector never matches).
 
 ## 3. Replay (DEBUG.004)
 
-`debug::replay` evaluates twice under the same configuration and
-compares: the redacted content hash, the ordered diagnostic codes, and
-the full step arrays. `--expect sha256:...` additionally pins the hash
-(the audit trail's `result` value). Any mismatch exits non-zero.
-Replay is a canonical pass: it materialises payloads through a probe
-(no alias copy charge) and hashes the redacted, payload-free tree, so
-`--materialise-blobs` and payload-resident secrets cannot change the
-identity. A first, wall-bounded pass without step collection mirrors
-what `eval` did; the two canonical step/hash repeats then run without a
-wall deadline, so step bookkeeping cannot turn a successful evaluation
-into a timing-dependent replay failure. The budget is an input: an
-audit produced under custom limits replays only when `active debug`
-receives the same `--max-*`/`--budget-profile` flags. Count and size
-limits still bind, so an untrusted document fails fast. Replay is
-strict by default like `eval`; pass `--resilient` (and
-`--allow-parent-escapes` when the audited run used it) to match a
-resilient or permissive audit. Steps are identity-only: payload bytes
-never enter a `StepEvent`.
+`debug::replay` compares the redacted content hash, the ordered
+diagnostic codes, and the full step arrays. A wall-bounded preflight
+runs with the same identity-only blobs as `eval` (no step collection),
+so a document that evaluated successfully cannot fail replay on the
+heavier canonical work; two canonical materialised step passes then run
+without a wall deadline and provide the hash, codes, and steps.
+`--expect sha256:...` additionally pins the hash (the audit trail's
+`result` value). Any mismatch exits non-zero. Replay hashes the
+redacted, payload-free tree, so `--materialise-blobs` and
+payload-resident secrets cannot change the identity. The budget and
+mode are inputs: an audit produced under custom limits, `--resilient`,
+or `--allow-parent-escapes` replays only when `active debug` receives
+the same flags. Count and size limits still bind, so an untrusted
+document fails fast. Steps are identity-only: payload bytes never enter
+a `StepEvent`. A strict validation failure is not replayable: the audit
+records `result = null` and `outcome = "failed"`, while replay returns
+the validation error; compare the recorded code list instead.
 
 ## 4. Minimal failing case (DEBUG.005)
 
@@ -111,7 +110,10 @@ An invalid combination is a usage error (exit 2 for clap conflicts,
 exit 1 for the runtime-checked `--trust-keys`/`--minimize` pair),
 never a silently ignored flag. `--minimize` honors the budget,
 `--profile`, `--resilient`, and `--allow-parent-escapes` inputs: the
-reducer evaluates candidates exactly as the run being explained.
+reducer parses and evaluates candidates under the same mode, options,
+profile, and count/size limits as the run being explained (it disables
+the wall clock for candidates unless `X002` is the target, so reduction
+is deterministic).
 
 ## 6. Secret guarantee
 

@@ -36,12 +36,14 @@ pub fn breakpoint_index(steps: &[StepEvent], selector: &str) -> Option<usize> {
     None
 }
 
-/// Deterministic replay: evaluate twice and compare the redacted
-/// content hash, the diagnostic code lists, and the step traces. When
-/// `expected` is given, the first hash must equal it (the audit
-/// trail's `result` value). Uses the shipped default budget; callers
-/// whose audit ran under a different limit pass it to
-/// [`replay_with_budget`].
+/// Deterministic replay: compare the redacted content hash, the
+/// diagnostic code lists, and the step traces. A wall-bounded preflight
+/// mirrors `eval` (identity-only blobs, no step collection); two
+/// canonical materialised step passes then run without a wall deadline
+/// and provide the hash, codes, and steps. When `expected` is given,
+/// the first hash must equal it (the audit trail's `result` value).
+/// Uses the shipped default budget; callers whose audit ran under a
+/// different limit pass it to [`replay_with_budget`].
 pub fn replay(
     module: &Module,
     expected: Option<&str>,
@@ -58,9 +60,9 @@ pub fn replay(
 
 /// Replay under an explicit budget and resilient mode. `resilient`
 /// matches the audited run: `eval` and the audit trail are strict by
-/// default, so replay is strict too. The first pass honors the
-/// caller's wall clock; only the second (identical canonical repeat)
-/// disables it, so a successful first pass cannot turn into a
+/// default, so replay is strict too. The wall-bounded preflight mirrors
+/// `eval`'s work; the two canonical step/hash passes have no wall
+/// deadline, so a successful first pass cannot turn into a
 /// timing-dependent mismatch.
 pub fn replay_with_budget(
     module: &Module,
@@ -72,22 +74,27 @@ pub fn replay_with_budget(
     let mut engine = Engine::new();
     engine.profile_override = override_profile.map(str::to_string);
     engine.resilient = resilient;
+    engine.budget = *budget;
+    // The wall-bounded preflight mirrors `eval` exactly: identity-only
+    // blobs, no step collection. Materialising for the canonical passes
+    // below would copy every payload per alias and could trip X002 on a
+    // document `eval` accepted.
+    if budget.max_wall_ms != 0 {
+        let _preflight = engine
+            .evaluate_with_seeds(module)
+            .map_err(|e| e.to_string())?;
+    }
     // Canonical audit form: materialise so payload-resident secrets are
     // visible to the redactor, then strip payloads so the identity does
     // not depend on the flag the audited run used. The probe skips
     // per-alias payload accounting; count/size limits still bind so an
-    // untrusted document fails fast instead of exhausting memory.
+    // untrusted document fails fast instead of exhausting memory. These
+    // passes have no wall deadline, so step bookkeeping cannot turn a
+    // successful evaluation into a timing-dependent failure.
+    engine.budget.max_wall_ms = 0;
     engine.materialise_blobs = true;
     engine.taint_probe = true;
-    engine.budget = *budget;
-    // A wall-bounded preflight mirrors what `eval` actually did; step
-    // collection is heavier, so the canonical passes below run without
-    // a wall deadline. The hash comes from the preflight tree.
-    let (preflight, preflight_diags, preflight_seeds) = engine
-        .evaluate_with_seeds(module)
-        .map_err(|e| e.to_string())?;
-    engine.budget.max_wall_ms = 0;
-    let (_first, _first_diags, first_steps, _first_seeds) = engine
+    let (first, first_diags, first_steps, first_seeds) = engine
         .evaluate_with_steps_and_seeds(module)
         .map_err(|e| e.to_string())?;
     let (second, second_diags, second_steps, second_seeds) = engine
@@ -98,15 +105,15 @@ pub fn replay_with_budget(
     // must agree on the same document, and a secret value change must
     // not alter the content identity. Seeds and material env values are
     // absorbed exactly as the export and audit paths do.
-    let profile = crate::secret::SecretProfile::for_engine(module, &engine, &preflight_seeds);
+    let profile = crate::secret::SecretProfile::for_engine(module, &engine, &first_seeds);
     let second_profile = crate::secret::SecretProfile::for_engine(module, &engine, &second_seeds);
     let first_hash = crate::provenance::content_hash(&crate::convert::strip_blob_payloads(
-        &crate::convert::redact_value(&profile, &preflight),
+        &crate::convert::redact_value(&profile, &first),
     ));
     let second_hash = crate::provenance::content_hash(&crate::convert::strip_blob_payloads(
         &crate::convert::redact_value(&second_profile, &second),
     ));
-    let first_codes: Vec<&str> = preflight_diags.iter().map(|d| d.code.as_str()).collect();
+    let first_codes: Vec<&str> = first_diags.iter().map(|d| d.code.as_str()).collect();
     let second_codes: Vec<&str> = second_diags.iter().map(|d| d.code.as_str()).collect();
     let steps_match = first_steps == second_steps;
     let expected_ok = expected.is_none_or(|text| text == first_hash);
@@ -233,6 +240,7 @@ fn still_fails(
     let parse_options = crate::ParseOptions {
         enable_includes: true,
         allow_parent_escapes: options.allow_parent_escapes,
+        resilient: options.resilient,
         ..Default::default()
     };
     let parsed = match file_ctx {
@@ -242,12 +250,7 @@ fn still_fails(
             parse_options,
             path,
         ),
-        None => match crate::parse(text, "reduce") {
-            Ok(module) => (module, Vec::new()),
-            Err(diagnostics) => {
-                return diagnostics.iter().any(|d| d.code == target_code);
-            }
-        },
+        None => crate::parse_recovering(text, "reduce", parse_options),
     };
     let (module, parse_diags) = parsed;
     if parse_diags.iter().any(|d| d.code == target_code) {
@@ -258,6 +261,12 @@ fn still_fails(
     engine.profile_override = options.profile.map(str::to_string);
     if let Some(budget) = options.budget {
         engine.budget = *budget;
+    }
+    // Reduction must not depend on machine load: candidates run without
+    // a wall deadline (count/size limits still bind), except when the
+    // wall-clock code itself is the target.
+    if target_code != "X002" {
+        engine.budget.max_wall_ms = 0;
     }
     match engine.evaluate(&module) {
         Ok((_, diagnostics)) => diagnostics.iter().any(|d| d.code == target_code),
@@ -368,7 +377,79 @@ fn redact_secret_literals(source: &str) -> String {
     for (start, end) in merged.iter().rev() {
         out.replace_range(*start..*end, "\"***SECRET***\"");
     }
+    // A duplicate of a known secret value elsewhere in the document
+    // (for example a blob payload) leaks just as badly as the locator
+    // itself. Collect the decoded text of every redacted literal and
+    // replace any other string token whose value matches it.
+    let mut known = crate::secret::SecretRedactor::new();
+    let lexed = crate::parser::Lexer::new(&normalized).tokenize();
+    for token in &lexed.tokens {
+        if !is_string_token(token) {
+            continue;
+        }
+        let Some((start, end)) = span_offsets(&normalized, &token_span(token)) else {
+            continue;
+        };
+        if merged.iter().any(|&(s, e)| start >= s && end <= e) {
+            known.insert(token.text.clone());
+        }
+    }
+    if !known.is_empty() {
+        let mut extras: Vec<(usize, usize)> = Vec::new();
+        for token in &lexed.tokens {
+            if !is_string_token(token) {
+                continue;
+            }
+            let Some((start, end)) = span_offsets(&normalized, &token_span(token)) else {
+                continue;
+            };
+            if merged.iter().any(|&(s, e)| start >= s && end <= e) {
+                continue;
+            }
+            if known.redact_text(&token.text).is_some() {
+                extras.push((start, end));
+            }
+        }
+        if !extras.is_empty() {
+            extras.sort_unstable();
+            let mut all: Vec<(usize, usize)> = merged.iter().copied().chain(extras).collect();
+            all.sort_unstable();
+            let mut coalesced: Vec<(usize, usize)> = Vec::new();
+            for (start, end) in all {
+                match coalesced.last_mut() {
+                    Some(last) if start <= last.1 => last.1 = last.1.max(end),
+                    _ => coalesced.push((start, end)),
+                }
+            }
+            let mut out = source.to_string();
+            for (start, end) in coalesced.iter().rev() {
+                out.replace_range(*start..*end, "\"***SECRET***\"");
+            }
+            return out;
+        }
+    }
     out
+}
+
+/// True for a token that carries a string value.
+fn is_string_token(token: &crate::parser::Token) -> bool {
+    matches!(
+        token.kind,
+        crate::parser::TokenKind::String(_)
+            | crate::parser::TokenKind::SingleString
+            | crate::parser::TokenKind::MlString(_)
+            | crate::parser::TokenKind::MlSingleString
+    )
+}
+
+/// Source span of a lexer token.
+fn token_span(token: &crate::parser::Token) -> crate::diag::Span {
+    crate::diag::Span {
+        line: token.line,
+        column: token.col,
+        end_line: token.end_line,
+        end_column: token.end_col,
+    }
 }
 
 /// Replace newlines in a `secret`…`(` gap with spaces (length-preserving),

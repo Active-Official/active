@@ -22,8 +22,8 @@ struct Cli {
 
 /// Evaluator resource limits (spec/budgets.md, C-037). Omitted flags
 /// use the shipped profile; `0` disables that limit. Options (rather
-/// than clap defaults) let a command tell an explicit request from a
-/// default, so `--minimize` can refuse limits it cannot honor.
+/// than clap defaults) let the audit path reject limits it cannot
+/// store and let reduction report what the user asked for.
 #[derive(Args, Clone)]
 struct BudgetArgs {
     /// Maximum IR nodes visited during evaluation (default 100000)
@@ -54,6 +54,28 @@ struct BudgetArgs {
     budget_profile: Option<BudgetProfile>,
 }
 
+/// Reject limits the audit document cannot represent: it stores them
+/// as Active integers (i64), so `active check` would reject a larger
+/// value with E023.
+fn validate_audit_limits(budget: &Budget) -> anyhow::Result<()> {
+    for (flag, value) in [
+        ("max-nodes", budget.max_nodes),
+        ("max-depth", budget.max_depth),
+        ("max-array-len", budget.max_array_len),
+        ("max-keys", budget.max_keys),
+        ("max-wall-ms", budget.max_wall_ms),
+        ("max-value-size", budget.max_value_size),
+        ("max-total-value-size", budget.max_total_value_size),
+    ] {
+        if value > i64::MAX as u64 {
+            anyhow::bail!(
+                "--{flag} {value} exceeds i64::MAX; the audit document stores limits as Active integers (use 0 for unlimited)"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Named budget profiles. Parsed by clap, so a typo fails fast with
 /// a usage error instead of a runtime bail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -67,8 +89,8 @@ enum BudgetProfile {
 }
 
 impl BudgetArgs {
-    /// True when the user passed any explicit limit or profile flag
-    /// (including a value equal to the default).
+    /// True when the user passed an explicit per-field limit (a named
+    /// profile alone is reported separately by `resolve`).
     fn has_explicit(&self) -> bool {
         self.max_nodes.is_some()
             || self.max_depth.is_some()
@@ -77,7 +99,6 @@ impl BudgetArgs {
             || self.max_wall_ms.is_some()
             || self.max_value_size.is_some()
             || self.max_total_value_size.is_some()
-            || self.budget_profile.is_some()
     }
 
     fn budget(&self) -> Budget {
@@ -107,34 +128,11 @@ impl BudgetArgs {
             Some(BudgetProfile::Interactive) => Budget::interactive(),
             Some(BudgetProfile::Trusted) => Budget::trusted(),
         };
-        if self.budget_profile.is_some()
-            && (self.max_nodes.is_some()
-                || self.max_depth.is_some()
-                || self.max_array_len.is_some()
-                || self.max_keys.is_some()
-                || self.max_wall_ms.is_some()
-                || self.max_value_size.is_some()
-                || self.max_total_value_size.is_some())
-        {
+        if self.budget_profile.is_some() && self.has_explicit() {
             eprintln!("warning: --budget-profile overrides the explicit --max-* flags");
         }
         // The audit and lock documents store limits as Active integers
-        // (i64); a larger limit would make the document fail E023.
-        for (flag, value) in [
-            ("max-nodes", budget.max_nodes),
-            ("max-depth", budget.max_depth),
-            ("max-array-len", budget.max_array_len),
-            ("max-keys", budget.max_keys),
-            ("max-wall-ms", budget.max_wall_ms),
-            ("max-value-size", budget.max_value_size),
-            ("max-total-value-size", budget.max_total_value_size),
-        ] {
-            if value > i64::MAX as u64 {
-                anyhow::bail!(
-                    "--{flag} {value} exceeds i64::MAX; audit and lock documents store limits as Active integers"
-                );
-            }
-        }
+        // (i64); larger limits are rejected at the audit call site.
         Ok(budget)
     }
 }
@@ -383,7 +381,7 @@ enum Commands {
         #[arg(long = "break", conflicts_with_all = ["replay", "minimize"])]
         break_at: Option<String>,
         /// Deterministic replay: evaluate twice and compare hashes,
-        /// codes, and step traces
+        /// codes, and step traces (plus a wall-bounded preflight)
         #[arg(long, conflicts_with = "minimize")]
         replay: bool,
         /// Expected content hash for --replay (sha256:...)
@@ -398,20 +396,20 @@ enum Commands {
         /// Output format: json (default) or text
         #[arg(long, default_value = "json")]
         format: String,
-        /// Profile override for stepping and replay evaluation
+        /// Profile override for stepping, replay, and reduction
         /// (audit reproducibility)
         #[arg(long)]
         profile: Option<String>,
-        /// Resilient evaluation for stepping/replay (match a resilient
-        /// audited run; `eval` is strict by default)
+        /// Resilient evaluation for stepping, replay, and reduction
+        /// (match a resilient audited run; `eval` is strict by default)
         #[arg(long)]
         resilient: bool,
-        /// Allow includes to escape the directory (match an audit run
-        /// that used --allow-parent-escapes)
+        /// Allow includes to escape the directory (match an audit or
+        /// reduction run that used --allow-parent-escapes)
         #[arg(long)]
         allow_parent_escapes: bool,
-        /// Resource limits for stepping and replay; pass the same
-        /// limits the audited run used to reproduce its hash
+        /// Resource limits for stepping, replay, and reduction; pass
+        /// the same limits the audited run used to reproduce its hash
         #[command(flatten)]
         budget: BudgetArgs,
         /// Require sibling signatures on includes (C-052)
@@ -963,6 +961,7 @@ fn write_audit_trail(
     profile: Option<&str>,
     budget: &active_core::Budget,
     allow_parent_escapes: bool,
+    materialise_blobs: bool,
 ) -> anyhow::Result<()> {
     fn quote(s: &str) -> String {
         let mut out = String::with_capacity(s.len() + 2);
@@ -1020,7 +1019,7 @@ fn write_audit_trail(
     // The resolved evaluation inputs are recorded so an audit is
     // self-describing: replay must use the same limits and parse flags.
     let budget_line = format!(
-        "  budget = {{ nodes = {}, depth = {}, array_len = {}, keys = {}, wall_ms = {}, value_size = {}, total_size = {} }},\n  parse = {{ resilient = {}, allow_parent_escapes = {} }},\n",
+        "  budget = {{ nodes = {}, depth = {}, array_len = {}, keys = {}, wall_ms = {}, value_size = {}, total_size = {} }},\n  parse = {{ resilient = {}, allow_parent_escapes = {}, materialise_blobs = {} }},\n",
         budget.max_nodes,
         budget.max_depth,
         budget.max_array_len,
@@ -1030,6 +1029,7 @@ fn write_audit_trail(
         budget.max_total_value_size,
         resilient,
         allow_parent_escapes,
+        materialise_blobs,
     );
     let doc = format!(
         "audit = {{\n  tool = \"active\",\n  version = {},\n  source = {},\n  mode = \"{}\",\n{}{}  nodes = {},\n  diagnostics = [{}],\n  result = {},\n  outcome = \"{}\"\n}}\n",
@@ -1360,6 +1360,9 @@ fn main() -> anyhow::Result<()> {
             let mut eng = engine(resilient, &profile, budget);
             eng.materialise_blobs = materialise_blobs;
             let engine = eng;
+            if audit_trail.is_some() {
+                validate_audit_limits(&engine.budget)?;
+            }
             // The effective profile (override wins, else the document's
             // literal selector) is recorded in the audit so replay can
             // reproduce the same hash.
@@ -1390,6 +1393,7 @@ fn main() -> anyhow::Result<()> {
                                 effective_profile.as_deref(),
                                 &engine.budget,
                                 allow_parent_escapes,
+                                materialise_blobs,
                             )?;
                         }
                     }
@@ -1483,6 +1487,7 @@ fn main() -> anyhow::Result<()> {
                     effective_profile.as_deref(),
                     &engine.budget,
                     allow_parent_escapes,
+                    materialise_blobs,
                 )?;
             }
             if had_failure(&diags, resilient) {

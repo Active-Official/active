@@ -3590,3 +3590,80 @@ fn minimize_honors_strictness_and_budget() {
         String::from_utf8_lossy(&bounded.stderr)
     );
 }
+
+#[test]
+fn audit_accepts_the_i64_maximum() {
+    // Review 54: the boundary itself is representable and revalidates.
+    let f = fixture("audit_i64_max.active", "a = 1\nb = 2\n");
+    let audit = f.with_extension("i64max.active");
+    let out = active()
+        .arg("eval")
+        .arg(&f)
+        .args(["--max-nodes", "9223372036854775807"])
+        .arg("--audit-trail")
+        .arg(&audit)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let checked = active()
+        .arg("check")
+        .arg(&audit)
+        .output()
+        .expect("run active");
+    assert!(
+        checked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+}
+
+#[test]
+fn minimize_redacts_duplicate_secret_literals() {
+    // Review 54: a duplicate of a secret value outside the locator (a
+    // blob payload here) must not survive in the reduction bundle.
+    let raw = "PIN-r54-duplicate";
+    let f = fixture(
+        "minimize_duplicate.active",
+        &format!(
+            "schema = {{ f = Int }}\nf = blob(\"text/plain\", \"{raw}\")\ns = secret(\"{raw}\")\n"
+        ),
+    );
+    let out = active()
+        .args(["debug", "--from"])
+        .arg(&f)
+        .args(["--minimize", "T002", "--format", "json"])
+        .output()
+        .expect("run active");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(!text.contains(raw), "{text}");
+    assert!(text.contains("***SECRET***"), "{text}");
+}
+
+#[test]
+fn minimize_parses_resiliently_when_asked() {
+    // Review 54: --resilient must reach the parser, not only the
+    // evaluator.
+    let f = fixture("minimize_h004.active", "a = [1, 2}\n");
+    let strict = active()
+        .args(["debug", "--from"])
+        .arg(&f)
+        .args(["--minimize", "H004"])
+        .output()
+        .expect("run active");
+    assert!(!strict.status.success(), "strict parse cannot heal H004");
+    let resilient = active()
+        .args(["debug", "--from"])
+        .arg(&f)
+        .args(["--minimize", "H004", "--resilient"])
+        .output()
+        .expect("run active");
+    assert!(
+        resilient.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resilient.stderr)
+    );
+}

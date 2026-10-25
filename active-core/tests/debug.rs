@@ -1279,3 +1279,22 @@ fn minimize_keeps_a_patch_path_before_a_parenthesis_value() {
     let reduced = report["reduced"].as_str().expect("reduced");
     assert!(reduced.contains("@patch(\"a\""), "{reduced}");
 }
+
+#[test]
+fn minimize_does_not_exempt_a_string_inside_a_directive_path_expression() {
+    // Review 62: a path argument must be one bare string; a call
+    // expression is data.
+    let source = "s = secret(\"hunter2-x\")\nt = 1\n@remove(f(\"hunter2-x\"))\n";
+    let report = debug::minimal_case(source, "E019", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(!reduced.contains("hunter2-x"), "{reduced}");
+}
+
+#[test]
+fn minimize_does_not_exempt_a_nested_active_profile_field() {
+    // Review 62: the selector keyword is only structural at depth zero.
+    let source = "s = secret(\"hunter2-x\")\nt = {\n  active_profile = \"hunter2-x\"\n}\n";
+    let report = debug::minimal_case(source, "T999", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(!reduced.contains("hunter2-x"), "{reduced}");
+}

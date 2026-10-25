@@ -2186,3 +2186,76 @@ fn substring_probe_cache_sees_values_inserted_later() {
     redactor.insert("hunter2-late");
     assert!(redactor.contains_substring("late hunter2-late", 4));
 }
+
+#[test]
+fn computed_selector_override_does_not_hide_a_material_seed() {
+    // Review 62 (HIGH): under a computed selector a possible profile
+    // may replace the base path that made a node look benign. Such a
+    // path is not a stable export, so the material value still seeds.
+    let src = "active_profile = env.P ?: \"none\"\na = { k = secret(\"hunter2-base\") }\nlet t = { k = \"hunter2-copy\" }\np = t\nprofile \"pr\" { a = t, p = { k = \"replaced\" } }\ndup = \"hunter2-copy\"\n";
+    let module = parse(src, "computed-visibility").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("P".to_string(), "pr".to_string());
+    let engine = Engine::hermetic().with_env(env);
+    let (value, _, seeds) = engine.evaluate_with_seeds(&module).expect("evaluate");
+    let mut secret = active_core::secret::SecretProfile::analyze(&module);
+    secret.absorb_secrets(&seeds);
+    let json = active_core::convert::value_to_pretty_json_with(&secret, &value);
+    assert!(!json.contains("hunter2-copy"), "{json}");
+}
+
+#[test]
+fn static_resolution_is_deterministic_at_the_depth_bound() {
+    // Review 62: a deep chain reachable both directly and through a
+    // shallow alias must resolve the same way on every analysis.
+    let mut src = String::from(
+        "a = secret(\"hunter2-a\")\nb = secret(\"hunter2-b\")\nlet c0 = \"hunter2-seed\"\n",
+    );
+    for i in 1..=1100 {
+        src.push_str(&format!("let c{i} = \"${{c{}}}\"\n", i - 1));
+    }
+    src.push_str(
+        "active_profile = \"p\"\nprofile \"p\" { a = \"${c1100}\", b = \"${c600}\" }\ncopy = \"VISIBLE-TEXT\"\n",
+    );
+    let module = parse(&src, "static-depth").expect("parse");
+    let first = active_core::secret::SecretProfile::analyze(&module);
+    for _ in 0..15 {
+        let again = active_core::secret::SecretProfile::analyze(&module);
+        assert_eq!(
+            again.literals(),
+            first.literals(),
+            "seed set changed between runs"
+        );
+    }
+}
+
+#[test]
+fn marker_containing_secret_is_redacted() {
+    // Review 62: an ordinary pass treats the marker as opaque; a known
+    // value that itself contains it must still match.
+    let mut redactor = active_core::secret::SecretRedactor::new();
+    redactor.insert("***SECRET***hunter2-tail");
+    let text = "prefix ***SECRET***hunter2-tail suffix";
+    assert_eq!(
+        redactor.redact_text(text).as_deref(),
+        Some("prefix ***SECRET*** suffix")
+    );
+    assert!(redactor.contains_substring(text, 4));
+}
+
+#[test]
+fn computed_rename_clears_a_stale_destination_record() {
+    // Review 62: a destination entry from another possible profile must
+    // not seed its text after a rename moves a different node there.
+    let src = "a = { x = secret(\"hunter2-base\") }\nactive_profile = env.P ?: \"p\"\nlet m = \"MATERIAL-TEXT\"\nlet q = \"STALE-TEXT\"\nprofile \"p\" { a = { x = m } }\nprofile \"q\" { a = { z = q } }\n@rename(\"a.x\", \"z\")\ndup = \"STALE-TEXT\"\n";
+    let module = parse(src, "computed-rename").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("P".to_string(), "p".to_string());
+    let engine = Engine::hermetic().with_env(env);
+    let (value, _, seeds) = engine.evaluate_with_seeds(&module).expect("evaluate");
+    let mut secret = active_core::secret::SecretProfile::analyze(&module);
+    secret.absorb_secrets(&seeds);
+    let json = active_core::convert::value_to_pretty_json_with(&secret, &value);
+    assert!(json.contains("STALE-TEXT"), "{json}");
+    assert!(!json.contains("MATERIAL-TEXT"), "{json}");
+}

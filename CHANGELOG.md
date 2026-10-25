@@ -269,8 +269,9 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   construction. Profile merging uses a larger, separate bound so
   normal 10k-key profiles do not fail closed. A profile value at a
   material path is resolved statically (literals, `let` references,
-  string interpolation, through alias chains of any legal length with
-  cycle detection, memoization, and a shared work/byte budget) and
+  string interpolation, through long alias chains with cycle detection,
+  deterministic root order, memoization, and shared node/byte/depth
+  budgets that fail the analysis closed when exceeded) and
   seeds the redactor; seeding is deferred until after every profile and
   patch transform, so only a node still visible through a benign
   export path keeps its text readable. Only the selected profile

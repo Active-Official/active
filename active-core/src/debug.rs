@@ -717,11 +717,28 @@ fn is_env_name(text: &str) -> bool {
 fn structural_span_keys(
     tokens: &[crate::parser::Token],
 ) -> std::collections::HashSet<(u32, u32, u32, u32)> {
+    // Bracket depth at each token. Structural keywords and directives
+    // are document-level; a table field that happens to be named
+    // `active_profile` (or a nested `include = "…"`) is data, not
+    // structure. String tokens never change the depth.
+    let mut depth_at: Vec<usize> = Vec::with_capacity(tokens.len());
+    let mut depth = 0usize;
+    for token in tokens {
+        depth_at.push(depth);
+        if is_string_token(token) {
+            continue;
+        }
+        match token.text.as_str() {
+            "{" | "[" | "(" => depth += 1,
+            "}" | "]" | ")" => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
     let mut out = std::collections::HashSet::new();
     for index in 0..tokens.len() {
         let line = tokens[index].line;
         let starts_line = index == 0 || tokens[index - 1].line < line;
-        if !starts_line {
+        if !starts_line || depth_at.get(index).copied().unwrap_or(0) != 0 {
             continue;
         }
         let same_line = |at: usize| tokens.get(at).is_some_and(|token| token.line == line);
@@ -782,29 +799,57 @@ fn structural_span_keys(
                 // Only path arguments are structure: the path of
                 // `@patch`/`@remove`, the source and target of
                 // `@rename`. A value argument is data and goes through
-                // the normal redaction passes. The first string token
-                // of each path argument is exempt; an expression that
-                // builds a path from several tokens is not trusted.
+                // the normal redaction passes. A path must be a single
+                // bare string token; an expression that builds one from
+                // several tokens is not trusted, so none of its parts
+                // are exempt.
                 let path_args = if directive == "rename" { 2 } else { 1 };
                 let mut depth = 1usize;
                 let mut argument = 0usize;
-                let mut argument_has_string = false;
+                let mut tokens_in_argument = 0usize;
+                let mut strings_in_argument = 0usize;
+                let mut lone_string = None;
                 for token in &tokens[index + 3..close] {
-                    if is_string_token(token) {
-                        if argument < path_args && !argument_has_string {
-                            out.insert(token_key(token));
-                            argument_has_string = true;
+                    if !is_string_token(token) {
+                        match token.text.as_str() {
+                            "(" => {
+                                depth += 1;
+                                tokens_in_argument += 1;
+                                continue;
+                            }
+                            ")" => {
+                                depth = depth.saturating_sub(1);
+                                tokens_in_argument += 1;
+                                continue;
+                            }
+                            "," if depth == 1 => {
+                                if argument < path_args
+                                    && tokens_in_argument == 1
+                                    && strings_in_argument == 1
+                                {
+                                    if let Some(key) = lone_string {
+                                        out.insert(key);
+                                    }
+                                }
+                                argument += 1;
+                                tokens_in_argument = 0;
+                                strings_in_argument = 0;
+                                lone_string = None;
+                                continue;
+                            }
+                            _ => {
+                                tokens_in_argument += 1;
+                                continue;
+                            }
                         }
-                        continue;
                     }
-                    match token.text.as_str() {
-                        "(" => depth += 1,
-                        ")" => depth = depth.saturating_sub(1),
-                        "," if depth == 1 => {
-                            argument += 1;
-                            argument_has_string = false;
-                        }
-                        _ => {}
+                    tokens_in_argument += 1;
+                    strings_in_argument += 1;
+                    lone_string = Some(token_key(token));
+                }
+                if argument < path_args && tokens_in_argument == 1 && strings_in_argument == 1 {
+                    if let Some(key) = lone_string {
+                        out.insert(key);
                     }
                 }
             }

@@ -241,6 +241,11 @@ pub struct SecretRedactor {
     /// substring probes that must ignore very short values. Keyed by
     /// the requested minimum so one build serves a whole pass.
     long_filtered: std::cell::RefCell<Option<(usize, Box<SecretRedactor>)>>,
+    /// Known values that themselves contain [`MARKER`]. Segment
+    /// scanning treats markers as opaque, so these are matched against
+    /// the unsplit text before the ordinary pass; otherwise a secret
+    /// that embeds the marker could never be redacted.
+    marker_patterns: std::cell::RefCell<Vec<String>>,
 }
 
 impl std::fmt::Debug for SecretRedactor {
@@ -275,6 +280,7 @@ impl Default for SecretRedactor {
             long: std::cell::RefCell::new(Vec::new()),
             linear_only: std::cell::Cell::new(false),
             long_filtered: std::cell::RefCell::new(None),
+            marker_patterns: std::cell::RefCell::new(Vec::new()),
         }
     }
 }
@@ -295,7 +301,11 @@ impl SecretRedactor {
         // it; drop it so the next probe sees the whole set.
         self.long_filtered.borrow_mut().take();
         self.min_len.set(self.min_len.get().min(text.len()));
-        if text.len() > MAX_AC_PATTERN {
+        if text.contains(MARKER) {
+            // Segment scanning cannot see a pattern that spans the
+            // marker; keep it for the unsplit pre-pass.
+            self.marker_patterns.borrow_mut().push(text.clone());
+        } else if text.len() > MAX_AC_PATTERN {
             self.long.borrow_mut().push(text.clone());
         } else {
             // Binary-counter placement: merge equal batches upward so
@@ -401,12 +411,13 @@ impl SecretRedactor {
     /// or None when nothing matched (so callers can keep their fast
     /// path and report taint honestly).
     ///
-    /// Existing markers are opaque: the text is split on [`MARKER`] and
-    /// only the non-marker segments are scanned. A secret containing
-    /// the marker itself cannot be expressed without ambiguity; the
-    /// marker wins, deterministically.
+    /// Existing markers are opaque: the ordinary pass splits the text
+    /// on [`MARKER`] and scans only the non-marker segments. A known
+    /// value that itself contains the marker is matched against the
+    /// unsplit text first (see [`Self::expand_marker_patterns`]), so a
+    /// secret can never hide behind the marker.
     pub fn redact_text(&self, text: &str) -> Option<String> {
-        if text == MARKER || self.min_len.get() == usize::MAX {
+        if text.is_empty() || self.min_len.get() == usize::MAX {
             return None;
         }
         // A text shorter than the shortest secret cannot match; no
@@ -414,8 +425,55 @@ impl SecretRedactor {
         if self.min_len.get() > text.len() {
             return None;
         }
+        let expanded = self.expand_marker_patterns(text);
+        let working = expanded.as_deref().unwrap_or(text);
         self.ensure_automata();
-        self.scan(text)
+        let scanned = self.scan(working);
+        match (expanded, scanned) {
+            (None, None) => None,
+            (Some(expanded), None) => Some(expanded),
+            (None, Some(scanned)) | (Some(_), Some(scanned)) => Some(scanned),
+        }
+    }
+
+    /// Replace every occurrence of a known marker-containing value with
+    /// [`MARKER`]. Leftmost-longest, like the ordinary pass. `None`
+    /// when no such value occurs, so the caller keeps its fast path.
+    fn expand_marker_patterns(&self, text: &str) -> Option<String> {
+        let patterns = self.marker_patterns.borrow();
+        if patterns.is_empty() {
+            return None;
+        }
+        let mut out = String::with_capacity(text.len());
+        let mut cursor = 0usize;
+        let mut changed = false;
+        loop {
+            let mut best: Option<(usize, usize)> = None;
+            for pattern in patterns.iter() {
+                if let Some(relative) = text[cursor..].find(pattern.as_str()) {
+                    let start = cursor + relative;
+                    let end = start + pattern.len();
+                    if best.is_none_or(|(best_start, best_end)| {
+                        start < best_start || (start == best_start && end > best_end)
+                    }) {
+                        best = Some((start, end));
+                    }
+                }
+            }
+            match best {
+                Some((start, end)) => {
+                    out.push_str(&text[cursor..start]);
+                    out.push_str(MARKER);
+                    cursor = end;
+                    changed = true;
+                }
+                None => {
+                    out.push_str(&text[cursor..]);
+                    break;
+                }
+            }
+        }
+        changed.then_some(out)
     }
 
     /// Marks the start of an output pass. Batch matchers are built once
@@ -1034,7 +1092,7 @@ fn set_material_path(map: &mut HashMap<NodeId, String>, node: NodeId, path: &str
 }
 
 /// Rename destinations inside a computed-profile path record.
-fn rename_computed_paths(entries: &mut [(String, NodeId)], from: &str, to: &str) {
+fn rename_computed_paths(entries: &mut Vec<(String, NodeId)>, from: &str, to: &str) {
     if split_parent(from).1.starts_with('[') {
         return;
     }
@@ -1044,6 +1102,9 @@ fn rename_computed_paths(entries: &mut [(String, NodeId)], from: &str, to: &str)
     } else {
         format!("{parent}.{to}")
     };
+    // The evaluator's rename replaces any value already at the
+    // destination; stale records there must not keep seeding.
+    entries.retain(|(known, _)| !path_under(known, &dest));
     for (path, _) in entries.iter_mut() {
         if path_under(path, from) {
             let suffix = &path[from.len()..];
@@ -1213,8 +1274,8 @@ impl StaticStrings {
             return None;
         }
         // A reference cycle cannot produce text. Stop on the revisit
-        // instead of counting hops, so every legal alias chain (a
-        // `let` chain of any length) still resolves.
+        // instead of counting hops, so a long alias chain resolves; the
+        // separate depth bound below fails the analysis closed past it.
         if !self.visiting.insert(id) {
             return None;
         }
@@ -1839,8 +1900,17 @@ impl SecretProfile {
                                     continue;
                                 }
                                 let provided_only = !data_paths.contains(path);
-                                if !provided_only && path_is_material(&material_paths, path) {
-                                    replacement_prefixes.push(path.clone());
+                                if !provided_only {
+                                    // A possible selection may replace
+                                    // this base value, so the path is not
+                                    // a stable benign export: no profile
+                                    // run can be proven. Drop it from
+                                    // visibility instead of suppressing a
+                                    // seed based on the base tree.
+                                    export_paths.retain(|known| !path_under(known, path));
+                                    if path_is_material(&material_paths, path) {
+                                        replacement_prefixes.push(path.clone());
+                                    }
                                 }
                             }
                             for (path, node) in profile_paths {
@@ -2037,6 +2107,10 @@ impl SecretProfile {
                                 fallback_secret_paths.insert(dest);
                             }
                             rename_material_node_paths(&mut material_node_paths, &from, &to);
+                            // Computed-profile records follow the same
+                            // same-parent move; a record already at the
+                            // destination is replaced, like the tree.
+                            rename_computed_paths(&mut computed_profile_paths, &from, &to);
                         }
                         continue;
                     }
@@ -2116,9 +2190,17 @@ impl SecretProfile {
         // Every material path's current value is material: read the node
         // from the post-transform map, so a value a later profile or
         // patch moved or replaced is judged where it now is.
+        //
+        // Roots are visited in a deterministic order. A deep chain that
+        // a shallow alias also reaches resolves differently depending on
+        // which root the resolver saw first (the shared suffix is cached
+        // below the depth bound), so hash order would leak into the
+        // analysis result.
         let mut material_at_path: HashSet<NodeId> = HashSet::new();
         let mut static_strings = StaticStrings::default();
-        for path in &fallback_secret_paths {
+        let mut fallback_order: Vec<&String> = fallback_secret_paths.iter().collect();
+        fallback_order.sort();
+        for path in fallback_order {
             let Some(node) = paths.get(path).copied() else {
                 continue;
             };
@@ -2139,11 +2221,13 @@ impl SecretProfile {
         }
         // Structural material: every literal inside a locator subtree,
         // including nodes that never enter the exported tree.
-        for id in &nodes {
-            if export_visible.contains(id) {
+        let mut node_order: Vec<NodeId> = nodes.iter().copied().collect();
+        node_order.sort_by_key(|id| id.0);
+        for id in node_order {
+            if export_visible.contains(&id) {
                 continue;
             }
-            if let Some(text) = static_strings.get(module, *id) {
+            if let Some(text) = static_strings.get(module, id) {
                 literals.insert(text.to_string());
             }
         }
@@ -2154,7 +2238,9 @@ impl SecretProfile {
         // node map: a sibling transform erases one record, and the other
         // still answers. Seed directly (the union is deliberately
         // conservative).
-        for (path, node) in &computed_profile_paths {
+        let mut computed_order: Vec<&(String, NodeId)> = computed_profile_paths.iter().collect();
+        computed_order.sort_by(|a, b| a.0.cmp(&b.0).then(a.1 .0.cmp(&b.1 .0)));
+        for (path, node) in computed_order {
             if !fallback_secret_paths.contains(path) && !nodes.contains(node) {
                 continue;
             }

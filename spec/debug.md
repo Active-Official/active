@@ -150,8 +150,11 @@ that sits at a material path seeds its resolved text, so a copy
 elsewhere redacts; a node still visible through a benign export path
 after every transform stays readable in that slot. Known secret
 substrings
-are redacted longest-first, and an existing marker is opaque, so a
-secret whose text overlaps the marker cannot rewrite it. A line break
+are redacted longest-first, and an existing marker is opaque to the
+ordinary pass, so a secret whose text overlaps the marker cannot
+rewrite it; a known value that itself contains the marker is matched
+against the unsplit text first, so it can never hide behind the
+marker. A line break
 between `secret` and `(` (which the parser rejects) is normalized for
 redaction only, so malformed calls still redact. The `secret` keyword
 matches case-insensitively, so `Secret(` and `secret.Env(` are still

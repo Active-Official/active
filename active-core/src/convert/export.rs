@@ -8,6 +8,9 @@ use crate::ir::Value;
 
 /// Render the evaluated tree as YAML 1.2 (block style) through the
 /// canonical JSON model: one mapping, two syntaxes.
+///
+/// Profile-unaware: a materialised blob payload is emitted as-is.
+/// Secret-bearing callers use [`super::value_to_yaml_string_with`].
 pub fn value_to_yaml_string(v: &Value) -> Result<String, String> {
     serde_yaml::to_string(&super::value_to_json(v))
         .map_err(|e| format!("YAML serialization failed: {e}"))
@@ -18,6 +21,9 @@ pub fn value_to_yaml_string(v: &Value) -> Result<String, String> {
 /// plus diagnostics (currently only W006 null omissions), or a hard
 /// error for shapes TOML cannot hold at all (mixed-type arrays —
 /// announced with a path, never silently dropped).
+///
+/// Profile-unaware: a materialised blob payload is emitted as-is.
+/// Secret-bearing callers use [`super::value_to_toml_string_with`].
 pub fn value_to_toml_string(v: &Value) -> Result<(String, Vec<Diagnostic>), String> {
     check_toml_homogeneous(v, "")?;
     let mut diags = Vec::new();

@@ -197,7 +197,8 @@ fn eval_inner(source: &str) -> String {
             // Structural material (plain locator sources and derived
             // values) is redacted before serialization, matching the
             // CLI and FFI exporters.
-            let profile = active_core::secret::SecretProfile::analyze(&module);
+            let mut profile = active_core::secret::SecretProfile::analyze(&module);
+            profile.absorb_environment(&engine.env);
             let redacted = active_core::convert::redact_value(&profile, &value);
             let json = active_core::convert::value_to_pretty_json(&redacted);
             let lines: Vec<String> = diags

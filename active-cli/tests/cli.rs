@@ -3127,3 +3127,55 @@ fn materialise_blobs_fails_closed_on_a_path_material_blob() {
     let text = String::from_utf8_lossy(&out.stderr);
     assert!(text.contains("B003"), "{text}");
 }
+
+#[test]
+fn eval_redacts_runtime_secrets_copied_outside_the_export_tree() {
+    // Review 46: a let-bound runtime secret is not part of the exported
+    // tree, so the export must seed the redactor from material env
+    // values. Both the plain copy and the materialised payload drop.
+    let f = fixture(
+        "runtime_secret_let.active",
+        "let s = env.ACTIVE_R46_A\nlet k = secret(s)\nlet b = env.ACTIVE_R46_B\nf = blob(\"text/plain\", b)\ncopy = b\n",
+    );
+    let out = active()
+        .arg("eval")
+        .arg(&f)
+        .env("ACTIVE_R46_A", "r46-runtime-token")
+        .env("ACTIVE_R46_B", "r46-runtime-token")
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(!text.contains("r46-runtime-token"), "{text}");
+    assert!(text.contains("***SECRET***"), "{text}");
+}
+
+#[test]
+fn eval_redacts_a_profile_selected_env_copy() {
+    // Review 46: a profile-selected plain env read is material only by
+    // path; a copy of its value elsewhere must still redact.
+    let f = fixture(
+        "runtime_secret_profile.active",
+        "let e = env.ACTIVE_R46_LIVE\nlet p = env.ACTIVE_R46_SRC\nk = secret(p)\nn = p\nactive_profile = \"pr\"\nprofile \"pr\" { n = e }\nlet d = env.ACTIVE_R46_DUP\ncopy = d\nf = blob(\"text/plain\", d)\n",
+    );
+    let out = active()
+        .arg("eval")
+        .arg(&f)
+        .env("ACTIVE_R46_LIVE", "r46-profile-token")
+        .env("ACTIVE_R46_SRC", "r46-source-token")
+        .env("ACTIVE_R46_DUP", "r46-profile-token")
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(!text.contains("r46-profile-token"), "{text}");
+    assert!(text.contains("***SECRET***"), "{text}");
+}

@@ -82,19 +82,13 @@ pub fn secret_subtree(module: &Module, root: NodeId, set: &mut HashSet<NodeId>) 
 /// pattern in linear time instead.
 const MAX_AC_PATTERN: usize = 4096;
 
-/// Values inserted since the last fold are scanned linearly. Folding
-/// at a fraction of the automaton set (or this floor) grows the set
-/// with the data, so total rebuild work is O(N log N) instead of
-/// O(N² / floor).
-const FOLD_THRESHOLD: usize = 64;
-
 /// Per-pattern cursor over one marker-free segment: the next known
 /// match start and whether the pattern has no further match in it.
-/// Caching both keeps linear-partition scanning at O(text) per
-/// pattern instead of rescanning the remainder after every match.
+/// Caching both keeps the linear fallback at O(text) per pattern
+/// instead of rescanning the remainder after every match.
 type PatternCursor = (Option<usize>, bool);
 
-/// Next match of one linear-partition pattern at or after `last`.
+/// Next match of one linearly scanned pattern at or after `last`.
 /// Each byte of a segment is searched at most once per pattern.
 fn linear_next(
     pattern: &str,
@@ -103,6 +97,10 @@ fn linear_next(
     cursor: &mut PatternCursor,
 ) -> Option<(usize, usize)> {
     if cursor.1 {
+        return None;
+    }
+    if pattern.len() > segment.len() - last {
+        cursor.1 = true;
         return None;
     }
     let start = match cursor.0 {
@@ -135,13 +133,57 @@ fn consider(start: usize, end: usize, best: &mut Option<(usize, usize)>) {
     }
 }
 
-/// A deterministic set of secret strings. Insertion is O(1) amortized
-/// (a HashSet guards duplicates). Redaction runs one Aho–Corasick scan
-/// over the automaton-eligible values plus one forward cursor pass per
-/// long or pending value, so the cost is O(text + matches) per pattern
-/// rather than a rescan of the text per secret, and no benign value is
-/// ever wholesale-marked.
-#[derive(Debug, Clone)]
+/// One log-structured batch of automaton-eligible values. The matcher
+/// is built lazily and rebuilt only when the batch changes, so an
+/// insert costs O(1) amortized and a scan visits O(log n) automata
+/// instead of rescanning a growing pending set.
+#[derive(Clone, Default)]
+struct Level {
+    values: Vec<String>,
+    automaton: Option<std::sync::Arc<aho_corasick::AhoCorasick>>,
+}
+
+impl Level {
+    fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
+    /// Build the matcher for this batch. Values are sorted longest
+    /// first so the automaton's leftmost-first tie-break keeps the
+    /// longer match at an equal start.
+    fn ensure(&mut self) -> Result<(), ()> {
+        if self.values.is_empty() {
+            self.automaton = None;
+            return Ok(());
+        }
+        if self.automaton.is_some() {
+            return Ok(());
+        }
+        self.values
+            .sort_unstable_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+        match aho_corasick::AhoCorasick::builder()
+            .match_kind(aho_corasick::MatchKind::LeftmostFirst)
+            // A long pattern would make the default automaton enumerate
+            // a dense transition table. The noncontiguous NFA builds
+            // and scans in linear time with bounded memory instead.
+            .kind(Some(aho_corasick::AhoCorasickKind::NoncontiguousNFA))
+            .build(self.values.iter().map(String::as_str))
+        {
+            Ok(built) => {
+                self.automaton = Some(std::sync::Arc::new(built));
+                Ok(())
+            }
+            Err(_) => Err(()),
+        }
+    }
+}
+
+/// A deterministic set of secret strings. Insertion is amortized
+/// O(log n) (a HashSet guards duplicates; each value joins one
+/// log-structured batch). Redaction scans at most O(log n) automata
+/// plus one forward cursor pass per long pattern, so no insert pattern
+/// costs a rescan of the text and no benign value is wholesale-marked.
+#[derive(Clone)]
 pub struct SecretRedactor {
     /// Authoritative set, insertion order.
     values: std::cell::RefCell<Vec<String>>,
@@ -149,23 +191,30 @@ pub struct SecretRedactor {
     /// Shortest value, so a text that cannot contain any secret is
     /// rejected in O(1).
     min_len: std::cell::Cell<usize>,
-    /// Automaton-eligible patterns, longest first.
-    base: std::cell::RefCell<Vec<String>>,
-    /// Patterns longer than [`MAX_AC_PATTERN`], longest first.
+    /// Automaton batches, each covering a disjoint subset of values.
+    levels: std::cell::RefCell<Vec<Level>>,
+    /// Patterns longer than [`MAX_AC_PATTERN`], scanned linearly.
     long: std::cell::RefCell<Vec<String>>,
-    /// Values inserted since the last fold.
-    pending: std::cell::RefCell<Vec<String>>,
-    /// Linear multi-pattern matcher over `base`, built lazily. `None`
-    /// while `base` is empty or when the build failed.
-    automaton: std::cell::RefCell<Option<std::sync::Arc<aho_corasick::AhoCorasick>>>,
-    /// The automaton could not be built. Scanning stays correct but
-    /// linear; never report a text clean because construction failed.
+    /// A matcher could not be built. Scanning stays correct but linear;
+    /// never report a text clean because construction failed.
     linear_only: std::cell::Cell<bool>,
+}
+
+impl std::fmt::Debug for SecretRedactor {
+    /// Counts only: values are secret material and must not reach a
+    /// diagnostic or a failed assertion's output.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecretRedactor")
+            .field("values", &self.values.borrow().len())
+            .field("levels", &self.levels.borrow().len())
+            .field("linear_only", &self.linear_only.get())
+            .finish()
+    }
 }
 
 impl PartialEq for SecretRedactor {
     /// Set equality: two redactors with the same values compare equal
-    /// regardless of insertion order or fold state.
+    /// regardless of insertion order or batch state.
     fn eq(&self, other: &Self) -> bool {
         self.seen == other.seen
     }
@@ -179,10 +228,8 @@ impl Default for SecretRedactor {
             values: std::cell::RefCell::new(Vec::new()),
             seen: HashSet::new(),
             min_len: std::cell::Cell::new(usize::MAX),
-            base: std::cell::RefCell::new(Vec::new()),
+            levels: std::cell::RefCell::new(Vec::new()),
             long: std::cell::RefCell::new(Vec::new()),
-            pending: std::cell::RefCell::new(Vec::new()),
-            automaton: std::cell::RefCell::new(None),
             linear_only: std::cell::Cell::new(false),
         }
     }
@@ -197,53 +244,50 @@ impl SecretRedactor {
         let text = text.into();
         // Empty strings would match every position; they are not
         // material.
-        if !text.is_empty() && self.seen.insert(text.clone()) {
-            self.min_len.set(self.min_len.get().min(text.len()));
-            self.pending.borrow_mut().push(text.clone());
-            self.values.borrow_mut().push(text);
-        }
-    }
-
-    /// Move pending values into the automaton-eligible or long set and
-    /// rebuild the automaton. Amortized: folding waits for the pending
-    /// set to reach a fraction of the base set, so each rebuild grows
-    /// with the data and total build work is amortized linear in the
-    /// final set size.
-    fn fold(&self) {
-        let mut pending = self.pending.borrow_mut();
-        if pending.is_empty() {
+        if text.is_empty() || !self.seen.insert(text.clone()) {
             return;
         }
-        let mut base = self.base.borrow_mut();
-        let mut long = self.long.borrow_mut();
-        for value in pending.drain(..) {
-            if value.len() > MAX_AC_PATTERN {
-                long.push(value);
-            } else {
-                base.push(value);
+        self.min_len.set(self.min_len.get().min(text.len()));
+        if text.len() > MAX_AC_PATTERN {
+            self.long.borrow_mut().push(text.clone());
+        } else {
+            // Binary-counter placement: merge equal batches upward so
+            // at most one batch per power-of-two size exists.
+            let mut carry = vec![text.clone()];
+            let mut levels = self.levels.borrow_mut();
+            let mut index = 0;
+            loop {
+                if index == levels.len() {
+                    levels.push(Level::default());
+                }
+                if levels[index].is_empty() {
+                    levels[index].values = carry;
+                    levels[index].automaton = None;
+                    break;
+                }
+                let existing = std::mem::take(&mut levels[index].values);
+                levels[index].automaton = None;
+                carry.extend(existing);
+                index += 1;
             }
         }
-        base.sort_unstable_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
-        long.sort_unstable_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+        self.values.borrow_mut().push(text);
+    }
+
+    /// Build every batch matcher. Called before a pass and before each
+    /// scan, so a batch inserted after the last pass is covered.
+    fn ensure_automata(&self) {
         if self.linear_only.get() {
             return;
         }
-        if base.is_empty() {
-            self.automaton.borrow_mut().take();
-            return;
-        }
-        match aho_corasick::AhoCorasick::builder()
-            .match_kind(aho_corasick::MatchKind::LeftmostFirst)
-            // A long pattern would make the default automaton enumerate
-            // a dense transition table. The noncontiguous NFA builds
-            // and scans in linear time with bounded memory instead.
-            .kind(Some(aho_corasick::AhoCorasickKind::NoncontiguousNFA))
-            .build(base.iter().map(String::as_str))
-        {
-            Ok(built) => *self.automaton.borrow_mut() = Some(std::sync::Arc::new(built)),
-            Err(_) => {
-                self.automaton.borrow_mut().take();
+        let mut levels = self.levels.borrow_mut();
+        for level in levels.iter_mut() {
+            if level.ensure().is_err() {
                 self.linear_only.set(true);
+                for level in levels.iter_mut() {
+                    level.automaton = None;
+                }
+                return;
             }
         }
     }
@@ -283,38 +327,24 @@ impl SecretRedactor {
         if self.min_len.get() > text.len() {
             return None;
         }
-        let pending_len = self.pending.borrow().len();
-        if pending_len > 0 {
-            let fold_at = FOLD_THRESHOLD.max(self.base.borrow().len() / 8);
-            if pending_len >= fold_at || self.base.borrow().is_empty() {
-                self.fold();
-            }
-        }
+        self.ensure_automata();
         self.scan(text)
     }
 
-    /// Marks the start of an output pass: pending values are folded into
-    /// the automaton once, so the pass itself does no rebuild work and
-    /// repeated exports are call-order independent.
+    /// Marks the start of an output pass. Batch matchers are built once
+    /// here, so the pass itself does no build work and repeated exports
+    /// are call-order independent.
     pub fn begin_pass(&self) {
-        self.fold();
+        self.ensure_automata();
     }
 
-    /// Scan one text, combining the automaton with a cursor scan of the
-    /// long and pending values. The leftmost match wins; at the same
-    /// start the longest wins, which is why `base` is sorted
-    /// longest-first. Linear-partition cursors keep each pattern's
-    /// segment search to one forward pass.
+    /// Scan one text across the batch automata and the linear
+    /// partitions. The leftmost match wins; at the same start the
+    /// longest wins.
     fn scan(&self, text: &str) -> Option<String> {
-        let base = self.base.borrow();
+        let levels = self.levels.borrow();
         let long = self.long.borrow();
-        let pending = self.pending.borrow();
-        let automaton = self.automaton.borrow();
-        let automaton = if self.linear_only.get() {
-            None
-        } else {
-            automaton.as_ref()
-        };
+        let linear = self.linear_only.get();
         let mut out: Option<String> = None;
         let mut offset = 0usize;
         // Existing markers are opaque: scan only non-marker segments.
@@ -329,32 +359,33 @@ impl SecretRedactor {
             let prefix = offset;
             offset += segment.len() + MARKER.len();
             let mut long_cursors: Vec<PatternCursor> = vec![(None, false); long.len()];
-            let mut pending_cursors: Vec<PatternCursor> = vec![(None, false); pending.len()];
-            let mut base_cursors: Vec<PatternCursor> = if automaton.is_none() {
-                vec![(None, false); base.len()]
+            let mut level_cursors: Vec<Vec<PatternCursor>> = if linear {
+                levels
+                    .iter()
+                    .map(|level| vec![(None, false); level.values.len()])
+                    .collect()
             } else {
                 Vec::new()
             };
             let mut last = 0usize;
             loop {
                 let mut best: Option<(usize, usize)> = None;
-                if let Some(automaton) = automaton {
-                    if let Some(found) = automaton.find(&segment[last..]) {
-                        let start = last + found.start();
-                        best = Some((start, last + found.end()));
+                for (level_index, level) in levels.iter().enumerate() {
+                    if linear {
+                        let cursors = &mut level_cursors[level_index];
+                        for (pattern, cursor) in level.values.iter().zip(cursors.iter_mut()) {
+                            if let Some((start, end)) = linear_next(pattern, segment, last, cursor)
+                            {
+                                consider(start, end, &mut best);
+                            }
+                        }
+                    } else if let Some(automaton) = level.automaton.as_ref() {
+                        if let Some(found) = automaton.find(&segment[last..]) {
+                            consider(last + found.start(), last + found.end(), &mut best);
+                        }
                     }
                 }
                 for (pattern, cursor) in long.iter().zip(long_cursors.iter_mut()) {
-                    if let Some((start, end)) = linear_next(pattern, segment, last, cursor) {
-                        consider(start, end, &mut best);
-                    }
-                }
-                for (pattern, cursor) in pending.iter().zip(pending_cursors.iter_mut()) {
-                    if let Some((start, end)) = linear_next(pattern, segment, last, cursor) {
-                        consider(start, end, &mut best);
-                    }
-                }
-                for (pattern, cursor) in base.iter().zip(base_cursors.iter_mut()) {
                     if let Some((start, end)) = linear_next(pattern, segment, last, cursor) {
                         consider(start, end, &mut best);
                     }
@@ -1829,6 +1860,22 @@ impl SecretProfile {
     /// path-tainted.
     pub fn env_is_material(&self, name: &str) -> bool {
         self.material_envs.contains(name)
+    }
+
+    /// Insert every material environment value into the literal set.
+    /// A runtime secret can be copied into an exported value through a
+    /// path the export tree does not carry (a `let` binding, a profile
+    /// replacement); seeding the value here makes the copy redact
+    /// wherever it surfaces. Call after analysis, before export.
+    pub fn absorb_environment(&mut self, env: &HashMap<String, String>) {
+        let values: Vec<String> = self
+            .material_envs
+            .iter()
+            .filter_map(|name| env.get(name).cloned())
+            .collect();
+        for value in values {
+            self.literals.insert(value);
+        }
     }
 
     /// The path at which a node is material without being globally

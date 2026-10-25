@@ -25,9 +25,25 @@ pub fn inspect_path_with_profile(
     path: &str,
     override_profile: Option<&str>,
 ) -> Result<JsonValue, String> {
+    inspect_path_with_profile_env(module, root, path, override_profile, None)
+}
+
+/// Inspect with the environment snapshot that produced the tree. A
+/// runtime secret copied into a payload can have no authored literal in
+/// the profile, so the environment's material values are seeded too.
+pub fn inspect_path_with_profile_env(
+    module: &Module,
+    root: &Value,
+    path: &str,
+    override_profile: Option<&str>,
+    env: Option<&std::collections::HashMap<String, String>>,
+) -> Result<JsonValue, String> {
     let cone = crate::convert::project_path(root, path)
         .map_err(|why| format!("cannot inspect `{path}`: {why}"))?;
-    let profile = SecretProfile::analyze_with_profile(module, override_profile);
+    let mut profile = SecretProfile::analyze_with_profile(module, override_profile);
+    if let Some(env) = env {
+        profile.absorb_environment(env);
+    }
     profile.begin_redaction_pass();
     // Runtime secrets live in the evaluated tree, not in the profile's
     // authored literals; seed both so a copy in any inspected value is

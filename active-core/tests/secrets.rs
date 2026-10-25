@@ -1772,6 +1772,35 @@ fn runtime_env_secret_is_swept_from_payloads_and_copies() {
 }
 
 #[test]
+fn let_bound_runtime_secret_is_swept_from_payloads_and_inspect() {
+    // Review 46: a `let`-bound secret never enters the exported tree,
+    // so the environment's material values must seed the redactor.
+    let raw = "sd-token-let-r46";
+    let src = "let s = env.ACTIVE_R46_A\nlet k = secret(s)\nlet b = env.ACTIVE_R46_B\nf = blob(\"text/plain\", b)\ncopy = b\n";
+    let module = parse(src, "runtime-secret-let").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("ACTIVE_R46_A".to_string(), raw.to_string());
+    env.insert("ACTIVE_R46_B".to_string(), raw.to_string());
+    let mut engine = Engine::hermetic().with_env(env.clone());
+    engine.materialise_blobs = true;
+    let (value, _) = engine.evaluate(&module).expect("evaluate");
+    let mut profile = active_core::secret::SecretProfile::analyze(&module);
+    profile.absorb_environment(&env);
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(raw), "{json}");
+    assert!(!json.contains("payload_b64"), "{json}");
+    let inspected =
+        active_core::convert::inspect_path_with_profile_env(&module, &value, "f", None, Some(&env))
+            .expect("inspect");
+    assert!(!inspected.to_string().contains(raw), "{inspected}");
+    assert!(
+        !inspected.to_string().contains("payload_b64"),
+        "{inspected}"
+    );
+    assert_eq!(inspected["tainted"], true, "{inspected}");
+}
+
+#[test]
 fn blob_identity_and_payload_sweep_authored_secret_literals() {
     // Review 42: a blob's media type and payload can carry a known
     // secret literal; both are swept/fail-closed.

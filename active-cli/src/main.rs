@@ -709,11 +709,12 @@ fn run_inspect(
             let (value, _) = evaluation_engine
                 .evaluate(&module)
                 .map_err(|e| anyhow::anyhow!("cannot evaluate for inspection: {e}"))?;
-            let report = active_core::convert::inspect_path_with_profile(
+            let report = active_core::convert::inspect_path_with_profile_env(
                 &module,
                 &value,
                 path,
                 profile.as_deref(),
+                Some(&evaluation_engine.env),
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?;
             match format {
@@ -1342,10 +1343,11 @@ fn main() -> anyhow::Result<()> {
             // Structural material is redacted on the FULL tree, then
             // projected: the cone is already redacted at document
             // paths, so it must NOT be re-rooted and redacted again.
-            let profile = active_core::secret::SecretProfile::analyze_with_profile(
+            let mut profile = active_core::secret::SecretProfile::analyze_with_profile(
                 &module,
                 engine.profile_override.as_deref(),
             );
+            profile.absorb_environment(&engine.env);
             let full_value = active_core::convert::redact_value(&profile, &value);
             let value = match path.as_deref() {
                 Some(p) => active_core::convert::project_path(&full_value, p)
@@ -1591,10 +1593,11 @@ fn main() -> anyhow::Result<()> {
             for d in &diags {
                 report(d, &name);
             }
-            let profile = active_core::secret::SecretProfile::analyze_with_profile(
+            let mut profile = active_core::secret::SecretProfile::analyze_with_profile(
                 &module,
                 engine.profile_override.as_deref(),
             );
+            profile.absorb_environment(&engine.env);
             match to.as_str() {
                 "json" => println!(
                     "{}",
@@ -2374,7 +2377,8 @@ fn main() -> anyhow::Result<()> {
             for d in &diags {
                 report(d, &filename);
             }
-            let profile = active_core::secret::SecretProfile::analyze(&module);
+            let mut profile = active_core::secret::SecretProfile::analyze(&module);
+            profile.absorb_environment(&engine.env);
             let items = collect_items(
                 &module,
                 &active_core::convert::redact_value(&profile, &value),
@@ -2422,19 +2426,18 @@ fn main() -> anyhow::Result<()> {
                 effective.as_deref(),
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let mut secret_profile = active_core::secret::SecretProfile::analyze_with_profile(
+                &module,
+                engine.profile_override.as_deref(),
+            );
+            secret_profile.absorb_environment(&engine.env);
             let manifest = active_core::provenance::LockManifest::new(
                 format!(
                     "active-cli {} / active-core {}",
                     env!("CARGO_PKG_VERSION"),
                     active_core::VERSION
                 ),
-                &active_core::convert::redact_value(
-                    &active_core::secret::SecretProfile::analyze_with_profile(
-                        &module,
-                        engine.profile_override.as_deref(),
-                    ),
-                    &value,
-                ),
+                &active_core::convert::redact_value(&secret_profile, &value),
                 provenance,
             );
             let rendered = manifest.render();

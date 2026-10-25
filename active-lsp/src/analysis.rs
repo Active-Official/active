@@ -919,7 +919,13 @@ fn value_kind(value: &Value) -> &'static str {
 /// composites by kind only. `profile` names the material nodes so a
 /// scalar used as a secret locator (or an interpolation embedding one)
 /// renders the marker instead of its text.
-fn render_hover_value(profile: &SecretProfile, node: NodeId, path: &str, value: &Value) -> String {
+fn render_hover_value(
+    profile: &SecretProfile,
+    redactor: &active_core::secret::SecretRedactor,
+    node: NodeId,
+    path: &str,
+    value: &Value,
+) -> String {
     let composite = matches!(value, Value::Array(_) | Value::Table(_));
     if !composite && (profile.node_is_secret(node) || profile.path_is_secret(path)) {
         return active_core::secret::MARKER.to_string();
@@ -927,7 +933,7 @@ fn render_hover_value(profile: &SecretProfile, node: NodeId, path: &str, value: 
     match value {
         Value::Secret(_) => active_core::secret::MARKER.to_string(),
         Value::String(s) => {
-            let redacted = profile.redact_text(s).unwrap_or_else(|| s.clone());
+            let redacted = redactor.redact_text(s).unwrap_or_else(|| s.clone());
             let quoted = format!("{redacted:?}");
             if quoted.chars().count() > 80 {
                 format!("{}…", quoted.chars().take(79).collect::<String>())
@@ -1043,9 +1049,13 @@ pub fn hover_at(doc: &Doc, line: u32, character: u32) -> Option<Hover> {
         if let Some(value) = value_at_path(root, &path) {
             let profile = SecretProfile::analyze(&doc.module);
             profile.begin_redaction_pass();
+            // Seed path-material plain values from the evaluated tree:
+            // a profile-selected env copy is material by path, not by
+            // value kind, and its text can appear in a sibling.
+            let redactor = active_core::convert::redactor_with_runtime_secrets(&profile, root);
             lines.push(format!(
                 "= {}",
-                render_hover_value(&profile, node, &path, value)
+                render_hover_value(&profile, &redactor, node, &path, value)
             ));
         }
     }

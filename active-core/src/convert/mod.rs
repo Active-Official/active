@@ -40,9 +40,14 @@ pub use import::{
 pub use inspect::{schema_inspect, INSPECT_VERSION};
 pub use suggest::{suggest_patches, suggest_patches_structured, PatchKind, PatchSuggestion};
 pub use value_inspect::{
-    inspect_path, inspect_path_with_profile, render_text as render_inspection_text,
+    inspect_path, inspect_path_with_profile, inspect_path_with_profile_env,
+    render_text as render_inspection_text,
 };
 
+/// Profile-unaware JSON mapping. A materialised blob payload is emitted
+/// as-is; callers handling secret material must use [`value_to_json_with`]
+/// (or [`redact_value`] first), which sweeps authored and runtime
+/// secrets.
 pub fn value_to_json(v: &Value) -> JsonValue {
     match v {
         Value::Null => JsonValue::Null,
@@ -105,33 +110,49 @@ pub fn value_to_json(v: &Value) -> JsonValue {
     }
 }
 
-/// Seed a redactor with the authored literals and every runtime secret
-/// in the evaluated tree. A runtime secret (an env read wrapped by
-/// `secret()`) has no authored literal to find, so a copy of its text in
-/// a plain string, a blob media type, or materialised payload bytes
-/// would otherwise render verbatim.
-pub(crate) fn redactor_with_runtime_secrets(
-    profile: &SecretProfile,
-    value: &Value,
-) -> SecretRedactor {
-    fn seed(value: &Value, redactor: &mut SecretRedactor) {
+/// Seed a redactor with the authored literals plus every runtime secret
+/// reachable in the evaluated tree. A runtime secret (an env read
+/// wrapped by `secret()`) has no authored literal to find, and a
+/// profile-selected plain value is material only by its path, so both
+/// forms must be collected here; their copies in a plain string, a blob
+/// media type, or materialised payload bytes would otherwise render
+/// verbatim.
+pub fn redactor_with_runtime_secrets(profile: &SecretProfile, value: &Value) -> SecretRedactor {
+    fn seed(profile: &SecretProfile, redactor: &mut SecretRedactor, path: &str, value: &Value) {
         match value {
             Value::Secret(text) => redactor.insert(text.clone()),
+            // Seed a plain string only when its node is globally
+            // material. A profile selection can place a BENIGN value at
+            // a material path; seeding that would hide the same value
+            // in its own data slot. A selected env read is in `nodes`
+            // (its env name is material), so it still seeds.
+            Value::String(text)
+                if profile
+                    .path_node(path)
+                    .is_some_and(|id| profile.node_is_secret(id)) =>
+            {
+                redactor.insert(text.clone());
+            }
             Value::Array(items) => {
-                for item in items {
-                    seed(item, redactor);
+                for (index, item) in items.iter().enumerate() {
+                    seed(profile, redactor, &format!("{path}[{index}]"), item);
                 }
             }
             Value::Table(map) => {
-                for item in map.values() {
-                    seed(item, redactor);
+                for (key, item) in map {
+                    let child = if path.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{path}.{key}")
+                    };
+                    seed(profile, redactor, &child, item);
                 }
             }
             _ => {}
         }
     }
     let mut redactor = profile.literals().clone();
-    seed(value, &mut redactor);
+    seed(profile, &mut redactor, "", value);
     redactor
 }
 
@@ -161,6 +182,8 @@ pub(crate) fn redacted_blob_json(hash: &[u8; 32], size: u64) -> JsonValue {
     }})
 }
 
+/// Profile-unaware pretty JSON. Secret-bearing callers must use
+/// [`value_to_pretty_json_with`].
 pub fn value_to_pretty_json(v: &Value) -> String {
     serde_json::to_string_pretty(&value_to_json(v)).unwrap_or_else(|_| "{}".into())
 }
@@ -175,9 +198,12 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
     // Runtime secrets live in the evaluated tree; authored literals
     // live in the profile. Copies need both.
     let redactor = redactor_with_runtime_secrets(profile, value);
+    let mut blob_material: std::collections::HashMap<[u8; 32], bool> =
+        std::collections::HashMap::new();
     fn walk(
         profile: &SecretProfile,
         redactor: &SecretRedactor,
+        blob_material: &mut std::collections::HashMap<[u8; 32], bool>,
         path: &str,
         value: &Value,
     ) -> Value {
@@ -186,7 +212,15 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
                 items
                     .iter()
                     .enumerate()
-                    .map(|(index, item)| walk(profile, redactor, &format!("{path}[{index}]"), item))
+                    .map(|(index, item)| {
+                        walk(
+                            profile,
+                            redactor,
+                            blob_material,
+                            &format!("{path}[{index}]"),
+                            item,
+                        )
+                    })
                     .collect(),
             ),
             Value::Table(map) => {
@@ -197,7 +231,10 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
                     } else {
                         format!("{path}.{key}")
                     };
-                    out.insert(key.clone(), walk(profile, redactor, &child, item));
+                    out.insert(
+                        key.clone(),
+                        walk(profile, redactor, blob_material, &child, item),
+                    );
                 }
                 Value::Table(out)
             }
@@ -212,9 +249,21 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
                 payload,
             } => {
                 // A secret can appear in identity metadata or inside a
-                // payload: sweep both.
+                // payload: sweep both. Payload materiality is memoized
+                // by content hash, so an aliased blob is scanned once.
                 let media_redacted = redactor.redact_text(media_type);
-                let payload_secret = blob_payload_is_material(redactor, payload.as_ref());
+                let payload_secret = if payload.is_some() {
+                    match blob_material.get(hash) {
+                        Some(known) => *known,
+                        None => {
+                            let material = blob_payload_is_material(redactor, payload.as_ref());
+                            blob_material.insert(*hash, material);
+                            material
+                        }
+                    }
+                } else {
+                    false
+                };
                 if *tainted
                     || profile.path_is_secret(path)
                     || media_redacted.is_some()
@@ -245,7 +294,7 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
             _ => value.clone(),
         }
     }
-    walk(profile, &redactor, "", value)
+    walk(profile, &redactor, &mut blob_material, "", value)
 }
 
 /// JSON export with structural-material redaction.

@@ -527,10 +527,11 @@ pub unsafe extern "C" fn active_eval(
                 // Structural material (a plain env read used as a secret
                 // locator, and anything built from it) is redacted before
                 // it crosses the boundary, matching the CLI exporters.
-                let profile = active_core::secret::SecretProfile::analyze_with_profile(
+                let mut profile = active_core::secret::SecretProfile::analyze_with_profile(
                     &parsed,
                     engine.profile_override.as_deref(),
                 );
+                profile.absorb_environment(&engine.env);
                 let value = active_core::convert::redact_value(&profile, &value);
                 Box::into_raw(Box::new(ActiveValue { value }))
             }

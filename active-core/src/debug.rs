@@ -752,6 +752,8 @@ fn structural_span_keys(
                 }
                 // Find the matching close on this line first: an
                 // unclosed directive is malformed and exempts nothing.
+                // String tokens never count as punctuation: a value
+                // such as `"("` must not change the nesting.
                 let mut probe = index + 3;
                 let mut depth = 1usize;
                 let mut close = None;
@@ -759,36 +761,50 @@ fn structural_span_keys(
                     if token.line != line {
                         break;
                     }
-                    match token.text.as_str() {
-                        "(" => depth += 1,
-                        ")" => {
-                            depth = depth.saturating_sub(1);
-                            if depth == 0 {
-                                close = Some(probe);
-                                break;
+                    if !is_string_token(token) {
+                        match token.text.as_str() {
+                            "(" => depth += 1,
+                            ")" => {
+                                depth = depth.saturating_sub(1);
+                                if depth == 0 {
+                                    close = Some(probe);
+                                    break;
+                                }
                             }
+                            _ => {}
                         }
-                        _ => {}
                     }
                     probe += 1;
                 }
                 let Some(close) = close else {
                     continue;
                 };
-                // `@patch(path, value)`: only the path is structure. The
-                // value is data and goes through the normal redaction
-                // passes. `@rename` takes two paths; `@remove` one.
+                // Only path arguments are structure: the path of
+                // `@patch`/`@remove`, the source and target of
+                // `@rename`. A value argument is data and goes through
+                // the normal redaction passes. The first string token
+                // of each path argument is exempt; an expression that
+                // builds a path from several tokens is not trusted.
+                let path_args = if directive == "rename" { 2 } else { 1 };
                 let mut depth = 1usize;
+                let mut argument = 0usize;
+                let mut argument_has_string = false;
                 for token in &tokens[index + 3..close] {
+                    if is_string_token(token) {
+                        if argument < path_args && !argument_has_string {
+                            out.insert(token_key(token));
+                            argument_has_string = true;
+                        }
+                        continue;
+                    }
                     match token.text.as_str() {
                         "(" => depth += 1,
                         ")" => depth = depth.saturating_sub(1),
-                        "," if directive == "patch" && depth == 1 => break,
-                        _ => {
-                            if is_string_token(token) {
-                                out.insert(token_key(token));
-                            }
+                        "," if depth == 1 => {
+                            argument += 1;
+                            argument_has_string = false;
                         }
+                        _ => {}
                     }
                 }
             }

@@ -2159,3 +2159,30 @@ fn computed_selector_seeds_inherited_material_profile_values() {
     assert!(!json.contains("hunter2-plain"), "{json}");
     assert!(!json.contains("hunter2-base"), "{json}");
 }
+
+#[test]
+fn computed_profile_seed_survives_a_sibling_transform() {
+    // Review 61 (HIGH): a patch on one computed-profile element erased
+    // the single recorded node path for a sibling. The maintained path
+    // records keep the surviving element material.
+    let src = "let x = \"hunter2-shared\"\nactive_profile = env.P ?: \"p\"\na = [secret(\"hunter2-b1\")]\nprofile \"p\" { a = [x, x] }\ndup = \"hunter2-shared\"\n@patch(\"a[0]\", \"benign\")\n";
+    let module = parse(src, "computed-sibling").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("P".to_string(), "p".to_string());
+    let engine = Engine::hermetic().with_env(env);
+    let (value, _, seeds) = engine.evaluate_with_seeds(&module).expect("evaluate");
+    let mut secret = active_core::secret::SecretProfile::analyze(&module);
+    secret.absorb_secrets(&seeds);
+    let json = active_core::convert::value_to_pretty_json_with(&secret, &value);
+    assert!(!json.contains("hunter2-shared"), "{json}");
+}
+
+#[test]
+fn substring_probe_cache_sees_values_inserted_later() {
+    // Review 61: the filtered automaton must be invalidated on insert.
+    let mut redactor = active_core::secret::SecretRedactor::new();
+    redactor.insert("ab");
+    assert!(!redactor.contains_substring("late hunter2-late", 4));
+    redactor.insert("hunter2-late");
+    assert!(redactor.contains_substring("late hunter2-late", 4));
+}

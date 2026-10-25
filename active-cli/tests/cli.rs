@@ -3191,6 +3191,27 @@ fn materialise_blobs_never_emits_a_computed_profile_payload() {
 }
 
 #[test]
+fn materialise_blobs_never_emits_a_computed_sibling_payload() {
+    // Review 61 (HIGH): a patch on one computed-profile element must not
+    // drop the seed for a surviving sibling.
+    let f = fixture(
+        "r61_computed_sibling.active",
+        "let x = \"hunter2-shared\"\nactive_profile = env.P ?: \"p\"\na = [secret(\"hunter2-b1\")]\nprofile \"p\" { a = [x, x] }\ndup = \"hunter2-shared\"\nb = blob(\"text/plain\", \"hunter2-shared\")\n@patch(\"a[0]\", \"benign\")\n",
+    );
+    let out = active()
+        .args(["eval", "--materialise-blobs"])
+        .arg(&f)
+        .env("P", "p")
+        .output()
+        .expect("run active");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stdout.contains("hunter2-shared"), "{stdout}");
+    assert!(!stderr.contains("hunter2-shared"), "{stderr}");
+    assert!(!stdout.contains("payload_b64"), "{stdout}");
+}
+
+#[test]
 fn eval_redacts_runtime_secrets_copied_outside_the_export_tree() {
     // Review 46: a let-bound runtime secret is not part of the exported
     // tree, so the export must seed the redactor from material env

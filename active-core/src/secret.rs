@@ -291,6 +291,9 @@ impl SecretRedactor {
         if text.is_empty() || !self.seen.insert(text.clone()) {
             return;
         }
+        // A substring cache built before this value existed would miss
+        // it; drop it so the next probe sees the whole set.
+        self.long_filtered.borrow_mut().take();
         self.min_len.set(self.min_len.get().min(text.len()));
         if text.len() > MAX_AC_PATTERN {
             self.long.borrow_mut().push(text.clone());
@@ -1168,8 +1171,9 @@ const MAX_STATIC_WORK: usize = 2_000_000;
 /// Bound on resolved bytes held by one analysis' resolver.
 const MAX_STATIC_BYTES: usize = 16 * 1024 * 1024;
 /// Recursion bound for one chain. Cycles are detected exactly by the
-/// `visiting` set; this only keeps a crafted deep chain off the stack.
-const MAX_STATIC_DEPTH: usize = 256;
+/// `visiting` set; this keeps a crafted deep chain off the stack.
+/// Exceeding it fails the whole analysis closed, like the other bounds.
+const MAX_STATIC_DEPTH: usize = 1024;
 
 /// Static string resolution through literals, references, bindings,
 /// semantic wrappers, and interpolations of the same. Used to seed a
@@ -1193,11 +1197,20 @@ impl StaticStrings {
     }
 
     fn get_at(&mut self, module: &Module, id: NodeId, depth: usize) -> Option<Rc<str>> {
-        if self.exhausted || depth > MAX_STATIC_DEPTH {
+        if self.exhausted {
             return None;
         }
+        // The cache answers before the depth check: a value resolved
+        // through a shallow path is still that value at any depth.
         if let Some(hit) = self.cache.get(&id) {
             return hit.clone();
+        }
+        if depth > MAX_STATIC_DEPTH {
+            // A chain this deep cannot be resolved safely, and returning
+            // `None` only for this node would let the analysis depend on
+            // where the caller started. Fail the whole analysis closed.
+            self.exhausted = true;
+            return None;
         }
         // A reference cycle cannot produce text. Stop on the revisit
         // instead of counting hops, so every legal alias chain (a
@@ -2137,8 +2150,14 @@ impl SecretProfile {
         // A computed selector cannot prove which profile ran, so its
         // paths stay out of `paths` and `export_paths`; the recorded
         // node is nevertheless material under every possible selection.
-        // Seed it directly (the union is deliberately conservative).
-        for node in material_node_paths.keys() {
+        // Use the maintained path records rather than the single-path
+        // node map: a sibling transform erases one record, and the other
+        // still answers. Seed directly (the union is deliberately
+        // conservative).
+        for (path, node) in &computed_profile_paths {
+            if !fallback_secret_paths.contains(path) && !nodes.contains(node) {
+                continue;
+            }
             material_at_path.insert(*node);
             if export_visible.contains(node) {
                 continue;

@@ -1259,3 +1259,23 @@ fn minimize_redacts_a_patch_value() {
     assert!(!reduced.contains("hunter2-patch"), "{reduced}");
     assert!(reduced.contains("@patch(\"t\""), "{reduced}");
 }
+
+#[test]
+fn minimize_redacts_extra_directive_arguments() {
+    // Review 61: only path arguments are structural. A second string on
+    // `@remove` is data even though the directive accepts one path.
+    let source = "s = secret(\"hunter2-x\")\n@remove(\"a\", \"hunter2-x\")\n";
+    let report = debug::minimal_case(source, "E019", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(reduced.contains("@remove(\"a\""), "{reduced}");
+    assert!(!reduced.contains("hunter2-x"), "{reduced}");
+}
+
+#[test]
+fn minimize_keeps_a_patch_path_before_a_parenthesis_value() {
+    // Review 61: a value that spells `(` is a string token, not nesting.
+    let source = "s = secret(\"hunter2-x\")\nx = 1 + \"a\"\n@patch(\"a\", \"(\")\n";
+    let report = debug::minimal_case(source, "T001", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(reduced.contains("@patch(\"a\""), "{reduced}");
+}

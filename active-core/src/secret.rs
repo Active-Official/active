@@ -79,11 +79,30 @@ pub fn secret_subtree(module: &Module, root: NodeId, set: &mut HashSet<NodeId>) 
 /// A deterministic set of secret strings. Insertion is O(1) amortized
 /// (a HashSet guards duplicates); the longest-first order is materialized
 /// once, lazily, before a redaction pass.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecretRedactor {
     values: std::cell::RefCell<Vec<String>>,
     seen: HashSet<String>,
     sorted: std::cell::Cell<bool>,
+    /// Character-comparison budget for one output pass. Exhaustion
+    /// redacts the remaining strings wholesale (fail closed), so a
+    /// pathological secret set cannot make post-evaluation redaction
+    /// unbounded.
+    work_left: std::cell::Cell<usize>,
+}
+
+/// Per-pass redaction work ceiling (secret count × text length).
+const MAX_REDACT_WORK: usize = 2_000_000;
+
+impl Default for SecretRedactor {
+    fn default() -> Self {
+        Self {
+            values: std::cell::RefCell::new(Vec::new()),
+            seen: HashSet::new(),
+            sorted: std::cell::Cell::new(true),
+            work_left: std::cell::Cell::new(MAX_REDACT_WORK),
+        }
+    }
 }
 
 impl SecretRedactor {
@@ -140,6 +159,16 @@ impl SecretRedactor {
         if values.is_empty() || text == MARKER {
             return None;
         }
+        // Bound the scan before starting: a huge secret set times a
+        // large string would otherwise run for minutes after the
+        // evaluation budgets have already passed.
+        let work = values.len().saturating_mul(text.len().max(1));
+        let left = self.work_left.get();
+        if work >= left {
+            self.work_left.set(0);
+            return Some(MARKER.to_string());
+        }
+        self.work_left.set(left - work);
         let mut out = String::with_capacity(text.len());
         let mut hit = false;
         for (index, segment) in text.split(MARKER).enumerate() {
@@ -172,6 +201,11 @@ impl SecretRedactor {
     /// Replace secret substrings inside every string of a rendered JSON
     /// tree. Returns true when anything was replaced.
     pub fn redact(&self, value: &mut JsonValue) -> bool {
+        self.work_left.set(MAX_REDACT_WORK);
+        self.redact_inner(value)
+    }
+
+    fn redact_inner(&self, value: &mut JsonValue) -> bool {
         match value {
             JsonValue::String(text) => match self.redact_text(text) {
                 Some(redacted) => {
@@ -183,14 +217,14 @@ impl SecretRedactor {
             JsonValue::Array(items) => {
                 let mut any = false;
                 for item in items {
-                    any |= self.redact(item);
+                    any |= self.redact_inner(item);
                 }
                 any
             }
             JsonValue::Object(map) => {
                 let mut any = false;
                 for item in map.values_mut() {
-                    any |= self.redact(item);
+                    any |= self.redact_inner(item);
                 }
                 any
             }

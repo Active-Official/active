@@ -1491,3 +1491,16 @@ fn work_bound_trip_marks_node_and_env_surfaces_material() {
         "env name fails closed for provenance"
     );
 }
+
+#[test]
+fn redaction_work_is_bounded_for_a_huge_secret_set() {
+    // Review 38: post-evaluation redaction must stay bounded even with
+    // a pathological secret set; exhaustion redacts wholesale.
+    let mut redactor = active_core::secret::SecretRedactor::new();
+    for i in 0..10_000 {
+        redactor.insert(format!("secret-literal-{i}"));
+    }
+    let text = "a".repeat(200_000);
+    let out = redactor.redact_text(&text).expect("over budget");
+    assert_eq!(out, active_core::secret::MARKER);
+}

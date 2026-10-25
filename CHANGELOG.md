@@ -223,12 +223,14 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   count as export or rename candidates, so a rename cannot clear a
   destination's taint and an unselected key cannot suppress a material
   default fill.
-- **Analysis stays bounded.** Profile merging shares one work bound
-  across fields and replacements; on exhaustion every node and env
-  read is marked material, so paths, traces, and provenance all fail
-  closed together. Nested default expansion charges a work budget and
-  degrades to a fail-closed wildcard, and env-name collection is
-  cached per subtree (a shared large expression is walked once).
+- **Analysis and redaction stay bounded.** Profile merging shares one
+  work bound across fields and replacements; on exhaustion every node
+  and env read is marked material, so paths, traces, and provenance all
+  fail closed together. Nested default expansion charges a work budget
+  and degrades to a fail-closed wildcard, env-name collection is cached
+  per subtree, and redaction carries a per-pass character-comparison
+  budget (a pathological secret set redacts the remaining strings
+  wholesale instead of running for minutes after evaluation).
   Incremental evaluation never memoizes a lazy env fallback answer, and
   the memo config token records the fallback presence.
 - **Patch and transform modeling is structural.** A successful

@@ -7,7 +7,7 @@
 //! - Secret redaction / taint
 //! - Basic arithmetic and logic
 
-use petgraph::algo::{is_cyclic_directed, toposort};
+use petgraph::algo::toposort;
 use std::collections::HashMap;
 use std::time::Instant;
 use thiserror::Error;
@@ -642,6 +642,11 @@ fn check_dp_bounds(
                     }
                 }
                 size[i] = sat_size(1, child_size);
+                // A nested interpolation is a real value-nesting step:
+                // its rendered text embeds the child's value. Omitting
+                // the depth let a long `${…}` chain recurse past the
+                // budget and overflow the stack.
+                depth[i] = child_depth.saturating_add(1).min(depth_cap);
             }
             Some(Node::Binary { lhs, rhs, .. }) => {
                 for child in [*lhs, *rhs] {
@@ -1378,10 +1383,10 @@ impl Engine {
         crate::trace::record("eval_start", module.arena.len() as u64, &module.diagnostics);
         // Budgets first: fail fast on monsters before any real work.
         check_static_budgets(module, &self.budget)?;
-        if is_cyclic_directed(&module.graph) {
-            return Err(EvalError::CycleDetected);
-        }
-
+        // `petgraph::is_cyclic_directed` walks the graph recursively and
+        // overflows the stack on a long chain (a crafted document with
+        // ~950 aliases killed the process). `toposort` is iterative and
+        // reports the same cycle, so use it directly.
         let order = toposort(&module.graph, None).map_err(|_| EvalError::CycleDetected)?;
         // Reference-aware materialization bounds (size and depth): the
         // billion-laughs killer. Runs on the topological order so every
@@ -1913,13 +1918,24 @@ impl Engine {
                         .as_ref()
                         .is_some_and(|profile| profile.path_is_secret(path))
                 });
-                let sensitive = node_material || on_material_path || path_material;
+                // A reference or binding step can be the only place a
+                // short path-material value is rendered: the scalar's
+                // export seed is length-gated, so register its text for
+                // the step trace explicitly.
+                let node_path_material = secret_profile.as_ref().is_some_and(|profile| {
+                    profile.node_is_path_material(node_id)
+                        && !profile.node_is_export_visible(node_id)
+                });
+                let sensitive =
+                    node_material || on_material_path || path_material || node_path_material;
                 match &value {
                     // A runtime secret is sensitive material wherever
                     // it appears; register its text so a copy (string,
                     // media type, or blob payload) redacts too.
                     Value::Secret(text) => sensitive_values.insert(text.clone()),
-                    Value::String(text) if node_material || on_material_path => {
+                    Value::String(text)
+                        if node_material || on_material_path || node_path_material =>
+                    {
                         let env_read = matches!(module.get(node_id), Some(Node::Env { .. }));
                         // Register the evaluated text of a material
                         // scalar so a container rendering redacts it.
@@ -1927,7 +1943,7 @@ impl Engine {
                         // reads do so: a benign literal that merely also
                         // appears at a profile path stays visible in its
                         // own step.
-                        if node_material || env_read {
+                        if node_material || env_read || node_path_material {
                             sensitive_values.insert(text.clone());
                         }
                     }

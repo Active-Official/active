@@ -62,8 +62,10 @@ when read:
   count 1 plus their children, and each `Ref` costs its target's
   full bound (the clone!). Interpolation sums its parts.
 - `depth[node]` bounds value nesting through references: tables
-  and arrays add one over their children (references followed),
-  everything else contributes nothing.
+  and arrays add one over their children, an interpolation adds one
+  over the values it renders (references followed), everything else
+  contributes nothing. A long `${…}` chain therefore trips X003
+  instead of exhausting the process stack.
 - Both saturate at `limit + 1`, so the numbers stay tiny and the
   pass stays linear even for exponential shapes; memoization makes
   shared subtrees O(1).

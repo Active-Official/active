@@ -2259,3 +2259,33 @@ fn computed_rename_clears_a_stale_destination_record() {
     assert!(json.contains("STALE-TEXT"), "{json}");
     assert!(!json.contains("MATERIAL-TEXT"), "{json}");
 }
+
+#[test]
+fn no_op_rename_keeps_a_computed_destination_seed() {
+    // Review 63 (HIGH): a rename whose source a possible profile never
+    // defines is a W004 no-op, so the destination value survives. Its
+    // computed record must not be erased.
+    let src = "active_profile = env.P ?: \"q\"\na = secret(\"hunter2-base\")\nprofile \"q\" { a = { z = \"STALE-TEXT\" } }\n@rename(\"a.x\", \"z\")\ndup = \"STALE-TEXT\"\n";
+    let module = parse(src, "noop-rename").expect("parse");
+    let (value, _) = Engine::hermetic().evaluate(&module).expect("evaluate");
+    let secret = active_core::secret::SecretProfile::analyze(&module);
+    let json = active_core::convert::value_to_pretty_json_with(&secret, &value);
+    assert!(!json.contains("STALE-TEXT"), "{json}");
+}
+
+#[test]
+fn computed_profile_benign_copy_stays_visible() {
+    // Review 63: a computed profile value placed at a material path is
+    // redacted there; a benign copy of the same value stays visible.
+    let src = "active_profile = env.P ?: \"p\"\na = secret(\"hunter2-base\")\nlet m = \"MATERIAL-TEXT\"\nprofile \"p\" { a = m }\nb = m\n";
+    let module = parse(src, "computed-benign-copy").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("P".to_string(), "p".to_string());
+    let engine = Engine::hermetic().with_env(env);
+    let (value, _, seeds) = engine.evaluate_with_seeds(&module).expect("evaluate");
+    let mut secret = active_core::secret::SecretProfile::analyze(&module);
+    secret.absorb_secrets(&seeds);
+    let json = active_core::convert::value_to_pretty_json_with(&secret, &value);
+    assert!(!json.contains("hunter2-base"), "{json}");
+    assert!(json.contains("MATERIAL-TEXT"), "{json}");
+}

@@ -1298,3 +1298,26 @@ fn minimize_does_not_exempt_a_nested_active_profile_field() {
     let reduced = report["reduced"].as_str().expect("reduced");
     assert!(!reduced.contains("hunter2-x"), "{reduced}");
 }
+
+#[test]
+fn minimize_does_not_exempt_fields_after_a_table_header() {
+    // Review 63: a `[meta]` header scopes following keys under it, so
+    // `active_profile` there is a field, not the selector.
+    let source = "s = secret(\"hunter2-x\")\nt = 1\n[meta]\nactive_profile = \"hunter2-x\"\n";
+    let report = debug::minimal_case(source, "T999", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(!reduced.contains("hunter2-x"), "{reduced}");
+}
+
+#[test]
+fn steps_redact_a_short_path_material_value() {
+    // Review 63: the step trace is its own rendering path; a short
+    // path-material value can appear only through a reference step.
+    let source = "active_profile = \"p\"\na = secret(\"hunter2-a\")\nlet m = \"XYZ\"\nprofile \"p\" { a = m }\n";
+    let module = module(source);
+    let (_, _, steps) = Engine::new()
+        .evaluate_with_steps(&module)
+        .expect("evaluate");
+    let rendered = serde_json::to_string(&steps).expect("json");
+    assert!(!rendered.contains("XYZ"), "{rendered}");
+}

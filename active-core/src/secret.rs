@@ -1092,7 +1092,12 @@ fn set_material_path(map: &mut HashMap<NodeId, String>, node: NodeId, path: &str
 }
 
 /// Rename destinations inside a computed-profile path record.
-fn rename_computed_paths(entries: &mut Vec<(String, NodeId)>, from: &str, to: &str) {
+fn rename_computed_paths(
+    entries: &mut Vec<(String, NodeId)>,
+    from: &str,
+    to: &str,
+    clear_destination: bool,
+) {
     if split_parent(from).1.starts_with('[') {
         return;
     }
@@ -1102,9 +1107,15 @@ fn rename_computed_paths(entries: &mut Vec<(String, NodeId)>, from: &str, to: &s
     } else {
         format!("{parent}.{to}")
     };
-    // The evaluator's rename replaces any value already at the
-    // destination; stale records there must not keep seeding.
-    entries.retain(|(known, _)| !path_under(known, &dest));
+    // A rename whose source exists in the evaluated tree moves the
+    // value; an existing destination is an E019 error, so dropping the
+    // destination record is safe there. When the source may come from a
+    // computed profile the rename may be a W004 no-op instead, and the
+    // destination value survives: keep both records (a union) so a
+    // no-op cannot erase a live seed.
+    if clear_destination {
+        entries.retain(|(known, _)| !path_under(known, &dest));
+    }
     for (path, _) in entries.iter_mut() {
         if path_under(path, from) {
             let suffix = &path[from.len()..];
@@ -1558,6 +1569,10 @@ pub struct SecretProfile {
     /// [`Self::material_node_paths`] this is a set computed after every
     /// transform, so a patched-over path no longer counts.
     material_at_path: HashSet<NodeId>,
+    /// Exact path → node for computed-profile paths. `paths` keeps the
+    /// base tree when the selector is computed, so value lookups must
+    /// consult these records first. Deterministically first-wins.
+    computed_path_nodes: HashMap<String, NodeId>,
 }
 
 impl SecretProfile {
@@ -2108,9 +2123,17 @@ impl SecretProfile {
                             }
                             rename_material_node_paths(&mut material_node_paths, &from, &to);
                             // Computed-profile records follow the same
-                            // same-parent move; a record already at the
-                            // destination is replaced, like the tree.
-                            rename_computed_paths(&mut computed_profile_paths, &from, &to);
+                            // same-parent move. The destination is only
+                            // known to be replaced when the source is a
+                            // base-tree path; otherwise the rename may
+                            // be a W004 no-op under the selected profile,
+                            // so keep both records.
+                            rename_computed_paths(
+                                &mut computed_profile_paths,
+                                &from,
+                                &to,
+                                data_paths.contains(&from),
+                            );
                         }
                         continue;
                     }
@@ -2118,7 +2141,7 @@ impl SecretProfile {
                     rename_set(&mut fallback_secret_paths, &from, &to);
                     rename_set(&mut export_paths, &from, &to);
                     rename_material_node_paths(&mut material_node_paths, &from, &to);
-                    rename_computed_paths(&mut computed_profile_paths, &from, &to);
+                    rename_computed_paths(&mut computed_profile_paths, &from, &to, true);
                 }
                 _ => {}
             }
@@ -2271,6 +2294,16 @@ impl SecretProfile {
                 }
             }
         }
+        // Exact value lookups for computed selectors need a concrete
+        // path → node map; `paths` still holds the base tree there.
+        // Sorted for a deterministic first-wins choice when two
+        // profiles record the same path.
+        let mut lookup_order: Vec<&(String, NodeId)> = computed_profile_paths.iter().collect();
+        lookup_order.sort_by(|a, b| a.0.cmp(&b.0).then(a.1 .0.cmp(&b.1 .0)));
+        let mut computed_path_nodes: HashMap<String, NodeId> = HashMap::new();
+        for (path, node) in lookup_order {
+            computed_path_nodes.entry(path.clone()).or_insert(*node);
+        }
         Self {
             nodes,
             paths,
@@ -2282,6 +2315,7 @@ impl SecretProfile {
             data_paths,
             export_visible,
             material_at_path,
+            computed_path_nodes,
         }
     }
 
@@ -2387,6 +2421,17 @@ impl SecretProfile {
     /// Node addressed by a dotted/indexed path (`a.b[0]`), when known.
     pub fn path_node(&self, path: &str) -> Option<NodeId> {
         self.paths.get(path).copied()
+    }
+
+    /// Node that answers for a path in the evaluated value. A computed
+    /// profile record wins over the base-tree mapping: `paths` never
+    /// receives computed profile paths, so the base node there can be
+    /// stale (a possible profile may have replaced the value).
+    pub fn value_node_at(&self, path: &str) -> Option<NodeId> {
+        self.computed_path_nodes
+            .get(path)
+            .copied()
+            .or_else(|| self.paths.get(path).copied())
     }
 
     /// True when the path's value is secret material or derives from it.

@@ -128,7 +128,7 @@ pub fn redactor_with_runtime_secrets(profile: &SecretProfile, value: &Value) -> 
             // (its env name is material), so it still seeds.
             Value::String(text)
                 if profile
-                    .path_node(path)
+                    .value_node_at(path)
                     .is_some_and(|id| profile.node_is_secret(id)) =>
             {
                 redactor.insert(text.clone());

@@ -380,3 +380,18 @@ fn budget_presets_are_ordered_and_strict_is_default() {
         assert!(v > 0, "trusted.{name} must stay finite");
     }
 }
+
+#[test]
+fn long_interpolation_chain_trips_depth_without_overflow() {
+    // Review 63: interpolation parts were missing from the depth DP and
+    // the pre-toposort cycle check recursed, so a long `${…}` chain
+    // overflowed the process stack instead of tripping X003. The chain
+    // must fail cleanly at the depth budget.
+    let mut src = String::from("let c0 = \"x\"\n");
+    for i in 1..=2000 {
+        src.push_str(&format!("let c{i} = \"${{c{}}}\"\n", i - 1));
+    }
+    src.push_str("z = c2000\n");
+    let err = eval_limited(&src, active_core::Budget::default());
+    assert_eq!(xcode(&err), "X003");
+}

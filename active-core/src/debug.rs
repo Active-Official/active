@@ -735,10 +735,29 @@ fn structural_span_keys(
         }
     }
     let mut out = std::collections::HashSet::new();
+    // After a `[table]` or `[[array]]` header, a line such as
+    // `active_profile = "…"` is a field of that table, not the document
+    // selector. Header state never resets: later headers stay scoped.
+    let mut after_header = false;
     for index in 0..tokens.len() {
         let line = tokens[index].line;
         let starts_line = index == 0 || tokens[index - 1].line < line;
         if !starts_line || depth_at.get(index).copied().unwrap_or(0) != 0 {
+            continue;
+        }
+        if !is_string_token(&tokens[index]) && tokens[index].text == "[" {
+            let closes = tokens[index + 1..]
+                .iter()
+                .take_while(|token| token.line == line)
+                .any(|token| !is_string_token(token) && token.text == "]");
+            if closes {
+                after_header = true;
+            }
+            continue;
+        }
+        // A quoted key (`"active_profile" = …`) is data, never the
+        // keyword.
+        if is_string_token(&tokens[index]) {
             continue;
         }
         let same_line = |at: usize| tokens.get(at).is_some_and(|token| token.line == line);
@@ -748,12 +767,12 @@ fn structural_span_keys(
                 .filter(|token| token.line == line && is_string_token(token))
         };
         match tokens[index].text.as_str() {
-            "include" | "profile" => {
+            "include" | "profile" if !after_header => {
                 if let Some(token) = next_string(index + 1) {
                     out.insert(token_key(token));
                 }
             }
-            "active_profile" => {
+            "active_profile" if !after_header => {
                 if same_line(index + 1) && tokens[index + 1].text == "=" {
                     if let Some(token) = next_string(index + 2) {
                         out.insert(token_key(token));

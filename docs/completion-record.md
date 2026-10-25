@@ -58,22 +58,35 @@ the baseline rule (no parallel rewrites).
 
 ## 4. GAP-CLOSURE status
 
-**§1 exits:** all hold — shared harness green in CI; content-addressed
-values and blobs shipped; repair with terminal states; inspector
-productized; debugger; visualizers; capability descriptor (13 tools,
-4 profiles); SARIF; Data Mode; evidence pack.
+### 4.1 §1 near-term exits
 
-**§2 designs:** the interchange profile and tool-result envelope are
-normative in `spec/agent-interchange-profile.md` and
-`spec/tool-result-envelope.md`, with a conforming example
-(`examples/agent-interchange/tool-result.active`) and conformance test
-(`active-core/tests/agent_interchange.rs`). The playground now ships the
-full generate → check → repair plan → partial apply → eval → full repair
-loop in `playground/loop/` (`run.ps1`, `run.sh`, README transcript);
-`cargo test -p active-cli --test loop_demo` drives the same pipeline
-through the shipped binary so the demo cannot drift. The hosted
-playground remains the browser evaluator; the headless walkthrough is in
-`docs/agent-headless.md`.
+| Item | Exit evidence |
+|---|---|
+| 1.1 Cross-implementation gate | the shared harness is a required CI job on both remotes; `conformance/evidence/harness.json` (`parity: []`) and the zero-SKIP `container-harness.json` |
+| 1.2 Content-addressed values + blob | `spec/blob.md`, `active-core/tests/blob.rs`, `agent-kit/vectors/blob-clean.active`; identity, equality, taint, budget, materialisation, and JSON-shape vectors |
+| 1.3 Multi-step repair | `spec/repair.md`, `active-core/tests/repair.rs`, `active-core/src/convert/repair.rs`; single/multi-step, stuck (H008), unrepairable, side-effect listing |
+| 1.4 Inspector productized | `active-core/tests/inspect.rs`, `active-core/src/convert/value_inspect.rs`, `docs/schemas/inspect*.json`; library + CLI golden tests, no raw secrets |
+| 1.5 Debugger/stepper/replay | `active-core/tests/debug.rs`, `spec/debug.md`; determinism + redaction tests, headless and LSP |
+| 1.6 Visualizers | `active-core/tests/viz.rs`, `viz/index.html`, `spec/viz.md`; stable JSON/DOT/Mermaid, redaction checks |
+| 1.7 Capability descriptor | `agent-kit/capability.schema.json`, `active capability`, `active-lsp` handshake; 13 tools, 4 profiles, unknown-major rejection |
+| 1.8 SARIF + stable JSON | `active lint --format sarif`, `docs/schemas/lint*.json`, `active-core/tests/lint.rs`; SARIF validated in evidence |
+| 1.9 Data Mode | `spec/mode.md`, `active-core/tests/mode.rs`; Config unchanged, Data vectors for progressive warnings and hard ceilings |
+| 1.10 Evidence pack | `conformance/evidence/README.md` plus this tree's gates/harness/container/codegen/catalog/agent-kit logs |
+
+### 4.2 §2 future-facing deliverables
+
+| Item | Deliverable |
+|---|---|
+| 2.1 Agent-to-agent interchange profile | `spec/agent-interchange-profile.md` + `active-core/tests/agent_interchange.rs` |
+| 2.2 "I already possess hash H" short-circuit | protocol note in the profile (hash short-circuit section) + agent-kit helpers/vectors |
+| 2.3 Capability negotiation handshake | capability handshake in the profile and `active capability --profile`; agent-kit reference |
+| 2.4 Deterministic explainer | `active-core/src/convert/explain.rs`, `active explain` (text/JSON), LSP hover texts |
+| 2.5 Audit trail as Active data | `spec/audit-trail.md`, `--audit-trail`, re-validation in `active-core/tests` |
+| 2.6 Partial eval + memo as the agent path | `spec/partial-eval.md`, `eval --path`, incremental memo; `docs/agent-headless.md` |
+| 2.7 Compatibility as queryable data | `active compatibility`, `spec/schema-evolution.md`, `active-core/tests/compat.rs` |
+| 2.8 Stuck/unrepairable terminal state | H008 in `active-core/src/convert/repair.rs` + repair tests |
+| 2.9 Secret-safe tool-result envelope | `spec/tool-result-envelope.md`, `examples/agent-interchange/tool-result.active`, conformance test |
+| 2.10 Playground full agent loop | `playground/loop/` (`run.ps1`, `run.sh`, transcript) and `active-cli/tests/loop_demo.rs` driving the shipped binary |
 
 ## 5. Verification battery (this tree)
 

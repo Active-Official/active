@@ -461,7 +461,12 @@ fn schema_field_json(module: &Module, profile: &SecretProfile, field: &SchemaFie
         constraints.push(format!("max_size {size}"));
     }
     if let Some(requires) = literal_string(module, field.requires) {
-        constraints.push(redact(format!("requires {requires}")));
+        // A real field reference stays raw so the contract resolves.
+        if crate::convert::schema_path_exists(module, &requires) {
+            constraints.push(format!("requires {requires}"));
+        } else {
+            constraints.push(redact(format!("requires {requires}")));
+        }
     }
     let mut out = json!({
         "type": redact(type_name(&field.typ)),

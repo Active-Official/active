@@ -2557,8 +2557,9 @@ fn viz_and_graph_report_a_payload_resident_short_secret() {
 
 #[test]
 fn diagnostics_redact_schema_literals() {
-    // Review 67: B004/T003/T004 quote schema prose.
-    let cases: [(&str, &str, &str); 3] = [
+    // Review 67: B004/T003 quote schema prose. (T004 is structural: a
+    // resolvable requires target is named, per spec/validation.md.)
+    let cases: [(&str, &str, &str); 2] = [
         (
             "B004",
             "s = secret(\"s3cr3t-media\")\nschema = { b = Blob(media_type = \"s3cr3t-media\") }\nb = blob(\"text/plain\", \"x\")\n",
@@ -2568,11 +2569,6 @@ fn diagnostics_redact_schema_literals() {
             "T003",
             "s = secret(\"s3cr3t-fmt\")\nschema = { f = String(format = \"s3cr3t-fmt\") }\nf = \"x\"\n",
             "s3cr3t-fmt",
-        ),
-        (
-            "T004",
-            "s = secret(\"secret_req\")\nschema = { secret_req = Bool, cert = String(requires = \"secret_req\") }\nsecret_req = true\n",
-            "secret_req",
         ),
     ];
     for (code, src, secret) in cases {
@@ -2798,4 +2794,74 @@ fn requires_targets_stay_structural() {
         .find(|entry| entry["name"] == "cert")
         .expect("cert entry");
     assert_eq!(cert["requires"], "tls", "{cert}");
+}
+
+#[test]
+fn parse_diagnostic_does_not_echo_a_version_value() {
+    // Review 69: parse errors abort before evaluation redaction.
+    let src = "s = secret(\"s3cr3tAlpha\")\nschema = { version = \"s3cr3tAlpha\", a = String }\na = \"x\"\n";
+    let diags = parse(src, "parse-echo").expect_err("version must be rejected");
+    for diagnostic in diags {
+        assert!(
+            !diagnostic.message.contains("s3cr3tAlpha"),
+            "{}",
+            diagnostic.message
+        );
+    }
+}
+
+#[test]
+fn inspect_does_not_echo_a_non_numeric_bound() {
+    // Review 69: a bound slot takes a number, never authored text.
+    let src = "s = secret(\"s3cr3tAlpha\")\nschema = { a = Int(min = \"s3cr3tAlpha\") }\na = 1\n";
+    let module = parse(src, "bound-slot").expect("parse");
+    let report = active_core::convert::schema_inspect(&module).expect("schema inspect");
+    assert!(!report.to_string().contains("s3cr3tAlpha"), "{report}");
+}
+
+#[test]
+fn t004_names_a_resolvable_requires_target() {
+    // Review 69: the spec requires naming the target when it resolves.
+    let src = "s = secret(\"tls\")\nschema = { tls = Bool, cert = String(requires = \"tls\") }\ntls = true\n";
+    let module = parse(src, "requires-t004").expect("parse");
+    let diags = match Engine::hermetic().evaluate(&module) {
+        Ok((_, diags)) => diags,
+        Err(EvalError::ValidationFailed { diagnostics }) => diagnostics,
+        Err(error) => panic!("{error:?}"),
+    };
+    let t004 = diags.iter().find(|d| d.code == "T004").expect("T004");
+    assert!(t004.message.contains("'tls'"), "{}", t004.message);
+}
+
+#[test]
+fn generated_machine_slots_withhold_material_values() {
+    // Review 69: a marker in a format/media/default slot is invalid.
+    let src = "s = secret(\"s3cr3t-gen\")\nschema = { g = String(format = \"s3cr3t-gen\", default = \"s3cr3t-gen\"), f = Blob(media_type = \"s3cr3t-gen\") }\ng = \"x\"\nf = blob(\"text/plain\", \"x\")\n";
+    let module = parse(src, "machine-slots").expect("parse");
+    let json_schema = active_core::convert::schema_to_json_schema(&module).expect("json");
+    let text = json_schema.to_string();
+    assert!(!text.contains("s3cr3t-gen"), "{text}");
+    assert!(!text.contains("\"format\""), "{text}");
+    assert!(!text.contains("x-active-media-type"), "{text}");
+}
+
+#[test]
+fn viz_repair_keeps_the_directive_path_structural() {
+    // Review 69: planning withholds material fills; the path must stay
+    // applicable.
+    let src = "s = secret(\"cert\")\nschema = { cert = String(default = \"v\") }\n";
+    let module = parse(src, "viz-repair-path").expect("parse");
+    let (_, diags) = Engine::hermetic().evaluate(&module).expect("evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    let suggestions =
+        active_core::convert::suggest_patches_structured_with_profile(&module, &diags, &profile);
+    for suggestion in &suggestions {
+        if suggestion.directive.contains("cert") {
+            assert!(
+                !suggestion.directive.contains("***SECRET***"),
+                "{}",
+                suggestion.directive
+            );
+        }
+    }
 }

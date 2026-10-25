@@ -38,7 +38,9 @@ for the run. Walls are host-time and appear as limits only.
 
 The plan is produced by the shipped engine with the caller's goal, step
 cap, and file context, so `viz repair` and `active repair` agree by
-construction (including includes). `repaired_source` is omitted: it can
+construction (including includes). Directives are emitted verbatim:
+planning withholds a fill that would copy material, so structural paths
+stay applicable. `repaired_source` is omitted: it can
 contain an authored secret literal, and this export is display data.
 
 ## Static viewer

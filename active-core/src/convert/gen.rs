@@ -225,6 +225,15 @@ pub fn schema_to_json_schema(module: &Module) -> Result<JsonValue, String> {
     Ok(node)
 }
 
+fn default_is_material(profile: &crate::secret::SecretProfile, value: &JsonValue) -> bool {
+    match value {
+        JsonValue::String(text) => profile.blob_identity_is_material(text),
+        JsonValue::Array(items) => items.iter().any(|item| default_is_material(profile, item)),
+        JsonValue::Object(map) => map.values().any(|item| default_is_material(profile, item)),
+        _ => false,
+    }
+}
+
 fn redact_default_value(profile: &crate::secret::SecretProfile, value: JsonValue) -> JsonValue {
     match value {
         JsonValue::String(text) => {
@@ -358,10 +367,11 @@ fn json_schema_field(
                 }
             }
             if let Some(format) = literal_string(module, field.format) {
-                obj.insert(
-                    "format".to_string(),
-                    JsonValue::String(redact_prose(profile, format)),
-                );
+                // A format is a closed vocabulary; withhold a material
+                // value instead of emitting a marker.
+                if !profile.blob_identity_is_material(&format) {
+                    obj.insert("format".to_string(), JsonValue::String(format));
+                }
             }
         }
         // Matches the §1 export shape: durations serialize as
@@ -440,10 +450,11 @@ fn json_schema_field(
             obj.insert("additionalProperties".to_string(), JsonValue::Bool(false));
             obj.insert("x-active-blob".to_string(), JsonValue::Bool(true));
             if let Some(media) = literal_string(module, field.blob_media_type) {
-                obj.insert(
-                    "x-active-media-type".to_string(),
-                    JsonValue::String(redact_prose(profile, media)),
-                );
+                // Withhold a material media type: a marker would be an
+                // invalid contract value.
+                if !profile.blob_identity_is_material(&media) {
+                    obj.insert("x-active-media-type".to_string(), JsonValue::String(media));
+                }
             }
             if let Some(max) = literal_int(module, field.blob_max_size) {
                 obj.insert("x-active-max-size".to_string(), JsonValue::from(max));
@@ -452,10 +463,14 @@ fn json_schema_field(
         ActiveType::Any => return JsonValue::Bool(true),
     }
     if let Some(default) = literal_default(module, field) {
-        obj.insert(
-            "default".to_string(),
-            redact_default_value(profile, default),
-        );
+        // A material default is not a usable contract value; omit it
+        // rather than emit a marker a consumer would fill.
+        if !default_is_material(profile, &default) {
+            obj.insert(
+                "default".to_string(),
+                redact_default_value(profile, default),
+            );
+        }
     }
     if field.description.is_some() {
         if let Some(doc) = literal_string(module, field.description) {
@@ -824,12 +839,18 @@ impl TsGen<'_> {
         }
         if !required {
             if let Some(default) = literal_default(self.module, field) {
-                let default = redact_default_value(self.profile, default);
-                match default {
-                    JsonValue::String(_) | JsonValue::Number(_) | JsonValue::Bool(_) => {
-                        out.push_str(&format!(".default({default})"));
+                if default_is_material(self.profile, &default) {
+                    // A material default would emit a marker into the
+                    // runtime schema; keep the field optional instead.
+                    out.push_str(".optional()");
+                } else {
+                    let default = redact_default_value(self.profile, default);
+                    match default {
+                        JsonValue::String(_) | JsonValue::Number(_) | JsonValue::Bool(_) => {
+                            out.push_str(&format!(".default({default})"));
+                        }
+                        _ => out.push_str(".optional()"),
                     }
-                    _ => out.push_str(".optional()"),
                 }
             } else {
                 out.push_str(".optional()");
@@ -1192,7 +1213,13 @@ impl GoGen<'_> {
                     notes.push(format!("pattern {pattern}"));
                 }
                 if let Some(target) = literal_string(self.module, field.requires) {
-                    let target = self.profile.redact_authored_text(&target).unwrap_or(target);
+                    // A real field reference stays raw; dangling text
+                    // is data.
+                    let target = if crate::convert::schema_path_exists(self.module, &target) {
+                        target
+                    } else {
+                        self.profile.redact_authored_text(&target).unwrap_or(target)
+                    };
                     notes.push(format!("requires: {target}"));
                 }
                 notes
@@ -1609,7 +1636,11 @@ impl PythonGen<'_> {
                     ));
                 }
                 if let Some(target) = literal_string(self.module, f.requires) {
-                    let target = self.profile.redact_authored_text(&target).unwrap_or(target);
+                    let target = if crate::convert::schema_path_exists(self.module, &target) {
+                        target
+                    } else {
+                        self.profile.redact_authored_text(&target).unwrap_or(target)
+                    };
                     self.out
                         .push_str(&format!("    # requires: {}\n", comment_line(&target)));
                 }

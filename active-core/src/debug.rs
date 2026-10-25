@@ -576,83 +576,178 @@ fn redact_secret_literals(
         }
     }
     // A healed quote can split `"x"secret"y"` into string and
-    // identifier tokens. A same-line pair of string tokens marks a
-    // literal island: if the whole slice carries a known value, redact
-    // it as one string. Over-redaction here is safe; a leak is not.
+    // identifier tokens. A run of adjacent string tokens (no structural
+    // punctuation between them) reconstructs the original text from its
+    // literal parts; redact the whole run on a hit. Valid constructs
+    // (`"a", "b"`, `"a" + "b"`, `f("a", "b")`) are excluded by the
+    // punctuation test.
     let string_tokens: Vec<&crate::parser::Token> = lexed
         .tokens
         .iter()
         .filter(|token| is_string_token(token))
         .collect();
-    for pair in string_tokens.windows(2) {
-        let (first, second) = (pair[0], pair[1]);
-        // A healed quote can split at a line break too; allow one line
-        // of distance.
-        if second.line.saturating_sub(first.line) > 1 {
+    let structural = |between: &str| {
+        between.bytes().any(|byte| {
+            matches!(
+                byte,
+                b',' | b')'
+                    | b'('
+                    | b'{'
+                    | b'}'
+                    | b'['
+                    | b']'
+                    | b';'
+                    | b'='
+                    | b'+'
+                    | b':'
+                    | b'|'
+                    | b'&'
+            )
+        })
+    };
+    let is_joiner = |byte: u8| {
+        !byte.is_ascii_whitespace()
+            && !matches!(
+                byte,
+                b',' | b')'
+                    | b']'
+                    | b'}'
+                    | b'('
+                    | b'['
+                    | b'{'
+                    | b'+'
+                    | b';'
+                    | b'='
+                    | b':'
+                    | b'|'
+                    | b'&'
+            )
+    };
+    let mut index = 0usize;
+    while index + 1 < string_tokens.len() {
+        let mut end_index = index;
+        while end_index + 1 < string_tokens.len() {
+            let first = string_tokens[end_index];
+            let second = string_tokens[end_index + 1];
+            if second.line.saturating_sub(first.line) > 1 {
+                break;
+            }
+            let (Some((_, first_end)), Some((second_start, _))) =
+                (offsets(&token_span(first)), offsets(&token_span(second)))
+            else {
+                break;
+            };
+            if second_start < first_end || second_start > normalized.len() {
+                break;
+            }
+            if structural(&normalized[first_end..second_start]) {
+                break;
+            }
+            end_index += 1;
+        }
+        if end_index == index {
+            index += 1;
             continue;
         }
-        let (Some((start, first_end)), Some((second_start, end))) =
-            (offsets(&token_span(first)), offsets(&token_span(second)))
-        else {
+        let (Some((start, first_end)), Some((second_start, end))) = (
+            offsets(&token_span(string_tokens[index])),
+            offsets(&token_span(string_tokens[end_index])),
+        ) else {
+            index = end_index + 1;
             continue;
         };
         if end <= start || end > normalized.len() || second_start < first_end {
+            index = end_index + 1;
             continue;
         }
-        let between = &normalized[first_end..second_start];
-        // Structural punctuation means a valid construct; never join
-        // across it.
-        let structural_between = between.bytes().any(|byte| {
-            matches!(
-                byte,
-                b',' | b')' | b'(' | b'{' | b'}' | b'[' | b']' | b';' | b'=' | b'+'
-            )
-        });
-        // A healed quote joins two literal parts with nothing but
-        // identifier bytes (or a line break) between them: their
-        // concatenation reconstructs the original text.
-        let joined_match = !structural_between && {
-            let mut joined = String::new();
-            if let Some(text) = decoded_token_text(first) {
+        let mut joined = String::new();
+        for token in &string_tokens[index..=end_index] {
+            if let Some(text) = decoded_token_text(token) {
                 joined.push_str(&text);
             }
-            if let Some(text) = decoded_token_text(second) {
-                joined.push_str(&text);
-            }
-            authored.contains_exact(&joined)
-                || exact.contains_exact(&joined)
-                || authored
-                    .redact_text_min(&joined, MIN_SUBSTRING_SEED)
-                    .is_some()
-                || seeds.redact_text_min(&joined, MIN_SUBSTRING_SEED).is_some()
-        };
-        // Only a healed quote joins two literals with no separator. A
-        // valid construct (`"a", "b"`, `"a" + "b"`, `f("a", "b")`) has
-        // whitespace or punctuation between them and is left alone.
-        let is_joiner = |byte: u8| -> bool {
-            !byte.is_ascii_whitespace()
-                && !matches!(
-                    byte,
-                    b',' | b')' | b']' | b'}' | b'(' | b'[' | b'{' | b'+' | b';' | b'='
-                )
-        };
-        let after_first = normalized.as_bytes().get(first_end).copied();
-        let before_second = normalized
-            .as_bytes()
-            .get(second_start.saturating_sub(1))
-            .copied();
-        let adjacent = after_first.is_some_and(is_joiner) && before_second.is_some_and(is_joiner);
-        let slice = &normalized[start..end];
-        let slice_hit = adjacent
-            && (authored
-                .redact_text_min(slice, MIN_SUBSTRING_SEED)
+        }
+        let mut hit = authored.contains_exact(&joined)
+            || exact.contains_exact(&joined)
+            || authored
+                .redact_text_min(&joined, MIN_SUBSTRING_SEED)
                 .is_some()
-                || seeds.redact_text_min(slice, MIN_SUBSTRING_SEED).is_some()
-                || exact
-                    .values_snapshot()
-                    .iter()
-                    .any(|value| !value.is_empty() && slice.contains(value)));
-        if joined_match || slice_hit {
+            || seeds.redact_text_min(&joined, MIN_SUBSTRING_SEED).is_some();
+        if !hit && end_index == index + 1 {
+            // Two adjacent literal islands with identifier bytes
+            // between them: the slice itself also carries the value.
+            let after_first = normalized.as_bytes().get(first_end).copied();
+            let before_second = normalized
+                .as_bytes()
+                .get(second_start.saturating_sub(1))
+                .copied();
+            if after_first.is_some_and(is_joiner) && before_second.is_some_and(is_joiner) {
+                let slice = &normalized[start..end];
+                hit = authored
+                    .redact_text_min(slice, MIN_SUBSTRING_SEED)
+                    .is_some()
+                    || seeds.redact_text_min(slice, MIN_SUBSTRING_SEED).is_some()
+                    || exact
+                        .values_snapshot()
+                        .iter()
+                        .any(|value| !value.is_empty() && slice.contains(value));
+            }
+        }
+        if hit {
+            extras.push((start, end));
+        }
+        index = end_index + 1;
+    }
+    // Bare-token runs: an invalid document can carry the secret as an
+    // identifier or operator run (`token = sk_live_…`), which the
+    // string-token passes never visit. Join adjacent tokens (no
+    // whitespace between them) and redact a run that carries a known
+    // value.
+    let mut runs: Vec<(usize, usize, String)> = Vec::new();
+    let mut current: Option<(usize, usize, String)> = None;
+    for token in &lexed.tokens {
+        let synthetic = matches!(
+            token.kind,
+            crate::parser::TokenKind::Newline
+                | crate::parser::TokenKind::Indent
+                | crate::parser::TokenKind::Dedent
+                | crate::parser::TokenKind::Eof
+        );
+        if is_string_token(token) || synthetic {
+            if let Some(run) = current.take() {
+                runs.push(run);
+            }
+            continue;
+        }
+        let Some((start, end)) = offsets(&token_span(token)) else {
+            if let Some(run) = current.take() {
+                runs.push(run);
+            }
+            continue;
+        };
+        match current.as_mut() {
+            Some((_, previous_end, text)) if *previous_end == start => {
+                text.push_str(&token.text);
+                *previous_end = end;
+            }
+            _ => {
+                if let Some(run) = current.take() {
+                    runs.push(run);
+                }
+                current = Some((start, end, token.text.clone()));
+            }
+        }
+    }
+    if let Some(run) = current {
+        runs.push(run);
+    }
+    for (start, end, text) in runs {
+        let hit = authored.contains_exact(&text)
+            || exact.contains_exact(&text)
+            || authored
+                .redact_text_min(&text, MIN_SUBSTRING_SEED)
+                .is_some()
+            || seeds.redact_text_min(&text, MIN_SUBSTRING_SEED).is_some();
+        if hit {
             extras.push((start, end));
         }
     }

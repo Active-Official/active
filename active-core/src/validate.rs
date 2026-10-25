@@ -129,6 +129,11 @@ impl Engine {
             );
             let runtime = runtime_secret_redactor(values, &profile);
             for diagnostic in &mut diagnostics {
+                // T004 names structural schema paths; keep them
+                // readable so the diagnostic can be acted on.
+                if diagnostic.code == "T004" {
+                    continue;
+                }
                 if let Some(message) = profile.redact_authored_text(&diagnostic.message) {
                     diagnostic.message = message;
                 }
@@ -777,12 +782,14 @@ impl<'a> Validator<'a> {
             if let Some(target) = target {
                 let filled = default_arg.is_some() && self.resilient;
                 if !filled && table_has(table, &target) {
-                    // A computed `requires` target may be material;
-                    // echo only a literal spelling.
-                    let message = if matches!(
+                    // A requires target is a real reference only when it
+                    // resolves to a schema path; otherwise the text is
+                    // data and must not be echoed.
+                    let named = matches!(
                         self.module.get(requires_id),
                         Some(Node::Literal(Value::String(_)))
-                    ) {
+                    ) && crate::convert::schema_path_exists(self.module, &target);
+                    let message = if named {
                         format!(
                             "schema violation at '{}': missing required key (required by present '{}')",
                             display_path(&path),
@@ -790,7 +797,7 @@ impl<'a> Validator<'a> {
                         )
                     } else {
                         format!(
-                            "schema violation at '{}': missing required key (required by a computed requires target)",
+                            "schema violation at '{}': missing required key (required by a material or computed requires target)",
                             display_path(&path),
                         )
                     };

@@ -2078,6 +2078,12 @@ impl Engine {
             // runtime redactor from the evaluated nodes as well.
             let runtime = crate::validate::runtime_secret_redactor(&values, &profile);
             for diagnostic in &mut diagnostics {
+                // T004 names structural schema paths (the missing
+                // field and a resolvable requires target); those must
+                // stay readable or the diagnostic cannot be acted on.
+                if diagnostic.code == "T004" {
+                    continue;
+                }
                 if let Some(message) = profile.redact_authored_text(&diagnostic.message) {
                     diagnostic.message = message;
                 }

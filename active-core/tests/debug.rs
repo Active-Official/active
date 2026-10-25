@@ -1374,13 +1374,15 @@ fn minimize_does_not_exempt_an_indented_selector() {
 }
 
 #[test]
-fn minimize_does_not_rewrite_an_identifier_matching_a_secret() {
-    // Review 65: the gap sweep must not touch code tokens.
+fn minimize_redacts_a_bare_identifier_matching_a_secret() {
+    // Review 69: a secret copied as a bare identifier is still a copy.
+    // The whole token run becomes a quoted marker; the call structure
+    // is preserved.
     let source = "port = secret(\"port\")\nvalue = 1\n";
     let report = debug::minimal_case(source, "T002", 0);
     let reduced = report["reduced"].as_str().expect("reduced");
-    assert!(reduced.contains("port = secret("), "{reduced}");
-    assert!(!reduced.contains("secret(\"port\")"), "{reduced}");
+    assert!(!reduced.contains("port"), "{reduced}");
+    assert!(reduced.contains("= secret("), "{reduced}");
 }
 
 #[test]
@@ -1459,4 +1461,31 @@ fn minimize_redacts_a_secret_split_across_a_healed_quote() {
         let reduced = report["reduced"].as_str().expect("reduced");
         assert!(!reduced.contains("hunter2-ABCD"), "{reduced}");
     }
+}
+
+#[test]
+fn minimize_redacts_a_bare_identifier_run() {
+    // Review 69: a secret copied as an unquoted identifier is a copy.
+    let source = "s = secret(\"sk_live_abcdef123456\")\ntoken = sk_live_abcdef123456\n";
+    let report = debug::minimal_case(source, "E010", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(!reduced.contains("sk_live_abcdef123456"), "{reduced}");
+}
+
+#[test]
+fn minimize_joins_a_run_of_literal_islands() {
+    // Review 69: three or more literal fragments reconstruct the text.
+    let source = "s = secret(\"hunter2-ABCD\")\nt = \"hunt\"x\"er2-ABCD\"\n";
+    let report = debug::minimal_case(source, "T006", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(!reduced.contains("hunter2-ABCD"), "{reduced}");
+}
+
+#[test]
+fn minimize_does_not_join_across_a_colon() {
+    // Review 69: a key/value colon separates literals; no false join.
+    let source = "s = secret(\"abcd\")\nt = { \"ab\": \"cd\" }\n";
+    let report = debug::minimal_case(source, "T006", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(reduced.contains("\"ab\": \"cd\""), "{reduced}");
 }

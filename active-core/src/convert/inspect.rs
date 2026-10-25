@@ -210,26 +210,61 @@ fn field_entry(
     let mut member_descriptions = JsonValue::Null;
     let mut closed = JsonValue::Null;
     match &field.typ {
-        ActiveType::Int | ActiveType::Float => {
+        ActiveType::Int => {
+            // A bound is a typed slot: only an integer literal is a
+            // bound. Anything else (including authored text) is not a
+            // valid contract and must not be echoed.
+            if let Some(Node::Literal(crate::ir::Value::Int(v))) =
+                field.min.and_then(|id| module.get(id))
+            {
+                constraints.insert("min".to_string(), JsonValue::from(*v));
+            }
+            if let Some(Node::Literal(crate::ir::Value::Int(v))) =
+                field.max.and_then(|id| module.get(id))
+            {
+                constraints.insert("max".to_string(), JsonValue::from(*v));
+            }
+        }
+        ActiveType::Float => {
             if let Some(Node::Literal(v)) = field.min.and_then(|id| module.get(id)) {
-                constraints.insert("min".to_string(), super::value_to_json(v));
+                if matches!(v, crate::ir::Value::Int(_) | crate::ir::Value::Float(_)) {
+                    constraints.insert("min".to_string(), super::value_to_json(v));
+                }
             }
             if let Some(Node::Literal(v)) = field.max.and_then(|id| module.get(id)) {
-                constraints.insert("max".to_string(), super::value_to_json(v));
+                if matches!(v, crate::ir::Value::Int(_) | crate::ir::Value::Float(_)) {
+                    constraints.insert("max".to_string(), super::value_to_json(v));
+                }
             }
         }
         ActiveType::String => {
-            if let Some(Node::Literal(v)) = field.min_len.and_then(|id| module.get(id)) {
-                constraints.insert("min_len".to_string(), super::value_to_json(v));
+            if let Some(Node::Literal(crate::ir::Value::Int(v))) =
+                field.min_len.and_then(|id| module.get(id))
+            {
+                if *v >= 0 {
+                    constraints.insert("min_len".to_string(), JsonValue::from(*v));
+                }
             }
-            if let Some(Node::Literal(v)) = field.max_len.and_then(|id| module.get(id)) {
-                constraints.insert("max_len".to_string(), super::value_to_json(v));
+            if let Some(Node::Literal(crate::ir::Value::Int(v))) =
+                field.max_len.and_then(|id| module.get(id))
+            {
+                if *v >= 0 {
+                    constraints.insert("max_len".to_string(), JsonValue::from(*v));
+                }
             }
             if let Some(pattern) = literal_string(module, field.pattern) {
-                constraints.insert("pattern".to_string(), JsonValue::String(redact(pattern)));
+                // A material pattern cannot be redacted into a valid
+                // regex; withhold it.
+                if !profile.blob_identity_is_material(&pattern) {
+                    constraints.insert("pattern".to_string(), JsonValue::String(pattern));
+                }
             }
             if let Some(format) = literal_string(module, field.format) {
-                constraints.insert("format".to_string(), JsonValue::String(redact(format)));
+                // A format is a closed vocabulary; a material value is
+                // not a valid format, so withhold it.
+                if !profile.blob_identity_is_material(&format) {
+                    constraints.insert("format".to_string(), JsonValue::String(format));
+                }
             }
         }
         ActiveType::Enum(options) => {
@@ -254,10 +289,19 @@ fn field_entry(
         }
         ActiveType::Blob => {
             if let Some(media) = literal_string(module, field.blob_media_type) {
-                constraints.insert("media_type".to_string(), JsonValue::String(redact(media)));
+                // A material media type is not a valid contract value;
+                // withhold it rather than emit a marker a consumer
+                // would treat as real.
+                if !profile.blob_identity_is_material(&media) {
+                    constraints.insert("media_type".to_string(), JsonValue::String(media));
+                }
             }
-            if let Some(Node::Literal(v)) = field.blob_max_size.and_then(|id| module.get(id)) {
-                constraints.insert("max_size".to_string(), super::value_to_json(v));
+            if let Some(Node::Literal(crate::ir::Value::Int(v))) =
+                field.blob_max_size.and_then(|id| module.get(id))
+            {
+                if *v >= 0 {
+                    constraints.insert("max_size".to_string(), JsonValue::from(*v));
+                }
             }
         }
         _ => {}

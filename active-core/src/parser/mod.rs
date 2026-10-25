@@ -4495,7 +4495,7 @@ impl Parser {
                         if !Self::is_schema_version(&version) {
                             self.error_at(
                                 "E020",
-                                format!("{name} must be major.minor.patch, got {version:?}"),
+                                format!("{name} must be major.minor.patch"),
                                 &vtok,
                             );
                         } else {

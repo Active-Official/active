@@ -295,3 +295,18 @@ fn array_element_blob_bounds_and_media_are_compared() {
         "{findings:?}"
     );
 }
+
+#[test]
+fn large_schema_comparison_is_linear() {
+    // Review 39: 20k rows compare without quadratic scans.
+    let mut src = String::from("schema = {");
+    for i in 0..20_000 {
+        if i > 0 {
+            src.push(',');
+        }
+        src.push_str(&format!("f{i} = Int"));
+    }
+    src.push_str("}\n");
+    let findings = compare_docs(&src, &src);
+    assert!(findings.is_empty(), "{}", findings.len());
+}

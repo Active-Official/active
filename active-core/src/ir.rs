@@ -656,14 +656,16 @@ impl Serialize for Value {
                     }),
                 );
                 inner.insert("tainted".to_string(), serde_json::Value::from(*tainted));
-                if let Some(bytes) = payload {
-                    inner.insert(
-                        "payload_b64".to_string(),
-                        serde_json::Value::from(base64::Engine::encode(
-                            &base64::engine::general_purpose::STANDARD,
-                            bytes,
-                        )),
-                    );
+                if !*tainted {
+                    if let Some(bytes) = payload {
+                        inner.insert(
+                            "payload_b64".to_string(),
+                            serde_json::Value::from(base64::Engine::encode(
+                                &base64::engine::general_purpose::STANDARD,
+                                bytes,
+                            )),
+                        );
+                    }
                 }
                 serde_json::Value::Object(
                     [("$active.blob".to_string(), serde_json::Value::Object(inner))]

@@ -154,23 +154,21 @@ impl SecretRedactor {
     /// only the non-marker segments are scanned. A secret containing
     /// the marker itself cannot be expressed without ambiguity; the
     /// marker wins, deterministically.
+    /// Reset the per-pass comparison budget. Call once before rendering
+    /// one output document, so repeated exports are call-order
+    /// independent.
+    pub fn begin_pass(&self) {
+        self.work_left.set(MAX_REDACT_WORK);
+    }
+
     pub fn redact_text(&self, text: &str) -> Option<String> {
         let values = self.ensure_sorted();
         if values.is_empty() || text == MARKER {
             return None;
         }
-        // Bound the scan before starting: a huge secret set times a
-        // large string would otherwise run for minutes after the
-        // evaluation budgets have already passed.
-        let work = values.len().saturating_mul(text.len().max(1));
-        let left = self.work_left.get();
-        if work >= left {
-            self.work_left.set(0);
-            return Some(MARKER.to_string());
-        }
-        self.work_left.set(left - work);
         let mut out = String::with_capacity(text.len());
         let mut hit = false;
+        let mut used = 0usize;
         for (index, segment) in text.split(MARKER).enumerate() {
             if index > 0 {
                 out.push_str(MARKER);
@@ -178,10 +176,22 @@ impl SecretRedactor {
             let mut cursor = 0usize;
             while cursor < segment.len() {
                 let rest = &segment[cursor..];
-                match values
-                    .iter()
-                    .find(|secret| rest.starts_with(secret.as_str()))
-                {
+                let mut matched: Option<&String> = None;
+                for secret in values.iter() {
+                    // Charge the comparison before running it: a long
+                    // candidate against a long text is real work.
+                    used = used.saturating_add(secret.len().max(1));
+                    let left = self.work_left.get();
+                    if used > left {
+                        self.work_left.set(0);
+                        return Some(MARKER.to_string());
+                    }
+                    if rest.starts_with(secret.as_str()) {
+                        matched = Some(secret);
+                        break;
+                    }
+                }
+                match matched {
                     Some(secret) => {
                         out.push_str(MARKER);
                         cursor += secret.len();
@@ -195,9 +205,10 @@ impl SecretRedactor {
                 }
             }
         }
+        self.work_left
+            .set(self.work_left.get().saturating_sub(used));
         hit.then_some(out)
     }
-
     /// Replace secret substrings inside every string of a rendered JSON
     /// tree. Returns true when anything was replaced.
     pub fn redact(&self, value: &mut JsonValue) -> bool {
@@ -1713,6 +1724,11 @@ impl SecretProfile {
     /// Authored literal strings inside material nodes.
     pub fn literals(&self) -> &SecretRedactor {
         &self.literals
+    }
+
+    /// Reset the redaction comparison budget before one output pass.
+    pub fn begin_redaction_pass(&self) {
+        self.literals.begin_pass();
     }
 
     /// Redact secret substrings in a rendered tree.

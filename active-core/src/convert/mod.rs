@@ -89,14 +89,16 @@ pub fn value_to_json(v: &Value) -> JsonValue {
                 }),
             );
             inner.insert("tainted".to_string(), json!(tainted));
-            if let Some(bytes) = payload {
-                inner.insert(
-                    "payload_b64".to_string(),
-                    json!(base64::Engine::encode(
-                        &base64::engine::general_purpose::STANDARD,
-                        bytes
-                    )),
-                );
+            if !*tainted {
+                if let Some(bytes) = payload {
+                    inner.insert(
+                        "payload_b64".to_string(),
+                        json!(base64::Engine::encode(
+                            &base64::engine::general_purpose::STANDARD,
+                            bytes
+                        )),
+                    );
+                }
             }
             json!({ "$active.blob": inner })
         }
@@ -113,6 +115,7 @@ pub fn value_to_pretty_json(v: &Value) -> String {
 /// a material scalar of any kind is hidden. A string that merely
 /// contains a known secret substring is redacted in place.
 pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
+    profile.begin_redaction_pass();
     fn walk(profile: &SecretProfile, path: &str, value: &Value) -> Value {
         match value {
             Value::Array(items) => Value::Array(

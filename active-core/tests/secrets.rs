@@ -1504,3 +1504,33 @@ fn redaction_work_is_bounded_for_a_huge_secret_set() {
     let out = redactor.redact_text(&text).expect("over budget");
     assert_eq!(out, active_core::secret::MARKER);
 }
+
+#[test]
+fn redaction_charges_comparator_work() {
+    // Review 39: a long non-matching prefix must not rescan per cursor
+    // beyond the pass budget; exhaustion redacts wholesale.
+    let mut redactor = active_core::secret::SecretRedactor::new();
+    let mut secret = "a".repeat(500_000);
+    secret.push('b');
+    redactor.insert(secret);
+    let text = "a".repeat(1_000_000);
+    let out = redactor.redact_text(&text).expect("budget trips");
+    assert_eq!(out, active_core::secret::MARKER);
+}
+
+#[test]
+fn redaction_passes_are_call_order_independent() {
+    // Review 39: two exports with one profile must be byte-identical
+    // even when a pass exhausts the comparison budget.
+    let big = "a".repeat(300_000);
+    let src = format!(
+        "big = \"{big}\"\ns0 = secret(\"secret-0\")\ns1 = secret(\"secret-1\")\ns2 = secret(\"secret-2\")\ns3 = secret(\"secret-3\")\ns4 = secret(\"secret-4\")\ns5 = secret(\"secret-5\")\ns6 = secret(\"secret-6\")\ns7 = secret(\"secret-7\")\ns8 = secret(\"secret-8\")\ns9 = secret(\"secret-9\")\n"
+    );
+    let module = parse(&src, "redaction-pass").expect("parse");
+    let (value, _) = Engine::new().evaluate(&module).expect("evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    let first = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    let second = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert_eq!(first, second, "exports must not depend on call order");
+    assert!(!first.contains("secret-0"), "{first}");
+}

@@ -143,14 +143,16 @@ fn build_toml_value(v: &Value, path: &str, diags: &mut Vec<Diagnostic>) -> Optio
                 ),
             );
             inner.insert("tainted".to_string(), toml::Value::Boolean(*tainted));
-            if let Some(bytes) = payload {
-                inner.insert(
-                    "payload_b64".to_string(),
-                    toml::Value::String(base64::Engine::encode(
-                        &base64::engine::general_purpose::STANDARD,
-                        bytes,
-                    )),
-                );
+            if !*tainted {
+                if let Some(bytes) = payload {
+                    inner.insert(
+                        "payload_b64".to_string(),
+                        toml::Value::String(base64::Engine::encode(
+                            &base64::engine::general_purpose::STANDARD,
+                            bytes,
+                        )),
+                    );
+                }
             }
             let mut map = toml::map::Map::new();
             map.insert("$active.blob".to_string(), toml::Value::Table(inner));

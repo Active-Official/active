@@ -631,3 +631,30 @@ fn annotation_action_respects_a_bom() {
         .expect("annotation edit");
     assert_eq!(edit.range.start.character, 1, "insert after the BOM");
 }
+
+#[test]
+fn hover_redacts_a_path_material_profile_value() {
+    // Review 39: hover must consult path materiality, not only nodes.
+    let doc = open(
+        "let d = 30m\nk = secret(d)\nn = 1\nactive_profile = \"p\"\nprofile \"p\" { n = d }\n",
+    );
+    let hover = analysis::hover_at(&doc, 2, 0).expect("hover on n");
+    let text = format!("{:?}", hover.contents);
+    assert!(!text.contains("1800000"), "hover leaked: {text}");
+    assert!(
+        !text.contains("30m") || text.contains("***SECRET***"),
+        "{text}"
+    );
+}
+
+#[test]
+fn inlay_hints_redact_a_path_material_profile_value() {
+    let doc = open(
+        "let d = 30m\nk = secret(d)\nn = 1\nactive_profile = \"p\"\nprofile \"p\" { n = d }\n",
+    );
+    let hints = analysis::inlay_hints(&doc, None);
+    for hint in &hints {
+        let label = format!("{:?}", hint.label);
+        assert!(!label.contains("1800000"), "inlay leaked: {label}");
+    }
+}

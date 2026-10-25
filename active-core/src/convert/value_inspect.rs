@@ -28,6 +28,7 @@ pub fn inspect_path_with_profile(
     let cone = crate::convert::project_path(root, path)
         .map_err(|why| format!("cannot inspect `{path}`: {why}"))?;
     let profile = SecretProfile::analyze_with_profile(module, override_profile);
+    profile.begin_redaction_pass();
     let kind = kind_name(cone);
     // A media type sourced from material (an env lookup used as a
     // secret locator) is not publishable, even when the blob's data is

@@ -223,6 +223,14 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   count as export or rename candidates, so a rename cannot clear a
   destination's taint and an unselected key cannot suppress a material
   default fill.
+- **Redaction and comparison are bounded and call-stable.** Redaction
+  charges the real comparator work (a long non-matching prefix cannot
+  rescan past the pass budget) and every export pass resets the budget,
+  so repeated exports are byte-identical. Tainted blobs never emit
+  `payload_b64` through JSON, TOML, or the redacting `Serialize` impl,
+  even when an embedder constructs one. Schema compatibility indexes
+  rows by path (linear instead of quadratic), and LSP hover/inlay
+  consult path materiality so a profile-selected value is redacted.
 - **Analysis and redaction stay bounded.** Profile merging shares one
   work bound across fields and replacements; on exhaustion every node
   and env read is marked material, so paths, traces, and provenance all

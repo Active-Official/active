@@ -370,3 +370,27 @@ fn materialise_flag_flip_clears_incremental_memo() {
         .to_string()
         .contains("payload_b64"));
 }
+
+#[test]
+fn tainted_blob_payload_never_serializes() {
+    // Review 39: the public Value enum must honor the wire invariant
+    // even when an embedder constructs a tainted blob with a payload.
+    use active_core::Value;
+    let blob = Value::Blob {
+        hash: [7u8; 32],
+        size: 6,
+        tainted: true,
+        media_type: "text/plain".to_string(),
+        payload: Some(b"secret".to_vec()),
+    };
+    let json = active_core::convert::value_to_json(&blob);
+    assert!(json.get("payload_b64").is_none(), "{json}");
+    let pretty = active_core::convert::value_to_pretty_json(&blob);
+    assert!(!pretty.contains("payload_b64"), "{pretty}");
+    let toml = active_core::convert::value_to_toml_string(&blob)
+        .expect("toml")
+        .0;
+    assert!(!toml.contains("payload_b64"), "{toml}");
+    let serde = serde_json::to_string(&blob).expect("serialize");
+    assert!(!serde.contains("payload_b64"), "{serde}");
+}

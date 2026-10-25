@@ -98,8 +98,9 @@ pub fn budget_data_with_profile(
     // computed from its children, so a large document stays O(n)
     // instead of re-serializing every subtree.
     // Sizes describe the redacted export: a material string reports
-    // the marker length, not the material's length.
+    // the marker length, not the material's length. One pass budget.
     let profile = crate::secret::SecretProfile::analyze_with_profile(module, profile_override);
+    profile.begin_redaction_pass();
     let total_size = shape_size(
         &profile,
         "",

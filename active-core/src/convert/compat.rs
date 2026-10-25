@@ -9,6 +9,7 @@
 //! enter the report.
 
 use serde::Serialize;
+use std::collections::HashMap;
 
 use crate::ir::{Module, Node, SchemaField};
 
@@ -228,6 +229,15 @@ pub fn compare(old: &Module, new: &Module) -> Result<Vec<CompatFinding>, String>
         .ok_or_else(|| "new document has no schema block".to_string())?;
     let old_fields = collect_fields(old, old_root);
     let new_fields = collect_fields(new, new_root);
+    // Index by path: comparing two n-row schemas is O(n), not O(n²).
+    let old_by_path: HashMap<&str, &Row> = old_fields
+        .iter()
+        .map(|row| (row.path.as_str(), row))
+        .collect();
+    let new_by_path: HashMap<&str, &Row> = new_fields
+        .iter()
+        .map(|row| (row.path.as_str(), row))
+        .collect();
 
     let mut findings = Vec::new();
 
@@ -235,7 +245,7 @@ pub fn compare(old: &Module, new: &Module) -> Result<Vec<CompatFinding>, String>
     // before the new version (removed_in <= new version).
     let new_version = schema_meta(new).version;
     for old_field in &old_fields {
-        if new_fields.iter().any(|row| row.path == old_field.path) {
+        if new_by_path.contains_key(old_field.path.as_str()) {
             continue;
         }
         let scheduled = match (&old_field.removed_in, &new_version) {
@@ -267,7 +277,7 @@ pub fn compare(old: &Module, new: &Module) -> Result<Vec<CompatFinding>, String>
 
     // Added fields, type changes, and blob tightening.
     for new_field in &new_fields {
-        match old_fields.iter().find(|row| row.path == new_field.path) {
+        match old_by_path.get(new_field.path.as_str()).copied() {
             None => {
                 let path = &new_field.path;
                 if new_field.required {

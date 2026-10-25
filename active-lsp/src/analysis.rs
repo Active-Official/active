@@ -919,9 +919,9 @@ fn value_kind(value: &Value) -> &'static str {
 /// composites by kind only. `profile` names the material nodes so a
 /// scalar used as a secret locator (or an interpolation embedding one)
 /// renders the marker instead of its text.
-fn render_hover_value(profile: &SecretProfile, node: NodeId, value: &Value) -> String {
+fn render_hover_value(profile: &SecretProfile, node: NodeId, path: &str, value: &Value) -> String {
     let composite = matches!(value, Value::Array(_) | Value::Table(_));
-    if !composite && profile.node_is_secret(node) {
+    if !composite && (profile.node_is_secret(node) || profile.path_is_secret(path)) {
         return active_core::secret::MARKER.to_string();
     }
     match value {
@@ -1042,7 +1042,11 @@ pub fn hover_at(doc: &Doc, line: u32, character: u32) -> Option<Hover> {
     if let Some(root) = doc.value.as_ref() {
         if let Some(value) = value_at_path(root, &path) {
             let profile = SecretProfile::analyze(&doc.module);
-            lines.push(format!("= {}", render_hover_value(&profile, node, value)));
+            profile.begin_redaction_pass();
+            lines.push(format!(
+                "= {}",
+                render_hover_value(&profile, node, &path, value)
+            ));
         }
     }
     // Origin, include-aware.
@@ -2497,7 +2501,7 @@ pub fn inlay_hints(doc: &Doc, range: Option<Range>) -> Vec<InlayHint> {
         // Byte quantities evaluate to plain integers, so the source
         // unit comes from the Quantity node when the value no longer
         // carries it.
-        if !profile.node_is_secret(id) {
+        if !profile.node_is_secret(id) && !profile.path_is_secret(&path) {
             if let Some(root) = doc.value.as_ref() {
                 match value_at_path(root, &path) {
                     Some(Value::DurationMs(ms)) => label.push_str(&format!(" = {ms} ms")),

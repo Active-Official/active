@@ -47,6 +47,10 @@ pub fn replay(
 ) -> Result<JsonValue, String> {
     let mut engine = Engine::new();
     engine.profile_override = override_profile.map(str::to_string);
+    // Canonical audit form: materialise so payload-resident secrets are
+    // visible to the redactor, then strip payloads so the identity does
+    // not depend on the flag the audited run used.
+    engine.materialise_blobs = true;
     let (first, first_diags, first_steps, first_seeds) = engine
         .evaluate_with_steps_and_seeds(module)
         .map_err(|e| e.to_string())?;
@@ -65,10 +69,12 @@ pub fn replay(
         crate::secret::SecretProfile::analyze_with_profile(module, override_profile);
     second_profile.absorb_environment(&engine.env);
     second_profile.absorb_secrets(&second_seeds);
-    let first_hash =
-        crate::provenance::content_hash(&crate::convert::redact_value(&profile, &first));
-    let second_hash =
-        crate::provenance::content_hash(&crate::convert::redact_value(&second_profile, &second));
+    let first_hash = crate::provenance::content_hash(&crate::convert::strip_blob_payloads(
+        &crate::convert::redact_value(&profile, &first),
+    ));
+    let second_hash = crate::provenance::content_hash(&crate::convert::strip_blob_payloads(
+        &crate::convert::redact_value(&second_profile, &second),
+    ));
     let first_codes: Vec<&str> = first_diags.iter().map(|d| d.code.as_str()).collect();
     let second_codes: Vec<&str> = second_diags.iter().map(|d| d.code.as_str()).collect();
     let steps_match = first_steps == second_steps;

@@ -120,6 +120,41 @@ fn linear_next(
     Some((start, start + pattern.len()))
 }
 
+/// Per-batch automaton cursor over one marker-free segment: the next
+/// known match and whether the batch has no further match in it.
+/// Caching the match keeps a distant match from re-scanning the suffix
+/// for every earlier match.
+type LevelCursor = (Option<(usize, usize)>, bool);
+
+/// Next match of one batch automaton at or after `last`. Each byte of
+/// a segment is searched at most once per batch.
+fn level_next(
+    automaton: &aho_corasick::AhoCorasick,
+    segment: &str,
+    last: usize,
+    cursor: &mut LevelCursor,
+) -> Option<(usize, usize)> {
+    if cursor.1 {
+        return None;
+    }
+    if let Some((start, end)) = cursor.0 {
+        if start >= last {
+            return Some((start, end));
+        }
+    }
+    match automaton.find(&segment[last..]) {
+        Some(found) => {
+            let match_span = (last + found.start(), last + found.end());
+            cursor.0 = Some(match_span);
+            Some(match_span)
+        }
+        None => {
+            cursor.1 = true;
+            None
+        }
+    }
+}
+
 /// Keep the leftmost match; at the same start keep the longer one.
 fn consider(start: usize, end: usize, best: &mut Option<(usize, usize)>) {
     let replace = match *best {
@@ -361,7 +396,8 @@ impl SecretRedactor {
             let prefix = offset;
             offset += segment.len() + MARKER.len();
             let mut long_cursors: Vec<PatternCursor> = vec![(None, false); long.len()];
-            let mut level_cursors: Vec<Vec<PatternCursor>> = if linear {
+            let mut level_cursors: Vec<LevelCursor> = vec![(None, false); levels.len()];
+            let mut pattern_cursors: Vec<Vec<PatternCursor>> = if linear {
                 levels
                     .iter()
                     .map(|level| vec![(None, false); level.values.len()])
@@ -369,21 +405,13 @@ impl SecretRedactor {
             } else {
                 Vec::new()
             };
-            // `last` only moves forward, so a matcher that finds nothing
-            // at/after it can never match later in this segment: mark it
-            // done instead of rescanning the suffix per match.
-            let mut level_done: Vec<bool> = vec![false; levels.len()];
             let mut last = 0usize;
             loop {
                 let mut best: Option<(usize, usize)> = None;
                 for (level_index, level) in levels.iter().enumerate() {
-                    if level_done[level_index] {
-                        continue;
-                    }
                     if linear {
-                        let cursors = &mut level_cursors[level_index];
+                        let cursors = &mut pattern_cursors[level_index];
                         if cursors.iter().all(|cursor| cursor.1) {
-                            level_done[level_index] = true;
                             continue;
                         }
                         for (pattern, cursor) in level.values.iter().zip(cursors.iter_mut()) {
@@ -393,14 +421,11 @@ impl SecretRedactor {
                             }
                         }
                     } else if let Some(automaton) = level.automaton.as_ref() {
-                        match automaton.find(&segment[last..]) {
-                            Some(found) => {
-                                consider(last + found.start(), last + found.end(), &mut best);
-                            }
-                            None => level_done[level_index] = true,
+                        if let Some((start, end)) =
+                            level_next(automaton, segment, last, &mut level_cursors[level_index])
+                        {
+                            consider(start, end, &mut best);
                         }
-                    } else {
-                        level_done[level_index] = true;
                     }
                 }
                 for (pattern, cursor) in long.iter().zip(long_cursors.iter_mut()) {

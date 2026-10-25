@@ -198,6 +198,34 @@ pub fn secret_tainted_paths_with(
     override_profile: Option<&str>,
 ) -> Vec<String> {
     let profile = crate::secret::SecretProfile::analyze_with_profile(module, override_profile);
+    secret_tainted_paths_from_profile(value, &profile)
+}
+
+/// Structural taint plus the evaluator's runtime secrets: a copy of a
+/// `let`-bound or computed secret is reported even though no path makes
+/// it structurally material.
+pub fn secret_tainted_paths_with_seeds(
+    module: &Module,
+    value: &crate::ir::Value,
+    override_profile: Option<&str>,
+    env: Option<&std::collections::HashMap<String, String>>,
+    seeds: Option<&crate::secret::SecretRedactor>,
+) -> Vec<String> {
+    let mut profile = crate::secret::SecretProfile::analyze_with_profile(module, override_profile);
+    if let Some(env) = env {
+        profile.absorb_environment(env);
+    }
+    if let Some(seeds) = seeds {
+        profile.absorb_secrets(seeds);
+    }
+    secret_tainted_paths_from_profile(value, &profile)
+}
+
+fn secret_tainted_paths_from_profile(
+    value: &crate::ir::Value,
+    profile: &crate::secret::SecretProfile,
+) -> Vec<String> {
+    profile.begin_redaction_pass();
     fn walk(
         value: &crate::ir::Value,
         path: String,
@@ -209,7 +237,12 @@ pub fn secret_tainted_paths_with(
         let tainted = match value {
             Value::Secret(_) => true,
             Value::Blob { tainted: true, .. } => true,
-            Value::Blob { .. } => structural,
+            Value::Blob { media_type, .. } => {
+                structural || profile.redact_text(media_type).is_some()
+            }
+            // A copy of a runtime secret has no structural path taint;
+            // its text is the only signal.
+            Value::String(text) => structural || profile.redact_text(text).is_some(),
             Value::Array(items) => {
                 let mut any = structural;
                 for (i, item) in items.iter().enumerate() {
@@ -242,7 +275,7 @@ pub fn secret_tainted_paths_with(
         tainted
     }
     let mut out = Vec::new();
-    walk(value, String::new(), &profile, &mut out);
+    walk(value, String::new(), profile, &mut out);
     out.sort();
     out.dedup();
     out

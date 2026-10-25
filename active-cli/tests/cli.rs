@@ -3226,3 +3226,104 @@ fn audit_hash_replays_after_runtime_secret_redaction() {
     assert!(text.contains("\"ok\": true"), "{text}");
     assert!(text.contains("\"expected_match\": true"), "{text}");
 }
+
+#[test]
+fn audit_hash_replays_with_a_materialised_payload_secret() {
+    // Review 48: the audit hashes a canonical materialised tree and
+    // replay uses the same policy, so a payload-resident secret cannot
+    // make the expected hash unreachable.
+    let f = fixture(
+        "audit_replay_payload.active",
+        "k = secret(\"PIN-r48-payload\")\nf = blob(\"text/plain\", \"PIN-r48-payload\")\nkeep = 1\n",
+    );
+    let audit = f.with_extension("audit.active");
+    let out = active()
+        .args(["eval", "--materialise-blobs", "--path", "keep"])
+        .arg(&f)
+        .arg("--audit-trail")
+        .arg(&audit)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let audit_text = std::fs::read_to_string(&audit).expect("audit file");
+    let hash = audit_text
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("result = "))
+        .map(|value| value.trim_end_matches(',').trim_matches('"').to_string())
+        .expect("audit result hash");
+    let replay = active()
+        .args(["debug", "--from"])
+        .arg(&f)
+        .args(["--replay", "--expect"])
+        .arg(&hash)
+        .output()
+        .expect("run active");
+    assert!(
+        replay.status.success(),
+        "{}",
+        String::from_utf8_lossy(&replay.stderr)
+    );
+    let text = String::from_utf8_lossy(&replay.stdout);
+    assert!(text.contains("\"ok\": true"), "{text}");
+}
+
+#[test]
+fn budget_size_describes_the_redacted_export() {
+    // Review 48: a copy of a runtime secret must report marker length,
+    // not the secret's length.
+    let short = fixture(
+        "budget_short.active",
+        "let v = \"PIN-${12}\"\nlet k = secret(v)\ncopy = \"PIN-12\"\n",
+    );
+    let long = fixture(
+        "budget_long.active",
+        "let v = \"PIN-${123456789012}\"\nlet k = secret(v)\ncopy = \"PIN-123456789012\"\n",
+    );
+    let usage = |path: &std::path::Path| -> u64 {
+        let out = active()
+            .args(["budget", "explain", "--from"])
+            .arg(path)
+            .args(["--format", "json"])
+            .output()
+            .expect("run active");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("budget json");
+        report["usage"]["value_size"].as_u64().expect("value_size")
+    };
+    assert_eq!(
+        usage(&short),
+        usage(&long),
+        "secret length must not change the reported export size"
+    );
+}
+
+#[test]
+fn graph_secret_cone_includes_a_runtime_copy() {
+    // Review 48: the query follows inspect/hover, which now include
+    // evaluator seeds.
+    let f = fixture(
+        "graph_secret_cone.active",
+        "let v = \"PIN-${1234}\"\nlet k = secret(v)\ncopy = \"PIN-1234\"\n",
+    );
+    let out = active()
+        .args(["graph", "query", "--from"])
+        .arg(&f)
+        .args(["--query", "secret-tainted-cone", "--format", "json"])
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("copy"), "{text}");
+}

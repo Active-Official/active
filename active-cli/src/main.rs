@@ -848,29 +848,15 @@ fn check_declared_against(
 /// Drop retained blob payloads for hashing: the audit result must be
 /// stable across `--materialise-blobs` (identity is the content).
 fn strip_blob_payloads(value: &active_core::Value) -> active_core::Value {
-    use active_core::Value;
-    match value {
-        Value::Blob {
-            hash,
-            size,
-            media_type,
-            tainted,
-            ..
-        } => Value::Blob {
-            hash: *hash,
-            size: *size,
-            media_type: media_type.clone(),
-            tainted: *tainted,
-            payload: None,
-        },
-        Value::Array(items) => Value::Array(items.iter().map(strip_blob_payloads).collect()),
-        Value::Table(map) => Value::Table(
-            map.iter()
-                .map(|(key, item)| (key.clone(), strip_blob_payloads(item)))
-                .collect(),
-        ),
-        other => other.clone(),
-    }
+    active_core::convert::strip_blob_payloads(value)
+}
+
+/// True when the arena builds any content-addressed value.
+fn module_has_blobs(module: &active_core::Module) -> bool {
+    module
+        .arena
+        .iter()
+        .any(|node| matches!(node, active_core::ir::Node::ContentAddressed { .. }))
 }
 
 /// Evaluate an in-memory source in the given file context and report
@@ -1067,8 +1053,8 @@ fn run_graph_query(
             }
         }
         "secret-tainted-cone" | "content-addressed-above-size" => {
-            let (value, diags) = evaluation_engine
-                .evaluate(&module)
+            let (value, diags, seeds) = evaluation_engine
+                .evaluate_with_seeds(&module)
                 .map_err(|e| anyhow::anyhow!("evaluation failed: {e}"))?;
             for d in &diags {
                 report(d, &name);
@@ -1076,10 +1062,12 @@ fn run_graph_query(
             if query.starts_with("secret") {
                 print_paths(
                     query,
-                    &active_core::graph::secret_tainted_paths_with(
+                    &active_core::graph::secret_tainted_paths_with_seeds(
                         &module,
                         &value,
                         profile.as_deref(),
+                        Some(&evaluation_engine.env),
+                        Some(&seeds),
                     ),
                 )
             } else {
@@ -1386,7 +1374,30 @@ fn main() -> anyhow::Result<()> {
                 other => anyhow::bail!("unsupported format: {}", other),
             }
             if let Some(audit_path) = audit_trail {
-                let audited = strip_blob_payloads(&full_value);
+                // Canonical audit form: when the document builds blobs
+                // and the run did not materialise them, hash a
+                // materialised view so a payload-resident secret is
+                // detected. Payloads are stripped afterwards, so the
+                // result does not depend on `--materialise-blobs` and
+                // replay can reproduce it with one fixed policy.
+                let canonical = if materialise_blobs || !module_has_blobs(&module) {
+                    full_value.clone()
+                } else {
+                    let mut canonical_engine = engine.clone();
+                    canonical_engine.materialise_blobs = true;
+                    let (canonical_value, _, canonical_seeds) = canonical_engine
+                        .evaluate_with_seeds(&module)
+                        .map_err(|e| anyhow::anyhow!("audit evaluation failed: {e}"))?;
+                    let mut canonical_profile =
+                        active_core::secret::SecretProfile::analyze_with_profile(
+                            &module,
+                            canonical_engine.profile_override.as_deref(),
+                        );
+                    canonical_profile.absorb_environment(&canonical_engine.env);
+                    canonical_profile.absorb_secrets(&canonical_seeds);
+                    active_core::convert::redact_value(&canonical_profile, &canonical_value)
+                };
+                let audited = strip_blob_payloads(&canonical);
                 write_audit_trail(
                     &audit_path,
                     &file,
@@ -1730,15 +1741,17 @@ fn main() -> anyhow::Result<()> {
             let module = parse_input(&from, false, false, &None)?;
             let mut evaluation_engine = Engine::new();
             evaluation_engine.profile_override = profile.clone();
-            let (value, diagnostics) = evaluation_engine
-                .evaluate(&module)
+            let (value, diagnostics, seeds) = evaluation_engine
+                .evaluate_with_seeds(&module)
                 .map_err(|e| anyhow::anyhow!("cannot evaluate: {e}"))?;
-            let data = active_core::viz::budget_data_with_profile(
+            let data = active_core::viz::budget_data_with_seeds(
                 &module,
                 &value,
                 &evaluation_engine.budget,
                 &diagnostics,
                 profile.as_deref(),
+                Some(&evaluation_engine.env),
+                Some(&seeds),
             );
             if format == "text" {
                 let limits = &data["limits"];
@@ -1852,7 +1865,9 @@ fn main() -> anyhow::Result<()> {
                 }
                 return Ok(());
             }
-            let (_, _, steps) = Engine::new()
+            let mut step_engine = Engine::new();
+            step_engine.profile_override = profile.clone();
+            let (_, _, steps) = step_engine
                 .evaluate_with_steps(&module)
                 .map_err(|e| anyhow::anyhow!("cannot evaluate for stepping: {e}"))?;
             let (shown, matched) = match break_at.as_deref() {
@@ -1995,17 +2010,19 @@ fn main() -> anyhow::Result<()> {
                 "budget" => {
                     let mut evaluation_engine = Engine::new();
                     evaluation_engine.profile_override = profile.clone();
-                    let (value, diagnostics) = evaluation_engine
-                        .evaluate(&module)
+                    let (value, diagnostics, seeds) = evaluation_engine
+                        .evaluate_with_seeds(&module)
                         .map_err(|e| anyhow::anyhow!("cannot evaluate: {e}"))?;
                     println!(
                         "{}",
-                        serde_json::to_string_pretty(&active_core::viz::budget_data_with_profile(
+                        serde_json::to_string_pretty(&active_core::viz::budget_data_with_seeds(
                             &module,
                             &value,
                             &evaluation_engine.budget,
                             &diagnostics,
-                            profile.as_deref()
+                            profile.as_deref(),
+                            Some(&evaluation_engine.env),
+                            Some(&seeds),
                         ))
                         .map_err(|e| anyhow::anyhow!("{e}"))?
                     );

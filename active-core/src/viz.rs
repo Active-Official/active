@@ -11,12 +11,19 @@ use crate::Budget;
 
 /// Taint flow: secret sources, the containment edges that carry taint,
 /// and the paths that would export it (all redacted on emission).
+///
+/// Structural view only: a copy of a `let`-bound or computed secret has
+/// no path taint. Callers that evaluated the document use
+/// [`taint_data_with_seeds`] so runtime copies are reported.
 pub fn taint_data(module: &Module, value: &Value) -> JsonValue {
     taint_data_with_profile(module, value, None)
 }
 
 /// Taint flow with an explicit profile override, so a caller that
 /// evaluated under `--profile` gets the matching material set.
+///
+/// Structural view only; see [`taint_data_with_seeds`] for runtime
+/// copies.
 pub fn taint_data_with_profile(
     module: &Module,
     value: &Value,
@@ -122,6 +129,39 @@ pub fn budget_data_with_profile(
     diagnostics: &[crate::Diagnostic],
     profile_override: Option<&str>,
 ) -> JsonValue {
+    let profile = crate::secret::SecretProfile::analyze_with_profile(module, profile_override);
+    budget_data_with_redactor(module, value, budget, diagnostics, &profile)
+}
+
+/// Budget dashboard seeded with the environment and runtime secrets
+/// that produced the tree, so `usage.value_size` describes the redacted
+/// export (a copy of a `let`-bound secret reports marker length).
+pub fn budget_data_with_seeds(
+    module: &Module,
+    value: &Value,
+    budget: &Budget,
+    diagnostics: &[crate::Diagnostic],
+    profile_override: Option<&str>,
+    env: Option<&std::collections::HashMap<String, String>>,
+    seeds: Option<&crate::secret::SecretRedactor>,
+) -> JsonValue {
+    let mut profile = crate::secret::SecretProfile::analyze_with_profile(module, profile_override);
+    if let Some(env) = env {
+        profile.absorb_environment(env);
+    }
+    if let Some(seeds) = seeds {
+        profile.absorb_secrets(seeds);
+    }
+    budget_data_with_redactor(module, value, budget, diagnostics, &profile)
+}
+
+fn budget_data_with_redactor(
+    module: &Module,
+    value: &Value,
+    budget: &Budget,
+    diagnostics: &[crate::Diagnostic],
+    profile: &crate::secret::SecretProfile,
+) -> JsonValue {
     let nodes = module.arena.len() as u64;
     let mut keys = 0u64;
     let mut max_array = 0u64;
@@ -132,10 +172,9 @@ pub fn budget_data_with_profile(
     // instead of re-serializing every subtree.
     // Sizes describe the redacted export: a material string reports
     // the marker length, not the material's length. One pass budget.
-    let profile = crate::secret::SecretProfile::analyze_with_profile(module, profile_override);
     profile.begin_redaction_pass();
     let total_size = shape_size(
-        &profile,
+        profile,
         "",
         value,
         1,

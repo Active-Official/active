@@ -46,6 +46,13 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   known secret substrings longest-first, and report `tainted: true`
   wherever a replacement happened. Containers keep their shape;
   material leaves carry the marker.
+- **Audit hashes are canonical.** The audit and `lock` hash is computed
+  on a materialised, redacted, payload-free tree, so
+  `--materialise-blobs` cannot change a document's identity, and
+  `debug --replay` uses the same policy: it reproduces an audit hash
+  for payload-resident and `let`-bound secrets. `budget explain`,
+  `viz budget`, and `graph query secret-tainted-cone` absorb the
+  evaluator's seeds, so a runtime copy reports redacted size and taint.
 - **Reduction fails closed.** `--minimize` now recognizes dot runs on
   either side of `env`, `secret env(`, and env calls with anything
   past the name (comma or not), and redacts every string literal in

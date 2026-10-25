@@ -303,6 +303,34 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
     walk(profile, &redactor, &mut blob_material, "", value)
 }
 
+/// Drop retained blob payloads, keeping identity and taint. Content
+/// hashes (audit, replay) use this so `--materialise-blobs` cannot
+/// change the identity of a document.
+pub fn strip_blob_payloads(value: &Value) -> Value {
+    match value {
+        Value::Blob {
+            hash,
+            size,
+            media_type,
+            tainted,
+            ..
+        } => Value::Blob {
+            hash: *hash,
+            size: *size,
+            media_type: media_type.clone(),
+            tainted: *tainted,
+            payload: None,
+        },
+        Value::Array(items) => Value::Array(items.iter().map(strip_blob_payloads).collect()),
+        Value::Table(map) => Value::Table(
+            map.iter()
+                .map(|(key, item)| (key.clone(), strip_blob_payloads(item)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
 /// JSON export with structural-material redaction.
 pub fn value_to_json_with(profile: &SecretProfile, value: &Value) -> JsonValue {
     value_to_json(&redact_value(profile, value))

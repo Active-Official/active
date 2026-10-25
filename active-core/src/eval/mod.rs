@@ -1462,16 +1462,13 @@ impl Engine {
             .iter()
             .any(|node| matches!(node, Node::ContentAddressed { .. }));
         // A caller that asked for runtime seeds needs the analysis even
-        // when the document has no blobs; without any `secret(...)` node
-        // there is nothing to seed.
-        let has_secret_nodes = module
-            .arena
-            .iter()
-            .any(|node| matches!(node, Node::Secret { .. }));
+        // when the document has no `secret(...)` node: a profile can be
+        // material by selection alone, and a fail-closed bound trip
+        // marks every env read.
         let secret_profile: Option<SecretProfile> = (steps.is_some()
             || has_blobs
-            || (seeds.is_some() && has_secret_nodes))
-            .then(|| SecretProfile::analyze_with_profile(module, self.profile_override.as_deref()));
+            || seeds.is_some())
+        .then(|| SecretProfile::analyze_with_profile(module, self.profile_override.as_deref()));
         // Evaluated values of sensitive nodes, so a container step can
         // redact the same bytes even though the container itself is
         // not Secret-kinded (topological order means children are

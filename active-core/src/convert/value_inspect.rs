@@ -13,12 +13,19 @@ use crate::secret::{SecretProfile, MARKER};
 use crate::types::ActiveType;
 
 /// Inspect one dotted/index path of an evaluated document.
+///
+/// No environment or evaluator seeds: a secret bound outside the
+/// exported tree (`let v = …; k = secret(v)`) is invisible here. Use
+/// [`inspect_path_with_profile_env`] with the seeds returned by
+/// `Engine::evaluate_with_seeds` for a view that matches the exporters.
 pub fn inspect_path(module: &Module, root: &Value, path: &str) -> Result<JsonValue, String> {
     inspect_path_with_profile(module, root, path, None)
 }
 
 /// Inspect with an explicit profile override (the engine's `--profile`
 /// selection). Taint must follow the profile that produced the tree.
+///
+/// No environment or evaluator seeds; see [`inspect_path`].
 pub fn inspect_path_with_profile(
     module: &Module,
     root: &Value,

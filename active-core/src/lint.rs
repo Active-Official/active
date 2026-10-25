@@ -784,8 +784,9 @@ fn hardcoded_secrets(module: &Module) -> Vec<Diagnostic> {
 }
 
 /// L005: values present under schema-deprecated fields. Walks the
-/// schema and value trees together (spec/validation.md §2 pairing);
-/// the migration message is schema-authored and safe to quote.
+/// schema and value trees together (spec/validation.md §2 pairing).
+/// The migration message is schema-authored text, so a reason that
+/// quotes a secret is redacted like any other prose.
 fn deprecated(module: &Module) -> Vec<Diagnostic> {
     let Some(schema_id) = module.schema else {
         return Vec::new();
@@ -793,6 +794,7 @@ fn deprecated(module: &Module) -> Vec<Diagnostic> {
     let Some(root) = module.root else {
         return Vec::new();
     };
+    let profile = crate::secret::SecretProfile::analyze(module);
     let mut out = Vec::new();
     // (schema node, value node, path) worklist.
     let mut stack = vec![(schema_id, root, String::new())];
@@ -825,6 +827,9 @@ fn deprecated(module: &Module) -> Vec<Diagnostic> {
             match module.get(*field_id) {
                 Some(Node::SchemaField { field }) => {
                     if let Some(reason) = &field.deprecated {
+                        let reason = profile
+                            .redact_authored_text(reason)
+                            .unwrap_or_else(|| reason.clone());
                         let message = if reason.is_empty() {
                             format!("deprecated field '{child_path}' is still used")
                         } else {

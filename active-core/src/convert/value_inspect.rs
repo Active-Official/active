@@ -129,7 +129,7 @@ pub fn inspect_path_with_profile_env(
         "size_bytes": size,
         "dependencies": dependencies,
     });
-    if let Some(schema) = schema_for_path(module, path) {
+    if let Some(schema) = schema_for_path(module, &profile, path) {
         report["schema"] = schema;
     }
     if let Some(root) = module.schema {
@@ -254,25 +254,32 @@ fn render_cone(
         Value::Blob {
             hash,
             size,
+            media_type,
             payload,
             ..
         } => {
-            let material = if payload.is_some() {
-                match blob_material.get(hash) {
-                    Some(known) => *known,
-                    None => {
-                        let material = crate::convert::blob_payload_is_material(
-                            redactor,
-                            profile,
-                            payload.as_ref(),
-                        );
-                        blob_material.insert(*hash, material);
-                        material
+            // The media type is part of the identity: a material (or a
+            // copy of a short material value) makes the blob material
+            // even without a payload.
+            let media_material =
+                profile.is_material_text(media_type) || redactor.redact_text(media_type).is_some();
+            let material = media_material
+                || if payload.is_some() {
+                    match blob_material.get(hash) {
+                        Some(known) => *known,
+                        None => {
+                            let material = crate::convert::blob_payload_is_material(
+                                redactor,
+                                profile,
+                                payload.as_ref(),
+                            );
+                            blob_material.insert(*hash, material);
+                            material
+                        }
                     }
-                }
-            } else {
-                false
-            };
+                } else {
+                    false
+                };
             if material {
                 (crate::convert::redacted_blob_json(hash, *size), true)
             } else {
@@ -389,7 +396,7 @@ fn contains_secret(value: &Value) -> bool {
 /// Schema contract at a dotted path, when a schema covers it. Each
 /// segment may carry any number of indices (`arr[0][1].key`): the key
 /// selects the field, then every index descends one array level.
-fn schema_for_path(module: &Module, path: &str) -> Option<JsonValue> {
+fn schema_for_path(module: &Module, profile: &SecretProfile, path: &str) -> Option<JsonValue> {
     let root = module.schema?;
     let mut current = root;
     for segment in path.split('.') {
@@ -410,7 +417,7 @@ fn schema_for_path(module: &Module, path: &str) -> Option<JsonValue> {
         }
     }
     match module.get(current) {
-        Some(Node::SchemaField { field }) => Some(schema_field_json(module, field)),
+        Some(Node::SchemaField { field }) => Some(schema_field_json(module, profile, field)),
         Some(Node::SchemaTable { closed, .. }) => Some(json!({
             "type": if *closed { "Table(closed)" } else { "Table" },
             "required": false,
@@ -420,7 +427,8 @@ fn schema_for_path(module: &Module, path: &str) -> Option<JsonValue> {
     }
 }
 
-fn schema_field_json(module: &Module, field: &SchemaField) -> JsonValue {
+fn schema_field_json(module: &Module, profile: &SecretProfile, field: &SchemaField) -> JsonValue {
+    let redact = |text: String| -> String { profile.redact_authored_text(&text).unwrap_or(text) };
     let mut constraints: Vec<String> = Vec::new();
     if let Some(value) = literal_text(module, field.min) {
         constraints.push(format!("min {value}"));
@@ -435,19 +443,19 @@ fn schema_field_json(module: &Module, field: &SchemaField) -> JsonValue {
         constraints.push(format!("max_len {len}"));
     }
     if let Some(pattern) = literal_string(module, field.pattern) {
-        constraints.push(format!("pattern {pattern}"));
+        constraints.push(redact(format!("pattern {pattern}")));
     }
     if let Some(format) = literal_string(module, field.format) {
-        constraints.push(format!("format {format}"));
+        constraints.push(redact(format!("format {format}")));
     }
     if let Some(media) = literal_string(module, field.blob_media_type) {
-        constraints.push(format!("media_type {media}"));
+        constraints.push(redact(format!("media_type {media}")));
     }
     if let Some(size) = literal_text(module, field.blob_max_size) {
         constraints.push(format!("max_size {size}"));
     }
     if let Some(requires) = literal_string(module, field.requires) {
-        constraints.push(format!("requires {requires}"));
+        constraints.push(redact(format!("requires {requires}")));
     }
     let mut out = json!({
         "type": type_name(&field.typ),
@@ -455,13 +463,13 @@ fn schema_field_json(module: &Module, field: &SchemaField) -> JsonValue {
         "constraints": constraints,
     });
     if let Some(description) = literal_string(module, field.description) {
-        out["description"] = json!(description);
+        out["description"] = json!(redact(description));
     }
     if let Some(deprecated) = &field.deprecated {
-        out["deprecated"] = json!(deprecated);
+        out["deprecated"] = json!(redact(deprecated.clone()));
     }
     if let Some(removed_in) = &field.removed_in {
-        out["removed_in"] = json!(removed_in);
+        out["removed_in"] = json!(redact(removed_in.clone()));
     }
     out
 }

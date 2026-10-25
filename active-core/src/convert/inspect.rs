@@ -36,6 +36,7 @@ fn schema_root(module: &Module) -> Result<NodeId, String> {
 /// `depth` mirrors the parser ceiling so hand-built arenas terminate.
 fn push_field(
     module: &Module,
+    profile: &crate::secret::SecretProfile,
     out: &mut Vec<JsonValue>,
     path: String,
     name: String,
@@ -77,7 +78,15 @@ fn push_field(
                 } else {
                     format!("{path}.{key}")
                 };
-                push_field(module, out, child_path, key.clone(), *child, depth + 1);
+                push_field(
+                    module,
+                    profile,
+                    out,
+                    child_path,
+                    key.clone(),
+                    *child,
+                    depth + 1,
+                );
             }
         }
         Some(Node::SchemaArray { element }) => {
@@ -109,12 +118,14 @@ fn push_field(
             match module.get(*element) {
                 Some(Node::SchemaField { field }) => out.push(field_entry(
                     module,
+                    profile,
                     format!("{path}[]"),
                     name.clone(),
                     field,
                 )),
                 Some(Node::SchemaTable { .. }) | Some(Node::SchemaArray { .. }) => push_field(
                     module,
+                    profile,
                     out,
                     format!("{path}[]"),
                     name.clone(),
@@ -124,7 +135,9 @@ fn push_field(
                 _ => {}
             }
         }
-        Some(Node::SchemaField { field }) => out.push(field_entry(module, path, name, field)),
+        Some(Node::SchemaField { field }) => {
+            out.push(field_entry(module, profile, path, name, field))
+        }
         _ => {}
     }
 }
@@ -168,7 +181,14 @@ fn string_list(module: &Module, id: Option<NodeId>) -> Vec<String> {
     texts.unwrap_or_default()
 }
 
-fn field_entry(module: &Module, path: String, name: String, field: &SchemaField) -> JsonValue {
+fn field_entry(
+    module: &Module,
+    profile: &crate::secret::SecretProfile,
+    path: String,
+    name: String,
+    field: &SchemaField,
+) -> JsonValue {
+    let redact = |text: String| -> String { profile.redact_authored_text(&text).unwrap_or(text) };
     let mut constraints = JsonMap::new();
     let mut members = JsonValue::Null;
     let mut member_descriptions = JsonValue::Null;
@@ -190,18 +210,22 @@ fn field_entry(module: &Module, path: String, name: String, field: &SchemaField)
                 constraints.insert("max_len".to_string(), super::value_to_json(v));
             }
             if let Some(pattern) = literal_string(module, field.pattern) {
-                constraints.insert("pattern".to_string(), JsonValue::String(pattern));
+                constraints.insert("pattern".to_string(), JsonValue::String(redact(pattern)));
             }
             if let Some(format) = literal_string(module, field.format) {
-                constraints.insert("format".to_string(), JsonValue::String(format));
+                constraints.insert("format".to_string(), JsonValue::String(redact(format)));
             }
         }
         ActiveType::Enum(options) => {
             members = JsonValue::Array(options.iter().cloned().map(JsonValue::String).collect());
             let texts = string_list(module, field.enum_descriptions);
             if texts.len() == options.len() {
-                member_descriptions =
-                    JsonValue::Array(texts.into_iter().map(JsonValue::String).collect());
+                member_descriptions = JsonValue::Array(
+                    texts
+                        .into_iter()
+                        .map(|text| JsonValue::String(redact(text)))
+                        .collect(),
+                );
             }
         }
         ActiveType::Table { closed: is_closed } => {
@@ -209,7 +233,7 @@ fn field_entry(module: &Module, path: String, name: String, field: &SchemaField)
         }
         ActiveType::Blob => {
             if let Some(media) = literal_string(module, field.blob_media_type) {
-                constraints.insert("media_type".to_string(), JsonValue::String(media));
+                constraints.insert("media_type".to_string(), JsonValue::String(redact(media)));
             }
             if let Some(Node::Literal(v)) = field.blob_max_size.and_then(|id| module.get(id)) {
                 constraints.insert("max_size".to_string(), super::value_to_json(v));
@@ -222,7 +246,7 @@ fn field_entry(module: &Module, path: String, name: String, field: &SchemaField)
     // the generators use (static default or Null excuses).
     let required =
         !matches!(field.typ, ActiveType::Null) && literal_default(module, field).is_none();
-    json!({
+    let mut entry = json!({
         "path": path,
         "name": name,
         "kind": "field",
@@ -230,15 +254,18 @@ fn field_entry(module: &Module, path: String, name: String, field: &SchemaField)
         "required": required,
         "default": literal_default(module, field).unwrap_or(JsonValue::Null),
         "constraints": JsonValue::Object(constraints),
-        "description": opt_string(literal_string(module, field.description)),
-        "deprecated": opt_string(field.deprecated.clone()),
-        "removed_in": opt_string(field.removed_in.clone()),
-        "requires": opt_string(literal_string(module, field.requires)),
+        "description": opt_string(literal_string(module, field.description).map(redact)),
+        "deprecated": opt_string(field.deprecated.clone().map(redact)),
+        "removed_in": opt_string(field.removed_in.clone().map(redact)),
+        "requires": opt_string(literal_string(module, field.requires).map(redact)),
         "members": members,
         "member_descriptions": member_descriptions,
         "closed": closed,
         "element": JsonValue::Null,
-    })
+    });
+    // A static default that equals a material value is a copy too.
+    profile.redact_json(&mut entry);
+    entry
 }
 
 /// Inspect a parsed module's schema block: versioned JSON with one entry
@@ -251,8 +278,17 @@ pub fn schema_inspect(module: &Module) -> Result<JsonValue, String> {
     if !matches!(module.get(root), Some(Node::SchemaTable { .. })) {
         return Err("schema block must be a table for inspection".to_string());
     }
+    let profile = crate::secret::SecretProfile::analyze(module);
     let mut fields = Vec::new();
-    push_field(module, &mut fields, String::new(), String::new(), root, 0);
+    push_field(
+        module,
+        &profile,
+        &mut fields,
+        String::new(),
+        String::new(),
+        root,
+        0,
+    );
     // The root table entry itself carries no field data; drop it so the
     // output is exactly the field list agents query.
     fields.retain(|entry| !entry["path"].as_str().unwrap_or("").is_empty());

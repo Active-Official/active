@@ -198,70 +198,73 @@ impl Engine {
                 .or(Some(ann.span.clone()));
             let file = module.node_files.get(&node_id).cloned();
             let shown_source = render_source(module, source, *expr);
-            match predicate_value(module, &overlay, values, *expr) {
-                Some(Value::Bool(true)) => {}
-                Some(Value::Bool(false)) => {
-                    let (profile, redactor) = material.get_or_insert_with(|| {
-                        let profile = crate::secret::SecretProfile::analyze_with_profile(
-                            module,
-                            self.profile_override.as_deref(),
-                        );
-                        let redactor = runtime_secret_redactor(values, &profile);
-                        (profile, redactor)
-                    });
-                    // The predicate's own source can quote a secret (a
-                    // constraint written against the literal); redact it
-                    // with the same material set as the actual.
-                    let shown_source = profile
-                        .redact_authored_text(&shown_source)
-                        .unwrap_or(shown_source);
-                    // Host values and computed secrets are not module
-                    // literals; sweep them too.
-                    let shown_source = redactor
-                        .redact_every_occurrence(&shown_source)
-                        .unwrap_or(shown_source);
-                    // A material actual of any kind renders the marker;
-                    // a string that merely contains a known secret is
-                    // redacted in place.
-                    let actual = if profile.node_is_secret(node_id)
-                        || profile.path_is_secret(&ann.path)
-                    {
-                        crate::secret::MARKER.to_string()
-                    } else {
-                        render_constrained(value, redactor, profile)
-                    };
-                    local.push(Diagnostic {
+            let outcome = predicate_value(module, &overlay, values, *expr);
+            // A passing predicate needs no material analysis; every
+            // failing arm (boolean false, non-boolean, or a host-value
+            // error path) shares the same redaction.
+            if outcome.is_some() && !matches!(outcome, Some(Value::Bool(true))) {
+                let (profile, redactor) = material.get_or_insert_with(|| {
+                    let profile = crate::secret::SecretProfile::analyze_with_profile(
+                        module,
+                        self.profile_override.as_deref(),
+                    );
+                    let redactor = runtime_secret_redactor(values, &profile);
+                    (profile, redactor)
+                });
+                // Redact the full source first, then truncate: cutting
+                // before redaction would leak the prefix of a secret
+                // that straddles the limit.
+                let shown_source = profile
+                    .redact_authored_text(&shown_source)
+                    .unwrap_or(shown_source);
+                // Host values and computed secrets are not module
+                // literals; sweep them too.
+                let shown_source = redactor
+                    .redact_every_occurrence(&shown_source)
+                    .unwrap_or(shown_source);
+                let shown_source = truncate_120(&shown_source);
+                match outcome {
+                    Some(Value::Bool(false)) => {
+                        // A material actual of any kind renders the
+                        // marker; a string that merely contains a known
+                        // secret is redacted in place.
+                        let actual = if profile.node_is_secret(node_id)
+                            || profile.path_is_secret(&ann.path)
+                        {
+                            crate::secret::MARKER.to_string()
+                        } else {
+                            render_constrained(value, redactor, profile)
+                        };
+                        local.push(Diagnostic {
+                            severity: Severity::Error,
+                            code: "T006".into(),
+                            message: format!(
+                                "constraint violation at '{}': {shown_source} does not hold (actual: {actual})",
+                                display_path(&ann.path),
+                            ),
+                            path: Some(ann.path.clone()),
+                            span,
+                            repair: None,
+                            confidence: 1.0,
+                            file,
+                        });
+                    }
+                    Some(other) => local.push(Diagnostic {
                         severity: Severity::Error,
                         code: "T006".into(),
                         message: format!(
-                            "constraint violation at '{}': {shown_source} does not hold (actual: {actual})",
+                            "constraint violation at '{}': {shown_source} must evaluate to a boolean, got {}",
                             display_path(&ann.path),
+                            value_kind_name(&other),
                         ),
                         path: Some(ann.path.clone()),
                         span,
                         repair: None,
                         confidence: 1.0,
                         file,
-                    });
+                    }),
+                    None => {}
                 }
-                Some(other) => local.push(Diagnostic {
-                    severity: Severity::Error,
-                    code: "T006".into(),
-                    message: format!(
-                        "constraint violation at '{}': {shown_source} must evaluate to a boolean, got {}",
-                        display_path(&ann.path),
-                        value_kind_name(&other),
-                    ),
-                    path: Some(ann.path.clone()),
-                    span,
-                    repair: None,
-                    confidence: 1.0,
-                    file,
-                }),
-                // Defensive: exotic predicate roots fall back to the
-                // graph result; a missing one cannot happen on
-                // cycle-checked graphs.
-                None => {}
             }
         }
         if !local.is_empty() && !self.resilient {
@@ -1802,7 +1805,9 @@ fn render_source(module: &Module, source: &str, expr: NodeId) -> String {
     if subtree_has_secret(module, expr) {
         return "constraint".to_string();
     }
-    truncate_120(source)
+    // Redaction runs before truncation at the call site, so a secret
+    // straddling the limit cannot leak its prefix.
+    source.to_string()
 }
 
 /// True when a `Secret` node is reachable from `expr`, following

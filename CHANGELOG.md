@@ -288,8 +288,10 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   value redacts at any length (whole-value matching), while substring
   spreading stays limited to four bytes and up so a short value cannot
   rewrite unrelated text; constraint sources and T006 actuals (including
-  host-only values), docgen intent/comment/schema prose, LSP hover
-  annotations, and blob media types and payloads use the exact set. The
+  host-only values, redacted before truncation), docgen intent/comment/
+  schema prose, LSP hover annotations, L005 migration messages, generated
+  code comments, schema inspect fields, and blob media types and payloads
+  use the exact set. The
   debug gap sweep touches only true inter-token gaps and redacts a
   malformed interpolation as one slice, so it cannot rewrite identifiers
   or keywords. Runtime secrets seed the same redactor as authored literals: the evaluator returns every

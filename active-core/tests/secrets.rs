@@ -2386,3 +2386,94 @@ fn constraint_source_redacts_a_runtime_secret() {
         None => std::env::remove_var("ACTIVE_R65_KEY"),
     }
 }
+
+#[test]
+fn t006_non_boolean_message_redacts_the_source() {
+    // Review 66: both failing T006 arms share the redaction.
+    let src = "token = secret(\"hunter2-x\")\n# @constraint: \"hunter2-x\"\nname = \"x\"\n";
+    let module = parse(src, "t006-nonbool").expect("parse");
+    let (_, diags) = Engine::hermetic().evaluate(&module).expect("evaluate");
+    let t006 = diags
+        .iter()
+        .find(|d| d.code == "T006")
+        .expect("constraint must fail");
+    assert!(!t006.message.contains("hunter2-x"), "{}", t006.message);
+}
+
+#[test]
+fn lint_deprecated_reason_is_redacted() {
+    // Review 66: L005 quotes schema prose.
+    let src = "token = secret(\"s3cr3t-dep\")\nschema = { host = String(deprecated = \"use s3cr3t-dep\") }\nhost = \"x\"\n";
+    let module = parse(src, "lint-dep").expect("parse");
+    let diags = active_core::lint::lint(&module);
+    let l005 = diags
+        .iter()
+        .find(|d| d.code == "L005")
+        .expect("deprecated field must lint");
+    assert!(!l005.message.contains("s3cr3t-dep"), "{}", l005.message);
+}
+
+#[test]
+fn schema_prose_redacts_on_inspect_and_generate() {
+    // Review 66: schema prose surfaces beyond docgen.
+    let src = "token = secret(\"s3cr3t-dep\")\nschema = { host = String(deprecated = \"use s3cr3t-dep\") }\nhost = \"x\"\n";
+    let module = parse(src, "schema-prose").expect("parse");
+    let (value, _) = Engine::new().evaluate(&module).expect("evaluate");
+    let report = active_core::convert::inspect_path_with_profile(&module, &value, "host", None)
+        .expect("inspect");
+    let text = serde_json::to_string(&report).expect("json");
+    assert!(!text.contains("s3cr3t-dep"), "{text}");
+    let schema = active_core::convert::schema_inspect(&module).expect("schema inspect");
+    assert!(
+        !serde_json::to_string(&schema)
+            .unwrap()
+            .contains("s3cr3t-dep"),
+        "{schema}"
+    );
+    let outputs = [
+        active_core::convert::schema_to_json_schema(&module).expect("json schema"),
+        active_core::convert::schema_to_openapi(&module, "Config").expect("openapi"),
+    ];
+    for output in outputs {
+        assert!(!output.to_string().contains("s3cr3t-dep"), "{output}");
+    }
+    for output in [
+        active_core::convert::schema_to_rust(&module, "Config"),
+        active_core::convert::schema_to_typescript(&module, "Config"),
+        active_core::convert::schema_to_python(&module, "Config"),
+        active_core::convert::schema_to_go(&module, "Config"),
+    ] {
+        let output = output.expect("generate");
+        assert!(!output.contains("s3cr3t-dep"), "{output}");
+    }
+}
+
+#[test]
+fn blob_payload_embedding_a_short_material_value_is_material() {
+    // Review 66: a short value inside a longer payload still taints it.
+    let src = "active_profile = \"p\"\na = secret(\"base\")\nprofile \"p\" { a = \"ABC\" }\nm = \"xxABCxx\"\nf = blob(\"text/plain\", m)\n";
+    let module = parse(src, "payload-substring").expect("parse");
+    let mut engine = Engine::hermetic();
+    engine.materialise_blobs = true;
+    let (value, _) = engine.evaluate(&module).expect("evaluate");
+    let profile = active_core::secret::SecretProfile::for_engine(
+        &module,
+        &engine,
+        &active_core::secret::SecretRedactor::new(),
+    );
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains("payload_b64"), "{json}");
+}
+
+#[test]
+fn inspect_value_block_redacts_a_short_blob_media_type() {
+    // Review 66: the inspect value block must apply the same media
+    // materiality as the content_addressed block.
+    let src = "active_profile = \"p\"\na = secret(\"base\")\nprofile \"p\" { a = \"ABC\" }\nm = \"ABC\"\nf = blob(m, \"data\")\n";
+    let module = parse(src, "inspect-short-blob").expect("parse");
+    let (value, _) = Engine::new().evaluate(&module).expect("evaluate");
+    let report = active_core::convert::inspect_path_with_profile(&module, &value, "f", None)
+        .expect("inspect");
+    let text = serde_json::to_string(&report).expect("json");
+    assert!(!text.contains("\"media_type\":\"ABC\""), "{text}");
+}

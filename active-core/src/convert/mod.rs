@@ -173,6 +173,12 @@ pub(crate) fn blob_payload_is_material(
             if profile.is_material_text(text) {
                 return true;
             }
+            // A short material value embedded in a longer payload still
+            // makes the payload material; withholding a blob cannot
+            // corrupt text.
+            if profile.exact_literals().redact_text(text).is_some() {
+                return true;
+            }
         }
         redactor
             .redact_text(&String::from_utf8_lossy(bytes))

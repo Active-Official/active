@@ -599,21 +599,24 @@ fn redact_secret_literals(
             continue;
         };
         for next in &lexed.tokens[index + 1..] {
-            if next.line != token.line || next.text == "}" {
-                if next.line == token.line && next.text == "}" {
-                    if let Some((_, end)) = offsets(&token_span(next)) {
-                        let slice = &normalized[start..end];
-                        let hit = authored
-                            .redact_text_min(slice, MIN_SUBSTRING_SEED)
-                            .is_some()
-                            || seeds.redact_text_min(slice, MIN_SUBSTRING_SEED).is_some()
-                            || exact
-                                .values_snapshot()
-                                .iter()
-                                .any(|value| !value.is_empty() && slice.contains(value));
-                        if hit {
-                            malformed_spans.push((start, end));
-                        }
+            if next.line != token.line {
+                break;
+            }
+            if next.text.contains('}') {
+                // The closer can live inside the next string token
+                // (`"}y"`), so take the whole token.
+                if let Some((_, end)) = offsets(&token_span(next)) {
+                    let slice = &normalized[start..end];
+                    let hit = authored
+                        .redact_text_min(slice, MIN_SUBSTRING_SEED)
+                        .is_some()
+                        || seeds.redact_text_min(slice, MIN_SUBSTRING_SEED).is_some()
+                        || exact
+                            .values_snapshot()
+                            .iter()
+                            .any(|value| !value.is_empty() && slice.contains(value));
+                    if hit {
+                        malformed_spans.push((start, end));
                     }
                 }
                 break;

@@ -1391,3 +1391,26 @@ fn minimize_does_not_spread_a_short_secret_through_a_comment() {
     let reduced = report["reduced"].as_str().expect("reduced");
     assert!(reduced.contains("# index note"), "{reduced}");
 }
+
+#[test]
+fn minimize_redacts_a_nested_quote_interpolation() {
+    // Review 66: the lexer splits `"x${"secret"}y"` into string and
+    // identifier tokens; the whole slice must be redacted.
+    let source = "s = secret(\"hunter2-ABCD\")\nt = \"x${\"hunter2-ABCD\"}y\"\n";
+    let report = debug::minimal_case(source, "T006", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(!reduced.contains("hunter2-ABCD"), "{reduced}");
+}
+
+#[test]
+fn minimize_redacts_a_secret_straddling_the_truncation_limit() {
+    // Review 66: redaction runs before truncation, so a long secret
+    // cannot leak its tail.
+    let secret = format!("{}TAILSECRET", "B".repeat(120));
+    let source = format!(
+        "token = secret(\"{secret}\")\n# @constraint: 1 == 2 && \"{secret}\" != \"\"\nname = \"x\"\n"
+    );
+    let report = debug::minimal_case(&source, "T006", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(!reduced.contains("TAILSECRET"), "{reduced}");
+}

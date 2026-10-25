@@ -210,7 +210,8 @@ fn nominal_id(module: &Module, mut id: NodeId) -> NodeId {
 /// static literals, static defaults, and `deprecated` flags.
 pub fn schema_to_json_schema(module: &Module) -> Result<JsonValue, String> {
     let root = schema_root(module)?;
-    let mut node = json_schema_node(module, root);
+    let profile = crate::secret::SecretProfile::analyze(module);
+    let mut node = json_schema_node(module, &profile, root);
     if let JsonValue::Object(ref mut map) = node {
         map.insert(
             "$comment".to_string(),
@@ -224,13 +225,21 @@ pub fn schema_to_json_schema(module: &Module) -> Result<JsonValue, String> {
     Ok(node)
 }
 
-fn json_schema_node(module: &Module, id: NodeId) -> JsonValue {
+fn redact_prose(profile: &crate::secret::SecretProfile, text: String) -> String {
+    profile.redact_authored_text(&text).unwrap_or(text)
+}
+
+fn json_schema_node(
+    module: &Module,
+    profile: &crate::secret::SecretProfile,
+    id: NodeId,
+) -> JsonValue {
     match module.get(id) {
         Some(Node::SchemaTable { fields, closed, .. }) => {
             let mut properties = serde_json::Map::new();
             let mut required = Vec::new();
             for (name, field) in fields {
-                properties.insert(name.clone(), json_schema_node(module, *field));
+                properties.insert(name.clone(), json_schema_node(module, profile, *field));
                 if is_required(module, *field) {
                     required.push(JsonValue::String(name.clone()));
                 }
@@ -266,14 +275,18 @@ fn json_schema_node(module: &Module, id: NodeId) -> JsonValue {
             JsonValue::Object(obj)
         }
         Some(Node::SchemaArray { element }) => {
-            json!({"type": "array", "items": json_schema_node(module, *element)})
+            json!({"type": "array", "items": json_schema_node(module, profile, *element)})
         }
-        Some(Node::SchemaField { field }) => json_schema_field(module, field),
+        Some(Node::SchemaField { field }) => json_schema_field(module, profile, field),
         _ => JsonValue::Bool(true),
     }
 }
 
-fn json_schema_field(module: &Module, field: &SchemaField) -> JsonValue {
+fn json_schema_field(
+    module: &Module,
+    profile: &crate::secret::SecretProfile,
+    field: &SchemaField,
+) -> JsonValue {
     let mut obj = serde_json::Map::new();
     match &field.typ {
         ActiveType::Null => {
@@ -309,10 +322,16 @@ fn json_schema_field(module: &Module, field: &SchemaField) -> JsonValue {
                 obj.insert("maxLength".to_string(), JsonValue::from(max));
             }
             if let Some(pattern) = literal_string(module, field.pattern) {
-                obj.insert("pattern".to_string(), JsonValue::String(pattern));
+                obj.insert(
+                    "pattern".to_string(),
+                    JsonValue::String(redact_prose(profile, pattern)),
+                );
             }
             if let Some(format) = literal_string(module, field.format) {
-                obj.insert("format".to_string(), JsonValue::String(format));
+                obj.insert(
+                    "format".to_string(),
+                    JsonValue::String(redact_prose(profile, format)),
+                );
             }
         }
         // Matches the §1 export shape: durations serialize as
@@ -339,7 +358,10 @@ fn json_schema_field(module: &Module, field: &SchemaField) -> JsonValue {
                 JsonValue::Array(members.iter().cloned().map(JsonValue::String).collect()),
             );
             if let Some(joined) = enum_descriptions_text(module, field) {
-                obj.insert("description".to_string(), JsonValue::String(joined));
+                obj.insert(
+                    "description".to_string(),
+                    JsonValue::String(redact_prose(profile, joined)),
+                );
             }
         }
         // Secrets export as redacted strings.
@@ -381,7 +403,10 @@ fn json_schema_field(module: &Module, field: &SchemaField) -> JsonValue {
             obj.insert("additionalProperties".to_string(), JsonValue::Bool(false));
             obj.insert("x-active-blob".to_string(), JsonValue::Bool(true));
             if let Some(media) = literal_string(module, field.blob_media_type) {
-                obj.insert("x-active-media-type".to_string(), JsonValue::String(media));
+                obj.insert(
+                    "x-active-media-type".to_string(),
+                    JsonValue::String(redact_prose(profile, media)),
+                );
             }
             if let Some(max) = literal_int(module, field.blob_max_size) {
                 obj.insert("x-active-max-size".to_string(), JsonValue::from(max));
@@ -394,7 +419,10 @@ fn json_schema_field(module: &Module, field: &SchemaField) -> JsonValue {
     }
     if field.description.is_some() {
         if let Some(doc) = literal_string(module, field.description) {
-            obj.insert("description".to_string(), JsonValue::String(doc));
+            obj.insert(
+                "description".to_string(),
+                JsonValue::String(redact_prose(profile, doc)),
+            );
         }
     }
     if let Some(reason) = field.deprecated.as_deref() {
@@ -402,7 +430,7 @@ fn json_schema_field(module: &Module, field: &SchemaField) -> JsonValue {
         if !reason.is_empty() {
             obj.insert(
                 "description".to_string(),
-                JsonValue::String(reason.to_string()),
+                JsonValue::String(redact_prose(profile, reason.to_string())),
             );
         }
     }
@@ -444,8 +472,10 @@ pub fn schema_to_typescript(module: &Module, root_name: &str) -> Result<String, 
     if !matches!(module.get(root), Some(Node::SchemaTable { .. })) {
         return Err("schema block must be a table for code generation".to_string());
     }
+    let profile = crate::secret::SecretProfile::analyze(module);
     let mut gen = TsGen {
         module,
+        profile: &profile,
         out: format!("{}import {{ z }} from \"zod\";\n\n", version_header("//")),
         names: HashMap::new(),
         taken: HashSet::new(),
@@ -460,6 +490,7 @@ pub fn schema_to_typescript(module: &Module, root_name: &str) -> Result<String, 
 
 struct TsGen<'a> {
     module: &'a Module,
+    profile: &'a crate::secret::SecretProfile,
     out: String,
     /// Type name per node plus every assigned name: same-derived
     /// names for different nodes (`port` vs `Port` tables) gain
@@ -496,7 +527,9 @@ impl TsGen<'_> {
             let tname = self.type_name(nominal, format!("{name}{}", pascal_case(key)));
             let typ = self.ts_type(&tname, *field);
             let mark = if optional { "?" } else { "" };
-            if let Some(doc) = field_description(self.module, *field) {
+            if let Some(doc) = field_description(self.module, *field)
+                .map(|doc| self.profile.redact_authored_text(&doc).unwrap_or(doc))
+            {
                 self.out
                     .push_str(&format!("  /** {} */\n", ts_comment(&doc)));
             }
@@ -574,7 +607,10 @@ impl TsGen<'_> {
 
     fn deprecated(&self, id: NodeId) -> Option<String> {
         match self.module.get(id) {
-            Some(Node::SchemaField { field }) => field.deprecated.clone(),
+            Some(Node::SchemaField { field }) => field
+                .deprecated
+                .clone()
+                .map(|reason| self.profile.redact_authored_text(&reason).unwrap_or(reason)),
             _ => None,
         }
     }
@@ -764,8 +800,10 @@ pub fn schema_to_go(module: &Module, root_name: &str) -> Result<String, String> 
             }
         )
     });
+    let profile = crate::secret::SecretProfile::analyze(module);
     let mut gen = GoGen {
         module,
+        profile: &profile,
         out: format!(
             "{}// Validation tags follow go-playground/validator conventions.\n",
             version_header("//")
@@ -845,6 +883,7 @@ fn flush_go_run(run: &mut Vec<(String, String, String)>, out: &mut String) {
 
 struct GoGen<'a> {
     module: &'a Module,
+    profile: &'a crate::secret::SecretProfile,
     out: String,
     names: HashMap<NodeId, String>,
     taken: HashSet<String>,
@@ -890,7 +929,9 @@ impl GoGen<'_> {
             let nominal = nominal_id(self.module, *field);
             let tname = self.type_name(nominal, format!("{name}{}", pascal_case(key)));
             let typ = self.go_type(&tname, *field);
-            if let Some(doc) = field_description(self.module, *field) {
+            if let Some(doc) = field_description(self.module, *field)
+                .map(|doc| self.profile.redact_authored_text(&doc).unwrap_or(doc))
+            {
                 lines.push(BodyLine::Comment(doc));
             }
             if let Some(reason) = self.deprecated(*field) {
@@ -1066,12 +1107,18 @@ impl GoGen<'_> {
                     _ => {}
                 }
                 if let Some(format) = literal_string(self.module, field.format) {
+                    let format = self.profile.redact_authored_text(&format).unwrap_or(format);
                     notes.push(format!("format: {format}"));
                 }
                 if let Some(pattern) = literal_string(self.module, field.pattern) {
+                    let pattern = self
+                        .profile
+                        .redact_authored_text(&pattern)
+                        .unwrap_or(pattern);
                     notes.push(format!("pattern {pattern}"));
                 }
                 if let Some(target) = literal_string(self.module, field.requires) {
+                    let target = self.profile.redact_authored_text(&target).unwrap_or(target);
                     notes.push(format!("requires: {target}"));
                 }
                 notes
@@ -1082,7 +1129,10 @@ impl GoGen<'_> {
 
     fn deprecated(&self, id: NodeId) -> Option<String> {
         match self.module.get(id) {
-            Some(Node::SchemaField { field }) => field.deprecated.clone(),
+            Some(Node::SchemaField { field }) => field
+                .deprecated
+                .clone()
+                .map(|reason| self.profile.redact_authored_text(&reason).unwrap_or(reason)),
             _ => None,
         }
     }
@@ -1118,8 +1168,10 @@ pub fn schema_to_rust(module: &Module, root_name: &str) -> Result<String, String
             }
         )
     });
+    let profile = crate::secret::SecretProfile::analyze(module);
     let mut gen = RustGen {
         module,
+        profile: &profile,
         out: format!(
             "{}\
             // Requires: serde = {{ version = \"1\", features = [\"derive\"] }}, serde_json = \"1\"\nuse serde::{{Deserialize, Serialize}};\n\n",
@@ -1144,6 +1196,7 @@ pub fn schema_to_rust(module: &Module, root_name: &str) -> Result<String, String
 
 struct RustGen<'a> {
     module: &'a Module,
+    profile: &'a crate::secret::SecretProfile,
     out: String,
     names: HashMap<NodeId, String>,
     taken: HashSet<String>,
@@ -1297,7 +1350,10 @@ impl RustGen<'_> {
 
     fn deprecated(&self, id: NodeId) -> Option<String> {
         match self.module.get(id) {
-            Some(Node::SchemaField { field }) => field.deprecated.clone(),
+            Some(Node::SchemaField { field }) => field
+                .deprecated
+                .clone()
+                .map(|reason| self.profile.redact_authored_text(&reason).unwrap_or(reason)),
             _ => None,
         }
     }
@@ -1330,8 +1386,10 @@ pub fn schema_to_python(module: &Module, root_name: &str) -> Result<String, Stri
             }
         )
     });
+    let profile = crate::secret::SecretProfile::analyze(module);
     let mut gen = PythonGen {
         module,
+        profile: &profile,
         out: format!(
             "{}from typing import Any, Literal, NotRequired, TypedDict\n\n\n",
             version_header("#")
@@ -1354,6 +1412,7 @@ pub fn schema_to_python(module: &Module, root_name: &str) -> Result<String, Stri
 
 struct PythonGen<'a> {
     module: &'a Module,
+    profile: &'a crate::secret::SecretProfile,
     out: String,
     names: HashMap<NodeId, String>,
     taken: HashSet<String>,
@@ -1438,26 +1497,39 @@ impl PythonGen<'_> {
                 self.out
                     .push_str(&format!("    # key: {}\n", comment_line(key)));
             }
-            if let Some(doc) = field_description(self.module, *field) {
+            if let Some(doc) = field_description(self.module, *field)
+                .map(|doc| self.profile.redact_authored_text(&doc).unwrap_or(doc))
+            {
                 self.out
                     .push_str(&format!("    # {}\n", comment_line(&doc)));
             }
             if let Some(crate::ir::Node::SchemaField { field: f }) = self.module.get(*field) {
                 if let Some(format) = literal_string(self.module, f.format) {
+                    let format = self.profile.redact_authored_text(&format).unwrap_or(format);
                     self.out
                         .push_str(&format!("    # format: {}\n", comment_line(&format)));
                 }
                 if let Some(pattern) = literal_string(self.module, f.pattern) {
+                    let pattern = self
+                        .profile
+                        .redact_authored_text(&pattern)
+                        .unwrap_or(pattern);
                     self.out
                         .push_str(&format!("    # pattern: {}\n", comment_line(&pattern)));
                 }
                 if let Some(default) = literal_default(self.module, f) {
                     self.out.push_str(&format!(
                         "    # default: {}\n",
-                        comment_line(&default.to_string())
+                        comment_line(
+                            &self
+                                .profile
+                                .redact_authored_text(&default.to_string())
+                                .unwrap_or_else(|| default.to_string()),
+                        )
                     ));
                 }
                 if let Some(target) = literal_string(self.module, f.requires) {
+                    let target = self.profile.redact_authored_text(&target).unwrap_or(target);
                     self.out
                         .push_str(&format!("    # requires: {}\n", comment_line(&target)));
                 }
@@ -1465,6 +1537,7 @@ impl PythonGen<'_> {
                     if reason.is_empty() {
                         self.out.push_str("    # Deprecated\n");
                     } else {
+                        let reason = self.profile.redact_authored_text(&reason).unwrap_or(reason);
                         self.out
                             .push_str(&format!("    # Deprecated: {}\n", comment_line(&reason)));
                     }

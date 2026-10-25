@@ -97,7 +97,10 @@ def main() -> int:
                 run(["repair", "--from", str(repair_fixture), "--format", "json"])
             ),
         ),
-        ("debug-steps", json.loads(run(["debug", "--from", str(fixture)]))),
+        (
+            "debug-steps",
+            json.loads(run(["debug", "--from", str(fixture), "--resilient"])),
+        ),
     ]
     for name, document in checks:
         validate(name, document)

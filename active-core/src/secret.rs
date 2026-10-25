@@ -1124,6 +1124,28 @@ fn mark_all_material(module: &Module, nodes: &mut HashSet<NodeId>, envs: &mut Ha
 /// Names of every env read anywhere in a value subtree, including
 /// operands, interpolation parts, quantities, blob media/data, and env
 /// fallbacks. A material profile value makes every read it contains
+/// A literal supplied by a profile at a material path is authored
+/// secret material: its text is known, so a copy elsewhere (a plain
+/// string or a blob payload) redacts even though no data path marks the
+/// copy. A profile that merely selects an existing benign data node is
+/// not a literal and stays visible in its own slot.
+fn insert_profile_literal(
+    module: &Module,
+    node: NodeId,
+    data_nodes: &HashSet<NodeId>,
+    literals: &mut SecretRedactor,
+) {
+    // A literal the profile merely references (a shared data node) is
+    // not profile-authored; only a literal value written in the profile
+    // block is new material.
+    if data_nodes.contains(&node) {
+        return;
+    }
+    if let Some(Node::Literal(Value::String(text))) = module.get(node) {
+        literals.insert(text.clone());
+    }
+}
+
 /// material under the env-name rule. Results are cached per node: a
 /// profile may reference one large shared subtree many times.
 fn collect_env_names(
@@ -1382,6 +1404,10 @@ impl SecretProfile {
         // literal parts are deliberately absent — they are the benign
         // scaffolding, not the material.
         let mut literals = SecretRedactor::new();
+        // Nodes reachable from the document's data tree: a profile that
+        // references one of these literals is selecting data, not
+        // authoring new material.
+        let data_nodes: HashSet<NodeId> = module.value_paths().into_keys().collect();
         for id in &nodes {
             if let Some(Node::Literal(Value::String(text))) = module.get(*id) {
                 literals.insert(text.clone());
@@ -1580,6 +1606,12 @@ impl SecretProfile {
                                         &mut material_envs,
                                         &mut env_name_cache,
                                     );
+                                    insert_profile_literal(
+                                        module,
+                                        *node,
+                                        &data_nodes,
+                                        &mut literals,
+                                    );
                                 } else if inherited || under {
                                     // Path-inherited materiality stays
                                     // path-based: exports and debug
@@ -1592,6 +1624,12 @@ impl SecretProfile {
                                         *node,
                                         &mut material_envs,
                                         &mut env_name_cache,
+                                    );
+                                    insert_profile_literal(
+                                        module,
+                                        *node,
+                                        &data_nodes,
+                                        &mut literals,
                                     );
                                 }
                             }
@@ -1668,6 +1706,12 @@ impl SecretProfile {
                                         node,
                                         &mut material_envs,
                                         &mut env_name_cache,
+                                    );
+                                    insert_profile_literal(
+                                        module,
+                                        node,
+                                        &data_nodes,
+                                        &mut literals,
                                     );
                                     if own {
                                         nodes.insert(node);

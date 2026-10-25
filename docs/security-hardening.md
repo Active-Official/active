@@ -23,7 +23,7 @@ Master Program tree before release. It complements
 
 | Class | Examples | Resolution |
 |---|---|---|
-| Secret leakage through exports | env-backed copies, profile-selected values, `let`-bound computed secrets, blob payload bytes, provenance env values | one redactor seeded from authored literals, the evaluator's material node values, and material env values; every exporter/inspector/trace/lock/audit absorbs it before rendering |
+| Secret leakage through exports | env-backed copies, profile-selected values, profile-authored literals, `let`-bound computed secrets, blob payload bytes, provenance env values | one redactor seeded from authored literals, the evaluator's material node values, profile-authored literals, and material env values; every exporter/inspector/trace/lock/audit absorbs it before rendering |
 | Secret leakage through tools | inspect wrappers, debug steps, LSP hover, graph/viz taint, audit/replay hashes, reduction bundles | identity-only step and inspect rendering, path-aware hover, seeded taint queries, canonical hashing, evaluator-seeded duplicate/comment redaction |
 | Availability | quadratic redaction, work-budget over-redaction, per-alias payload charging, trusted-budget passes | Aho-Corasick batches with match cursors, per-batch retirement, a taint probe that skips alias copy accounting, caller-honoring budgets |
 | Fidelity | longest-at-equal-start semantics, marker opacity, prefix preservation, UTF-8 | differential tests against a naive leftmost-longest reference, marker-split scanning, cursor reuse |

@@ -1047,15 +1047,24 @@ fn minimize_redacts_duplicate_values_beyond_plain_tokens() {
         "schema = { t = Int }\nt = secret(\"\"\"\n    hunter2-ML\n\"\"\")\ndup = \"hunter2-ML\"\n",
         "schema = { t = Int }\nt = secret(\"pa\\$\\$word\")\ndup = \"pa$$word\"\n",
         "schema = { t = Int }\nt = secret(\"hunter2-b64\")\ndup = \"aHVudGVyMi1iNjQ=\"\n",
+        "schema = { t = Int }\nt = secret(\"hunter2-b64\")\ndup = \"aHVudGVyMi1iNjQ\"\n",
+        "schema = { t = Int }\nt = secret(\"hunter2-b64\")\ndup = \"aHVudGVyMi1iNjQ\" # unpadded\n",
+        "schema = { t = Int }\nt = secret(\"hunter2-b64\")\ndup = \"aHVudGVyMi1iNjQ\" # unpadded\n",
+    ];
+    let raw_values = [
+        "hunter2-COMMENT",
+        "abc-resolved",
+        "hunter2-ML",
+        "pa$$word",
+        "aHVudGVyMi1iNjQ=",
+        "aHVudGVyMi1iNjQ",
     ];
     for source in cases {
-        let report = debug::minimal_case(source, "T002", 200);
+        let report = debug::minimal_case(source, "T002", 0);
         let reduced = report["reduced"].as_str().expect("reduced");
-        assert!(!reduced.contains("hunter2-COMMENT"), "{reduced}");
-        assert!(!reduced.contains("abc-resolved"), "{reduced}");
-        assert!(!reduced.contains("hunter2-ML"), "{reduced}");
-        assert!(!reduced.contains("pa$$word"), "{reduced}");
-        assert!(!reduced.contains("aHVudGVyMi1iNjQ="), "{reduced}");
+        for raw in raw_values {
+            assert!(!reduced.contains(raw), "{raw} survived: {reduced}");
+        }
     }
 }
 
@@ -1088,4 +1097,45 @@ fn strict_minimize_does_not_evaluate_parse_broken_modules() {
     let source = "schema = { x = Int }\nx = 1 + \"s\"\ny = [1, 2}\n";
     let report = debug::minimal_case(source, "T001", 50);
     assert_eq!(report["target_present"], false, "{report}");
+}
+
+#[test]
+fn minimize_never_evaluates_parse_errors_in_any_mode() {
+    // Review 56: the shipped CLI aborts on parse errors in both modes.
+    let source = "x = 1 + \"s\"\n$bad = 2\n";
+    let strict =
+        debug::minimal_case_with_options(source, "T001", 0, None, debug::DebugOptions::default());
+    assert_eq!(strict["target_present"], false, "{strict}");
+    let resilient = debug::minimal_case_with_options(
+        source,
+        "T001",
+        0,
+        None,
+        debug::DebugOptions {
+            resilient: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(resilient["target_present"], false, "{resilient}");
+}
+
+#[test]
+fn minimize_does_not_exempt_a_string_literal_named_secret() {
+    // Review 56: only the keyword may open an env call.
+    let source = "t = secret(\"hunter2\")\nx = \"secret\".env(\"hunter2\")\n";
+    let report = debug::minimal_case(source, "T002", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(!reduced.contains("hunter2"), "{reduced}");
+}
+
+#[test]
+fn minimize_keeps_a_grouped_env_name() {
+    // Review 56: grouping parentheses are canonical.
+    let source = "schema = { t = Int }\nt = secret(\"HUNTER2_ENVNAME\")\nother = secret.env((\"HUNTER2_ENVNAME\"))\n";
+    let report = debug::minimal_case(source, "T002", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(
+        reduced.contains("secret.env((\"HUNTER2_ENVNAME\"))"),
+        "{reduced}"
+    );
 }

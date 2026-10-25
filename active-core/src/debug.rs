@@ -103,9 +103,11 @@ pub fn replay_with_budget(
     let first_hash = crate::provenance::content_hash(&crate::convert::strip_blob_payloads(
         &crate::convert::redact_value(&profile, &first),
     ));
-    let first_codes: Vec<&str> = first_diags.iter().map(|d| d.code.as_str()).collect();
-    let first_codes_owned: Vec<String> =
-        first_codes.iter().map(|code| (*code).to_string()).collect();
+    let first_codes: Vec<String> = first_diags.iter().map(|d| d.code.clone()).collect();
+    let first_steps_digest = steps_digest(&first_steps);
+    let first_steps_len = first_steps.len();
+    drop(first_steps);
+    drop(first_diags);
     drop(first);
 
     let (second, second_diags, second_steps, second_seeds) = engine
@@ -115,27 +117,31 @@ pub fn replay_with_budget(
     let second_hash = crate::provenance::content_hash(&crate::convert::strip_blob_payloads(
         &crate::convert::redact_value(&second_profile, &second),
     ));
-    let second_codes: Vec<&str> = second_diags.iter().map(|d| d.code.as_str()).collect();
-    let steps_match = first_steps == second_steps;
+    let second_codes: Vec<String> = second_diags.iter().map(|d| d.code.clone()).collect();
+    let steps_match = first_steps_digest == steps_digest(&second_steps);
+    drop(second_steps);
+    drop(second_diags);
+    drop(second);
     let expected_ok = expected.is_none_or(|text| text == first_hash);
-    let ok = first_hash == second_hash
-        && first_codes_owned
-            .iter()
-            .map(String::as_str)
-            .eq(second_codes.iter().copied())
-        && steps_match
-        && expected_ok;
+    let ok = first_hash == second_hash && first_codes == second_codes && steps_match && expected_ok;
 
     Ok(json!({
         "ok": ok,
         "hash": first_hash,
         "second_hash": second_hash,
         "codes": first_codes,
-        "steps": first_steps.len(),
+        "steps": first_steps_len,
         "steps_match": steps_match,
         "expected": expected,
         "expected_match": expected_ok,
     }))
+}
+
+/// Digest of a step array, so two passes can be compared without
+/// retaining both rendered vectors.
+fn steps_digest(steps: &[StepEvent]) -> [u8; 32] {
+    let bytes = serde_json::to_vec(steps).unwrap_or_default();
+    *blake3::hash(&bytes).as_bytes()
 }
 
 /// Evaluation inputs for reduction, so a minimized case is produced
@@ -265,12 +271,12 @@ fn still_fails(
     if parse_diags.iter().any(|d| d.code == target_code) {
         return true;
     }
-    // The shipped strict path never evaluates a module with parse
-    // errors; reduction must answer the same question.
-    if !options.resilient
-        && parse_diags
-            .iter()
-            .any(|d| d.severity == crate::diag::Severity::Error)
+    // The shipped CLI never evaluates a module with parse errors (in
+    // either mode; resilient heals warnings, not syntax errors), so a
+    // runtime code cannot be "present" through the real path.
+    if parse_diags
+        .iter()
+        .any(|d| d.severity == crate::diag::Severity::Error)
     {
         return false;
     }
@@ -359,6 +365,10 @@ fn bundle_seeds(
     file_ctx: Option<&std::path::Path>,
     options: DebugOptions<'_>,
 ) -> crate::secret::SecretRedactor {
+    // Most reductions have no secret material: skip the extra walk.
+    if !source.contains("secret") && !source.contains("profile") && !source.contains("env.") {
+        return crate::secret::SecretRedactor::new();
+    }
     let parse_options = crate::ParseOptions {
         enable_includes: file_ctx.is_some(),
         allow_parent_escapes: options.allow_parent_escapes,
@@ -375,18 +385,29 @@ fn bundle_seeds(
         None => crate::parse_recovering(source, "minimize", parse_options),
     };
     let mut engine = Engine::new();
-    engine.resilient = options.resilient;
+    // Seeds are a value snapshot, not a verdict: evaluate resiliently so
+    // a strict validation failure still yields the material strings the
+    // bundle must redact.
+    engine.resilient = true;
     engine.profile_override = options.profile.map(str::to_string);
     if let Some(budget) = options.budget {
         engine.budget = *budget;
     }
     engine.budget.max_wall_ms = 0;
-    engine.materialise_blobs = true;
-    engine.taint_probe = true;
-    engine
+    let mut seeds = engine
         .evaluate_with_seeds(&module)
         .map(|(_, _, seeds)| seeds)
-        .unwrap_or_default()
+        .unwrap_or_default();
+    // Profile-authored literals at material paths are known secrets
+    // even when their node value is path-material only.
+    let profile = crate::secret::SecretProfile::with_context(
+        &module,
+        options.profile,
+        Some(&engine.env),
+        Some(&seeds),
+    );
+    seeds.merge(profile.literals());
+    seeds
 }
 
 /// Replace secret-bearing string literals in exported source with a
@@ -413,6 +434,8 @@ fn redact_secret_literals(source: &str, seeds: &crate::secret::SecretRedactor) -
     // in place (newlines → spaces) so a recovering parse sees the call
     // and every span maps 1:1 back to the original bytes.
     let normalized = normalize_secret_gaps(source);
+    let line_starts = line_byte_starts(&normalized);
+    let offsets = |span: &crate::diag::Span| span_offsets_with(&line_starts, &normalized, span);
     let mut spans = semantic_secret_spans(&normalized);
     // The lexical pass also covers malformed calls and locators the
     // parser cannot resolve. Overlaps are unioned below.
@@ -420,10 +443,7 @@ fn redact_secret_literals(source: &str, seeds: &crate::secret::SecretRedactor) -
     if spans.is_empty() && seeds.is_empty() {
         return source.to_string();
     }
-    let mut ranges: Vec<(usize, usize)> = spans
-        .iter()
-        .filter_map(|span| span_offsets(&normalized, span))
-        .collect();
+    let mut ranges: Vec<(usize, usize)> = spans.iter().filter_map(offsets).collect();
     ranges.sort_unstable();
     // Coalesce overlapping/adjacent ranges (an interpolated string
     // contains its literal parts; replacing both with stale offsets
@@ -449,7 +469,7 @@ fn redact_secret_literals(source: &str, seeds: &crate::secret::SecretRedactor) -
         if !is_string_token(token) {
             continue;
         }
-        let Some((start, end)) = span_offsets(&normalized, &token_span(token)) else {
+        let Some((start, end)) = offsets(&token_span(token)) else {
             continue;
         };
         if merged.iter().any(|&(s, e)| start >= s && end <= e) {
@@ -463,7 +483,7 @@ fn redact_secret_literals(source: &str, seeds: &crate::secret::SecretRedactor) -
         if !is_string_token(token) {
             continue;
         }
-        let Some((start, end)) = span_offsets(&normalized, &token_span(token)) else {
+        let Some((start, end)) = offsets(&token_span(token)) else {
             continue;
         };
         if merged.iter().any(|&(s, e)| start >= s && end <= e) {
@@ -472,7 +492,16 @@ fn redact_secret_literals(source: &str, seeds: &crate::secret::SecretRedactor) -
         if env_names.contains(&token_key(token)) {
             continue;
         }
-        if value_is_known(&token.text, &authored, seeds) {
+        let matched = match decoded_token_text(token) {
+            Some(value) => value_is_known(&value, &authored, seeds),
+            // Interpolated token: its resolved value is not in the
+            // token text, so fail closed on a known substring.
+            None => {
+                authored.redact_text(&token.text).is_some()
+                    || seeds.redact_text(&token.text).is_some()
+            }
+        };
+        if matched {
             extras.push((start, end));
         }
     }
@@ -483,7 +512,7 @@ fn redact_secret_literals(source: &str, seeds: &crate::secret::SecretRedactor) -
     let comment_lex = crate::parser::Lexer::new(source).tokenize();
     let mut comment_ranges: Vec<(usize, usize)> = Vec::new();
     for (_, span) in &comment_lex.comments {
-        let Some((start, end)) = span_offsets(source, span) else {
+        let Some((start, end)) = offsets(span) else {
             continue;
         };
         let text = &source[start..end];
@@ -543,19 +572,36 @@ fn value_is_known(
 
 fn decode_base64(value: &str) -> Option<String> {
     use base64::Engine as _;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(value)
-        .ok()?;
-    String::from_utf8(bytes).ok()
+    let compact: String = value.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+    let engines = [
+        &base64::engine::general_purpose::STANDARD,
+        &base64::engine::general_purpose::STANDARD_NO_PAD,
+        &base64::engine::general_purpose::URL_SAFE,
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+    ];
+    for engine in engines {
+        if let Ok(bytes) = engine.decode(&compact) {
+            if let Ok(text) = String::from_utf8(bytes) {
+                return Some(text);
+            }
+        }
+    }
+    None
 }
 
 fn decode_hex(value: &str) -> Option<String> {
-    if value.len() < 4 || value.len() % 2 != 0 {
+    let compact: String = value
+        .chars()
+        .filter(|c| !c.is_ascii_whitespace())
+        .collect::<String>()
+        .trim_start_matches("0x")
+        .to_string();
+    let chars: Vec<char> = compact.chars().collect();
+    if chars.len() < 2 || chars.len() % 2 != 0 {
         return None;
     }
-    let mut bytes = Vec::with_capacity(value.len() / 2);
-    let chars: Vec<char> = value.chars().collect();
-    for pair in chars.chunks(2) {
+    let mut bytes = Vec::with_capacity(chars.len() / 2);
+    for pair in chars.chunks_exact(2) {
         let digit = |c: char| c.to_digit(16).map(|d| d as u8);
         bytes.push(digit(pair[0])? * 16 + digit(pair[1])?);
     }
@@ -574,30 +620,64 @@ fn env_name_span_keys(
 ) -> std::collections::HashSet<(u32, u32, u32, u32)> {
     let mut out = std::collections::HashSet::new();
     for index in 0..tokens.len() {
-        if tokens[index].text != "secret" {
+        if !is_secret_token(tokens, index) {
             continue;
         }
-        let mut cursor = index + 1;
-        let mut saw_dot = false;
-        let mut saw_env = false;
-        while cursor < tokens.len() && cursor <= index + 8 {
-            match tokens[cursor].text.as_str() {
-                "." if !saw_dot => saw_dot = true,
-                "env" if saw_dot => saw_env = true,
-                "(" if saw_env => {
-                    if let Some(token) = tokens.get(cursor + 1) {
-                        if is_string_token(token) {
-                            out.insert(token_key(token));
-                        }
-                    }
-                    break;
-                }
-                _ => {}
+        let line = tokens[index].line;
+        let mut probe = index + 1;
+        // Strict same-line shape: `secret` `.` `env` `(` [`(`…] STRING.
+        // A loose lookahead could cross a line and exempt a later call.
+        let expect = |probe: usize, text: &str| {
+            tokens
+                .get(probe)
+                .is_some_and(|token| token.line == line && token.text == text)
+        };
+        if !expect(probe, ".") {
+            continue;
+        }
+        probe += 1;
+        if !expect(probe, "env") {
+            continue;
+        }
+        probe += 1;
+        if !expect(probe, "(") {
+            continue;
+        }
+        probe += 1;
+        while expect(probe, "(") {
+            probe += 1;
+        }
+        if let Some(token) = tokens.get(probe) {
+            if token.line == line && is_string_token(token) {
+                out.insert(token_key(token));
             }
-            cursor += 1;
         }
     }
     out
+}
+
+/// Decoded value of a string token. The lexer's position map is not an
+/// interpolation marker; `token.text` is the decoded literal text and
+/// nested interpolations appear as their own tokens.
+fn decoded_token_text(token: &crate::parser::Token) -> Option<String> {
+    use crate::parser::TokenKind as K;
+    let decoded = match &token.kind {
+        K::MlString(_) => crate::parser::strip_common_indent(&token.text),
+        K::String(_) | K::MlSingleString | K::SingleString => token.text.clone(),
+        _ => return None,
+    };
+    Some(
+        decoded
+            .chars()
+            .map(|c| {
+                if c == crate::parser::ESCAPED_DOLLAR {
+                    '$'
+                } else {
+                    c
+                }
+            })
+            .collect(),
+    )
 }
 
 /// True for a token that carries a string value.
@@ -625,6 +705,7 @@ fn token_span(token: &crate::parser::Token) -> crate::diag::Span {
 /// so the recovering parser accepts a call broken across lines and span
 /// offsets stay valid against the original text.
 fn normalize_secret_gaps(source: &str) -> String {
+    let line_starts = line_byte_starts(source);
     let lexed = crate::parser::Lexer::new(source).tokenize();
     let tokens = &lexed.tokens;
     let mut bytes = source.as_bytes().to_vec();
@@ -632,7 +713,7 @@ fn normalize_secret_gaps(source: &str) -> String {
     // a `secret`…`(` gap must not swallow the call when the newline is
     // turned into a space.
     for comment in &lexed.comments {
-        if let Some((start, end)) = span_offsets(source, &comment.1) {
+        if let Some((start, end)) = span_offsets_with(&line_starts, source, &comment.1) {
             for byte in &mut bytes[start..end] {
                 if !matches!(*byte, b'\n' | b'\r') {
                     *byte = b' ';
@@ -654,10 +735,13 @@ fn normalize_secret_gaps(source: &str) -> String {
             continue;
         };
         let probe = call.open;
-        let Some((_, gap_start)) = span_offsets(source, &span_of(&tokens[index])) else {
+        let Some((_, gap_start)) =
+            span_offsets_with(&line_starts, source, &span_of(&tokens[index]))
+        else {
             continue;
         };
-        let Some((gap_end, _)) = span_offsets(source, &span_of(&tokens[probe])) else {
+        let Some((gap_end, _)) = span_offsets_with(&line_starts, source, &span_of(&tokens[probe]))
+        else {
             continue;
         };
         if gap_start < gap_end && gap_end <= bytes.len() {
@@ -1037,10 +1121,15 @@ fn skip_layout(tokens: &[crate::parser::Token], mut index: usize) -> usize {
 }
 
 /// Convert a 1-based core span into byte offsets in `text`.
-fn span_offsets(text: &str, span: &crate::diag::Span) -> Option<(usize, usize)> {
-    let line_starts = line_byte_starts(text);
-    let start = byte_at(&line_starts, text, span.line, span.column)?;
-    let end = byte_at(&line_starts, text, span.end_line, span.end_column)?;
+/// Span offsets with a precomputed line index (per-comment scanning is
+/// otherwise O(comments × source)).
+fn span_offsets_with(
+    line_starts: &[usize],
+    text: &str,
+    span: &crate::diag::Span,
+) -> Option<(usize, usize)> {
+    let start = byte_at(line_starts, text, span.line, span.column)?;
+    let end = byte_at(line_starts, text, span.end_line, span.end_column)?;
     (end > start).then_some((start, end))
 }
 

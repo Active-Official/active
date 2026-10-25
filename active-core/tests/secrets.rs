@@ -1975,3 +1975,34 @@ fn taint_probe_materialises_without_charging_alias_copies() {
         "taint probe must fit the document's exact baseline budget"
     );
 }
+
+#[test]
+fn profile_literal_at_a_material_path_seeds_payload_and_copies() {
+    // Review 56: a literal supplied by a profile at a material path is
+    // authored secret material; its copies and payloads redact.
+    let raw = "hunter2-profile-r56";
+    let src = format!(
+        "t = secret(\"hunter2-target\")\nactive_profile = \"p\"\nprofile \"p\" {{ t = \"{raw}\" }}\nb = blob(\"text/plain\", \"prefix {raw} suffix\")\nu = \"prefix {raw} suffix\"\n"
+    );
+    let module = parse(&src, "profile-literal-seed").expect("parse");
+    let mut engine = Engine::hermetic();
+    engine.materialise_blobs = true;
+    let (value, _, seeds) = engine.evaluate_with_seeds(&module).expect("evaluate");
+    let mut profile = active_core::secret::SecretProfile::analyze(&module);
+    profile.absorb_environment(&engine.env);
+    profile.absorb_secrets(&seeds);
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(raw), "{json}");
+    assert!(!json.contains("payload_b64"), "{json}");
+    let inspected = active_core::convert::inspect_path_with_profile_env(
+        &module,
+        &value,
+        "b",
+        None,
+        None,
+        Some(&seeds),
+    )
+    .expect("inspect");
+    assert!(!inspected.to_string().contains(raw), "{inspected}");
+    assert_eq!(inspected["tainted"], true, "{inspected}");
+}

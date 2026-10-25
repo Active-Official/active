@@ -125,8 +125,12 @@ value elsewhere — another string token, a blob payload, a comment, or a
 base64/hex encoding of the value — is redacted too. Matching uses exact
 decoded token equality (so a short secret does not rewrite unrelated
 strings) and substring matching for comments (which are non-semantic);
-canonical `secret.env("NAME")` arguments are exempt. Encoded forms that
-are neither base64 nor hex are not decoded. Taint is structural, so a plain
+canonical `secret.env("NAME")` arguments are exempt. Padded, unpadded,
+and URL-safe base64 plus hex (with optional `0x` and whitespace) are
+decoded when they form the whole value; an encoded secret embedded in a
+longer string is not decoded. Multi-line strings are dedented and
+escaped dollars unmarked before matching; a nested interpolation that
+hides the value is covered when its literal token matches. Taint is structural, so a plain
 value used as a locator (a `let`, a table field, an environment lookup)
 and any interpolation, reference, or container built from it are
 material even without a `Value::Secret` marker; containers keep their

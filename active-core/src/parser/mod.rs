@@ -21,7 +21,7 @@
 
 mod lexer;
 
-use lexer::ESCAPED_DOLLAR;
+pub(crate) use lexer::ESCAPED_DOLLAR;
 use lexer::SENTINEL_POS;
 pub use lexer::{Lexed, Lexer, Token, TokenKind};
 
@@ -4008,7 +4008,7 @@ impl Parser {
 /// (tabs and spaces are distinct characters — a line whose indentation
 /// diverges keeps its excess), and drop a trailing whitespace-only line
 /// before the closing delimiter.
-fn strip_common_indent(raw: &str) -> String {
+pub(crate) fn strip_common_indent(raw: &str) -> String {
     strip_common_indent_mapped(raw, 1, 1, 0, None).0
 }
 /// Where one stripped line sits in the source: the source line number and

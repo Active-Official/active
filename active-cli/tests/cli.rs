@@ -3679,7 +3679,7 @@ fn minimize_redacts_an_env_value_duplicate() {
     let out = active()
         .args(["debug", "--from"])
         .arg(&f)
-        .args(["--minimize", "T002", "--resilient", "--format", "json"])
+        .args(["--minimize", "T002", "--format", "json"])
         .env("PROBE_SECRET", "hunter2-env-dup")
         .output()
         .expect("run active");

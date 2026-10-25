@@ -92,15 +92,23 @@ pub fn inspect_path_with_profile(
         size: blob_size,
         tainted: blob_tainted,
         media_type,
+        payload,
         ..
     } = cone
     {
         // A media type sourced from material (an env lookup used as a
         // secret locator) is not publishable, even though the blob's
-        // data taint flag is separate.
+        // data taint flag is separate. A materialised payload that
+        // embeds a secret literal is material for the same reason.
         let media_literal = profile.redact_text(media_type).is_some();
+        let payload_literal = payload.as_ref().is_some_and(|bytes| {
+            profile
+                .redact_text(&String::from_utf8_lossy(bytes))
+                .is_some()
+        });
         let media_secret = path_material
             || media_literal
+            || payload_literal
             || matches!(
                 profile.path_node(path).and_then(|id| module.get(id)),
                 Some(Node::ContentAddressed { media_type, .. }) if profile.node_is_secret(*media_type)
@@ -111,7 +119,7 @@ pub fn inspect_path_with_profile(
             // A tainted identity redacts its media type (spec/blob.md
             // §5/§7), matching every other export path.
             "media_type": if *blob_tainted || media_secret { MARKER } else { media_type },
-            "tainted": *blob_tainted || path_material || media_literal,
+            "tainted": *blob_tainted || media_secret,
         });
     }
     Ok(report)
@@ -154,6 +162,35 @@ fn render_cone(profile: &SecretProfile, path: &str, value: &Value) -> (JsonValue
             (JsonValue::Object(out), marked)
         }
         _ if profile.path_is_secret(path) => (JsonValue::String(MARKER.to_string()), true),
+        // A materialised payload can carry an authored secret literal
+        // even when the blob's own taint flag is clear. The encoded
+        // bytes would not match a literal sweep, so the identity is
+        // redacted as a whole and the payload is never rendered.
+        Value::Blob {
+            hash,
+            size,
+            payload,
+            ..
+        } => {
+            let payload_literal = payload.as_ref().is_some_and(|bytes| {
+                profile
+                    .redact_text(&String::from_utf8_lossy(bytes))
+                    .is_some()
+            });
+            if payload_literal {
+                (
+                    json!({
+                        "hash": format!("blake3:{}", crate::blob::hash_hex(hash)),
+                        "size": size,
+                        "media_type": MARKER,
+                        "tainted": true,
+                    }),
+                    true,
+                )
+            } else {
+                (crate::convert::value_to_json(value), false)
+            }
+        }
         _ => (crate::convert::value_to_json(value), false),
     }
 }

@@ -223,28 +223,32 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   count as export or rename candidates, so a rename cannot clear a
   destination's taint and an unselected key cannot suppress a material
   default fill.
-- **Redaction and comparison are bounded and call-stable.** Redaction
-  rejects an over-long candidate on its length in O(1), charges only
-  the bytes actually compared, and uses a pass budget sized for
-  document-scale exports (256M comparisons), so benign values are not
-  wholesale-marked while a pathological common prefix still fails
-  closed quickly. Every export pass resets the budget, so repeated
-  exports are byte-identical. Profile merging uses a larger, separate
-  bound so normal 10k-key profiles do not fail closed. Blob media types
-  and payloads are swept for authored secret literals (a match drops
-  the payload and marks the identity), tainted blobs never emit
+- **Redaction is linear, exact, and call-stable.** Redaction compiles
+  the secret set into one Aho–Corasick noncontiguous automaton, so a
+  scan costs O(text + matches) instead of O(secrets × text): a
+  pathological secret set can no longer exhaust a budget and
+  wholesale-mark benign values, and a very long secret builds a
+  bounded automaton instead of enumerating a dense byte-per-state
+  table. Matching is leftmost-first, existing markers are opaque, and
+  an over-long candidate is rejected on its length in O(1) before the
+  automaton is built. Repeated exports are byte-identical by
+  construction. Profile merging uses a larger, separate bound so
+  normal 10k-key profiles do not fail closed. Blob media types and
+  payloads are swept for authored secret literals (a match drops the
+  payload and marks the identity), tainted blobs never emit
   `payload_b64` through JSON, TOML, or the redacting `Serialize` impl,
-  schema compatibility indexes rows by path (linear instead of
-  quadratic), and LSP hover/inlay consult path materiality so a
-  profile-selected value is redacted.
+  inspection redacts a materialised payload the same way, schema
+  compatibility indexes rows by path (linear instead of quadratic),
+  and LSP hover/inlay consult path materiality so a profile-selected
+  value is redacted.
 - **Analysis and redaction stay bounded.** Profile merging shares one
   work bound across fields and replacements; on exhaustion every node
   and env read is marked material, so paths, traces, and provenance all
   fail closed together. Nested default expansion charges a work budget
   and degrades to a fail-closed wildcard, env-name collection is cached
-  per subtree, and redaction carries a per-pass character-comparison
-  budget (a pathological secret set redacts the remaining strings
-  wholesale instead of running for minutes after evaluation).
+  per subtree, and redaction uses a single linear automaton, so a
+  pathological secret set scans in time proportional to the text
+  instead of running for minutes after evaluation.
   Incremental evaluation never memoizes a lazy env fallback answer, and
   the memo config token records the fallback presence.
 - **Patch and transform modeling is structural.** A successful

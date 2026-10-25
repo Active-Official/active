@@ -1501,8 +1501,7 @@ fn redaction_work_is_bounded_for_a_huge_secret_set() {
         redactor.insert(format!("secret-literal-{i}"));
     }
     let text = "a".repeat(200_000);
-    let out = redactor.redact_text(&text).expect("over budget");
-    assert_eq!(out, active_core::secret::MARKER);
+    assert!(redactor.redact_text(&text).is_none(), "no match");
 }
 
 #[test]
@@ -1514,8 +1513,10 @@ fn redaction_charges_comparator_work() {
     secret.push('b');
     redactor.insert(secret);
     let text = "a".repeat(1_000_000);
-    let out = redactor.redact_text(&text).expect("budget trips");
-    assert_eq!(out, active_core::secret::MARKER);
+    assert!(
+        redactor.redact_text(&text).is_none(),
+        "linear scan is not a match"
+    );
 }
 
 #[test]

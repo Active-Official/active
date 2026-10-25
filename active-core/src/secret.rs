@@ -79,23 +79,25 @@ pub fn secret_subtree(module: &Module, root: NodeId, set: &mut HashSet<NodeId>) 
 /// A deterministic set of secret strings. Insertion is O(1) amortized
 /// (a HashSet guards duplicates); the longest-first order is materialized
 /// once, lazily, before a redaction pass.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct SecretRedactor {
     values: std::cell::RefCell<Vec<String>>,
     seen: HashSet<String>,
     sorted: std::cell::Cell<bool>,
-    /// Character-comparison budget for one output pass. Exhaustion
-    /// redacts the remaining strings wholesale (fail closed), so a
-    /// pathological secret set cannot make post-evaluation redaction
-    /// unbounded.
-    work_left: std::cell::Cell<usize>,
+    /// Linear multi-pattern matcher, built lazily from the sorted
+    /// values. Redaction is O(text + matches), not O(secrets × text),
+    /// so no work budget is needed and no benign value is ever
+    /// wholesale-marked.
+    automaton: std::cell::RefCell<Option<std::sync::Arc<aho_corasick::AhoCorasick>>>,
 }
 
-/// Per-pass redaction work ceiling (byte comparisons). Sized so a
-/// 10k-key document with dozens of secrets stays exact, while a
-/// pathological common prefix still fails closed in well under a
-/// second.
-const MAX_REDACT_WORK: usize = 256_000_000;
+impl PartialEq for SecretRedactor {
+    fn eq(&self, other: &Self) -> bool {
+        *self.values.borrow() == *other.values.borrow()
+    }
+}
+
+impl Eq for SecretRedactor {}
 
 impl Default for SecretRedactor {
     fn default() -> Self {
@@ -103,7 +105,7 @@ impl Default for SecretRedactor {
             values: std::cell::RefCell::new(Vec::new()),
             seen: HashSet::new(),
             sorted: std::cell::Cell::new(true),
-            work_left: std::cell::Cell::new(MAX_REDACT_WORK),
+            automaton: std::cell::RefCell::new(None),
         }
     }
 }
@@ -120,6 +122,7 @@ impl SecretRedactor {
         if !text.is_empty() && self.seen.insert(text.clone()) {
             self.values.borrow_mut().push(text);
             self.sorted.set(false);
+            self.automaton.borrow_mut().take();
         }
     }
 
@@ -130,6 +133,7 @@ impl SecretRedactor {
                 values.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
             }
             self.sorted.set(true);
+            self.automaton.borrow_mut().take();
         }
         self.values.borrow()
     }
@@ -157,84 +161,56 @@ impl SecretRedactor {
     /// only the non-marker segments are scanned. A secret containing
     /// the marker itself cannot be expressed without ambiguity; the
     /// marker wins, deterministically.
-    /// Reset the per-pass comparison budget. Call once before rendering
-    /// one output document, so repeated exports are call-order
-    /// independent.
-    pub fn begin_pass(&self) {
-        self.work_left.set(MAX_REDACT_WORK);
-    }
+    /// Kept for callers that delimitate an output pass. The linear
+    /// matcher needs no reset; repeated exports are call-order
+    /// independent by construction.
+    pub fn begin_pass(&self) {}
 
     pub fn redact_text(&self, text: &str) -> Option<String> {
         let values = self.ensure_sorted();
         if values.is_empty() || text == MARKER {
             return None;
         }
+        // `values` is sorted longest-first, so the first entry bounds
+        // every possible match length.
+        if values[0].len() > text.len() {
+            return None;
+        }
+        if self.automaton.borrow().is_none() {
+            let built = aho_corasick::AhoCorasick::builder()
+                .match_kind(aho_corasick::MatchKind::LeftmostFirst)
+                // A single very long secret would make the default
+                // automaton enumerate one state per byte with a dense
+                // transition table. The noncontiguous NFA builds and
+                // scans in linear time with bounded memory instead.
+                .kind(Some(aho_corasick::AhoCorasickKind::NoncontiguousNFA))
+                .build(values.iter().map(String::as_str))
+                .ok()?;
+            *self.automaton.borrow_mut() = Some(std::sync::Arc::new(built));
+        }
+        let automaton = self.automaton.borrow();
+        let automaton = automaton.as_ref()?;
         let mut out = String::with_capacity(text.len());
         let mut hit = false;
-        let mut used = 0usize;
+        // Existing markers are opaque: scan only non-marker segments.
         for (index, segment) in text.split(MARKER).enumerate() {
             if index > 0 {
                 out.push_str(MARKER);
             }
-            let mut cursor = 0usize;
-            while cursor < segment.len() {
-                let rest = &segment[cursor..];
-                let mut matched: Option<&String> = None;
-                for secret in values.iter() {
-                    // Charge the bytes actually compared: a candidate
-                    // longer than the remainder fails on its length in
-                    // O(1), and a differing first byte costs one byte.
-                    let rest_bytes = rest.as_bytes();
-                    let secret_bytes = secret.as_bytes();
-                    if secret_bytes.len() > rest_bytes.len() {
-                        used = used.saturating_add(1);
-                        if used > self.work_left.get() {
-                            self.work_left.set(0);
-                            return Some(MARKER.to_string());
-                        }
-                        continue;
-                    }
-                    let mut compared = 0usize;
-                    let mut equal = true;
-                    while compared < secret_bytes.len() {
-                        compared += 1;
-                        if rest_bytes[compared - 1] != secret_bytes[compared - 1] {
-                            equal = false;
-                            break;
-                        }
-                    }
-                    used = used.saturating_add(compared.max(1));
-                    if used > self.work_left.get() {
-                        self.work_left.set(0);
-                        return Some(MARKER.to_string());
-                    }
-                    if equal {
-                        matched = Some(secret);
-                        break;
-                    }
-                }
-                match matched {
-                    Some(secret) => {
-                        out.push_str(MARKER);
-                        cursor += secret.len();
-                        hit = true;
-                    }
-                    None => {
-                        let ch = rest.chars().next().expect("non-empty remainder");
-                        out.push(ch);
-                        cursor += ch.len_utf8();
-                    }
-                }
+            let mut last = 0usize;
+            for found in automaton.find_iter(segment) {
+                out.push_str(&segment[last..found.start()]);
+                out.push_str(MARKER);
+                last = found.end();
+                hit = true;
             }
+            out.push_str(&segment[last..]);
         }
-        self.work_left
-            .set(self.work_left.get().saturating_sub(used));
         hit.then_some(out)
     }
     /// Replace secret substrings inside every string of a rendered JSON
     /// tree. Returns true when anything was replaced.
     pub fn redact(&self, value: &mut JsonValue) -> bool {
-        self.work_left.set(MAX_REDACT_WORK);
         self.redact_inner(value)
     }
 
@@ -1752,7 +1728,8 @@ impl SecretProfile {
         &self.literals
     }
 
-    /// Reset the redaction comparison budget before one output pass.
+    /// Marks the start of an output pass. The linear matcher keeps no
+    /// pass state, so this is a no-op kept for call-site clarity.
     pub fn begin_redaction_pass(&self) {
         self.literals.begin_pass();
     }

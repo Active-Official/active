@@ -24,6 +24,7 @@ dependencies = [
 name = "active-core"
 version = "1.4.0"
 dependencies = [
+ "aho-corasick",
  "anyhow",
  "base64",
  "blake3",

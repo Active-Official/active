@@ -693,3 +693,27 @@ fn inspect_sweeps_a_blob_media_literal() {
         "{report}"
     );
 }
+
+#[test]
+fn inspect_drops_a_materialised_payload_carrying_a_secret_literal() {
+    // Review 43: the payload bytes never match a literal sweep once
+    // base64-encoded, so a materialised blob whose payload embeds an
+    // authored secret must fail closed: no payload, tainted identity.
+    let raw = "hunter2-payload-r43";
+    let src =
+        format!("m = \"{raw}\"\nk = secret(m)\nf = blob(\"text/plain\", \"pre {raw} post\")\n");
+    let module = parse(&src, "blob-payload-literal").expect("parse");
+    let mut engine = active_core::Engine::new();
+    engine.materialise_blobs = true;
+    let (value, _) = engine.evaluate(&module).expect("evaluate");
+    let report = active_core::convert::inspect_path(&module, &value, "f").expect("inspect");
+    assert!(!report.to_string().contains(raw), "{report}");
+    assert!(!report.to_string().contains("payload_b64"), "{report}");
+    assert_eq!(report["tainted"], true, "{report}");
+    assert_eq!(report["value"]["tainted"], true, "{report}");
+    assert_eq!(
+        report["content_addressed"]["media_type"], "***SECRET***",
+        "{report}"
+    );
+    assert_eq!(report["content_addressed"]["tainted"], true, "{report}");
+}

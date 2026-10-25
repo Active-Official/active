@@ -178,15 +178,27 @@ impl SecretRedactor {
                 let rest = &segment[cursor..];
                 let mut matched: Option<&String> = None;
                 for secret in values.iter() {
-                    // Charge the comparison before running it: a long
-                    // candidate against a long text is real work.
-                    used = used.saturating_add(secret.len().max(1));
-                    let left = self.work_left.get();
-                    if used > left {
+                    // Charge the bytes actually compared: a candidate
+                    // longer than the remainder fails on its length in
+                    // O(1), and a differing first byte costs one byte.
+                    let rest_bytes = rest.as_bytes();
+                    let secret_bytes = secret.as_bytes();
+                    let limit = rest_bytes.len().min(secret_bytes.len());
+                    let mut compared = 0usize;
+                    let mut equal = true;
+                    while compared < limit {
+                        compared += 1;
+                        if rest_bytes[compared - 1] != secret_bytes[compared - 1] {
+                            equal = false;
+                            break;
+                        }
+                    }
+                    used = used.saturating_add(compared.max(1));
+                    if used > self.work_left.get() {
                         self.work_left.set(0);
                         return Some(MARKER.to_string());
                     }
-                    if rest.starts_with(secret.as_str()) {
+                    if equal && secret_bytes.len() <= rest_bytes.len() {
                         matched = Some(secret);
                         break;
                     }

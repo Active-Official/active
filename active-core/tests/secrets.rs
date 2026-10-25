@@ -1534,3 +1534,17 @@ fn redaction_passes_are_call_order_independent() {
     assert_eq!(first, second, "exports must not depend on call order");
     assert!(!first.contains("secret-0"), "{first}");
 }
+
+#[test]
+fn redaction_budget_does_not_overcharge_short_candidates() {
+    // Review 40: a candidate longer than the remainder fails on its
+    // length; charging its full length destroyed benign exports.
+    let mut redactor = active_core::secret::SecretRedactor::new();
+    redactor.insert("a".repeat(40));
+    redactor.insert("b".repeat(40));
+    let benign = "c".repeat(32_000);
+    assert!(
+        redactor.redact_text(&benign).is_none(),
+        "benign text must stay unmarked"
+    );
+}

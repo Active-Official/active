@@ -1175,7 +1175,7 @@ impl<'a> StepRenderer<'a> {
                 let material = *tainted
                     || sensitive
                     || path.is_some_and(|path| self.profile.path_is_secret(path))
-                    || self.redactor.redact_text(media_type).is_some()
+                    || self.profile.blob_identity_is_material(media_type)
                     || self.blob_material(hash, payload.as_ref());
                 if material {
                     (crate::convert::redacted_blob_json(hash, *size), true)
@@ -2056,6 +2056,26 @@ impl Engine {
                     module,
                     None,
                 ));
+            }
+        }
+        // Diagnostics can quote schema prose (a media type, format, or
+        // requires target). Redact authored text so every consumer —
+        // CLI check/eval, LSP diagnostics, repair findings — sees the
+        // same safe message. The analysis is skipped when the document
+        // defines no secret at all.
+        let has_secret = module
+            .arena
+            .iter()
+            .any(|node| matches!(node, crate::ir::Node::Secret { .. }));
+        if has_secret || !module.profiles.is_empty() {
+            let profile = crate::secret::SecretProfile::analyze_with_profile(
+                module,
+                self.profile_override.as_deref(),
+            );
+            for diagnostic in &mut diagnostics {
+                if let Some(message) = profile.redact_authored_text(&diagnostic.message) {
+                    diagnostic.message = message;
+                }
             }
         }
         crate::trace::record(

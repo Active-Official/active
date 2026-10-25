@@ -255,13 +255,15 @@ fn secret_tainted_paths_from_profile(
                     if let Some(known) = payload_cache.get(hash) {
                         return *known;
                     }
-                    let material = profile
-                        .redact_text(&String::from_utf8_lossy(bytes))
-                        .is_some();
+                    let material = crate::convert::blob_payload_is_material(
+                        profile.literals(),
+                        profile,
+                        Some(bytes),
+                    );
                     payload_cache.insert(*hash, material);
                     material
                 });
-                structural || profile.redact_text(media_type).is_some() || payload_material
+                structural || profile.blob_identity_is_material(media_type) || payload_material
             }
             // A copy of a runtime secret has no structural path taint;
             // its text is the only signal.

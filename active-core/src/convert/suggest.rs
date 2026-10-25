@@ -266,6 +266,12 @@ fn fill_for(module: &Module, d: &Diagnostic) -> Option<(String, String)> {
     // `validate_patch_path` enforces the same shape, so quoting or
     // escaping here would produce directives the engine rejects.
     // Array paths never reach this point (rejected above).
+    // A default that is or contains a material value would copy the
+    // secret into a patch plan; suggest nothing instead.
+    let profile = crate::secret::SecretProfile::analyze(module);
+    if profile.blob_identity_is_material(&value) {
+        return None;
+    }
     Some((path.clone(), format!("@patch(\"{path}\", {value})")))
 }
 

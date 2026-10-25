@@ -263,8 +263,9 @@ fn field_entry(
         "closed": closed,
         "element": JsonValue::Null,
     });
-    // A static default that equals a material value is a copy too.
-    profile.redact_json(&mut entry);
+    // Redact the value-bearing slot only: `path`, `name`, `kind`, and
+    // `type` are structure and must stay queryable.
+    profile.redact_json(&mut entry["default"]);
     entry
 }
 
@@ -274,11 +275,19 @@ fn field_entry(
 /// top level so agents discover the contract without parsing source.
 /// Errors only when the document has no schema block.
 pub fn schema_inspect(module: &Module) -> Result<JsonValue, String> {
+    schema_inspect_with_profile(module, None)
+}
+
+/// Schema inspection under an explicit profile override.
+pub fn schema_inspect_with_profile(
+    module: &Module,
+    override_profile: Option<&str>,
+) -> Result<JsonValue, String> {
     let root = schema_root(module)?;
     if !matches!(module.get(root), Some(Node::SchemaTable { .. })) {
         return Err("schema block must be a table for inspection".to_string());
     }
-    let profile = crate::secret::SecretProfile::analyze(module);
+    let profile = crate::secret::SecretProfile::analyze_with_profile(module, override_profile);
     let mut fields = Vec::new();
     push_field(
         module,
@@ -292,20 +301,16 @@ pub fn schema_inspect(module: &Module) -> Result<JsonValue, String> {
     // The root table entry itself carries no field data; drop it so the
     // output is exactly the field list agents query.
     fields.retain(|entry| !entry["path"].as_str().unwrap_or("").is_empty());
+    let redact_meta = |value: Option<String>| {
+        value
+            .map(|text| JsonValue::String(profile.redact_authored_text(&text).unwrap_or(text)))
+            .unwrap_or(JsonValue::Null)
+    };
     let (schema_version, min_reader, min_writer) = match module.get(root) {
         Some(Node::SchemaTable { meta, .. }) => (
-            meta.version
-                .clone()
-                .map(JsonValue::String)
-                .unwrap_or(JsonValue::Null),
-            meta.min_reader
-                .clone()
-                .map(JsonValue::String)
-                .unwrap_or(JsonValue::Null),
-            meta.min_writer
-                .clone()
-                .map(JsonValue::String)
-                .unwrap_or(JsonValue::Null),
+            redact_meta(meta.version.clone()),
+            redact_meta(meta.min_reader.clone()),
+            redact_meta(meta.min_writer.clone()),
         ),
         _ => (JsonValue::Null, JsonValue::Null, JsonValue::Null),
     };

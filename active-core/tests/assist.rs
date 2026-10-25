@@ -304,3 +304,27 @@ fn suggest_handles_nested_paths_and_dynamic_defaults() {
         "dynamic default must not map: {patches:?}"
     );
 }
+
+#[test]
+fn suggest_skips_a_literal_default_that_is_a_secret_copy() {
+    // Review 67: a default equal to a material value must not become a
+    // patch directive.
+    let (module, diags) = strict_diags(
+        "s = secret(\"K\")\nschema = { tls = Bool, cert = String(requires = \"tls\", default = \"K\") }\ntls = true\n",
+    );
+    assert!(diags.iter().any(|d| d.code == "T004"), "{diags:?}");
+    let patches = suggest_patches(&module, &diags);
+    assert!(
+        !patches.iter().any(|p| p.contains("@patch(\"cert\"")),
+        "{patches:?}"
+    );
+    // Control: a benign default still produces the fill.
+    let (module, diags) = strict_diags(
+        "s = secret(\"K\")\nschema = { tls = Bool, cert = String(requires = \"tls\", default = \"none\") }\ntls = true\n",
+    );
+    let patches = suggest_patches(&module, &diags);
+    assert!(
+        patches.iter().any(|p| p.contains("@patch(\"cert\"")),
+        "{patches:?}"
+    );
+}

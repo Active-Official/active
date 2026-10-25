@@ -225,6 +225,26 @@ pub fn schema_to_json_schema(module: &Module) -> Result<JsonValue, String> {
     Ok(node)
 }
 
+fn redact_default_value(profile: &crate::secret::SecretProfile, value: JsonValue) -> JsonValue {
+    match value {
+        JsonValue::String(text) => {
+            JsonValue::String(profile.redact_authored_text(&text).unwrap_or(text))
+        }
+        JsonValue::Array(items) => JsonValue::Array(
+            items
+                .into_iter()
+                .map(|item| redact_default_value(profile, item))
+                .collect(),
+        ),
+        JsonValue::Object(map) => JsonValue::Object(
+            map.into_iter()
+                .map(|(key, item)| (key, redact_default_value(profile, item)))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
 fn redact_prose(profile: &crate::secret::SecretProfile, text: String) -> String {
     profile.redact_authored_text(&text).unwrap_or(text)
 }
@@ -254,6 +274,9 @@ fn json_schema_node(
             for (name, field_id) in fields {
                 if let Some(crate::ir::Node::SchemaField { field }) = module.get(*field_id) {
                     if let Some(target) = literal_string(module, field.requires) {
+                        if profile.blob_identity_is_material(&target) {
+                            continue;
+                        }
                         dependent
                             .entry(target)
                             .or_insert_with(|| JsonValue::Array(Vec::new()))
@@ -415,7 +438,10 @@ fn json_schema_field(
         ActiveType::Any => return JsonValue::Bool(true),
     }
     if let Some(default) = literal_default(module, field) {
-        obj.insert("default".to_string(), default);
+        obj.insert(
+            "default".to_string(),
+            redact_default_value(profile, default),
+        );
     }
     if field.description.is_some() {
         if let Some(doc) = literal_string(module, field.description) {
@@ -721,6 +747,10 @@ impl TsGen<'_> {
                     expr.push_str(&format!(".max({max})"));
                 }
                 if let Some(pattern) = literal_string(self.module, field.pattern) {
+                    let pattern = self
+                        .profile
+                        .redact_authored_text(&pattern)
+                        .unwrap_or(pattern);
                     let quoted = JsonValue::String(pattern).to_string();
                     expr.push_str(&format!(".regex(new RegExp({quoted}))"));
                 }
@@ -761,6 +791,7 @@ impl TsGen<'_> {
         }
         if !required {
             if let Some(default) = literal_default(self.module, field) {
+                let default = redact_default_value(self.profile, default);
                 match default {
                     JsonValue::String(_) | JsonValue::Number(_) | JsonValue::Bool(_) => {
                         out.push_str(&format!(".default({default})"));

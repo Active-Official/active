@@ -39,7 +39,7 @@ pub use import::{
     json_text_to_active, json_value_to_active, jsonschema_to_active, toml_text_to_active,
     yaml_text_to_active,
 };
-pub use inspect::{schema_inspect, INSPECT_VERSION};
+pub use inspect::{schema_inspect, schema_inspect_with_profile, INSPECT_VERSION};
 pub use suggest::{suggest_patches, suggest_patches_structured, PatchKind, PatchSuggestion};
 pub use value_inspect::{
     inspect_path, inspect_path_with_profile, inspect_path_with_profile_env,
@@ -274,7 +274,7 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
                 // payload: sweep both. Payload materiality is memoized
                 // by content hash, so an aliased blob is scanned once.
                 let media_redacted = redactor.redact_text(media_type);
-                let media_exact = profile.is_material_text(media_type);
+                let media_exact = profile.blob_identity_is_material(media_type);
                 let payload_secret = if payload.is_some() {
                     match blob_material.get(hash) {
                         Some(known) => *known,

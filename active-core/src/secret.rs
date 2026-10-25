@@ -2458,6 +2458,14 @@ impl SecretProfile {
         self.exact_literals.contains_exact(text)
     }
 
+    /// True when a blob identity string (media type) is material: an
+    /// exact match, or any occurrence of a material value at any
+    /// length. Withholding a blob cannot corrupt text, so this is
+    /// deliberately broader than [`Self::redact_text`].
+    pub fn blob_identity_is_material(&self, text: &str) -> bool {
+        self.is_material_text(text) || self.exact_literals.redact_text(text).is_some()
+    }
+
     /// The exact material-value set, for surfaces that render whole
     /// values (inspect, graph, viz, trace).
     pub fn exact_literals(&self) -> &SecretRedactor {

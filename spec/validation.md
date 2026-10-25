@@ -110,7 +110,7 @@ Detail strings are structural (`below minimum`, `above maximum`,
 `too short`, `too long`, `does not match pattern`, …): evaluated
 values and **computed** bounds are never echoed into messages (secret
 invariant, §7). A bound or expectation the schema spells as a literal
-is source text and may be quoted.
+is source text and is redacted when it carries material.
 
 ## 5. Missing keys (T004)
 
@@ -159,7 +159,7 @@ the engine so the default invocation is strict.
 
 ## 7. Security and determinism
 
-- Messages quote only schema-authored literals (paths, type names,
+- Messages quote only schema-authored literals (paths, type names, redacted when material,
   enum members, and literal bounds/expectations) and kinds. Actual
   values and computed bounds never appear — a `secret()` value, an
   environment value, or any computed bound cannot reach a diagnostic,

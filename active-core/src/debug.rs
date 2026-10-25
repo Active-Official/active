@@ -344,13 +344,14 @@ pub fn minimal_case_with_options(
     let (reduced, attempts) =
         reduce_with_options(source, target_code, max_attempts, file_ctx, options);
     let target_present = still_fails(source, target_code, file_ctx, options);
-    let reduced_bytes = reduced.len();
     // Seeds cover values the source-level locator scan cannot see:
     // environment reads, computed interpolations, and multi-line
     // dedenting. The evaluator runs under the same options as the run
     // being explained.
     let seeds = bundle_seeds(source, file_ctx, options);
     let reduced = redact_secret_literals(&reduced, &seeds.0, &seeds.1, seeds.2);
+    // Measure the delivered text, after redaction can change its size.
+    let reduced_bytes = reduced.len();
     json!({
         "target_code": target_code,
         "target_present": target_present,
@@ -538,7 +539,9 @@ fn redact_secret_literals(
             // An interpolation keeps `${…}` in the token text; the
             // resolved value is unavailable, so fail closed on a known
             // substring of four bytes or more. An exact whole token
-            // also counts.
+            // also counts, and the literal parts alone are tested so a
+            // secret split across an interpolation is caught.
+            let elided = strip_interpolation_exprs(&token.text);
             authored.contains_exact(&token.text)
                 || exact.contains_exact(&token.text)
                 || authored
@@ -547,6 +550,11 @@ fn redact_secret_literals(
                 || seeds
                     .redact_text_min(&token.text, MIN_SUBSTRING_SEED)
                     .is_some()
+                || authored
+                    .redact_text_min(&elided, MIN_SUBSTRING_SEED)
+                    .is_some()
+                || seeds.redact_text_min(&elided, MIN_SUBSTRING_SEED).is_some()
+                || exact.contains_exact(&elided)
         } else {
             match decoded_token_text(token) {
                 Some(value) => {
@@ -564,6 +572,59 @@ fn redact_secret_literals(
             }
         };
         if matched {
+            extras.push((start, end));
+        }
+    }
+    // A healed quote can split `"x"secret"y"` into string and
+    // identifier tokens. A same-line pair of string tokens marks a
+    // literal island: if the whole slice carries a known value, redact
+    // it as one string. Over-redaction here is safe; a leak is not.
+    let string_tokens: Vec<&crate::parser::Token> = lexed
+        .tokens
+        .iter()
+        .filter(|token| is_string_token(token))
+        .collect();
+    for pair in string_tokens.windows(2) {
+        let (first, second) = (pair[0], pair[1]);
+        if first.line != second.line {
+            continue;
+        }
+        let (Some((start, first_end)), Some((second_start, end))) =
+            (offsets(&token_span(first)), offsets(&token_span(second)))
+        else {
+            continue;
+        };
+        if end <= start || end > normalized.len() || second_start < first_end {
+            continue;
+        }
+        // Only a healed quote joins two literals with no separator. A
+        // valid construct (`"a", "b"`, `"a" + "b"`, `f("a", "b")`) has
+        // whitespace or punctuation between them and is left alone.
+        let is_joiner = |byte: u8| -> bool {
+            !byte.is_ascii_whitespace()
+                && !matches!(
+                    byte,
+                    b',' | b')' | b']' | b'}' | b'(' | b'[' | b'{' | b'+' | b';' | b'='
+                )
+        };
+        let after_first = normalized.as_bytes().get(first_end).copied();
+        let before_second = normalized
+            .as_bytes()
+            .get(second_start.saturating_sub(1))
+            .copied();
+        if !after_first.is_some_and(is_joiner) || !before_second.is_some_and(is_joiner) {
+            continue;
+        }
+        let slice = &normalized[start..end];
+        let hit = authored
+            .redact_text_min(slice, MIN_SUBSTRING_SEED)
+            .is_some()
+            || seeds.redact_text_min(slice, MIN_SUBSTRING_SEED).is_some()
+            || exact
+                .values_snapshot()
+                .iter()
+                .any(|value| !value.is_empty() && slice.contains(value));
+        if hit {
             extras.push((start, end));
         }
     }
@@ -1078,6 +1139,34 @@ fn structural_span_keys(
             }
             _ => {}
         }
+    }
+    out
+}
+
+/// Text with `${…}` expressions removed, for matching a secret that a
+/// malformed interpolation splits across literal parts.
+fn strip_interpolation_exprs(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '$' && chars.peek() == Some(&'{') {
+            chars.next();
+            let mut depth = 1usize;
+            for inner in chars.by_ref() {
+                match inner {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            continue;
+        }
+        out.push(c);
     }
     out
 }

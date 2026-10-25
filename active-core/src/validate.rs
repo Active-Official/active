@@ -116,9 +116,20 @@ impl Engine {
                     ));
                 }
             }
-            return Err(EvalError::ValidationFailed {
-                diagnostics: validator.diagnostics,
-            });
+            let mut diagnostics = validator.diagnostics;
+            // Diagnostics can quote schema prose (media type, format,
+            // requires target); redact before the error reaches CLI,
+            // LSP, or repair.
+            let profile = crate::secret::SecretProfile::analyze_with_profile(
+                module,
+                self.profile_override.as_deref(),
+            );
+            for diagnostic in &mut diagnostics {
+                if let Some(message) = profile.redact_authored_text(&diagnostic.message) {
+                    diagnostic.message = message;
+                }
+            }
+            return Err(EvalError::ValidationFailed { diagnostics });
         }
         diagnostics.extend(validator.diagnostics);
         Ok(())

@@ -135,10 +135,17 @@ pub fn inspect_path_with_profile_env(
     if let Some(root) = module.schema {
         if let Some(Node::SchemaTable { meta, .. }) = module.get(root) {
             if meta.version.is_some() || meta.min_reader.is_some() || meta.min_writer.is_some() {
+                let redact_meta = |value: &Option<String>| {
+                    value.as_ref().map(|text| {
+                        profile
+                            .redact_authored_text(text)
+                            .unwrap_or_else(|| text.clone())
+                    })
+                };
                 report["schema_evolution"] = json!({
-                    "version": meta.version,
-                    "min_reader": meta.min_reader,
-                    "min_writer": meta.min_writer,
+                    "version": redact_meta(&meta.version),
+                    "min_reader": redact_meta(&meta.min_reader),
+                    "min_writer": redact_meta(&meta.min_writer),
                 });
             }
         }
@@ -156,8 +163,8 @@ pub fn inspect_path_with_profile_env(
         // secret locator) is not publishable, even though the blob's
         // data taint flag is separate. A materialised payload that
         // embeds a secret literal is material for the same reason.
-        let media_literal =
-            redactor.redact_text(media_type).is_some() || profile.is_material_text(media_type);
+        let media_literal = redactor.redact_text(media_type).is_some()
+            || profile.blob_identity_is_material(media_type);
         let payload_literal = if payload.is_some() {
             match blob_material.get(hash) {
                 Some(known) => *known,
@@ -261,8 +268,7 @@ fn render_cone(
             // The media type is part of the identity: a material (or a
             // copy of a short material value) makes the blob material
             // even without a payload.
-            let media_material =
-                profile.is_material_text(media_type) || redactor.redact_text(media_type).is_some();
+            let media_material = profile.blob_identity_is_material(media_type);
             let material = media_material
                 || if payload.is_some() {
                     match blob_material.get(hash) {

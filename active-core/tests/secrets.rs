@@ -2477,3 +2477,136 @@ fn inspect_value_block_redacts_a_short_blob_media_type() {
     let text = serde_json::to_string(&report).expect("json");
     assert!(!text.contains("\"media_type\":\"ABC\""), "{text}");
 }
+
+#[test]
+fn inspect_keeps_structural_fields_that_match_a_secret() {
+    // Review 67: structural keys of an inspect entry stay queryable.
+    let src = "s = secret(\"host\")\nschema = { host = String }\nhost = \"x\"\n";
+    let module = parse(src, "inspect-structure").expect("parse");
+    let report =
+        active_core::convert::schema_inspect_with_profile(&module, None).expect("schema inspect");
+    let entry = &report["fields"][0];
+    assert_eq!(entry["path"], "host", "{entry}");
+    assert_eq!(entry["name"], "host", "{entry}");
+    assert_eq!(entry["kind"], "field", "{entry}");
+    assert_eq!(entry["type"], "String", "{entry}");
+}
+
+#[test]
+fn schema_evolution_metadata_is_redacted() {
+    // Review 67: versions are authored strings and may quote a secret.
+    let src =
+        "s = secret(\"1.2.3\")\nschema = { version = \"1.2.3\", host = String }\nhost = \"x\"\n";
+    let module = parse(src, "evolution").expect("parse");
+    let (value, _) = Engine::new().evaluate(&module).expect("evaluate");
+    let schema = active_core::convert::schema_inspect(&module).expect("schema inspect");
+    assert!(!schema.to_string().contains("1.2.3"), "{schema}");
+    let report = active_core::convert::inspect_path_with_profile(&module, &value, "host", None)
+        .expect("inspect");
+    assert!(!report.to_string().contains("1.2.3"), "{report}");
+
+    let old = parse(src, "old").expect("parse");
+    let new_src =
+        "s = secret(\"1.2.3\")\nschema = { version = \"1.2.2\", host = String }\nhost = \"x\"\n";
+    let new = parse(new_src, "new").expect("parse");
+    let findings = active_core::convert::compare_schemas(&old, &new).expect("compare");
+    for finding in findings {
+        assert!(!finding.message.contains("1.2.3"), "{}", finding.message);
+    }
+}
+
+#[test]
+fn schema_inspect_honors_a_profile_override() {
+    // Review 67: `schema inspect --profile` must not silently ignore
+    // the selection.
+    let src = "a = secret(\"base\")\nprofile \"p\" { a = \"s3cr3t-short\" }\nschema = { host = String(deprecated = \"migrate s3cr3t-short\") }\nhost = \"x\"\n";
+    let module = parse(src, "schema-profile").expect("parse");
+    let report = active_core::convert::schema_inspect_with_profile(&module, Some("p"))
+        .expect("schema inspect");
+    assert!(!report.to_string().contains("s3cr3t-short"), "{report}");
+}
+
+#[test]
+fn blob_media_substring_is_material() {
+    // Review 67: a short material value embedded in a media type taints
+    // the identity.
+    let src = "active_profile = \"p\"\na = secret(\"base\")\nprofile \"p\" { a = \"ABC\" }\nf = blob(\"xxABCxx\", \"hello\")\n";
+    let module = parse(src, "media-substring").expect("parse");
+    let (value, _) = Engine::new().evaluate(&module).expect("evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains("xxABCxx"), "{json}");
+    let report = active_core::convert::inspect_path_with_profile(&module, &value, "f", None)
+        .expect("inspect");
+    assert!(!report.to_string().contains("xxABCxx"), "{report}");
+}
+
+#[test]
+fn viz_and_graph_report_a_payload_resident_short_secret() {
+    // Review 67: both surfaces use the shared payload check.
+    let src = "active_profile = \"p\"\na = secret(\"base\")\nprofile \"p\" { a = \"ABC\" }\nm = \"xxABCxx\"\nf = blob(\"text/plain\", m)\n";
+    let module = parse(src, "payload-surfaces").expect("parse");
+    let mut engine = Engine::hermetic();
+    engine.materialise_blobs = true;
+    let (value, _) = engine.evaluate(&module).expect("evaluate");
+    let viz = active_core::viz::taint_data_with_profile(&module, &value, None);
+    assert!(viz.to_string().contains("\"f\""), "{viz}");
+    let paths = active_core::graph::secret_tainted_paths_with(&module, &value, None);
+    assert!(paths.iter().any(|path| path == "f"), "{paths:?}");
+}
+
+#[test]
+fn diagnostics_redact_schema_literals() {
+    // Review 67: B004/T003/T004 quote schema prose.
+    let cases: [(&str, &str, &str); 3] = [
+        (
+            "B004",
+            "s = secret(\"s3cr3t-media\")\nschema = { b = Blob(media_type = \"s3cr3t-media\") }\nb = blob(\"text/plain\", \"x\")\n",
+            "s3cr3t-media",
+        ),
+        (
+            "T003",
+            "s = secret(\"s3cr3t-fmt\")\nschema = { f = String(format = \"s3cr3t-fmt\") }\nf = \"x\"\n",
+            "s3cr3t-fmt",
+        ),
+        (
+            "T004",
+            "s = secret(\"secret_req\")\nschema = { secret_req = Bool, cert = String(requires = \"secret_req\") }\nsecret_req = true\n",
+            "secret_req",
+        ),
+    ];
+    for (code, src, secret) in cases {
+        let module = parse(src, "diag-redact").expect("parse");
+        let diags = match Engine::new().evaluate(&module) {
+            Ok((_, diags)) => diags,
+            Err(EvalError::ValidationFailed { diagnostics }) => diagnostics,
+            Err(error) => panic!("{code}: {error:?}"),
+        };
+        let found = diags
+            .iter()
+            .find(|d| d.code == code)
+            .unwrap_or_else(|| panic!("{code} missing: {diags:?}"));
+        assert!(!found.message.contains(secret), "{}", found.message);
+    }
+}
+
+#[test]
+fn generated_defaults_patterns_and_requires_redact_secrets() {
+    // Review 67: generated artifacts carry schema prose and defaults.
+    let src = "s = secret(\"s3cr3t-gen\")\nschema = { host = String(default = \"s3cr3t-gen\", pattern = \"^s3cr3t-gen$\", requires = \"s3cr3t-gen\") }\n";
+    let module = parse(src, "gen-prose").expect("parse");
+    let json_schema = active_core::convert::schema_to_json_schema(&module).expect("json schema");
+    assert!(
+        !json_schema.to_string().contains("s3cr3t-gen"),
+        "{json_schema}"
+    );
+    for output in [
+        active_core::convert::schema_to_typescript(&module, "Config"),
+        active_core::convert::schema_to_rust(&module, "Config"),
+        active_core::convert::schema_to_python(&module, "Config"),
+        active_core::convert::schema_to_go(&module, "Config"),
+    ] {
+        let output = output.expect("generate");
+        assert!(!output.contains("s3cr3t-gen"), "{output}");
+    }
+}

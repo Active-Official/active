@@ -1,7 +1,7 @@
 use active_core::convert::{
     collect_items_with_profile, doc_to_html, doc_to_man, doc_to_markdown, json_text_to_active,
-    jsonschema_to_active, schema_inspect, schema_to_go, schema_to_json_schema, schema_to_openapi,
-    schema_to_python, schema_to_rust, schema_to_typescript, toml_text_to_active,
+    jsonschema_to_active, schema_inspect_with_profile, schema_to_go, schema_to_json_schema,
+    schema_to_openapi, schema_to_python, schema_to_rust, schema_to_typescript, toml_text_to_active,
     value_to_pretty_json, value_to_toml_string, value_to_yaml_string, yaml_text_to_active,
 };
 use active_core::diag::{Diagnostic, Severity};
@@ -744,7 +744,8 @@ fn run_inspect(
             if format != "json" {
                 anyhow::bail!("schema inspection supports --format json only");
             }
-            let inspected = schema_inspect(&module).map_err(|e| anyhow::anyhow!("{e}"))?;
+            let inspected = schema_inspect_with_profile(&module, profile.as_deref())
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
             println!(
                 "{}",
                 serde_json::to_string_pretty(&inspected).map_err(|e| anyhow::anyhow!("{e}"))?

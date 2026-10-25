@@ -336,18 +336,19 @@ fn minimal_case_does_not_redact_env_names_or_unrelated_strings() {
 }
 
 #[test]
-fn reduced_bytes_is_measured_before_redaction() {
+fn reduced_bytes_matches_the_delivered_text() {
     let long = "A".repeat(200);
     let src = format!("token = secret(\"{long}\")\n");
     let report = debug::minimal_case(&src, "T999", 10);
     let reduced = report["reduced"].as_str().expect("reduced");
     assert_eq!(
-        report["reduced_bytes"].as_u64().unwrap(),
-        report["original_bytes"].as_u64().unwrap()
+        report["reduced_bytes"].as_u64().unwrap() as usize,
+        reduced.len(),
+        "the reported size describes the delivered text: {report}"
     );
     assert!(
-        reduced.len() < report["reduced_bytes"].as_u64().unwrap() as usize,
-        "redaction must not inflate the reported size: {report}"
+        reduced.len() < report["original_bytes"].as_u64().unwrap() as usize,
+        "redaction must shrink a long locator: {report}"
     );
 }
 
@@ -1413,4 +1414,35 @@ fn minimize_redacts_a_secret_straddling_the_truncation_limit() {
     let report = debug::minimal_case(&source, "T006", 0);
     let reduced = report["reduced"].as_str().expect("reduced");
     assert!(!reduced.contains("TAILSECRET"), "{reduced}");
+}
+
+#[test]
+fn minimize_redacts_a_nested_quote_without_interpolation() {
+    // Review 67: a healed quote splits into string and identifier
+    // tokens; the literal island must redact.
+    let source = "s = secret(\"hunter2-ABCD\")\nt = \"x\"hunter2-ABCD\"y\"\n";
+    let report = debug::minimal_case(source, "T006", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(!reduced.contains("hunter2-ABCD"), "{reduced}");
+}
+
+#[test]
+fn minimize_redacts_a_secret_split_across_an_interpolation() {
+    // Review 67: the literal parts around `${…}` reconstruct the copy.
+    let source = "s = secret(\"hunter2-ABCD\")\nt = \"AAAhunter2-${1 + 1}ABCDZZZ\"\n";
+    let report = debug::minimal_case(source, "T006", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(!reduced.contains("hunter2-ABCD"), "{reduced}");
+}
+
+#[test]
+fn minimize_reports_the_delivered_reduced_size() {
+    // Review 67: `reduced_bytes` describes the text after redaction.
+    let source = "s = secret(\"hunter2-ABCD\")\nt = \"x\"hunter2-ABCD\"y\"\n";
+    let report = debug::minimal_case(source, "T006", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert_eq!(
+        report["reduced_bytes"].as_u64().unwrap() as usize,
+        reduced.len()
+    );
 }

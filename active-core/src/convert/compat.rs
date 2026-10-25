@@ -339,6 +339,19 @@ pub fn compare(old: &Module, new: &Module) -> Result<Vec<CompatFinding>, String>
     // Version gates from schema metadata.
     check_version_gates(old, new, &mut findings);
 
+    // Messages echo schema prose (versions, media types); redact with
+    // both documents' material sets so neither side can leak a copy.
+    let old_profile = crate::secret::SecretProfile::analyze(old);
+    let new_profile = crate::secret::SecretProfile::analyze(new);
+    for finding in &mut findings {
+        if let Some(text) = old_profile.redact_authored_text(&finding.message) {
+            finding.message = text;
+        }
+        if let Some(text) = new_profile.redact_authored_text(&finding.message) {
+            finding.message = text;
+        }
+    }
+
     Ok(findings)
 }
 

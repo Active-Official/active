@@ -80,13 +80,15 @@ fn taint_data_from_profile(
                     if let Some(known) = payload_cache.get(hash) {
                         return *known;
                     }
-                    let material = profile
-                        .redact_text(&String::from_utf8_lossy(bytes))
-                        .is_some();
+                    let material = crate::convert::blob_payload_is_material(
+                        profile.literals(),
+                        profile,
+                        Some(bytes),
+                    );
                     payload_cache.insert(*hash, material);
                     material
                 });
-                profile.redact_text(media_type).is_some() || payload_material
+                profile.blob_identity_is_material(media_type) || payload_material
             }
             _ => false,
         };
@@ -272,8 +274,28 @@ pub fn repair_data(
     let outcome = crate::convert::repair_document(source, goal, preserve, max_steps);
     let mut data =
         serde_json::to_value(outcome).unwrap_or_else(|_| json!({"error": "unserializable plan"}));
+    let (module, _) = crate::parse_recovering(source, "viz-repair", crate::ParseOptions::default());
+    let profile = crate::secret::SecretProfile::analyze(&module);
     if let Some(object) = data.as_object_mut() {
         object.remove("repaired_source");
+        // A fill can quote a schema default; redact the directive text
+        // with the same authored-prose rule as every other surface.
+        if let Some(steps) = object
+            .get_mut("steps")
+            .and_then(|steps| steps.as_array_mut())
+        {
+            for step in steps {
+                if let Some(directive) = step
+                    .get("directive")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string)
+                {
+                    if let Some(redacted) = profile.redact_authored_text(&directive) {
+                        step["directive"] = JsonValue::String(redacted);
+                    }
+                }
+            }
+        }
     }
     data
 }

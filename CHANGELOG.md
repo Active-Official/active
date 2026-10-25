@@ -239,11 +239,13 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   is rejected in O(1), and repeated exports are byte-identical by
   construction. Profile merging uses a larger, separate bound so
   normal 10k-key profiles do not fail closed. Runtime secrets seed the
-  same redactor as authored literals (from the evaluated tree, from
-  material environment values, and from every `Secret` value), so a
-  copy in a plain string, a blob media type, or a materialised payload
-  is swept in exports, inspection, and step/debug traces; a match
-  drops the payload and marks the identity tainted. Tainted blobs never
+  same redactor as authored literals: the evaluator returns every
+  material node's text (covering `let`-bound and computed secrets and
+  lazy host lookups), material environment values are merged, and every
+  surface — CLI eval/convert/doc/lock/inspect, FFI, WASM, LSP hover,
+  debug replay, and viz taint — absorbs them before rendering. A copy
+  in a plain string, a blob media type, or a materialised payload is
+  swept; a match drops the payload and marks the identity tainted. Tainted blobs never
   emit `payload_b64` through JSON, TOML, or the redacting `Serialize`
   impl, schema compatibility indexes rows by path (linear instead of
   quadratic), and LSP hover/inlay consult path materiality so a

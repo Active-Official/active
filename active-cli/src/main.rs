@@ -706,8 +706,8 @@ fn run_inspect(
         Some(path) => {
             let mut evaluation_engine = Engine::new();
             evaluation_engine.profile_override = profile.clone();
-            let (value, _) = evaluation_engine
-                .evaluate(&module)
+            let (value, _, seeds) = evaluation_engine
+                .evaluate_with_seeds(&module)
                 .map_err(|e| anyhow::anyhow!("cannot evaluate for inspection: {e}"))?;
             let report = active_core::convert::inspect_path_with_profile_env(
                 &module,
@@ -715,6 +715,7 @@ fn run_inspect(
                 path,
                 profile.as_deref(),
                 Some(&evaluation_engine.env),
+                Some(&seeds),
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?;
             match format {
@@ -1304,7 +1305,7 @@ fn main() -> anyhow::Result<()> {
                     .filter(|name| module.profiles.contains_key(name))
             });
             active_core::trace::set_tracing(trace);
-            let (value, diags) = match engine.evaluate(&module) {
+            let (value, diags, seeds) = match engine.evaluate_with_seeds(&module) {
                 Ok(out) => {
                     dump_trail(trace);
                     out
@@ -1348,6 +1349,7 @@ fn main() -> anyhow::Result<()> {
                 engine.profile_override.as_deref(),
             );
             profile.absorb_environment(&engine.env);
+            profile.absorb_secrets(&seeds);
             let full_value = active_core::convert::redact_value(&profile, &value);
             let value = match path.as_deref() {
                 Some(p) => active_core::convert::project_path(&full_value, p)
@@ -1587,8 +1589,8 @@ fn main() -> anyhow::Result<()> {
             let trust = load_trust(&trust_keys)?;
             let module = parse_input(&file, resilient, allow_parent_escapes, &trust)?;
             let engine = engine(resilient, &profile, budget.resolve()?);
-            let (value, diags) = engine
-                .evaluate(&module)
+            let (value, diags, seeds) = engine
+                .evaluate_with_seeds(&module)
                 .inspect_err(|e| report_eval_error(e, &name))?;
             for d in &diags {
                 report(d, &name);
@@ -1598,6 +1600,7 @@ fn main() -> anyhow::Result<()> {
                 engine.profile_override.as_deref(),
             );
             profile.absorb_environment(&engine.env);
+            profile.absorb_secrets(&seeds);
             match to.as_str() {
                 "json" => println!(
                     "{}",
@@ -1975,15 +1978,16 @@ fn main() -> anyhow::Result<()> {
                 "taint" => {
                     let mut evaluation_engine = Engine::new();
                     evaluation_engine.profile_override = profile.clone();
-                    let (value, _) = evaluation_engine
-                        .evaluate(&module)
+                    let (value, _, seeds) = evaluation_engine
+                        .evaluate_with_seeds(&module)
                         .map_err(|e| anyhow::anyhow!("cannot evaluate: {e}"))?;
                     println!(
                         "{}",
-                        serde_json::to_string_pretty(&active_core::viz::taint_data_with_profile(
+                        serde_json::to_string_pretty(&active_core::viz::taint_data_with_seeds(
                             &module,
                             &value,
-                            profile.as_deref()
+                            profile.as_deref(),
+                            Some(&seeds),
                         ))
                         .map_err(|e| anyhow::anyhow!("{e}"))?
                     );
@@ -2371,14 +2375,15 @@ fn main() -> anyhow::Result<()> {
             let trust = load_trust(&trust_keys)?;
             let module = parse_input(&from, resilient, allow_parent_escapes, &trust)?;
             let engine = engine(resilient, &None, budget.resolve()?);
-            let (value, diags) = engine
-                .evaluate(&module)
+            let (value, diags, seeds) = engine
+                .evaluate_with_seeds(&module)
                 .map_err(|e| anyhow::anyhow!("evaluation failed: {e}"))?;
             for d in &diags {
                 report(d, &filename);
             }
             let mut profile = active_core::secret::SecretProfile::analyze(&module);
             profile.absorb_environment(&engine.env);
+            profile.absorb_secrets(&seeds);
             let items = collect_items(
                 &module,
                 &active_core::convert::redact_value(&profile, &value),
@@ -2403,8 +2408,8 @@ fn main() -> anyhow::Result<()> {
             let trust = load_trust(&trust_keys)?;
             let module = parse_input(&file, resilient, allow_parent_escapes, &trust)?;
             let engine = engine(resilient, &profile, budget.resolve()?);
-            let (value, diags) = engine
-                .evaluate(&module)
+            let (value, diags, seeds) = engine
+                .evaluate_with_seeds(&module)
                 .inspect_err(|e| report_eval_error(e, &name))?;
             for d in &diags {
                 report(d, &name);
@@ -2431,6 +2436,7 @@ fn main() -> anyhow::Result<()> {
                 engine.profile_override.as_deref(),
             );
             secret_profile.absorb_environment(&engine.env);
+            secret_profile.absorb_secrets(&seeds);
             let manifest = active_core::provenance::LockManifest::new(
                 format!(
                     "active-cli {} / active-core {}",

@@ -521,17 +521,20 @@ pub unsafe extern "C" fn active_eval(
             Ok(e) => e,
             Err(_) => return std::ptr::null_mut(),
         };
-        match engine.evaluate(&parsed) {
-            Ok((value, _)) => {
+        match engine.evaluate_with_seeds(&parsed) {
+            Ok((value, _, seeds)) => {
                 set_last(ACTIVE_ERR_OK);
                 // Structural material (a plain env read used as a secret
                 // locator, and anything built from it) is redacted before
                 // it crosses the boundary, matching the CLI exporters.
+                // Seeds cover lazy host values: `engine.env` stays empty
+                // when the host supplies the lookup callback.
                 let mut profile = active_core::secret::SecretProfile::analyze_with_profile(
                     &parsed,
                     engine.profile_override.as_deref(),
                 );
                 profile.absorb_environment(&engine.env);
+                profile.absorb_secrets(&seeds);
                 let value = active_core::convert::redact_value(&profile, &value);
                 Box::into_raw(Box::new(ActiveValue { value }))
             }

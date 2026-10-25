@@ -1683,6 +1683,28 @@ fn redaction_keeps_the_prefix_when_the_first_match_follows_a_marker() {
 }
 
 #[test]
+fn redaction_does_not_rescan_an_absent_level_per_match() {
+    // Review 47: a batch with no match must be retired for the rest of
+    // the segment, not rescanned for every match another batch finds.
+    let mut redactor = active_core::secret::SecretRedactor::new();
+    redactor.insert("a".to_string());
+    redactor.insert("b".to_string());
+    redactor.insert("c".to_string());
+    let text = "c".repeat(40_000);
+    let started = std::time::Instant::now();
+    let redacted = redactor.redact_text(&text).expect("c matches");
+    assert_eq!(
+        redacted.matches(active_core::secret::MARKER).count(),
+        40_000
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "absent batches rescanned: {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
 fn redaction_scans_absent_long_patterns_once_per_segment() {
     // Review 45: an absent long pattern must be searched once, not
     // once per short-pattern match.
@@ -1783,20 +1805,53 @@ fn let_bound_runtime_secret_is_swept_from_payloads_and_inspect() {
     env.insert("ACTIVE_R46_B".to_string(), raw.to_string());
     let mut engine = Engine::hermetic().with_env(env.clone());
     engine.materialise_blobs = true;
-    let (value, _) = engine.evaluate(&module).expect("evaluate");
+    let (value, _, seeds) = engine.evaluate_with_seeds(&module).expect("evaluate");
     let mut profile = active_core::secret::SecretProfile::analyze(&module);
     profile.absorb_environment(&env);
+    profile.absorb_secrets(&seeds);
     let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
     assert!(!json.contains(raw), "{json}");
     assert!(!json.contains("payload_b64"), "{json}");
-    let inspected =
-        active_core::convert::inspect_path_with_profile_env(&module, &value, "f", None, Some(&env))
-            .expect("inspect");
+    let inspected = active_core::convert::inspect_path_with_profile_env(
+        &module,
+        &value,
+        "f",
+        None,
+        Some(&env),
+        Some(&seeds),
+    )
+    .expect("inspect");
     assert!(!inspected.to_string().contains(raw), "{inspected}");
     assert!(
         !inspected.to_string().contains("payload_b64"),
         "{inspected}"
     );
+    assert_eq!(inspected["tainted"], true, "{inspected}");
+}
+
+#[test]
+fn computed_let_secret_is_swept_from_exports_and_inspect() {
+    // Review 47: a material interpolation bound to a `let` name never
+    // enters the exported tree; the evaluator seeds must cover it.
+    let src = "let v = \"PIN-${1234}\"\nlet k = secret(v)\ncopy = \"PIN-1234\"\n";
+    let module = parse(src, "computed-let").expect("parse");
+    let (value, _, seeds) = Engine::hermetic()
+        .evaluate_with_seeds(&module)
+        .expect("evaluate");
+    let mut profile = active_core::secret::SecretProfile::analyze(&module);
+    profile.absorb_secrets(&seeds);
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains("PIN-1234"), "{json}");
+    let inspected = active_core::convert::inspect_path_with_profile_env(
+        &module,
+        &value,
+        "copy",
+        None,
+        None,
+        Some(&seeds),
+    )
+    .expect("inspect");
+    assert!(!inspected.to_string().contains("PIN-1234"), "{inspected}");
     assert_eq!(inspected["tainted"], true, "{inspected}");
 }
 

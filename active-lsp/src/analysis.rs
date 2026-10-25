@@ -37,6 +37,11 @@ pub struct Doc {
     #[allow(dead_code)]
     pub parse_diags: Vec<Diagnostic>,
     pub value: Option<Value>,
+    /// Runtime secret seeds from the evaluation that produced `value`:
+    /// material node text that may not appear in the tree (a
+    /// `let`-bound computed secret). Hover seeds its redactor with
+    /// these so a copy redacts.
+    pub value_seeds: active_core::secret::SecretRedactor,
     /// Evaluation diagnostics (resilient): published by C-044.
     #[allow(dead_code)]
     pub eval_diags: Vec<Diagnostic>,
@@ -93,29 +98,30 @@ pub fn open_doc(
     // as the normal X00x diagnostic instead of a hung editor.
     let mut engine = Engine::hermetic();
     engine.budget = active_core::Budget::strict();
-    let (value, eval_diags) = match engine.evaluate_incremental(&module, &mut memo) {
-        Ok((v, d)) => (Some(v), d),
-        // Hard evaluation failures (cycles, budgets, validation in
-        // strict mode) still publish: the error becomes one
-        // diagnostic alongside the module's own records, so
-        // open/change handlers surface everything (C-044).
-        // Messages are secret-safe by the C-036 audit.
-        Err(e) => {
-            let mut diags = vec![Diagnostic {
-                severity: Severity::Error,
-                code: e.code().to_string(),
-                message: e.to_string(),
-                path: None,
-                span: e.span().cloned(),
-                repair: None,
-                confidence: 1.0,
-                file: e.file().map(str::to_string),
-            }];
-            diags.extend(module.diagnostics.iter().cloned());
-            diags.extend(module.healing.iter().cloned());
-            (None, diags)
-        }
-    };
+    let (value, eval_diags, value_seeds) =
+        match engine.evaluate_incremental_with_seeds(&module, &mut memo) {
+            Ok((v, d, seeds)) => (Some(v), d, seeds),
+            // Hard evaluation failures (cycles, budgets, validation in
+            // strict mode) still publish: the error becomes one
+            // diagnostic alongside the module's own records, so
+            // open/change handlers surface everything (C-044).
+            // Messages are secret-safe by the C-036 audit.
+            Err(e) => {
+                let mut diags = vec![Diagnostic {
+                    severity: Severity::Error,
+                    code: e.code().to_string(),
+                    message: e.to_string(),
+                    path: None,
+                    span: e.span().cloned(),
+                    repair: None,
+                    confidence: 1.0,
+                    file: e.file().map(str::to_string),
+                }];
+                diags.extend(module.diagnostics.iter().cloned());
+                diags.extend(module.healing.iter().cloned());
+                (None, diags, active_core::secret::SecretRedactor::new())
+            }
+        };
     let lint_diags = lint(&module);
     Doc {
         uri,
@@ -124,6 +130,7 @@ pub fn open_doc(
         module,
         parse_diags,
         value,
+        value_seeds,
         eval_diags,
         lint_diags,
         memo,
@@ -1047,7 +1054,8 @@ pub fn hover_at(doc: &Doc, line: u32, character: u32) -> Option<Hover> {
     // Value at the path (redacted; lets have no tree value).
     if let Some(root) = doc.value.as_ref() {
         if let Some(value) = value_at_path(root, &path) {
-            let profile = SecretProfile::analyze(&doc.module);
+            let mut profile = SecretProfile::analyze(&doc.module);
+            profile.absorb_secrets(&doc.value_seeds);
             profile.begin_redaction_pass();
             // Seed path-material plain values from the evaluated tree:
             // a profile-selected env copy is material by path, not by

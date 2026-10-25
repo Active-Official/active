@@ -47,21 +47,28 @@ pub fn replay(
 ) -> Result<JsonValue, String> {
     let mut engine = Engine::new();
     engine.profile_override = override_profile.map(str::to_string);
-    let (first, first_diags, first_steps) = engine
-        .evaluate_with_steps(module)
+    let (first, first_diags, first_steps, first_seeds) = engine
+        .evaluate_with_steps_and_seeds(module)
         .map_err(|e| e.to_string())?;
-    let (second, second_diags, second_steps) = engine
-        .evaluate_with_steps(module)
+    let (second, second_diags, second_steps, second_seeds) = engine
+        .evaluate_with_steps_and_seeds(module)
         .map_err(|e| e.to_string())?;
 
     // Hash the structurally redacted tree: the audit trail and replay
     // must agree on the same document, and a secret value change must
-    // not alter the content identity.
-    let profile = crate::secret::SecretProfile::analyze_with_profile(module, override_profile);
+    // not alter the content identity. Seeds and material env values are
+    // absorbed exactly as the export and audit paths do.
+    let mut profile = crate::secret::SecretProfile::analyze_with_profile(module, override_profile);
+    profile.absorb_environment(&engine.env);
+    profile.absorb_secrets(&first_seeds);
+    let mut second_profile =
+        crate::secret::SecretProfile::analyze_with_profile(module, override_profile);
+    second_profile.absorb_environment(&engine.env);
+    second_profile.absorb_secrets(&second_seeds);
     let first_hash =
         crate::provenance::content_hash(&crate::convert::redact_value(&profile, &first));
     let second_hash =
-        crate::provenance::content_hash(&crate::convert::redact_value(&profile, &second));
+        crate::provenance::content_hash(&crate::convert::redact_value(&second_profile, &second));
     let first_codes: Vec<&str> = first_diags.iter().map(|d| d.code.as_str()).collect();
     let second_codes: Vec<&str> = second_diags.iter().map(|d| d.code.as_str()).collect();
     let steps_match = first_steps == second_steps;

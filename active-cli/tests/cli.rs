@@ -3179,3 +3179,50 @@ fn eval_redacts_a_profile_selected_env_copy() {
     assert!(!text.contains("r46-profile-token"), "{text}");
     assert!(text.contains("***SECRET***"), "{text}");
 }
+
+#[test]
+fn audit_hash_replays_after_runtime_secret_redaction() {
+    // Review 47: the audit and replay must hash the same redacted tree
+    // even when the secret is bound to a `let` name and never exported.
+    let f = fixture(
+        "audit_replay_runtime.active",
+        "let s = env.ACTIVE_R47_A\nlet k = secret(s)\ncopy = s\n",
+    );
+    let audit = f.with_extension("audit.active");
+    let out = active()
+        .arg("eval")
+        .arg(&f)
+        .arg("--audit-trail")
+        .arg(&audit)
+        .env("ACTIVE_R47_A", "r47-audit-token")
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let audit_text = std::fs::read_to_string(&audit).expect("audit file");
+    let hash = audit_text
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("result = "))
+        .map(|value| value.trim_end_matches(',').trim_matches('"').to_string())
+        .expect("audit result hash");
+    assert!(!hash.is_empty(), "{audit_text}");
+    let replay = active()
+        .args(["debug", "--from"])
+        .arg(&f)
+        .args(["--replay", "--expect"])
+        .arg(&hash)
+        .env("ACTIVE_R47_A", "r47-audit-token")
+        .output()
+        .expect("run active");
+    assert!(
+        replay.status.success(),
+        "{}",
+        String::from_utf8_lossy(&replay.stderr)
+    );
+    let text = String::from_utf8_lossy(&replay.stdout);
+    assert!(text.contains("\"ok\": true"), "{text}");
+    assert!(text.contains("\"expected_match\": true"), "{text}");
+}

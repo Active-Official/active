@@ -648,6 +648,16 @@ fn hover_redacts_a_path_material_profile_value() {
 }
 
 #[test]
+fn hover_redacts_a_copy_of_a_computed_let_secret() {
+    // Review 47: a secret bound to a `let` name never enters the
+    // exported tree; hover seeds its redactor from the evaluation.
+    let doc = open("let v = \"PIN-${1234}\"\nlet k = secret(v)\ncopy = \"PIN-1234\"\n");
+    let hover = analysis::hover_at(&doc, 2, 0).expect("hover on copy");
+    let text = format!("{:?}", hover.contents);
+    assert!(!text.contains("PIN-1234"), "hover leaked: {text}");
+}
+
+#[test]
 fn inlay_hints_redact_a_path_material_profile_value() {
     let doc = open(
         "let d = 30m\nk = secret(d)\nn = 1\nactive_profile = \"p\"\nprofile \"p\" { n = d }\n",

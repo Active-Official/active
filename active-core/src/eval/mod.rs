@@ -1229,7 +1229,21 @@ impl Engine {
     }
 
     pub fn evaluate(&self, module: &Module) -> Result<(Value, Vec<Diagnostic>), EvalError> {
-        self.evaluate_inner(module, None, None)
+        self.evaluate_inner(module, None, None, None)
+    }
+
+    /// Evaluate and also return the runtime secret seeds observed by the
+    /// walk: every material node's evaluated text. Export surfaces seed
+    /// their redactor with this so a secret copied through a `let`
+    /// binding, a non-string interpolation part, or a lazy host env
+    /// lookup still redacts even though it never enters the tree.
+    pub fn evaluate_with_seeds(
+        &self,
+        module: &Module,
+    ) -> Result<(Value, Vec<Diagnostic>, SecretRedactor), EvalError> {
+        let mut seeds = SecretRedactor::new();
+        let (value, diagnostics) = self.evaluate_inner(module, None, None, Some(&mut seeds))?;
+        Ok((value, diagnostics, seeds))
     }
 
     /// Evaluate and return one secret-safe step per arena node in
@@ -1243,9 +1257,22 @@ impl Engine {
         &self,
         module: &Module,
     ) -> Result<(Value, Vec<Diagnostic>, Vec<StepEvent>), EvalError> {
+        self.evaluate_with_steps_and_seeds(module)
+            .map(|(value, diagnostics, steps, _)| (value, diagnostics, steps))
+    }
+
+    /// Step trace plus runtime secret seeds: replay needs both so its
+    /// content hash agrees with an audit written by an exporter that
+    /// absorbed the seeds.
+    pub fn evaluate_with_steps_and_seeds(
+        &self,
+        module: &Module,
+    ) -> Result<(Value, Vec<Diagnostic>, Vec<StepEvent>, SecretRedactor), EvalError> {
         let mut steps = Vec::new();
-        let (value, diagnostics) = self.evaluate_inner(module, None, Some(&mut steps))?;
-        Ok((value, diagnostics, steps))
+        let mut seeds = SecretRedactor::new();
+        let (value, diagnostics) =
+            self.evaluate_inner(module, None, Some(&mut steps), Some(&mut seeds))?;
+        Ok((value, diagnostics, steps, seeds))
     }
 
     /// Incremental evaluation over a reused memo store (C-055,
@@ -1263,6 +1290,19 @@ impl Engine {
         module: &Module,
         memo: &mut IncrementalMemo,
     ) -> Result<(Value, Vec<Diagnostic>), EvalError> {
+        self.evaluate_incremental_with_seeds(module, memo)
+            .map(|(value, diagnostics, _)| (value, diagnostics))
+    }
+
+    /// Incremental evaluation that also returns the runtime secret
+    /// seeds (see [`Engine::evaluate_with_seeds`]). Memo hits still
+    /// insert their served values into the walk map, so the seeds cover
+    /// every material node on a partially cached document.
+    pub fn evaluate_incremental_with_seeds(
+        &self,
+        module: &Module,
+        memo: &mut IncrementalMemo,
+    ) -> Result<(Value, Vec<Diagnostic>, SecretRedactor), EvalError> {
         // `Budget` compares by value (all fields are `u64`): any
         // configuration change clears the store before the walk.
         let token = (
@@ -1279,7 +1319,8 @@ impl Engine {
         }
         memo.last_eval_count = 0;
         memo.last_memo_hits = 0;
-        let outcome = self.evaluate_inner(module, Some(memo), None);
+        let mut seeds = SecretRedactor::new();
+        let outcome = self.evaluate_inner(module, Some(memo), None, Some(&mut seeds));
         // Bound the store: every document version inserts novel
         // fingerprints, so without eviction a long-lived memo (the
         // language server reuses one per document) grows with edit
@@ -1291,7 +1332,7 @@ impl Engine {
         if memo.map.len() > cap {
             memo.map.clear();
         }
-        outcome
+        outcome.map(|(value, diagnostics)| (value, diagnostics, seeds))
     }
 
     fn evaluate_inner(
@@ -1299,6 +1340,7 @@ impl Engine {
         module: &Module,
         mut memo: Option<&mut IncrementalMemo>,
         steps: Option<&mut Vec<StepEvent>>,
+        seeds: Option<&mut SecretRedactor>,
     ) -> Result<(Value, Vec<Diagnostic>), EvalError> {
         // The deadline covers everything from here on (spec/budgets.md
         // §2): static scans, cycle check, sort, walk, transforms, and
@@ -1419,7 +1461,16 @@ impl Engine {
             .arena
             .iter()
             .any(|node| matches!(node, Node::ContentAddressed { .. }));
-        let secret_profile: Option<SecretProfile> = (steps.is_some() || has_blobs)
+        // A caller that asked for runtime seeds needs the analysis even
+        // when the document has no blobs; without any `secret(...)` node
+        // there is nothing to seed.
+        let has_secret_nodes = module
+            .arena
+            .iter()
+            .any(|node| matches!(node, Node::Secret { .. }));
+        let secret_profile: Option<SecretProfile> = (steps.is_some()
+            || has_blobs
+            || (seeds.is_some() && has_secret_nodes))
             .then(|| SecretProfile::analyze_with_profile(module, self.profile_override.as_deref()));
         // Evaluated values of sensitive nodes, so a container step can
         // redact the same bytes even though the container itself is
@@ -1869,6 +1920,29 @@ impl Engine {
                     codes: step.codes,
                 });
             }
+        }
+
+        // Runtime secret seeds: every material node's evaluated text,
+        // including nodes that never enter the exported tree (a `let`
+        // binding, a computed interpolation, a lazy env lookup). This is
+        // the same source the step renderer uses, so every surface can
+        // agree on what must be redacted.
+        if let Some(out) = seeds {
+            let mut collected = SecretRedactor::new();
+            if let Some(profile) = secret_profile.as_ref() {
+                for (id, value) in &values {
+                    if !profile.node_is_secret(*id) {
+                        continue;
+                    }
+                    match value {
+                        Value::Secret(text) | Value::String(text) => {
+                            collected.insert(text.clone());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            *out = collected;
         }
 
         let root = module.root.ok_or(EvalError::MissingRoot)?;

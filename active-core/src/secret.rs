@@ -135,7 +135,7 @@ fn consider(start: usize, end: usize, best: &mut Option<(usize, usize)>) {
 
 /// One log-structured batch of automaton-eligible values. The matcher
 /// is built lazily and rebuilt only when the batch changes, so an
-/// insert costs O(1) amortized and a scan visits O(log n) automata
+/// insert merges logarithmically and a scan visits O(log n) automata
 /// instead of rescanning a growing pending set.
 #[derive(Clone, Default)]
 struct Level {
@@ -340,7 +340,9 @@ impl SecretRedactor {
 
     /// Scan one text across the batch automata and the linear
     /// partitions. The leftmost match wins; at the same start the
-    /// longest wins.
+    /// longest wins. A batch or long pattern that finds nothing at or
+    /// after the current position retires for the rest of the segment,
+    /// so an absent matcher cannot rescan the suffix per match.
     fn scan(&self, text: &str) -> Option<String> {
         let levels = self.levels.borrow();
         let long = self.long.borrow();
@@ -367,12 +369,23 @@ impl SecretRedactor {
             } else {
                 Vec::new()
             };
+            // `last` only moves forward, so a matcher that finds nothing
+            // at/after it can never match later in this segment: mark it
+            // done instead of rescanning the suffix per match.
+            let mut level_done: Vec<bool> = vec![false; levels.len()];
             let mut last = 0usize;
             loop {
                 let mut best: Option<(usize, usize)> = None;
                 for (level_index, level) in levels.iter().enumerate() {
+                    if level_done[level_index] {
+                        continue;
+                    }
                     if linear {
                         let cursors = &mut level_cursors[level_index];
+                        if cursors.iter().all(|cursor| cursor.1) {
+                            level_done[level_index] = true;
+                            continue;
+                        }
                         for (pattern, cursor) in level.values.iter().zip(cursors.iter_mut()) {
                             if let Some((start, end)) = linear_next(pattern, segment, last, cursor)
                             {
@@ -380,9 +393,14 @@ impl SecretRedactor {
                             }
                         }
                     } else if let Some(automaton) = level.automaton.as_ref() {
-                        if let Some(found) = automaton.find(&segment[last..]) {
-                            consider(last + found.start(), last + found.end(), &mut best);
+                        match automaton.find(&segment[last..]) {
+                            Some(found) => {
+                                consider(last + found.start(), last + found.end(), &mut best);
+                            }
+                            None => level_done[level_index] = true,
                         }
+                    } else {
+                        level_done[level_index] = true;
                     }
                 }
                 for (pattern, cursor) in long.iter().zip(long_cursors.iter_mut()) {
@@ -1860,6 +1878,14 @@ impl SecretProfile {
     /// path-tainted.
     pub fn env_is_material(&self, name: &str) -> bool {
         self.material_envs.contains(name)
+    }
+
+    /// Insert runtime secret seeds collected by the evaluator. Seeds
+    /// cover material node values that never enter the exported tree
+    /// (a `let` binding, a computed interpolation, a lazy host env
+    /// lookup), so any copy of their text redacts on every surface.
+    pub fn absorb_secrets(&mut self, seeds: &SecretRedactor) {
+        self.literals.merge(seeds);
     }
 
     /// Insert every material environment value into the literal set.

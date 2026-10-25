@@ -193,6 +193,12 @@ pub fn value_to_pretty_json(v: &Value) -> String {
 /// Containers keep their shape; a benign sibling stays visible, while
 /// a material scalar of any kind is hidden. A string that merely
 /// contains a known secret substring is redacted in place.
+///
+/// Seed the profile first when a secret may be bound outside the
+/// exported tree: `Engine::evaluate_with_seeds` returns the evaluator's
+/// material node values, `SecretProfile::absorb_secrets` merges them,
+/// and `absorb_environment` covers material environment values. The
+/// CLI, FFI, WASM, LSP, inspect, and replay front ends all do this.
 pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
     profile.begin_redaction_pass();
     // Runtime secrets live in the evaluated tree; authored literals

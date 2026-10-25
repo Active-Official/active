@@ -83,17 +83,64 @@ pub fn secret_subtree(module: &Module, root: NodeId, set: &mut HashSet<NodeId>) 
 const MAX_AC_PATTERN: usize = 4096;
 
 /// Values inserted since the last fold are scanned linearly. Folding
-/// at this many keeps that scan short while rebuilding the automaton
-/// only at geometric set sizes, so interleaved insert/redact calls do
-/// not rebuild it per call.
+/// at a fraction of the automaton set (or this floor) grows the set
+/// with the data, so total rebuild work is O(N log N) instead of
+/// O(N² / floor).
 const FOLD_THRESHOLD: usize = 64;
+
+/// Per-pattern cursor over one marker-free segment: the next known
+/// match start and whether the pattern has no further match in it.
+/// Caching both keeps linear-partition scanning at O(text) per
+/// pattern instead of rescanning the remainder after every match.
+type PatternCursor = (Option<usize>, bool);
+
+/// Next match of one linear-partition pattern at or after `last`.
+/// Each byte of a segment is searched at most once per pattern.
+fn linear_next(
+    pattern: &str,
+    segment: &str,
+    last: usize,
+    cursor: &mut PatternCursor,
+) -> Option<(usize, usize)> {
+    if cursor.1 {
+        return None;
+    }
+    let start = match cursor.0 {
+        Some(start) if start >= last => start,
+        _ => match segment[last..].find(pattern) {
+            Some(relative) => {
+                let start = last + relative;
+                cursor.0 = Some(start);
+                start
+            }
+            None => {
+                cursor.1 = true;
+                return None;
+            }
+        },
+    };
+    Some((start, start + pattern.len()))
+}
+
+/// Keep the leftmost match; at the same start keep the longer one.
+fn consider(start: usize, end: usize, best: &mut Option<(usize, usize)>) {
+    let replace = match *best {
+        None => true,
+        Some((best_start, best_end)) => {
+            start < best_start || (start == best_start && end > best_end)
+        }
+    };
+    if replace {
+        *best = Some((start, end));
+    }
+}
 
 /// A deterministic set of secret strings. Insertion is O(1) amortized
 /// (a HashSet guards duplicates). Redaction runs one Aho–Corasick scan
-/// over the automaton-eligible values, plus a linear scan of the few
-/// long values and the values inserted since the last fold, so the
-/// cost is O(text + matches) instead of O(secrets × text) and no
-/// benign value is ever wholesale-marked.
+/// over the automaton-eligible values plus one forward cursor pass per
+/// long or pending value, so the cost is O(text + matches) per pattern
+/// rather than a rescan of the text per secret, and no benign value is
+/// ever wholesale-marked.
 #[derive(Debug, Clone)]
 pub struct SecretRedactor {
     /// Authoritative set, insertion order.
@@ -120,12 +167,7 @@ impl PartialEq for SecretRedactor {
     /// Set equality: two redactors with the same values compare equal
     /// regardless of insertion order or fold state.
     fn eq(&self, other: &Self) -> bool {
-        fn sorted(this: &SecretRedactor) -> Vec<String> {
-            let mut values = this.values.borrow().clone();
-            values.sort_unstable_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
-            values
-        }
-        self.values.borrow().len() == other.values.borrow().len() && sorted(self) == sorted(other)
+        self.seen == other.seen
     }
 }
 
@@ -163,8 +205,10 @@ impl SecretRedactor {
     }
 
     /// Move pending values into the automaton-eligible or long set and
-    /// rebuild the automaton. Amortized: callers fold at geometric set
-    /// sizes, so the total build work is linear in the final set size.
+    /// rebuild the automaton. Amortized: folding waits for the pending
+    /// set to reach a fraction of the base set, so each rebuild grows
+    /// with the data and total build work is amortized linear in the
+    /// final set size.
     fn fold(&self) {
         let mut pending = self.pending.borrow_mut();
         if pending.is_empty() {
@@ -240,8 +284,11 @@ impl SecretRedactor {
             return None;
         }
         let pending_len = self.pending.borrow().len();
-        if pending_len > 0 && (pending_len >= FOLD_THRESHOLD || self.base.borrow().is_empty()) {
-            self.fold();
+        if pending_len > 0 {
+            let fold_at = FOLD_THRESHOLD.max(self.base.borrow().len() / 8);
+            if pending_len >= fold_at || self.base.borrow().is_empty() {
+                self.fold();
+            }
         }
         self.scan(text)
     }
@@ -253,41 +300,12 @@ impl SecretRedactor {
         self.fold();
     }
 
-    /// Scan one text, combining the automaton with a linear scan of the
+    /// Scan one text, combining the automaton with a cursor scan of the
     /// long and pending values. The leftmost match wins; at the same
     /// start the longest wins, which is why `base` is sorted
-    /// longest-first.
+    /// longest-first. Linear-partition cursors keep each pattern's
+    /// segment search to one forward pass.
     fn scan(&self, text: &str) -> Option<String> {
-        // Earliest match in `patterns` at or after `last`, preferring
-        // the longer match at an equal start.
-        fn earliest(
-            patterns: &[String],
-            segment: &str,
-            last: usize,
-            best: &mut Option<(usize, usize)>,
-        ) {
-            let remainder = &segment[last..];
-            for pattern in patterns {
-                if pattern.len() > remainder.len() {
-                    continue;
-                }
-                let Some(relative) = remainder.find(pattern.as_str()) else {
-                    continue;
-                };
-                let start = last + relative;
-                let end = start + pattern.len();
-                let replace = match *best {
-                    None => true,
-                    Some((best_start, best_end)) => {
-                        start < best_start || (start == best_start && end > best_end)
-                    }
-                };
-                if replace {
-                    *best = Some((start, end));
-                }
-            }
-        }
-
         let base = self.base.borrow();
         let long = self.long.borrow();
         let pending = self.pending.borrow();
@@ -310,6 +328,13 @@ impl SecretRedactor {
             // before it, including the markers already in the text.
             let prefix = offset;
             offset += segment.len() + MARKER.len();
+            let mut long_cursors: Vec<PatternCursor> = vec![(None, false); long.len()];
+            let mut pending_cursors: Vec<PatternCursor> = vec![(None, false); pending.len()];
+            let mut base_cursors: Vec<PatternCursor> = if automaton.is_none() {
+                vec![(None, false); base.len()]
+            } else {
+                Vec::new()
+            };
             let mut last = 0usize;
             loop {
                 let mut best: Option<(usize, usize)> = None;
@@ -319,10 +344,20 @@ impl SecretRedactor {
                         best = Some((start, last + found.end()));
                     }
                 }
-                earliest(&long, segment, last, &mut best);
-                earliest(&pending, segment, last, &mut best);
-                if automaton.is_none() {
-                    earliest(&base, segment, last, &mut best);
+                for (pattern, cursor) in long.iter().zip(long_cursors.iter_mut()) {
+                    if let Some((start, end)) = linear_next(pattern, segment, last, cursor) {
+                        consider(start, end, &mut best);
+                    }
+                }
+                for (pattern, cursor) in pending.iter().zip(pending_cursors.iter_mut()) {
+                    if let Some((start, end)) = linear_next(pattern, segment, last, cursor) {
+                        consider(start, end, &mut best);
+                    }
+                }
+                for (pattern, cursor) in base.iter().zip(base_cursors.iter_mut()) {
+                    if let Some((start, end)) = linear_next(pattern, segment, last, cursor) {
+                        consider(start, end, &mut best);
+                    }
                 }
                 let Some((start, end)) = best else { break };
                 let buffer = out.get_or_insert_with(|| {

@@ -1027,95 +1027,151 @@ pub struct StepEvent {
     pub codes: Vec<String>,
 }
 
-/// Render one step value with path-aware material marking: a container
-/// keeps its shape, and every material leaf (string, number, whatever
+/// A step collected during evaluation and rendered once the whole walk
+/// has finished, so the sensitive set is complete regardless of node
+/// order (a copy can precede the secret it contains).
+struct PendingStep {
+    node_id: crate::ir::NodeId,
+    path: Option<String>,
+    kind: String,
+    sensitive: bool,
+    codes: Vec<String>,
+}
+
+/// Renders step values with path-aware material marking: containers
+/// keep their shape, and every material leaf (string, number, whatever
 /// the kind) becomes the marker. Without a path an internal container
 /// fails closed to the marker when it is material at all.
-fn render_step_value(
-    profile: &SecretProfile,
-    path: Option<&str>,
-    value: &Value,
-    sensitive: bool,
-) -> serde_json::Value {
-    let marker = || serde_json::Value::String(crate::secret::MARKER.to_string());
-    match value {
-        Value::Array(items) => {
-            let Some(base) = path else {
-                if sensitive {
-                    return marker();
-                }
-                // Without a path the shape is still rendered child by
-                // child, so a blob payload is swept even at depth.
-                return serde_json::Value::Array(
-                    items
+///
+/// The sensitive set is the complete redactor (authored literals plus
+/// every runtime secret evaluated so far), so a blob payload embedding
+/// either kind of secret is dropped before its bytes are encoded. The
+/// bool reports whether the render redacted anything, so the step's
+/// `tainted` flag always agrees with its value.
+struct StepRenderer<'a> {
+    profile: &'a SecretProfile,
+    redactor: &'a SecretRedactor,
+    blob_material: std::cell::RefCell<std::collections::HashMap<[u8; 32], bool>>,
+}
+
+impl<'a> StepRenderer<'a> {
+    fn new(profile: &'a SecretProfile, redactor: &'a SecretRedactor) -> Self {
+        Self {
+            profile,
+            redactor,
+            blob_material: std::cell::RefCell::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// Payload materiality, memoized by content hash. An identity-only
+    /// blob (no payload in the tree) is never material here.
+    fn blob_material(&self, hash: &[u8; 32], payload: Option<&Vec<u8>>) -> bool {
+        if payload.is_none() {
+            return false;
+        }
+        if let Some(known) = self.blob_material.borrow().get(hash) {
+            return *known;
+        }
+        let material = crate::convert::blob_payload_is_material(self.redactor, payload);
+        self.blob_material.borrow_mut().insert(*hash, material);
+        material
+    }
+
+    fn render(
+        &self,
+        path: Option<&str>,
+        value: &Value,
+        sensitive: bool,
+    ) -> (serde_json::Value, bool) {
+        let marker = || serde_json::Value::String(crate::secret::MARKER.to_string());
+        match value {
+            Value::Array(items) => {
+                let Some(base) = path else {
+                    if sensitive {
+                        return (marker(), true);
+                    }
+                    // Without a path the shape is still rendered child
+                    // by child, so a blob payload is swept at depth.
+                    let mut marked = false;
+                    let rendered = items
                         .iter()
-                        .map(|item| render_step_value(profile, None, item, false))
-                        .collect(),
-                );
-            };
-            serde_json::Value::Array(
-                items
+                        .map(|item| {
+                            let (child, hit) = self.render(None, item, false);
+                            marked |= hit;
+                            child
+                        })
+                        .collect();
+                    return (serde_json::Value::Array(rendered), marked);
+                };
+                let mut marked = false;
+                let rendered = items
                     .iter()
                     .enumerate()
                     .map(|(index, item)| {
                         let child = format!("{base}[{index}]");
-                        render_step_value(
-                            profile,
-                            Some(&child),
-                            item,
-                            profile.path_is_secret(&child),
-                        )
+                        let (rendered, hit) =
+                            self.render(Some(&child), item, self.profile.path_is_secret(&child));
+                        marked |= hit;
+                        rendered
                     })
-                    .collect(),
-            )
-        }
-        Value::Table(map) => {
-            let Some(base) = path else {
-                if sensitive {
-                    return marker();
-                }
+                    .collect();
+                (serde_json::Value::Array(rendered), marked)
+            }
+            Value::Table(map) => {
+                let Some(base) = path else {
+                    if sensitive {
+                        return (marker(), true);
+                    }
+                    let mut marked = false;
+                    let mut out = serde_json::Map::new();
+                    for (key, item) in map {
+                        let (rendered, hit) = self.render(None, item, false);
+                        marked |= hit;
+                        out.insert(key.clone(), rendered);
+                    }
+                    return (serde_json::Value::Object(out), marked);
+                };
+                let mut marked = false;
                 let mut out = serde_json::Map::new();
                 for (key, item) in map {
-                    out.insert(key.clone(), render_step_value(profile, None, item, false));
+                    let child = if base.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{base}.{key}")
+                    };
+                    let (rendered, hit) =
+                        self.render(Some(&child), item, self.profile.path_is_secret(&child));
+                    marked |= hit;
+                    out.insert(key.clone(), rendered);
                 }
-                return serde_json::Value::Object(out);
-            };
-            let mut out = serde_json::Map::new();
-            for (key, item) in map {
-                let child = if base.is_empty() {
-                    key.clone()
+                (serde_json::Value::Object(out), marked)
+            }
+            Value::Blob {
+                hash,
+                size,
+                tainted,
+                media_type,
+                payload,
+            } => {
+                // A materialised payload can carry a secret literal (or
+                // a runtime secret) whose base64 form no literal sweep
+                // can match.
+                let material = *tainted
+                    || sensitive
+                    || path.is_some_and(|path| self.profile.path_is_secret(path))
+                    || self.redactor.redact_text(media_type).is_some()
+                    || self.blob_material(hash, payload.as_ref());
+                if material {
+                    (crate::convert::redacted_blob_json(hash, *size), true)
                 } else {
-                    format!("{base}.{key}")
-                };
-                out.insert(
-                    key.clone(),
-                    render_step_value(profile, Some(&child), item, profile.path_is_secret(&child)),
-                );
+                    (crate::convert::value_to_json(value), false)
+                }
             }
-            serde_json::Value::Object(out)
-        }
-        Value::Blob {
-            hash,
-            size,
-            tainted,
-            media_type,
-            payload,
-        } => {
-            // A materialised payload can carry an authored secret
-            // literal whose base64 form no literal sweep can match.
-            let material = *tainted
-                || sensitive
-                || path.is_some_and(|path| profile.path_is_secret(path))
-                || profile.redact_text(media_type).is_some()
-                || crate::convert::blob_payload_is_material(profile, payload.as_ref());
-            if material {
-                crate::convert::redacted_blob_json(hash, *size)
-            } else {
-                crate::convert::value_to_json(value)
+            _ if sensitive || path.is_some_and(|path| self.profile.path_is_secret(path)) => {
+                (marker(), true)
             }
+            _ => (crate::convert::value_to_json(value), false),
         }
-        _ if sensitive || path.is_some_and(|path| profile.path_is_secret(path)) => marker(),
-        _ => crate::convert::value_to_json(value),
     }
 }
 
@@ -1127,14 +1183,6 @@ fn value_has_secret(value: &Value) -> bool {
         Value::Table(map) => map.values().any(value_has_secret),
         _ => false,
     }
-}
-
-/// Replace every string in a rendered JSON tree containing a known
-/// sensitive value. Returns true when anything was replaced, so the
-/// step can be marked tainted. Delegates to the shared redactor so
-/// step traces and `inspect` agree on substring behavior.
-fn redact_json_strings(value: &mut serde_json::Value, sensitive: &SecretRedactor) -> bool {
-    sensitive.redact(value)
 }
 
 impl Engine {
@@ -1250,7 +1298,7 @@ impl Engine {
         &self,
         module: &Module,
         mut memo: Option<&mut IncrementalMemo>,
-        mut steps: Option<&mut Vec<StepEvent>>,
+        steps: Option<&mut Vec<StepEvent>>,
     ) -> Result<(Value, Vec<Diagnostic>), EvalError> {
         // The deadline covers everything from here on (spec/budgets.md
         // §2): static scans, cycle check, sort, walk, transforms, and
@@ -1382,6 +1430,9 @@ impl Engine {
             .as_ref()
             .map(|profile| profile.literals().clone())
             .unwrap_or_default();
+        // Steps render after the walk, when the sensitive set is
+        // complete; only the cheap per-node facts are collected here.
+        let mut pending_steps: Vec<PendingStep> = Vec::new();
 
         // Fingerprints for this call (arena-indexed cache, sized
         // once): computed inline during the walk below, which runs
@@ -1718,7 +1769,7 @@ impl Engine {
                 }
             }
 
-            if let Some(list) = steps.as_deref_mut() {
+            if steps.is_some() {
                 let material_path = secret_profile
                     .as_ref()
                     .and_then(|profile| profile.material_path_for(node_id));
@@ -1761,32 +1812,30 @@ impl Engine {
                         .is_some_and(|profile| profile.path_is_secret(path))
                 });
                 let sensitive = node_material || on_material_path || path_material;
-                if node_material || on_material_path {
-                    // Register the evaluated text of a material scalar
-                    // so a container rendering redacts it. Only
-                    // intrinsically material nodes and env reads do so:
-                    // a benign literal that merely also appears at a
-                    // profile path must stay visible in its own step.
-                    let env_read = matches!(module.get(node_id), Some(Node::Env { .. }));
-                    if let Value::String(text) = &value {
+                match &value {
+                    // A runtime secret is sensitive material wherever
+                    // it appears; register its text so a copy (string,
+                    // media type, or blob payload) redacts too.
+                    Value::Secret(text) => sensitive_values.insert(text.clone()),
+                    Value::String(text) if node_material || on_material_path => {
+                        let env_read = matches!(module.get(node_id), Some(Node::Env { .. }));
+                        // Register the evaluated text of a material
+                        // scalar so a container rendering redacts it.
+                        // Only intrinsically material nodes and env
+                        // reads do so: a benign literal that merely also
+                        // appears at a profile path stays visible in its
+                        // own step.
                         if node_material || env_read {
                             sensitive_values.insert(text.clone());
                         }
                     }
+                    _ => {}
                 }
-                let mut rendered = match secret_profile.as_ref() {
-                    Some(profile) => {
-                        render_step_value(profile, step_path.as_deref(), &value, sensitive)
-                    }
-                    None => crate::convert::value_to_json(&value),
-                };
-                let replaced = redact_json_strings(&mut rendered, &sensitive_values);
-                list.push(StepEvent {
-                    node: node_id.0,
+                pending_steps.push(PendingStep {
+                    node_id,
                     path: step_path,
-                    kind: value_kind_name(&value),
-                    tainted: sensitive || replaced || value_has_secret(&value),
-                    value: rendered,
+                    kind: value_kind_name(&value).to_string(),
+                    sensitive,
                     codes: diagnostics[diag_start..]
                         .iter()
                         .map(|d| d.code.clone())
@@ -1794,6 +1843,32 @@ impl Engine {
                 });
             }
             values.insert(node_id, value);
+        }
+
+        // Render the collected steps once the sensitive set is complete,
+        // so evaluation order cannot leak a secret into another step.
+        if let Some(list) = steps {
+            let renderer = secret_profile
+                .as_ref()
+                .map(|profile| StepRenderer::new(profile, &sensitive_values));
+            for step in pending_steps {
+                let Some(value) = values.get(&step.node_id) else {
+                    continue;
+                };
+                let (mut rendered, material) = match renderer.as_ref() {
+                    Some(renderer) => renderer.render(step.path.as_deref(), value, step.sensitive),
+                    None => (crate::convert::value_to_json(value), false),
+                };
+                let replaced = sensitive_values.redact(&mut rendered);
+                list.push(StepEvent {
+                    node: step.node_id.0,
+                    path: step.path,
+                    kind: step.kind,
+                    tainted: step.sensitive || material || replaced || value_has_secret(value),
+                    value: rendered,
+                    codes: step.codes,
+                });
+            }
         }
 
         let root = module.root.ok_or(EvalError::MissingRoot)?;

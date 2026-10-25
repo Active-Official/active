@@ -1,7 +1,7 @@
 //! Conversion between Active Value and JSON / simple map representations
 
 use crate::ir::Value;
-use crate::secret::SecretProfile;
+use crate::secret::{SecretProfile, SecretRedactor};
 use serde_json::{json, Value as JsonValue};
 
 pub mod capability;
@@ -105,12 +105,45 @@ pub fn value_to_json(v: &Value) -> JsonValue {
     }
 }
 
-/// True when a blob payload's raw bytes carry an authored secret
-/// literal. The bytes are swept before base64 encoding, which cannot
-/// be matched against a literal again.
-pub(crate) fn blob_payload_is_material(profile: &SecretProfile, payload: Option<&Vec<u8>>) -> bool {
+/// Seed a redactor with the authored literals and every runtime secret
+/// in the evaluated tree. A runtime secret (an env read wrapped by
+/// `secret()`) has no authored literal to find, so a copy of its text in
+/// a plain string, a blob media type, or materialised payload bytes
+/// would otherwise render verbatim.
+pub(crate) fn redactor_with_runtime_secrets(
+    profile: &SecretProfile,
+    value: &Value,
+) -> SecretRedactor {
+    fn seed(value: &Value, redactor: &mut SecretRedactor) {
+        match value {
+            Value::Secret(text) => redactor.insert(text.clone()),
+            Value::Array(items) => {
+                for item in items {
+                    seed(item, redactor);
+                }
+            }
+            Value::Table(map) => {
+                for item in map.values() {
+                    seed(item, redactor);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut redactor = profile.literals().clone();
+    seed(value, &mut redactor);
+    redactor
+}
+
+/// True when a blob payload's raw bytes carry a secret. The bytes are
+/// swept before base64 encoding, which cannot be matched against a
+/// literal again.
+pub(crate) fn blob_payload_is_material(
+    redactor: &SecretRedactor,
+    payload: Option<&Vec<u8>>,
+) -> bool {
     payload.is_some_and(|bytes| {
-        profile
+        redactor
             .redact_text(&String::from_utf8_lossy(bytes))
             .is_some()
     })
@@ -139,13 +172,21 @@ pub fn value_to_pretty_json(v: &Value) -> String {
 /// contains a known secret substring is redacted in place.
 pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
     profile.begin_redaction_pass();
-    fn walk(profile: &SecretProfile, path: &str, value: &Value) -> Value {
+    // Runtime secrets live in the evaluated tree; authored literals
+    // live in the profile. Copies need both.
+    let redactor = redactor_with_runtime_secrets(profile, value);
+    fn walk(
+        profile: &SecretProfile,
+        redactor: &SecretRedactor,
+        path: &str,
+        value: &Value,
+    ) -> Value {
         match value {
             Value::Array(items) => Value::Array(
                 items
                     .iter()
                     .enumerate()
-                    .map(|(index, item)| walk(profile, &format!("{path}[{index}]"), item))
+                    .map(|(index, item)| walk(profile, redactor, &format!("{path}[{index}]"), item))
                     .collect(),
             ),
             Value::Table(map) => {
@@ -156,7 +197,7 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
                     } else {
                         format!("{path}.{key}")
                     };
-                    out.insert(key.clone(), walk(profile, &child, item));
+                    out.insert(key.clone(), walk(profile, redactor, &child, item));
                 }
                 Value::Table(out)
             }
@@ -170,10 +211,10 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
                 tainted,
                 payload,
             } => {
-                // A literal that is known secret material can appear in
-                // identity metadata or inside a payload: sweep both.
-                let media_redacted = profile.redact_text(media_type);
-                let payload_secret = blob_payload_is_material(profile, payload.as_ref());
+                // A secret can appear in identity metadata or inside a
+                // payload: sweep both.
+                let media_redacted = redactor.redact_text(media_type);
+                let payload_secret = blob_payload_is_material(redactor, payload.as_ref());
                 if *tainted
                     || profile.path_is_secret(path)
                     || media_redacted.is_some()
@@ -197,14 +238,14 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
                 }
             }
             _ if profile.path_is_secret(path) => Value::Secret(String::new()),
-            Value::String(text) => match profile.redact_text(text) {
+            Value::String(text) => match redactor.redact_text(text) {
                 Some(redacted) => Value::String(redacted),
                 None => value.clone(),
             },
             _ => value.clone(),
         }
     }
-    walk(profile, "", value)
+    walk(profile, &redactor, "", value)
 }
 
 /// JSON export with structural-material redaction.

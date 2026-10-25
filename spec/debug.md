@@ -22,6 +22,11 @@ StepEvent { node: u32, path: Option<String>, kind: String,
   locator is not Secret-kinded, so this is enforced structurally, not
   by the value kind. A container keeps its shape and each material
   leaf (string, number, …) renders the marker.
+- **Complete sensitive set:** steps render after the walk, once every
+  authored literal and runtime secret is known, so evaluation order
+  cannot leak a copy into an earlier step. Any step whose render
+  redacts a string or drops a blob payload reports `tainted: true`, so
+  the `taint` breakpoint and the value never disagree.
 - **Transforms run after the walk.** Profile merges, `@patch`
   directives, and schema-default fills apply to the final tree, so
   the root step shows the walked document; `eval` shows the

@@ -631,6 +631,13 @@ impl Serialize for Value {
             // taint bit. Payload bytes serialize ONLY when the value
             // carries them — set exclusively by explicit
             // materialisation on an untainted blob.
+            //
+            // This impl is profile-unaware: it cannot tell whether the
+            // payload embeds a secret that only the evaluation context
+            // knows. Export surfaces route through
+            // `convert::redact_value` (or the `*_with` exporters),
+            // which sweeps runtime and authored secrets first; call
+            // this impl directly only on an already-redacted tree.
             Value::Blob {
                 hash,
                 size,

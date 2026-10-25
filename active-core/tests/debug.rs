@@ -175,6 +175,38 @@ fn step_trace_drops_a_materialised_payload_carrying_a_secret_literal() {
     let text = debug::render_steps(&steps);
     assert!(!text.contains("payload_b64"), "{text}");
     assert!(!text.contains(raw), "{text}");
+    // Review 45: the redacted identity must make the step tainted, or
+    // `--break taint` misses it.
+    assert!(
+        steps.iter().any(|step| step.kind == "blob" && step.tainted),
+        "redacted blob step must be tainted: {steps:?}"
+    );
+    assert!(
+        steps
+            .iter()
+            .any(|step| step.kind == "table" && step.tainted),
+        "container step with a redacted blob must be tainted: {steps:?}"
+    );
+}
+
+#[test]
+fn step_trace_redacts_copies_of_a_runtime_secret() {
+    // Review 45: the sensitive set must be complete before rendering,
+    // so a copy evaluated before (or after) the secret still redacts.
+    use std::collections::HashMap;
+    let raw = "sd-token-order-r45";
+    let src = format!(
+        "copy = \"pre {raw} post\"\nf = blob(\"text/plain\", \"pre {raw} post\")\nm = env.TOKEN\nk = secret(m)\n"
+    );
+    let module = parse(&src, "debug-runtime-order").expect("parse");
+    let mut env = HashMap::new();
+    env.insert("TOKEN".to_string(), raw.to_string());
+    let mut engine = Engine::hermetic().with_env(env);
+    engine.materialise_blobs = true;
+    let (_, _, steps) = engine.evaluate_with_steps(&module).expect("evaluate");
+    let rendered = serde_json::to_string(&steps).expect("json");
+    assert!(!rendered.contains(raw), "{rendered}");
+    assert!(!rendered.contains("payload_b64"), "{rendered}");
 }
 
 #[test]

@@ -229,21 +229,23 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   pathological secret set can no longer exhaust a budget and
   wholesale-mark benign values. A pattern longer than 4 KB stays out
   of the automaton and is scanned with `str::find`, so one huge secret
-  costs no automaton memory; values inserted after a pass are folded
-  at geometric set sizes, so interleaved insert/redact callers do not
-  rebuild the automaton per call; a failed build falls back to a
-  correct linear scan instead of reporting every text clean. Matching
-  is leftmost-longest among known secrets, existing markers are
+  costs no automaton memory; values inserted after a pass are folded as
+  the set grows (pending reaches a fraction of the automaton set), so
+  interleaved insert/redact callers do not rebuild the automaton per
+  call and total build work stays sub-quadratic; a failed build falls
+  back to a correct linear scan instead of reporting every text clean.
+  Matching is leftmost-longest among known secrets, existing markers are
   opaque, a text shorter than the shortest secret is rejected in O(1),
   and repeated exports are byte-identical by construction. Profile
   merging uses a larger, separate bound so normal 10k-key profiles do
-  not fail closed. Blob media types and payloads are swept for authored
-  secret literals (a match drops the payload and marks the identity)
-  in exports, inspection, and step/debug traces, tainted blobs never
-  emit `payload_b64` through JSON, TOML, or the redacting `Serialize`
-  impl, schema compatibility indexes rows by path (linear instead of
-  quadratic), and LSP hover/inlay consult path materiality so a
-  profile-selected value is redacted.
+  not fail closed. Runtime secrets seed the same redactor as authored
+  literals, so a copy in a plain string, a blob media type, or a
+  materialised payload is swept in exports, inspection, and
+  step/debug traces; a match drops the payload and marks the identity
+  tainted. Tainted blobs never emit `payload_b64` through JSON, TOML,
+  or the redacting `Serialize` impl, schema compatibility indexes rows
+  by path (linear instead of quadratic), and LSP hover/inlay consult
+  path materiality so a profile-selected value is redacted.
 - **Analysis and redaction stay bounded.** Profile merging shares one
   work bound across fields and replacements; on exhaustion every node
   and env read is marked material, so paths, traces, and provenance all

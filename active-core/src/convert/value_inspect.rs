@@ -29,6 +29,10 @@ pub fn inspect_path_with_profile(
         .map_err(|why| format!("cannot inspect `{path}`: {why}"))?;
     let profile = SecretProfile::analyze_with_profile(module, override_profile);
     profile.begin_redaction_pass();
+    // Runtime secrets live in the evaluated tree, not in the profile's
+    // authored literals; seed both so a copy in any inspected value is
+    // redacted.
+    let redactor = crate::convert::redactor_with_runtime_secrets(&profile, root);
     let kind = kind_name(cone);
     // A media type sourced from material (an env lookup used as a
     // secret locator) is not publishable, even when the blob's data is
@@ -44,8 +48,8 @@ pub fn inspect_path_with_profile(
     // `Value::Secret` marker, so taint is structural. Render with the
     // profile's path map, then sweep authored literals out of any
     // string that embedded one.
-    let (mut value, marked) = render_cone(&profile, path, cone);
-    let redacted = profile.redact_json(&mut value);
+    let (mut value, marked) = render_cone(&profile, &redactor, path, cone);
+    let redacted = redactor.redact(&mut value);
     let tainted =
         profile.path_is_secret(path) || contains_secret(cone) || redacted || marked || media_secret;
     // Size of the REDACTED rendering (the bytes a consumer actually
@@ -100,8 +104,8 @@ pub fn inspect_path_with_profile(
         // secret locator) is not publishable, even though the blob's
         // data taint flag is separate. A materialised payload that
         // embeds a secret literal is material for the same reason.
-        let media_literal = profile.redact_text(media_type).is_some();
-        let payload_literal = crate::convert::blob_payload_is_material(&profile, payload.as_ref());
+        let media_literal = redactor.redact_text(media_type).is_some();
+        let payload_literal = crate::convert::blob_payload_is_material(&redactor, payload.as_ref());
         let media_secret = path_material
             || media_literal
             || payload_literal
@@ -127,7 +131,12 @@ pub fn inspect_path_with_profile(
 /// structural taint set applies at the right granularity. The bool
 /// reports whether anything was marked, so the report's `tainted` flag
 /// never says false on a value that contains markers.
-fn render_cone(profile: &SecretProfile, path: &str, value: &Value) -> (JsonValue, bool) {
+fn render_cone(
+    profile: &SecretProfile,
+    redactor: &crate::secret::SecretRedactor,
+    path: &str,
+    value: &Value,
+) -> (JsonValue, bool) {
     match value {
         Value::Array(items) => {
             let mut marked = false;
@@ -135,7 +144,8 @@ fn render_cone(profile: &SecretProfile, path: &str, value: &Value) -> (JsonValue
                 .iter()
                 .enumerate()
                 .map(|(index, item)| {
-                    let (child, hit) = render_cone(profile, &format!("{path}[{index}]"), item);
+                    let (child, hit) =
+                        render_cone(profile, redactor, &format!("{path}[{index}]"), item);
                     marked |= hit;
                     child
                 })
@@ -151,24 +161,24 @@ fn render_cone(profile: &SecretProfile, path: &str, value: &Value) -> (JsonValue
                 } else {
                     format!("{path}.{key}")
                 };
-                let (rendered, hit) = render_cone(profile, &child, item);
+                let (rendered, hit) = render_cone(profile, redactor, &child, item);
                 marked |= hit;
                 out.insert(key.clone(), rendered);
             }
             (JsonValue::Object(out), marked)
         }
         _ if profile.path_is_secret(path) => (JsonValue::String(MARKER.to_string()), true),
-        // A materialised payload can carry an authored secret literal
-        // even when the blob's own taint flag is clear. The encoded
-        // bytes would not match a literal sweep, so the identity is
-        // redacted as a whole and the payload is never rendered.
+        // A materialised payload can carry a secret even when the
+        // blob's own taint flag is clear. The encoded bytes would not
+        // match a literal sweep, so the identity is redacted as a whole
+        // and the payload is never rendered.
         Value::Blob {
             hash,
             size,
             payload,
             ..
         } => {
-            if crate::convert::blob_payload_is_material(profile, payload.as_ref()) {
+            if crate::convert::blob_payload_is_material(redactor, payload.as_ref()) {
                 (crate::convert::redacted_blob_json(hash, *size), true)
             } else {
                 (crate::convert::value_to_json(value), false)

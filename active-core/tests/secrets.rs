@@ -1683,6 +1683,48 @@ fn redaction_keeps_the_prefix_when_the_first_match_follows_a_marker() {
 }
 
 #[test]
+fn redaction_scans_absent_long_patterns_once_per_segment() {
+    // Review 45: an absent long pattern must be searched once, not
+    // once per short-pattern match.
+    let mut redactor = active_core::secret::SecretRedactor::new();
+    redactor.insert("x".to_string());
+    for index in 0..3 {
+        redactor.insert(format!("{}{index}", "z".repeat(5_000)));
+    }
+    let text = "x".repeat(180_000);
+    let started = std::time::Instant::now();
+    let redacted = redactor.redact_text(&text).expect("short secret matches");
+    assert_eq!(
+        redacted.matches(active_core::secret::MARKER).count(),
+        180_000,
+        "every short occurrence redacts"
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "absent long patterns rescanned: {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn redaction_interleaved_insert_and_redact_scales() {
+    // Review 45: folding follows the base set, so 8 000 alternations
+    // stay far below the old quadratic bound.
+    let mut redactor = active_core::secret::SecretRedactor::new();
+    let started = std::time::Instant::now();
+    for index in 0..8_000 {
+        redactor.insert(format!("token-{index:05}"));
+        let text = format!("value token-{index:05} tail");
+        assert!(redactor.redact_text(&text).is_some());
+    }
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(15),
+        "interleaved insert/redact took {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
 fn redaction_handles_a_pattern_longer_than_the_automaton_limit() {
     // Review 44: patterns over MAX_AC_PATTERN stay out of the
     // automaton and are scanned linearly, still longest-first.
@@ -1695,6 +1737,38 @@ fn redaction_handles_a_pattern_longer_than_the_automaton_limit() {
     assert!(!redacted.contains("short-secret"), "{redacted}");
     assert!(!redacted.contains(&long), "long secret leaked");
     assert_eq!(redacted.matches(active_core::secret::MARKER).count(), 2);
+}
+
+#[test]
+fn runtime_env_secret_is_swept_from_payloads_and_copies() {
+    // Review 45: a runtime (env-backed) secret has no authored literal
+    // in the profile; its text must still be found in a payload, a
+    // media type, and a plain string copy.
+    let raw = "sd-token-env-r45";
+    let src = format!(
+        "m = env.TOKEN\nk = secret(m)\nf = blob(\"text/plain\", \"pre {raw} post\")\ncopy = \"pre {raw} post\"\n"
+    );
+    let module = parse(&src, "runtime-secret-payload").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("TOKEN".to_string(), raw.to_string());
+    let mut engine = Engine::hermetic().with_env(env);
+    engine.materialise_blobs = true;
+    let (value, _) = engine.evaluate(&module).expect("evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(raw), "{json}");
+    assert!(!json.contains("payload_b64"), "{json}");
+    let toml = active_core::convert::value_to_toml_string_with(&profile, &value)
+        .expect("toml")
+        .0;
+    assert!(!toml.contains(raw), "{toml}");
+    let inspected = active_core::convert::inspect_path(&module, &value, "f").expect("inspect blob");
+    assert!(!inspected.to_string().contains(raw), "{inspected}");
+    assert!(
+        !inspected.to_string().contains("payload_b64"),
+        "{inspected}"
+    );
+    assert_eq!(inspected["tainted"], true, "{inspected}");
 }
 
 #[test]

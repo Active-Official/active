@@ -20,31 +20,33 @@ struct Cli {
     command: Commands,
 }
 
-/// Evaluator resource limits (spec/budgets.md, C-037). Each defaults
-/// to the shipped profile; `0` disables that limit.
+/// Evaluator resource limits (spec/budgets.md, C-037). Omitted flags
+/// use the shipped profile; `0` disables that limit. Options (rather
+/// than clap defaults) let a command tell an explicit request from a
+/// default, so `--minimize` can refuse limits it cannot honor.
 #[derive(Args, Clone)]
 struct BudgetArgs {
-    /// Maximum IR nodes visited during evaluation
-    #[arg(long, default_value_t = Budget::default().max_nodes)]
-    max_nodes: u64,
-    /// Maximum value nesting depth
-    #[arg(long, default_value_t = Budget::default().max_depth)]
-    max_depth: u64,
-    /// Longest single array
-    #[arg(long, default_value_t = Budget::default().max_array_len)]
-    max_array_len: u64,
-    /// Total table keys across the document
-    #[arg(long, default_value_t = Budget::default().max_keys)]
-    max_keys: u64,
-    /// Wall-clock milliseconds for the whole evaluation
-    #[arg(long, default_value_t = Budget::default().max_wall_ms)]
-    max_wall_ms: u64,
-    /// Maximum materialized value size (reference expansion counted)
-    #[arg(long, default_value_t = Budget::default().max_value_size)]
-    max_value_size: u64,
-    /// Maximum cumulative materialized size across evaluation
-    #[arg(long, default_value_t = Budget::default().max_total_value_size)]
-    max_total_value_size: u64,
+    /// Maximum IR nodes visited during evaluation (default 100000)
+    #[arg(long)]
+    max_nodes: Option<u64>,
+    /// Maximum value nesting depth (default 256)
+    #[arg(long)]
+    max_depth: Option<u64>,
+    /// Longest single array (default 100000)
+    #[arg(long)]
+    max_array_len: Option<u64>,
+    /// Total table keys across the document (default 100000)
+    #[arg(long)]
+    max_keys: Option<u64>,
+    /// Wall-clock milliseconds for the whole evaluation (default 100)
+    #[arg(long)]
+    max_wall_ms: Option<u64>,
+    /// Maximum materialized value size (default 10000000)
+    #[arg(long)]
+    max_value_size: Option<u64>,
+    /// Maximum cumulative materialized size (default 100000000)
+    #[arg(long)]
+    max_total_value_size: Option<u64>,
     /// Named budget profile: strict (CI/serverless), interactive
     /// (REPL/playground), or trusted (vendored/generated input).
     /// A profile replaces every per-field limit above.
@@ -65,22 +67,31 @@ enum BudgetProfile {
 }
 
 impl BudgetArgs {
-    /// True when the user passed any explicit --max-* flag (vs. all
-    /// clap defaults): used to warn when a named profile silently
-    /// overrides them.
+    /// True when the user passed any explicit limit or profile flag
+    /// (including a value equal to the default).
     fn has_explicit(&self) -> bool {
-        self.budget() != Budget::default()
+        self.max_nodes.is_some()
+            || self.max_depth.is_some()
+            || self.max_array_len.is_some()
+            || self.max_keys.is_some()
+            || self.max_wall_ms.is_some()
+            || self.max_value_size.is_some()
+            || self.max_total_value_size.is_some()
+            || self.budget_profile.is_some()
     }
 
     fn budget(&self) -> Budget {
+        let default = Budget::default();
         Budget {
-            max_nodes: self.max_nodes,
-            max_depth: self.max_depth,
-            max_array_len: self.max_array_len,
-            max_keys: self.max_keys,
-            max_wall_ms: self.max_wall_ms,
-            max_value_size: self.max_value_size,
-            max_total_value_size: self.max_total_value_size,
+            max_nodes: self.max_nodes.unwrap_or(default.max_nodes),
+            max_depth: self.max_depth.unwrap_or(default.max_depth),
+            max_array_len: self.max_array_len.unwrap_or(default.max_array_len),
+            max_keys: self.max_keys.unwrap_or(default.max_keys),
+            max_wall_ms: self.max_wall_ms.unwrap_or(default.max_wall_ms),
+            max_value_size: self.max_value_size.unwrap_or(default.max_value_size),
+            max_total_value_size: self
+                .max_total_value_size
+                .unwrap_or(default.max_total_value_size),
         }
     }
 
@@ -90,16 +101,41 @@ impl BudgetArgs {
     /// both prints a warning so a stale `--max-*` flag cannot
     /// silently do nothing.
     fn resolve(&self) -> anyhow::Result<Budget> {
-        let profile = match self.budget_profile {
-            None => return Ok(self.budget()),
+        let budget = match self.budget_profile {
+            None => self.budget(),
             Some(BudgetProfile::Strict) => Budget::strict(),
             Some(BudgetProfile::Interactive) => Budget::interactive(),
             Some(BudgetProfile::Trusted) => Budget::trusted(),
         };
-        if self.budget() != Budget::default() {
+        if self.budget_profile.is_some()
+            && (self.max_nodes.is_some()
+                || self.max_depth.is_some()
+                || self.max_array_len.is_some()
+                || self.max_keys.is_some()
+                || self.max_wall_ms.is_some()
+                || self.max_value_size.is_some()
+                || self.max_total_value_size.is_some())
+        {
             eprintln!("warning: --budget-profile overrides the explicit --max-* flags");
         }
-        Ok(profile)
+        // The audit and lock documents store limits as Active integers
+        // (i64); a larger limit would make the document fail E023.
+        for (flag, value) in [
+            ("max-nodes", budget.max_nodes),
+            ("max-depth", budget.max_depth),
+            ("max-array-len", budget.max_array_len),
+            ("max-keys", budget.max_keys),
+            ("max-wall-ms", budget.max_wall_ms),
+            ("max-value-size", budget.max_value_size),
+            ("max-total-value-size", budget.max_total_value_size),
+        ] {
+            if value > i64::MAX as u64 {
+                anyhow::bail!(
+                    "--{flag} {value} exceeds i64::MAX; audit and lock documents store limits as Active integers"
+                );
+            }
+        }
+        Ok(budget)
     }
 }
 
@@ -1838,9 +1874,6 @@ fn main() -> anyhow::Result<()> {
                     "--trust-keys is not supported with --minimize (signed-include reduction)"
                 );
             }
-            if minimize.is_some() && budget.has_explicit() {
-                anyhow::bail!("--max-* and --budget-profile are not supported with --minimize");
-            }
             let trust = load_trust(&trust_keys)?;
             if format != "json" && format != "text" {
                 anyhow::bail!("unknown debug format `{format}` (want json|text)");
@@ -1851,11 +1884,18 @@ fn main() -> anyhow::Result<()> {
             if let Some(code) = minimize {
                 let source = std::fs::read_to_string(&from)
                     .map_err(|e| anyhow::anyhow!("cannot read source: {e}"))?;
-                let report = active_core::debug::minimal_case_with(
+                let resolved_budget = budget.resolve()?;
+                let report = active_core::debug::minimal_case_with_options(
                     &source,
                     &code,
                     max_attempts.unwrap_or(200),
                     Some(&from),
+                    active_core::debug::DebugOptions {
+                        resilient,
+                        allow_parent_escapes,
+                        profile: profile.as_deref(),
+                        budget: Some(&resolved_budget),
+                    },
                 );
                 if format == "text" {
                     println!(

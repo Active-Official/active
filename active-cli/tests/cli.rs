@@ -3493,3 +3493,100 @@ fn debug_steps_honor_a_caller_budget() {
     let text = String::from_utf8_lossy(&out.stderr);
     assert!(text.contains("budget exceeded"), "{text}");
 }
+
+#[test]
+fn audit_records_limits_and_revalidates() {
+    // Review 53: the audit is self-describing, and a limit above i64
+    // is refused instead of writing an invalid document.
+    let f = fixture("audit_limits.active", "a = 1\nb = 2\n");
+    let audit = f.with_extension("audit.active");
+    let out = active()
+        .arg("eval")
+        .arg(&f)
+        .args(["--max-nodes", "500", "--max-wall-ms", "50"])
+        .arg("--audit-trail")
+        .arg(&audit)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = std::fs::read_to_string(&audit).expect("audit file");
+    assert!(text.contains("budget = {"), "{text}");
+    assert!(text.contains("parse = {"), "{text}");
+    assert!(text.contains("nodes = 500"), "{text}");
+    let checked = active()
+        .arg("check")
+        .arg(&audit)
+        .output()
+        .expect("run active");
+    assert!(
+        checked.status.success(),
+        "audit must re-validate: {}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+
+    let huge = active()
+        .arg("eval")
+        .arg(&f)
+        .args(["--max-nodes", "18446744073709551615"])
+        .arg("--audit-trail")
+        .arg(f.with_extension("huge.active"))
+        .output()
+        .expect("run active");
+    assert!(!huge.status.success(), "i64 overflow must be refused");
+    let error = String::from_utf8_lossy(&huge.stderr);
+    assert!(error.contains("i64"), "{error}");
+}
+
+#[test]
+fn minimize_honors_strictness_and_budget() {
+    // Review 53: the reducer evaluates exactly like the run it explains.
+    let strict_doc = fixture(
+        "minimize_strict.active",
+        "schema = { with_default = Int(default = 7) }\nother = 1\n",
+    );
+    let strict = active()
+        .args(["debug", "--from"])
+        .arg(&strict_doc)
+        .args(["--minimize", "W005"])
+        .output()
+        .expect("run active");
+    assert!(
+        !strict.status.success(),
+        "strict mode must not report a resilient-only target"
+    );
+    let resilient = active()
+        .args(["debug", "--from"])
+        .arg(&strict_doc)
+        .args(["--minimize", "W005", "--resilient"])
+        .output()
+        .expect("run active");
+    assert!(
+        resilient.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resilient.stderr)
+    );
+
+    let budget_doc = fixture("minimize_budget.active", "a = 1\nb = 2\n");
+    let default = active()
+        .args(["debug", "--from"])
+        .arg(&budget_doc)
+        .args(["--minimize", "X001"])
+        .output()
+        .expect("run active");
+    assert!(!default.status.success(), "X001 is absent by default");
+    let bounded = active()
+        .args(["debug", "--from"])
+        .arg(&budget_doc)
+        .args(["--minimize", "X001", "--max-nodes", "1"])
+        .output()
+        .expect("run active");
+    assert!(
+        bounded.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bounded.stderr)
+    );
+}

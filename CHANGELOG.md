@@ -61,10 +61,13 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   payload accounting, so analysis cannot fail a document that
   exported within its budget; `debug` accepts the same `--max-*`,
   `--budget-profile`, `--resilient`, and `--allow-parent-escapes`
-  inputs as `eval`, defaults to strict like `eval`, honors the caller
-  wall clock on its first pass, and renders identity-only steps. The
-  audit document records its resolved budget and parse flags, so a
-  non-default run is self-describing and replayable.
+  inputs as `eval`, defaults to strict like `eval`, and renders
+  identity-only steps. Replay runs a wall-bounded preflight that
+  mirrors `eval`, then two canonical step/hash passes without a wall
+  deadline. `--minimize` evaluates candidates under the same mode,
+  profile, parse options, and limits. The audit document records its
+  resolved budget and parse flags (limits above `i64::MAX` are
+  refused), so a non-default run is self-describing and replayable.
 - **Reduction fails closed.** `--minimize` now recognizes dot runs on
   either side of `env`, `secret env(`, and env calls with anything
   past the name (comma or not), and redacts every string literal in

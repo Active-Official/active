@@ -62,13 +62,17 @@ the full step arrays. `--expect sha256:...` additionally pins the hash
 Replay is a canonical pass: it materialises payloads through a probe
 (no alias copy charge) and hashes the redacted, payload-free tree, so
 `--materialise-blobs` and payload-resident secrets cannot change the
-identity. The budget is an input: an audit produced under custom
-limits replays only when `active debug` receives the same `--max-*`
-flags. The wall clock is disabled for the canonical pass so a
-successful export cannot be followed by a timing-dependent audit
-failure; count and size limits still bind, so an untrusted document
-fails fast. Steps are identity-only: payload bytes never enter a
-`StepEvent`.
+identity. A first, wall-bounded pass without step collection mirrors
+what `eval` did; the two canonical step/hash repeats then run without a
+wall deadline, so step bookkeeping cannot turn a successful evaluation
+into a timing-dependent replay failure. The budget is an input: an
+audit produced under custom limits replays only when `active debug`
+receives the same `--max-*`/`--budget-profile` flags. Count and size
+limits still bind, so an untrusted document fails fast. Replay is
+strict by default like `eval`; pass `--resilient` (and
+`--allow-parent-escapes` when the audited run used it) to match a
+resilient or permissive audit. Steps are identity-only: payload bytes
+never enter a `StepEvent`.
 
 ## 4. Minimal failing case (DEBUG.005)
 
@@ -102,10 +106,12 @@ step, then the breakpoint verdict.
 
 Flag combinations are constrained: `--expect` requires `--replay`;
 `--break` conflicts with `--replay` and `--minimize`; `--replay`
-conflicts with `--minimize`; `--max-attempts` requires `--minimize`;
-`--max-*` and `--budget-profile` conflict with `--minimize` (reduction
-does not evaluate under caller limits). An invalid combination is a
-clap usage error (exit 2), never a silently ignored flag.
+conflicts with `--minimize`; `--max-attempts` requires `--minimize`.
+An invalid combination is a usage error (exit 2 for clap conflicts,
+exit 1 for the runtime-checked `--trust-keys`/`--minimize` pair),
+never a silently ignored flag. `--minimize` honors the budget,
+`--profile`, `--resilient`, and `--allow-parent-escapes` inputs: the
+reducer evaluates candidates exactly as the run being explained.
 
 ## 6. Secret guarantee
 

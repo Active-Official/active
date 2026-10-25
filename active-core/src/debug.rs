@@ -8,7 +8,7 @@
 use serde_json::{json, Value as JsonValue};
 
 use crate::eval::StepEvent;
-use crate::{Engine, Module};
+use crate::{Engine, EvalError, Module};
 
 /// First step index matching a breakpoint selector:
 /// `taint`, `path:<prefix>`, `code:<CODE>`, or `node:<n>` (0-based
@@ -80,10 +80,16 @@ pub fn replay_with_budget(
     engine.materialise_blobs = true;
     engine.taint_probe = true;
     engine.budget = *budget;
-    let (first, first_diags, first_steps, first_seeds) = engine
-        .evaluate_with_steps_and_seeds(module)
+    // A wall-bounded preflight mirrors what `eval` actually did; step
+    // collection is heavier, so the canonical passes below run without
+    // a wall deadline. The hash comes from the preflight tree.
+    let (preflight, preflight_diags, preflight_seeds) = engine
+        .evaluate_with_seeds(module)
         .map_err(|e| e.to_string())?;
     engine.budget.max_wall_ms = 0;
+    let (_first, _first_diags, first_steps, _first_seeds) = engine
+        .evaluate_with_steps_and_seeds(module)
+        .map_err(|e| e.to_string())?;
     let (second, second_diags, second_steps, second_seeds) = engine
         .evaluate_with_steps_and_seeds(module)
         .map_err(|e| e.to_string())?;
@@ -92,15 +98,15 @@ pub fn replay_with_budget(
     // must agree on the same document, and a secret value change must
     // not alter the content identity. Seeds and material env values are
     // absorbed exactly as the export and audit paths do.
-    let profile = crate::secret::SecretProfile::for_engine(module, &engine, &first_seeds);
+    let profile = crate::secret::SecretProfile::for_engine(module, &engine, &preflight_seeds);
     let second_profile = crate::secret::SecretProfile::for_engine(module, &engine, &second_seeds);
     let first_hash = crate::provenance::content_hash(&crate::convert::strip_blob_payloads(
-        &crate::convert::redact_value(&profile, &first),
+        &crate::convert::redact_value(&profile, &preflight),
     ));
     let second_hash = crate::provenance::content_hash(&crate::convert::strip_blob_payloads(
         &crate::convert::redact_value(&second_profile, &second),
     ));
-    let first_codes: Vec<&str> = first_diags.iter().map(|d| d.code.as_str()).collect();
+    let first_codes: Vec<&str> = preflight_diags.iter().map(|d| d.code.as_str()).collect();
     let second_codes: Vec<&str> = second_diags.iter().map(|d| d.code.as_str()).collect();
     let steps_match = first_steps == second_steps;
     let expected_ok = expected.is_none_or(|text| text == first_hash);
@@ -118,6 +124,17 @@ pub fn replay_with_budget(
     }))
 }
 
+/// Evaluation inputs for reduction, so a minimized case is produced
+/// under the same mode, parse options, profile, and limits as the run
+/// it explains. `Default` is the strict shipped profile.
+#[derive(Clone, Copy, Default)]
+pub struct DebugOptions<'a> {
+    pub resilient: bool,
+    pub allow_parent_escapes: bool,
+    pub profile: Option<&'a str>,
+    pub budget: Option<&'a crate::Budget>,
+}
+
 /// Reduce a failing document by deleting lines while the target
 /// diagnostic code survives. Deterministic (top-down, first productive
 /// deletion wins), bounded by `max_attempts` parse/evaluate cycles.
@@ -133,6 +150,23 @@ pub fn reduce_with(
     target_code: &str,
     max_attempts: usize,
     file_ctx: Option<&std::path::Path>,
+) -> (String, usize) {
+    reduce_with_options(
+        source,
+        target_code,
+        max_attempts,
+        file_ctx,
+        DebugOptions::default(),
+    )
+}
+
+/// File-aware reduction under explicit evaluation inputs.
+pub fn reduce_with_options(
+    source: &str,
+    target_code: &str,
+    max_attempts: usize,
+    file_ctx: Option<&std::path::Path>,
+    options: DebugOptions<'_>,
 ) -> (String, usize) {
     let protected = secret_call_lines(source);
     // Keep the protected flag attached to the line itself: line
@@ -169,7 +203,7 @@ pub fn reduce_with(
                 .collect::<Vec<_>>()
                 .join("\n");
             attempts += 1;
-            if still_fails(&candidate, target_code, file_ctx) {
+            if still_fails(&candidate, target_code, file_ctx, options) {
                 lines = trial;
                 progressed = true;
             } else {
@@ -190,15 +224,24 @@ pub fn reduce_with(
 /// Whether `text` still produces `target_code` through the shipped
 /// parse/evaluate path (parse diagnostics and terminal error codes
 /// included).
-fn still_fails(text: &str, target_code: &str, file_ctx: Option<&std::path::Path>) -> bool {
+fn still_fails(
+    text: &str,
+    target_code: &str,
+    file_ctx: Option<&std::path::Path>,
+    options: DebugOptions<'_>,
+) -> bool {
+    let parse_options = crate::ParseOptions {
+        enable_includes: true,
+        allow_parent_escapes: options.allow_parent_escapes,
+        ..Default::default()
+    };
     let parsed = match file_ctx {
-        Some(path) => {
-            let options = crate::ParseOptions {
-                enable_includes: true,
-                ..Default::default()
-            };
-            crate::parse_text_recovering_with_file(text, &path.to_string_lossy(), options, path)
-        }
+        Some(path) => crate::parse_text_recovering_with_file(
+            text,
+            &path.to_string_lossy(),
+            parse_options,
+            path,
+        ),
         None => match crate::parse(text, "reduce") {
             Ok(module) => (module, Vec::new()),
             Err(diagnostics) => {
@@ -210,8 +253,19 @@ fn still_fails(text: &str, target_code: &str, file_ctx: Option<&std::path::Path>
     if parse_diags.iter().any(|d| d.code == target_code) {
         return true;
     }
-    match Engine::new().evaluate(&module) {
+    let mut engine = Engine::new();
+    engine.resilient = options.resilient;
+    engine.profile_override = options.profile.map(str::to_string);
+    if let Some(budget) = options.budget {
+        engine.budget = *budget;
+    }
+    match engine.evaluate(&module) {
         Ok((_, diagnostics)) => diagnostics.iter().any(|d| d.code == target_code),
+        // Strict validation surfaces its diagnostics inside the error;
+        // the target may be any of them, not only the wrapper code.
+        Err(EvalError::ValidationFailed { diagnostics }) => {
+            diagnostics.iter().any(|d| d.code == target_code)
+        }
         Err(error) => error.code() == target_code,
     }
 }
@@ -232,8 +286,26 @@ pub fn minimal_case_with(
     max_attempts: usize,
     file_ctx: Option<&std::path::Path>,
 ) -> JsonValue {
-    let (reduced, attempts) = reduce_with(source, target_code, max_attempts, file_ctx);
-    let target_present = still_fails(source, target_code, file_ctx);
+    minimal_case_with_options(
+        source,
+        target_code,
+        max_attempts,
+        file_ctx,
+        DebugOptions::default(),
+    )
+}
+
+/// File-aware minimal case under explicit evaluation inputs.
+pub fn minimal_case_with_options(
+    source: &str,
+    target_code: &str,
+    max_attempts: usize,
+    file_ctx: Option<&std::path::Path>,
+    options: DebugOptions<'_>,
+) -> JsonValue {
+    let (reduced, attempts) =
+        reduce_with_options(source, target_code, max_attempts, file_ctx, options);
+    let target_present = still_fails(source, target_code, file_ctx, options);
     let reduced_bytes = reduced.len();
     let reduced = redact_secret_literals(&reduced);
     json!({

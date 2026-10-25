@@ -267,10 +267,12 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   existing markers are opaque, a text shorter than the shortest secret
   is rejected in O(1), and repeated exports are byte-identical by
   construction. Profile merging uses a larger, separate bound so
-  normal 10k-key profiles do not fail closed. A literal authored inside
-  a profile block at a material path is treated as secret material, so
-  a copy of it elsewhere (a plain string or a materialised payload)
-  redacts. Runtime secrets seed the same redactor as authored literals: the evaluator returns every
+  normal 10k-key profiles do not fail closed. A profile value at a
+  material path is resolved statically (literals, `let` references,
+  string interpolation) and seeds the redactor unless the same node is
+  still visible through a benign export path; memo-served nodes seed
+  exactly like fresh ones. A copy of it elsewhere (a plain string or a
+  materialised payload) redacts. Runtime secrets seed the same redactor as authored literals: the evaluator returns every
   material node's text (covering `let`-bound and computed secrets and
   lazy host lookups), material environment values are merged, and every
   surface — CLI eval/convert/doc/lock/inspect, FFI, WASM, LSP hover,

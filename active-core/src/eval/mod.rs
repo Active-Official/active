@@ -1498,24 +1498,9 @@ impl Engine {
             || has_blobs
             || seeds.is_some())
         .then(|| SecretProfile::analyze_with_profile(module, self.profile_override.as_deref()));
-        // Nodes reachable from the exported tree. A profile may select
-        // a data node at a material path: its value is visible in its
-        // own slot and must not seed, while a `let`-bound/computed
-        // profile value (not reachable from the root) is material.
-        let root_nodes: std::collections::HashSet<NodeId> = if seeds.is_some() {
-            let mut reachable = std::collections::HashSet::new();
-            let mut stack: Vec<NodeId> = module.root.into_iter().collect();
-            while let Some(id) = stack.pop() {
-                if reachable.insert(id) {
-                    if let Some(node) = module.get(id) {
-                        stack.extend(crate::secret::node_children(node));
-                    }
-                }
-            }
-            reachable
-        } else {
-            std::collections::HashSet::new()
-        };
+        // Whether a node still renders through a benign export path is
+        // a property of the post-transform profile; no separate walk is
+        // needed (and a pre-transform walk would miss overridden slots).
         // Evaluated values of sensitive nodes, so a container step can
         // redact the same bytes even though the container itself is
         // not Secret-kinded (topological order means children are
@@ -1603,6 +1588,20 @@ impl Engine {
                             fresh
                         }));
                         memo.last_memo_hits += 1;
+                        if let Some(out) = seeds.as_deref_mut() {
+                            if let Some(profile) = secret_profile.as_ref() {
+                                let structural = profile.node_is_secret(node_id);
+                                let path_material = profile.material_path_for(node_id).is_some()
+                                    && !profile.node_is_export_visible(node_id);
+                                if structural || path_material {
+                                    if let Value::Secret(text) | Value::String(text) = value {
+                                        if structural || text.len() >= 4 {
+                                            out.insert(text.clone());
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         continue;
                     }
                 }
@@ -1941,12 +1940,17 @@ impl Engine {
             }
             if let Some(out) = seeds.as_deref_mut() {
                 if let Some(profile) = secret_profile.as_ref() {
-                    let material = profile.node_is_secret(node_id)
-                        || (profile.material_path_for(node_id).is_some()
-                            && !root_nodes.contains(&node_id));
-                    if material {
+                    let structural = profile.node_is_secret(node_id);
+                    let path_material = profile.material_path_for(node_id).is_some()
+                        && !profile.node_is_export_visible(node_id);
+                    if structural || path_material {
                         if let Value::Secret(text) | Value::String(text) = &value {
-                            out.insert(text.clone());
+                            // A short path-material value would corrupt
+                            // unrelated strings; structural secrets of
+                            // any length still seed.
+                            if structural || text.len() >= 4 {
+                                out.insert(text.clone());
+                            }
                         }
                     }
                 }

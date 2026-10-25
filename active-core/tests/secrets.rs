@@ -2037,3 +2037,39 @@ fn profile_selected_let_literal_seeds_payload_and_copies() {
     assert!(!inspected.to_string().contains(raw), "{inspected}");
     assert_eq!(inspected["tainted"], true, "{inspected}");
 }
+
+#[test]
+fn incremental_seeds_cover_memo_hits() {
+    // Review 58: a memo-served node must seed like a fresh walk.
+    let src = "let region = \"hunter2-region\"\nt = secret(\"hunter2-target\")\nactive_profile = \"p\"\nprofile \"p\" { t = \"${region}-suffix\" }\ndup = \"hunter2-region-suffix\"\n";
+    let module = parse(src, "memo-seeds").expect("parse");
+    let engine = Engine::hermetic();
+    let mut memo = active_core::IncrementalMemo::default();
+    let (_, _, first) = engine
+        .evaluate_incremental_with_seeds(&module, &mut memo)
+        .expect("first");
+    assert!(first.contains_exact("hunter2-region-suffix"));
+    let (_, _, second) = engine
+        .evaluate_incremental_with_seeds(&module, &mut memo)
+        .expect("second");
+    assert!(second.contains_exact("hunter2-region-suffix"));
+}
+
+#[test]
+fn profile_override_of_the_benign_slot_still_seeds() {
+    // Review 58: the pre-transform "visible in its own slot" node can be
+    // overridden; its text is then material everywhere.
+    let raw = "hunter2-let";
+    let src = format!(
+        "let v = \"{raw}\"\nt = secret(\"hunter2-target\")\nactive_profile = \"p\"\nprofile \"p\" {{ t = v, other = 1 }}\nother = v\ndup = \"{raw}\"\n"
+    );
+    let module = parse(&src, "overridden-slot").expect("parse");
+    let (value, _, seeds) = Engine::hermetic()
+        .evaluate_with_seeds(&module)
+        .expect("evaluate");
+    let mut profile = active_core::secret::SecretProfile::analyze(&module);
+    profile.absorb_environment(&std::collections::HashMap::new());
+    profile.absorb_secrets(&seeds);
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains(raw), "{json}");
+}

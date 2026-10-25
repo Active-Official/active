@@ -674,7 +674,7 @@ fn env_name_span_keys(
             probe += 1;
         }
         if let Some(token) = tokens.get(probe) {
-            if token.line == line && is_string_token(token) {
+            if token.line == line && is_string_token(token) && is_env_name(&token.text) {
                 out.insert(token_key(token));
             }
         }
@@ -682,26 +682,41 @@ fn env_name_span_keys(
     out
 }
 
+/// A canonical environment name: identifier shape. Anything else in
+/// `secret.env(...)` is not trustworthy and stays redactable.
+fn is_env_name(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 /// Decoded value of a string token. `token.text` is the decoded literal
 /// text (an interpolation's `${…}` stays in the text; nested tokens are
 /// not part of the lexer stream). Multi-line strings are dedented.
 fn decoded_token_text(token: &crate::parser::Token) -> Option<String> {
     use crate::parser::TokenKind as K;
-    let (decoded, positions) = match &token.kind {
-        K::MlString(_) => (crate::parser::strip_common_indent(&token.text), None),
+    let (decoded, marks) = match &token.kind {
+        K::MlString(positions) => {
+            let (text, marks) =
+                crate::parser::ml_text_and_marks(&token.text, token.line, token.col, positions);
+            (text, Some(marks))
+        }
         K::MlSingleString => (crate::parser::strip_common_indent(&token.text), None),
-        K::String(map) => (token.text.clone(), Some(map)),
+        K::String(_) => (token.text.clone(), None),
         K::SingleString => (token.text.clone(), None),
         _ => return None,
     };
     let mut out = String::with_capacity(decoded.len());
     for (index, c) in decoded.chars().enumerate() {
         if c == crate::parser::ESCAPED_DOLLAR {
-            // Only an escaped `\$` carries the sentinel position; a
-            // genuine U+E000 is user data and stays as-is.
-            let escaped = positions
-                .and_then(|map| map.get(index))
-                .is_some_and(|position| *position == crate::parser::SENTINEL_POS);
+            // Only an escaped `\$` carries a sentinel mark; a genuine
+            // U+E000 is user data and stays as-is.
+            let escaped = marks
+                .as_ref()
+                .and_then(|marks| marks.get(index))
+                .is_some_and(|marked| *marked);
             out.push(if escaped { '$' } else { c });
         } else {
             out.push(c);
@@ -925,7 +940,7 @@ fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
         let Some(call) = call_opening(tokens, probe + 1, tokens[probe].text == "secret") else {
             continue;
         };
-        if !call.canonical_env {
+        if !call.canonical_env || call.malformed {
             continue;
         }
         let mut first = skip_layout(tokens, call.open + 1);
@@ -936,7 +951,8 @@ fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
             if matches!(
                 token.kind,
                 K::String(_) | K::SingleString | K::MlString(_) | K::MlSingleString
-            ) {
+            ) && is_env_name(&token.text)
+            {
                 canonical_env_names.insert((token.line, token.col, token.end_line, token.end_col));
             }
         }
@@ -955,7 +971,7 @@ fn lexical_secret_spans(source: &str) -> Vec<crate::diag::Span> {
             continue;
         };
         let open = call.open;
-        let skip_first_string = call.canonical_env;
+        let skip_first_string = call.canonical_env && !call.malformed;
         // The env-name exemption applies only when the first argument
         // is itself a string (grouping parentheses allowed), so
         // `secret.env(default = "x", "NAME")` and

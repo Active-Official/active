@@ -1186,3 +1186,18 @@ fn minimize_collects_seeds_on_a_hard_error() {
     let reduced = report["reduced"].as_str().expect("reduced");
     assert!(!reduced.contains("abc-1"), "{reduced}");
 }
+
+#[test]
+fn minimize_redacts_ml_escaped_dollar_and_malformed_env_names() {
+    // Review 58: `"""` escaped dollars are unmarked; a malformed
+    // env-call argument is not a canonical name.
+    let ml = "schema = { t = Int }\nt = secret(\"pa$word\")\ndup = \"\"\"pa\\$word\"\"\"\n";
+    let report = debug::minimal_case(ml, "T002", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(!reduced.contains("pa$word"), "{reduced}");
+
+    let malformed = "schema = { t = Int }\nt = secret(\"hunter2-x\")\nname = Secret.env(\"canary-1\")\nbad = 1 + \"s\"\n";
+    let report = debug::minimal_case(malformed, "T001", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(!reduced.contains("canary-1"), "{reduced}");
+}

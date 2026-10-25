@@ -4011,6 +4011,18 @@ impl Parser {
 pub(crate) fn strip_common_indent(raw: &str) -> String {
     strip_common_indent_mapped(raw, 1, 1, 0, None).0
 }
+
+/// Multi-line text plus the `\$` sentinel marks, for consumers that
+/// compare decoded values (debugger reduction).
+pub(crate) fn ml_text_and_marks(
+    raw: &str,
+    line: u32,
+    col: u32,
+    positions: &[(u32, u32)],
+) -> (String, Vec<bool>) {
+    let (text, _, marks) = strip_common_indent_mapped(raw, line, col, 3, Some(positions));
+    (text, marks)
+}
 /// Where one stripped line sits in the source: the source line number and
 /// the source column of every stripped character on that line.
 #[derive(Debug, Clone)]

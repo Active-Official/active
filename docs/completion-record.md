@@ -94,7 +94,7 @@ playground remains the browser evaluator; the headless walkthrough is in
 | Editor smoke | 6 commands, redaction probe pass |
 | Neovim package determinism | identical hashes |
 | Dual-push CI | recorded in `conformance/evidence/ci.log` |
-| Independent review | DeepSeek V4.1 Flash (BYOK, `--reasoning-effort max`) rounds 22–26; every finding fixed with a regression test; final round reports no open findings (`conformance/evidence/review-final.log`) |
+| Independent review | DeepSeek V4.1 Flash (BYOK, `--reasoning-effort max`) rounds 12–58; every finding fixed with a regression test; final round reports no open findings (`conformance/evidence/review-final.log`; summary in `docs/security-hardening.md`) |
 
 ## 6. Accepted, documented gaps
 

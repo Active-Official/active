@@ -350,7 +350,7 @@ pub fn minimal_case_with_options(
     // dedenting. The evaluator runs under the same options as the run
     // being explained.
     let seeds = bundle_seeds(source, file_ctx, options);
-    let reduced = redact_secret_literals(&reduced, &seeds.0, seeds.1);
+    let reduced = redact_secret_literals(&reduced, &seeds.0, &seeds.1, seeds.2);
     json!({
         "target_code": target_code,
         "target_present": target_present,
@@ -370,7 +370,11 @@ fn bundle_seeds(
     source: &str,
     file_ctx: Option<&std::path::Path>,
     options: DebugOptions<'_>,
-) -> (crate::secret::SecretRedactor, bool) {
+) -> (
+    crate::secret::SecretRedactor,
+    crate::secret::SecretRedactor,
+    bool,
+) {
     let parse_options = crate::ParseOptions {
         enable_includes: file_ctx.is_some(),
         allow_parent_escapes: options.allow_parent_escapes,
@@ -387,7 +391,11 @@ fn bundle_seeds(
         None => crate::parse_recovering(source, "minimize", parse_options),
     };
     if !module_is_material(&module) {
-        return (crate::secret::SecretRedactor::new(), false);
+        return (
+            crate::secret::SecretRedactor::new(),
+            crate::secret::SecretRedactor::new(),
+            false,
+        );
     }
     let mut engine = Engine::new();
     // Seeds are a value snapshot, not a verdict: evaluate resiliently so
@@ -417,10 +425,11 @@ fn bundle_seeds(
         Some(&seeds),
     );
     seeds.merge(profile.literals());
-    // Exact duplicates of a short material value still redact (they are
-    // not in the substring set).
-    seeds.merge(profile.exact_literals());
-    (seeds, fail_closed)
+    // Exact matching at any length is separate from the substring set:
+    // a short value must match a whole token, never spread through
+    // unrelated prose.
+    let exact = profile.exact_literals().clone();
+    (seeds, exact, fail_closed)
 }
 
 fn module_is_material(module: &Module) -> bool {
@@ -454,6 +463,7 @@ fn module_is_material(module: &Module) -> bool {
 fn redact_secret_literals(
     source: &str,
     seeds: &crate::secret::SecretRedactor,
+    exact: &crate::secret::SecretRedactor,
     fail_closed: bool,
 ) -> String {
     // Line breaks between `secret` and `(` are rejected by the parser
@@ -467,7 +477,7 @@ fn redact_secret_literals(
     // The lexical pass also covers malformed calls and locators the
     // parser cannot resolve. Overlaps are unioned below.
     spans.extend(lexical_secret_spans(&normalized));
-    if spans.is_empty() && seeds.is_empty() && !fail_closed {
+    if spans.is_empty() && seeds.is_empty() && exact.is_empty() && !fail_closed {
         return source.to_string();
     }
     let mut ranges: Vec<(usize, usize)> = spans.iter().filter_map(offsets).collect();
@@ -527,17 +537,26 @@ fn redact_secret_literals(
         let matched = if token.text.contains("${") {
             // An interpolation keeps `${…}` in the token text; the
             // resolved value is unavailable, so fail closed on a known
-            // substring.
-            authored.redact_text(&token.text).is_some() || seeds.redact_text(&token.text).is_some()
+            // substring of four bytes or more. An exact whole token
+            // also counts.
+            authored.contains_exact(&token.text)
+                || exact.contains_exact(&token.text)
+                || authored
+                    .redact_text_min(&token.text, MIN_SUBSTRING_SEED)
+                    .is_some()
+                || seeds
+                    .redact_text_min(&token.text, MIN_SUBSTRING_SEED)
+                    .is_some()
         } else {
             match decoded_token_text(token) {
                 Some(value) => {
                     // Exact (whole-token) duplicates catch the common
                     // copy; a substring match catches a secret embedded
                     // in surrounding text. Values shorter than four
-                    // bytes stay exact-only so a tiny structural secret
-                    // cannot redact unrelated text everywhere.
+                    // bytes stay exact-only so a tiny secret cannot
+                    // redact unrelated text everywhere.
                     value_is_known(&value, &authored, seeds)
+                        || exact.contains_exact(&value)
                         || authored.contains_substring(&value, MIN_SUBSTRING_SEED)
                         || seeds.contains_substring(&value, MIN_SUBSTRING_SEED)
                 }
@@ -560,9 +579,45 @@ fn redact_secret_literals(
             continue;
         };
         let text = &source[start..end];
-        let authored_hit = authored.redact_text(text).is_some();
-        if fail_closed || authored_hit || seeds.redact_text(text).is_some() {
+        let authored_hit = authored.redact_text_min(text, MIN_SUBSTRING_SEED).is_some();
+        if fail_closed || authored_hit || seeds.redact_text_min(text, MIN_SUBSTRING_SEED).is_some()
+        {
             comment_ranges.push((start, end));
+        }
+    }
+    // A string token that ends at a `${` opener means the lexer split
+    // a malformed interpolation: the interior is tokenized as ordinary
+    // identifiers, so the token passes cannot see it. When the
+    // outer-string-to-closing-brace slice carries a known value, redact
+    // the whole slice as string content.
+    let mut malformed_spans: Vec<(usize, usize)> = Vec::new();
+    for (index, token) in lexed.tokens.iter().enumerate() {
+        if !is_string_token(token) || !token.text.ends_with("${") {
+            continue;
+        }
+        let Some((start, _)) = offsets(&token_span(token)) else {
+            continue;
+        };
+        for next in &lexed.tokens[index + 1..] {
+            if next.line != token.line || next.text == "}" {
+                if next.line == token.line && next.text == "}" {
+                    if let Some((_, end)) = offsets(&token_span(next)) {
+                        let slice = &normalized[start..end];
+                        let hit = authored
+                            .redact_text_min(slice, MIN_SUBSTRING_SEED)
+                            .is_some()
+                            || seeds.redact_text_min(slice, MIN_SUBSTRING_SEED).is_some()
+                            || exact
+                                .values_snapshot()
+                                .iter()
+                                .any(|value| !value.is_empty() && slice.contains(value));
+                        if hit {
+                            malformed_spans.push((start, end));
+                        }
+                    }
+                }
+                break;
+            }
         }
     }
     let mut all: Vec<(usize, usize)> = merged
@@ -570,6 +625,7 @@ fn redact_secret_literals(
         .copied()
         .chain(extras)
         .chain(comment_ranges)
+        .chain(malformed_spans)
         .collect();
     all.sort_unstable();
     let mut coalesced: Vec<(usize, usize)> = Vec::new();
@@ -581,21 +637,26 @@ fn redact_secret_literals(
     }
     // A healed or malformed token stream can leave data bytes between
     // tokens (a nested quote inside an interpolation is one example),
-    // so a token-span pass is not a complete sweep. Sweep every byte
-    // outside the redacted spans and the protected structural/env-name
-    // literals, four bytes and up, so a short value cannot rewrite
-    // text. Protected literals stay readable so the bundle remains
-    // reproducible.
-    let protected: Vec<(usize, usize)> = lexed
+    // so a token-span pass is not a complete sweep. Block every token:
+    // only true inter-token gaps are swept, so a secret that collides
+    // with an identifier or keyword cannot rewrite code. Gaps are not
+    // code, so both the four-byte substring sweep and an exact
+    // occurrence pass (quoted marker, any length) apply there.
+    let token_ranges: Vec<(usize, usize)> = lexed
         .tokens
         .iter()
-        .filter(|token| {
-            env_names.contains(&token_key(token)) || structural.contains(&token_key(token))
-        })
         .filter_map(|token| offsets(&token_span(token)))
         .collect();
     let mut blocked: Vec<(usize, usize)> = coalesced.clone();
-    blocked.extend(protected);
+    blocked.extend(token_ranges);
+    // Comments are handled by their own pass; the gap sweep must not
+    // rewrite them.
+    blocked.extend(
+        comment_lex
+            .comments
+            .iter()
+            .filter_map(|(_, span)| span_offsets_with(&source_starts, source, span)),
+    );
     blocked.sort_unstable();
     let mut merged_blocked: Vec<(usize, usize)> = Vec::new();
     for (start, end) in blocked {
@@ -622,6 +683,18 @@ fn redact_secret_literals(
         }
         if let Some(text) = seeds.redact_text_min(&swept, MIN_SUBSTRING_SEED) {
             swept = text;
+        }
+        // A short value can only survive in a malformed gap, where the
+        // lexer produced no token for it. Replace whole occurrences
+        // with a quoted marker so the surrounding string stays
+        // well-formed. Longest value first, so a shorter value cannot
+        // split a longer one.
+        let mut exact_values = exact.values_snapshot();
+        exact_values.sort_by(|a, b| b.len().cmp(&a.len()).then(a.cmp(b)));
+        for value in exact_values {
+            if !value.is_empty() && swept.contains(&value) {
+                swept = swept.replace(&value, &format!("\"{}\"", crate::secret::MARKER));
+            }
         }
         swept
     };
@@ -853,14 +926,7 @@ fn structural_span_keys(
         if !first_on_line[index] || depth_at.get(index).copied().unwrap_or(0) != 0 {
             continue;
         }
-        // Root declarations end a header body.
-        if matches!(
-            tokens[index].text.as_str(),
-            "let" | "include" | "profile" | "@"
-        ) {
-            header_depth = None;
-        }
-        if !is_string_token(&tokens[index]) && tokens[index].text == "[" {
+        if !is_string_token(&tokens[index]) && tokens[index].text == "[" && block_depth == 0 {
             let closes = tokens[index + 1..]
                 .iter()
                 .take_while(|token| token.line == line)
@@ -875,20 +941,33 @@ fn structural_span_keys(
         if is_string_token(&tokens[index]) {
             continue;
         }
-        let after_header = header_depth.is_some();
         let same_line = |at: usize| tokens.get(at).is_some_and(|token| token.line == line);
         let next_string = |at: usize| {
             tokens.get(at).filter(|token| {
                 token.line == line && is_string_token(token) && !token.text.contains("${")
             })
         };
-        match tokens[index].text.as_str() {
-            "include" | "profile" if !after_header => {
+        let text = tokens[index].text.as_str();
+        // Root declarations end a header body, but only genuine
+        // statements: `include = 1` and `profile: 1` are ordinary keys
+        // (spec/grammar.md §2.7/§2.9). Indented lines are inside a
+        // block, never root.
+        let root_statement = block_depth == 0
+            && (text == "let"
+                || text == "@"
+                || (matches!(text, "include" | "profile") && next_string(index + 1).is_some()));
+        if root_statement {
+            header_depth = None;
+        }
+        let after_header = header_depth.is_some();
+        let at_root = !after_header && block_depth == 0;
+        match text {
+            "include" | "profile" if at_root => {
                 if let Some(token) = next_string(index + 1) {
                     out.insert(token_key(token));
                 }
             }
-            "active_profile" if !after_header => {
+            "active_profile" if at_root => {
                 if same_line(index + 1) && tokens[index + 1].text == "=" {
                     if let Some(token) = next_string(index + 2) {
                         out.insert(token_key(token));

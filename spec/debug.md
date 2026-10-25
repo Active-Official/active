@@ -142,7 +142,9 @@ names, the active-profile selector, and `@patch`/`@remove`/`@rename`
 path arguments (each one bare string token, never an interpolation) —
 which the bundle must keep to stay reproducible. Bytes that a healed
 or malformed token stream leaves between tokens are swept separately,
-so a nested quote cannot carry a value past the token pass. Taint
+so a nested quote cannot carry a value past the token pass; a
+recognized token, identifier, or keyword is never rewritten by that
+sweep, and a malformed interpolation is redacted as one string slice. Taint
 is structural, so a plain
 value used as a locator (a `let`, a table field, an environment lookup)
 and any interpolation, reference, or container built from it are

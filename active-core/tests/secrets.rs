@@ -2337,3 +2337,52 @@ fn constraint_actual_redacts_a_short_path_material_copy() {
         .expect("constraint must fail");
     assert!(!t006.message.contains("XYZ"), "{}", t006.message);
 }
+
+#[test]
+fn short_material_value_redacts_blob_identity_and_payload() {
+    // Review 65: the exact set applies at the blob media-type and
+    // payload boundaries too.
+    let src = "active_profile = \"p\"\na = secret(\"base\")\nprofile \"p\" { a = \"ABC\" }\nm = \"ABC\"\nf = blob(m, \"data\")\ng = blob(\"text/plain\", \"ABC\")\n";
+    let module = parse(src, "short-blob").expect("parse");
+    let mut engine = Engine::hermetic();
+    engine.materialise_blobs = true;
+    let (value, _) = engine.evaluate(&module).expect("evaluate");
+    let secret = active_core::secret::SecretProfile::for_engine(
+        &module,
+        &engine,
+        &active_core::secret::SecretRedactor::new(),
+    );
+    let json = active_core::convert::value_to_pretty_json_with(&secret, &value);
+    assert!(!json.contains("\"media_type\": \"ABC\""), "{json}");
+    assert!(!json.contains("payload_b64"), "{json}");
+}
+
+#[test]
+fn redact_json_uses_the_exact_material_set() {
+    // Review 65: public JSON redaction matches a whole short copy.
+    let src = "active_profile = \"p\"\na = secret(\"base\")\nprofile \"p\" { a = \"ABC\" }\n";
+    let module = parse(src, "short-json").expect("parse");
+    let secret = active_core::secret::SecretProfile::analyze(&module);
+    let mut json = serde_json::json!({ "copy": "ABC" });
+    assert!(secret.redact_json(&mut json));
+    assert_eq!(json["copy"], "***SECRET***");
+}
+
+#[test]
+fn constraint_source_redacts_a_runtime_secret() {
+    // Review 65: the predicate source can quote a host value.
+    let prior = std::env::var("ACTIVE_R65_KEY").ok();
+    std::env::set_var("ACTIVE_R65_KEY", "r65-env-secret");
+    let src = "api = secret(env.ACTIVE_R65_KEY)\n# @constraint: value == \"r65-env-secret\"\nname = \"x\"\n";
+    let module = parse(src, "runtime-t006").expect("parse");
+    let (_, diags) = Engine::new().evaluate(&module).expect("evaluate");
+    let t006 = diags
+        .iter()
+        .find(|d| d.code == "T006")
+        .expect("constraint must fail");
+    assert!(!t006.message.contains("r65-env-secret"), "{}", t006.message);
+    match prior {
+        Some(value) => std::env::set_var("ACTIVE_R65_KEY", value),
+        None => std::env::remove_var("ACTIVE_R65_KEY"),
+    }
+}

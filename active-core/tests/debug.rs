@@ -1351,3 +1351,43 @@ fn minimize_does_not_exempt_an_interpolated_directive_path() {
     let reduced = report["reduced"].as_str().expect("reduced");
     assert!(!reduced.contains("hunter2-x"), "{reduced}");
 }
+
+#[test]
+fn minimize_does_not_exempt_a_field_named_include() {
+    // Review 65: `include = 1` is an ordinary key, not a statement, so
+    // it does not end a header body.
+    let source = "s = secret(\"hunter2-x\")\n[meta]\ninclude = 1\nactive_profile = \"hunter2-x\"\n";
+    let report = debug::minimal_case(source, "T999", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(!reduced.contains("hunter2-x"), "{reduced}");
+}
+
+#[test]
+fn minimize_does_not_exempt_an_indented_selector() {
+    // Review 65: a YAML-style block nests the key under `meta`, so it
+    // is not the document selector.
+    let source = "s = secret(\"hunter2-x\")\nmeta:\n  active_profile = \"hunter2-x\"\n";
+    let report = debug::minimal_case(source, "T999", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(!reduced.contains("hunter2-x"), "{reduced}");
+}
+
+#[test]
+fn minimize_does_not_rewrite_an_identifier_matching_a_secret() {
+    // Review 65: the gap sweep must not touch code tokens.
+    let source = "port = secret(\"port\")\nvalue = 1\n";
+    let report = debug::minimal_case(source, "T002", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(reduced.contains("port = secret("), "{reduced}");
+    assert!(!reduced.contains("secret(\"port\")"), "{reduced}");
+}
+
+#[test]
+fn minimize_does_not_spread_a_short_secret_through_a_comment() {
+    // Review 65: the exact set is not a substring set; `x` must not
+    // rewrite an unrelated comment.
+    let source = "active_profile = \"p\"\na = secret(\"base\")\nprofile \"p\" { a = \"x\" }\n# index note\nb = 1\n";
+    let report = debug::minimal_case(source, "T999", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(reduced.contains("# index note"), "{reduced}");
+}

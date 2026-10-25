@@ -163,9 +163,17 @@ pub fn redactor_with_runtime_secrets(profile: &SecretProfile, value: &Value) -> 
 /// literal again.
 pub(crate) fn blob_payload_is_material(
     redactor: &SecretRedactor,
+    profile: &SecretProfile,
     payload: Option<&Vec<u8>>,
 ) -> bool {
     payload.is_some_and(|bytes| {
+        // A short material value is not in the substring redactor; an
+        // exact UTF-8 payload match still counts.
+        if let Ok(text) = std::str::from_utf8(bytes) {
+            if profile.is_material_text(text) {
+                return true;
+            }
+        }
         redactor
             .redact_text(&String::from_utf8_lossy(bytes))
             .is_some()
@@ -260,11 +268,13 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
                 // payload: sweep both. Payload materiality is memoized
                 // by content hash, so an aliased blob is scanned once.
                 let media_redacted = redactor.redact_text(media_type);
+                let media_exact = profile.is_material_text(media_type);
                 let payload_secret = if payload.is_some() {
                     match blob_material.get(hash) {
                         Some(known) => *known,
                         None => {
-                            let material = blob_payload_is_material(redactor, payload.as_ref());
+                            let material =
+                                blob_payload_is_material(redactor, profile, payload.as_ref());
                             blob_material.insert(*hash, material);
                             material
                         }
@@ -275,6 +285,7 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
                 if *tainted
                     || profile.path_is_secret(path)
                     || media_redacted.is_some()
+                    || media_exact
                     || payload_secret
                 {
                     Value::Blob {

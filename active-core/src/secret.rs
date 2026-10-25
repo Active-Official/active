@@ -357,6 +357,13 @@ impl SecretRedactor {
         self.values.borrow().len()
     }
 
+    /// Snapshot of the known values, for callers that must replace
+    /// exact occurrences inside malformed (untokenized) text. Crate
+    /// internal: values are secret material.
+    pub(crate) fn values_snapshot(&self) -> Vec<String> {
+        self.values.borrow().clone()
+    }
+
     /// True when `text` is exactly one of the known values (no
     /// substring matching). Used where a literal duplicate must be
     /// replaced without over-redacting longer or shorter strings.
@@ -2562,7 +2569,34 @@ impl SecretProfile {
 
     /// Redact secret substrings in a rendered tree.
     pub fn redact_json(&self, value: &mut JsonValue) -> bool {
-        self.literals.redact(value)
+        fn walk(value: &mut JsonValue, exact: &SecretRedactor, literals: &SecretRedactor) -> bool {
+            match value {
+                JsonValue::String(text) => {
+                    if exact.contains_exact(text) {
+                        *text = MARKER.to_string();
+                        true
+                    } else {
+                        literals.redact(value)
+                    }
+                }
+                JsonValue::Array(items) => {
+                    let mut hit = false;
+                    for item in items {
+                        hit |= walk(item, exact, literals);
+                    }
+                    hit
+                }
+                JsonValue::Object(map) => {
+                    let mut hit = false;
+                    for item in map.values_mut() {
+                        hit |= walk(item, exact, literals);
+                    }
+                    hit
+                }
+                _ => false,
+            }
+        }
+        walk(value, &self.exact_literals, &self.literals)
     }
 
     /// Redact secret substrings in text.

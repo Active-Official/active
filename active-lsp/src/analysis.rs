@@ -940,6 +940,11 @@ fn render_hover_value(
     match value {
         Value::Secret(_) => active_core::secret::MARKER.to_string(),
         Value::String(s) => {
+            // A whole value identical to a material value is a copy,
+            // even when it is shorter than the substring threshold.
+            if profile.is_material_text(s) {
+                return active_core::secret::MARKER.to_string();
+            }
             let redacted = redactor.redact_text(s).unwrap_or_else(|| s.clone());
             let quoted = format!("{redacted:?}");
             if quoted.chars().count() > 80 {
@@ -1051,12 +1056,13 @@ pub fn hover_at(doc: &Doc, line: u32, character: u32) -> Option<Hover> {
             None => lines.push(format!("**{name}**")),
         }
     }
+    // One profile serves the value, the annotation prose, and the
+    // deprecation reason: authored text can quote a secret too.
+    let profile = SecretProfile::with_context(&doc.module, None, None, Some(&doc.value_seeds));
+    profile.begin_redaction_pass();
     // Value at the path (redacted; lets have no tree value).
     if let Some(root) = doc.value.as_ref() {
         if let Some(value) = value_at_path(root, &path) {
-            let profile =
-                SecretProfile::with_context(&doc.module, None, None, Some(&doc.value_seeds));
-            profile.begin_redaction_pass();
             // Seed path-material plain values from the evaluated tree:
             // a profile-selected env copy is material by path, not by
             // value kind, and its text can appear in a sibling.
@@ -1081,8 +1087,16 @@ pub fn hover_at(doc: &Doc, line: u32, character: u32) -> Option<Hover> {
     if let Some(anns) = doc.module.annotations.get(&node) {
         for ann in anns {
             match &ann.kind {
-                AnnotationKind::Intent(text) => lines.push(format!("> {text}")),
+                AnnotationKind::Intent(text) => {
+                    let text = profile
+                        .redact_authored_text(text)
+                        .unwrap_or_else(|| text.clone());
+                    lines.push(format!("> {text}"));
+                }
                 AnnotationKind::Constraint { source, .. } => {
+                    let source = profile
+                        .redact_authored_text(source)
+                        .unwrap_or_else(|| source.clone());
                     lines.push(format!("constraint: `{source}`"));
                 }
                 AnnotationKind::AiImmutable(true) => lines.push("🔒 `ai_immutable`".to_string()),
@@ -1095,6 +1109,7 @@ pub fn hover_at(doc: &Doc, line: u32, character: u32) -> Option<Hover> {
         if reason.is_empty() {
             lines.push("⚠️ deprecated".to_string());
         } else {
+            let reason = profile.redact_authored_text(&reason).unwrap_or(reason);
             lines.push(format!("⚠️ deprecated: {reason}"));
         }
     }

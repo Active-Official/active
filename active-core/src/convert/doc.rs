@@ -119,8 +119,25 @@ fn walk_value(
     let node = by_path.get(path).copied();
     let schema = schema_node_at(module, path);
     let is_table = matches!(val, Value::Table(_));
-    let (type_text, required, default_text, constraints, deprecated) =
+    let (type_text, required, mut default_text, mut constraints, mut deprecated) =
         describe_schema(module, schema, val);
+    // Schema prose is authored text too: a deprecated reason, pattern,
+    // or default can quote a secret.
+    if let Some(text) = default_text.as_mut() {
+        *text = profile
+            .redact_authored_text(text)
+            .unwrap_or_else(|| text.clone());
+    }
+    for constraint in constraints.iter_mut() {
+        *constraint = profile
+            .redact_authored_text(constraint)
+            .unwrap_or_else(|| constraint.clone());
+    }
+    if let Some(text) = deprecated.as_mut() {
+        *text = profile
+            .redact_authored_text(text)
+            .unwrap_or_else(|| text.clone());
+    }
     let mut description_parts: Vec<String> = Vec::new();
     // Schema `description` metadata leads: the contract prose lives with
     // the contract, and docgen is its renderer (spec/schema-extensions

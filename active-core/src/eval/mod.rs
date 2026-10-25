@@ -1087,7 +1087,8 @@ impl<'a> StepRenderer<'a> {
         if let Some(known) = self.blob_material.borrow().get(hash) {
             return *known;
         }
-        let material = crate::convert::blob_payload_is_material(self.redactor, payload);
+        let material =
+            crate::convert::blob_payload_is_material(self.redactor, self.profile, payload);
         self.blob_material.borrow_mut().insert(*hash, material);
         material
     }

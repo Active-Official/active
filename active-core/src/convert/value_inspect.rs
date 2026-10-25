@@ -156,13 +156,17 @@ pub fn inspect_path_with_profile_env(
         // secret locator) is not publishable, even though the blob's
         // data taint flag is separate. A materialised payload that
         // embeds a secret literal is material for the same reason.
-        let media_literal = redactor.redact_text(media_type).is_some();
+        let media_literal =
+            redactor.redact_text(media_type).is_some() || profile.is_material_text(media_type);
         let payload_literal = if payload.is_some() {
             match blob_material.get(hash) {
                 Some(known) => *known,
                 None => {
-                    let material =
-                        crate::convert::blob_payload_is_material(&redactor, payload.as_ref());
+                    let material = crate::convert::blob_payload_is_material(
+                        &redactor,
+                        &profile,
+                        payload.as_ref(),
+                    );
                     blob_material.insert(*hash, material);
                     material
                 }
@@ -257,8 +261,11 @@ fn render_cone(
                 match blob_material.get(hash) {
                     Some(known) => *known,
                     None => {
-                        let material =
-                            crate::convert::blob_payload_is_material(redactor, payload.as_ref());
+                        let material = crate::convert::blob_payload_is_material(
+                            redactor,
+                            profile,
+                            payload.as_ref(),
+                        );
                         blob_material.insert(*hash, material);
                         material
                     }

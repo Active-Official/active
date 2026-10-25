@@ -702,3 +702,25 @@ fn inlay_hints_redact_a_path_material_profile_value() {
         assert!(!label.contains("1800000"), "inlay leaked: {label}");
     }
 }
+
+#[test]
+fn hover_redacts_secret_text_quoted_in_an_intent() {
+    // Review 65: hover renders annotation prose too.
+    let doc = open(
+        "token = secret(\"s3cr3t-lsp\")\n# @intent: \"the token is s3cr3t-lsp\"\nname = \"x\"\n",
+    );
+    let hover = analysis::hover_at(&doc, 2, 0).expect("hover on name");
+    let text = format!("{:?}", hover.contents);
+    assert!(!text.contains("s3cr3t-lsp"), "hover leaked: {text}");
+}
+
+#[test]
+fn hover_redacts_a_short_path_material_copy() {
+    // Review 65: whole-value matching covers short copies.
+    let doc = open(
+        "active_profile = \"p\"\na = secret(\"base\")\nprofile \"p\" { a = \"ABC\" }\nb = \"ABC\"\n",
+    );
+    let hover = analysis::hover_at(&doc, 3, 0).expect("hover on b");
+    let text = format!("{:?}", hover.contents);
+    assert!(!text.contains("ABC"), "hover leaked: {text}");
+}

@@ -215,6 +215,11 @@ impl Engine {
                     let shown_source = profile
                         .redact_authored_text(&shown_source)
                         .unwrap_or(shown_source);
+                    // Host values and computed secrets are not module
+                    // literals; sweep them too.
+                    let shown_source = redactor
+                        .redact_every_occurrence(&shown_source)
+                        .unwrap_or(shown_source);
                     // A material actual of any kind renders the marker;
                     // a string that merely contains a known secret is
                     // redacted in place.

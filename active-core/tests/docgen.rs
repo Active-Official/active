@@ -179,3 +179,16 @@ fn doc_redacts_secret_text_quoted_in_an_intent() {
     let md = doc_to_markdown("Service", &items);
     assert!(!md.contains("s3cr3t-doc"), "{md}");
 }
+
+#[test]
+fn doc_redacts_schema_prose_that_quotes_a_secret() {
+    // Review 65: deprecated reasons, patterns, and defaults are
+    // authored text too.
+    let src = "token = secret(\"s3cr3t-doc\")\nschema = { host = String(deprecated = \"use s3cr3t-doc instead\") }\nhost = \"x\"\n";
+    let module = parse(src, "doc").expect("parse");
+    let (value, _) = Engine::new().evaluate(&module).expect("evaluate");
+    let raw = active_core::convert::value_to_pretty_json(&value);
+    let items = collect_items(&module, &value);
+    let md = doc_to_markdown("Service", &items);
+    assert!(!md.contains("s3cr3t-doc"), "{md} / {raw}");
+}

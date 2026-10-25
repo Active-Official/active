@@ -37,7 +37,9 @@ pub fn taint_data_with_profile(
 
 /// Taint flow seeded with the evaluator's runtime secrets, so a copy of
 /// a `let`-bound or computed secret is reported as tainted instead of
-/// only the authored paths.
+/// only the authored paths. `env` is the same snapshot evaluation used
+/// (material values seed the redactor); `seeds` comes from
+/// `Engine::evaluate_with_seeds`.
 pub fn taint_data_with_seeds(
     module: &Module,
     value: &Value,
@@ -45,13 +47,7 @@ pub fn taint_data_with_seeds(
     env: Option<&std::collections::HashMap<String, String>>,
     seeds: Option<&crate::secret::SecretRedactor>,
 ) -> JsonValue {
-    let mut profile = crate::secret::SecretProfile::analyze_with_profile(module, override_profile);
-    if let Some(env) = env {
-        profile.absorb_environment(env);
-    }
-    if let Some(seeds) = seeds {
-        profile.absorb_secrets(seeds);
-    }
+    let profile = crate::secret::SecretProfile::with_context(module, override_profile, env, seeds);
     taint_data_from_profile(module, value, &profile)
 }
 
@@ -66,6 +62,8 @@ fn taint_data_from_profile(
     let mut export_points: Vec<String> = Vec::new();
     let _ = module;
     let mut emitted: HashSet<String> = HashSet::new();
+    let mut payload_cache: std::collections::HashMap<[u8; 32], bool> =
+        std::collections::HashMap::new();
     walk_taint(value, "", None, &mut |path, node_value, parent| {
         let structural = profile.path_is_secret(path);
         // A copy of a runtime secret is not structurally material; its
@@ -73,16 +71,22 @@ fn taint_data_from_profile(
         let literal = match node_value {
             Value::String(text) => profile.redact_text(text).is_some(),
             Value::Blob {
+                hash,
                 media_type,
                 payload,
                 ..
             } => {
-                profile.redact_text(media_type).is_some()
-                    || payload.as_ref().is_some_and(|bytes| {
-                        profile
-                            .redact_text(&String::from_utf8_lossy(bytes))
-                            .is_some()
-                    })
+                let payload_material = payload.as_ref().is_some_and(|bytes| {
+                    if let Some(known) = payload_cache.get(hash) {
+                        return *known;
+                    }
+                    let material = profile
+                        .redact_text(&String::from_utf8_lossy(bytes))
+                        .is_some();
+                    payload_cache.insert(*hash, material);
+                    material
+                });
+                profile.redact_text(media_type).is_some() || payload_material
             }
             _ => false,
         };
@@ -123,6 +127,10 @@ fn taint_data_from_profile(
 /// Budget dashboard: every limit, the static usage proxy the evaluator
 /// can observe without a second walk, headroom, and the progressive
 /// warnings recorded for this run (W013).
+///
+/// Structural view only: a copy of a runtime secret reports its raw
+/// length. Prefer [`budget_data_with_seeds`] when the document was
+/// evaluated.
 pub fn budget_data(
     module: &Module,
     value: &Value,
@@ -164,13 +172,7 @@ pub fn budget_data_with_seeds(
     env: Option<&std::collections::HashMap<String, String>>,
     seeds: Option<&crate::secret::SecretRedactor>,
 ) -> JsonValue {
-    let mut profile = crate::secret::SecretProfile::analyze_with_profile(module, profile_override);
-    if let Some(env) = env {
-        profile.absorb_environment(env);
-    }
-    if let Some(seeds) = seeds {
-        profile.absorb_secrets(seeds);
-    }
+    let profile = crate::secret::SecretProfile::with_context(module, profile_override, env, seeds);
     budget_data_with_redactor(module, value, budget, diagnostics, &profile)
 }
 

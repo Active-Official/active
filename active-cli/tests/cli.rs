@@ -3415,3 +3415,47 @@ fn audit_and_lock_agree_on_a_payload_resident_secret() {
     let lock_text = String::from_utf8_lossy(&lock.stdout);
     assert!(lock_text.contains(&audit_hash), "{lock_text}");
 }
+
+#[test]
+fn replay_reproduces_an_alias_heavy_audit_hash() {
+    // Review 50: replay uses the same probe policy and a trusted
+    // envelope, so an audit written near a caller budget still replays.
+    let payload = "A".repeat(150);
+    let src = format!(
+        "d = \"{payload}\"\nb = blob(\"text/plain\", d)\nr1 = b\nr2 = b\nr3 = b\nr4 = b\nr5 = b\n"
+    );
+    let f = fixture("audit_replay_aliases.active", &src);
+    let audit = f.with_extension("audit.active");
+    let out = active()
+        .arg("eval")
+        .arg(&f)
+        .arg("--max-total-value-size")
+        .arg("5000")
+        .arg("--audit-trail")
+        .arg(&audit)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let audit_text = std::fs::read_to_string(&audit).expect("audit file");
+    let hash = audit_text
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("result = "))
+        .map(|value| value.trim_end_matches(',').trim_matches('"').to_string())
+        .expect("audit result hash");
+    let replay = active()
+        .args(["debug", "--from"])
+        .arg(&f)
+        .args(["--replay", "--expect"])
+        .arg(&hash)
+        .output()
+        .expect("run active");
+    assert!(
+        replay.status.success(),
+        "{}",
+        String::from_utf8_lossy(&replay.stderr)
+    );
+}

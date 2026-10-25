@@ -45,12 +45,15 @@ filesystem (for hashes only):
   - secret-bound reads: any variable reachable backward through
     the dependency graph from a `Secret` node — direct locators
     (`secret(env.X)`, `secret.env("X")`) and transitive flows
-    (`let h = env.H` + `secret(h)`) alike. No value is recorded,
-    only `secret = true` plus `value_hash = sha256:<hex>` for
-    drift detection. A variable that feeds a secret anywhere is
-    secret everywhere (even its plain uses withhold the value).
-    The secret invariant (C-036) overrides the record-the-values
-    rule here: a manifest must never carry live secrets.
+    (`let h = env.H` + `secret(h)`) alike — plus a read that a
+    profile places at a material path and a read whose *value*
+    matches an evaluator secret seed (a copy of a `let`-bound or
+    computed secret). No value is recorded, only `secret = true`
+    plus `value_hash = sha256:<hex>` for drift detection. A
+    variable that feeds a secret anywhere is secret everywhere
+    (even its plain uses withhold the value). The secret invariant
+    (C-036) overrides the record-the-values rule here: a manifest
+    must never carry live secrets.
   - unset vars record `set = false` (replay detects flips).
 - **includes**: every distinct file stamped in `node_files`
   except the main file (canonical-identity comparison), each
@@ -67,9 +70,13 @@ filesystem (for hashes only):
 `content_hash = sha256:<hex>` over the canonical redacted form:
 compact JSON (`serde_json::Map` is a `BTreeMap`, so keys sort —
 byte-stable), secrets already replaced by `***SECRET***`
-(`value_to_json`). Hashing the redacted tree (never raw secrets)
-keeps lockfiles publishable. Same tree → same hash on every
-platform (tested cross-fixture; CI runs both).
+(`value_to_json`), retained blob payloads stripped first.
+Hashing the redacted, payload-free tree (never raw secrets)
+keeps lockfiles publishable and makes the identity independent of
+`--materialise-blobs`. The audit and replay use the same
+canonicaliser, so `debug --replay --expect` reproduces an audit
+`result`. Same tree → same hash on every platform (tested
+cross-fixture; CI runs both).
 
 ## 4. Lockfile format (`ACTIVE lock`)
 
@@ -126,9 +133,12 @@ redacted on the same rule as every other export path (spec/blob.md §7).
 ## 5. Threat model notes (for C-052)
 
 - The manifest records plain env values verbatim: authors must
-  route sensitive inputs through `secret()`/`secret.env()`.
-  Plain-env values already appear in evaluated output, so the
-  manifest adds no new exposure class.
+  route sensitive inputs through `secret()`/`secret.env()`. A
+  value that matches an evaluator secret seed, or that a profile
+  places at a material path, is withheld (`secret = true`, hash
+  only) even when its name is not structurally bound. Plain-env
+  values already appear in evaluated output, so the manifest adds
+  no new exposure class.
 - Hashes (`content_hash`, `value_hash`) are integrity/drift
   signals, not encryption; SHA-256 preimage resistance is the
   operative property.

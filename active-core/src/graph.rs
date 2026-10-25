@@ -143,6 +143,11 @@ pub fn shortest_path(module: &Module, from: NodeId, to: NodeId) -> Option<Vec<St
 /// (H-001 class guarantee for graph queries). Operates on the
 /// evaluated tree, so it reflects actual data flow rather than
 /// static edges.
+///
+/// Structural only: a copy of a runtime secret and a payload-resident
+/// secret are invisible without evaluator seeds and retained payloads.
+/// Prefer [`secret_tainted_paths_with_seeds`] when the document was
+/// evaluated.
 pub fn secret_tainted_paths(value: &crate::ir::Value) -> Vec<String> {
     fn walk(value: &crate::ir::Value, path: String, out: &mut Vec<String>) -> bool {
         use crate::ir::Value;
@@ -207,7 +212,8 @@ pub fn secret_tainted_paths_with(
 
 /// Structural taint plus the evaluator's runtime secrets: a copy of a
 /// `let`-bound or computed secret is reported even though no path makes
-/// it structurally material.
+/// it structurally material. `env` and `seeds` are the snapshot and
+/// seeds that produced `value`; retained payloads are inspected too.
 pub fn secret_tainted_paths_with_seeds(
     module: &Module,
     value: &crate::ir::Value,
@@ -215,13 +221,7 @@ pub fn secret_tainted_paths_with_seeds(
     env: Option<&std::collections::HashMap<String, String>>,
     seeds: Option<&crate::secret::SecretRedactor>,
 ) -> Vec<String> {
-    let mut profile = crate::secret::SecretProfile::analyze_with_profile(module, override_profile);
-    if let Some(env) = env {
-        profile.absorb_environment(env);
-    }
-    if let Some(seeds) = seeds {
-        profile.absorb_secrets(seeds);
-    }
+    let profile = crate::secret::SecretProfile::with_context(module, override_profile, env, seeds);
     secret_tainted_paths_from_profile(value, &profile)
 }
 
@@ -235,6 +235,7 @@ fn secret_tainted_paths_from_profile(
         path: String,
         profile: &crate::secret::SecretProfile,
         out: &mut Vec<String>,
+        payload_cache: &mut std::collections::HashMap<[u8; 32], bool>,
     ) -> bool {
         use crate::ir::Value;
         let structural = profile.path_is_secret(&path);
@@ -245,17 +246,22 @@ fn secret_tainted_paths_from_profile(
             // retained bytes; callers that need it evaluate with
             // materialisation and these seeds.
             Value::Blob {
+                hash,
                 media_type,
                 payload,
                 ..
             } => {
-                structural
-                    || profile.redact_text(media_type).is_some()
-                    || payload.as_ref().is_some_and(|bytes| {
-                        profile
-                            .redact_text(&String::from_utf8_lossy(bytes))
-                            .is_some()
-                    })
+                let payload_material = payload.as_ref().is_some_and(|bytes| {
+                    if let Some(known) = payload_cache.get(hash) {
+                        return *known;
+                    }
+                    let material = profile
+                        .redact_text(&String::from_utf8_lossy(bytes))
+                        .is_some();
+                    payload_cache.insert(*hash, material);
+                    material
+                });
+                structural || profile.redact_text(media_type).is_some() || payload_material
             }
             // A copy of a runtime secret has no structural path taint;
             // its text is the only signal.
@@ -268,7 +274,7 @@ fn secret_tainted_paths_from_profile(
                     } else {
                         format!("{path}[{i}]")
                     };
-                    any |= walk(item, child, profile, out);
+                    any |= walk(item, child, profile, out, payload_cache);
                 }
                 any
             }
@@ -280,7 +286,7 @@ fn secret_tainted_paths_from_profile(
                     } else {
                         format!("{path}.{key}")
                     };
-                    any |= walk(val, child, profile, out);
+                    any |= walk(val, child, profile, out, payload_cache);
                 }
                 any
             }
@@ -292,7 +298,8 @@ fn secret_tainted_paths_from_profile(
         tainted
     }
     let mut out = Vec::new();
-    walk(value, String::new(), profile, &mut out);
+    let mut payload_cache = std::collections::HashMap::new();
+    walk(value, String::new(), profile, &mut out, &mut payload_cache);
     out.sort();
     out.dedup();
     out

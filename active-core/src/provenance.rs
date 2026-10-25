@@ -17,10 +17,14 @@ pub struct EnvInput {
     pub name: String,
     pub set: bool,
     /// Plain reads record the value verbatim; secret-bound reads
-    /// record nothing here (the secret invariant wins).
+    /// record nothing here (the secret invariant wins). A read is
+    /// secret-bound when a `Secret` node locates it, a profile makes
+    /// it material by path, or its value matches an evaluator secret
+    /// seed (a copy of a `let`-bound or computed secret).
     pub value: Option<String>,
-    /// True when a `Secret` node directly locates this variable
-    /// (`secret(env.X)` and `secret.env("X")` share that shape).
+    /// True when the name is secret-bound or its value matches a
+    /// secret seed (`secret(env.X)` and `secret.env("X")` share the
+    /// locator shape; the value match covers plain copies).
     pub secret: bool,
     /// Drift signal for secret-bound reads (preimage-resistant).
     pub value_hash: Option<String>,

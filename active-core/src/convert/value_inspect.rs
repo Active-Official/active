@@ -33,12 +33,31 @@ pub fn inspect_path_with_profile(
     path: &str,
     override_profile: Option<&str>,
 ) -> Result<JsonValue, String> {
-    let mut engine = crate::eval::Engine::hermetic();
-    engine.profile_override = override_profile.map(str::to_string);
-    let seeds = engine
-        .evaluate_with_seeds(module)
-        .map(|(_, _, seeds)| seeds)
-        .unwrap_or_default();
+    // Only a `secret(...)` node can bind a value outside the tree; a
+    // document without one needs no seed pass. When one exists, recover
+    // the seeds hermetically (trusted envelope, so a document that
+    // evaluated at production scale still inspects) and fail closed if
+    // that is impossible: an unseeded report could return raw material.
+    let has_secret = module
+        .arena
+        .iter()
+        .any(|node| matches!(node, crate::ir::Node::Secret { .. }));
+    let seeds = if has_secret {
+        let mut engine = crate::eval::Engine::hermetic();
+        engine.profile_override = override_profile.map(str::to_string);
+        engine.budget = crate::Budget::trusted();
+        engine
+            .evaluate_with_seeds(module)
+            .map(|(_, _, seeds)| seeds)
+            .map_err(|error| {
+                format!(
+                    "cannot recover runtime secret seeds ({error}); \
+                     use inspect_path_with_profile_env with the evaluator seeds"
+                )
+            })?
+    } else {
+        crate::secret::SecretRedactor::new()
+    };
     inspect_path_with_profile_env(module, root, path, override_profile, None, Some(&seeds))
 }
 
@@ -56,13 +75,7 @@ pub fn inspect_path_with_profile_env(
 ) -> Result<JsonValue, String> {
     let cone = crate::convert::project_path(root, path)
         .map_err(|why| format!("cannot inspect `{path}`: {why}"))?;
-    let mut profile = SecretProfile::analyze_with_profile(module, override_profile);
-    if let Some(env) = env {
-        profile.absorb_environment(env);
-    }
-    if let Some(seeds) = seeds {
-        profile.absorb_secrets(seeds);
-    }
+    let profile = SecretProfile::with_context(module, override_profile, env, seeds);
     profile.begin_redaction_pass();
     // Runtime secrets live in the evaluated tree, not in the profile's
     // authored literals; seed both so a copy in any inspected value is

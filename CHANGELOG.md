@@ -56,7 +56,10 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   `viz taint` absorb the evaluator's seeds (the value-dependent
   queries materialise so a payload-resident secret is seen), and
   inspection's unseeded wrappers re-evaluate hermetically for computed
-  secrets while the CLI passes the real seeds.
+  secrets while the CLI passes the real seeds. Read-only taint and
+  hashing passes materialise through a probe that skips per-alias
+  payload accounting, so analysis cannot fail a document that
+  exported within its budget.
 - **Reduction fails closed.** `--minimize` now recognizes dot runs on
   either side of `env`, `secret env(`, and env calls with anything
   past the name (comma or not), and redacts every string literal in

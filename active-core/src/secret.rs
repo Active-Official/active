@@ -1901,6 +1901,40 @@ impl SecretProfile {
         self.nodes.is_empty()
     }
 
+    /// Analyze with the environment snapshot and runtime seeds that
+    /// produced a tree. Every export surface needs this trio; keeping it
+    /// in one place stops a surface from absorbing only part of it.
+    pub fn with_context(
+        module: &Module,
+        override_profile: Option<&str>,
+        env: Option<&HashMap<String, String>>,
+        seeds: Option<&SecretRedactor>,
+    ) -> Self {
+        let mut profile = Self::analyze_with_profile(module, override_profile);
+        if let Some(env) = env {
+            profile.absorb_environment(env);
+        }
+        if let Some(seeds) = seeds {
+            profile.absorb_secrets(seeds);
+        }
+        profile
+    }
+
+    /// Analyze for an engine and absorb its environment plus the seeds
+    /// from its evaluation.
+    pub fn for_engine(
+        module: &Module,
+        engine: &crate::eval::Engine,
+        seeds: &SecretRedactor,
+    ) -> Self {
+        Self::with_context(
+            module,
+            engine.profile_override.as_deref(),
+            Some(&engine.env),
+            Some(seeds),
+        )
+    }
+
     /// True when an environment read of this name is material at any
     /// path, including a profile-selected value that is only
     /// path-tainted.

@@ -371,6 +371,12 @@ pub struct Engine {
     /// against the materialised-size budgets); otherwise values carry
     /// identity only. Tainted blobs never retain payloads either way.
     pub materialise_blobs: bool,
+    /// Read-only taint probe: materialise payloads but do not charge
+    /// the per-alias payload copy. Analysis surfaces (inspect, taint
+    /// queries, audit/lock hashing) need the bytes to notice a
+    /// payload-resident secret but never emit them, so alias copies
+    /// must not fail a document that exported within its budget.
+    pub taint_probe: bool,
 }
 
 impl Default for Engine {
@@ -715,6 +721,8 @@ fn check_dp_bounds(
     Ok((total, size, max_depth_seen))
 }
 
+type MemoConfig = (bool, Option<String>, Budget, bool, bool, Mode, bool);
+
 /// Memo store for incremental evaluation (C-055, spec/performance.md
 /// §2): fingerprint → evaluated value plus the diagnostics produced
 /// while evaluating it. Reused across `evaluate_incremental` calls.
@@ -730,11 +738,13 @@ fn check_dp_bounds(
 /// own redacting `Debug` wherever else they are formatted.
 pub struct IncrementalMemo {
     map: HashMap<u64, (Value, Vec<Diagnostic>)>,
-    // (resilient, profile override, budget, materialise flag, mode):
-    // any configuration change clears the store before the walk, so a
-    // flag flip or mode change can never serve a stale tree (or a
-    // warning-less diagnostic set) across modes.
-    config: Option<(bool, Option<String>, Budget, bool, Mode, bool)>,
+    // The configuration token covers
+    // (resilient, profile override, budget, materialise flag, taint
+    // probe, mode, env-fallback presence): any configuration change
+    // clears the store before the walk, so a flag flip or mode change
+    // can never serve a stale tree (or a warning-less diagnostic set)
+    // across modes.
+    config: Option<MemoConfig>,
     salt: u64,
     pub last_eval_count: u64,
     pub last_memo_hits: u64,
@@ -1213,6 +1223,7 @@ impl Engine {
             env: std::collections::HashMap::new(),
             env_fallback: None,
             materialise_blobs: false,
+            taint_probe: false,
         }
     }
 
@@ -1310,6 +1321,7 @@ impl Engine {
             self.profile_override.clone(),
             self.budget,
             self.materialise_blobs,
+            self.taint_probe,
             module.mode,
             self.env_fallback.is_some(),
         );
@@ -1690,7 +1702,9 @@ impl Engine {
                         ..
                     } = &v
                     {
-                        account.charge(module, Some(node_id), bytes.len() as u64)?;
+                        if !self.taint_probe {
+                            account.charge(module, Some(node_id), bytes.len() as u64)?;
+                        }
                     }
                     v
                 }

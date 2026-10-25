@@ -181,9 +181,9 @@ fn blob_media_diagnostics_and_inspection_redact_material() {
     let module = parse(src, "blob-media-redact").expect("must parse");
     let mut env = HashMap::new();
     env.insert("BLOB_MEDIA".to_string(), "ENVSECRET-media".to_string());
-    let (value, diagnostics) = Engine::hermetic()
-        .with_env(env)
-        .evaluate(&module)
+    let (value, diagnostics, seeds) = Engine::hermetic()
+        .with_env(env.clone())
+        .evaluate_with_seeds(&module)
         .expect("resilient evaluate");
     let b004 = diagnostics
         .iter()
@@ -194,8 +194,15 @@ fn blob_media_diagnostics_and_inspection_redact_material() {
         "B004 leaked the evaluated media type: {}",
         b004.message
     );
-    let report =
-        active_core::convert::inspect_path(&module, &value, "f").expect("inspect the blob");
+    let report = active_core::convert::inspect_path_with_profile_env(
+        &module,
+        &value,
+        "f",
+        None,
+        Some(&env),
+        Some(&seeds),
+    )
+    .expect("inspect the blob");
     assert_eq!(report["tainted"], true, "{report}");
     assert_eq!(
         report["content_addressed"]["media_type"], "***SECRET***",
@@ -1929,4 +1936,42 @@ fn blob_identity_and_payload_sweep_authored_secret_literals() {
     let redacted = active_core::convert::redact_value(&profile, &value);
     let json = active_core::convert::value_to_pretty_json(&redacted);
     assert!(!json.contains(raw), "blob literal leaked: {json}");
+}
+
+#[test]
+fn taint_probe_materialises_without_charging_alias_copies() {
+    // Review 50: read-only taint passes need payload bytes but must not
+    // fail a document that exported within its budget.
+    let src = "d = \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"\nb = blob(\"text/plain\", d)\nr1 = b\nr2 = b\nr3 = b\nr4 = b\nr5 = b\n";
+    let module = parse(src, "taint-probe").expect("parse");
+    let evaluate_with = |limit: u64, materialise: bool, probe: bool| {
+        let mut engine = Engine::hermetic();
+        engine.budget.max_total_value_size = limit;
+        engine.materialise_blobs = materialise;
+        engine.taint_probe = probe;
+        engine.evaluate(&module).is_ok()
+    };
+    // Find the exact minimal budget at which the plain export fits.
+    let mut high = 1u64;
+    while !evaluate_with(high, false, false) {
+        high = high.saturating_mul(2);
+    }
+    let mut low = 1u64;
+    while low < high {
+        let middle = (low + high) / 2;
+        if evaluate_with(middle, false, false) {
+            high = middle;
+        } else {
+            low = middle + 1;
+        }
+    }
+    let limit = low;
+    assert!(
+        !evaluate_with(limit, true, false),
+        "plain materialisation must charge alias copies at the exact baseline"
+    );
+    assert!(
+        evaluate_with(limit, true, true),
+        "taint probe must fit the document's exact baseline budget"
+    );
 }

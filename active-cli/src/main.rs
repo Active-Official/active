@@ -710,6 +710,7 @@ fn run_inspect(
             // Retain payloads so a payload-resident secret is visible to
             // the taint check; the report strips payloads before output.
             evaluation_engine.materialise_blobs = true;
+            evaluation_engine.taint_probe = true;
             let (value, _, seeds) = evaluation_engine
                 .evaluate_with_seeds(&module)
                 .map_err(|e| anyhow::anyhow!("cannot evaluate for inspection: {e}"))?;
@@ -1059,6 +1060,7 @@ fn run_graph_query(
                 // Payload-resident secrets are only visible when the
                 // bytes are retained; the query emits paths, never bytes.
                 evaluation_engine.materialise_blobs = true;
+                evaluation_engine.taint_probe = true;
             }
             let (value, diags, seeds) = evaluation_engine
                 .evaluate_with_seeds(&module)
@@ -1339,12 +1341,7 @@ fn main() -> anyhow::Result<()> {
             // Structural material is redacted on the FULL tree, then
             // projected: the cone is already redacted at document
             // paths, so it must NOT be re-rooted and redacted again.
-            let mut profile = active_core::secret::SecretProfile::analyze_with_profile(
-                &module,
-                engine.profile_override.as_deref(),
-            );
-            profile.absorb_environment(&engine.env);
-            profile.absorb_secrets(&seeds);
+            let profile = active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
             let full_value = active_core::convert::redact_value(&profile, &value);
             let value = match path.as_deref() {
                 Some(p) => active_core::convert::project_path(&full_value, p)
@@ -1392,20 +1389,15 @@ fn main() -> anyhow::Result<()> {
                 } else {
                     let mut canonical_engine = engine.clone();
                     canonical_engine.materialise_blobs = true;
-                    // Hashing is not the user's evaluation: relax its
-                    // budgets so payload accounting cannot fail a
-                    // document that already exported successfully.
-                    canonical_engine.budget = active_core::Budget::trusted();
+                    canonical_engine.taint_probe = true;
                     let (canonical_value, _, canonical_seeds) = canonical_engine
                         .evaluate_with_seeds(&module)
                         .map_err(|e| anyhow::anyhow!("audit evaluation failed: {e}"))?;
-                    let mut canonical_profile =
-                        active_core::secret::SecretProfile::analyze_with_profile(
-                            &module,
-                            canonical_engine.profile_override.as_deref(),
-                        );
-                    canonical_profile.absorb_environment(&canonical_engine.env);
-                    canonical_profile.absorb_secrets(&canonical_seeds);
+                    let canonical_profile = active_core::secret::SecretProfile::for_engine(
+                        &module,
+                        &canonical_engine,
+                        &canonical_seeds,
+                    );
                     active_core::convert::redact_value(&canonical_profile, &canonical_value)
                 };
                 let audited = strip_blob_payloads(&canonical);
@@ -1617,12 +1609,7 @@ fn main() -> anyhow::Result<()> {
             for d in &diags {
                 report(d, &name);
             }
-            let mut profile = active_core::secret::SecretProfile::analyze_with_profile(
-                &module,
-                engine.profile_override.as_deref(),
-            );
-            profile.absorb_environment(&engine.env);
-            profile.absorb_secrets(&seeds);
+            let profile = active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
             match to.as_str() {
                 "json" => println!(
                     "{}",
@@ -2007,6 +1994,7 @@ fn main() -> anyhow::Result<()> {
                     // Taint queries need payload bytes to see a
                     // payload-resident secret; only paths are emitted.
                     evaluation_engine.materialise_blobs = true;
+                    evaluation_engine.taint_probe = true;
                     let (value, _, seeds) = evaluation_engine
                         .evaluate_with_seeds(&module)
                         .map_err(|e| anyhow::anyhow!("cannot evaluate: {e}"))?;
@@ -2413,9 +2401,7 @@ fn main() -> anyhow::Result<()> {
             for d in &diags {
                 report(d, &filename);
             }
-            let mut profile = active_core::secret::SecretProfile::analyze(&module);
-            profile.absorb_environment(&engine.env);
-            profile.absorb_secrets(&seeds);
+            let profile = active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
             let items = collect_items(
                 &module,
                 &active_core::convert::redact_value(&profile, &value),
@@ -2464,28 +2450,22 @@ fn main() -> anyhow::Result<()> {
                 Some(&seeds),
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-            let mut secret_profile = active_core::secret::SecretProfile::analyze_with_profile(
-                &module,
-                engine.profile_override.as_deref(),
-            );
-            secret_profile.absorb_environment(&engine.env);
-            secret_profile.absorb_secrets(&seeds);
+            let secret_profile =
+                active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
             // Canonical lock identity: same materialise → redact → strip
             // policy as the audit, so both hash the same document.
             let canonical = if module_has_blobs(&module) && !engine.materialise_blobs {
                 let mut canonical_engine = engine.clone();
                 canonical_engine.materialise_blobs = true;
-                canonical_engine.budget = active_core::Budget::trusted();
+                canonical_engine.taint_probe = true;
                 let (canonical_value, _, canonical_seeds) = canonical_engine
                     .evaluate_with_seeds(&module)
                     .map_err(|e| anyhow::anyhow!("lock evaluation failed: {e}"))?;
-                let mut canonical_profile =
-                    active_core::secret::SecretProfile::analyze_with_profile(
-                        &module,
-                        canonical_engine.profile_override.as_deref(),
-                    );
-                canonical_profile.absorb_environment(&canonical_engine.env);
-                canonical_profile.absorb_secrets(&canonical_seeds);
+                let canonical_profile = active_core::secret::SecretProfile::for_engine(
+                    &module,
+                    &canonical_engine,
+                    &canonical_seeds,
+                );
                 active_core::convert::redact_value(&canonical_profile, &canonical_value)
             } else {
                 active_core::convert::redact_value(&secret_profile, &value)

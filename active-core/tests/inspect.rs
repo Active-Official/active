@@ -409,11 +409,19 @@ fn inspect_redacts_the_media_of_a_data_tainted_blob() {
     let module = active_core::parse(src, "inspect-blob-data").expect("parse");
     let mut env = std::collections::HashMap::new();
     env.insert("R13BLOB".to_string(), "ENVSECRET-blob".to_string());
-    let (evaluated, _) = active_core::Engine::hermetic()
-        .with_env(env)
-        .evaluate(&module)
+    let (evaluated, _, seeds) = active_core::Engine::hermetic()
+        .with_env(env.clone())
+        .evaluate_with_seeds(&module)
         .expect("evaluate");
-    let report = active_core::convert::inspect_path(&module, &evaluated, "f").expect("inspect");
+    let report = active_core::convert::inspect_path_with_profile_env(
+        &module,
+        &evaluated,
+        "f",
+        None,
+        Some(&env),
+        Some(&seeds),
+    )
+    .expect("inspect");
     assert_eq!(report["tainted"], true, "{report}");
     assert_eq!(
         report["content_addressed"]["media_type"], "***SECRET***",
@@ -664,11 +672,18 @@ fn inspect_redacts_a_path_material_blob_media() {
     let mut env = std::collections::HashMap::new();
     env.insert("ACTIVE_R30_MEDIA".to_string(), media.to_string());
     env.insert("ACTIVE_R30_SRC".to_string(), "blob-source-r30".to_string());
-    let mut engine = active_core::Engine::new().with_env(env);
+    let mut engine = active_core::Engine::new().with_env(env.clone());
     engine.profile_override = Some("p".to_string());
-    let (value, _) = engine.evaluate(&module).expect("evaluate");
-    let report = active_core::convert::inspect_path_with_profile(&module, &value, "n", Some("p"))
-        .expect("inspect");
+    let (value, _, seeds) = engine.evaluate_with_seeds(&module).expect("evaluate");
+    let report = active_core::convert::inspect_path_with_profile_env(
+        &module,
+        &value,
+        "n",
+        Some("p"),
+        Some(&env),
+        Some(&seeds),
+    )
+    .expect("inspect");
     assert_eq!(report["tainted"], true, "{report}");
     assert_eq!(report["content_addressed"]["tainted"], true, "{report}");
     assert_eq!(
@@ -733,4 +748,19 @@ fn inspect_path_recovers_a_computed_let_secret() {
     let report = active_core::convert::inspect_path(&module, &value, "copy").expect("inspect");
     assert!(!report.to_string().contains("PIN-1234"), "{report}");
     assert_eq!(report["tainted"], true, "{report}");
+}
+
+#[test]
+fn inspect_path_fails_closed_when_seeds_cannot_be_recovered() {
+    // Review 50: an unseeded report could return raw material; a failed
+    // hermetic seed pass is an error, never a silent fallback.
+    let module = active_core::parse("a = b\nb = a\nk = secret(a)\n", "inspect-cycle")
+        .expect("parse survives a cycle");
+    let root = active_core::Value::Table(Default::default());
+    let error = active_core::convert::inspect_path(&module, &root, "a")
+        .expect_err("cycle must fail the seed pass");
+    assert!(
+        error.contains("cannot recover runtime secret seeds"),
+        "{error}"
+    );
 }

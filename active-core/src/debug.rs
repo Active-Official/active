@@ -49,8 +49,12 @@ pub fn replay(
     engine.profile_override = override_profile.map(str::to_string);
     // Canonical audit form: materialise so payload-resident secrets are
     // visible to the redactor, then strip payloads so the identity does
-    // not depend on the flag the audited run used.
+    // not depend on the flag the audited run used. The probe does not
+    // charge alias copies and gets the trusted envelope, so replay
+    // cannot fail a document that audited successfully.
     engine.materialise_blobs = true;
+    engine.taint_probe = true;
+    engine.budget = crate::Budget::trusted();
     let (first, first_diags, first_steps, first_seeds) = engine
         .evaluate_with_steps_and_seeds(module)
         .map_err(|e| e.to_string())?;
@@ -62,13 +66,8 @@ pub fn replay(
     // must agree on the same document, and a secret value change must
     // not alter the content identity. Seeds and material env values are
     // absorbed exactly as the export and audit paths do.
-    let mut profile = crate::secret::SecretProfile::analyze_with_profile(module, override_profile);
-    profile.absorb_environment(&engine.env);
-    profile.absorb_secrets(&first_seeds);
-    let mut second_profile =
-        crate::secret::SecretProfile::analyze_with_profile(module, override_profile);
-    second_profile.absorb_environment(&engine.env);
-    second_profile.absorb_secrets(&second_seeds);
+    let profile = crate::secret::SecretProfile::for_engine(module, &engine, &first_seeds);
+    let second_profile = crate::secret::SecretProfile::for_engine(module, &engine, &second_seeds);
     let first_hash = crate::provenance::content_hash(&crate::convert::strip_blob_payloads(
         &crate::convert::redact_value(&profile, &first),
     ));

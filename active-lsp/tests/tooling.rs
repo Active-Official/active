@@ -680,6 +680,18 @@ fn hover_redacts_a_copy_of_a_nested_profile_alias() {
 }
 
 #[test]
+fn hover_redacts_a_copy_of_a_computed_profile_value() {
+    // Review 60: a computed selector's inherited-material value seeds
+    // copies even though no concrete profile path is in the tree map.
+    let doc = open(
+        "active_profile = env.P ?: \"p\"\na = secret(\"hunter2-base\")\nprofile \"p\" { a = { x = \"hunter2-plain\" } }\ndup = \"hunter2-plain\"\n",
+    );
+    let hover = analysis::hover_at(&doc, 3, 0).expect("hover on dup");
+    let text = format!("{:?}", hover.contents);
+    assert!(!text.contains("hunter2-plain"), "hover leaked: {text}");
+}
+
+#[test]
 fn inlay_hints_redact_a_path_material_profile_value() {
     let doc = open(
         "let d = 30m\nk = secret(d)\nn = 1\nactive_profile = \"p\"\nprofile \"p\" { n = d }\n",

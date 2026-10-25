@@ -1242,8 +1242,20 @@ fn minimize_keeps_include_profile_and_patch_structure_on_a_hard_error() {
     assert!(reduced.contains("include \"inc.active\""), "{reduced}");
     assert!(reduced.contains("active_profile = \"prod\""), "{reduced}");
     assert!(reduced.contains("profile \"prod\""), "{reduced}");
-    assert!(reduced.contains("@patch(\"level\", \"info\")"), "{reduced}");
+    // Only the patch path is structure; its value is data.
+    assert!(reduced.contains("@patch(\"level\""), "{reduced}");
+    assert!(!reduced.contains("\"info\""), "{reduced}");
     assert!(!reduced.contains("hunter2-inc"), "{reduced}");
     assert!(!reduced.contains("benign-value"), "{reduced}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn minimize_redacts_a_patch_value() {
+    // Review 60: the second `@patch` argument is a value, not a path.
+    let source = "t = secret(\"hunter2-patch\")\n@patch(\"t\", \"hunter2-patch\" + 1)\n";
+    let report = debug::minimal_case(source, "T001", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(!reduced.contains("hunter2-patch"), "{reduced}");
+    assert!(reduced.contains("@patch(\"t\""), "{reduced}");
 }

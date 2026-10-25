@@ -744,32 +744,52 @@ fn structural_span_keys(
                 }
             }
             "@" => {
-                let is_directive = same_line(index + 1)
-                    && matches!(
-                        tokens[index + 1].text.as_str(),
-                        "patch" | "remove" | "rename"
-                    );
+                let directive = tokens[index + 1].text.as_str();
+                let is_directive =
+                    same_line(index + 1) && matches!(directive, "patch" | "remove" | "rename");
                 if !is_directive || !same_line(index + 2) || tokens[index + 2].text != "(" {
                     continue;
                 }
+                // Find the matching close on this line first: an
+                // unclosed directive is malformed and exempts nothing.
                 let mut probe = index + 3;
-                let mut found = Vec::new();
-                let mut closed = false;
+                let mut depth = 1usize;
+                let mut close = None;
                 while let Some(token) = tokens.get(probe) {
                     if token.line != line {
                         break;
                     }
-                    if token.text == ")" {
-                        closed = true;
-                        break;
-                    }
-                    if is_string_token(token) {
-                        found.push(token_key(token));
+                    match token.text.as_str() {
+                        "(" => depth += 1,
+                        ")" => {
+                            depth = depth.saturating_sub(1);
+                            if depth == 0 {
+                                close = Some(probe);
+                                break;
+                            }
+                        }
+                        _ => {}
                     }
                     probe += 1;
                 }
-                if closed {
-                    out.extend(found);
+                let Some(close) = close else {
+                    continue;
+                };
+                // `@patch(path, value)`: only the path is structure. The
+                // value is data and goes through the normal redaction
+                // passes. `@rename` takes two paths; `@remove` one.
+                let mut depth = 1usize;
+                for token in &tokens[index + 3..close] {
+                    match token.text.as_str() {
+                        "(" => depth += 1,
+                        ")" => depth = depth.saturating_sub(1),
+                        "," if directive == "patch" && depth == 1 => break,
+                        _ => {
+                            if is_string_token(token) {
+                                out.insert(token_key(token));
+                            }
+                        }
+                    }
                 }
             }
             _ => {}

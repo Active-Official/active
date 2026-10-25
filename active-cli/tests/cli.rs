@@ -3164,6 +3164,33 @@ fn materialise_blobs_never_emits_a_seeded_alias_payload() {
 }
 
 #[test]
+fn materialise_blobs_never_emits_a_computed_profile_payload() {
+    // Review 60 (HIGH): a computed selector's inherited-material value
+    // must seed copies and payloads even though its path is not in the
+    // evaluated-tree map.
+    let f = fixture(
+        "r60_computed_blob.active",
+        "active_profile = env.P ?: \"p\"\na = secret(\"hunter2-base\")\nprofile \"p\" { a = { x = \"hunter2-plain\" } }\ndup = \"hunter2-plain\"\nb = blob(\"text/plain\", \"hunter2-plain\")\n",
+    );
+    let out = active()
+        .args(["eval", "--materialise-blobs"])
+        .arg(&f)
+        .env("P", "p")
+        .output()
+        .expect("run active");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stdout.contains("hunter2-plain"), "{stdout}");
+    assert!(!stderr.contains("hunter2-plain"), "{stderr}");
+    assert!(!stdout.contains("payload_b64"), "{stdout}");
+    if out.status.success() {
+        assert!(stdout.contains("***SECRET***"), "{stdout}");
+    } else {
+        assert!(stderr.contains("B003"), "{stderr}");
+    }
+}
+
+#[test]
 fn eval_redacts_runtime_secrets_copied_outside_the_export_tree() {
     // Review 46: a let-bound runtime secret is not part of the exported
     // tree, so the export must seed the redactor from material env

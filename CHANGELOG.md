@@ -275,7 +275,9 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   patch transform, so only a node still visible through a benign
   export path keeps its text readable. Only the selected profile
   contributes (all profiles only for a computed selector, none when no
-  profile runs). Memo-served nodes seed
+  profile runs); a computed selector's material paths never enter the
+  evaluated-tree map, so their recorded nodes seed directly under the
+  conservative union. Memo-served nodes seed
   exactly like fresh ones. A copy of a material value elsewhere (a
   plain string, a comment, or a materialised payload) redacts, and a
   debug bundle keeps include targets, profile names, the

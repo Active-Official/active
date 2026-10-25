@@ -2141,3 +2141,21 @@ fn profile_value_exported_benignly_stays_visible() {
     assert!(json.contains("BENIGN-PATCH"), "{json}");
     assert!(!json.contains("hunter2-x"), "{json}");
 }
+
+#[test]
+fn computed_selector_seeds_inherited_material_profile_values() {
+    // Review 60: a computed selector cannot prove which profile runs, so
+    // its paths never enter the evaluated-tree map. The recorded node is
+    // material under every selection and must still seed a copy.
+    let src = "active_profile = env.P ?: \"p\"\na = secret(\"hunter2-base\")\nprofile \"p\" { a = { x = \"hunter2-plain\" } }\ndup = \"hunter2-plain\"\n";
+    let module = parse(src, "computed-seed").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("P".to_string(), "p".to_string());
+    let engine = Engine::hermetic().with_env(env);
+    let (value, _, seeds) = engine.evaluate_with_seeds(&module).expect("evaluate");
+    let mut secret = active_core::secret::SecretProfile::analyze(&module);
+    secret.absorb_secrets(&seeds);
+    let json = active_core::convert::value_to_pretty_json_with(&secret, &value);
+    assert!(!json.contains("hunter2-plain"), "{json}");
+    assert!(!json.contains("hunter2-base"), "{json}");
+}

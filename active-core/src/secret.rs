@@ -237,6 +237,10 @@ pub struct SecretRedactor {
     /// A matcher could not be built. Scanning stays correct but linear;
     /// never report a text clean because construction failed.
     linear_only: std::cell::Cell<bool>,
+    /// Lazily built matcher over the values at or above a length, for
+    /// substring probes that must ignore very short values. Keyed by
+    /// the requested minimum so one build serves a whole pass.
+    long_filtered: std::cell::RefCell<Option<(usize, Box<SecretRedactor>)>>,
 }
 
 impl std::fmt::Debug for SecretRedactor {
@@ -270,6 +274,7 @@ impl Default for SecretRedactor {
             levels: std::cell::RefCell::new(Vec::new()),
             long: std::cell::RefCell::new(Vec::new()),
             linear_only: std::cell::Cell::new(false),
+            long_filtered: std::cell::RefCell::new(None),
         }
     }
 }
@@ -351,12 +356,32 @@ impl SecretRedactor {
     /// two-byte secret as a substring would redact unrelated fragments
     /// of every string. Used by the debugger's duplicate pass, where
     /// the caller has no path context to redact a value in place.
+    ///
+    /// Scans through the same automata as [`Self::redact_text`]: a
+    /// filtered matcher is built once per minimum length, so a pass
+    /// over many tokens costs O(text) each instead of O(values ×
+    /// text).
     pub fn contains_substring(&self, text: &str, min_bytes: usize) -> bool {
-        let values = self.values.borrow();
-        !values.is_empty()
-            && values
-                .iter()
-                .any(|value| value.len() >= min_bytes && text.contains(value.as_str()))
+        if self.is_empty() || text.len() < min_bytes {
+            return false;
+        }
+        if self.min_len.get() >= min_bytes {
+            return self.redact_text(text).is_some();
+        }
+        let mut cache = self.long_filtered.borrow_mut();
+        if cache.as_ref().is_none_or(|(min, _)| *min != min_bytes) {
+            let mut filtered = SecretRedactor::new();
+            for value in self.values.borrow().iter() {
+                if value.len() >= min_bytes {
+                    filtered.insert(value.clone());
+                }
+            }
+            *cache = Some((min_bytes, Box::new(filtered)));
+        }
+        match cache.as_ref() {
+            Some((_, filtered)) => filtered.redact_text(text).is_some(),
+            None => false,
+        }
     }
 
     pub fn merge(&mut self, other: &SecretRedactor) {
@@ -1187,7 +1212,13 @@ impl StaticStrings {
             return None;
         }
         let resolved: Option<Rc<str>> = match module.get(id) {
-            Some(Node::Literal(Value::String(text))) => Some(Rc::from(text.as_str())),
+            Some(Node::Literal(Value::String(text))) => {
+                if !self.charge(text.len()) {
+                    None
+                } else {
+                    Some(Rc::from(text.as_str()))
+                }
+            }
             Some(Node::Ref(target)) => self.get_at(module, *target, depth + 1),
             Some(Node::Ident(name)) => match module.bindings.get(name) {
                 Some(target) => self.get_at(module, *target, depth + 1),
@@ -1199,10 +1230,25 @@ impl StaticStrings {
                 let mut complete = true;
                 for part in parts {
                     match part {
-                        crate::ir::InterpPart::Literal(text) => out.push_str(text),
+                        crate::ir::InterpPart::Literal(text) => {
+                            if !self.charge(text.len()) {
+                                complete = false;
+                                break;
+                            }
+                            out.push_str(text);
+                        }
                         crate::ir::InterpPart::Expr(expr) => {
                             match self.get_at(module, *expr, depth + 1) {
-                                Some(text) => out.push_str(&text),
+                                // The child charged its own text; the
+                                // concatenation adds the same bytes
+                                // again to the retained output.
+                                Some(text) => {
+                                    if !self.charge(text.len()) {
+                                        complete = false;
+                                        break;
+                                    }
+                                    out.push_str(&text);
+                                }
                                 None => {
                                     complete = false;
                                     break;
@@ -1220,15 +1266,22 @@ impl StaticStrings {
             _ => None,
         };
         self.visiting.remove(&id);
-        if let Some(text) = &resolved {
-            self.bytes = self.bytes.saturating_add(text.len());
-            if self.bytes > MAX_STATIC_BYTES {
-                self.exhausted = true;
-                return None;
-            }
-        }
         self.cache.insert(id, resolved.clone());
         resolved
+    }
+
+    /// Charge `bytes` against the shared budget before allocating.
+    /// Exhaustion is sticky: every later resolution returns `None`, so
+    /// the analysis fails closed deterministically instead of seeding
+    /// whichever nodes happened to be visited first.
+    fn charge(&mut self, bytes: usize) -> bool {
+        self.bytes = self.bytes.saturating_add(bytes);
+        if self.bytes > MAX_STATIC_BYTES {
+            self.exhausted = true;
+            false
+        } else {
+            true
+        }
     }
 }
 
@@ -2079,6 +2132,38 @@ impl SecretProfile {
             }
             if let Some(text) = static_strings.get(module, *id) {
                 literals.insert(text.to_string());
+            }
+        }
+        // A computed selector cannot prove which profile ran, so its
+        // paths stay out of `paths` and `export_paths`; the recorded
+        // node is nevertheless material under every possible selection.
+        // Seed it directly (the union is deliberately conservative).
+        for node in material_node_paths.keys() {
+            material_at_path.insert(*node);
+            if export_visible.contains(node) {
+                continue;
+            }
+            let Some(text) = static_strings.get(module, *node) else {
+                continue;
+            };
+            if !nodes.contains(node) && text.len() < 4 {
+                continue;
+            }
+            literals.insert(text.to_string());
+        }
+        // An exhausted static resolver cannot know which values it
+        // missed. Fail closed for the whole analysis: every literal is
+        // material and every path is unknown, so no surface can publish
+        // a value based on which nodes happened to be visited first.
+        if static_strings.exhausted {
+            truncated = true;
+            mark_all_material(module, &mut nodes, &mut material_envs);
+            export_visible.clear();
+            material_at_path.extend(nodes.iter().copied());
+            for node in &module.arena {
+                if let Node::Literal(Value::String(text)) = node {
+                    literals.insert(text.clone());
+                }
             }
         }
         Self {

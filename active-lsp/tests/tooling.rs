@@ -658,6 +658,28 @@ fn hover_redacts_a_copy_of_a_computed_let_secret() {
 }
 
 #[test]
+fn hover_redacts_a_copy_of_a_nested_profile_alias() {
+    // Review 59: a profile value in a nested table, reached through a
+    // long alias chain, must seed hover for a copy elsewhere.
+    let chain: String = (0..=20)
+        .map(|i| {
+            if i == 0 {
+                "let a0 = \"hunter2-alias\"\n".to_string()
+            } else {
+                format!("let a{i} = a{}\n", i - 1)
+            }
+        })
+        .collect();
+    let src = format!(
+        "{chain}t = {{ s = secret(\"hunter2-target\") }}\nother = a20\nactive_profile = \"p\"\nprofile \"p\" {{ other = 1, t = {{ s = a20 }} }}\ndup = \"hunter2-alias\"\n"
+    );
+    let doc = open(&src);
+    let hover = analysis::hover_at(&doc, 25, 0).expect("hover on dup");
+    let text = format!("{:?}", hover.contents);
+    assert!(!text.contains("hunter2-alias"), "hover leaked: {text}");
+}
+
+#[test]
 fn inlay_hints_redact_a_path_material_profile_value() {
     let doc = open(
         "let d = 30m\nk = secret(d)\nn = 1\nactive_profile = \"p\"\nprofile \"p\" { n = d }\n",

@@ -1188,16 +1188,62 @@ fn minimize_collects_seeds_on_a_hard_error() {
 }
 
 #[test]
-fn minimize_redacts_ml_escaped_dollar_and_malformed_env_names() {
-    // Review 58: `"""` escaped dollars are unmarked; a malformed
-    // env-call argument is not a canonical name.
-    let ml = "schema = { t = Int }\nt = secret(\"pa$word\")\ndup = \"\"\"pa\\$word\"\"\"\n";
-    let report = debug::minimal_case(ml, "T002", 0);
-    let reduced = report["reduced"].as_str().expect("reduced");
-    assert!(!reduced.contains("pa$word"), "{reduced}");
+fn minimize_redacts_escaped_dollar_forms_and_noncanonical_env_names() {
+    // Both `"""` and `"..."` unmark `\$`. The source spelling is the
+    // assertion: an unredacted token still reads `pa\$word`.
+    for dup in ["\"pa\\$word\"", "\"\"\"pa\\$word\"\"\""] {
+        let source = format!("schema = {{ t = Int }}\nt = secret(\"pa$word\")\ndup = {dup}\n");
+        let report = debug::minimal_case(&source, "T002", 0);
+        let reduced = report["reduced"].as_str().expect("reduced");
+        assert!(!reduced.contains("pa\\$word"), "{dup} survived: {reduced}");
+        assert!(!reduced.contains("pa$word"), "{dup} survived: {reduced}");
+    }
 
-    let malformed = "schema = { t = Int }\nt = secret(\"hunter2-x\")\nname = Secret.env(\"canary-1\")\nbad = 1 + \"s\"\n";
+    // Fail-closed sweep: a canonical env name stays readable so the
+    // bundle can reproduce the lookup, while a non-identifier name is
+    // not trusted and is redacted.
+    let malformed = "t = secret(\"hunter2-x\")\nok = secret.env(\"ACTIVE_R59_OK\")\nbad = secret.env(\"canary-1\")\nboom = 1 + \"s\"\n";
     let report = debug::minimal_case(malformed, "T001", 0);
     let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(reduced.contains("ACTIVE_R59_OK"), "{reduced}");
     assert!(!reduced.contains("canary-1"), "{reduced}");
+}
+
+#[test]
+fn minimize_redacts_a_secret_embedded_in_a_plain_duplicate() {
+    // Review 59: a plain token went through exact matching only, so a
+    // secret inside surrounding text survived. Substring matches apply
+    // at four bytes and up.
+    let source = "schema = { t = Int }\nt = secret(\"pa$word\")\ndup = \"pre pa$word post\"\nshort = \"pre x post\"\n";
+    let report = debug::minimal_case(source, "T002", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(!reduced.contains("pa$word"), "{reduced}");
+    assert!(reduced.contains("pre x post"), "{reduced}");
+}
+
+#[test]
+fn minimize_keeps_include_profile_and_patch_structure_on_a_hard_error() {
+    // Review 58/59: a fail-closed sweep must not replace the literals
+    // that resolve an include, select a profile, or apply a patch.
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "active-debug-r59-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&dir).expect("create dir");
+    std::fs::write(dir.join("inc.active"), "included = 1\n").expect("write include");
+    let main = dir.join("main.active");
+    let source = "include \"inc.active\"\nt = secret(\"hunter2-inc\")\nactive_profile = \"prod\"\nprofile \"prod\" { level = \"debug\" }\n@patch(\"level\", \"info\")\nkeep = \"benign-value\"\nboom = 1 + \"s\"\n";
+    std::fs::write(&main, source).expect("write main");
+    let report = debug::minimal_case_with(source, "T001", 0, Some(&main));
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(reduced.contains("include \"inc.active\""), "{reduced}");
+    assert!(reduced.contains("active_profile = \"prod\""), "{reduced}");
+    assert!(reduced.contains("profile \"prod\""), "{reduced}");
+    assert!(reduced.contains("@patch(\"level\", \"info\")"), "{reduced}");
+    assert!(!reduced.contains("hunter2-inc"), "{reduced}");
+    assert!(!reduced.contains("benign-value"), "{reduced}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

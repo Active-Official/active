@@ -20,6 +20,7 @@
 //! longest-first, then lexicographically.
 
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use serde_json::Value as JsonValue;
 
@@ -343,6 +344,19 @@ impl SecretRedactor {
     /// replaced without over-redacting longer or shorter strings.
     pub fn contains_exact(&self, text: &str) -> bool {
         self.seen.contains(text)
+    }
+
+    /// True when `text` contains a known value of at least `min_bytes`.
+    /// Very short values stay exact-match only: spreading a one- or
+    /// two-byte secret as a substring would redact unrelated fragments
+    /// of every string. Used by the debugger's duplicate pass, where
+    /// the caller has no path context to redact a value in place.
+    pub fn contains_substring(&self, text: &str, min_bytes: usize) -> bool {
+        let values = self.values.borrow();
+        !values.is_empty()
+            && values
+                .iter()
+                .any(|value| value.len() >= min_bytes && text.contains(value.as_str()))
     }
 
     pub fn merge(&mut self, other: &SecretRedactor) {
@@ -1121,44 +1135,100 @@ fn mark_all_material(module: &Module, nodes: &mut HashSet<NodeId>, envs: &mut Ha
     }
 }
 
-/// Statically resolve a string expression through literals, references,
-/// and interpolations of the same. Used to seed a profile-supplied
-/// value at a material path without running the evaluator. `None` when
-/// any part needs runtime input (env, arithmetic, calls).
-fn resolve_static_node(module: &Module, id: NodeId, depth: usize) -> Option<NodeId> {
-    if depth > 16 {
-        return None;
-    }
-    match module.get(id)? {
-        Node::Ref(target) => resolve_static_node(module, *target, depth + 1),
-        Node::Ident(name) => resolve_static_node(module, *module.bindings.get(name)?, depth + 1),
-        Node::Semantic { inner, .. } => resolve_static_node(module, *inner, depth + 1),
-        _ => Some(id),
-    }
+/// Bound on node visits across one analysis' static resolution. A
+/// profile may reference a large shared subtree from many paths; the
+/// cache resolves each node once, and this stops a crafted graph from
+/// costing unbounded CPU.
+const MAX_STATIC_WORK: usize = 2_000_000;
+/// Bound on resolved bytes held by one analysis' resolver.
+const MAX_STATIC_BYTES: usize = 16 * 1024 * 1024;
+/// Recursion bound for one chain. Cycles are detected exactly by the
+/// `visiting` set; this only keeps a crafted deep chain off the stack.
+const MAX_STATIC_DEPTH: usize = 256;
+
+/// Static string resolution through literals, references, bindings,
+/// semantic wrappers, and interpolations of the same. Used to seed a
+/// profile-supplied value at a material path without running the
+/// evaluator. `None` when any part needs runtime input (env,
+/// arithmetic, calls), when a reference cycle is met, or when the
+/// shared budget is exhausted; evaluator seeds still cover every
+/// shipped export path in those cases.
+#[derive(Default)]
+struct StaticStrings {
+    cache: HashMap<NodeId, Option<Rc<str>>>,
+    visiting: HashSet<NodeId>,
+    work: usize,
+    bytes: usize,
+    exhausted: bool,
 }
 
-fn static_string_deep(module: &Module, id: NodeId, depth: usize) -> Option<String> {
-    if depth > 16 {
-        return None;
+impl StaticStrings {
+    fn get(&mut self, module: &Module, id: NodeId) -> Option<Rc<str>> {
+        self.get_at(module, id, 0)
     }
-    match module.get(id)? {
-        Node::Literal(Value::String(text)) => Some(text.clone()),
-        Node::Ref(target) => static_string_deep(module, *target, depth + 1),
-        Node::Ident(name) => static_string_deep(module, *module.bindings.get(name)?, depth + 1),
-        Node::Semantic { inner, .. } => static_string_deep(module, *inner, depth + 1),
-        Node::Interpolate { parts } => {
-            let mut out = String::new();
-            for part in parts {
-                match part {
-                    crate::ir::InterpPart::Literal(text) => out.push_str(text),
-                    crate::ir::InterpPart::Expr(expr) => {
-                        out.push_str(&static_string_deep(module, *expr, depth + 1)?)
+
+    fn get_at(&mut self, module: &Module, id: NodeId, depth: usize) -> Option<Rc<str>> {
+        if self.exhausted || depth > MAX_STATIC_DEPTH {
+            return None;
+        }
+        if let Some(hit) = self.cache.get(&id) {
+            return hit.clone();
+        }
+        // A reference cycle cannot produce text. Stop on the revisit
+        // instead of counting hops, so every legal alias chain (a
+        // `let` chain of any length) still resolves.
+        if !self.visiting.insert(id) {
+            return None;
+        }
+        self.work = self.work.saturating_add(1);
+        if self.work > MAX_STATIC_WORK {
+            self.exhausted = true;
+            self.visiting.remove(&id);
+            return None;
+        }
+        let resolved: Option<Rc<str>> = match module.get(id) {
+            Some(Node::Literal(Value::String(text))) => Some(Rc::from(text.as_str())),
+            Some(Node::Ref(target)) => self.get_at(module, *target, depth + 1),
+            Some(Node::Ident(name)) => match module.bindings.get(name) {
+                Some(target) => self.get_at(module, *target, depth + 1),
+                None => None,
+            },
+            Some(Node::Semantic { inner, .. }) => self.get_at(module, *inner, depth + 1),
+            Some(Node::Interpolate { parts }) => {
+                let mut out = String::new();
+                let mut complete = true;
+                for part in parts {
+                    match part {
+                        crate::ir::InterpPart::Literal(text) => out.push_str(text),
+                        crate::ir::InterpPart::Expr(expr) => {
+                            match self.get_at(module, *expr, depth + 1) {
+                                Some(text) => out.push_str(&text),
+                                None => {
+                                    complete = false;
+                                    break;
+                                }
+                            }
+                        }
                     }
                 }
+                if complete {
+                    Some(Rc::from(out))
+                } else {
+                    None
+                }
             }
-            Some(out)
+            _ => None,
+        };
+        self.visiting.remove(&id);
+        if let Some(text) = &resolved {
+            self.bytes = self.bytes.saturating_add(text.len());
+            if self.bytes > MAX_STATIC_BYTES {
+                self.exhausted = true;
+                return None;
+            }
         }
-        _ => None,
+        self.cache.insert(id, resolved.clone());
+        resolved
     }
 }
 
@@ -1357,6 +1427,10 @@ pub struct SecretProfile {
     /// even when its source node is also used benignly elsewhere that
     /// the profile overrode.
     export_visible: HashSet<NodeId>,
+    /// Nodes served at a material path in the final tree. Unlike
+    /// [`Self::material_node_paths`] this is a set computed after every
+    /// transform, so a patched-over path no longer counts.
+    material_at_path: HashSet<NodeId>,
 }
 
 impl SecretProfile {
@@ -1607,6 +1681,11 @@ impl SecretProfile {
                             }
                             for path in &replaces {
                                 remove_subtree(&mut paths, path);
+                                // The replaced subtree is gone from the
+                                // evaluated tree; its paths are re-added
+                                // below only where the profile provides
+                                // them.
+                                export_paths.retain(|key| !path_under(key, path));
                             }
                             for (path, node) in &profile_paths {
                                 let provided_only = !data_paths.contains(path);
@@ -1639,23 +1718,6 @@ impl SecretProfile {
                                         &mut material_envs,
                                         &mut env_name_cache,
                                     );
-                                }
-                                // A profile value at a material path that
-                                // is not also visible through a benign
-                                // path is authored material: its text
-                                // seeds copies and payloads.
-                                let visible_benign = paths.iter().any(|(benign_path, id)| {
-                                    id == node
-                                        && data_paths.contains(benign_path)
-                                        && !nodes.contains(id)
-                                        && !fallback_secret_paths.contains(benign_path)
-                                });
-                                if (own || inherited || under) && !visible_benign {
-                                    if let Some(text) = static_string_deep(module, *node, 0) {
-                                        if own || text.len() >= 4 {
-                                            literals.insert(text);
-                                        }
-                                    }
                                 }
                             }
                             let profile_keys: Vec<String> = profile_paths.keys().cloned().collect();
@@ -1732,19 +1794,6 @@ impl SecretProfile {
                                         &mut material_envs,
                                         &mut env_name_cache,
                                     );
-                                    let visible_benign = paths.iter().any(|(benign_path, id)| {
-                                        *id == node
-                                            && data_paths.contains(benign_path)
-                                            && !nodes.contains(id)
-                                            && !fallback_secret_paths.contains(benign_path)
-                                    });
-                                    if !visible_benign {
-                                        if let Some(text) = static_string_deep(module, node, 0) {
-                                            if own || text.len() >= 4 {
-                                                literals.insert(text);
-                                            }
-                                        }
-                                    }
                                     if own {
                                         nodes.insert(node);
                                     }
@@ -1841,10 +1890,15 @@ impl SecretProfile {
                     let mut patched = HashMap::new();
                     truncated |= walk_paths(module, *value, &path, &mut patched, true, true);
                     if applies {
+                        // A Set replaces the subtree: the old
+                        // descendants are no longer part of the tree.
+                        export_paths.retain(|key| !path_under(key, &path));
                         export_paths.extend(patched.keys().cloned());
                         // A Set replaces the subtree: profile paths
-                        // under it are stale.
+                        // under it are stale, and so is the old value's
+                        // step label (the new value answers for itself).
                         computed_profile_paths.retain(|(known, _)| !path_under(known, &path));
+                        remove_material_node_paths(&mut material_node_paths, &path);
                     }
                     for (known, node) in patched {
                         if nodes.contains(&node) {
@@ -1947,13 +2001,16 @@ impl SecretProfile {
                     if export_paths.contains(&concrete) {
                         // Explicit values, profile overrides, and patch
                         // destinations win over a fill.
-                        paths.entry(concrete).or_insert(node);
+                        paths.entry(concrete.clone()).or_insert(node);
                     } else {
                         // A binding-only entry is not the exported
                         // value: the evaluator fills this path, so the
                         // fill node wins over the placeholder.
-                        paths.insert(concrete, node);
+                        paths.insert(concrete.clone(), node);
                     }
+                    // The filled path is part of the evaluated document,
+                    // so a node there can be benignly export-visible.
+                    export_paths.insert(concrete);
                 }
             }
         }
@@ -1968,64 +2025,60 @@ impl SecretProfile {
                 }
             }
         }
-        // Profile-supplied values at material data paths are authored
-        // material even when the merge branch treats them as a shared
-        // reference. Resolve them statically and seed, unless the same
-        // text is still visible through a benign data path.
-        for table_id in module.profiles.values() {
-            let Some(Node::Table { fields }) = module.get(*table_id) else {
+        // A node is export-visible when some path the evaluated document
+        // actually provides maps to it and neither the node nor that
+        // path is material. `paths` also holds binding names and stale
+        // nodes from failed Sets, so visibility is filtered by
+        // `export_paths` (root tree + the selected profile's paths +
+        // successful patch destinations + filled defaults).
+        //
+        // Visibility suppresses *literal* seeding only. The path-aware
+        // renderer redacts a material path on its own; the seed exists
+        // to catch copies of the text elsewhere (`dup`, a blob payload).
+        // When the same node is still exported through a benign path,
+        // its text legitimately appears there, so spreading the seed
+        // would corrupt that benign value.
+        let mut export_visible: HashSet<NodeId> = HashSet::new();
+        for (path, id) in &paths {
+            if !export_paths.contains(path) {
                 continue;
-            };
-            for (key, child) in fields {
-                let data_material = data_paths.contains(key)
-                    && (base_paths.get(key).is_some_and(|id| nodes.contains(id))
-                        || fallback_secret_paths.contains(key));
-                if !data_material {
-                    continue;
-                }
-                let terminal = resolve_static_node(module, *child, 0);
-                let visible_benign = terminal.is_some_and(|node| {
-                    paths.iter().any(|(benign_path, id)| {
-                        *id == node
-                            && data_paths.contains(benign_path)
-                            && !nodes.contains(id)
-                            && !fallback_secret_paths.contains(benign_path)
-                    })
-                });
-                if visible_benign {
-                    continue;
-                }
-                if let Some(text) = static_string_deep(module, *child, 0) {
-                    if text.len() >= 4 {
-                        literals.insert(text);
-                    }
-                }
+            }
+            if !nodes.contains(id) && !fallback_secret_paths.contains(path) {
+                export_visible.insert(*id);
             }
         }
-        // Nodes still visible through a benign export path after every
-        // transform. A path-material value outside this set is material
-        // even when its source node is also used benignly elsewhere that
-        // the profile overrode.
-        let export_visible: HashSet<NodeId> = paths
-            .iter()
-            .filter(|(path, id)| !nodes.contains(*id) && !fallback_secret_paths.contains(*path))
-            .map(|(_, id)| *id)
-            .collect();
-        // Nodes marked material after the first literal pass (locator
-        // subtrees, profile selections, fail-closed marking): their
-        // authored text is known material too. A value visible through a
-        // benign export path stays readable; a path-material value
-        // shorter than four bytes does not seed (it would corrupt
-        // unrelated strings), while structural secrets of any length do.
-        for id in nodes.iter().chain(material_node_paths.keys()) {
+        // Every material path's current value is material: read the node
+        // from the post-transform map, so a value a later profile or
+        // patch moved or replaced is judged where it now is.
+        let mut material_at_path: HashSet<NodeId> = HashSet::new();
+        let mut static_strings = StaticStrings::default();
+        for path in &fallback_secret_paths {
+            let Some(node) = paths.get(path).copied() else {
+                continue;
+            };
+            material_at_path.insert(node);
+            if export_visible.contains(&node) {
+                continue;
+            }
+            let Some(text) = static_strings.get(module, node) else {
+                continue;
+            };
+            // A value that is material only through its path seeds when
+            // it is long enough not to corrupt unrelated text; a
+            // structurally secret value seeds at any length.
+            if !nodes.contains(&node) && text.len() < 4 {
+                continue;
+            }
+            literals.insert(text.to_string());
+        }
+        // Structural material: every literal inside a locator subtree,
+        // including nodes that never enter the exported tree.
+        for id in &nodes {
             if export_visible.contains(id) {
                 continue;
             }
-            if let Some(text) = static_string_deep(module, *id, 0) {
-                if material_node_paths.contains_key(id) && text.len() < 4 {
-                    continue;
-                }
-                literals.insert(text);
+            if let Some(text) = static_strings.get(module, *id) {
+                literals.insert(text.to_string());
             }
         }
         Self {
@@ -2038,6 +2091,7 @@ impl SecretProfile {
             material_node_paths,
             data_paths,
             export_visible,
+            material_at_path,
         }
     }
 
@@ -2120,6 +2174,13 @@ impl SecretProfile {
     /// marked (a profile selection), for step-trace rendering.
     pub fn material_path_for(&self, id: NodeId) -> Option<&str> {
         self.material_node_paths.get(&id).map(String::as_str)
+    }
+
+    /// True when the node is served at a material path in the final
+    /// tree, even if the node is also used benignly elsewhere. Computed
+    /// after every profile and patch, so a replaced value drops out.
+    pub fn node_is_path_material(&self, id: NodeId) -> bool {
+        self.material_at_path.contains(&id)
     }
 
     /// True for a path the exported tree owns (root or selected

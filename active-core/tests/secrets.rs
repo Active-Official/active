@@ -2073,3 +2073,71 @@ fn profile_override_of_the_benign_slot_still_seeds() {
     let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
     assert!(!json.contains(raw), "{json}");
 }
+
+#[test]
+fn nested_profile_tables_and_long_alias_chains_seed() {
+    // Review 59 (HIGH): a profile value nested in a table, reached
+    // through a long `let` alias chain, was never seeded because
+    // visibility looked at the pre-transform tree. Both field orders
+    // must behave the same, and a copy of the text must redact.
+    let chain: String = (0..=20)
+        .map(|i| {
+            if i == 0 {
+                "let a0 = \"hunter2-alias\"\n".to_string()
+            } else {
+                format!("let a{i} = a{}\n", i - 1)
+            }
+        })
+        .collect();
+    for profile in [
+        "profile \"p\" { t = { s = a20 }, other = 1 }",
+        "profile \"p\" { other = 1, t = { s = a20 } }",
+    ] {
+        let src = format!(
+            "{chain}t = {{ s = secret(\"hunter2-target\") }}\nother = a20\nactive_profile = \"p\"\n{profile}\ndup = \"hunter2-alias\"\n"
+        );
+        let module = parse(&src, "nested-profile").expect("parse");
+        let (value, _, seeds) = Engine::hermetic()
+            .evaluate_with_seeds(&module)
+            .expect("evaluate");
+        let mut secret = active_core::secret::SecretProfile::analyze(&module);
+        secret.absorb_secrets(&seeds);
+        let json = active_core::convert::value_to_pretty_json_with(&secret, &value);
+        assert!(!json.contains("hunter2-alias"), "{profile}: {json}");
+        assert!(!json.contains("hunter2-target"), "{profile}: {json}");
+    }
+}
+
+#[test]
+fn unselected_profiles_do_not_seed_literals() {
+    // Review 59 (MEDIUM): only the selected profile may contribute
+    // material values. `q` never runs, so `other` stays readable.
+    let src = "t = secret(\"hunter2-x\")\nother = \"hunter2-other\"\nprofile \"q\" { t = \"hunter2-other\" }\n";
+    let module = parse(src, "unselected-profile").expect("parse");
+    let (value, _) = Engine::hermetic().evaluate(&module).expect("evaluate");
+    let secret = active_core::secret::SecretProfile::analyze(&module);
+    let json = active_core::convert::value_to_pretty_json_with(&secret, &value);
+    assert!(json.contains("hunter2-other"), "{json}");
+    assert!(!json.contains("hunter2-x"), "{json}");
+}
+
+#[test]
+fn profile_value_exported_benignly_stays_visible() {
+    // A value placed at a material path by a profile is redacted there,
+    // and stays readable at a benign path that exports the same node.
+    // A later patch over a material path answers for its own value.
+    let src = "let v = \"hunter2-shared\"\nt = secret(\"hunter2-x\")\nother = v\nactive_profile = \"p\"\nprofile \"p\" { t = v }\n";
+    let module = parse(src, "benign-shared").expect("parse");
+    let (value, _) = Engine::hermetic().evaluate(&module).expect("evaluate");
+    let secret = active_core::secret::SecretProfile::analyze(&module);
+    let json = active_core::convert::value_to_pretty_json_with(&secret, &value);
+    assert!(json.contains("hunter2-shared"), "{json}");
+
+    let patched = "other = secret(\"hunter2-x\")\n@patch(\"other\", \"BENIGN-PATCH\")\n";
+    let module = parse(patched, "benign-patch").expect("parse");
+    let (value, _) = Engine::hermetic().evaluate(&module).expect("evaluate");
+    let secret = active_core::secret::SecretProfile::analyze(&module);
+    let json = active_core::convert::value_to_pretty_json_with(&secret, &value);
+    assert!(json.contains("BENIGN-PATCH"), "{json}");
+    assert!(!json.contains("hunter2-x"), "{json}");
+}

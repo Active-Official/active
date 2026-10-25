@@ -3129,6 +3129,41 @@ fn materialise_blobs_fails_closed_on_a_path_material_blob() {
 }
 
 #[test]
+fn materialise_blobs_never_emits_a_seeded_alias_payload() {
+    // Review 59 (HIGH): a profile value behind a long alias chain used
+    // to reach `payload_b64`. The payload must be refused (B003) or
+    // redacted, and its bytes must never appear in either stream.
+    let chain: String = (0..=20)
+        .map(|i| {
+            if i == 0 {
+                "let a0 = \"hunter2-alias\"\n".to_string()
+            } else {
+                format!("let a{i} = a{}\n", i - 1)
+            }
+        })
+        .collect();
+    let src = format!(
+        "{chain}t = {{ s = secret(\"hunter2-target\") }}\nother = a20\nactive_profile = \"p\"\nprofile \"p\" {{ other = 1, t = {{ s = a20 }} }}\ndup = \"hunter2-alias\"\nb = blob(\"text/plain\", a20)\n"
+    );
+    let f = fixture("r59_alias_blob.active", &src);
+    let out = active()
+        .args(["eval", "--materialise-blobs"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stdout.contains("hunter2-alias"), "{stdout}");
+    assert!(!stderr.contains("hunter2-alias"), "{stderr}");
+    assert!(!stdout.contains("payload_b64"), "{stdout}");
+    if out.status.success() {
+        assert!(stdout.contains("***SECRET***"), "{stdout}");
+    } else {
+        assert!(stderr.contains("B003"), "{stderr}");
+    }
+}
+
+#[test]
 fn eval_redacts_runtime_secrets_copied_outside_the_export_tree() {
     // Review 46: a let-bound runtime secret is not part of the exported
     // tree, so the export must seed the redactor from material env

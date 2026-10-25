@@ -269,10 +269,18 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   construction. Profile merging uses a larger, separate bound so
   normal 10k-key profiles do not fail closed. A profile value at a
   material path is resolved statically (literals, `let` references,
-  string interpolation) and seeds the redactor unless the same node is
-  still visible through a benign export path; memo-served nodes seed
-  exactly like fresh ones. A copy of it elsewhere (a plain string or a
-  materialised payload) redacts. Runtime secrets seed the same redactor as authored literals: the evaluator returns every
+  string interpolation, through alias chains of any legal length with
+  cycle detection, memoization, and a shared work/byte budget) and
+  seeds the redactor; seeding is deferred until after every profile and
+  patch transform, so only a node still visible through a benign
+  export path keeps its text readable. Only the selected profile
+  contributes (all profiles only for a computed selector, none when no
+  profile runs). Memo-served nodes seed
+  exactly like fresh ones. A copy of a material value elsewhere (a
+  plain string, a comment, or a materialised payload) redacts, and a
+  debug bundle keeps include targets, profile names, the
+  active-profile selector, and patch path arguments readable even under
+  the fail-closed sweep. Runtime secrets seed the same redactor as authored literals: the evaluator returns every
   material node's text (covering `let`-bound and computed secrets and
   lazy host lookups), material environment values are merged, and every
   surface — CLI eval/convert/doc/lock/inspect, FFI, WASM, LSP hover,

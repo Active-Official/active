@@ -10,6 +10,11 @@ use serde_json::{json, Value as JsonValue};
 use crate::eval::StepEvent;
 use crate::{Engine, EvalError, Module};
 
+/// Minimum length for a substring duplicate match. A shorter structural
+/// secret is still matched exactly: spreading it as a substring would
+/// redact unrelated fragments of every string in the bundle.
+const MIN_SUBSTRING_SEED: usize = 4;
+
 /// First step index matching a breakpoint selector:
 /// `taint`, `path:<prefix>`, `code:<CODE>`, or `node:<n>` (0-based
 /// topological index). Unknown selectors match nothing.
@@ -482,6 +487,7 @@ fn redact_secret_literals(
     }
     let lexed = crate::parser::Lexer::new(&normalized).tokenize();
     let env_names = env_name_span_keys(&lexed.tokens);
+    let structural = structural_span_keys(&lexed.tokens);
     // Authored locator values (decoded token text).
     let mut authored = crate::secret::SecretRedactor::new();
     for token in &lexed.tokens {
@@ -508,7 +514,7 @@ fn redact_secret_literals(
         if merged.iter().any(|&(s, e)| start >= s && end <= e) {
             continue;
         }
-        if env_names.contains(&token_key(token)) {
+        if env_names.contains(&token_key(token)) || structural.contains(&token_key(token)) {
             continue;
         }
         if fail_closed {
@@ -522,7 +528,16 @@ fn redact_secret_literals(
             authored.redact_text(&token.text).is_some() || seeds.redact_text(&token.text).is_some()
         } else {
             match decoded_token_text(token) {
-                Some(value) => value_is_known(&value, &authored, seeds),
+                Some(value) => {
+                    // Exact (whole-token) duplicates catch the common
+                    // copy; a substring match catches a secret embedded
+                    // in surrounding text. Values shorter than four
+                    // bytes stay exact-only so a tiny structural secret
+                    // cannot redact unrelated text everywhere.
+                    value_is_known(&value, &authored, seeds)
+                        || authored.contains_substring(&value, MIN_SUBSTRING_SEED)
+                        || seeds.contains_substring(&value, MIN_SUBSTRING_SEED)
+                }
                 None => false,
             }
         };
@@ -692,6 +707,77 @@ fn is_env_name(text: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// Tokens whose text is document structure rather than data: `include`
+/// targets, profile names, the active-profile selector, and the path
+/// arguments of `@patch`/`@remove`/`@rename`. A minimal case must keep
+/// them readable, or the bundle can no longer resolve includes, select
+/// the profile, or apply its patches. Each shape must start a line and
+/// close on that same line; an incomplete shape is not trusted, so
+/// fail-closed still redacts it.
+fn structural_span_keys(
+    tokens: &[crate::parser::Token],
+) -> std::collections::HashSet<(u32, u32, u32, u32)> {
+    let mut out = std::collections::HashSet::new();
+    for index in 0..tokens.len() {
+        let line = tokens[index].line;
+        let starts_line = index == 0 || tokens[index - 1].line < line;
+        if !starts_line {
+            continue;
+        }
+        let same_line = |at: usize| tokens.get(at).is_some_and(|token| token.line == line);
+        let next_string = |at: usize| {
+            tokens
+                .get(at)
+                .filter(|token| token.line == line && is_string_token(token))
+        };
+        match tokens[index].text.as_str() {
+            "include" | "profile" => {
+                if let Some(token) = next_string(index + 1) {
+                    out.insert(token_key(token));
+                }
+            }
+            "active_profile" => {
+                if same_line(index + 1) && tokens[index + 1].text == "=" {
+                    if let Some(token) = next_string(index + 2) {
+                        out.insert(token_key(token));
+                    }
+                }
+            }
+            "@" => {
+                let is_directive = same_line(index + 1)
+                    && matches!(
+                        tokens[index + 1].text.as_str(),
+                        "patch" | "remove" | "rename"
+                    );
+                if !is_directive || !same_line(index + 2) || tokens[index + 2].text != "(" {
+                    continue;
+                }
+                let mut probe = index + 3;
+                let mut found = Vec::new();
+                let mut closed = false;
+                while let Some(token) = tokens.get(probe) {
+                    if token.line != line {
+                        break;
+                    }
+                    if token.text == ")" {
+                        closed = true;
+                        break;
+                    }
+                    if is_string_token(token) {
+                        found.push(token_key(token));
+                    }
+                    probe += 1;
+                }
+                if closed {
+                    out.extend(found);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 /// Decoded value of a string token. `token.text` is the decoded literal
 /// text (an interpolation's `${…}` stays in the text; nested tokens are
 /// not part of the lexer stream). Multi-line strings are dedented.
@@ -704,7 +790,23 @@ fn decoded_token_text(token: &crate::parser::Token) -> Option<String> {
             (text, Some(marks))
         }
         K::MlSingleString => (crate::parser::strip_common_indent(&token.text), None),
-        K::String(_) => (token.text.clone(), None),
+        // A plain string keeps its `\$` sentinel; the lexer records the
+        // sentinel in the position map. Without the marks a duplicate of
+        // `"pa\$word"` would keep U+E000 and under-redact.
+        K::String(positions) => (
+            token.text.clone(),
+            Some(
+                token
+                    .text
+                    .chars()
+                    .enumerate()
+                    .map(|(index, c)| {
+                        c == crate::parser::ESCAPED_DOLLAR
+                            && positions.get(index) == Some(&crate::parser::SENTINEL_POS)
+                    })
+                    .collect(),
+            ),
+        ),
         K::SingleString => (token.text.clone(), None),
         _ => return None,
     };

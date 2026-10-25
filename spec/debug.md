@@ -123,23 +123,33 @@ subtrees are replaced structurally, and `--minimize` rewrites authored
 secret literals to `"***SECRET***"`. A duplicate of a known secret
 value elsewhere — another string token, a blob payload, a comment, or a
 base64/hex encoding of the value — is redacted too. Matching uses exact
-decoded token equality (so a short secret does not rewrite unrelated
-strings) and substring matching for comments (which are non-semantic);
-canonical `secret.env("NAME")` arguments are exempt. Padded, unpadded,
+decoded token equality plus a substring match for known values of at
+least four bytes (so a secret embedded in surrounding text is caught
+while a short secret cannot rewrite unrelated strings); comments use
+substring matching throughout (they are non-semantic); canonical
+`secret.env("NAME")` arguments are exempt. Padded, unpadded,
 and URL-safe base64 plus hex (with optional `0x` and whitespace) are
 decoded when they form the whole value; an encoded secret embedded in a
 longer string is not decoded. Both triple-quoted string forms are
-dedented before matching; escaped dollars are unmarked where the lexer
-marks them (a genuine U+E000 stays). An interpolation keeps `${…}` in
+dedented before matching; escaped dollars are unmarked in both the
+`"""` and `"…"` forms where the lexer marks them (a genuine U+E000
+stays). An interpolation keeps `${…}` in
 its token text, so a known value anywhere in that text redacts the
 token. If the document fails hard before every secret node is walked,
-the bundle fails closed and redacts every string literal (canonical
-env names excepted). Taint is structural, so a plain
+the bundle fails closed and redacts every string literal except
+canonical env names and structural literals — include targets, profile
+names, the active-profile selector, and `@patch`/`@remove`/`@rename`
+path arguments — which the bundle must keep to stay reproducible. Taint
+is structural, so a plain
 value used as a locator (a `let`, a table field, an environment lookup)
 and any interpolation, reference, or container built from it are
 material even without a `Value::Secret` marker; containers keep their
 shape and every material leaf carries the marker, whatever its kind
-(a number used as a locator is material too). Known secret substrings
+(a number used as a locator is material too). A profile or patch value
+that sits at a material path seeds its resolved text, so a copy
+elsewhere redacts; a node still visible through a benign export path
+after every transform stays readable in that slot. Known secret
+substrings
 are redacted longest-first, and an existing marker is opaque, so a
 secret whose text overlaps the marker cannot rewrite it. A line break
 between `secret` and `(` (which the parser rejects) is normalized for

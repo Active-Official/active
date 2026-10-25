@@ -1591,7 +1591,13 @@ impl Engine {
                         if let Some(out) = seeds.as_deref_mut() {
                             if let Some(profile) = secret_profile.as_ref() {
                                 let structural = profile.node_is_secret(node_id);
-                                let path_material = profile.material_path_for(node_id).is_some()
+                                // A node served at a material path is
+                                // material for this evaluation unless it
+                                // is still exported through a benign
+                                // path (the renderer redacts the material
+                                // occurrence; spreading the seed would
+                                // corrupt the benign one).
+                                let path_material = profile.node_is_path_material(node_id)
                                     && !profile.node_is_export_visible(node_id);
                                 if structural || path_material {
                                     if let Value::Secret(text) | Value::String(text) = value {
@@ -1941,7 +1947,7 @@ impl Engine {
             if let Some(out) = seeds.as_deref_mut() {
                 if let Some(profile) = secret_profile.as_ref() {
                     let structural = profile.node_is_secret(node_id);
-                    let path_material = profile.material_path_for(node_id).is_some()
+                    let path_material = profile.node_is_path_material(node_id)
                         && !profile.node_is_export_visible(node_id);
                     if structural || path_material {
                         if let Value::Secret(text) | Value::String(text) = &value {

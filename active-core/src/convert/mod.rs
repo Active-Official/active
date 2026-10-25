@@ -40,7 +40,10 @@ pub use import::{
     yaml_text_to_active,
 };
 pub use inspect::{schema_inspect, schema_inspect_with_profile, INSPECT_VERSION};
-pub use suggest::{suggest_patches, suggest_patches_structured, PatchKind, PatchSuggestion};
+pub use suggest::{
+    suggest_patches, suggest_patches_structured, suggest_patches_structured_with_profile,
+    PatchKind, PatchSuggestion,
+};
 pub use value_inspect::{
     inspect_path, inspect_path_with_profile, inspect_path_with_profile_env,
     render_text as render_inspection_text,
@@ -184,6 +187,30 @@ pub(crate) fn blob_payload_is_material(
             .redact_text(&String::from_utf8_lossy(bytes))
             .is_some()
     })
+}
+
+/// True when a dotted path resolves to a schema node. Used to tell a
+/// structural reference (a real field name) from authored text that
+/// merely looks like one.
+pub(crate) fn schema_path_exists(module: &crate::ir::Module, path: &str) -> bool {
+    let Some(mut id) = module.schema else {
+        return false;
+    };
+    for segment in path.split('.') {
+        match module.get(id) {
+            Some(crate::ir::Node::SchemaTable { fields, .. }) => match fields.get(segment) {
+                Some(next) => id = *next,
+                None => return false,
+            },
+            _ => return false,
+        }
+    }
+    matches!(
+        module.get(id),
+        Some(crate::ir::Node::SchemaField { .. })
+            | Some(crate::ir::Node::SchemaTable { .. })
+            | Some(crate::ir::Node::SchemaArray { .. })
+    )
 }
 
 /// Identity shape for a blob whose identity must be withheld: the

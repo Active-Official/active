@@ -2068,12 +2068,20 @@ impl Engine {
             .iter()
             .any(|node| matches!(node, crate::ir::Node::Secret { .. }));
         if has_secret || !module.profiles.is_empty() {
-            let profile = crate::secret::SecretProfile::analyze_with_profile(
+            let profile = crate::secret::SecretProfile::with_context(
                 module,
                 self.profile_override.as_deref(),
+                Some(&self.env),
+                None,
             );
+            // Host and computed values are not module literals; seed a
+            // runtime redactor from the evaluated nodes as well.
+            let runtime = crate::validate::runtime_secret_redactor(&values, &profile);
             for diagnostic in &mut diagnostics {
                 if let Some(message) = profile.redact_authored_text(&diagnostic.message) {
+                    diagnostic.message = message;
+                }
+                if let Some(message) = runtime.redact_every_occurrence(&diagnostic.message) {
                     diagnostic.message = message;
                 }
             }

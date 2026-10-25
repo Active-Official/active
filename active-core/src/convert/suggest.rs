@@ -49,6 +49,18 @@ pub fn suggest_patches(module: &Module, diags: &[Diagnostic]) -> Vec<String> {
 /// Structured suggestions in diagnostic order. Same content as
 /// [`suggest_patches`], shaped for agents to parse instead of scrape.
 pub fn suggest_patches_structured(module: &Module, diags: &[Diagnostic]) -> Vec<PatchSuggestion> {
+    let profile = crate::secret::SecretProfile::analyze(module);
+    suggest_patches_structured_with_profile(module, diags, &profile)
+}
+
+/// Structured suggestions under an already analyzed profile: an
+/// evaluated caller passes the engine context so a default that copies
+/// an environment or profile value is withheld too.
+pub fn suggest_patches_structured_with_profile(
+    module: &Module,
+    diags: &[Diagnostic],
+    profile: &crate::secret::SecretProfile,
+) -> Vec<PatchSuggestion> {
     let mut out = Vec::new();
     for d in diags {
         if let Some(repair) = d.repair.as_ref() {
@@ -75,7 +87,7 @@ pub fn suggest_patches_structured(module: &Module, diags: &[Diagnostic]) -> Vec<
         // is structural on code + schema — never on message text, so a
         // diagnostic rewording cannot silently disable suggestions.
         if d.code == "T004" {
-            if let Some((path, directive)) = fill_for(module, d) {
+            if let Some((path, directive)) = fill_for(module, profile, d) {
                 out.push(PatchSuggestion {
                     kind: PatchKind::Fill,
                     path,
@@ -200,7 +212,11 @@ fn escape_directive_str(s: &str) -> String {
 /// (expressions, secrets) have no source-text form and yield no patch;
 /// deprecated fields yield no patch either, since omitting them is the
 /// migration path. Returns the filled path plus directive.
-fn fill_for(module: &Module, d: &Diagnostic) -> Option<(String, String)> {
+fn fill_for(
+    module: &Module,
+    profile: &crate::secret::SecretProfile,
+    d: &Diagnostic,
+) -> Option<(String, String)> {
     let path = d.path.as_ref()?;
     if path.contains('[') {
         return None;
@@ -230,6 +246,11 @@ fn fill_for(module: &Module, d: &Diagnostic) -> Option<(String, String)> {
         // has no one-line source form here and yields no patch by
         // design. Shared escaper with rename endpoints.
         Some(Node::Literal(Value::String(s))) => {
+            // Test the raw text before escaping: escaping could hide
+            // the match the directive would carry.
+            if profile.blob_identity_is_material(s) {
+                return None;
+            }
             if has_unrepresentable_control(s) {
                 return None;
             }
@@ -268,7 +289,6 @@ fn fill_for(module: &Module, d: &Diagnostic) -> Option<(String, String)> {
     // Array paths never reach this point (rejected above).
     // A default that is or contains a material value would copy the
     // secret into a patch plan; suggest nothing instead.
-    let profile = crate::secret::SecretProfile::analyze(module);
     if profile.blob_identity_is_material(&value) {
         return None;
     }
@@ -339,7 +359,12 @@ mod tests {
         // Positive control first: the finite default fills normally.
         let mut module = crate::parse("schema = { ratio = Float(default = 1.5) }\n", "fill-finite")
             .expect("must parse");
-        assert!(fill_for(&module, &t004("ratio")).is_some());
+        assert!(fill_for(
+            &module,
+            &crate::secret::SecretProfile::analyze(&module),
+            &t004("ratio")
+        )
+        .is_some());
         let default_id = schema_field_at(&module, "ratio")
             .expect("field present")
             .default
@@ -349,7 +374,12 @@ mod tests {
             other => panic!("expected float default, got {other:?}"),
         }
         assert!(
-            fill_for(&module, &t004("ratio")).is_none(),
+            fill_for(
+                &module,
+                &crate::secret::SecretProfile::analyze(&module),
+                &t004("ratio")
+            )
+            .is_none(),
             "inf default must not emit an unparseable directive"
         );
     }

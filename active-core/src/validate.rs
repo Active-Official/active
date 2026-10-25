@@ -119,13 +119,20 @@ impl Engine {
             let mut diagnostics = validator.diagnostics;
             // Diagnostics can quote schema prose (media type, format,
             // requires target); redact before the error reaches CLI,
-            // LSP, or repair.
-            let profile = crate::secret::SecretProfile::analyze_with_profile(
+            // LSP, or repair. Host values need the engine context plus
+            // the evaluated node values.
+            let profile = crate::secret::SecretProfile::with_context(
                 module,
                 self.profile_override.as_deref(),
+                Some(&self.env),
+                None,
             );
+            let runtime = runtime_secret_redactor(values, &profile);
             for diagnostic in &mut diagnostics {
                 if let Some(message) = profile.redact_authored_text(&diagnostic.message) {
+                    diagnostic.message = message;
+                }
+                if let Some(message) = runtime.redact_every_occurrence(&diagnostic.message) {
                     diagnostic.message = message;
                 }
             }
@@ -1869,7 +1876,7 @@ fn subtree_has_secret(module: &Module, expr: NodeId) -> bool {
 /// plus the evaluated text of every structurally sensitive node (an
 /// environment lookup is not visible in the module, so its value must
 /// come from the walk).
-fn runtime_secret_redactor(
+pub(crate) fn runtime_secret_redactor(
     values: &HashMap<NodeId, Value>,
     profile: &crate::secret::SecretProfile,
 ) -> crate::secret::SecretRedactor {

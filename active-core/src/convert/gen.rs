@@ -274,7 +274,10 @@ fn json_schema_node(
             for (name, field_id) in fields {
                 if let Some(crate::ir::Node::SchemaField { field }) = module.get(*field_id) {
                     if let Some(target) = literal_string(module, field.requires) {
-                        if profile.blob_identity_is_material(&target) {
+                        // A real field reference stays raw so the
+                        // generated contract resolves; dangling text is
+                        // data and is withheld.
+                        if !crate::convert::schema_path_exists(module, &target) {
                             continue;
                         }
                         dependent
@@ -345,10 +348,14 @@ fn json_schema_field(
                 obj.insert("maxLength".to_string(), JsonValue::from(max));
             }
             if let Some(pattern) = literal_string(module, field.pattern) {
-                obj.insert(
-                    "pattern".to_string(),
-                    JsonValue::String(redact_prose(profile, pattern)),
-                );
+                // A material pattern cannot be redacted into valid regex
+                // syntax; withhold the constraint entirely.
+                if !profile.blob_identity_is_material(&pattern) {
+                    obj.insert(
+                        "pattern".to_string(),
+                        JsonValue::String(redact_prose(profile, pattern)),
+                    );
+                }
             }
             if let Some(format) = literal_string(module, field.format) {
                 obj.insert(
@@ -376,10 +383,17 @@ fn json_schema_field(
             }
         }
         ActiveType::Enum(members) => {
-            obj.insert(
-                "enum".to_string(),
-                JsonValue::Array(members.iter().cloned().map(JsonValue::String).collect()),
-            );
+            // A material member cannot be redacted into a valid enum
+            // contract; withhold the member list and keep `string`.
+            if !members
+                .iter()
+                .any(|member| profile.blob_identity_is_material(member))
+            {
+                obj.insert(
+                    "enum".to_string(),
+                    JsonValue::Array(members.iter().cloned().map(JsonValue::String).collect()),
+                );
+            }
             if let Some(joined) = enum_descriptions_text(module, field) {
                 obj.insert(
                     "description".to_string(),
@@ -622,11 +636,21 @@ impl TsGen<'_> {
             ActiveType::String | ActiveType::Secret => "string".to_string(),
             ActiveType::Blob => "{ \"$active.blob\": { hash: string; size: number; media_type: string; tainted: boolean; payload_b64?: string } }".to_string(),
             ActiveType::Table { .. } => "Record<string, unknown>".to_string(),
-            ActiveType::Enum(members) => members
-                .iter()
-                .map(|m| format!("{m:?}"))
-                .collect::<Vec<_>>()
-                .join(" | "),
+            ActiveType::Enum(members) => {
+                // Keep the interface valid when a member is material.
+                if members
+                    .iter()
+                    .any(|member| self.profile.blob_identity_is_material(member))
+                {
+                    "string".to_string()
+                } else {
+                    members
+                        .iter()
+                        .map(|m| format!("{m:?}"))
+                        .collect::<Vec<_>>()
+                        .join(" | ")
+                }
+            }
             ActiveType::Any => "unknown".to_string(),
         }
     }
@@ -732,11 +756,20 @@ impl TsGen<'_> {
             ActiveType::Table { .. } => "z.record(z.string(), z.unknown())".to_string(),
             ActiveType::Any => "z.unknown()".to_string(),
             ActiveType::Enum(members) => {
-                let items: Vec<String> = members
+                // A material member cannot be redacted into a valid
+                // enum; fall back to an unconstrained string.
+                if members
                     .iter()
-                    .map(|m| JsonValue::String(m.clone()).to_string())
-                    .collect();
-                format!("z.enum([{}])", items.join(", "))
+                    .any(|member| self.profile.blob_identity_is_material(member))
+                {
+                    "z.string()".to_string()
+                } else {
+                    let items: Vec<String> = members
+                        .iter()
+                        .map(|m| JsonValue::String(m.clone()).to_string())
+                        .collect();
+                    format!("z.enum([{}])", items.join(", "))
+                }
             }
             ActiveType::String => {
                 let mut expr = "z.string()".to_string();
@@ -747,12 +780,12 @@ impl TsGen<'_> {
                     expr.push_str(&format!(".max({max})"));
                 }
                 if let Some(pattern) = literal_string(self.module, field.pattern) {
-                    let pattern = self
-                        .profile
-                        .redact_authored_text(&pattern)
-                        .unwrap_or(pattern);
-                    let quoted = JsonValue::String(pattern).to_string();
-                    expr.push_str(&format!(".regex(new RegExp({quoted}))"));
+                    // Redacting a pattern would emit an invalid regex;
+                    // drop the constraint when it is material.
+                    if !self.profile.blob_identity_is_material(&pattern) {
+                        let quoted = JsonValue::String(pattern).to_string();
+                        expr.push_str(&format!(".regex(new RegExp({quoted}))"));
+                    }
                 }
                 match literal_string(self.module, field.format).as_deref() {
                     // zod's email/url/uuid definitions are its own (close
@@ -1092,9 +1125,10 @@ impl GoGen<'_> {
                 // `// one of:` comment still documents them, and the
                 // JSON Schema target stays exact.
                 ActiveType::Enum(members)
-                    if !members
-                        .iter()
-                        .any(|m| m.contains([' ', ',', '`', '"', '\\'])) =>
+                    if !members.iter().any(|member| {
+                        member.contains([' ', ',', '`', '"', '\\'])
+                            || self.profile.blob_identity_is_material(member)
+                    }) =>
                 {
                     rules.push(format!("oneof={}", members.join(" ")));
                 }
@@ -1130,7 +1164,16 @@ impl GoGen<'_> {
                 match &field.typ {
                     ActiveType::Duration => notes.push("milliseconds".to_string()),
                     ActiveType::Enum(members) => {
-                        notes.push(format!("one of: {}", members.join(", ")))
+                        let joined = members
+                            .iter()
+                            .map(|member| {
+                                self.profile
+                                    .redact_authored_text(member)
+                                    .unwrap_or_else(|| member.clone())
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        notes.push(format!("one of: {joined}"))
                     }
                     ActiveType::Secret => {
                         notes.push("secret value, redacted as ***SECRET*** on export".to_string())
@@ -1324,11 +1367,17 @@ impl RustGen<'_> {
         self.out.push_str(" {\n");
         let mut taken = HashSet::new();
         for member in members {
-            let mut variant = pascal_case(&sanitize_ident(member, "Value"));
+            // A material member cannot be emitted as a wire value;
+            // derive the variant and the rename from the redacted text.
+            let member = self
+                .profile
+                .redact_authored_text(member)
+                .unwrap_or_else(|| member.clone());
+            let mut variant = pascal_case(&sanitize_ident(&member, "Value"));
             while !taken.insert(variant.clone()) {
                 variant.push('_');
             }
-            if &variant != member {
+            if variant != member {
                 self.out
                     .push_str(&format!("\t#[serde(rename = {member:?})]\n"));
             }
@@ -1631,8 +1680,17 @@ impl PythonGen<'_> {
             // below as an `ActiveBlob` TypedDict.
             ActiveType::Blob => "ActiveBlob".to_string(),
             ActiveType::Enum(members) => {
-                let quoted: Vec<String> = members.iter().map(|m| py_string(m)).collect();
-                format!("Literal[{}]", quoted.join(", "))
+                // A material member cannot be redacted into a valid
+                // Literal; fall back to an unconstrained string.
+                if members
+                    .iter()
+                    .any(|member| self.profile.blob_identity_is_material(member))
+                {
+                    "str".to_string()
+                } else {
+                    let quoted: Vec<String> = members.iter().map(|m| py_string(m)).collect();
+                    format!("Literal[{}]", quoted.join(", "))
+                }
             }
             ActiveType::Table { .. } => "dict[str, Any]".to_string(),
             ActiveType::Any => "Any".to_string(),

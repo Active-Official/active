@@ -1446,3 +1446,17 @@ fn minimize_reports_the_delivered_reduced_size() {
         reduced.len()
     );
 }
+
+#[test]
+fn minimize_redacts_a_secret_split_across_a_healed_quote() {
+    // Review 68: the literal parts on either side of a healed quote
+    // reconstruct the original text, including across a line break.
+    for source in [
+        "s = secret(\"hunter2-ABCD\")\nt = \"hunter2-\"x\"ABCD\"\n",
+        "s = secret(\"hunter2-ABCD\")\nt = \"hunter2-\"x\n\"ABCD\"\n",
+    ] {
+        let report = debug::minimal_case(source, "T006", 0);
+        let reduced = report["reduced"].as_str().expect("reduced");
+        assert!(!reduced.contains("hunter2-ABCD"), "{reduced}");
+    }
+}

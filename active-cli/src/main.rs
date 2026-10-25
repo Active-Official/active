@@ -1201,6 +1201,25 @@ const CAPABILITY_JSON: &str = include_str!("../../agent-kit/capability.schema.js
 /// Strict-evaluation diagnostics for the explain/patch surfaces: parse
 /// errors abort in parse_input; validation diagnostics are the working
 /// set; any other engine failure is fatal and reported.
+/// Material profile for planning output: module prose plus the process
+/// environment values its material env reads would resolve to. Hermetic
+/// tools do not evaluate, so this is the widest context they can see.
+fn material_profile(module: &active_core::Module) -> active_core::secret::SecretProfile {
+    let mut profile = active_core::secret::SecretProfile::analyze(module);
+    let mut env = std::collections::HashMap::new();
+    for node in &module.arena {
+        if let active_core::ir::Node::Env { name, .. } = node {
+            if profile.env_is_material(name) {
+                if let Ok(value) = std::env::var(name) {
+                    env.insert(name.clone(), value);
+                }
+            }
+        }
+    }
+    profile.absorb_environment(&env);
+    profile
+}
+
 fn collect_diags(module: &active_core::Module, filename: &str, budget: Budget) -> Vec<Diagnostic> {
     match engine(false, &None, budget).evaluate(module) {
         Ok((_, diags)) => diags,
@@ -2062,8 +2081,36 @@ fn main() -> anyhow::Result<()> {
                 // contain an authored secret literal (spec/viz.md §3).
                 let mut data =
                     serde_json::to_value(&outcome).map_err(|e| anyhow::anyhow!("{e}"))?;
+                // Repair accepts unparseable input, so the planning
+                // profile comes from a recovering parse, never the
+                // strict loader.
+                let plan_text = std::fs::read_to_string(&from).unwrap_or_default();
+                let (plan_module, _) = active_core::parse_recovering(
+                    &plan_text,
+                    "viz-repair",
+                    active_core::ParseOptions::default(),
+                );
+                let profile = material_profile(&plan_module);
                 if let Some(object) = data.as_object_mut() {
                     object.remove("repaired_source");
+                    // A fill can copy a material default; redact every
+                    // directive with the same authored-prose rule.
+                    if let Some(steps) = object
+                        .get_mut("steps")
+                        .and_then(|steps| steps.as_array_mut())
+                    {
+                        for step in steps {
+                            if let Some(directive) = step
+                                .get("directive")
+                                .and_then(|value| value.as_str())
+                                .map(str::to_string)
+                            {
+                                if let Some(redacted) = profile.redact_authored_text(&directive) {
+                                    step["directive"] = serde_json::Value::String(redacted);
+                                }
+                            }
+                        }
+                    }
                 }
                 println!(
                     "{}",
@@ -2180,15 +2227,19 @@ fn main() -> anyhow::Result<()> {
             let trust = load_trust(&trust_keys)?;
             let module = parse_input(&from, false, allow_parent_escapes, &trust)?;
             let diags = collect_diags(&module, &filename, budget.resolve()?);
+            // Planning with the material profile: a default that copies
+            // an authored or environment secret yields no directive.
+            let profile = material_profile(&module);
+            let structured = active_core::convert::suggest_patches_structured_with_profile(
+                &module, &diags, &profile,
+            );
             match format {
                 OutFormat::Text => {
-                    for directive in active_core::convert::suggest_patches(&module, &diags) {
-                        println!("{directive}");
+                    for suggestion in &structured {
+                        println!("{}", suggestion.directive);
                     }
                 }
                 OutFormat::Json => {
-                    let structured =
-                        active_core::convert::suggest_patches_structured(&module, &diags);
                     println!(
                         "{}",
                         serde_json::to_string_pretty(&structured)

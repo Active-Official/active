@@ -282,7 +282,17 @@ pub fn repair_with_engine_and_options(
             break;
         }
 
-        let suggestions = crate::convert::suggest_patches_structured(&module, &diags);
+        // The planning profile sees the engine's environment and
+        // profile selection, so a default that copies a runtime value
+        // is withheld as well as an authored one.
+        let profile = crate::secret::SecretProfile::with_context(
+            &module,
+            engine.profile_override.as_deref(),
+            Some(&engine.env),
+            None,
+        );
+        let suggestions =
+            crate::convert::suggest_patches_structured_with_profile(&module, &diags, &profile);
         // Goal ordering: MinimizeDiff prefers fills (purely additive)
         // over renames; every goal skips preserved paths and
         // already-applied directives.

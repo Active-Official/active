@@ -464,7 +464,7 @@ fn schema_field_json(module: &Module, profile: &SecretProfile, field: &SchemaFie
         constraints.push(redact(format!("requires {requires}")));
     }
     let mut out = json!({
-        "type": type_name(&field.typ),
+        "type": redact(type_name(&field.typ)),
         "required": field.default.is_none() && !matches!(field.typ, ActiveType::Null),
         "constraints": constraints,
     });

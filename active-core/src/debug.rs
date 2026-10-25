@@ -586,7 +586,9 @@ fn redact_secret_literals(
         .collect();
     for pair in string_tokens.windows(2) {
         let (first, second) = (pair[0], pair[1]);
-        if first.line != second.line {
+        // A healed quote can split at a line break too; allow one line
+        // of distance.
+        if second.line.saturating_sub(first.line) > 1 {
             continue;
         }
         let (Some((start, first_end)), Some((second_start, end))) =
@@ -597,6 +599,33 @@ fn redact_secret_literals(
         if end <= start || end > normalized.len() || second_start < first_end {
             continue;
         }
+        let between = &normalized[first_end..second_start];
+        // Structural punctuation means a valid construct; never join
+        // across it.
+        let structural_between = between.bytes().any(|byte| {
+            matches!(
+                byte,
+                b',' | b')' | b'(' | b'{' | b'}' | b'[' | b']' | b';' | b'=' | b'+'
+            )
+        });
+        // A healed quote joins two literal parts with nothing but
+        // identifier bytes (or a line break) between them: their
+        // concatenation reconstructs the original text.
+        let joined_match = !structural_between && {
+            let mut joined = String::new();
+            if let Some(text) = decoded_token_text(first) {
+                joined.push_str(&text);
+            }
+            if let Some(text) = decoded_token_text(second) {
+                joined.push_str(&text);
+            }
+            authored.contains_exact(&joined)
+                || exact.contains_exact(&joined)
+                || authored
+                    .redact_text_min(&joined, MIN_SUBSTRING_SEED)
+                    .is_some()
+                || seeds.redact_text_min(&joined, MIN_SUBSTRING_SEED).is_some()
+        };
         // Only a healed quote joins two literals with no separator. A
         // valid construct (`"a", "b"`, `"a" + "b"`, `f("a", "b")`) has
         // whitespace or punctuation between them and is left alone.
@@ -612,19 +641,18 @@ fn redact_secret_literals(
             .as_bytes()
             .get(second_start.saturating_sub(1))
             .copied();
-        if !after_first.is_some_and(is_joiner) || !before_second.is_some_and(is_joiner) {
-            continue;
-        }
+        let adjacent = after_first.is_some_and(is_joiner) && before_second.is_some_and(is_joiner);
         let slice = &normalized[start..end];
-        let hit = authored
-            .redact_text_min(slice, MIN_SUBSTRING_SEED)
-            .is_some()
-            || seeds.redact_text_min(slice, MIN_SUBSTRING_SEED).is_some()
-            || exact
-                .values_snapshot()
-                .iter()
-                .any(|value| !value.is_empty() && slice.contains(value));
-        if hit {
+        let slice_hit = adjacent
+            && (authored
+                .redact_text_min(slice, MIN_SUBSTRING_SEED)
+                .is_some()
+                || seeds.redact_text_min(slice, MIN_SUBSTRING_SEED).is_some()
+                || exact
+                    .values_snapshot()
+                    .iter()
+                    .any(|value| !value.is_empty() && slice.contains(value)));
+        if joined_match || slice_hit {
             extras.push((start, end));
         }
     }

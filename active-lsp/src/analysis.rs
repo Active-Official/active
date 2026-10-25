@@ -987,19 +987,27 @@ fn value_at_path<'v>(value: &'v Value, path: &str) -> Option<&'v Value> {
 }
 
 /// Schema type string at a dotted path (`Int`, `Array<String>`,
-/// `Table`, …), or None when no schema covers it.
-fn schema_type_at(module: &Module, path: &str) -> Option<String> {
-    fn render(module: &Module, id: NodeId) -> String {
-        match module.get(id) {
+/// `Table`, …), or None when no schema covers it. Enum labels spell
+/// their members, so material text is redacted.
+fn schema_type_at_with_profile(
+    module: &Module,
+    path: &str,
+    profile: &SecretProfile,
+) -> Option<String> {
+    fn render(module: &Module, id: NodeId, profile: &SecretProfile) -> String {
+        let text = match module.get(id) {
             Some(Node::SchemaField { field }) => field.typ.name(),
-            Some(Node::SchemaArray { element }) => format!("Array<{}>", render(module, *element)),
+            Some(Node::SchemaArray { element }) => {
+                format!("Array<{}>", render(module, *element, profile))
+            }
             Some(Node::SchemaTable { .. }) => "Table".to_string(),
             _ => "Any".to_string(),
-        }
+        };
+        profile.redact_authored_text(&text).unwrap_or(text)
     }
     let mut id = module.schema?;
     if path.is_empty() {
-        return Some(render(module, id));
+        return Some(render(module, id, profile));
     }
     for segment in path.split('.') {
         match module.get(id) {
@@ -1007,7 +1015,7 @@ fn schema_type_at(module: &Module, path: &str) -> Option<String> {
             _ => return None,
         }
     }
-    Some(render(module, id))
+    Some(render(module, id, profile))
 }
 
 /// Owning key (or binding) as a target for non-identifier
@@ -1039,10 +1047,14 @@ pub fn hover_at(doc: &Doc, line: u32, character: u32) -> Option<Hover> {
         Target::Key { path, node } => (path.clone(), *node),
     };
     let mut lines: Vec<String> = Vec::new();
+    // One profile serves the type, the value, the annotation prose, and
+    // the deprecation reason: authored text can quote a secret too.
+    let profile = SecretProfile::with_context(&doc.module, None, None, Some(&doc.value_seeds));
+    profile.begin_redaction_pass();
     // Type: schema first, evaluated value kind as fallback (spec §2
     // requires one or the other — never a bare name when a value
     // exists).
-    if let Some(typ) = schema_type_at(&doc.module, &path) {
+    if let Some(typ) = schema_type_at_with_profile(&doc.module, &path, &profile) {
         lines.push(format!("**{name}**: `{typ}`"));
     } else if let Target::Let { .. } = target {
         lines.push(format!("**{name}** (let binding)"));
@@ -1056,10 +1068,6 @@ pub fn hover_at(doc: &Doc, line: u32, character: u32) -> Option<Hover> {
             None => lines.push(format!("**{name}**")),
         }
     }
-    // One profile serves the value, the annotation prose, and the
-    // deprecation reason: authored text can quote a secret too.
-    let profile = SecretProfile::with_context(&doc.module, None, None, Some(&doc.value_seeds));
-    profile.begin_redaction_pass();
     // Value at the path (redacted; lets have no tree value).
     if let Some(root) = doc.value.as_ref() {
         if let Some(value) = value_at_path(root, &path) {
@@ -1896,7 +1904,11 @@ fn is_completion_char(c: char) -> bool {
 /// Schema field names valid at a dotted scope path: walk the active
 /// schema tree by segment; a `SchemaTable` yields its field names
 /// with type details, anything else yields nothing.
-fn schema_names_at(module: &Module, scope_path: &str) -> Vec<(String, String)> {
+fn schema_names_at(
+    module: &Module,
+    scope_path: &str,
+    profile: &SecretProfile,
+) -> Vec<(String, String)> {
     let Some(mut id) = module.schema else {
         return Vec::new();
     };
@@ -1925,6 +1937,8 @@ fn schema_names_at(module: &Module, scope_path: &str) -> Vec<(String, String)> {
                     Some(Node::SchemaTable { .. }) => "Table".to_string(),
                     _ => "Any".to_string(),
                 };
+                // An enum detail spells its members.
+                let detail = profile.redact_authored_text(&detail).unwrap_or(detail);
                 (name.clone(), detail)
             })
             .collect(),
@@ -1976,7 +1990,9 @@ pub fn completion_at(doc: &Doc, line: u32, character: u32) -> Vec<CompletionItem
         .map(|scope| scope.path.clone())
         .unwrap_or_default();
     let mut items: Vec<CompletionItem> = Vec::new();
-    for (name, detail) in schema_names_at(&doc.module, &scope_path) {
+    let schema_profile =
+        SecretProfile::with_context(&doc.module, None, None, Some(&doc.value_seeds));
+    for (name, detail) in schema_names_at(&doc.module, &scope_path, &schema_profile) {
         if name.starts_with(&prefix) {
             items.push(CompletionItem {
                 label: name,
@@ -2518,7 +2534,7 @@ pub fn inlay_hints(doc: &Doc, range: Option<Range>) -> Vec<InlayHint> {
             continue;
         };
         let position = range_of_span(&doc.text, span).end;
-        let mut label = match schema_type_at(&doc.module, &path) {
+        let mut label = match schema_type_at_with_profile(&doc.module, &path, &profile) {
             Some(typ) => format!(": {typ}"),
             None => match doc
                 .value

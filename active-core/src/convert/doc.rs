@@ -119,8 +119,12 @@ fn walk_value(
     let node = by_path.get(path).copied();
     let schema = schema_node_at(module, path);
     let is_table = matches!(val, Value::Table(_));
-    let (type_text, required, mut default_text, mut constraints, mut deprecated) =
+    let (mut type_text, required, mut default_text, mut constraints, mut deprecated) =
         describe_schema(module, schema, val);
+    // An enum type label spells its members; redact material text.
+    type_text = profile
+        .redact_authored_text(&type_text)
+        .unwrap_or(type_text);
     // Schema prose is authored text too: a deprecated reason, pattern,
     // or default can quote a secret.
     if let Some(text) = default_text.as_mut() {
@@ -173,6 +177,18 @@ fn walk_value(
     let description = profile
         .redact_authored_text(&description)
         .unwrap_or(description);
+    // The public API may receive an unredacted value: the item's own
+    // value text is redacted here, not only at the CLI boundary.
+    let value_text = if profile.path_is_secret(path) {
+        crate::secret::MARKER.to_string()
+    } else {
+        let rendered = render_value(val);
+        let rendered = profile.redact_authored_text(&rendered).unwrap_or(rendered);
+        profile
+            .literals()
+            .redact_text(&rendered)
+            .unwrap_or(rendered)
+    };
     items.push(DocItem {
         path: path.to_string(),
         depth,
@@ -181,7 +197,7 @@ fn walk_value(
         type_text,
         required,
         default_text,
-        value_text: render_value(val),
+        value_text,
         description,
         constraints,
         deprecated,

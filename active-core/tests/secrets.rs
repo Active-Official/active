@@ -2610,3 +2610,192 @@ fn generated_defaults_patterns_and_requires_redact_secrets() {
         assert!(!output.contains("s3cr3t-gen"), "{output}");
     }
 }
+
+#[test]
+fn enum_members_redact_on_every_schema_surface() {
+    // Review 68: an enum member is authored text.
+    let src =
+        "s = secret(\"s3cr3t-enum\")\nschema = { e = Enum(\"s3cr3t-enum\", \"ok\") }\ne = \"ok\"\n";
+    let module = parse(src, "enum-redact").expect("parse");
+    let (value, _) = Engine::new().evaluate(&module).expect("evaluate");
+    let report = active_core::convert::schema_inspect(&module).expect("schema inspect");
+    assert!(!report.to_string().contains("s3cr3t-enum"), "{report}");
+    let path = active_core::convert::inspect_path_with_profile(&module, &value, "e", None)
+        .expect("inspect");
+    assert!(!path.to_string().contains("s3cr3t-enum"), "{path}");
+    let items = active_core::convert::collect_items(&module, &value);
+    let md = active_core::convert::doc_to_markdown("Config", &items);
+    assert!(!md.contains("s3cr3t-enum"), "{md}");
+    let json_schema = active_core::convert::schema_to_json_schema(&module).expect("json");
+    assert!(
+        !json_schema.to_string().contains("s3cr3t-enum"),
+        "{json_schema}"
+    );
+    for output in [
+        active_core::convert::schema_to_typescript(&module, "Config"),
+        active_core::convert::schema_to_rust(&module, "Config"),
+        active_core::convert::schema_to_python(&module, "Config"),
+        active_core::convert::schema_to_go(&module, "Config"),
+    ] {
+        let output = output.expect("generate");
+        assert!(!output.contains("s3cr3t-enum"), "{output}");
+    }
+}
+
+#[test]
+fn generated_material_pattern_is_withheld_not_redacted() {
+    // Review 68: a redacted regex is invalid syntax; drop it.
+    let src = "s = secret(\"s3cr3t-gen\")\nschema = { host = String(pattern = \"^s3cr3t-gen$\") }\nhost = \"x\"\n";
+    let module = parse(src, "pattern-valid").expect("parse");
+    let json_schema = active_core::convert::schema_to_json_schema(&module).expect("json");
+    assert!(
+        !json_schema.to_string().contains("pattern"),
+        "{json_schema}"
+    );
+    let ts = active_core::convert::schema_to_typescript(&module, "Config").expect("ts");
+    assert!(!ts.contains("regex"), "{ts}");
+    assert!(!ts.contains("s3cr3t-gen"), "{ts}");
+}
+
+#[test]
+fn plan_and_repair_withhold_a_profile_material_default() {
+    // Review 68: the planning profile carries the selected profile.
+    let src = "a = secret(\"base\")\nprofile \"p\" { a = \"s3cr3t-default\" }\nschema = { tls = Bool, cert = String(requires = \"tls\", default = \"s3cr3t-default\") }\ntls = true\n";
+    let module = parse(src, "plan-profile").expect("parse");
+    let mut engine = Engine::hermetic();
+    engine.profile_override = Some("p".to_string());
+    let (_, diags) = engine.evaluate(&module).expect("evaluate");
+    let profile = active_core::secret::SecretProfile::with_context(
+        &module,
+        Some("p"),
+        Some(&engine.env),
+        None,
+    );
+    let suggestions =
+        active_core::convert::suggest_patches_structured_with_profile(&module, &diags, &profile);
+    for suggestion in suggestions {
+        assert!(
+            !suggestion.directive.contains("s3cr3t-default"),
+            "{}",
+            suggestion.directive
+        );
+    }
+    let outcome = active_core::convert::repair_with_engine(
+        src,
+        active_core::diag::RepairGoal::Validate,
+        &[],
+        10,
+        &engine,
+        None,
+    );
+    for step in &outcome.steps {
+        assert!(
+            !step.directive.contains("s3cr3t-default"),
+            "{}",
+            step.directive
+        );
+    }
+    for finding in &outcome.findings {
+        assert!(
+            !finding.message.contains("s3cr3t-default"),
+            "{}",
+            finding.message
+        );
+    }
+}
+
+#[test]
+fn plan_withholds_an_environment_material_default() {
+    // Review 68: the same guard covers host values.
+    let src = "s = secret(env.ACTIVE_R68_TOKEN)\nschema = { tls = Bool, cert = String(requires = \"tls\", default = \"TOKENVALUE\") }\ntls = true\n";
+    let module = parse(src, "plan-env").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("ACTIVE_R68_TOKEN".to_string(), "TOKENVALUE".to_string());
+    let engine = Engine::hermetic().with_env(env);
+    let (_, diags) = engine.evaluate(&module).expect("evaluate");
+    let profile =
+        active_core::secret::SecretProfile::with_context(&module, None, Some(&engine.env), None);
+    let suggestions =
+        active_core::convert::suggest_patches_structured_with_profile(&module, &diags, &profile);
+    for suggestion in suggestions {
+        assert!(
+            !suggestion.directive.contains("TOKENVALUE"),
+            "{}",
+            suggestion.directive
+        );
+    }
+    let outcome = active_core::convert::repair_with_engine(
+        src,
+        active_core::diag::RepairGoal::Validate,
+        &[],
+        10,
+        &engine,
+        None,
+    );
+    for step in &outcome.steps {
+        assert!(!step.directive.contains("TOKENVALUE"), "{}", step.directive);
+    }
+    for finding in &outcome.findings {
+        assert!(
+            !finding.message.contains("TOKENVALUE"),
+            "{}",
+            finding.message
+        );
+    }
+}
+
+#[test]
+fn diagnostics_redact_environment_schema_literals() {
+    // Review 68: host values need the engine environment.
+    let src = "s = secret(env.ACTIVE_R68_FMT)\nschema = { f = String(format = \"TOKENVALUE\") }\nf = \"x\"\n";
+    let module = parse(src, "diag-env").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("ACTIVE_R68_FMT".to_string(), "TOKENVALUE".to_string());
+    let engine = Engine::hermetic().with_env(env);
+    let diags = match engine.evaluate(&module) {
+        Ok((_, diags)) => diags,
+        Err(EvalError::ValidationFailed { diagnostics }) => diagnostics,
+        Err(error) => panic!("{error:?}"),
+    };
+    for diagnostic in &diags {
+        assert!(
+            !diagnostic.message.contains("TOKENVALUE"),
+            "{}",
+            diagnostic.message
+        );
+    }
+}
+
+#[test]
+fn nested_table_metadata_is_redacted() {
+    // Review 68: nested schema tables carry their own metadata.
+    let src = "s = secret(\"1.2.3\")\nschema = { db = Table { version = \"1.2.3\", min_reader = \"1.2.3\", host = String } }\ndb = { host = \"x\" }\n";
+    let module = parse(src, "nested-meta").expect("parse");
+    let report = active_core::convert::schema_inspect(&module).expect("schema inspect");
+    assert!(!report.to_string().contains("1.2.3"), "{report}");
+}
+
+#[test]
+fn docgen_api_redacts_value_text() {
+    // Review 68: the public item builder may receive a raw value.
+    let src = "a = \"s3cr3t-locator-value\"\nk = secret(a)\nb = true\n";
+    let module = parse(src, "doc-value").expect("parse");
+    let (value, _) = Engine::new().evaluate(&module).expect("evaluate");
+    let items = active_core::convert::collect_items(&module, &value);
+    let md = active_core::convert::doc_to_markdown("Config", &items);
+    assert!(!md.contains("s3cr3t-locator-value"), "{md}");
+}
+
+#[test]
+fn requires_targets_stay_structural() {
+    // Review 68: a requires target is a reference, like a field name.
+    let src = "s = secret(\"tls\")\nschema = { tls = Bool, cert = String(requires = \"tls\") }\ntls = true\n";
+    let module = parse(src, "requires-structural").expect("parse");
+    let report = active_core::convert::schema_inspect(&module).expect("schema inspect");
+    let fields = report["fields"].as_array().expect("fields");
+    let cert = fields
+        .iter()
+        .find(|entry| entry["name"] == "cert")
+        .expect("cert entry");
+    assert_eq!(cert["requires"], "tls", "{cert}");
+}

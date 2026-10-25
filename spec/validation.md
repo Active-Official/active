@@ -110,7 +110,7 @@ Detail strings are structural (`below minimum`, `above maximum`,
 `too short`, `too long`, `does not match pattern`, …): evaluated
 values and **computed** bounds are never echoed into messages (secret
 invariant, §7). A bound or expectation the schema spells as a literal
-is source text and is redacted when it carries material.
+is source text and is redacted when it carries authored material; evaluated surfaces also seed host values.
 
 ## 5. Missing keys (T004)
 

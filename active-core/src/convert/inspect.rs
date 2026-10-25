@@ -53,6 +53,22 @@ fn push_field(
             meta,
             ..
         }) => {
+            // Nested table metadata is authored text too.
+            let redact_meta = |value: &Option<String>| {
+                value
+                    .as_ref()
+                    .map(|text| {
+                        JsonValue::String(
+                            profile
+                                .redact_authored_text(text)
+                                .unwrap_or_else(|| text.clone()),
+                        )
+                    })
+                    .unwrap_or(JsonValue::Null)
+            };
+            let version = redact_meta(&meta.version);
+            let min_reader = redact_meta(&meta.min_reader);
+            let min_writer = redact_meta(&meta.min_writer);
             out.push(json!({
                 "path": path,
                 "name": name,
@@ -67,9 +83,9 @@ fn push_field(
                 "members": JsonValue::Null,
                 "member_descriptions": JsonValue::Null,
                 "closed": closed,
-                "version": meta.version,
-                "min_reader": meta.min_reader,
-                "min_writer": meta.min_writer,
+                "version": version,
+                "min_reader": min_reader,
+                "min_writer": min_writer,
                 "element": JsonValue::Null,
             }));
             for (key, child) in fields {
@@ -217,7 +233,12 @@ fn field_entry(
             }
         }
         ActiveType::Enum(options) => {
-            members = JsonValue::Array(options.iter().cloned().map(JsonValue::String).collect());
+            members = JsonValue::Array(
+                options
+                    .iter()
+                    .map(|member| JsonValue::String(redact(member.clone())))
+                    .collect(),
+            );
             let texts = string_list(module, field.enum_descriptions);
             if texts.len() == options.len() {
                 member_descriptions = JsonValue::Array(
@@ -257,7 +278,15 @@ fn field_entry(
         "description": opt_string(literal_string(module, field.description).map(redact)),
         "deprecated": opt_string(field.deprecated.clone().map(redact)),
         "removed_in": opt_string(field.removed_in.clone().map(redact)),
-        "requires": opt_string(literal_string(module, field.requires).map(redact)),
+        "requires": opt_string(literal_string(module, field.requires).map(|target| {
+            // A real field reference stays raw so the contract
+            // resolves; dangling text is data and redacts.
+            if super::schema_path_exists(module, &target) {
+                target
+            } else {
+                redact(target)
+            }
+        })),
         "members": members,
         "member_descriptions": member_descriptions,
         "closed": closed,

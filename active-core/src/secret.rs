@@ -91,10 +91,11 @@ pub struct SecretRedactor {
     work_left: std::cell::Cell<usize>,
 }
 
-/// Per-pass redaction work ceiling (byte comparisons). Large enough
-/// for document-scale benign exports, small enough that a pathological
-/// common prefix cannot run for seconds after evaluation.
-const MAX_REDACT_WORK: usize = 64_000_000;
+/// Per-pass redaction work ceiling (byte comparisons). Sized so a
+/// 10k-key document with dozens of secrets stays exact, while a
+/// pathological common prefix still fails closed in well under a
+/// second.
+const MAX_REDACT_WORK: usize = 256_000_000;
 
 impl Default for SecretRedactor {
     fn default() -> Self {
@@ -1256,6 +1257,10 @@ impl SecretProfile {
         // merged analysis. On exhaustion, fail closed for the document.
         let mut profile_work = 0usize;
         let mut env_name_cache: HashMap<NodeId, HashSet<String>> = HashMap::new();
+        // Profile merging is legitimately O(fields × paths) on large
+        // documents; a separate, larger bound keeps normal 10k-key
+        // profiles exact while still bounding a pathological merge.
+        const MAX_PROFILE_WORK: usize = 20_000_000;
         match selection {
             ProfileSelection::Named(name) => {
                 if let Some(id) = module.profiles.get(&name) {
@@ -1274,7 +1279,7 @@ impl SecretProfile {
                             profile_work = profile_work
                                 .saturating_add(profile_paths.len())
                                 .saturating_add(paths.len());
-                            if profile_work > MAX_TRANSFORM_WORK {
+                            if profile_work > MAX_PROFILE_WORK {
                                 truncated = true;
                                 paths.clear();
                                 fallback_secret_paths.clear();
@@ -1320,7 +1325,7 @@ impl SecretProfile {
                             }
                             profile_work = profile_work
                                 .saturating_add(replaces.len().saturating_mul(paths.len()));
-                            if profile_work > MAX_TRANSFORM_WORK {
+                            if profile_work > MAX_PROFILE_WORK {
                                 truncated = true;
                                 paths.clear();
                                 fallback_secret_paths.clear();
@@ -1384,7 +1389,7 @@ impl SecretProfile {
                             profile_work = profile_work
                                 .saturating_add(profile_paths.len())
                                 .saturating_add(paths.len());
-                            if profile_work > MAX_TRANSFORM_WORK {
+                            if profile_work > MAX_PROFILE_WORK {
                                 truncated = true;
                                 paths.clear();
                                 fallback_secret_paths.clear();

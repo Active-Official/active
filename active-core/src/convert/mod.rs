@@ -147,7 +147,19 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
                 tainted,
                 payload,
             } => {
-                if *tainted || profile.path_is_secret(path) {
+                // A literal that is known secret material can appear in
+                // identity metadata or inside a payload: sweep both.
+                let media_redacted = profile.redact_text(media_type);
+                let payload_secret = payload.as_ref().is_some_and(|bytes| {
+                    profile
+                        .redact_text(&String::from_utf8_lossy(bytes))
+                        .is_some()
+                });
+                if *tainted
+                    || profile.path_is_secret(path)
+                    || media_redacted.is_some()
+                    || payload_secret
+                {
                     Value::Blob {
                         hash: *hash,
                         size: *size,

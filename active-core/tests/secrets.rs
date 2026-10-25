@@ -1571,8 +1571,12 @@ fn redaction_keeps_document_scale_benign_exports_intact() {
     // secrets must not exhaust the pass budget and destroy benign
     // values.
     let mut redactor = active_core::secret::SecretRedactor::new();
-    redactor.insert("z".repeat(40));
-    redactor.insert("y".repeat(40));
+    for ch in [
+        'z', 'y', 'x', 'w', 'v', 'u', 't', 's', 'r', 'p', 'o', 'n', 'm', 'l', 'k', 'j', 'i', 'h',
+        'g', 'f', 'e', 'd', 'c', 'b', 'Z', 'Y', 'X', 'W', 'V', 'U', 'T', 'S',
+    ] {
+        redactor.insert(ch.to_string().repeat(40));
+    }
     let benign = "q".repeat(200);
     for _ in 0..10_000 {
         assert!(
@@ -1580,4 +1584,43 @@ fn redaction_keeps_document_scale_benign_exports_intact() {
             "benign value marked at document scale"
         );
     }
+}
+
+#[test]
+fn profile_bound_does_not_false_redact_a_benign_document() {
+    // Review 42: 100 scalar overrides over 10k benign keys is normal
+    // work, not a bound trip.
+    let mut src = String::from("active_profile = \"p\"\n");
+    for i in 0..10_000 {
+        src.push_str(&format!("k{i} = {i}\n"));
+    }
+    src.push_str("profile \"p\" {\n");
+    for i in 0..100 {
+        src.push_str(&format!("k{i} = {i}\n"));
+    }
+    src.push_str("}\n");
+    let module = parse(&src, "profile-bound-benign").expect("parse");
+    let profile = active_core::secret::SecretProfile::analyze_with_profile(&module, Some("p"));
+    assert!(
+        !profile.path_is_secret("k9999"),
+        "benign document must not fail closed"
+    );
+}
+
+#[test]
+fn blob_identity_and_payload_sweep_authored_secret_literals() {
+    // Review 42: a blob's media type and payload can carry a known
+    // secret literal; both are swept/fail-closed.
+    let raw = "hunter2-blob-r42";
+    let src = format!(
+        "m = \"{raw}\"\nk = secret(m)\nf = blob(m, \"data\")\ng = blob(\"text/plain\", \"pre {raw} post\")\n"
+    );
+    let module = parse(&src, "blob-literal").expect("parse");
+    let mut engine = Engine::new();
+    engine.materialise_blobs = true;
+    let (value, _) = engine.evaluate(&module).expect("evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    let redacted = active_core::convert::redact_value(&profile, &value);
+    let json = active_core::convert::value_to_pretty_json(&redacted);
+    assert!(!json.contains(raw), "blob literal leaked: {json}");
 }

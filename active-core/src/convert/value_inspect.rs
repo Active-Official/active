@@ -98,7 +98,9 @@ pub fn inspect_path_with_profile(
         // A media type sourced from material (an env lookup used as a
         // secret locator) is not publishable, even though the blob's
         // data taint flag is separate.
+        let media_literal = profile.redact_text(media_type).is_some();
         let media_secret = path_material
+            || media_literal
             || matches!(
                 profile.path_node(path).and_then(|id| module.get(id)),
                 Some(Node::ContentAddressed { media_type, .. }) if profile.node_is_secret(*media_type)
@@ -109,7 +111,7 @@ pub fn inspect_path_with_profile(
             // A tainted identity redacts its media type (spec/blob.md
             // §5/§7), matching every other export path.
             "media_type": if *blob_tainted || media_secret { MARKER } else { media_type },
-            "tainted": *blob_tainted || path_material,
+            "tainted": *blob_tainted || path_material || media_literal,
         });
     }
     Ok(report)

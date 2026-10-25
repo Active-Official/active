@@ -226,14 +226,17 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
 - **Redaction and comparison are bounded and call-stable.** Redaction
   rejects an over-long candidate on its length in O(1), charges only
   the bytes actually compared, and uses a pass budget sized for
-  document-scale exports (64M comparisons), so benign values are not
+  document-scale exports (256M comparisons), so benign values are not
   wholesale-marked while a pathological common prefix still fails
   closed quickly. Every export pass resets the budget, so repeated
-  exports are byte-identical. Tainted blobs never emit `payload_b64`
-  through JSON, TOML, or the redacting `Serialize` impl, even when an
-  embedder constructs one. Schema compatibility indexes rows by path
-  (linear instead of quadratic), and LSP hover/inlay consult path
-  materiality so a profile-selected value is redacted.
+  exports are byte-identical. Profile merging uses a larger, separate
+  bound so normal 10k-key profiles do not fail closed. Blob media types
+  and payloads are swept for authored secret literals (a match drops
+  the payload and marks the identity), tainted blobs never emit
+  `payload_b64` through JSON, TOML, or the redacting `Serialize` impl,
+  schema compatibility indexes rows by path (linear instead of
+  quadratic), and LSP hover/inlay consult path materiality so a
+  profile-selected value is redacted.
 - **Analysis and redaction stay bounded.** Profile merging shares one
   work bound across fields and replacements; on exhaustion every node
   and env read is marked material, so paths, traces, and provenance all

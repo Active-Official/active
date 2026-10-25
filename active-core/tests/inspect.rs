@@ -677,3 +677,19 @@ fn inspect_redacts_a_path_material_blob_media() {
     );
     assert!(!report.to_string().contains(media), "{report}");
 }
+
+#[test]
+fn inspect_sweeps_a_blob_media_literal() {
+    let raw = "hunter2-media-r42";
+    let src = format!("m = \"{raw}\"\nk = secret(m)\nf = blob(m, \"data\")\n");
+    let module = parse(&src, "blob-media-literal").expect("parse");
+    let (value, _) = active_core::Engine::new()
+        .evaluate(&module)
+        .expect("evaluate");
+    let report = active_core::convert::inspect_path(&module, &value, "f").expect("inspect");
+    assert!(!report.to_string().contains(raw), "{report}");
+    assert_eq!(
+        report["content_addressed"]["media_type"], "***SECRET***",
+        "{report}"
+    );
+}

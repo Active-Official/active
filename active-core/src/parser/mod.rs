@@ -22,7 +22,7 @@
 mod lexer;
 
 pub(crate) use lexer::ESCAPED_DOLLAR;
-use lexer::SENTINEL_POS;
+pub(crate) use lexer::SENTINEL_POS;
 pub use lexer::{Lexed, Lexer, Token, TokenKind};
 
 /// Extract the span of a token.

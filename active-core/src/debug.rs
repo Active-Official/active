@@ -345,7 +345,7 @@ pub fn minimal_case_with_options(
     // dedenting. The evaluator runs under the same options as the run
     // being explained.
     let seeds = bundle_seeds(source, file_ctx, options);
-    let reduced = redact_secret_literals(&reduced, &seeds);
+    let reduced = redact_secret_literals(&reduced, &seeds.0, seeds.1);
     json!({
         "target_code": target_code,
         "target_present": target_present,
@@ -357,18 +357,15 @@ pub fn minimal_case_with_options(
 }
 
 /// Runtime secret seeds for a reduction bundle. Evaluation uses the
-/// caller's options (mode, profile, parse flags, limits) with payload
-/// materialisation and no wall deadline; a failed evaluation yields no
-/// seeds and the locator-span pass still applies.
+/// caller's options (profile, parse flags, limits) with no wall
+/// deadline; seeds are collected during the walk, so a hard error keeps
+/// the material text discovered so far. A document with no secret,
+/// environment, or profile input skips the walk entirely.
 fn bundle_seeds(
     source: &str,
     file_ctx: Option<&std::path::Path>,
     options: DebugOptions<'_>,
-) -> crate::secret::SecretRedactor {
-    // Most reductions have no secret material: skip the extra walk.
-    if !source.contains("secret") && !source.contains("profile") && !source.contains("env.") {
-        return crate::secret::SecretRedactor::new();
-    }
+) -> (crate::secret::SecretRedactor, bool) {
     let parse_options = crate::ParseOptions {
         enable_includes: file_ctx.is_some(),
         allow_parent_escapes: options.allow_parent_escapes,
@@ -384,20 +381,28 @@ fn bundle_seeds(
         ),
         None => crate::parse_recovering(source, "minimize", parse_options),
     };
+    if !module_is_material(&module) {
+        return (crate::secret::SecretRedactor::new(), false);
+    }
     let mut engine = Engine::new();
     // Seeds are a value snapshot, not a verdict: evaluate resiliently so
     // a strict validation failure still yields the material strings the
-    // bundle must redact.
+    // bundle must redact. Seeds are written during the walk, so a hard
+    // error keeps what was discovered.
     engine.resilient = true;
     engine.profile_override = options.profile.map(str::to_string);
     if let Some(budget) = options.budget {
         engine.budget = *budget;
     }
     engine.budget.max_wall_ms = 0;
-    let mut seeds = engine
-        .evaluate_with_seeds(&module)
-        .map(|(_, _, seeds)| seeds)
-        .unwrap_or_default();
+    let (outcome, mut seeds) = engine.evaluate_collecting_seeds(&module);
+    // A hard error can stop the walk before later secret nodes; the
+    // bundle then fails closed by redacting every string literal.
+    let has_secret = module
+        .arena
+        .iter()
+        .any(|node| matches!(node, crate::ir::Node::Secret { .. }));
+    let fail_closed = outcome.is_err() && has_secret;
     // Profile-authored literals at material paths are known secrets
     // even when their node value is path-material only.
     let profile = crate::secret::SecretProfile::with_context(
@@ -407,7 +412,17 @@ fn bundle_seeds(
         Some(&seeds),
     );
     seeds.merge(profile.literals());
-    seeds
+    (seeds, fail_closed)
+}
+
+fn module_is_material(module: &Module) -> bool {
+    !module.profiles.is_empty()
+        || module.arena.iter().any(|node| {
+            matches!(
+                node,
+                crate::ir::Node::Secret { .. } | crate::ir::Node::Env { .. }
+            )
+        })
 }
 
 /// Replace secret-bearing string literals in exported source with a
@@ -428,7 +443,11 @@ fn bundle_seeds(
 ///    seed, including env/computed/interpolated values) is replaced
 ///    too, and any comment containing one is redacted wholesale. A
 ///    base64 or hex encoding of a known value counts as a duplicate.
-fn redact_secret_literals(source: &str, seeds: &crate::secret::SecretRedactor) -> String {
+fn redact_secret_literals(
+    source: &str,
+    seeds: &crate::secret::SecretRedactor,
+    fail_closed: bool,
+) -> String {
     // Line breaks between `secret` and `(` are rejected by the parser
     // but still denote a call for display purposes. Normalize the gap
     // in place (newlines → spaces) so a recovering parse sees the call
@@ -440,7 +459,7 @@ fn redact_secret_literals(source: &str, seeds: &crate::secret::SecretRedactor) -
     // The lexical pass also covers malformed calls and locators the
     // parser cannot resolve. Overlaps are unioned below.
     spans.extend(lexical_secret_spans(&normalized));
-    if spans.is_empty() && seeds.is_empty() {
+    if spans.is_empty() && seeds.is_empty() && !fail_closed {
         return source.to_string();
     }
     let mut ranges: Vec<(usize, usize)> = spans.iter().filter_map(offsets).collect();
@@ -473,7 +492,7 @@ fn redact_secret_literals(source: &str, seeds: &crate::secret::SecretRedactor) -
             continue;
         };
         if merged.iter().any(|&(s, e)| start >= s && end <= e) {
-            authored.insert(token.text.clone());
+            authored.insert(decoded_token_text(token).unwrap_or_else(|| token.text.clone()));
         }
     }
     // Duplicates of a known value elsewhere in the document (a blob
@@ -492,13 +511,19 @@ fn redact_secret_literals(source: &str, seeds: &crate::secret::SecretRedactor) -
         if env_names.contains(&token_key(token)) {
             continue;
         }
-        let matched = match decoded_token_text(token) {
-            Some(value) => value_is_known(&value, &authored, seeds),
-            // Interpolated token: its resolved value is not in the
-            // token text, so fail closed on a known substring.
-            None => {
-                authored.redact_text(&token.text).is_some()
-                    || seeds.redact_text(&token.text).is_some()
+        if fail_closed {
+            extras.push((start, end));
+            continue;
+        }
+        let matched = if token.text.contains("${") {
+            // An interpolation keeps `${…}` in the token text; the
+            // resolved value is unavailable, so fail closed on a known
+            // substring.
+            authored.redact_text(&token.text).is_some() || seeds.redact_text(&token.text).is_some()
+        } else {
+            match decoded_token_text(token) {
+                Some(value) => value_is_known(&value, &authored, seeds),
+                None => false,
             }
         };
         if matched {
@@ -510,14 +535,15 @@ fn redact_secret_literals(source: &str, seeds: &crate::secret::SecretRedactor) -
     // Lex the original text: `normalized` blanks comment bytes so the
     // recovering parser sees no comment at all.
     let comment_lex = crate::parser::Lexer::new(source).tokenize();
+    let source_starts = line_byte_starts(source);
     let mut comment_ranges: Vec<(usize, usize)> = Vec::new();
     for (_, span) in &comment_lex.comments {
-        let Some((start, end)) = offsets(span) else {
+        let Some((start, end)) = span_offsets_with(&source_starts, source, span) else {
             continue;
         };
         let text = &source[start..end];
         let authored_hit = authored.redact_text(text).is_some();
-        if authored_hit || seeds.redact_text(text).is_some() {
+        if fail_closed || authored_hit || seeds.redact_text(text).is_some() {
             comment_ranges.push((start, end));
         }
     }
@@ -656,28 +682,32 @@ fn env_name_span_keys(
     out
 }
 
-/// Decoded value of a string token. The lexer's position map is not an
-/// interpolation marker; `token.text` is the decoded literal text and
-/// nested interpolations appear as their own tokens.
+/// Decoded value of a string token. `token.text` is the decoded literal
+/// text (an interpolation's `${…}` stays in the text; nested tokens are
+/// not part of the lexer stream). Multi-line strings are dedented.
 fn decoded_token_text(token: &crate::parser::Token) -> Option<String> {
     use crate::parser::TokenKind as K;
-    let decoded = match &token.kind {
-        K::MlString(_) => crate::parser::strip_common_indent(&token.text),
-        K::String(_) | K::MlSingleString | K::SingleString => token.text.clone(),
+    let (decoded, positions) = match &token.kind {
+        K::MlString(_) => (crate::parser::strip_common_indent(&token.text), None),
+        K::MlSingleString => (crate::parser::strip_common_indent(&token.text), None),
+        K::String(map) => (token.text.clone(), Some(map)),
+        K::SingleString => (token.text.clone(), None),
         _ => return None,
     };
-    Some(
-        decoded
-            .chars()
-            .map(|c| {
-                if c == crate::parser::ESCAPED_DOLLAR {
-                    '$'
-                } else {
-                    c
-                }
-            })
-            .collect(),
-    )
+    let mut out = String::with_capacity(decoded.len());
+    for (index, c) in decoded.chars().enumerate() {
+        if c == crate::parser::ESCAPED_DOLLAR {
+            // Only an escaped `\$` carries the sentinel position; a
+            // genuine U+E000 is user data and stays as-is.
+            let escaped = positions
+                .and_then(|map| map.get(index))
+                .is_some_and(|position| *position == crate::parser::SENTINEL_POS);
+            out.push(if escaped { '$' } else { c });
+        } else {
+            out.push(c);
+        }
+    }
+    Some(out)
 }
 
 /// True for a token that carries a string value.
@@ -1052,9 +1082,23 @@ struct CallOpen {
 /// (`Secret(`) are still secret calls for display purposes.
 fn is_secret_token(tokens: &[crate::parser::Token], index: usize) -> bool {
     use crate::parser::TokenKind as K;
-    tokens.get(index).is_some_and(|token| {
+    let is_call = tokens.get(index).is_some_and(|token| {
         matches!(token.kind, K::Secret | K::Ident) && token.text.eq_ignore_ascii_case("secret")
-    })
+    });
+    if !is_call {
+        return false;
+    }
+    // `a.secret.env(NAME)` is a member, not the keyword call.
+    let mut probe = index;
+    while probe > 0 {
+        probe -= 1;
+        match tokens[probe].kind {
+            K::Newline | K::Indent | K::Dedent => continue,
+            K::Dot => return false,
+            _ => break,
+        }
+    }
+    true
 }
 
 fn call_opening(

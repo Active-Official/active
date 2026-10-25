@@ -1257,9 +1257,21 @@ impl Engine {
         &self,
         module: &Module,
     ) -> Result<(Value, Vec<Diagnostic>, SecretRedactor), EvalError> {
+        let (outcome, seeds) = self.evaluate_collecting_seeds(module);
+        outcome.map(|(value, diagnostics)| (value, diagnostics, seeds))
+    }
+
+    /// Evaluate while collecting runtime secret seeds, returning the
+    /// seeds even when the walk fails. Seeds are written as each node
+    /// evaluates, so a type, blob, or budget error still leaves the
+    /// material text discovered so far available for redaction.
+    pub fn evaluate_collecting_seeds(
+        &self,
+        module: &Module,
+    ) -> (Result<(Value, Vec<Diagnostic>), EvalError>, SecretRedactor) {
         let mut seeds = SecretRedactor::new();
-        let (value, diagnostics) = self.evaluate_inner(module, None, None, Some(&mut seeds))?;
-        Ok((value, diagnostics, seeds))
+        let outcome = self.evaluate_inner(module, None, None, Some(&mut seeds));
+        (outcome, seeds)
     }
 
     /// Evaluate and return one secret-safe step per arena node in
@@ -1357,7 +1369,7 @@ impl Engine {
         module: &Module,
         mut memo: Option<&mut IncrementalMemo>,
         steps: Option<&mut Vec<StepEvent>>,
-        seeds: Option<&mut SecretRedactor>,
+        mut seeds: Option<&mut SecretRedactor>,
     ) -> Result<(Value, Vec<Diagnostic>), EvalError> {
         // The deadline covers everything from here on (spec/budgets.md
         // §2): static scans, cycle check, sort, walk, transforms, and
@@ -1486,6 +1498,24 @@ impl Engine {
             || has_blobs
             || seeds.is_some())
         .then(|| SecretProfile::analyze_with_profile(module, self.profile_override.as_deref()));
+        // Nodes reachable from the exported tree. A profile may select
+        // a data node at a material path: its value is visible in its
+        // own slot and must not seed, while a `let`-bound/computed
+        // profile value (not reachable from the root) is material.
+        let root_nodes: std::collections::HashSet<NodeId> = if seeds.is_some() {
+            let mut reachable = std::collections::HashSet::new();
+            let mut stack: Vec<NodeId> = module.root.into_iter().collect();
+            while let Some(id) = stack.pop() {
+                if reachable.insert(id) {
+                    if let Some(node) = module.get(id) {
+                        stack.extend(crate::secret::node_children(node));
+                    }
+                }
+            }
+            reachable
+        } else {
+            std::collections::HashSet::new()
+        };
         // Evaluated values of sensitive nodes, so a container step can
         // redact the same bytes even though the container itself is
         // not Secret-kinded (topological order means children are
@@ -1909,6 +1939,18 @@ impl Engine {
                         .collect(),
                 });
             }
+            if let Some(out) = seeds.as_deref_mut() {
+                if let Some(profile) = secret_profile.as_ref() {
+                    let material = profile.node_is_secret(node_id)
+                        || (profile.material_path_for(node_id).is_some()
+                            && !root_nodes.contains(&node_id));
+                    if material {
+                        if let Value::Secret(text) | Value::String(text) = &value {
+                            out.insert(text.clone());
+                        }
+                    }
+                }
+            }
             values.insert(node_id, value);
         }
 
@@ -1936,29 +1978,6 @@ impl Engine {
                     codes: step.codes,
                 });
             }
-        }
-
-        // Runtime secret seeds: every material node's evaluated text,
-        // including nodes that never enter the exported tree (a `let`
-        // binding, a computed interpolation, a lazy env lookup). This is
-        // the same source the step renderer uses, so every surface can
-        // agree on what must be redacted.
-        if let Some(out) = seeds {
-            let mut collected = SecretRedactor::new();
-            if let Some(profile) = secret_profile.as_ref() {
-                for (id, value) in &values {
-                    if !profile.node_is_secret(*id) {
-                        continue;
-                    }
-                    match value {
-                        Value::Secret(text) | Value::String(text) => {
-                            collected.insert(text.clone());
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            *out = collected;
         }
 
         let root = module.root.ok_or(EvalError::MissingRoot)?;

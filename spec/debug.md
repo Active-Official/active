@@ -128,9 +128,13 @@ strings) and substring matching for comments (which are non-semantic);
 canonical `secret.env("NAME")` arguments are exempt. Padded, unpadded,
 and URL-safe base64 plus hex (with optional `0x` and whitespace) are
 decoded when they form the whole value; an encoded secret embedded in a
-longer string is not decoded. Multi-line strings are dedented and
-escaped dollars unmarked before matching; a nested interpolation that
-hides the value is covered when its literal token matches. Taint is structural, so a plain
+longer string is not decoded. Both triple-quoted string forms are
+dedented before matching; escaped dollars are unmarked where the lexer
+marks them (a genuine U+E000 stays). An interpolation keeps `${…}` in
+its token text, so a known value anywhere in that text redacts the
+token. If the document fails hard before every secret node is walked,
+the bundle fails closed and redacts every string literal (canonical
+env names excepted). Taint is structural, so a plain
 value used as a locator (a `let`, a table field, an environment lookup)
 and any interpolation, reference, or container built from it are
 material even without a `Value::Secret` marker; containers keep their

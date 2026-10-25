@@ -1049,13 +1049,13 @@ fn minimize_redacts_duplicate_values_beyond_plain_tokens() {
         "schema = { t = Int }\nt = secret(\"hunter2-b64\")\ndup = \"aHVudGVyMi1iNjQ=\"\n",
         "schema = { t = Int }\nt = secret(\"hunter2-b64\")\ndup = \"aHVudGVyMi1iNjQ\"\n",
         "schema = { t = Int }\nt = secret(\"hunter2-b64\")\ndup = \"aHVudGVyMi1iNjQ\" # unpadded\n",
-        "schema = { t = Int }\nt = secret(\"hunter2-b64\")\ndup = \"aHVudGVyMi1iNjQ\" # unpadded\n",
     ];
     let raw_values = [
         "hunter2-COMMENT",
         "abc-resolved",
         "hunter2-ML",
         "pa$$word",
+        "hunter2-b64",
         "aHVudGVyMi1iNjQ=",
         "aHVudGVyMi1iNjQ",
     ];
@@ -1138,4 +1138,51 @@ fn minimize_keeps_a_grouped_env_name() {
         reduced.contains("secret.env((\"HUNTER2_ENVNAME\"))"),
         "{reduced}"
     );
+}
+
+#[test]
+fn minimize_covers_interpolation_mlsingle_and_dotted_env_tricks() {
+    // Review 57 edge cases: nested interpolation, triple-single-quoted
+    // dedent, a dotted member named secret, and a genuine U+E000.
+    let cases = [
+        "schema = { t = Int }\nt = secret(\"hunter2-nested\")\ndup = \"prefix ${ \\\"hunter2-nested\\\" } suffix\"\n",
+        "schema = { t = Int }\nt = secret(\"hunter2-mls\")\ndup = '''\n  hunter2-mls'''\n",
+        "schema = { t = Int }\na = { secret = 1 }\nt = secret(\"hunter2-dot\")\ndup = a.secret.env(\"hunter2-dot\")\n",
+    ];
+    let raws = ["hunter2-nested", "hunter2-mls", "hunter2-dot"];
+    for (source, raw) in cases.iter().zip(raws) {
+        let report = debug::minimal_case(source, "T002", 0);
+        let reduced = report["reduced"].as_str().expect("reduced");
+        assert!(!reduced.contains(raw), "{raw} survived: {reduced}");
+    }
+}
+
+#[test]
+fn minimize_keeps_a_genuine_sentinel_character() {
+    // Review 57: a literal U+E000 is user data, not an escaped dollar.
+    let source =
+        "schema = { t = Int }\nt = secret(\"pa\\u{E000}word\")\ndup = \"pa\\u{E000}word\"\n";
+    let report = debug::minimal_case(source, "T002", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(!reduced.contains("pa$word"), "{reduced}");
+}
+
+#[test]
+fn minimize_redacts_a_comment_after_a_secret_gap() {
+    // Review 57: comment offsets use the source line index, not the
+    // normalized one.
+    let source = "t = secret(\"hunter2-one\")\ng = secret\n(\"hunter2-two\")\n# note hunter2-one leaked here\n";
+    let report = debug::minimal_case(source, "T002", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(!reduced.contains("hunter2-one"), "{reduced}");
+}
+
+#[test]
+fn minimize_collects_seeds_on_a_hard_error() {
+    // Review 57: a type error after the secret node still leaves its
+    // text available for duplicate redaction.
+    let source = "t = secret(\"abc-${1}\")\ndup = \"abc-1\"\nbad = 1 + \"s\"\n";
+    let report = debug::minimal_case(source, "T001", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(!reduced.contains("abc-1"), "{reduced}");
 }

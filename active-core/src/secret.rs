@@ -1121,9 +1121,6 @@ fn mark_all_material(module: &Module, nodes: &mut HashSet<NodeId>, envs: &mut Ha
     }
 }
 
-/// Names of every env read anywhere in a value subtree, including
-/// operands, interpolation parts, quantities, blob media/data, and env
-/// fallbacks. A material profile value makes every read it contains
 /// A literal supplied by a profile at a material path is authored
 /// secret material: its text is known, so a copy elsewhere (a plain
 /// string or a blob payload) redacts even though no data path marks the
@@ -1146,6 +1143,9 @@ fn insert_profile_literal(
     }
 }
 
+/// Names of every env read anywhere in a value subtree, including
+/// operands, interpolation parts, quantities, blob media/data, and env
+/// fallbacks. A material profile value makes every read it contains
 /// material under the env-name rule. Results are cached per node: a
 /// profile may reference one large shared subtree many times.
 fn collect_env_names(
@@ -1404,10 +1404,23 @@ impl SecretProfile {
         // literal parts are deliberately absent — they are the benign
         // scaffolding, not the material.
         let mut literals = SecretRedactor::new();
-        // Nodes reachable from the document's data tree: a profile that
-        // references one of these literals is selecting data, not
-        // authoring new material.
-        let data_nodes: HashSet<NodeId> = module.value_paths().into_keys().collect();
+        // Nodes reachable from the exported data tree (root only, not
+        // `let` bindings): a profile that references one of these
+        // literals is selecting data, not authoring new material.
+        let data_nodes: HashSet<NodeId> = if module.profiles.is_empty() {
+            HashSet::new()
+        } else {
+            let mut reachable = HashSet::new();
+            let mut stack: Vec<NodeId> = module.root.into_iter().collect();
+            while let Some(id) = stack.pop() {
+                if reachable.insert(id) {
+                    if let Some(node) = module.get(id) {
+                        stack.extend(node_children(node));
+                    }
+                }
+            }
+            reachable
+        };
         for id in &nodes {
             if let Some(Node::Literal(Value::String(text))) = module.get(*id) {
                 literals.insert(text.clone());
@@ -1934,6 +1947,17 @@ impl SecretProfile {
                 if nodes.contains(&NodeId(index as u32)) {
                     material_envs.insert(name.clone());
                 }
+            }
+        }
+        // Nodes marked material after the first literal pass (locator
+        // subtrees, profile selections, fail-closed marking): their
+        // authored text is known material too.
+        for id in &nodes {
+            if data_nodes.contains(id) {
+                continue;
+            }
+            if let Some(Node::Literal(Value::String(text))) = module.get(*id) {
+                literals.insert(text.clone());
             }
         }
         Self {

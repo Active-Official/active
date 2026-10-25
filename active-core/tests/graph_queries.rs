@@ -66,3 +66,27 @@ fn blobs_above_size_filters_by_floor() {
     assert_eq!(big[0].0, "big");
     assert!(big[0].1 >= 10, "{big:?}");
 }
+
+#[test]
+fn secret_tainted_cone_sees_runtime_copy_and_payload_secret() {
+    // Review 49: seeds and a materialised payload make a runtime copy
+    // and a payload-resident secret visible to the query.
+    let module = parse(
+        "let v = \"PIN-${1234}\"\nlet k = secret(v)\ncopy = \"PIN-1234\"\nf = blob(\"text/plain\", \"PIN-1234\")\n",
+        "gq-seeds",
+    )
+    .expect("must parse");
+    let mut engine = Engine::hermetic();
+    engine.materialise_blobs = true;
+    let (value, _, seeds) = engine.evaluate_with_seeds(&module).expect("must evaluate");
+    let paths = active_core::graph::secret_tainted_paths_with_seeds(
+        &module,
+        &value,
+        None,
+        None,
+        Some(&seeds),
+    );
+    for path in ["copy", "f"] {
+        assert!(paths.contains(&path.to_string()), "{paths:?}");
+    }
+}

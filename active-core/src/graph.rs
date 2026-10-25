@@ -192,6 +192,10 @@ pub fn secret_tainted_paths(value: &crate::ir::Value) -> Vec<String> {
 /// as a `secret(...)` locator (and anything built from it) is material
 /// even without a `Value::Secret` marker. The same profile backs
 /// `inspect` and step traces, so the query agrees with them.
+///
+/// Structural only: a runtime copy or a payload-resident secret is
+/// invisible. Callers that evaluated the document use
+/// [`secret_tainted_paths_with_seeds`].
 pub fn secret_tainted_paths_with(
     module: &Module,
     value: &crate::ir::Value,
@@ -237,8 +241,21 @@ fn secret_tainted_paths_from_profile(
         let tainted = match value {
             Value::Secret(_) => true,
             Value::Blob { tainted: true, .. } => true,
-            Value::Blob { media_type, .. } => {
-                structural || profile.redact_text(media_type).is_some()
+            // A payload-resident secret is invisible without the
+            // retained bytes; callers that need it evaluate with
+            // materialisation and these seeds.
+            Value::Blob {
+                media_type,
+                payload,
+                ..
+            } => {
+                structural
+                    || profile.redact_text(media_type).is_some()
+                    || payload.as_ref().is_some_and(|bytes| {
+                        profile
+                            .redact_text(&String::from_utf8_lossy(bytes))
+                            .is_some()
+                    })
             }
             // A copy of a runtime secret has no structural path taint;
             // its text is the only signal.

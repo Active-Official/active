@@ -14,10 +14,11 @@ use crate::types::ActiveType;
 
 /// Inspect one dotted/index path of an evaluated document.
 ///
-/// No environment or evaluator seeds: a secret bound outside the
-/// exported tree (`let v = …; k = secret(v)`) is invisible here. Use
-/// [`inspect_path_with_profile_env`] with the seeds returned by
-/// `Engine::evaluate_with_seeds` for a view that matches the exporters.
+/// Runtime environment values are not visible to this wrapper. It does
+/// recover computed out-of-tree secrets by re-evaluating the module
+/// hermetically for seeds; a document that reads the host environment
+/// should use [`inspect_path_with_profile_env`] with the evaluator's
+/// seeds and environment.
 pub fn inspect_path(module: &Module, root: &Value, path: &str) -> Result<JsonValue, String> {
     inspect_path_with_profile(module, root, path, None)
 }
@@ -25,14 +26,20 @@ pub fn inspect_path(module: &Module, root: &Value, path: &str) -> Result<JsonVal
 /// Inspect with an explicit profile override (the engine's `--profile`
 /// selection). Taint must follow the profile that produced the tree.
 ///
-/// No environment or evaluator seeds; see [`inspect_path`].
+/// Hermetic seeds only; see [`inspect_path`].
 pub fn inspect_path_with_profile(
     module: &Module,
     root: &Value,
     path: &str,
     override_profile: Option<&str>,
 ) -> Result<JsonValue, String> {
-    inspect_path_with_profile_env(module, root, path, override_profile, None, None)
+    let mut engine = crate::eval::Engine::hermetic();
+    engine.profile_override = override_profile.map(str::to_string);
+    let seeds = engine
+        .evaluate_with_seeds(module)
+        .map(|(_, _, seeds)| seeds)
+        .unwrap_or_default();
+    inspect_path_with_profile_env(module, root, path, override_profile, None, Some(&seeds))
 }
 
 /// Inspect with the environment snapshot and runtime secret seeds that
@@ -209,7 +216,12 @@ fn render_cone(
             if crate::convert::blob_payload_is_material(redactor, payload.as_ref()) {
                 (crate::convert::redacted_blob_json(hash, *size), true)
             } else {
-                (crate::convert::value_to_json(value), false)
+                // Inspect reports are identity-only: a clean payload is
+                // used for the taint check, never emitted.
+                (
+                    crate::convert::value_to_json(&crate::convert::strip_blob_payloads(value)),
+                    false,
+                )
             }
         }
         _ => (crate::convert::value_to_json(value), false),

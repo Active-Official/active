@@ -239,3 +239,64 @@ fn budget_data_with_profile_hides_selected_material_length() {
         "material length must not change the reported size"
     );
 }
+
+#[test]
+fn taint_data_with_seeds_reports_a_runtime_copy_and_payload_secret() {
+    // Review 49: value-dependent taint needs the evaluator seeds and a
+    // materialised payload to see a copy or payload-resident secret.
+    let module = parse(
+        "let v = \"PIN-${1234}\"\nlet k = secret(v)\ncopy = \"PIN-1234\"\nf = blob(\"text/plain\", \"PIN-1234\")\n",
+        "viz-seeds",
+    )
+    .expect("parse");
+    let mut engine = Engine::hermetic();
+    engine.materialise_blobs = true;
+    let (value, _, seeds) = engine.evaluate_with_seeds(&module).expect("evaluate");
+    let data = viz::taint_data_with_seeds(&module, &value, None, None, Some(&seeds));
+    let sources: Vec<&str> = data["sources"]
+        .as_array()
+        .expect("sources")
+        .iter()
+        .filter_map(|item| item.as_str())
+        .collect();
+    assert!(sources.contains(&"copy"), "{sources:?}");
+    assert!(sources.contains(&"f"), "{sources:?}");
+}
+
+#[test]
+fn budget_data_with_seeds_ignores_a_runtime_copy_length() {
+    let module = parse(
+        "let a = \"PIN-${12}\"\nlet k = secret(a)\ncopy = \"PIN-12\"\n",
+        "viz-budget-short",
+    )
+    .expect("parse");
+    let module_long = parse(
+        "let a = \"PIN-${123456789012}\"\nlet k = secret(a)\ncopy = \"PIN-123456789012\"\n",
+        "viz-budget-long",
+    )
+    .expect("parse");
+    let mut engine = Engine::hermetic();
+    engine.materialise_blobs = true;
+    let (short, _, short_seeds) = engine.evaluate_with_seeds(&module).expect("evaluate");
+    let (long, _, long_seeds) = engine.evaluate_with_seeds(&module_long).expect("evaluate");
+    let size = |module: &active_core::Module,
+                value: &active_core::Value,
+                seeds: &active_core::secret::SecretRedactor| {
+        viz::budget_data_with_seeds(
+            module,
+            value,
+            &Budget::trusted(),
+            &[],
+            None,
+            None,
+            Some(seeds),
+        )["usage"]["value_size"]
+            .as_u64()
+            .expect("value_size")
+    };
+    assert_eq!(
+        size(&module, &short, &short_seeds),
+        size(&module_long, &long, &long_seeds),
+        "secret length must not change the reported size"
+    );
+}

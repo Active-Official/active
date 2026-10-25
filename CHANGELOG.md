@@ -50,9 +50,13 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   on a materialised, redacted, payload-free tree, so
   `--materialise-blobs` cannot change a document's identity, and
   `debug --replay` uses the same policy: it reproduces an audit hash
-  for payload-resident and `let`-bound secrets. `budget explain`,
-  `viz budget`, and `graph query secret-tainted-cone` absorb the
-  evaluator's seeds, so a runtime copy reports redacted size and taint.
+  for payload-resident and `let`-bound secrets. `lock` withholds an
+  environment value whose text matches a runtime secret. `budget
+  explain`, `viz budget`, `graph query secret-tainted-cone`, and
+  `viz taint` absorb the evaluator's seeds (the value-dependent
+  queries materialise so a payload-resident secret is seen), and
+  inspection's unseeded wrappers re-evaluate hermetically for computed
+  secrets while the CLI passes the real seeds.
 - **Reduction fails closed.** `--minimize` now recognizes dot runs on
   either side of `env`, `secret env(`, and env calls with anything
   past the name (comma or not), and redacts every string literal in

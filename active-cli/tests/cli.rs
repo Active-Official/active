@@ -3327,3 +3327,91 @@ fn graph_secret_cone_includes_a_runtime_copy() {
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("copy"), "{text}");
 }
+
+#[test]
+fn lock_withholds_an_env_value_matching_a_runtime_secret() {
+    // Review 49: provenance withholds a value whose text matches an
+    // evaluator seed, even when its name is not structurally material.
+    let f = fixture(
+        "lock_runtime_env.active",
+        "let v = \"PIN-${12 + 34}\"\nlet k = secret(v)\nout = env.ACTIVE_R49_PROV\n",
+    );
+    let out = active()
+        .arg("lock")
+        .arg(&f)
+        .env("ACTIVE_R49_PROV", "PIN-46")
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(!text.contains("PIN-46"), "{text}");
+}
+
+#[test]
+fn audit_trail_succeeds_with_blob_aliases_near_the_budget() {
+    // Review 49: the canonical audit pass relaxes budgets, so a document
+    // that exported successfully still writes its audit.
+    let payload = "A".repeat(100);
+    let src = format!(
+        "d = \"{payload}\"\nb = blob(\"text/plain\", d)\nr1 = b\nr2 = b\nr3 = b\nr4 = b\nr5 = b\n"
+    );
+    let f = fixture("audit_blob_aliases.active", &src);
+    let audit = f.with_extension("audit.active");
+    let out = active()
+        .arg("eval")
+        .arg(&f)
+        .arg("--max-total-value-size")
+        .arg("2000")
+        .arg("--audit-trail")
+        .arg(&audit)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(audit.exists(), "audit file must be written");
+}
+
+#[test]
+fn audit_and_lock_agree_on_a_payload_resident_secret() {
+    // Review 49: both hashes come from the same canonicaliser.
+    let f = fixture(
+        "audit_lock_payload.active",
+        "k = secret(\"PIN-r49-lock\")\nf = blob(\"text/plain\", \"PIN-r49-lock\")\nkeep = 1\n",
+    );
+    let audit = f.with_extension("audit.active");
+    let out = active()
+        .arg("eval")
+        .arg(&f)
+        .arg("--path")
+        .arg("keep")
+        .arg("--audit-trail")
+        .arg(&audit)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let audit_text = std::fs::read_to_string(&audit).expect("audit file");
+    let audit_hash = audit_text
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("result = "))
+        .map(|value| value.trim_end_matches(',').trim_matches('"').to_string())
+        .expect("audit result hash");
+    let lock = active().arg("lock").arg(&f).output().expect("run active");
+    assert!(
+        lock.status.success(),
+        "{}",
+        String::from_utf8_lossy(&lock.stderr)
+    );
+    let lock_text = String::from_utf8_lossy(&lock.stdout);
+    assert!(lock_text.contains(&audit_hash), "{lock_text}");
+}

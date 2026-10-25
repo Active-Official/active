@@ -37,8 +37,10 @@ audit = {
   fatal loop-terminal errors, same convention as the repair plan's
   `final_codes`).
 - `result`: `content_hash` of the evaluated value — computed over the
-  canonical redacted form, so raw secrets can never enter the log.
-  On a failed evaluation with no value, `result` is `null` (see §2).
+  canonical redacted form (materialised, redacted, payload-free), so
+  raw secrets can never enter the log and `--materialise-blobs` cannot
+  change the identity. On a failed evaluation with no value, `result`
+  is `null` (see §2).
 - `outcome`: `clean` or `failed` (mirrors the process exit contract).
 
 ## 2. Properties

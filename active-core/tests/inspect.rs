@@ -717,3 +717,20 @@ fn inspect_drops_a_materialised_payload_carrying_a_secret_literal() {
     );
     assert_eq!(report["content_addressed"]["tainted"], true, "{report}");
 }
+
+#[test]
+fn inspect_path_recovers_a_computed_let_secret() {
+    // Review 49: the unseeded wrapper re-evaluates hermetically, so a
+    // computed out-of-tree secret still redacts its copy.
+    let module = active_core::parse(
+        "let v = \"PIN-${1234}\"\nlet k = secret(v)\ncopy = \"PIN-1234\"\n",
+        "inspect-computed",
+    )
+    .expect("parse");
+    let (value, _) = active_core::Engine::hermetic()
+        .evaluate(&module)
+        .expect("evaluate");
+    let report = active_core::convert::inspect_path(&module, &value, "copy").expect("inspect");
+    assert!(!report.to_string().contains("PIN-1234"), "{report}");
+    assert_eq!(report["tainted"], true, "{report}");
+}

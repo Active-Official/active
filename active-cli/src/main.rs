@@ -362,7 +362,8 @@ enum Commands {
         /// Output format: json (default) or text
         #[arg(long, default_value = "json")]
         format: String,
-        /// Profile override for replay evaluation (audit reproducibility)
+        /// Profile override for stepping and replay evaluation
+        /// (audit reproducibility)
         #[arg(long)]
         profile: Option<String>,
         /// Require sibling signatures on includes (C-052)
@@ -706,6 +707,9 @@ fn run_inspect(
         Some(path) => {
             let mut evaluation_engine = Engine::new();
             evaluation_engine.profile_override = profile.clone();
+            // Retain payloads so a payload-resident secret is visible to
+            // the taint check; the report strips payloads before output.
+            evaluation_engine.materialise_blobs = true;
             let (value, _, seeds) = evaluation_engine
                 .evaluate_with_seeds(&module)
                 .map_err(|e| anyhow::anyhow!("cannot evaluate for inspection: {e}"))?;
@@ -839,12 +843,6 @@ fn check_declared_against(
     }
 }
 
-/// Secret-redacted audit document (PROPOSAL §5.1, CHECKLIST AUD.001):
-/// counts, diagnostic codes, mode, and the content hash of the
-/// REDACTED result — itself a valid Active document, never raw
-/// values or secrets. Written on success and on validation failure
-/// alike (the outcome field tells them apart); fatal engine errors
-/// return before any value exists, so they carry no audit trail.
 /// Drop retained blob payloads for hashing: the audit result must be
 /// stable across `--materialise-blobs` (identity is the content).
 fn strip_blob_payloads(value: &active_core::Value) -> active_core::Value {
@@ -898,9 +896,13 @@ fn source_verdict(engine: &Engine, source: &str, file: &std::path::Path) -> (boo
     (codes.is_empty(), codes)
 }
 
-/// Write the audit trail (spec/audit-trail.md): a valid Active document
-/// with stable, value-free fields. `value` is the redacted full tree;
-/// `None` marks a failed evaluation with no result.
+/// Secret-redacted audit document (PROPOSAL §5.1, CHECKLIST AUD.001):
+/// counts, diagnostic codes, mode, and the content hash of the
+/// REDACTED result — itself a valid Active document, never raw values
+/// or secrets. Written on success and on validation failure alike (the
+/// outcome field tells them apart); fatal engine errors return before
+/// any value exists, so they carry no audit trail. `value` is the
+/// canonical redacted full tree, already payload-free.
 fn write_audit_trail(
     path: &std::path::Path,
     file: &std::path::Path,
@@ -999,7 +1001,7 @@ fn run_graph_query(
 ) -> anyhow::Result<()> {
     let trust = load_trust(trust_keys)?;
     let module = parse_input(from, resilient, allow_parent_escapes, &trust)?;
-    let evaluation_engine = engine(resilient, profile, Budget::default());
+    let mut evaluation_engine = engine(resilient, profile, Budget::default());
     let name = from.to_string_lossy().to_string();
     for d in &module.healing {
         report(d, &name);
@@ -1053,6 +1055,11 @@ fn run_graph_query(
             }
         }
         "secret-tainted-cone" | "content-addressed-above-size" => {
+            if query.starts_with("secret") {
+                // Payload-resident secrets are only visible when the
+                // bytes are retained; the query emits paths, never bytes.
+                evaluation_engine.materialise_blobs = true;
+            }
             let (value, diags, seeds) = evaluation_engine
                 .evaluate_with_seeds(&module)
                 .map_err(|e| anyhow::anyhow!("evaluation failed: {e}"))?;
@@ -1385,6 +1392,10 @@ fn main() -> anyhow::Result<()> {
                 } else {
                     let mut canonical_engine = engine.clone();
                     canonical_engine.materialise_blobs = true;
+                    // Hashing is not the user's evaluation: relax its
+                    // budgets so payload accounting cannot fail a
+                    // document that already exported successfully.
+                    canonical_engine.budget = active_core::Budget::trusted();
                     let (canonical_value, _, canonical_seeds) = canonical_engine
                         .evaluate_with_seeds(&module)
                         .map_err(|e| anyhow::anyhow!("audit evaluation failed: {e}"))?;
@@ -1993,6 +2004,9 @@ fn main() -> anyhow::Result<()> {
                 "taint" => {
                     let mut evaluation_engine = Engine::new();
                     evaluation_engine.profile_override = profile.clone();
+                    // Taint queries need payload bytes to see a
+                    // payload-resident secret; only paths are emitted.
+                    evaluation_engine.materialise_blobs = true;
                     let (value, _, seeds) = evaluation_engine
                         .evaluate_with_seeds(&module)
                         .map_err(|e| anyhow::anyhow!("cannot evaluate: {e}"))?;
@@ -2002,6 +2016,7 @@ fn main() -> anyhow::Result<()> {
                             &module,
                             &value,
                             profile.as_deref(),
+                            Some(&evaluation_engine.env),
                             Some(&seeds),
                         ))
                         .map_err(|e| anyhow::anyhow!("{e}"))?
@@ -2441,11 +2456,12 @@ fn main() -> anyhow::Result<()> {
                 active_core::secret::active_profile_name(&module)
                     .filter(|name| module.profiles.contains_key(name))
             });
-            let provenance = active_core::provenance::collect_provenance(
+            let provenance = active_core::provenance::collect_provenance_with_seeds(
                 &module,
                 &engine.env,
                 Some(file.as_path()),
                 effective.as_deref(),
+                Some(&seeds),
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?;
             let mut secret_profile = active_core::secret::SecretProfile::analyze_with_profile(
@@ -2454,13 +2470,33 @@ fn main() -> anyhow::Result<()> {
             );
             secret_profile.absorb_environment(&engine.env);
             secret_profile.absorb_secrets(&seeds);
+            // Canonical lock identity: same materialise → redact → strip
+            // policy as the audit, so both hash the same document.
+            let canonical = if module_has_blobs(&module) && !engine.materialise_blobs {
+                let mut canonical_engine = engine.clone();
+                canonical_engine.materialise_blobs = true;
+                canonical_engine.budget = active_core::Budget::trusted();
+                let (canonical_value, _, canonical_seeds) = canonical_engine
+                    .evaluate_with_seeds(&module)
+                    .map_err(|e| anyhow::anyhow!("lock evaluation failed: {e}"))?;
+                let mut canonical_profile =
+                    active_core::secret::SecretProfile::analyze_with_profile(
+                        &module,
+                        canonical_engine.profile_override.as_deref(),
+                    );
+                canonical_profile.absorb_environment(&canonical_engine.env);
+                canonical_profile.absorb_secrets(&canonical_seeds);
+                active_core::convert::redact_value(&canonical_profile, &canonical_value)
+            } else {
+                active_core::convert::redact_value(&secret_profile, &value)
+            };
             let manifest = active_core::provenance::LockManifest::new(
                 format!(
                     "active-cli {} / active-core {}",
                     env!("CARGO_PKG_VERSION"),
                     active_core::VERSION
                 ),
-                &active_core::convert::redact_value(&secret_profile, &value),
+                &strip_blob_payloads(&canonical),
                 provenance,
             );
             let rendered = manifest.render();

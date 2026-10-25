@@ -42,9 +42,13 @@ pub fn taint_data_with_seeds(
     module: &Module,
     value: &Value,
     override_profile: Option<&str>,
+    env: Option<&std::collections::HashMap<String, String>>,
     seeds: Option<&crate::secret::SecretRedactor>,
 ) -> JsonValue {
     let mut profile = crate::secret::SecretProfile::analyze_with_profile(module, override_profile);
+    if let Some(env) = env {
+        profile.absorb_environment(env);
+    }
     if let Some(seeds) = seeds {
         profile.absorb_secrets(seeds);
     }
@@ -68,7 +72,18 @@ fn taint_data_from_profile(
         // text gives it away.
         let literal = match node_value {
             Value::String(text) => profile.redact_text(text).is_some(),
-            Value::Blob { media_type, .. } => profile.redact_text(media_type).is_some(),
+            Value::Blob {
+                media_type,
+                payload,
+                ..
+            } => {
+                profile.redact_text(media_type).is_some()
+                    || payload.as_ref().is_some_and(|bytes| {
+                        profile
+                            .redact_text(&String::from_utf8_lossy(bytes))
+                            .is_some()
+                    })
+            }
             _ => false,
         };
         if contains_secret(node_value) || structural || literal {
@@ -117,11 +132,15 @@ pub fn budget_data(
     budget_data_with_profile(module, value, budget, diagnostics, None)
 }
 
-/// Profile-aware budget dashboard. `profile_override` must be the same
+/// Budget dashboard. `profile_override` must be the same
 /// selector the evaluation used (`Engine::profile_override`), so the
 /// reported sizes describe the tree the caller actually received. An
 /// embedder that evaluated under an override and then called the
 /// unprofiled form would leak material length through `usage.value_size`.
+///
+/// Structural view only: a copy of a `let`-bound or computed secret
+/// reports its raw length. Callers that evaluated the document use
+/// [`budget_data_with_seeds`].
 pub fn budget_data_with_profile(
     module: &Module,
     value: &Value,

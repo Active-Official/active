@@ -124,6 +124,20 @@ pub fn collect_provenance(
     main_file: Option<&Path>,
     profile: Option<&str>,
 ) -> Result<Provenance, String> {
+    collect_provenance_with_seeds(module, env, main_file, profile, None)
+}
+
+/// Provenance that also withholds an environment value whose text
+/// matches an evaluator secret seed, even when its name is not
+/// structurally material. A copy of a `let`-bound secret can otherwise
+/// reach the lockfile's `[[provenance.env]]` value.
+pub fn collect_provenance_with_seeds(
+    module: &Module,
+    env: &std::collections::HashMap<String, String>,
+    main_file: Option<&Path>,
+    profile: Option<&str>,
+    seeds: Option<&crate::secret::SecretRedactor>,
+) -> Result<Provenance, String> {
     let mut secret = secret_bound_names(module);
     // Profile selection is part of the secret analysis: a profile may
     // place `env.T` at a path the document marks material, and the
@@ -149,13 +163,17 @@ pub fn collect_provenance(
     for (name, ()) in names {
         let is_secret = secret.contains(&name);
         match env.get(&name) {
-            Some(value) if !is_secret => env_inputs.push(EnvInput {
-                name: name.clone(),
-                set: true,
-                value: Some(value.clone()),
-                secret: false,
-                value_hash: None,
-            }),
+            Some(value)
+                if !is_secret && !seeds.is_some_and(|seeds| seeds.redact_text(value).is_some()) =>
+            {
+                env_inputs.push(EnvInput {
+                    name: name.clone(),
+                    set: true,
+                    value: Some(value.clone()),
+                    secret: false,
+                    value_hash: None,
+                })
+            }
             Some(value) => env_inputs.push(EnvInput {
                 name: name.clone(),
                 set: true,
@@ -222,10 +240,14 @@ pub fn collect_provenance(
 /// Content hash over the canonical redacted form: compact JSON with
 /// sorted keys, secrets already replaced by `***SECRET***`
 /// (`value_to_json`). Same tree → same `sha256:<hex>` on every
-/// platform. Raw secret values never enter the hash.
+/// platform. Raw secret values never enter the hash. Retained blob
+/// payloads are stripped first, so `--materialise-blobs` cannot change
+/// a document's identity.
 pub fn content_hash(value: &crate::ir::Value) -> String {
-    let canonical = serde_json::to_string(&crate::convert::value_to_json(value))
-        .unwrap_or_else(|_| "null".to_string());
+    let canonical = serde_json::to_string(&crate::convert::value_to_json(
+        &crate::convert::strip_blob_payloads(value),
+    ))
+    .unwrap_or_else(|_| "null".to_string());
     format!("sha256:{}", sha256_hex(canonical.as_bytes()))
 }
 

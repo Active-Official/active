@@ -67,7 +67,7 @@ same bytes.
 | `dependents-of` | transitive dependents of `--key`, sorted |
 | `dependencies-of` | transitive dependencies of `--key`, sorted |
 | `shortest-path` | node labels from `--key <from>,<to>` (hard error when absent) |
-| `secret-tainted-cone` | paths whose subtree is structural secret material (the `inspect`/hover profile, including plain locator sources); `--profile` selects the override |
+| `secret-tainted-cone` | paths whose subtree is structural secret material (the `inspect`/hover profile, including plain locator sources) or whose text matches an evaluator secret seed (a copy of a `let`-bound, computed, or host-env secret); `--profile` selects the override; the query evaluates with materialisation so a payload-resident secret is seen, and emits paths only |
 | `content-addressed-above-size` | `(path, size, blake3)` for blobs at or above `--min-size`; identity metadata only, never payload bytes |
 
 ## 4. Library API (`active_core::graph`)

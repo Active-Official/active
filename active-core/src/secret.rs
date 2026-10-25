@@ -89,7 +89,9 @@ const MAX_AC_PATTERN: usize = 4096;
 type PatternCursor = (Option<usize>, bool);
 
 /// Next match of one linearly scanned pattern at or after `last`.
-/// Each byte of a segment is searched at most once per pattern.
+/// The cursor keeps each pattern's segment search linear: the search
+/// resumes after the previous match and stops once the remainder is
+/// too short.
 fn linear_next(
     pattern: &str,
     segment: &str,
@@ -126,8 +128,9 @@ fn linear_next(
 /// for every earlier match.
 type LevelCursor = (Option<(usize, usize)>, bool);
 
-/// Next match of one batch automaton at or after `last`. Each byte of
-/// a segment is searched at most once per batch.
+/// Next match of one batch automaton at or after `last`. The cursor
+/// keeps the batch's segment search linear: a distant match is
+/// remembered, and an exhausted batch is never scanned again.
 fn level_next(
     automaton: &aho_corasick::AhoCorasick,
     segment: &str,

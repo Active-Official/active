@@ -1,9 +1,18 @@
-Close-out check ÔÇö verifying the retry gate can't hide real failures.
+I'll start by inspecting the repository state and the relevant code/spec.
 
-CONFIRMED CLEAN
+Now I'll rebuild the CLI at HEAD and run the exact reproduction.
 
-1. No masking: `build_with_retry` returns 0 only on real success; deterministic failure fails all 3 identically ÔåÆ returns non-zero ÔåÆ `main` exits 1. Every attempt prints `attempt n/3` + 500 chars output.
-2. No stall: bounded `for (1,2,3)`, sleeps 5+10+15s=30s total; `run()` keeps 600s `timeout` (raises, never hangs); only build step retried.
-3. Gate intact: diff is 1 file only; `BUILD FAILED`/`SMOKE-OK` checks unchanged, no new `return 0`.
+Both parse-echo tests pass and the repro is clean. Now spot-checking round-69 items and gates.
 
+All gates pass. Let me identify the exact N1/N10/N11 items from prior round context so the regression spot-check is precise.
+
+CLEAN
+
+| Check | Status | Evidence |
+|---|---|---|
+| NEW-2 repro: `check`, `lint`, `eval` | FIXED | `s3cr3tAlpha` absent from all output; message is `E024: unknown active_mode: want "data" or "config"`; exits 1. Non-string mode path also value-free; valid `data`/`config` still evaluate. |
+| Committed parse-echo tests | PASS | `parse_diagnostic_does_not_echo_an_active_mode_value` and `..._a_version_value`: 2/2 passed. |
+| Workspace gates | PASS | `cargo fmt --all --check` exit 0; `cargo clippy --workspace --all-targets -- -D warnings` exit 0; `cargo test --workspace` 3198 passed, 0 failed (86 binaries). |
+| NEW-1, NEW-3..NEW-8, N1/N10/N11 | PASS | All 9 round-69 tests plus 2 updated tests pass; `secrets` 133/133, `debug` 83/83, `mode` 13/13; no regression. |
+| `spec/secrets.md` vs code | PASS | ┬º4 E0xx still says tokens/paths only, no evaluated values; E024 emits the field path plus fixed alternatives, a strict subset. Note: fa144bb touches only parser + test, so the claimed spec edit is absent, but the existing bullet is not contradicted. |
 

@@ -61,8 +61,10 @@ error message, or an export** — only redaction markers do.
 
 Every message constructor was audited for evaluated-value echo:
 
-- E0xx (parser): source tokens and paths only — no evaluated values
-  exist yet at parse time.
+- E0xx (parser): names, paths, and spans only — no evaluated values
+  exist yet at parse time, and string payloads (schema versions,
+  `active_mode` values) are never echoed, so a parse error cannot
+  publish a secret.
 - W001–W004: identifier names, profile names, key paths — all
   source-authored, never values.
 - T001: operand kind names only (value-free: no content, no marker).

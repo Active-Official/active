@@ -2865,3 +2865,17 @@ fn viz_repair_keeps_the_directive_path_structural() {
         }
     }
 }
+
+#[test]
+fn parse_diagnostic_does_not_echo_an_active_mode_value() {
+    // Verification 70: the mode value is data, not a diagnostic token.
+    let src = "s = secret(\"s3cr3tAlpha\")\nactive_mode = \"s3cr3tAlpha\"\n";
+    let diags = parse(src, "parse-mode-echo").expect_err("mode must be rejected");
+    for diagnostic in diags {
+        assert!(
+            !diagnostic.message.contains("s3cr3tAlpha"),
+            "{}",
+            diagnostic.message
+        );
+    }
+}

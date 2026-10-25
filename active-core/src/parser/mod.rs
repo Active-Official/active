@@ -2531,7 +2531,9 @@ impl Parser {
                 self.errors.push(Diagnostic {
                     severity: Severity::Error,
                     code: "E024".into(),
-                    message: format!("unknown mode {text:?}: want \"data\" or \"config\""),
+                    // Names and paths only: the value is data and may
+                    // quote a secret.
+                    message: "unknown active_mode: want \"data\" or \"config\"".into(),
                     path: Some("active_mode".into()),
                     span,
                     repair: None,

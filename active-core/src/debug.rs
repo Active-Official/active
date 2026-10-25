@@ -39,22 +39,44 @@ pub fn breakpoint_index(steps: &[StepEvent], selector: &str) -> Option<usize> {
 /// Deterministic replay: evaluate twice and compare the redacted
 /// content hash, the diagnostic code lists, and the step traces. When
 /// `expected` is given, the first hash must equal it (the audit
-/// trail's `result` value).
+/// trail's `result` value). Uses the shipped default budget; callers
+/// whose audit ran under a different limit pass it to
+/// [`replay_with_budget`].
 pub fn replay(
     module: &Module,
     expected: Option<&str>,
     override_profile: Option<&str>,
 ) -> Result<JsonValue, String> {
+    replay_with_budget(
+        module,
+        expected,
+        override_profile,
+        &crate::Budget::default(),
+    )
+}
+
+/// Replay under an explicit budget. `spec/reproducibility.md` declares
+/// the budget an input: an audit produced with a non-default limit
+/// replays byte-identically only under the same limit. The wall clock
+/// is disabled for the canonical pass so a successful export cannot be
+/// followed by a timing-dependent audit failure.
+pub fn replay_with_budget(
+    module: &Module,
+    expected: Option<&str>,
+    override_profile: Option<&str>,
+    budget: &crate::Budget,
+) -> Result<JsonValue, String> {
     let mut engine = Engine::new();
     engine.profile_override = override_profile.map(str::to_string);
     // Canonical audit form: materialise so payload-resident secrets are
     // visible to the redactor, then strip payloads so the identity does
-    // not depend on the flag the audited run used. The probe does not
-    // charge alias copies and gets the trusted envelope, so replay
-    // cannot fail a document that audited successfully.
+    // not depend on the flag the audited run used. The probe skips
+    // per-alias payload accounting; count/size limits still bind so an
+    // untrusted document fails fast instead of exhausting memory.
     engine.materialise_blobs = true;
     engine.taint_probe = true;
-    engine.budget = crate::Budget::trusted();
+    engine.budget = *budget;
+    engine.budget.max_wall_ms = 0;
     let (first, first_diags, first_steps, first_seeds) = engine
         .evaluate_with_steps_and_seeds(module)
         .map_err(|e| e.to_string())?;

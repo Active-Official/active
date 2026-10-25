@@ -198,9 +198,7 @@ fn eval_inner(source: &str) -> String {
             // values) is redacted before serialization, matching the
             // CLI and FFI exporters. Seeds cover a secret bound to a
             // `let` name that never enters the exported tree.
-            let mut profile = active_core::secret::SecretProfile::analyze(&module);
-            profile.absorb_environment(&engine.env);
-            profile.absorb_secrets(&seeds);
+            let profile = active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
             let redacted = active_core::convert::redact_value(&profile, &value);
             let json = active_core::convert::value_to_pretty_json(&redacted);
             let lines: Vec<String> = diags

@@ -1174,7 +1174,12 @@ impl<'a> StepRenderer<'a> {
                 if material {
                     (crate::convert::redacted_blob_json(hash, *size), true)
                 } else {
-                    (crate::convert::value_to_json(value), false)
+                    // Steps are identity-only: payload bytes are never
+                    // rendered (they can be megabytes per ancestor).
+                    (
+                        crate::convert::value_to_json(&crate::convert::strip_blob_payloads(value)),
+                        false,
+                    )
                 }
             }
             _ if sensitive || path.is_some_and(|path| self.profile.path_is_secret(path)) => {

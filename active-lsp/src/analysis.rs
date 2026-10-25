@@ -1054,8 +1054,8 @@ pub fn hover_at(doc: &Doc, line: u32, character: u32) -> Option<Hover> {
     // Value at the path (redacted; lets have no tree value).
     if let Some(root) = doc.value.as_ref() {
         if let Some(value) = value_at_path(root, &path) {
-            let mut profile = SecretProfile::analyze(&doc.module);
-            profile.absorb_secrets(&doc.value_seeds);
+            let profile =
+                SecretProfile::with_context(&doc.module, None, None, Some(&doc.value_seeds));
             profile.begin_redaction_pass();
             // Seed path-material plain values from the evaluated tree:
             // a profile-selected env copy is material by path, not by

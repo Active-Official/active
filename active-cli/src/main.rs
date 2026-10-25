@@ -366,6 +366,10 @@ enum Commands {
         /// (audit reproducibility)
         #[arg(long)]
         profile: Option<String>,
+        /// Resource limits for stepping and replay; pass the same
+        /// limits the audited run used to reproduce its hash
+        #[command(flatten)]
+        budget: BudgetArgs,
         /// Require sibling signatures on includes (C-052)
         #[arg(long)]
         trust_keys: Option<PathBuf>,
@@ -1390,6 +1394,10 @@ fn main() -> anyhow::Result<()> {
                     let mut canonical_engine = engine.clone();
                     canonical_engine.materialise_blobs = true;
                     canonical_engine.taint_probe = true;
+                    // A second pass must not fail on the caller's wall
+                    // clock after the first succeeded; counts and sizes
+                    // still bind.
+                    canonical_engine.budget.max_wall_ms = 0;
                     let (canonical_value, _, canonical_seeds) = canonical_engine
                         .evaluate_with_seeds(&module)
                         .map_err(|e| anyhow::anyhow!("audit evaluation failed: {e}"))?;
@@ -1790,6 +1798,7 @@ fn main() -> anyhow::Result<()> {
             max_attempts,
             format,
             profile,
+            budget,
             trust_keys,
         } => {
             if minimize.is_some() && trust_keys.is_some() {
@@ -1836,9 +1845,13 @@ fn main() -> anyhow::Result<()> {
             }
             let module = parse_input(&from, false, false, &trust)?;
             if replay {
-                let report =
-                    active_core::debug::replay(&module, expect.as_deref(), profile.as_deref())
-                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                let report = active_core::debug::replay_with_budget(
+                    &module,
+                    expect.as_deref(),
+                    profile.as_deref(),
+                    &budget.resolve()?,
+                )
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
                 if format == "text" {
                     println!(
                         "replay: {} hash={} steps={} steps_match={}",
@@ -1865,6 +1878,7 @@ fn main() -> anyhow::Result<()> {
             }
             let mut step_engine = Engine::new();
             step_engine.profile_override = profile.clone();
+            step_engine.budget = budget.resolve()?;
             let (_, _, steps) = step_engine
                 .evaluate_with_steps(&module)
                 .map_err(|e| anyhow::anyhow!("cannot evaluate for stepping: {e}"))?;
@@ -2458,6 +2472,7 @@ fn main() -> anyhow::Result<()> {
                 let mut canonical_engine = engine.clone();
                 canonical_engine.materialise_blobs = true;
                 canonical_engine.taint_probe = true;
+                canonical_engine.budget.max_wall_ms = 0;
                 let (canonical_value, _, canonical_seeds) = canonical_engine
                     .evaluate_with_seeds(&module)
                     .map_err(|e| anyhow::anyhow!("lock evaluation failed: {e}"))?;

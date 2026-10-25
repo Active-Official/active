@@ -529,12 +529,8 @@ pub unsafe extern "C" fn active_eval(
                 // it crosses the boundary, matching the CLI exporters.
                 // Seeds cover lazy host values: `engine.env` stays empty
                 // when the host supplies the lookup callback.
-                let mut profile = active_core::secret::SecretProfile::analyze_with_profile(
-                    &parsed,
-                    engine.profile_override.as_deref(),
-                );
-                profile.absorb_environment(&engine.env);
-                profile.absorb_secrets(&seeds);
+                let profile =
+                    active_core::secret::SecretProfile::for_engine(&parsed, &engine, &seeds);
                 let value = active_core::convert::redact_value(&profile, &value);
                 Box::into_raw(Box::new(ActiveValue { value }))
             }

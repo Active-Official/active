@@ -997,3 +997,41 @@ fn steps_are_deterministic_for_a_node_material_at_two_paths() {
         "source leaked: {first}"
     );
 }
+
+#[test]
+fn replay_respects_a_caller_budget() {
+    // Review 51: replay is an input-bounded evaluation, not a trusted
+    // pass; a budget that rejects the document rejects replay too.
+    let module = parse("x = 1\ny = 2\n", "replay-budget").expect("parse");
+    let budget = active_core::Budget {
+        max_nodes: 1,
+        ..Default::default()
+    };
+    let error = debug::replay_with_budget(&module, None, None, &budget)
+        .expect_err("node budget must bind replay");
+    assert!(error.contains("node"), "{error}");
+}
+
+#[test]
+fn step_events_never_carry_blob_payloads() {
+    // Review 51: a materialised tree feeds the taint check, but a step
+    // is identity-only, so payload bytes never enter a trace.
+    let payload = "B".repeat(64);
+    let src = format!("b = blob(\"text/plain\", \"{payload}\")\nc = b\n");
+    let module = parse(&src, "step-payload").expect("parse");
+    let mut engine = Engine::hermetic();
+    engine.materialise_blobs = true;
+    engine.taint_probe = true;
+    let (value, _, steps, _) = engine
+        .evaluate_with_steps_and_seeds(&module)
+        .expect("evaluate");
+    let rendered = serde_json::to_string(&steps).expect("json");
+    assert!(!rendered.contains("payload_b64"), "{rendered}");
+    let blob_steps: Vec<_> = steps.iter().filter(|step| step.kind == "blob").collect();
+    assert_eq!(blob_steps.len(), 2, "{rendered}");
+    for step in blob_steps {
+        assert!(step.value.to_string().contains("\"size\":64"), "{rendered}");
+        assert!(!step.value.to_string().contains("payload"), "{rendered}");
+    }
+    assert!(matches!(value, active_core::Value::Table(_)));
+}

@@ -59,6 +59,16 @@ selector never matches).
 compares: the redacted content hash, the ordered diagnostic codes, and
 the full step arrays. `--expect sha256:...` additionally pins the hash
 (the audit trail's `result` value). Any mismatch exits non-zero.
+Replay is a canonical pass: it materialises payloads through a probe
+(no alias copy charge) and hashes the redacted, payload-free tree, so
+`--materialise-blobs` and payload-resident secrets cannot change the
+identity. The budget is an input: an audit produced under custom
+limits replays only when `active debug` receives the same `--max-*`
+flags. The wall clock is disabled for the canonical pass so a
+successful export cannot be followed by a timing-dependent audit
+failure; count and size limits still bind, so an untrusted document
+fails fast. Steps are identity-only: payload bytes never enter a
+`StepEvent`.
 
 ## 4. Minimal failing case (DEBUG.005)
 

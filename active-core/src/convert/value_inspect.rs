@@ -45,7 +45,6 @@ pub fn inspect_path_with_profile(
     let seeds = if has_secret {
         let mut engine = crate::eval::Engine::hermetic();
         engine.profile_override = override_profile.map(str::to_string);
-        engine.budget = crate::Budget::trusted();
         engine
             .evaluate_with_seeds(module)
             .map(|(_, _, seeds)| seeds)
@@ -96,7 +95,11 @@ pub fn inspect_path_with_profile_env(
     // `Value::Secret` marker, so taint is structural. Render with the
     // profile's path map, then sweep authored literals out of any
     // string that embedded one.
-    let (mut value, marked) = render_cone(&profile, &redactor, path, cone);
+    // Payload materiality is memoized by content hash across the cone
+    // and the identity block, so an aliased blob is scanned once.
+    let mut blob_material: std::collections::HashMap<[u8; 32], bool> =
+        std::collections::HashMap::new();
+    let (mut value, marked) = render_cone(&profile, &redactor, &mut blob_material, path, cone);
     let redacted = redactor.redact(&mut value);
     let tainted =
         profile.path_is_secret(path) || contains_secret(cone) || redacted || marked || media_secret;
@@ -153,7 +156,19 @@ pub fn inspect_path_with_profile_env(
         // data taint flag is separate. A materialised payload that
         // embeds a secret literal is material for the same reason.
         let media_literal = redactor.redact_text(media_type).is_some();
-        let payload_literal = crate::convert::blob_payload_is_material(&redactor, payload.as_ref());
+        let payload_literal = if payload.is_some() {
+            match blob_material.get(hash) {
+                Some(known) => *known,
+                None => {
+                    let material =
+                        crate::convert::blob_payload_is_material(&redactor, payload.as_ref());
+                    blob_material.insert(*hash, material);
+                    material
+                }
+            }
+        } else {
+            false
+        };
         let media_secret = path_material
             || media_literal
             || payload_literal
@@ -182,6 +197,7 @@ pub fn inspect_path_with_profile_env(
 fn render_cone(
     profile: &SecretProfile,
     redactor: &crate::secret::SecretRedactor,
+    blob_material: &mut std::collections::HashMap<[u8; 32], bool>,
     path: &str,
     value: &Value,
 ) -> (JsonValue, bool) {
@@ -192,8 +208,13 @@ fn render_cone(
                 .iter()
                 .enumerate()
                 .map(|(index, item)| {
-                    let (child, hit) =
-                        render_cone(profile, redactor, &format!("{path}[{index}]"), item);
+                    let (child, hit) = render_cone(
+                        profile,
+                        redactor,
+                        blob_material,
+                        &format!("{path}[{index}]"),
+                        item,
+                    );
                     marked |= hit;
                     child
                 })
@@ -209,7 +230,7 @@ fn render_cone(
                 } else {
                     format!("{path}.{key}")
                 };
-                let (rendered, hit) = render_cone(profile, redactor, &child, item);
+                let (rendered, hit) = render_cone(profile, redactor, blob_material, &child, item);
                 marked |= hit;
                 out.insert(key.clone(), rendered);
             }
@@ -226,7 +247,20 @@ fn render_cone(
             payload,
             ..
         } => {
-            if crate::convert::blob_payload_is_material(redactor, payload.as_ref()) {
+            let material = if payload.is_some() {
+                match blob_material.get(hash) {
+                    Some(known) => *known,
+                    None => {
+                        let material =
+                            crate::convert::blob_payload_is_material(redactor, payload.as_ref());
+                        blob_material.insert(*hash, material);
+                        material
+                    }
+                }
+            } else {
+                false
+            };
+            if material {
                 (crate::convert::redacted_blob_json(hash, *size), true)
             } else {
                 // Inspect reports are identity-only: a clean payload is

@@ -128,7 +128,12 @@ redacted on the same rule as every other export path (spec/blob.md §7).
 - Replay semantics: re-running `ACTIVE lock` on the same inputs
   reproduces the hash byte-for-byte; any drift (changed env
   value, edited include, new toolchain) changes the hash or the
-  manifest. Comparison tooling is future work (not C-051).
+  manifest. An audit produced under custom resource limits replays
+  only under the same limits: `active debug --replay` accepts the
+  same `--max-*` flags as `eval`. The wall clock is disabled for
+  the canonical hashing pass, so a successful export cannot be
+  followed by a timing-dependent audit failure.
+  Comparison tooling is future work (not C-051).
 
 ## 5. Threat model notes (for C-052)
 

@@ -38,8 +38,9 @@ runtime secret, and a blob payload embedding one all report
 marker exists at runtime. The CLI evaluates through a taint probe that
 retains payloads without charging per-alias copies, so a
 payload-resident secret is noticed and the report still carries no
-payload bytes; the probe keeps the caller's count and size limits. On a
-pathological document the probe can still hit the wall-clock limit.
+payload bytes. Inspection always uses the shipped default resource
+limits (it has no `--max-*` flags); a document that needs a larger
+budget must be evaluated by the embedding caller.
 Containers keep their shape; only material leaves are replaced, and
 known secret substrings are redacted anywhere they appear. Schema:
 `docs/schemas/inspect-value.json`.

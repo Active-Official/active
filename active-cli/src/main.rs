@@ -366,6 +366,14 @@ enum Commands {
         /// (audit reproducibility)
         #[arg(long)]
         profile: Option<String>,
+        /// Resilient evaluation for stepping/replay (match a resilient
+        /// audited run; `eval` is strict by default)
+        #[arg(long)]
+        resilient: bool,
+        /// Allow includes to escape the directory (match an audit run
+        /// that used --allow-parent-escapes)
+        #[arg(long)]
+        allow_parent_escapes: bool,
         /// Resource limits for stepping and replay; pass the same
         /// limits the audited run used to reproduce its hash
         #[command(flatten)]
@@ -908,6 +916,7 @@ fn source_verdict(engine: &Engine, source: &str, file: &std::path::Path) -> (boo
 /// outcome field tells them apart); fatal engine errors return before
 /// any value exists, so they carry no audit trail. `value` is the
 /// canonical redacted full tree, already payload-free.
+#[allow(clippy::too_many_arguments)]
 fn write_audit_trail(
     path: &std::path::Path,
     file: &std::path::Path,
@@ -916,6 +925,8 @@ fn write_audit_trail(
     diags: &[active_core::Diagnostic],
     resilient: bool,
     profile: Option<&str>,
+    budget: &active_core::Budget,
+    allow_parent_escapes: bool,
 ) -> anyhow::Result<()> {
     fn quote(s: &str) -> String {
         let mut out = String::with_capacity(s.len() + 2);
@@ -970,8 +981,22 @@ fn write_audit_trail(
     let profile_line = profile
         .map(|name| format!("  profile = {},\n", quote(name)))
         .unwrap_or_default();
+    // The resolved evaluation inputs are recorded so an audit is
+    // self-describing: replay must use the same limits and parse flags.
+    let budget_line = format!(
+        "  budget = {{ nodes = {}, depth = {}, array_len = {}, keys = {}, wall_ms = {}, value_size = {}, total_size = {} }},\n  parse = {{ resilient = {}, allow_parent_escapes = {} }},\n",
+        budget.max_nodes,
+        budget.max_depth,
+        budget.max_array_len,
+        budget.max_keys,
+        budget.max_wall_ms,
+        budget.max_value_size,
+        budget.max_total_value_size,
+        resilient,
+        allow_parent_escapes,
+    );
     let doc = format!(
-        "audit = {{\n  tool = \"active\",\n  version = {},\n  source = {},\n  mode = \"{}\",\n{}  nodes = {},\n  diagnostics = [{}],\n  result = {},\n  outcome = \"{}\"\n}}\n",
+        "audit = {{\n  tool = \"active\",\n  version = {},\n  source = {},\n  mode = \"{}\",\n{}{}  nodes = {},\n  diagnostics = [{}],\n  result = {},\n  outcome = \"{}\"\n}}\n",
         quote(env!("CARGO_PKG_VERSION")),
         quote(&file.to_string_lossy()),
         match module.mode {
@@ -979,6 +1004,7 @@ fn write_audit_trail(
             active_core::Mode::Config => "config",
         },
         profile_line,
+        budget_line,
         module.arena.len(),
         codes_list,
         result,
@@ -1326,6 +1352,8 @@ fn main() -> anyhow::Result<()> {
                                 diagnostics,
                                 resilient,
                                 effective_profile.as_deref(),
+                                &engine.budget,
+                                allow_parent_escapes,
                             )?;
                         }
                     }
@@ -1417,6 +1445,8 @@ fn main() -> anyhow::Result<()> {
                     &diags,
                     resilient,
                     effective_profile.as_deref(),
+                    &engine.budget,
+                    allow_parent_escapes,
                 )?;
             }
             if had_failure(&diags, resilient) {
@@ -1798,6 +1828,8 @@ fn main() -> anyhow::Result<()> {
             max_attempts,
             format,
             profile,
+            resilient,
+            allow_parent_escapes,
             budget,
             trust_keys,
         } => {
@@ -1805,6 +1837,9 @@ fn main() -> anyhow::Result<()> {
                 anyhow::bail!(
                     "--trust-keys is not supported with --minimize (signed-include reduction)"
                 );
+            }
+            if minimize.is_some() && budget.has_explicit() {
+                anyhow::bail!("--max-* and --budget-profile are not supported with --minimize");
             }
             let trust = load_trust(&trust_keys)?;
             if format != "json" && format != "text" {
@@ -1843,13 +1878,14 @@ fn main() -> anyhow::Result<()> {
                 }
                 return Ok(());
             }
-            let module = parse_input(&from, false, false, &trust)?;
+            let module = parse_input(&from, resilient, allow_parent_escapes, &trust)?;
             if replay {
                 let report = active_core::debug::replay_with_budget(
                     &module,
                     expect.as_deref(),
                     profile.as_deref(),
                     &budget.resolve()?,
+                    resilient,
                 )
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
                 if format == "text" {
@@ -1878,6 +1914,7 @@ fn main() -> anyhow::Result<()> {
             }
             let mut step_engine = Engine::new();
             step_engine.profile_override = profile.clone();
+            step_engine.resilient = resilient;
             step_engine.budget = budget.resolve()?;
             let (_, _, steps) = step_engine
                 .evaluate_with_steps(&module)

@@ -35,9 +35,10 @@ pub fn inspect_path_with_profile(
 ) -> Result<JsonValue, String> {
     // Only a `secret(...)` node can bind a value outside the tree; a
     // document without one needs no seed pass. When one exists, recover
-    // the seeds hermetically (trusted envelope, so a document that
-    // evaluated at production scale still inspects) and fail closed if
-    // that is impossible: an unseeded report could return raw material.
+    // the seeds hermetically under the shipped default budget (a
+    // document that evaluates within it still inspects) and fail closed
+    // if that is impossible: an unseeded report could return raw
+    // material.
     let has_secret = module
         .arena
         .iter()

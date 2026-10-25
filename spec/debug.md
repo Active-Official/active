@@ -92,6 +92,8 @@ wraps it with sizes for a regression bundle.
 ```
 active debug --from <file> [--break SELECTOR] [--replay [--expect HASH]]
              [--minimize CODE] [--max-attempts N] [--format json|text]
+             [--profile NAME] [--resilient] [--allow-parent-escapes]
+             [--budget-profile P | --max-nodes N --max-depth N ...]
 ```
 
 Default action prints the step trace. JSON output wraps
@@ -100,9 +102,10 @@ step, then the breakpoint verdict.
 
 Flag combinations are constrained: `--expect` requires `--replay`;
 `--break` conflicts with `--replay` and `--minimize`; `--replay`
-conflicts with `--minimize`; `--max-attempts` requires `--minimize`.
-An invalid combination is a clap usage error (exit 2), never a
-silently ignored flag.
+conflicts with `--minimize`; `--max-attempts` requires `--minimize`;
+`--max-*` and `--budget-profile` conflict with `--minimize` (reduction
+does not evaluate under caller limits). An invalid combination is a
+clap usage error (exit 2), never a silently ignored flag.
 
 ## 6. Secret guarantee
 

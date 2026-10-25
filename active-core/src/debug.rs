@@ -52,22 +52,26 @@ pub fn replay(
         expected,
         override_profile,
         &crate::Budget::default(),
+        false,
     )
 }
 
-/// Replay under an explicit budget. `spec/reproducibility.md` declares
-/// the budget an input: an audit produced with a non-default limit
-/// replays byte-identically only under the same limit. The wall clock
-/// is disabled for the canonical pass so a successful export cannot be
-/// followed by a timing-dependent audit failure.
+/// Replay under an explicit budget and resilient mode. `resilient`
+/// matches the audited run: `eval` and the audit trail are strict by
+/// default, so replay is strict too. The first pass honors the
+/// caller's wall clock; only the second (identical canonical repeat)
+/// disables it, so a successful first pass cannot turn into a
+/// timing-dependent mismatch.
 pub fn replay_with_budget(
     module: &Module,
     expected: Option<&str>,
     override_profile: Option<&str>,
     budget: &crate::Budget,
+    resilient: bool,
 ) -> Result<JsonValue, String> {
     let mut engine = Engine::new();
     engine.profile_override = override_profile.map(str::to_string);
+    engine.resilient = resilient;
     // Canonical audit form: materialise so payload-resident secrets are
     // visible to the redactor, then strip payloads so the identity does
     // not depend on the flag the audited run used. The probe skips
@@ -76,10 +80,10 @@ pub fn replay_with_budget(
     engine.materialise_blobs = true;
     engine.taint_probe = true;
     engine.budget = *budget;
-    engine.budget.max_wall_ms = 0;
     let (first, first_diags, first_steps, first_seeds) = engine
         .evaluate_with_steps_and_seeds(module)
         .map_err(|e| e.to_string())?;
+    engine.budget.max_wall_ms = 0;
     let (second, second_diags, second_steps, second_seeds) = engine
         .evaluate_with_steps_and_seeds(module)
         .map_err(|e| e.to_string())?;

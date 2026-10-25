@@ -1007,7 +1007,7 @@ fn replay_respects_a_caller_budget() {
         max_nodes: 1,
         ..Default::default()
     };
-    let error = debug::replay_with_budget(&module, None, None, &budget)
+    let error = debug::replay_with_budget(&module, None, None, &budget, false)
         .expect_err("node budget must bind replay");
     assert!(error.contains("node"), "{error}");
 }

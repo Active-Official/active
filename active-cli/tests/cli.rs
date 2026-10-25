@@ -2202,7 +2202,7 @@ fn debug_steps_break_and_replay_are_secret_safe() {
     let steps = active()
         .args(["debug", "--from"])
         .arg(&f)
-        .args(["--format", "text"])
+        .args(["--format", "text", "--resilient"])
         .output()
         .expect("run active");
     assert!(
@@ -2218,7 +2218,7 @@ fn debug_steps_break_and_replay_are_secret_safe() {
     let break_out = active()
         .args(["debug", "--from"])
         .arg(&f)
-        .args(["--break", "taint", "--format", "text"])
+        .args(["--break", "taint", "--format", "text", "--resilient"])
         .output()
         .expect("run active");
     assert!(break_out.status.success());
@@ -2227,7 +2227,7 @@ fn debug_steps_break_and_replay_are_secret_safe() {
     let replay = active()
         .args(["debug", "--from"])
         .arg(&f)
-        .args(["--replay", "--format", "text"])
+        .args(["--replay", "--format", "text", "--resilient"])
         .output()
         .expect("run active");
     assert!(replay.status.success());
@@ -3353,8 +3353,9 @@ fn lock_withholds_an_env_value_matching_a_runtime_secret() {
 
 #[test]
 fn audit_trail_succeeds_with_blob_aliases_near_the_budget() {
-    // Review 49: the canonical audit pass relaxes budgets, so a document
-    // that exported successfully still writes its audit.
+    // Review 49: the canonical audit pass uses a taint probe, so
+    // per-alias payload accounting cannot fail a document that
+    // exported successfully.
     let payload = "A".repeat(100);
     let src = format!(
         "d = \"{payload}\"\nb = blob(\"text/plain\", d)\nr1 = b\nr2 = b\nr3 = b\nr4 = b\nr5 = b\n"
@@ -3418,8 +3419,8 @@ fn audit_and_lock_agree_on_a_payload_resident_secret() {
 
 #[test]
 fn replay_reproduces_an_alias_heavy_audit_hash() {
-    // Review 50: replay uses the same probe policy and a trusted
-    // envelope, so an audit written near a caller budget still replays.
+    // Review 50: replay uses the same probe policy and the caller's
+    // limits, so an audit written near a caller budget still replays.
     let payload = "A".repeat(150);
     let src = format!(
         "d = \"{payload}\"\nb = blob(\"text/plain\", d)\nr1 = b\nr2 = b\nr3 = b\nr4 = b\nr5 = b\n"
@@ -3451,6 +3452,7 @@ fn replay_reproduces_an_alias_heavy_audit_hash() {
         .arg(&f)
         .args(["--replay", "--expect"])
         .arg(&hash)
+        .args(["--max-total-value-size", "5000"])
         .output()
         .expect("run active");
     assert!(
@@ -3458,4 +3460,36 @@ fn replay_reproduces_an_alias_heavy_audit_hash() {
         "{}",
         String::from_utf8_lossy(&replay.stderr)
     );
+    // The budget is an input: replaying with a limit that rejects the
+    // document must fail instead of silently using a different one.
+    let tighter = active()
+        .args(["debug", "--from"])
+        .arg(&f)
+        .args(["--replay", "--expect"])
+        .arg(&hash)
+        .args(["--max-nodes", "1"])
+        .output()
+        .expect("run active");
+    assert!(
+        !tighter.status.success(),
+        "replay must honor the caller's limits"
+    );
+    let tighter_text = String::from_utf8_lossy(&tighter.stderr);
+    assert!(tighter_text.contains("budget exceeded"), "{tighter_text}");
+}
+
+#[test]
+fn debug_steps_honor_a_caller_budget() {
+    // Review 52: the new --max-* flags bind stepping too, never a
+    // silently accepted no-op.
+    let f = fixture("debug_budget.active", "a = 1\nb = 2\n");
+    let out = active()
+        .args(["debug", "--from"])
+        .arg(&f)
+        .args(["--max-nodes", "1"])
+        .output()
+        .expect("run active");
+    assert!(!out.status.success(), "node budget must bind stepping");
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(text.contains("budget exceeded"), "{text}");
 }

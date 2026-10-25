@@ -1548,3 +1548,36 @@ fn redaction_budget_does_not_overcharge_short_candidates() {
         "benign text must stay unmarked"
     );
 }
+
+#[test]
+fn redaction_never_scans_a_candidate_longer_than_the_remainder() {
+    // Review 41: a 2001-byte candidate against a 2000-byte benign
+    // remainder must fail on length without scanning or tripping the
+    // budget.
+    let mut redactor = active_core::secret::SecretRedactor::new();
+    let mut secret = "a".repeat(2000);
+    secret.push('b');
+    redactor.insert(secret);
+    let benign = "a".repeat(2000);
+    assert!(
+        redactor.redact_text(&benign).is_none(),
+        "length mismatch must not mark benign text"
+    );
+}
+
+#[test]
+fn redaction_keeps_document_scale_benign_exports_intact() {
+    // Review 41: a normal multi-thousand-field export with a couple of
+    // secrets must not exhaust the pass budget and destroy benign
+    // values.
+    let mut redactor = active_core::secret::SecretRedactor::new();
+    redactor.insert("z".repeat(40));
+    redactor.insert("y".repeat(40));
+    let benign = "q".repeat(200);
+    for _ in 0..10_000 {
+        assert!(
+            redactor.redact_text(&benign).is_none(),
+            "benign value marked at document scale"
+        );
+    }
+}

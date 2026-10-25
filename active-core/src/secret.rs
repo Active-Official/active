@@ -91,8 +91,10 @@ pub struct SecretRedactor {
     work_left: std::cell::Cell<usize>,
 }
 
-/// Per-pass redaction work ceiling (secret count × text length).
-const MAX_REDACT_WORK: usize = 2_000_000;
+/// Per-pass redaction work ceiling (byte comparisons). Large enough
+/// for document-scale benign exports, small enough that a pathological
+/// common prefix cannot run for seconds after evaluation.
+const MAX_REDACT_WORK: usize = 64_000_000;
 
 impl Default for SecretRedactor {
     fn default() -> Self {
@@ -183,10 +185,17 @@ impl SecretRedactor {
                     // O(1), and a differing first byte costs one byte.
                     let rest_bytes = rest.as_bytes();
                     let secret_bytes = secret.as_bytes();
-                    let limit = rest_bytes.len().min(secret_bytes.len());
+                    if secret_bytes.len() > rest_bytes.len() {
+                        used = used.saturating_add(1);
+                        if used > self.work_left.get() {
+                            self.work_left.set(0);
+                            return Some(MARKER.to_string());
+                        }
+                        continue;
+                    }
                     let mut compared = 0usize;
                     let mut equal = true;
-                    while compared < limit {
+                    while compared < secret_bytes.len() {
                         compared += 1;
                         if rest_bytes[compared - 1] != secret_bytes[compared - 1] {
                             equal = false;
@@ -198,7 +207,7 @@ impl SecretRedactor {
                         self.work_left.set(0);
                         return Some(MARKER.to_string());
                     }
-                    if equal && secret_bytes.len() <= rest_bytes.len() {
+                    if equal {
                         matched = Some(secret);
                         break;
                     }

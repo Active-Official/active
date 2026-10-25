@@ -224,10 +224,12 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   destination's taint and an unselected key cannot suppress a material
   default fill.
 - **Redaction and comparison are bounded and call-stable.** Redaction
-  charges the bytes actually compared (a long candidate against a short
-  remainder fails on its length in O(1)), and every export pass resets
-  the budget, so repeated exports are byte-identical and benign values
-  are not wholesale-marked. Tainted blobs never emit `payload_b64`
+  rejects an over-long candidate on its length in O(1), charges only
+  the bytes actually compared, and uses a pass budget sized for
+  document-scale exports (64M comparisons), so benign values are not
+  wholesale-marked while a pathological common prefix still fails
+  closed quickly. Every export pass resets the budget, so repeated
+  exports are byte-identical. Tainted blobs never emit `payload_b64`
   through JSON, TOML, or the redacting `Serialize` impl, even when an
   embedder constructs one. Schema compatibility indexes rows by path
   (linear instead of quadratic), and LSP hover/inlay consult path

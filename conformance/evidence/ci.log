@@ -1,16 +1,1 @@
-ed394e8 docs(expansion): re-run full verification battery fresh on final HEAD 8fbf162
-ed394e862bf1eea273a615a552484d887b10897a
---- origin ---
-completed	success	docs(expansion): re-run full verification battery fresh on final HEADÔÇª	CodSpeed	main	push	39725779965	2m6s	2026-10-22T05:02:52Z
-completed	success	docs(expansion): re-run full verification battery fresh on final HEADÔÇª	CI	main	push	39725779429	2m28s	2026-10-22T05:02:51Z
-completed	success	docs(expansion): re-run full verification battery fresh on final HEADÔÇª	Conformance	main	push	39725779424	8m21s	2026-10-22T05:02:51Z
-completed	success	docs(expansion): record final CI verdicts for HEAD f5adf3a	CI	main	push	39723319622	2m16s	2026-10-22T04:36:31Z
-completed	success	docs(expansion): record final CI verdicts for HEAD f5adf3a	Conformance	main	push	39723319572	7m36s	2026-10-22T04:36:31Z
-completed	success	docs(expansion): record final CI verdicts for HEAD f5adf3a	CodSpeed	main	push	39723319549	4m2s	2026-10-22T04:36:31Z
---- official ---
-completed	success	docs(expansion): re-run full verification battery fresh on final HEADÔÇª	CodSpeed	main	push	39725782810	2m53s	2026-10-22T05:02:53Z
-completed	success	docs(expansion): re-run full verification battery fresh on final HEADÔÇª	CI	main	push	39725782765	2m31s	2026-10-22T05:02:53Z
-completed	success	docs(expansion): re-run full verification battery fresh on final HEADÔÇª	Conformance	main	push	39725782721	9m18s	2026-10-22T05:02:53Z
-completed	success	docs(expansion): record final CI verdicts for HEAD f5adf3a	Conformance	main	push	39723322995	9m29s	2026-10-22T04:36:33Z
-completed	success	docs(expansion): record final CI verdicts for HEAD f5adf3a	CI	main	push	39723322975	1m48s	2026-10-22T04:36:33Z
-completed	success	docs(expansion): record final CI verdicts for HEAD f5adf3a	CodSpeed	main	push	39723322971	2m10s	2026-10-22T04:36:33Z
+CI watch for 11096b7f678c6fdb25a9a7e5b6b83db07a3ae8c9

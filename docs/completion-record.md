@@ -1,6 +1,6 @@
 # Master Program completion record
 
-**Date:** 2026-10-24
+**Date:** 2026-10-25
 **Version:** 1.4.0 (workspace, all crates and language packages)
 **Tree:** the commit that adds this record (see `git log -- docs/completion-record.md`)
 **Programs:** Master (`PROPOSAL.md` / `CHECKLIST.md`) and Tooling
@@ -94,7 +94,7 @@ playground remains the browser evaluator; the headless walkthrough is in
 | Editor smoke | 6 commands, redaction probe pass |
 | Neovim package determinism | identical hashes |
 | Dual-push CI | recorded in `conformance/evidence/ci.log` |
-| Independent review | DeepSeek V4.1 Flash (BYOK, `--reasoning-effort max`) rounds 12–58; every finding fixed with a regression test; final round reports no open findings (`conformance/evidence/review-final.log`; summary in `docs/security-hardening.md`) |
+| Independent review | DeepSeek V4.1 Flash (BYOK, `--reasoning-effort max`) rounds 12-71 (rounds 70 and 71 verification-only); every finding fixed with a regression test; the final verification round reports CLEAN with no open findings (`conformance/evidence/review-final.log`; summary in `docs/security-hardening.md`) |
 
 ## 6. Accepted, documented gaps
 

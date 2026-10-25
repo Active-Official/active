@@ -5,6 +5,7 @@
    freed before return; borrowed codes copy on return and are never
    freed. */
 #include <caml/alloc.h>
+#include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <string.h>

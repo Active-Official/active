@@ -101,11 +101,7 @@ pub fn inspect_path_with_profile(
         // data taint flag is separate. A materialised payload that
         // embeds a secret literal is material for the same reason.
         let media_literal = profile.redact_text(media_type).is_some();
-        let payload_literal = payload.as_ref().is_some_and(|bytes| {
-            profile
-                .redact_text(&String::from_utf8_lossy(bytes))
-                .is_some()
-        });
+        let payload_literal = crate::convert::blob_payload_is_material(&profile, payload.as_ref());
         let media_secret = path_material
             || media_literal
             || payload_literal
@@ -172,21 +168,8 @@ fn render_cone(profile: &SecretProfile, path: &str, value: &Value) -> (JsonValue
             payload,
             ..
         } => {
-            let payload_literal = payload.as_ref().is_some_and(|bytes| {
-                profile
-                    .redact_text(&String::from_utf8_lossy(bytes))
-                    .is_some()
-            });
-            if payload_literal {
-                (
-                    json!({
-                        "hash": format!("blake3:{}", crate::blob::hash_hex(hash)),
-                        "size": size,
-                        "media_type": MARKER,
-                        "tainted": true,
-                    }),
-                    true,
-                )
+            if crate::convert::blob_payload_is_material(profile, payload.as_ref()) {
+                (crate::convert::redacted_blob_json(hash, *size), true)
             } else {
                 (crate::convert::value_to_json(value), false)
             }

@@ -1609,6 +1609,95 @@ fn profile_bound_does_not_false_redact_a_benign_document() {
 }
 
 #[test]
+fn redaction_never_uses_the_longest_secret_as_a_length_gate() {
+    // Review 44 (CRITICAL): a long secret must not disable redaction of
+    // every shorter secret in a shorter text.
+    let long = "L".repeat(200);
+    let src = format!(
+        "long = secret(\"{long}\")\nshort = secret(\"hunter2-r44\")\ncopy = \"hunter2-r44\"\nplain = \"ok\"\n"
+    );
+    let module = parse(&src, "mixed-length").expect("parse");
+    let (value, _) = Engine::new().evaluate(&module).expect("evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains("hunter2-r44"), "{json}");
+    assert!(json.contains("ok"), "{json}");
+}
+
+#[test]
+fn redaction_interleaved_insert_and_redact_is_amortized() {
+    // Review 44: inserting one secret then redacting used to rebuild
+    // the automaton every call (quadratic). 2 000 alternations must
+    // finish promptly and match the final set exactly.
+    let mut redactor = active_core::secret::SecretRedactor::new();
+    let started = std::time::Instant::now();
+    for index in 0..2_000 {
+        redactor.insert(format!("token-{index:04}"));
+        let text = format!("value token-{index:04} tail");
+        let redacted = redactor.redact_text(&text).expect("current secret matches");
+        assert!(
+            !redacted.contains(&format!("token-{index:04}")),
+            "{redacted}"
+        );
+    }
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "interleaved insert/redact took {:?}",
+        started.elapsed()
+    );
+    assert!(redactor.redact_text("token-0000").is_some());
+}
+
+#[test]
+fn redaction_set_equality_ignores_insertion_order() {
+    // Review 44: equality is a set comparison, not insertion order.
+    let mut first = active_core::secret::SecretRedactor::new();
+    first.insert("alpha-secret");
+    first.insert("beta-secret");
+    let mut second = active_core::secret::SecretRedactor::new();
+    second.insert("beta-secret");
+    second.insert("alpha-secret");
+    assert_eq!(first, second);
+    second.insert("gamma-secret");
+    assert_ne!(first, second);
+}
+
+#[test]
+fn redaction_keeps_the_prefix_when_the_first_match_follows_a_marker() {
+    // Review 44: a lazily allocated output buffer must still carry the
+    // segments (and markers) before the first match.
+    let mut redactor = active_core::secret::SecretRedactor::new();
+    redactor.insert("hunter2-after-marker");
+    let marker = active_core::secret::MARKER;
+    let text = format!("head {marker} middle {marker} tail hunter2-after-marker end");
+    let redacted = redactor.redact_text(&text).expect("late match");
+    assert_eq!(
+        redacted,
+        format!("head {marker} middle {marker} tail {marker} end")
+    );
+    let both = format!("hunter2-after-marker {marker} hunter2-after-marker");
+    assert_eq!(
+        redactor.redact_text(&both),
+        Some(format!("{marker} {marker} {marker}"))
+    );
+}
+
+#[test]
+fn redaction_handles_a_pattern_longer_than_the_automaton_limit() {
+    // Review 44: patterns over MAX_AC_PATTERN stay out of the
+    // automaton and are scanned linearly, still longest-first.
+    let mut redactor = active_core::secret::SecretRedactor::new();
+    let long = "q".repeat(5_000);
+    redactor.insert(long.clone());
+    redactor.insert("short-secret".to_string());
+    let text = format!("pre {long} mid short-secret post");
+    let redacted = redactor.redact_text(&text).expect("both match");
+    assert!(!redacted.contains("short-secret"), "{redacted}");
+    assert!(!redacted.contains(&long), "long secret leaked");
+    assert_eq!(redacted.matches(active_core::secret::MARKER).count(), 2);
+}
+
+#[test]
 fn blob_identity_and_payload_sweep_authored_secret_literals() {
     // Review 42: a blob's media type and payload can carry a known
     // secret literal; both are swept/fail-closed.

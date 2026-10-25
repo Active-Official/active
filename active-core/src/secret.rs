@@ -76,24 +76,56 @@ pub fn secret_subtree(module: &Module, root: NodeId, set: &mut HashSet<NodeId>) 
     }
 }
 
+/// Patterns longer than this stay out of the automaton. A single very
+/// long secret would otherwise cost one automaton state per byte
+/// (tens of megabytes for a 500 KB value); `str::find` scans such a
+/// pattern in linear time instead.
+const MAX_AC_PATTERN: usize = 4096;
+
+/// Values inserted since the last fold are scanned linearly. Folding
+/// at this many keeps that scan short while rebuilding the automaton
+/// only at geometric set sizes, so interleaved insert/redact calls do
+/// not rebuild it per call.
+const FOLD_THRESHOLD: usize = 64;
+
 /// A deterministic set of secret strings. Insertion is O(1) amortized
-/// (a HashSet guards duplicates); the longest-first order is materialized
-/// once, lazily, before a redaction pass.
+/// (a HashSet guards duplicates). Redaction runs one Aho–Corasick scan
+/// over the automaton-eligible values, plus a linear scan of the few
+/// long values and the values inserted since the last fold, so the
+/// cost is O(text + matches) instead of O(secrets × text) and no
+/// benign value is ever wholesale-marked.
 #[derive(Debug, Clone)]
 pub struct SecretRedactor {
+    /// Authoritative set, insertion order.
     values: std::cell::RefCell<Vec<String>>,
     seen: HashSet<String>,
-    sorted: std::cell::Cell<bool>,
-    /// Linear multi-pattern matcher, built lazily from the sorted
-    /// values. Redaction is O(text + matches), not O(secrets × text),
-    /// so no work budget is needed and no benign value is ever
-    /// wholesale-marked.
+    /// Shortest value, so a text that cannot contain any secret is
+    /// rejected in O(1).
+    min_len: std::cell::Cell<usize>,
+    /// Automaton-eligible patterns, longest first.
+    base: std::cell::RefCell<Vec<String>>,
+    /// Patterns longer than [`MAX_AC_PATTERN`], longest first.
+    long: std::cell::RefCell<Vec<String>>,
+    /// Values inserted since the last fold.
+    pending: std::cell::RefCell<Vec<String>>,
+    /// Linear multi-pattern matcher over `base`, built lazily. `None`
+    /// while `base` is empty or when the build failed.
     automaton: std::cell::RefCell<Option<std::sync::Arc<aho_corasick::AhoCorasick>>>,
+    /// The automaton could not be built. Scanning stays correct but
+    /// linear; never report a text clean because construction failed.
+    linear_only: std::cell::Cell<bool>,
 }
 
 impl PartialEq for SecretRedactor {
+    /// Set equality: two redactors with the same values compare equal
+    /// regardless of insertion order or fold state.
     fn eq(&self, other: &Self) -> bool {
-        *self.values.borrow() == *other.values.borrow()
+        fn sorted(this: &SecretRedactor) -> Vec<String> {
+            let mut values = this.values.borrow().clone();
+            values.sort_unstable_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+            values
+        }
+        self.values.borrow().len() == other.values.borrow().len() && sorted(self) == sorted(other)
     }
 }
 
@@ -104,8 +136,12 @@ impl Default for SecretRedactor {
         Self {
             values: std::cell::RefCell::new(Vec::new()),
             seen: HashSet::new(),
-            sorted: std::cell::Cell::new(true),
+            min_len: std::cell::Cell::new(usize::MAX),
+            base: std::cell::RefCell::new(Vec::new()),
+            long: std::cell::RefCell::new(Vec::new()),
+            pending: std::cell::RefCell::new(Vec::new()),
             automaton: std::cell::RefCell::new(None),
+            linear_only: std::cell::Cell::new(false),
         }
     }
 }
@@ -120,22 +156,52 @@ impl SecretRedactor {
         // Empty strings would match every position; they are not
         // material.
         if !text.is_empty() && self.seen.insert(text.clone()) {
+            self.min_len.set(self.min_len.get().min(text.len()));
+            self.pending.borrow_mut().push(text.clone());
             self.values.borrow_mut().push(text);
-            self.sorted.set(false);
-            self.automaton.borrow_mut().take();
         }
     }
 
-    fn ensure_sorted(&self) -> std::cell::Ref<'_, Vec<String>> {
-        if !self.sorted.get() {
-            {
-                let mut values = self.values.borrow_mut();
-                values.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
-            }
-            self.sorted.set(true);
-            self.automaton.borrow_mut().take();
+    /// Move pending values into the automaton-eligible or long set and
+    /// rebuild the automaton. Amortized: callers fold at geometric set
+    /// sizes, so the total build work is linear in the final set size.
+    fn fold(&self) {
+        let mut pending = self.pending.borrow_mut();
+        if pending.is_empty() {
+            return;
         }
-        self.values.borrow()
+        let mut base = self.base.borrow_mut();
+        let mut long = self.long.borrow_mut();
+        for value in pending.drain(..) {
+            if value.len() > MAX_AC_PATTERN {
+                long.push(value);
+            } else {
+                base.push(value);
+            }
+        }
+        base.sort_unstable_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+        long.sort_unstable_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+        if self.linear_only.get() {
+            return;
+        }
+        if base.is_empty() {
+            self.automaton.borrow_mut().take();
+            return;
+        }
+        match aho_corasick::AhoCorasick::builder()
+            .match_kind(aho_corasick::MatchKind::LeftmostFirst)
+            // A long pattern would make the default automaton enumerate
+            // a dense transition table. The noncontiguous NFA builds
+            // and scans in linear time with bounded memory instead.
+            .kind(Some(aho_corasick::AhoCorasickKind::NoncontiguousNFA))
+            .build(base.iter().map(String::as_str))
+        {
+            Ok(built) => *self.automaton.borrow_mut() = Some(std::sync::Arc::new(built)),
+            Err(_) => {
+                self.automaton.borrow_mut().take();
+                self.linear_only.set(true);
+            }
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -147,9 +213,12 @@ impl SecretRedactor {
     }
 
     pub fn merge(&mut self, other: &SecretRedactor) {
-        let values = other.ensure_sorted();
-        for value in values.iter() {
-            self.insert(value.clone());
+        if std::ptr::eq(self, other) {
+            return;
+        }
+        let values = other.values.borrow().clone();
+        for value in values {
+            self.insert(value);
         }
     }
 
@@ -161,52 +230,115 @@ impl SecretRedactor {
     /// only the non-marker segments are scanned. A secret containing
     /// the marker itself cannot be expressed without ambiguity; the
     /// marker wins, deterministically.
-    /// Kept for callers that delimitate an output pass. The linear
-    /// matcher needs no reset; repeated exports are call-order
-    /// independent by construction.
-    pub fn begin_pass(&self) {}
-
     pub fn redact_text(&self, text: &str) -> Option<String> {
-        let values = self.ensure_sorted();
-        if values.is_empty() || text == MARKER {
+        if text == MARKER || self.min_len.get() == usize::MAX {
             return None;
         }
-        // `values` is sorted longest-first, so the first entry bounds
-        // every possible match length.
-        if values[0].len() > text.len() {
+        // A text shorter than the shortest secret cannot match; no
+        // automaton build is needed for it.
+        if self.min_len.get() > text.len() {
             return None;
         }
-        if self.automaton.borrow().is_none() {
-            let built = aho_corasick::AhoCorasick::builder()
-                .match_kind(aho_corasick::MatchKind::LeftmostFirst)
-                // A single very long secret would make the default
-                // automaton enumerate one state per byte with a dense
-                // transition table. The noncontiguous NFA builds and
-                // scans in linear time with bounded memory instead.
-                .kind(Some(aho_corasick::AhoCorasickKind::NoncontiguousNFA))
-                .build(values.iter().map(String::as_str))
-                .ok()?;
-            *self.automaton.borrow_mut() = Some(std::sync::Arc::new(built));
+        let pending_len = self.pending.borrow().len();
+        if pending_len > 0 && (pending_len >= FOLD_THRESHOLD || self.base.borrow().is_empty()) {
+            self.fold();
         }
+        self.scan(text)
+    }
+
+    /// Marks the start of an output pass: pending values are folded into
+    /// the automaton once, so the pass itself does no rebuild work and
+    /// repeated exports are call-order independent.
+    pub fn begin_pass(&self) {
+        self.fold();
+    }
+
+    /// Scan one text, combining the automaton with a linear scan of the
+    /// long and pending values. The leftmost match wins; at the same
+    /// start the longest wins, which is why `base` is sorted
+    /// longest-first.
+    fn scan(&self, text: &str) -> Option<String> {
+        // Earliest match in `patterns` at or after `last`, preferring
+        // the longer match at an equal start.
+        fn earliest(
+            patterns: &[String],
+            segment: &str,
+            last: usize,
+            best: &mut Option<(usize, usize)>,
+        ) {
+            let remainder = &segment[last..];
+            for pattern in patterns {
+                if pattern.len() > remainder.len() {
+                    continue;
+                }
+                let Some(relative) = remainder.find(pattern.as_str()) else {
+                    continue;
+                };
+                let start = last + relative;
+                let end = start + pattern.len();
+                let replace = match *best {
+                    None => true,
+                    Some((best_start, best_end)) => {
+                        start < best_start || (start == best_start && end > best_end)
+                    }
+                };
+                if replace {
+                    *best = Some((start, end));
+                }
+            }
+        }
+
+        let base = self.base.borrow();
+        let long = self.long.borrow();
+        let pending = self.pending.borrow();
         let automaton = self.automaton.borrow();
-        let automaton = automaton.as_ref()?;
-        let mut out = String::with_capacity(text.len());
-        let mut hit = false;
+        let automaton = if self.linear_only.get() {
+            None
+        } else {
+            automaton.as_ref()
+        };
+        let mut out: Option<String> = None;
+        let mut offset = 0usize;
         // Existing markers are opaque: scan only non-marker segments.
         for (index, segment) in text.split(MARKER).enumerate() {
             if index > 0 {
-                out.push_str(MARKER);
+                if let Some(buffer) = out.as_mut() {
+                    buffer.push_str(MARKER);
+                }
             }
+            // The first match in a later segment must keep everything
+            // before it, including the markers already in the text.
+            let prefix = offset;
+            offset += segment.len() + MARKER.len();
             let mut last = 0usize;
-            for found in automaton.find_iter(segment) {
-                out.push_str(&segment[last..found.start()]);
-                out.push_str(MARKER);
-                last = found.end();
-                hit = true;
+            loop {
+                let mut best: Option<(usize, usize)> = None;
+                if let Some(automaton) = automaton {
+                    if let Some(found) = automaton.find(&segment[last..]) {
+                        let start = last + found.start();
+                        best = Some((start, last + found.end()));
+                    }
+                }
+                earliest(&long, segment, last, &mut best);
+                earliest(&pending, segment, last, &mut best);
+                if automaton.is_none() {
+                    earliest(&base, segment, last, &mut best);
+                }
+                let Some((start, end)) = best else { break };
+                let buffer = out.get_or_insert_with(|| {
+                    let mut buffer = String::with_capacity(text.len());
+                    buffer.push_str(&text[..prefix]);
+                    buffer
+                });
+                buffer.push_str(&segment[last..start]);
+                buffer.push_str(MARKER);
+                last = end;
             }
-            out.push_str(&segment[last..]);
+            if let Some(buffer) = out.as_mut() {
+                buffer.push_str(&segment[last..]);
+            }
         }
-        hit.then_some(out)
+        out
     }
     /// Replace secret substrings inside every string of a rendered JSON
     /// tree. Returns true when anything was replaced.
@@ -1728,8 +1860,9 @@ impl SecretProfile {
         &self.literals
     }
 
-    /// Marks the start of an output pass. The linear matcher keeps no
-    /// pass state, so this is a no-op kept for call-site clarity.
+    /// Marks the start of an output pass. Pending literals are folded
+    /// into the automaton once here; the matcher keeps no other pass
+    /// state, so repeated exports are call-order independent.
     pub fn begin_redaction_pass(&self) {
         self.literals.begin_pass();
     }

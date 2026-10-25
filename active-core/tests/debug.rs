@@ -159,6 +159,25 @@ fn taint_breakpoint_matches_a_tainted_blob() {
 }
 
 #[test]
+fn step_trace_drops_a_materialised_payload_carrying_a_secret_literal() {
+    // Review 44: base64 payload bytes cannot be matched by a literal
+    // sweep, so a materialised blob step must drop the payload.
+    let raw = "hunter2-debug-probe";
+    let src =
+        format!("m = \"{raw}\"\nk = secret(m)\nf = blob(\"text/plain\", \"pre {raw} post\")\n");
+    let module = parse(&src, "debug-blob-payload").expect("parse");
+    let mut engine = Engine::new();
+    engine.materialise_blobs = true;
+    let (_, _, steps) = engine.evaluate_with_steps(&module).expect("evaluate");
+    let rendered = serde_json::to_string(&steps).expect("json");
+    assert!(!rendered.contains("payload_b64"), "{rendered}");
+    assert!(!rendered.contains(raw), "{rendered}");
+    let text = debug::render_steps(&steps);
+    assert!(!text.contains("payload_b64"), "{text}");
+    assert!(!text.contains(raw), "{text}");
+}
+
+#[test]
 fn minimal_case_redacts_authored_secret_literals() {
     let src = "schema = { token = Int }\ntoken = secret(\"hunter2-min\")\nnoise = 1\n";
     let report = debug::minimal_case(src, "T002", 100);

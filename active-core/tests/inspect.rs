@@ -710,7 +710,7 @@ fn inspect_drops_a_materialised_payload_carrying_a_secret_literal() {
     assert!(!report.to_string().contains(raw), "{report}");
     assert!(!report.to_string().contains("payload_b64"), "{report}");
     assert_eq!(report["tainted"], true, "{report}");
-    assert_eq!(report["value"]["tainted"], true, "{report}");
+    assert_eq!(report["value"]["$active.blob"]["tainted"], true, "{report}");
     assert_eq!(
         report["content_addressed"]["media_type"], "***SECRET***",
         "{report}"

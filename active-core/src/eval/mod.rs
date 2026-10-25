@@ -1041,11 +1041,17 @@ fn render_step_value(
     match value {
         Value::Array(items) => {
             let Some(base) = path else {
-                return if sensitive {
-                    marker()
-                } else {
-                    crate::convert::value_to_json(value)
-                };
+                if sensitive {
+                    return marker();
+                }
+                // Without a path the shape is still rendered child by
+                // child, so a blob payload is swept even at depth.
+                return serde_json::Value::Array(
+                    items
+                        .iter()
+                        .map(|item| render_step_value(profile, None, item, false))
+                        .collect(),
+                );
             };
             serde_json::Value::Array(
                 items
@@ -1065,11 +1071,14 @@ fn render_step_value(
         }
         Value::Table(map) => {
             let Some(base) = path else {
-                return if sensitive {
-                    marker()
-                } else {
-                    crate::convert::value_to_json(value)
-                };
+                if sensitive {
+                    return marker();
+                }
+                let mut out = serde_json::Map::new();
+                for (key, item) in map {
+                    out.insert(key.clone(), render_step_value(profile, None, item, false));
+                }
+                return serde_json::Value::Object(out);
             };
             let mut out = serde_json::Map::new();
             for (key, item) in map {
@@ -1084,6 +1093,26 @@ fn render_step_value(
                 );
             }
             serde_json::Value::Object(out)
+        }
+        Value::Blob {
+            hash,
+            size,
+            tainted,
+            media_type,
+            payload,
+        } => {
+            // A materialised payload can carry an authored secret
+            // literal whose base64 form no literal sweep can match.
+            let material = *tainted
+                || sensitive
+                || path.is_some_and(|path| profile.path_is_secret(path))
+                || profile.redact_text(media_type).is_some()
+                || crate::convert::blob_payload_is_material(profile, payload.as_ref());
+            if material {
+                crate::convert::redacted_blob_json(hash, *size)
+            } else {
+                crate::convert::value_to_json(value)
+            }
         }
         _ if sensitive || path.is_some_and(|path| profile.path_is_secret(path)) => marker(),
         _ => crate::convert::value_to_json(value),

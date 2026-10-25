@@ -105,6 +105,29 @@ pub fn value_to_json(v: &Value) -> JsonValue {
     }
 }
 
+/// True when a blob payload's raw bytes carry an authored secret
+/// literal. The bytes are swept before base64 encoding, which cannot
+/// be matched against a literal again.
+pub(crate) fn blob_payload_is_material(profile: &SecretProfile, payload: Option<&Vec<u8>>) -> bool {
+    payload.is_some_and(|bytes| {
+        profile
+            .redact_text(&String::from_utf8_lossy(bytes))
+            .is_some()
+    })
+}
+
+/// Identity shape for a blob whose identity must be withheld: the
+/// payload is absent and the media type is the marker, wrapped exactly
+/// like every other export (spec/blob.md §5).
+pub(crate) fn redacted_blob_json(hash: &[u8; 32], size: u64) -> JsonValue {
+    json!({ "$active.blob": {
+        "hash": format!("blake3:{}", crate::blob::hash_hex(hash)),
+        "size": size,
+        "media_type": crate::secret::MARKER,
+        "tainted": true,
+    }})
+}
+
 pub fn value_to_pretty_json(v: &Value) -> String {
     serde_json::to_string_pretty(&value_to_json(v)).unwrap_or_else(|_| "{}".into())
 }
@@ -150,11 +173,7 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
                 // A literal that is known secret material can appear in
                 // identity metadata or inside a payload: sweep both.
                 let media_redacted = profile.redact_text(media_type);
-                let payload_secret = payload.as_ref().is_some_and(|bytes| {
-                    profile
-                        .redact_text(&String::from_utf8_lossy(bytes))
-                        .is_some()
-                });
+                let payload_secret = blob_payload_is_material(profile, payload.as_ref());
                 if *tainted
                     || profile.path_is_secret(path)
                     || media_redacted.is_some()

@@ -338,6 +338,13 @@ impl SecretRedactor {
         self.values.borrow().len()
     }
 
+    /// True when `text` is exactly one of the known values (no
+    /// substring matching). Used where a literal duplicate must be
+    /// replaced without over-redacting longer or shorter strings.
+    pub fn contains_exact(&self, text: &str) -> bool {
+        self.seen.contains(text)
+    }
+
     pub fn merge(&mut self, other: &SecretRedactor) {
         if std::ptr::eq(self, other) {
             return;

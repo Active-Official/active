@@ -131,8 +131,8 @@ impl BudgetArgs {
         if self.budget_profile.is_some() && self.has_explicit() {
             eprintln!("warning: --budget-profile overrides the explicit --max-* flags");
         }
-        // The audit and lock documents store limits as Active integers
-        // (i64); larger limits are rejected at the audit call site.
+        // The audit document stores limits as Active integers (i64);
+        // larger limits are rejected at the audit call site.
         Ok(budget)
     }
 }

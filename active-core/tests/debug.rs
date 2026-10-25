@@ -1035,3 +1035,57 @@ fn step_events_never_carry_blob_payloads() {
     }
     assert!(matches!(value, active_core::Value::Table(_)));
 }
+
+#[test]
+fn minimize_redacts_duplicate_values_beyond_plain_tokens() {
+    // Review 55: comments, interpolation, multi-line dedent, escaped
+    // dollars, and base64 encodings of a known secret must not survive
+    // in a reduction bundle.
+    let cases = [
+        "schema = { t = Int }\nt = secret(\"hunter2-COMMENT\") # rotate hunter2-COMMENT\n",
+        "schema = { t = Int }\nt = secret(\"abc-${'resolved'}\")\ndup = \"abc-resolved\"\n",
+        "schema = { t = Int }\nt = secret(\"\"\"\n    hunter2-ML\n\"\"\")\ndup = \"hunter2-ML\"\n",
+        "schema = { t = Int }\nt = secret(\"pa\\$\\$word\")\ndup = \"pa$$word\"\n",
+        "schema = { t = Int }\nt = secret(\"hunter2-b64\")\ndup = \"aHVudGVyMi1iNjQ=\"\n",
+    ];
+    for source in cases {
+        let report = debug::minimal_case(source, "T002", 200);
+        let reduced = report["reduced"].as_str().expect("reduced");
+        assert!(!reduced.contains("hunter2-COMMENT"), "{reduced}");
+        assert!(!reduced.contains("abc-resolved"), "{reduced}");
+        assert!(!reduced.contains("hunter2-ML"), "{reduced}");
+        assert!(!reduced.contains("pa$$word"), "{reduced}");
+        assert!(!reduced.contains("aHVudGVyMi1iNjQ="), "{reduced}");
+    }
+}
+
+#[test]
+fn minimize_keeps_env_names_and_unrelated_strings() {
+    // Review 55: canonical env names are not material, and a short
+    // secret must not rewrite unrelated longer strings.
+    let source = "schema = { t = Int }\nt = secret(\"HUNTER2_ENVNAME\")\nother = secret.env(\"HUNTER2_ENVNAME\")\nname = \"banana\"\nshort = secret(\"a\")\n";
+    let report = debug::minimal_case(source, "T002", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(
+        reduced.contains("secret.env(\"HUNTER2_ENVNAME\")"),
+        "{reduced}"
+    );
+    assert!(reduced.contains("\"banana\""), "{reduced}");
+}
+
+#[test]
+fn minimize_is_hermetic_without_a_file_context() {
+    // Review 55: string reduction must not resolve includes from the
+    // process working directory.
+    let report = debug::minimal_case("include \"probe_inc.active\"\nx = 1\n", "E015", 20);
+    assert_eq!(report["target_present"], true, "{report}");
+}
+
+#[test]
+fn strict_minimize_does_not_evaluate_parse_broken_modules() {
+    // Review 55: the strict CLI never evaluates a module with parse
+    // errors, so a runtime code cannot be "present".
+    let source = "schema = { x = Int }\nx = 1 + \"s\"\ny = [1, 2}\n";
+    let report = debug::minimal_case(source, "T001", 50);
+    assert_eq!(report["target_present"], false, "{report}");
+}

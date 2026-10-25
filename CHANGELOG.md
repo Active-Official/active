@@ -66,8 +66,9 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   preflight that mirrors `eval`, then two canonical step/hash passes
   without a wall deadline. `--minimize` parses and evaluates candidates
   under the same mode, profile, parse options, and limits (wall-free
-  unless `X002` is the target) and redacts duplicate copies of a secret
-  value, not only the locator. The audit document records its resolved
+  unless `X002` is the target); it redacts duplicate copies of a secret
+  value (another string, a blob payload, a comment, or a base64/hex
+  encoding) with exact token matching, and keeps canonical env names. The audit document records its resolved
   budget and parse flags (including materialisation; limits above
   `i64::MAX` are refused on the audit path only), so a non-default run
   is self-describing and replayable.

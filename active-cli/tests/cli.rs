@@ -3667,3 +3667,23 @@ fn minimize_parses_resiliently_when_asked() {
         String::from_utf8_lossy(&resilient.stderr)
     );
 }
+
+#[test]
+fn minimize_redacts_an_env_value_duplicate() {
+    // Review 55: the bundle redactor is seeded from the evaluator, so a
+    // plain value equal to an env-backed secret is redacted.
+    let f = fixture(
+        "minimize_env_dup.active",
+        "schema = { x = Int }\nx = \"hunter2-env-dup\"\ntoken = secret.env(\"PROBE_SECRET\")\n",
+    );
+    let out = active()
+        .args(["debug", "--from"])
+        .arg(&f)
+        .args(["--minimize", "T002", "--resilient", "--format", "json"])
+        .env("PROBE_SECRET", "hunter2-env-dup")
+        .output()
+        .expect("run active");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(!text.contains("hunter2-env-dup"), "{text}");
+    assert!(text.contains("***SECRET***"), "{text}");
+}

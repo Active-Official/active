@@ -39,8 +39,9 @@ audit = {
   keys, wall_ms, value_size, total_size }`. Replay must be given the
   same limits to reproduce `result`.
 - `parse`: `{ resilient, allow_parent_escapes, materialise_blobs }`,
-  the parse/evaluation mode the audited run used. Matching these on
-  replay is part of the contract.
+  the parse/evaluation mode the audited run used. Replay must match
+  `resilient` and `allow_parent_escapes`; the hash itself is canonical
+  across `materialise_blobs` (payloads are stripped).
 - Limits are stored as Active integers, so any limit above
   `i64::MAX` is refused before the audit is written (use `0` for
   unlimited).

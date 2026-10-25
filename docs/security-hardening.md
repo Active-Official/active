@@ -1,4 +1,4 @@
-# Security hardening record (review rounds 12-54)
+# Security hardening record (review rounds 12-55)
 
 This record summarizes the independent review loop that hardened the
 Master Program tree before release. It complements
@@ -24,7 +24,7 @@ Master Program tree before release. It complements
 | Class | Examples | Resolution |
 |---|---|---|
 | Secret leakage through exports | env-backed copies, profile-selected values, `let`-bound computed secrets, blob payload bytes, provenance env values | one redactor seeded from authored literals, the evaluator's material node values, and material env values; every exporter/inspector/trace/lock/audit absorbs it before rendering |
-| Secret leakage through tools | inspect wrappers, debug steps, LSP hover, graph/viz taint, audit/replay hashes | identity-only step and inspect rendering, path-aware hover, seeded taint queries, canonical hashing |
+| Secret leakage through tools | inspect wrappers, debug steps, LSP hover, graph/viz taint, audit/replay hashes, reduction bundles | identity-only step and inspect rendering, path-aware hover, seeded taint queries, canonical hashing, evaluator-seeded duplicate/comment redaction |
 | Availability | quadratic redaction, work-budget over-redaction, per-alias payload charging, trusted-budget passes | Aho-Corasick batches with match cursors, per-batch retirement, a taint probe that skips alias copy accounting, caller-honoring budgets |
 | Fidelity | longest-at-equal-start semantics, marker opacity, prefix preservation, UTF-8 | differential tests against a naive leftmost-longest reference, marker-split scanning, cursor reuse |
 | Contract | `tainted` flags, audit/replay/lock agreement, error codes | flags derived from the same decision as the value; one canonicaliser for audit, lock, and replay |
@@ -32,9 +32,11 @@ Master Program tree before release. It complements
 
 ## Invariants held
 
-- No raw secret or `payload_b64` reaches an output surface; the only
-  payload emitter is the explicit `eval --materialise-blobs` path, which
-  refuses a secret-bearing payload with B003.
+- No raw secret or `payload_b64` reaches an output surface in any tested
+  path; reduction also redacts duplicate values, comments, and
+  base64/hex encodings of a known secret. The only payload emitter is
+  the explicit `eval --materialise-blobs` path, which refuses a
+  secret-bearing payload with B003.
 - Redaction is linear per pattern batch and never marks a benign value
   wholesale.
 - A bounds trip fails closed (marker), never open.

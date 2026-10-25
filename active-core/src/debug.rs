@@ -97,27 +97,34 @@ pub fn replay_with_budget(
     let (first, first_diags, first_steps, first_seeds) = engine
         .evaluate_with_steps_and_seeds(module)
         .map_err(|e| e.to_string())?;
-    let (second, second_diags, second_steps, second_seeds) = engine
-        .evaluate_with_steps_and_seeds(module)
-        .map_err(|e| e.to_string())?;
-
-    // Hash the structurally redacted tree: the audit trail and replay
-    // must agree on the same document, and a secret value change must
-    // not alter the content identity. Seeds and material env values are
-    // absorbed exactly as the export and audit paths do.
+    // Hash the first canonical tree before the second pass so only one
+    // materialised tree is live at a time.
     let profile = crate::secret::SecretProfile::for_engine(module, &engine, &first_seeds);
-    let second_profile = crate::secret::SecretProfile::for_engine(module, &engine, &second_seeds);
     let first_hash = crate::provenance::content_hash(&crate::convert::strip_blob_payloads(
         &crate::convert::redact_value(&profile, &first),
     ));
+    let first_codes: Vec<&str> = first_diags.iter().map(|d| d.code.as_str()).collect();
+    let first_codes_owned: Vec<String> =
+        first_codes.iter().map(|code| (*code).to_string()).collect();
+    drop(first);
+
+    let (second, second_diags, second_steps, second_seeds) = engine
+        .evaluate_with_steps_and_seeds(module)
+        .map_err(|e| e.to_string())?;
+    let second_profile = crate::secret::SecretProfile::for_engine(module, &engine, &second_seeds);
     let second_hash = crate::provenance::content_hash(&crate::convert::strip_blob_payloads(
         &crate::convert::redact_value(&second_profile, &second),
     ));
-    let first_codes: Vec<&str> = first_diags.iter().map(|d| d.code.as_str()).collect();
     let second_codes: Vec<&str> = second_diags.iter().map(|d| d.code.as_str()).collect();
     let steps_match = first_steps == second_steps;
     let expected_ok = expected.is_none_or(|text| text == first_hash);
-    let ok = first_hash == second_hash && first_codes == second_codes && steps_match && expected_ok;
+    let ok = first_hash == second_hash
+        && first_codes_owned
+            .iter()
+            .map(String::as_str)
+            .eq(second_codes.iter().copied())
+        && steps_match
+        && expected_ok;
 
     Ok(json!({
         "ok": ok,
@@ -238,7 +245,9 @@ fn still_fails(
     options: DebugOptions<'_>,
 ) -> bool {
     let parse_options = crate::ParseOptions {
-        enable_includes: true,
+        // String-based reduction stays hermetic: includes resolve only
+        // when a file context was supplied.
+        enable_includes: file_ctx.is_some(),
         allow_parent_escapes: options.allow_parent_escapes,
         resilient: options.resilient,
         ..Default::default()
@@ -255,6 +264,15 @@ fn still_fails(
     let (module, parse_diags) = parsed;
     if parse_diags.iter().any(|d| d.code == target_code) {
         return true;
+    }
+    // The shipped strict path never evaluates a module with parse
+    // errors; reduction must answer the same question.
+    if !options.resilient
+        && parse_diags
+            .iter()
+            .any(|d| d.severity == crate::diag::Severity::Error)
+    {
+        return false;
     }
     let mut engine = Engine::new();
     engine.resilient = options.resilient;
@@ -316,7 +334,12 @@ pub fn minimal_case_with_options(
         reduce_with_options(source, target_code, max_attempts, file_ctx, options);
     let target_present = still_fails(source, target_code, file_ctx, options);
     let reduced_bytes = reduced.len();
-    let reduced = redact_secret_literals(&reduced);
+    // Seeds cover values the source-level locator scan cannot see:
+    // environment reads, computed interpolations, and multi-line
+    // dedenting. The evaluator runs under the same options as the run
+    // being explained.
+    let seeds = bundle_seeds(source, file_ctx, options);
+    let reduced = redact_secret_literals(&reduced, &seeds);
     json!({
         "target_code": target_code,
         "target_present": target_present,
@@ -325,6 +348,45 @@ pub fn minimal_case_with_options(
         "reduced_bytes": reduced_bytes,
         "reduced": reduced,
     })
+}
+
+/// Runtime secret seeds for a reduction bundle. Evaluation uses the
+/// caller's options (mode, profile, parse flags, limits) with payload
+/// materialisation and no wall deadline; a failed evaluation yields no
+/// seeds and the locator-span pass still applies.
+fn bundle_seeds(
+    source: &str,
+    file_ctx: Option<&std::path::Path>,
+    options: DebugOptions<'_>,
+) -> crate::secret::SecretRedactor {
+    let parse_options = crate::ParseOptions {
+        enable_includes: file_ctx.is_some(),
+        allow_parent_escapes: options.allow_parent_escapes,
+        resilient: options.resilient,
+        ..Default::default()
+    };
+    let (module, _) = match file_ctx {
+        Some(path) => crate::parse_text_recovering_with_file(
+            source,
+            &path.to_string_lossy(),
+            parse_options,
+            path,
+        ),
+        None => crate::parse_recovering(source, "minimize", parse_options),
+    };
+    let mut engine = Engine::new();
+    engine.resilient = options.resilient;
+    engine.profile_override = options.profile.map(str::to_string);
+    if let Some(budget) = options.budget {
+        engine.budget = *budget;
+    }
+    engine.budget.max_wall_ms = 0;
+    engine.materialise_blobs = true;
+    engine.taint_probe = true;
+    engine
+        .evaluate_with_seeds(&module)
+        .map(|(_, _, seeds)| seeds)
+        .unwrap_or_default()
 }
 
 /// Replace secret-bearing string literals in exported source with a
@@ -339,7 +401,13 @@ pub fn minimal_case_with_options(
 ///    unterminated strings.
 ///
 /// `secret.env(NAME)` names are not material and pass through.
-fn redact_secret_literals(source: &str) -> String {
+///
+/// 3. **Duplicates** (value pass): any other string token whose decoded
+///    value equals a known secret value (authored locator or evaluator
+///    seed, including env/computed/interpolated values) is replaced
+///    too, and any comment containing one is redacted wholesale. A
+///    base64 or hex encoding of a known value counts as a duplicate.
+fn redact_secret_literals(source: &str, seeds: &crate::secret::SecretRedactor) -> String {
     // Line breaks between `secret` and `(` are rejected by the parser
     // but still denote a call for display purposes. Normalize the gap
     // in place (newlines → spaces) so a recovering parse sees the call
@@ -349,7 +417,7 @@ fn redact_secret_literals(source: &str) -> String {
     // The lexical pass also covers malformed calls and locators the
     // parser cannot resolve. Overlaps are unioned below.
     spans.extend(lexical_secret_spans(&normalized));
-    if spans.is_empty() {
+    if spans.is_empty() && seeds.is_empty() {
         return source.to_string();
     }
     let mut ranges: Vec<(usize, usize)> = spans
@@ -373,16 +441,10 @@ fn redact_secret_literals(source: &str) -> String {
             _ => merged.push((start, end)),
         }
     }
-    let mut out = source.to_string();
-    for (start, end) in merged.iter().rev() {
-        out.replace_range(*start..*end, "\"***SECRET***\"");
-    }
-    // A duplicate of a known secret value elsewhere in the document
-    // (for example a blob payload) leaks just as badly as the locator
-    // itself. Collect the decoded text of every redacted literal and
-    // replace any other string token whose value matches it.
-    let mut known = crate::secret::SecretRedactor::new();
     let lexed = crate::parser::Lexer::new(&normalized).tokenize();
+    let env_names = env_name_span_keys(&lexed.tokens);
+    // Authored locator values (decoded token text).
+    let mut authored = crate::secret::SecretRedactor::new();
     for token in &lexed.tokens {
         if !is_string_token(token) {
             continue;
@@ -391,41 +453,148 @@ fn redact_secret_literals(source: &str) -> String {
             continue;
         };
         if merged.iter().any(|&(s, e)| start >= s && end <= e) {
-            known.insert(token.text.clone());
+            authored.insert(token.text.clone());
         }
     }
-    if !known.is_empty() {
-        let mut extras: Vec<(usize, usize)> = Vec::new();
-        for token in &lexed.tokens {
-            if !is_string_token(token) {
-                continue;
-            }
-            let Some((start, end)) = span_offsets(&normalized, &token_span(token)) else {
-                continue;
-            };
-            if merged.iter().any(|&(s, e)| start >= s && end <= e) {
-                continue;
-            }
-            if known.redact_text(&token.text).is_some() {
-                extras.push((start, end));
-            }
+    // Duplicates of a known value elsewhere in the document (a blob
+    // payload, a copy, an echo) leak just as badly as the locator.
+    let mut extras: Vec<(usize, usize)> = Vec::new();
+    for token in &lexed.tokens {
+        if !is_string_token(token) {
+            continue;
         }
-        if !extras.is_empty() {
-            extras.sort_unstable();
-            let mut all: Vec<(usize, usize)> = merged.iter().copied().chain(extras).collect();
-            all.sort_unstable();
-            let mut coalesced: Vec<(usize, usize)> = Vec::new();
-            for (start, end) in all {
-                match coalesced.last_mut() {
-                    Some(last) if start <= last.1 => last.1 = last.1.max(end),
-                    _ => coalesced.push((start, end)),
+        let Some((start, end)) = span_offsets(&normalized, &token_span(token)) else {
+            continue;
+        };
+        if merged.iter().any(|&(s, e)| start >= s && end <= e) {
+            continue;
+        }
+        if env_names.contains(&token_key(token)) {
+            continue;
+        }
+        if value_is_known(&token.text, &authored, seeds) {
+            extras.push((start, end));
+        }
+    }
+    // Comments are non-semantic: redact the whole comment when it
+    // contains a known value (substring match is the fail-closed rule).
+    // Lex the original text: `normalized` blanks comment bytes so the
+    // recovering parser sees no comment at all.
+    let comment_lex = crate::parser::Lexer::new(source).tokenize();
+    let mut comment_ranges: Vec<(usize, usize)> = Vec::new();
+    for (_, span) in &comment_lex.comments {
+        let Some((start, end)) = span_offsets(source, span) else {
+            continue;
+        };
+        let text = &source[start..end];
+        let authored_hit = authored.redact_text(text).is_some();
+        if authored_hit || seeds.redact_text(text).is_some() {
+            comment_ranges.push((start, end));
+        }
+    }
+    let mut all: Vec<(usize, usize)> = merged
+        .iter()
+        .copied()
+        .chain(extras)
+        .chain(comment_ranges)
+        .collect();
+    all.sort_unstable();
+    let mut coalesced: Vec<(usize, usize)> = Vec::new();
+    for (start, end) in all {
+        match coalesced.last_mut() {
+            Some(last) if start <= last.1 => last.1 = last.1.max(end),
+            _ => coalesced.push((start, end)),
+        }
+    }
+    let mut out = source.to_string();
+    for (start, end) in coalesced.iter().rev() {
+        let replacement = if source[*start..].starts_with('#') {
+            "# ***SECRET***"
+        } else {
+            "\"***SECRET***\""
+        };
+        out.replace_range(*start..*end, replacement);
+    }
+    out
+}
+
+/// True when a decoded token value is a known secret, exactly or via a
+/// base64/hex encoding of one.
+fn value_is_known(
+    value: &str,
+    authored: &crate::secret::SecretRedactor,
+    seeds: &crate::secret::SecretRedactor,
+) -> bool {
+    if authored.contains_exact(value) || seeds.contains_exact(value) {
+        return true;
+    }
+    if let Some(decoded) = decode_base64(value) {
+        if authored.contains_exact(&decoded) || seeds.contains_exact(&decoded) {
+            return true;
+        }
+    }
+    if let Some(decoded) = decode_hex(value) {
+        if authored.contains_exact(&decoded) || seeds.contains_exact(&decoded) {
+            return true;
+        }
+    }
+    false
+}
+
+fn decode_base64(value: &str) -> Option<String> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(value)
+        .ok()?;
+    String::from_utf8(bytes).ok()
+}
+
+fn decode_hex(value: &str) -> Option<String> {
+    if value.len() < 4 || value.len() % 2 != 0 {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(value.len() / 2);
+    let chars: Vec<char> = value.chars().collect();
+    for pair in chars.chunks(2) {
+        let digit = |c: char| c.to_digit(16).map(|d| d as u8);
+        bytes.push(digit(pair[0])? * 16 + digit(pair[1])?);
+    }
+    String::from_utf8(bytes).ok()
+}
+
+/// Span key of a lexer token.
+fn token_key(token: &crate::parser::Token) -> (u32, u32, u32, u32) {
+    (token.line, token.col, token.end_line, token.end_col)
+}
+
+/// Keys of the first string argument of every `secret.env("NAME")`
+/// call: canonical env names are not material and stay readable.
+fn env_name_span_keys(
+    tokens: &[crate::parser::Token],
+) -> std::collections::HashSet<(u32, u32, u32, u32)> {
+    let mut out = std::collections::HashSet::new();
+    for index in 0..tokens.len() {
+        if tokens[index].text != "secret" {
+            continue;
+        }
+        let mut cursor = index + 1;
+        let mut saw_dot = false;
+        let mut saw_env = false;
+        while cursor < tokens.len() && cursor <= index + 8 {
+            match tokens[cursor].text.as_str() {
+                "." if !saw_dot => saw_dot = true,
+                "env" if saw_dot => saw_env = true,
+                "(" if saw_env => {
+                    if let Some(token) = tokens.get(cursor + 1) {
+                        if is_string_token(token) {
+                            out.insert(token_key(token));
+                        }
+                    }
+                    break;
                 }
+                _ => {}
             }
-            let mut out = source.to_string();
-            for (start, end) in coalesced.iter().rev() {
-                out.replace_range(*start..*end, "\"***SECRET***\"");
-            }
-            return out;
+            cursor += 1;
         }
     }
     out

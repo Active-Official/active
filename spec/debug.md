@@ -120,7 +120,13 @@ is deterministic).
 No step, breakpoint, replay report, or reduction bundle contains raw
 secret material: the value mapping redacts Secret values, locator
 subtrees are replaced structurally, and `--minimize` rewrites authored
-secret literals to `"***SECRET***"`. Taint is structural, so a plain
+secret literals to `"***SECRET***"`. A duplicate of a known secret
+value elsewhere — another string token, a blob payload, a comment, or a
+base64/hex encoding of the value — is redacted too. Matching uses exact
+decoded token equality (so a short secret does not rewrite unrelated
+strings) and substring matching for comments (which are non-semantic);
+canonical `secret.env("NAME")` arguments are exempt. Encoded forms that
+are neither base64 nor hex are not decoded. Taint is structural, so a plain
 value used as a locator (a `let`, a table field, an environment lookup)
 and any interpolation, reference, or container built from it are
 material even without a `Value::Secret` marker; containers keep their

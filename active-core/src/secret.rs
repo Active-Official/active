@@ -364,6 +364,41 @@ impl SecretRedactor {
         self.seen.contains(text)
     }
 
+    /// Replace every occurrence of every known value, regardless of
+    /// length. Intended for authored display text (a constraint
+    /// source, a comment) where over-redaction is preferable to a
+    /// leak. Never use it on document data: a one-byte value would
+    /// rewrite unrelated text.
+    pub fn redact_every_occurrence(&self, text: &str) -> Option<String> {
+        if self.is_empty() {
+            return None;
+        }
+        let mut all = SecretRedactor::new();
+        for value in self.values.borrow().iter() {
+            all.insert(value.clone());
+        }
+        all.redact_text(text)
+    }
+
+    /// Replace every occurrence of a known value of at least
+    /// `min_bytes`. Used when sweeping display text where short values
+    /// would rewrite unrelated fragments. Markers stay opaque.
+    pub fn redact_text_min(&self, text: &str, min_bytes: usize) -> Option<String> {
+        if self.is_empty() || text.len() < min_bytes {
+            return None;
+        }
+        if self.min_len.get() >= min_bytes {
+            return self.redact_text(text);
+        }
+        let mut filtered = SecretRedactor::new();
+        for value in self.values.borrow().iter() {
+            if value.len() >= min_bytes {
+                filtered.insert(value.clone());
+            }
+        }
+        filtered.redact_text(text)
+    }
+
     /// True when `text` contains a known value of at least `min_bytes`.
     /// Very short values stay exact-match only: spreading a one- or
     /// two-byte secret as a substring would redact unrelated fragments
@@ -1573,6 +1608,11 @@ pub struct SecretProfile {
     /// base tree when the selector is computed, so value lookups must
     /// consult these records first. Deterministically first-wins.
     computed_path_nodes: HashMap<String, NodeId>,
+    /// Every material value's text, at any length. Consulted only at
+    /// whole-value boundaries: a short material value must redact an
+    /// identical copy, while spreading it as a substring would rewrite
+    /// unrelated text (that stays limited to [`Self::literals`]).
+    exact_literals: SecretRedactor,
 }
 
 impl SecretProfile {
@@ -2124,15 +2164,19 @@ impl SecretProfile {
                             rename_material_node_paths(&mut material_node_paths, &from, &to);
                             // Computed-profile records follow the same
                             // same-parent move. The destination is only
-                            // known to be replaced when the source is a
-                            // base-tree path; otherwise the rename may
-                            // be a W004 no-op under the selected profile,
-                            // so keep both records.
+                            // known to be replaced when the source still
+                            // exists in the transform-maintained tree; a
+                            // source removed or moved by an earlier patch
+                            // makes this rename a W004 no-op, so keep both
+                            // records.
+                            let source_present = data_paths.contains(&from)
+                                && (paths.contains_key(&from)
+                                    || paths.keys().any(|key| path_under(key, &from)));
                             rename_computed_paths(
                                 &mut computed_profile_paths,
                                 &from,
                                 &to,
-                                data_paths.contains(&from),
+                                source_present,
                             );
                         }
                         continue;
@@ -2221,6 +2265,7 @@ impl SecretProfile {
         // analysis result.
         let mut material_at_path: HashSet<NodeId> = HashSet::new();
         let mut static_strings = StaticStrings::default();
+        let mut exact_literals = SecretRedactor::new();
         let mut fallback_order: Vec<&String> = fallback_secret_paths.iter().collect();
         fallback_order.sort();
         for path in fallback_order {
@@ -2234,6 +2279,10 @@ impl SecretProfile {
             let Some(text) = static_strings.get(module, node) else {
                 continue;
             };
+            // Exact matching is safe at any length: an identical copy
+            // must redact, while a short value stays out of the
+            // substring set below.
+            exact_literals.insert(text.to_string());
             // A value that is material only through its path seeds when
             // it is long enough not to corrupt unrelated text; a
             // structurally secret value seeds at any length.
@@ -2251,6 +2300,7 @@ impl SecretProfile {
                 continue;
             }
             if let Some(text) = static_strings.get(module, id) {
+                exact_literals.insert(text.to_string());
                 literals.insert(text.to_string());
             }
         }
@@ -2274,6 +2324,7 @@ impl SecretProfile {
             let Some(text) = static_strings.get(module, *node) else {
                 continue;
             };
+            exact_literals.insert(text.to_string());
             if !nodes.contains(node) && text.len() < 4 {
                 continue;
             }
@@ -2291,6 +2342,7 @@ impl SecretProfile {
             for node in &module.arena {
                 if let Node::Literal(Value::String(text)) = node {
                     literals.insert(text.clone());
+                    exact_literals.insert(text.clone());
                 }
             }
         }
@@ -2316,6 +2368,7 @@ impl SecretProfile {
             export_visible,
             material_at_path,
             computed_path_nodes,
+            exact_literals,
         }
     }
 
@@ -2370,6 +2423,7 @@ impl SecretProfile {
     /// lookup), so any copy of their text redacts on every surface.
     pub fn absorb_secrets(&mut self, seeds: &SecretRedactor) {
         self.literals.merge(seeds);
+        self.exact_literals.merge(seeds);
     }
 
     /// Insert every material environment value into the literal set.
@@ -2384,8 +2438,31 @@ impl SecretProfile {
             .filter_map(|name| env.get(name).cloned())
             .collect();
         for value in values {
-            self.literals.insert(value);
+            self.literals.insert(value.clone());
+            self.exact_literals.insert(value);
         }
+    }
+
+    /// True when `text` is exactly a material value, at any length.
+    /// Whole-value boundaries use this; substring redaction stays in
+    /// [`Self::literals`] so a short value cannot rewrite unrelated
+    /// text.
+    pub fn is_material_text(&self, text: &str) -> bool {
+        self.exact_literals.contains_exact(text)
+    }
+
+    /// The exact material-value set, for surfaces that render whole
+    /// values (inspect, graph, viz, trace).
+    pub fn exact_literals(&self) -> &SecretRedactor {
+        &self.exact_literals
+    }
+
+    /// Redact authored display text (a constraint source, a comment, a
+    /// doc intent) with every material value, including short ones.
+    /// Over-redaction is acceptable for prose; document data uses the
+    /// length-gated path.
+    pub fn redact_authored_text(&self, text: &str) -> Option<String> {
+        self.exact_literals.redact_every_occurrence(text)
     }
 
     /// True when the node is still rendered through a benign export path
@@ -2490,6 +2567,12 @@ impl SecretProfile {
 
     /// Redact secret substrings in text.
     pub fn redact_text(&self, text: &str) -> Option<String> {
+        // A whole value identical to a material value is material at
+        // any length; substring matching stays length-gated so a short
+        // value cannot rewrite unrelated text.
+        if self.exact_literals.contains_exact(text) {
+            return Some(MARKER.to_string());
+        }
         self.literals.redact_text(text)
     }
 }

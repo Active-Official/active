@@ -166,3 +166,16 @@ fn markdown_surfaces_schema_description_and_deprecated() {
     assert!(man.contains("DNS name."), "{man}");
     assert!(man.contains("use fqdn"), "{man}");
 }
+
+#[test]
+fn doc_redacts_secret_text_quoted_in_an_intent() {
+    // Review 64: annotation and comment prose renders through docgen,
+    // so a quoted locator must redact there too.
+    let src =
+        "token = secret(\"s3cr3t-doc\")\n# @intent: \"the token is s3cr3t-doc\"\nname = \"x\"\n";
+    let module = parse(src, "doc").expect("parse");
+    let (value, _) = Engine::new().evaluate(&module).expect("evaluate");
+    let items = collect_items(&module, &value);
+    let md = doc_to_markdown("Service", &items);
+    assert!(!md.contains("s3cr3t-doc"), "{md}");
+}

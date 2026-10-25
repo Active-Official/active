@@ -238,6 +238,11 @@ fn render_cone(
             (JsonValue::Object(out), marked)
         }
         _ if profile.path_is_secret(path) => (JsonValue::String(MARKER.to_string()), true),
+        // A whole value identical to a material value is a copy, at any
+        // length; short values are not in the substring redactor.
+        Value::String(text) if profile.is_material_text(text) => {
+            (JsonValue::String(MARKER.to_string()), true)
+        }
         // A materialised payload can carry a secret even when the
         // blob's own taint flag is clear. The encoded bytes would not
         // match a literal sweep, so the identity is redacted as a whole

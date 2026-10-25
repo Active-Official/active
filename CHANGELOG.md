@@ -283,7 +283,12 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
   plain string, a comment, or a materialised payload) redacts, and a
   debug bundle keeps include targets, profile names, the
   active-profile selector, and patch path arguments readable even under
-  the fail-closed sweep. Runtime secrets seed the same redactor as authored literals: the evaluator returns every
+  the fail-closed sweep; bytes left between tokens by a healed or
+  malformed string are swept too. A value that is exactly a material
+  value redacts at any length (whole-value matching), while substring
+  spreading stays limited to four bytes and up so a short value cannot
+  rewrite unrelated text; constraint sources, T006 actuals, and docgen
+  intent/comment prose use the exact set. Runtime secrets seed the same redactor as authored literals: the evaluator returns every
   material node's text (covering `let`-bound and computed secrets and
   lazy host lookups), material environment values are merged, and every
   surface — CLI eval/convert/doc/lock/inspect, FFI, WASM, LSP hover,

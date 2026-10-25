@@ -1321,3 +1321,33 @@ fn steps_redact_a_short_path_material_value() {
     let rendered = serde_json::to_string(&steps).expect("json");
     assert!(!rendered.contains("XYZ"), "{rendered}");
 }
+
+#[test]
+fn minimize_does_not_exempt_a_header_after_a_dedent() {
+    // Review 64: the Dedent token shares the header line, so the header
+    // must still be recognized and scope the following field.
+    let source =
+        "s = secret(\"hunter2-x\")\nmeta:\n  x = 1\n[other]\nactive_profile = \"hunter2-x\"\n";
+    let report = debug::minimal_case(source, "T999", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(!reduced.contains("hunter2-x"), "{reduced}");
+}
+
+#[test]
+fn minimize_keeps_a_root_selector_after_a_header_body() {
+    // Review 64: a root `let` ends a header body, so the selector that
+    // follows is structural again.
+    let source = "s = secret(\"hunter2-x\")\n[meta]\nx = 1\nlet y = 1\nactive_profile = \"prod\"\nprofile \"prod\" { z = 1 }\n";
+    let report = debug::minimal_case(source, "T999", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(reduced.contains("active_profile = \"prod\""), "{reduced}");
+}
+
+#[test]
+fn minimize_does_not_exempt_an_interpolated_directive_path() {
+    // Review 64: `${…}` is never a static path; the token is data.
+    let source = "s = secret(\"hunter2-x\")\n@patch(\"a.${\"hunter2-x\"}\", 1)\n";
+    let report = debug::minimal_case(source, "E019", 0);
+    let reduced = report["reduced"].as_str().expect("reduced");
+    assert!(!reduced.contains("hunter2-x"), "{reduced}");
+}

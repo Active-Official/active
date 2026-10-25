@@ -55,6 +55,8 @@ exits non-zero.
 - Golden probes per format over a fixture with nesting, intents,
   comments, constraints, defaults, deprecations, and a secret.
 - Comment attachment (leading/trailing/doc-comment) unit tests.
-- Redaction audit: secret text in no output.
+- Redaction audit: secret text in no output. Values, and the
+  annotation/comment prose that becomes a description, are redacted
+  with the same material set.
 - No-schema documents still generate (values + kinds).
 - CLI tests for all three formats incl. exit codes.

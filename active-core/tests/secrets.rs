@@ -2289,3 +2289,51 @@ fn computed_profile_benign_copy_stays_visible() {
     assert!(!json.contains("hunter2-base"), "{json}");
     assert!(json.contains("MATERIAL-TEXT"), "{json}");
 }
+
+#[test]
+fn no_op_rename_after_prior_transforms_keeps_the_destination_seed() {
+    // Review 64 (HIGH): an earlier rename or remove makes the second
+    // rename a W004 no-op, so the destination value survives. Its
+    // computed record must not be cleared just because the source was
+    // a base path.
+    for patch in ["@rename(\"a.y\", \"y2\")", "@remove(\"a.y\")"] {
+        let src = format!(
+            "active_profile = env.P ?: \"p\"\na = {{ x = secret(\"hunter2-base\"), y = 1 }}\nprofile \"p\" {{ a = {{ x = {{ q = \"LIVE-TEXT\" }} }} }}\n{patch}\n@rename(\"a.y\", \"x\")\ndup = \"LIVE-TEXT\"\n"
+        );
+        let module = parse(&src, "noop-rename-prior").expect("parse");
+        let (value, _) = Engine::hermetic().evaluate(&module).expect("evaluate");
+        let secret = active_core::secret::SecretProfile::analyze(&module);
+        let json = active_core::convert::value_to_pretty_json_with(&secret, &value);
+        assert!(!json.contains("LIVE-TEXT"), "{patch}: {json}");
+    }
+}
+
+#[test]
+fn short_path_material_value_redacts_only_whole_copies() {
+    // Review 64: a short material value must redact an identical whole
+    // value, while a longer string containing it stays readable.
+    let src = "active_profile = \"p\"\na = secret(\"base\")\nprofile \"p\" { a = \"ABC\" }\nb = \"ABC\"\nregion = \"ABC-east-1\"\n";
+    let module = parse(src, "short-material").expect("parse");
+    let (value, _) = Engine::hermetic().evaluate(&module).expect("evaluate");
+    let secret = active_core::secret::SecretProfile::analyze(&module);
+    let json = active_core::convert::value_to_pretty_json_with(&secret, &value);
+    assert!(!json.contains("\"b\": \"ABC\""), "{json}");
+    assert!(json.contains("ABC-east-1"), "{json}");
+}
+
+#[test]
+fn constraint_actual_redacts_a_short_path_material_copy() {
+    // Review 64: T006's actual uses the same exact material set. `b`
+    // is a distinct literal holding the same short text, so it is a
+    // copy (a shared node exported benignly stays visible by design).
+    let src = "active_profile = \"p\"\na = secret(\"base\")\nprofile \"p\" { a = \"XYZ\" }\n# @constraint: value != \"XYZ\"\nb = \"XYZ\"\n";
+    let module = parse(src, "short-t006").expect("parse");
+    let (_, diags) = Engine::hermetic()
+        .evaluate(&module)
+        .expect("evaluation returns diagnostics");
+    let t006 = diags
+        .iter()
+        .find(|d| d.code == "T006")
+        .expect("constraint must fail");
+    assert!(!t006.message.contains("XYZ"), "{}", t006.message);
+}

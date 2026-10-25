@@ -21,7 +21,9 @@ pub use capability::{
     profile as sandbox_profile, profiles as sandbox_profiles, refused as refused_capabilities,
 };
 pub use compat::{compare as compare_schemas, CompatFinding};
-pub use doc::{collect_items, doc_to_html, doc_to_man, doc_to_markdown, DocItem};
+pub use doc::{
+    collect_items, collect_items_with_profile, doc_to_html, doc_to_man, doc_to_markdown, DocItem,
+};
 pub use project::project as project_path;
 pub use repair::{
     repair as repair_document, repair_with_engine, PlannedStep, RepairOutcome, StepStatus,
@@ -293,6 +295,10 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
                 }
             }
             _ if profile.path_is_secret(path) => Value::Secret(String::new()),
+            // A whole value identical to a material value (at any
+            // length) is material too; short values never enter the
+            // substring redactor.
+            Value::String(text) if profile.is_material_text(text) => Value::Secret(String::new()),
             Value::String(text) => match redactor.redact_text(text) {
                 Some(redacted) => Value::String(redacted),
                 None => value.clone(),

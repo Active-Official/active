@@ -417,6 +417,9 @@ fn bundle_seeds(
         Some(&seeds),
     );
     seeds.merge(profile.literals());
+    // Exact duplicates of a short material value still redact (they are
+    // not in the substring set).
+    seeds.merge(profile.exact_literals());
     (seeds, fail_closed)
 }
 
@@ -576,15 +579,82 @@ fn redact_secret_literals(
             _ => coalesced.push((start, end)),
         }
     }
-    let mut out = source.to_string();
-    for (start, end) in coalesced.iter().rev() {
-        let replacement = if source[*start..].starts_with('#') {
-            "# ***SECRET***"
-        } else {
-            "\"***SECRET***\""
-        };
-        out.replace_range(*start..*end, replacement);
+    // A healed or malformed token stream can leave data bytes between
+    // tokens (a nested quote inside an interpolation is one example),
+    // so a token-span pass is not a complete sweep. Sweep every byte
+    // outside the redacted spans and the protected structural/env-name
+    // literals, four bytes and up, so a short value cannot rewrite
+    // text. Protected literals stay readable so the bundle remains
+    // reproducible.
+    let protected: Vec<(usize, usize)> = lexed
+        .tokens
+        .iter()
+        .filter(|token| {
+            env_names.contains(&token_key(token)) || structural.contains(&token_key(token))
+        })
+        .filter_map(|token| offsets(&token_span(token)))
+        .collect();
+    let mut blocked: Vec<(usize, usize)> = coalesced.clone();
+    blocked.extend(protected);
+    blocked.sort_unstable();
+    let mut merged_blocked: Vec<(usize, usize)> = Vec::new();
+    for (start, end) in blocked {
+        match merged_blocked.last_mut() {
+            Some(last) if start <= last.1 => last.1 = last.1.max(end),
+            _ => merged_blocked.push((start, end)),
+        }
     }
+    let mut edits: Vec<(usize, usize, String)> = coalesced
+        .iter()
+        .map(|(start, end)| {
+            let replacement = if source[*start..].starts_with('#') {
+                "# ***SECRET***".to_string()
+            } else {
+                "\"***SECRET***\"".to_string()
+            };
+            (*start, *end, replacement)
+        })
+        .collect();
+    let sweep = |gap: &str| -> String {
+        let mut swept = gap.to_string();
+        if let Some(text) = authored.redact_text_min(&swept, MIN_SUBSTRING_SEED) {
+            swept = text;
+        }
+        if let Some(text) = seeds.redact_text_min(&swept, MIN_SUBSTRING_SEED) {
+            swept = text;
+        }
+        swept
+    };
+    let mut cursor = 0usize;
+    for (start, end) in merged_blocked {
+        if start > cursor {
+            let gap = &source[cursor..start];
+            let swept = sweep(gap);
+            if swept != gap {
+                edits.push((cursor, start, swept));
+            }
+        }
+        cursor = cursor.max(end);
+    }
+    if cursor < source.len() {
+        let gap = &source[cursor..];
+        let swept = sweep(gap);
+        if swept != gap {
+            edits.push((cursor, source.len(), swept));
+        }
+    }
+    edits.sort_unstable_by_key(|edit| edit.0);
+    let mut out = String::with_capacity(source.len());
+    let mut last = 0usize;
+    for (start, end, replacement) in edits {
+        if start < last {
+            continue;
+        }
+        out.push_str(&source[last..start]);
+        out.push_str(&replacement);
+        last = end;
+    }
+    out.push_str(&source[last..]);
     out
 }
 
@@ -734,16 +804,61 @@ fn structural_span_keys(
             _ => {}
         }
     }
+    // First non-synthetic token of each source line. Indent/Dedent sit
+    // on the same line as the token they precede, so a naive
+    // "previous token's line" test misses a header or statement after
+    // a dedented block.
+    let mut first_on_line = vec![false; tokens.len()];
+    let mut previous_line = u32::MAX;
+    for (index, token) in tokens.iter().enumerate() {
+        if matches!(
+            token.kind,
+            crate::parser::TokenKind::Newline
+                | crate::parser::TokenKind::Indent
+                | crate::parser::TokenKind::Dedent
+                | crate::parser::TokenKind::Eof
+        ) {
+            continue;
+        }
+        if token.line != previous_line {
+            first_on_line[index] = true;
+            previous_line = token.line;
+        }
+    }
     let mut out = std::collections::HashSet::new();
     // After a `[table]` or `[[array]]` header, a line such as
-    // `active_profile = "…"` is a field of that table, not the document
-    // selector. Header state never resets: later headers stay scoped.
-    let mut after_header = false;
+    // `active_profile = "…"` is a field of that table until a root
+    // declaration ends the header body (spec/grammar.md §2.0). The
+    // header scope follows the enclosing block, so a Dedent out of it
+    // clears the scope.
+    let mut block_depth = 0usize;
+    let mut header_depth: Option<usize> = None;
     for index in 0..tokens.len() {
+        match tokens[index].kind {
+            crate::parser::TokenKind::Indent => {
+                block_depth += 1;
+                continue;
+            }
+            crate::parser::TokenKind::Dedent => {
+                block_depth = block_depth.saturating_sub(1);
+                if header_depth.is_some_and(|depth| block_depth < depth) {
+                    header_depth = None;
+                }
+                continue;
+            }
+            crate::parser::TokenKind::Newline | crate::parser::TokenKind::Eof => continue,
+            _ => {}
+        }
         let line = tokens[index].line;
-        let starts_line = index == 0 || tokens[index - 1].line < line;
-        if !starts_line || depth_at.get(index).copied().unwrap_or(0) != 0 {
+        if !first_on_line[index] || depth_at.get(index).copied().unwrap_or(0) != 0 {
             continue;
+        }
+        // Root declarations end a header body.
+        if matches!(
+            tokens[index].text.as_str(),
+            "let" | "include" | "profile" | "@"
+        ) {
+            header_depth = None;
         }
         if !is_string_token(&tokens[index]) && tokens[index].text == "[" {
             let closes = tokens[index + 1..]
@@ -751,7 +866,7 @@ fn structural_span_keys(
                 .take_while(|token| token.line == line)
                 .any(|token| !is_string_token(token) && token.text == "]");
             if closes {
-                after_header = true;
+                header_depth = Some(block_depth);
             }
             continue;
         }
@@ -760,11 +875,12 @@ fn structural_span_keys(
         if is_string_token(&tokens[index]) {
             continue;
         }
+        let after_header = header_depth.is_some();
         let same_line = |at: usize| tokens.get(at).is_some_and(|token| token.line == line);
         let next_string = |at: usize| {
-            tokens
-                .get(at)
-                .filter(|token| token.line == line && is_string_token(token))
+            tokens.get(at).filter(|token| {
+                token.line == line && is_string_token(token) && !token.text.contains("${")
+            })
         };
         match tokens[index].text.as_str() {
             "include" | "profile" if !after_header => {
@@ -864,7 +980,13 @@ fn structural_span_keys(
                     }
                     tokens_in_argument += 1;
                     strings_in_argument += 1;
-                    lone_string = Some(token_key(token));
+                    // An interpolated token is not a static path; its
+                    // `${…}` content must go through redaction.
+                    lone_string = if token.text.contains("${") {
+                        None
+                    } else {
+                        Some(token_key(token))
+                    };
                 }
                 if argument < path_args && tokens_in_argument == 1 && strings_in_argument == 1 {
                     if let Some(key) = lone_string {

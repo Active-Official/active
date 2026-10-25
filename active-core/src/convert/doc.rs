@@ -28,6 +28,18 @@ pub struct DocItem {
 /// evaluated value tree, enriched with schema data, annotations,
 /// and attached comments.
 pub fn collect_items(module: &Module, value: &Value) -> Vec<DocItem> {
+    let profile = crate::secret::SecretProfile::analyze(module);
+    collect_items_with_profile(module, value, &profile)
+}
+
+/// Documentation items under an already analyzed profile: descriptions
+/// are redacted with the same material set as values, so an `@intent`
+/// or comment that quotes a secret cannot leak it.
+pub fn collect_items_with_profile(
+    module: &Module,
+    value: &Value,
+    profile: &crate::secret::SecretProfile,
+) -> Vec<DocItem> {
     // Node per dotted path (tables win ties, like resolution) for
     // annotations and comment matching.
     let mut by_path: HashMap<String, NodeId> = HashMap::new();
@@ -57,10 +69,16 @@ pub fn collect_items(module: &Module, value: &Value) -> Vec<DocItem> {
         }
         comments.entry(key).or_default().push(text);
     }
+    let ctx = DocContext {
+        module,
+        profile,
+        by_path: &by_path,
+        comments: &comments,
+    };
     let mut items = Vec::new();
     if let Value::Table(map) = value {
         for (key, val) in map {
-            walk_value(module, val, key, 0, &by_path, &comments, &mut items);
+            walk_value(&ctx, val, key, 0, &mut items);
         }
     }
     items
@@ -69,15 +87,24 @@ pub fn collect_items(module: &Module, value: &Value) -> Vec<DocItem> {
 /// One value plus, for containers, its descendants: tables recurse
 /// by key, arrays by index (`items[0]`). Sections group by the
 /// first segment (`General` for root-level scalars).
+struct DocContext<'a> {
+    module: &'a Module,
+    profile: &'a crate::secret::SecretProfile,
+    by_path: &'a HashMap<String, NodeId>,
+    comments: &'a HashMap<String, Vec<String>>,
+}
+
 fn walk_value(
-    module: &Module,
+    ctx: &DocContext<'_>,
     val: &Value,
     path: &str,
     depth: usize,
-    by_path: &HashMap<String, NodeId>,
-    comments: &HashMap<String, Vec<String>>,
     items: &mut Vec<DocItem>,
 ) {
+    let module = ctx.module;
+    let profile = ctx.profile;
+    let by_path = ctx.by_path;
+    let comments = ctx.comments;
     let section = if depth == 0 && !matches!(val, Value::Table(_) | Value::Array(_)) {
         "General".to_string()
     } else {
@@ -123,6 +150,12 @@ fn walk_value(
     // Bare `#` markers contribute nothing; drop empties so they
     // never widen paragraph spacing.
     description_parts.retain(|part| !part.trim().is_empty());
+    // Annotation and comment prose is untrusted for secrets too: an
+    // `@intent` that quotes a locator would otherwise publish it.
+    let description = description_parts.join("\n\n");
+    let description = profile
+        .redact_authored_text(&description)
+        .unwrap_or(description);
     items.push(DocItem {
         path: path.to_string(),
         depth,
@@ -132,35 +165,19 @@ fn walk_value(
         required,
         default_text,
         value_text: render_value(val),
-        description: description_parts.join("\n\n"),
+        description,
         constraints,
         deprecated,
     });
     match val {
         Value::Table(nested) => {
             for (key, child) in nested {
-                walk_value(
-                    module,
-                    child,
-                    &format!("{path}.{key}"),
-                    depth + 1,
-                    by_path,
-                    comments,
-                    items,
-                );
+                walk_value(ctx, child, &format!("{path}.{key}"), depth + 1, items);
             }
         }
         Value::Array(elements) => {
             for (i, element) in elements.iter().enumerate() {
-                walk_value(
-                    module,
-                    element,
-                    &format!("{path}[{i}]"),
-                    depth + 1,
-                    by_path,
-                    comments,
-                    items,
-                );
+                walk_value(ctx, element, &format!("{path}[{i}]"), depth + 1, items);
             }
         }
         _ => {}

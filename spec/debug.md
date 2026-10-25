@@ -139,7 +139,10 @@ token. If the document fails hard before every secret node is walked,
 the bundle fails closed and redacts every string literal except
 canonical env names and structural literals — include targets, profile
 names, the active-profile selector, and `@patch`/`@remove`/`@rename`
-path arguments — which the bundle must keep to stay reproducible. Taint
+path arguments (each one bare string token, never an interpolation) —
+which the bundle must keep to stay reproducible. Bytes that a healed
+or malformed token stream leaves between tokens are swept separately,
+so a nested quote cannot carry a value past the token pass. Taint
 is structural, so a plain
 value used as a locator (a `let`, a table field, an environment lookup)
 and any interpolation, reference, or container built from it are

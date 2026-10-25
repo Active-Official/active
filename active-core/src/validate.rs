@@ -209,6 +209,12 @@ impl Engine {
                         let redactor = runtime_secret_redactor(values, &profile);
                         (profile, redactor)
                     });
+                    // The predicate's own source can quote a secret (a
+                    // constraint written against the literal); redact it
+                    // with the same material set as the actual.
+                    let shown_source = profile
+                        .redact_authored_text(&shown_source)
+                        .unwrap_or(shown_source);
                     // A material actual of any kind renders the marker;
                     // a string that merely contains a known secret is
                     // redacted in place.
@@ -217,7 +223,7 @@ impl Engine {
                     {
                         crate::secret::MARKER.to_string()
                     } else {
-                        render_constrained(value, redactor)
+                        render_constrained(value, redactor, profile)
                     };
                     local.push(Diagnostic {
                         severity: Severity::Error,
@@ -1861,9 +1867,18 @@ fn runtime_secret_redactor(
 /// as `secret`, strings debug-quoted and material-redacted, scalars
 /// plain, containers by kind — truncated to 120 characters. Secret
 /// material can never reach a message through here.
-fn render_constrained(value: &Value, redactor: &crate::secret::SecretRedactor) -> String {
+fn render_constrained(
+    value: &Value,
+    redactor: &crate::secret::SecretRedactor,
+    profile: &crate::secret::SecretProfile,
+) -> String {
     let text = match value {
         Value::Secret(_) => "secret".to_string(),
+        // A whole value identical to a material value is a copy, at any
+        // length.
+        Value::String(s) if profile.is_material_text(s) => {
+            format!("{:?}", crate::secret::MARKER)
+        }
         Value::String(s) => match redactor.redact_text(s) {
             Some(redacted) => format!("{redacted:?}"),
             None => format!("{s:?}"),

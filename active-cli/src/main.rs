@@ -1,5 +1,5 @@
 use active_core::convert::{
-    collect_items, doc_to_html, doc_to_man, doc_to_markdown, json_text_to_active,
+    collect_items_with_profile, doc_to_html, doc_to_man, doc_to_markdown, json_text_to_active,
     jsonschema_to_active, schema_inspect, schema_to_go, schema_to_json_schema, schema_to_openapi,
     schema_to_python, schema_to_rust, schema_to_typescript, toml_text_to_active,
     value_to_pretty_json, value_to_toml_string, value_to_yaml_string, yaml_text_to_active,
@@ -2498,9 +2498,10 @@ fn main() -> anyhow::Result<()> {
                 report(d, &filename);
             }
             let profile = active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
-            let items = collect_items(
+            let items = collect_items_with_profile(
                 &module,
                 &active_core::convert::redact_value(&profile, &value),
+                &profile,
             );
             match to.as_str() {
                 "markdown" | "md" => println!("{}", doc_to_markdown(&title, &items)),

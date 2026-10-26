@@ -1,5 +1,22 @@
 # CI verdicts for the final tree (2026-10-26)
 
+HEAD f55f9b8 (CI-log stamp; superseded by the next commit)
+  RatioArtificiosa/active-lang
+    CI           40302574358  success
+    Conformance  40302574380  failure   (juliaup download timed out on the
+                                        runner; not a code failure. Fixed by
+                                        making Tier-2 upstream installers
+                                        continue-on-error, so an installer
+                                        outage becomes a harness SKIP)
+    CodSpeed     40302574389  in_progress at the time of this log
+                                        (superseded by the next commit)
+  Active-Official/active
+    CI           40302578427  success
+    Conformance  40302578352  in_progress at the time of this log
+                                        (superseded by the next commit)
+    CodSpeed     40302578338  success
+    Fuzz smoke   40304341629  success
+
 HEAD 8badded (docs/evidence-only commit on top of content tree f6efd0d)
   RatioArtificiosa/active-lang
     CI           40291728278  success

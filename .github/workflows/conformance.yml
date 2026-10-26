@@ -57,14 +57,22 @@ jobs:
           perl libffi-platypus-perl r-base-core ghc ocaml elixir
           kotlin
       - name: Install Nim via choosenim (Linux only)
+        # Tier-2 SKIP policy: a failed upstream installer must surface as
+        # a documented harness SKIP, never as a red gate.
+        continue-on-error: true
         if: runner.os == 'Linux'
         run: curl -fsSL https://nim-lang.org/choosenim/init.sh -o /tmp/choosenim.sh && sh /tmp/choosenim.sh -y -- 2.2.12 && echo "$HOME/.nimble/bin" >> "$GITHUB_PATH"
       - name: Install Crystal (Linux only)
         # OBS devel:languages:crystal repo for noble; tracks the stable
-        # release like the Dart repo below.
+        # release like the Dart repo below. Tier-2 SKIP policy: a failed
+        # upstream installer is a documented SKIP, never a red gate.
+        continue-on-error: true
         if: runner.os == 'Linux'
         run: curl -fsSL https://crystal-lang.org/install.sh | sudo bash
       - name: Install Dart (Linux only)
+        # Tier-2 SKIP policy: a failed upstream installer must surface as
+        # a documented harness SKIP, never as a red gate.
+        continue-on-error: true
         if: runner.os == 'Linux'
         run: |
           sudo apt-get install -y -qq apt-transport-https
@@ -75,6 +83,9 @@ jobs:
       - name: Install Julia via juliaup (Linux only)
         # Follows the stable release channel; the smoke needs any working
         # toolchain since it drives the frozen C ABI. Proof pins 1.13.2.
+        # Tier-2 SKIP policy: a juliaup outage is a documented SKIP, never
+        # a red gate.
+        continue-on-error: true
         if: runner.os == 'Linux'
         run: curl -fsSL https://install.julialang.org -o /tmp/juliaup && sh /tmp/juliaup -y && echo "$HOME/.juliaup/bin" >> "$GITHUB_PATH"
       - name: Install Erlang NIF headers (Linux only)

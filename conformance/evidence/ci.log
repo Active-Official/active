@@ -1,5 +1,34 @@
 # CI verdicts for the final tree (2026-10-26)
 
+Content tree fcea0d3 (round-77 review fixes: LSP hermetic steps, Enum
+formatter arguments, semantic CR strings, brace trailing comments,
+debug-build stack depth, budget:0, lint include escapes)
+  RatioArtificiosa/active-lang
+    CI           40333418737  success
+    Conformance  40333418591  success
+    Fuzz smoke   40333419116  success   (push)
+    Fuzz smoke   40333502494  success   (workflow_dispatch)
+    CodSpeed     40333418771  cancelled (superseded by the evidence stamp)
+  Active-Official/active
+    CI           40333428157  success
+    Conformance  40333428214  success
+    Fuzz smoke   40333428137  success   (push)
+    Fuzz smoke   40333507485  success   (workflow_dispatch)
+    CodSpeed     40333428250  cancelled (superseded by the evidence stamp)
+
+Review evidence stamp 1b5ce29 (conformance/evidence/review.log and
+review-final.log: round 77 findings plus the ALL FIXED verification)
+  RatioArtificiosa/active-lang
+    CI           40335637519  success
+    Conformance  40335637847  success
+    CodSpeed     40335637525  success
+  Active-Official/active
+    CI           40335643045  success
+    Conformance  40335644400  success
+    CodSpeed     40335642928  success
+  Fuzz smoke is not path-triggered by an evidence-only commit; the same
+  code passed two fuzz runs on fcea0d3 above.
+
 Content tree b95ea27 (formatter fuzz fixes: semantic edge quotes,
 empty-table comment blank, CR in interpolation-literal strings)
   RatioArtificiosa/active-lang

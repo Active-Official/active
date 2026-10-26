@@ -1,4 +1,4 @@
-# Security hardening record (review rounds 12-75)
+# Security hardening record (review rounds 12-77)
 
 This record summarizes the independent review loop that hardened the
 Master Program tree before release. It complements
@@ -347,6 +347,81 @@ Round 74 verified 11 of the 12 as fixed and flagged F6 for a missing
 discriminating test. Round 75 verified the added docgen bound: the
 committed test passes in 0.25 s, and restoring the per-call redactor makes
 it fail at 3.80 s. Final verdict: all 12 fixed.
+
+## Rounds 76-77 - final leak sweep and fresh full-diff review
+
+### Round 76: the linter's env-equal deprecated reason
+
+A post-fix leak sweep over every report surface found one remaining
+leak. The linter is hermetic by design: it builds its redactor from the
+document alone and never reads the process environment. `L005` prints a
+suggested replacement for a deprecated key, and when that replacement was
+copied from an environment value the CLI reported the raw value, because
+the lint messages were never swept with the analyzed material profile.
+
+The fix sweeps every lint finding message in the CLI through
+`material_profile(module)` before reporting, so text, JSON, and SARIF all
+carry the same redaction as the rest of the tool. The regression test
+runs the real binary in all three formats, asserts the raw value is
+absent and `***SECRET***` is present, and keeps a benign-prose control to
+prove ordinary reasons stay readable. The linter stays hermetic; the
+sweep belongs to the reporting layer that owns the environment snapshot.
+
+### Round 77: fresh review of the complete goal diff
+
+A fresh BYOK xhigh review over `ef98a2d..HEAD` at `b96509f` re-read the
+whole diff with reproduction-first triage and swept every secret-bearing
+surface. It found seven issues, all fixed at the cause at `fcea0d3`:
+
+1. **HIGH - LSP debugger bridge used ambient state.**
+   `active/debug/steps` built `Engine::new()`, so a step that read the
+   environment could show a host value while hover and diagnostics
+   reported the hermetic `null`. The bridge now uses
+   `Engine::hermetic()` with the wall clock off, which is the same engine
+   the explain bridge already used. Test:
+   `step_bridge_is_hermetic_for_environment_reads`.
+2. **HIGH - the formatter dropped Enum field arguments.**
+   The Enum branch returned before the shared argument list, so
+   `default`, `description`, and `requires` disappeared on rewrite. That
+   changes requiredness, defaults, and documented intent, and it made
+   `fmt --check schemas/*` fail on shipped schemas. Enum fields now render
+   every accepted argument like any other leaf. Tests:
+   `enum_fields_keep_every_accepted_argument`,
+   `every_shipped_schema_round_trips_through_the_formatter`.
+3. **MEDIUM - semantic multiline strings normalized a carriage return.**
+   The verbatim `'''` form emitted a CR payload as LF, changing the value
+   and breaking idempotence. CR payloads now take the escaped `"""` path,
+   where `\r` is explicit. Test:
+   `semantic_multiline_with_a_carriage_return_keeps_its_value`.
+4. **MEDIUM - brace output was not idempotent for a trailing note after a
+   nested block.** The next parse moved the note inside the last nested
+   table, so a second format changed the document. The formatter now
+   hoists the note into that nested block, which is the fixed point, and
+   empty nested tables emit `key = {}` so the note has a stable anchor.
+   Tests: `brace_trailing_note_after_a_nested_block_is_idempotent`,
+   `brace_empty_tables_keep_inter_entry_comments_idempotent`.
+5. **MEDIUM - 59-64-level nested expressions overflowed a 1 MiB stack in
+   unoptimized builds.** The parser's own depth limit is 64, so the limit
+   was reachable before the check fired on small stacks. The CLI and LSP
+   now run commands on a 32 MiB worker thread, and 64 levels yield E004.
+   The parser contract is documented in `spec/budgets.md`. Test:
+   `deep_expression_nesting_fails_with_e004_instead_of_overflowing`.
+6. **LOW - `--break budget:0` was accepted.** The documented range is
+   1-100; 0 now matches nothing. Covered in
+   `budget_breakpoints_match_on_count_and_percent`.
+7. **LOW - the L016 absolute and parent-escape branches were
+   unreachable.** `lint` had no way to opt the parser into such include
+   paths, and the parser refuses them by default (E015). `lint` now takes
+   `--allow-parent-escapes`, which is the same opt-in the other commands
+   use. Test:
+   `lint_can_report_include_escapes_when_the_parser_allows_them`.
+
+Round 77b re-checked every finding at `fcea0d3` with no new findings
+requested. It also formatted all eight shipped schemas to a copy and
+confirmed no `default`, `description`, `requires`, `descriptions`,
+`deprecated`, or `removed_in` occurrence was lost, and that the
+absolute-path L016 branch fires through the live CLI. Final verdict: all
+seven fixed, zero open findings (`conformance/evidence/review.log`).
 
 The round also rebuilt the release C ABI and the debug WASM module so
 the differential gate exercises the fixed core rather than a stale

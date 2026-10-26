@@ -108,23 +108,26 @@ the baseline rule (no parallel rewrites).
 | Editor smoke | 6 commands, redaction probe pass |
 | Neovim package determinism | identical hashes |
 | Dual-push CI | recorded in `conformance/evidence/ci.log` |
-| Independent review | DeepSeek V4.1 Flash (BYOK, `--reasoning-effort max`) rounds 12-75. Round 73 re-reviewed the complete goal diff and found 12 issues (2 critical, 1 high, 6 medium, 3 low); every one was fixed at the cause with a regression test on the shipped path. Round 74 verified 11 as FIXED and flagged F6 for a missing discriminating test; round 75 verified the added docgen bound (0.25 s committed vs 3.80 s with the old body). Final verdict: all 12 FIXED, zero open findings (`conformance/evidence/review-final.log`; detail in `docs/security-hardening.md`) |
+| Independent review | DeepSeek V4.1 Flash (BYOK, `--reasoning-effort max`) rounds 12-77. Round 73 re-reviewed the complete goal diff and found 12 issues (2 critical, 1 high, 6 medium, 3 low); every one was fixed at the cause with a regression test on the shipped path. Round 74 verified 11 as FIXED and flagged F6 for a missing discriminating test; round 75 verified the added docgen bound (0.25 s committed vs 3.80 s with the old body). Round 76 closed the last leak (the linter's env-equal deprecated reason) and verified it in text, JSON, and SARIF. A fresh full-diff review at `b96509f` (round 77) found 7 further issues (2 high, 3 medium, 2 low), all fixed at `fcea0d3` and verified fixed by round 77b with no new findings requested. Final verdict: zero open findings (`conformance/evidence/review.log`; detail in `docs/security-hardening.md`) |
 
 ### Final CI (2026-10-26)
 
-Both remotes are green on the final content tree `f6efd0d`
-(the round-73 fixes, the docgen bound, and the lint prose redaction).
+Both remotes are green on the final content tree `fcea0d3` (the round-77
+fixes) and on the review evidence stamp `1b5ce29`
+(`conformance/evidence/review.log` and `review-final.log`).
 `Fuzz smoke` is green on both remotes as well (formatter target
-included):
+included; an evidence-only commit does not trigger it, so the two runs
+below are the code's):
 
 | Remote | CI | Conformance | CodSpeed | Fuzz smoke |
 |---|---|---|---|---|
-| `RatioArtificiosa/active-lang` | success (40285705290) | success (40285705341) | success (40285705405) | success (40285705321) |
-| `Active-Official/active` | success (40285709925) | success (40285709871) | success (40285709960) | success (40285709964) |
+| `RatioArtificiosa/active-lang` | success (40333418737) | success (40333418591) | success (40335637525) | success (40333419116, 40333502494) |
+| `Active-Official/active` | success (40333428157) | success (40333428214) | success (40335642928) | success (40333428137, 40333507485) |
 
-Earlier green stamps: `81ff859` (content) and `ff445b0` (docs) were
-green on CI, Conformance, and CodSpeed on both remotes; run IDs are in
-the goal close-out and `conformance/evidence/ci.log`.
+Earlier green stamps: `b96509f` (docs and evidence), `b95ea27`
+(content), and `f6efd0d` (content) were green on CI, Conformance, and
+CodSpeed on both remotes; run IDs are in the goal close-out and
+`conformance/evidence/ci.log`.
 
 The Ubuntu conformance job also builds the OCaml binding; `ocaml_stubs.c`
 includes `<caml/fail.h>` so `caml_invalid_argument` is declared under

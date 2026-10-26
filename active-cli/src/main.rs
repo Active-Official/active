@@ -2876,7 +2876,16 @@ fn main() -> anyhow::Result<()> {
                         continue;
                     }
                 };
-                for d in lint::lint_with(&module, &options) {
+                // Lint messages can quote schema prose; a deprecation
+                // reason copied from a host value must redact like every
+                // other prose surface. The linter itself stays hermetic
+                // (no environment snapshot), so the CLI applies the
+                // analyzed material set here.
+                let material = material_profile(&module);
+                for mut d in lint::lint_with(&module, &options) {
+                    if let Some(text) = material.redact_text(&d.message) {
+                        d.message = text;
+                    }
                     if format == LintFormat::Text {
                         report(&d, &name);
                     } else {

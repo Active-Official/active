@@ -4061,3 +4061,35 @@ fn compatibility_redacts_an_environment_equal_enum_member() {
         "expected a compatibility finding: {body}"
     );
 }
+
+#[test]
+fn lint_redacts_an_environment_equal_deprecated_reason() {
+    let value = "Zx9QwErTySeCrEtVaLuE";
+    let f = fixture(
+        "lint_env_deprecated.active",
+        "schema = { old = String(deprecated = \"use Zx9QwErTySeCrEtVaLuE instead\") }\n\
+         old = \"x\"\n\
+         base = secret(\"base-secret\")\n\
+         profile \"p\" { base = env.ACTIVE_LINT_MATERIAL }\n\
+         active_profile = \"p\"\n",
+    );
+    for format in ["text", "json", "sarif"] {
+        let out = active()
+            .args(["lint", "--format", format])
+            .arg(&f)
+            .env("ACTIVE_LINT_MATERIAL", value)
+            .output()
+            .expect("run active");
+        let body = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            !body.contains(value),
+            "lint {format} leaked a value: {body}"
+        );
+        assert!(body.contains("L005"), "lint {format}: {body}");
+        assert!(body.contains("***SECRET***"), "lint {format}: {body}");
+    }
+}

@@ -8,15 +8,23 @@
 
 use active_core::{parse, parse_file, Engine, ParseOptions};
 
+fn semantic_engine() -> Engine {
+    let mut engine = Engine::new();
+    // Semantic tests must not depend on machine load. Node, depth, array,
+    // key, and size budgets still bind; only the wall clock is disabled.
+    engine.budget.max_wall_ms = 0;
+    engine
+}
+
 fn eval_json(src: &str) -> serde_json::Value {
     let module = parse(src, "research").unwrap_or_else(|d| panic!("parse failed: {d:?}"));
-    let (value, _) = Engine::new().evaluate(&module).expect("must evaluate");
+    let (value, _) = semantic_engine().evaluate(&module).expect("must evaluate");
     serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json")
 }
 
 fn codes_of(src: &str) -> Vec<String> {
     match parse(src, "research") {
-        Ok(module) => match Engine::new().evaluate(&module) {
+        Ok(module) => match semantic_engine().evaluate(&module) {
             Ok((_, diags)) => diags.into_iter().map(|d| d.code).collect(),
             Err(e) => vec![e.code().to_string()],
         },

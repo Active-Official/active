@@ -1,6 +1,6 @@
 # Verification evidence (Master Program close-out)
 
-Captured on the Master Program tree (2026-10-22) by re-running the
+Captured on the final tree (2026-10-26) by re-running the
 battery below. The commit that lands these files carries the exact
 tree; re-run the commands from the repo root to reproduce any row.
 
@@ -11,11 +11,11 @@ tree; re-run the commands from the repo root to reproduce any row.
 | `binding-proof.log` | Step 2: Tier-1 fresh-consumer proof | `BINDING-PROOF: ALL PASS` (codes, resilient eval, T001 refusal, redaction) |
 | `codegen.log` | Step 3: multi-target codegen validators | `CODEGEN: ALL PASS` (jsonschema/tsc+zod/gofmt+go vet+validator/python, determinism, stamps) |
 | `cli-launch.log` / `cli.log` | Step 4: CLI launch smoke | Full demo + complete transcripts, T001 refusal, `deterministic: True`, trace events |
-| `gates.log` | Step 5: full workspace gates | Every section `GATE: PASS` (workspace tests, fmt, clippy, packaging, capability, harness tests, secret scan: 0 raw hits) |
+| `gates.log` | Step 5: full workspace gates | `BUILD_EXIT=0`, `FMT_EXIT=0`, `CLIPPY_EXIT=0`, `TEST_EXIT=0`, `WASM_EXIT=0` |
 | `ci.log` | Step 6: real CI verdicts | Live `gh run list` for the pushed HEAD on origin+official |
-| `review-final.log` | Step 7: fresh review (BYOK xhigh) | `CONFIRMED CLEAN`, no open findings |
+| `review-final.log` | Step 7: fresh review (BYOK xhigh) | all 12 round-73 findings FIXED, zero open findings |
 | `agentkit.log` / `agentkit-eval.json` / `agentkit-eval.log` | Step 6: agent-kit evaluation | `ok: true`, `tasks_improved` 5, mean 1.5 iterations, cone agreement true |
-| `catalog-diff.log` | Error-code catalog diff (`catalog_diff.py`) | 83 emitted, 84 catalogued, 0 missing (E009 intentionally unassigned) |
+| `catalog-diff.log` | Error-code catalog diff (`catalog_diff.py`) | 89 emitted, 90 catalogued, 0 missing (E009 intentionally unassigned) |
 | `harness-tests.log` | Harness enforcement unit tests | 25/25 run.py + 14/14 diff_vectors + capability 4/4 |
 | `miri.log` | Miri (nightly) over `active-core` trace + blob units | 3/3 trace + 3/3 blob pass, no UB (master program EVID.001) |
 | `research-battery.md` | Research battery + corpus summary | 1,998 RB tests, ported corpora counts, fuzz seeds, secret proofs |
@@ -25,3 +25,21 @@ Supporting scripts next to the logs (`codegen_check.py`,
 and the agent-kit gate on every push and PR (see
 `.github/workflows/conformance.yml`); green runs on the pushed tree are
 recorded in the phase gates and the completion record.
+
+## Container harness artifacts
+
+The zero-SKIP container build uses an isolated `CARGO_TARGET_DIR`. Set
+`ACTIVE_FFI_LIB` and `ACTIVE_WASM_PATH` to the artifacts built in that
+directory so the differential gate tests the same core the container
+just built, never a stale in-repo `.so` or `.wasm`:
+
+```sh
+docker run --rm \
+  -e CARGO_TARGET_DIR=/tmp/target \
+  -e ACTIVE_FFI_LIB=/tmp/target/release/libactive_ffi.so \
+  -e ACTIVE_WASM_PATH=/tmp/target/wasm32-unknown-unknown/debug/active_wasm.wasm \
+  -v "$PWD:/work" -w /work active-all-toolchains:phase2 \
+  bash -lc "cargo build -p active-ffi --release && \
+            cargo build -p active-wasm --target wasm32-unknown-unknown && \
+            python3 conformance/harness/run.py --out /work/conformance/evidence/container-harness.json"
+```

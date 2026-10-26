@@ -1,4 +1,4 @@
-# Security hardening record (review rounds 12-74)
+# Security hardening record (review rounds 12-75)
 
 This record summarizes the independent review loop that hardened the
 Master Program tree before release. It complements
@@ -342,6 +342,11 @@ and pinned with a regression test that drives the shipped path.
     committed expectations. The differential gate now runs 19 cases
     with identical codes, spans, and values across the C ABI, Python,
     and JS embeddings.
+
+Round 74 verified 11 of the 12 as fixed and flagged F6 for a missing
+discriminating test. Round 75 verified the added docgen bound: the
+committed test passes in 0.25 s, and restoring the per-call redactor makes
+it fail at 3.80 s. Final verdict: all 12 fixed.
 
 The round also rebuilt the release C ABI and the debug WASM module so
 the differential gate exercises the fixed core rather than a stale

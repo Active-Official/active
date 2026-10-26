@@ -1,6 +1,6 @@
 # Master Program completion record
 
-**Date:** 2026-10-25
+**Date:** 2026-10-26
 **Version:** 1.4.0 (workspace, all crates and language packages)
 **Tree:** the commit that adds this record (see `git log -- docs/completion-record.md`)
 **Programs:** Master (`PROPOSAL.md` / `CHECKLIST.md`) and Tooling
@@ -52,7 +52,7 @@ the baseline rule (no parallel rewrites).
 | REPAIR-UI | browser model, partial apply, cherry-pick | `active-core/tests/repair.rs`, `spec/repair-ui.md` |
 | QUERY | schema/mode/budget CLIs, committed JSON schemas | `docs/schemas/`, `conformance/evidence/output_schema_check.py` |
 | EDITOR | VS Code status/commands/webview, Neovim Lua layer, gap notes | `editors/vscode/scripts/smoke.js`, `editors/neovim/lua/active.lua`, `editors/README.md` |
-| QUALITY | fuzz CI job, property tests, benches, golden CLI tests | `.github/workflows/fuzz.yml`, `fuzz/Cargo.toml` (three libFuzzer targets), `active-lsp/tests/properties.rs`, `active-lsp/benches/analysis.rs`, `active-core/benches/tooling.rs` |
+| QUALITY | fuzz CI job, property tests, benches, golden CLI tests | `.github/workflows/fuzz.yml`, `fuzz/Cargo.toml` (four libFuzzer targets: lexer, parser, interpolation, formatter), `active-lsp/tests/properties.rs`, `active-lsp/benches/analysis.rs`, `active-core/benches/tooling.rs` |
 | DOCS-TOOLING | tooling guide, headless flows, descriptor features | `docs/tooling.md`, `docs/agent-headless.md` |
 | TOOLING-FINAL | version alignment, VSIX + Neovim + docs artifacts | `release.yml` jobs, `packaging/test_package_neovim.py` |
 
@@ -102,7 +102,7 @@ the baseline rule (no parallel rewrites).
 | Miri (trace + blob units) | pass, no UB |
 | Codegen equivalence | `CODEGEN: ALL PASS` |
 | Agent-kit eval | `ok: true`, 5 improved per loop, mean 1.5 |
-| Catalog diff | 83 emitted, 84 catalogued, 0 missing (E009 intentionally unassigned) |
+| Catalog diff | 89 emitted, 90 catalogued, 0 missing (E009 intentionally unassigned) |
 | Prompt pack | 14/14 copilot, 12/14 direct |
 | Output schemas | 9/9 documents validate (`output-schema.log`) |
 | Editor smoke | 6 commands, redaction probe pass |
@@ -110,7 +110,7 @@ the baseline rule (no parallel rewrites).
 | Dual-push CI | recorded in `conformance/evidence/ci.log` |
 | Independent review | DeepSeek V4.1 Flash (BYOK, `--reasoning-effort max`) rounds 12-75. Round 73 re-reviewed the complete goal diff and found 12 issues (2 critical, 1 high, 6 medium, 3 low); every one was fixed at the cause with a regression test on the shipped path. Round 74 verified 11 as FIXED and flagged F6 for a missing discriminating test; round 75 verified the added docgen bound (0.25 s committed vs 3.80 s with the old body). Final verdict: all 12 FIXED, zero open findings (`conformance/evidence/review-final.log`; detail in `docs/security-hardening.md`) |
 
-### Final CI (2026-10-25)
+### Final CI (2026-10-26)
 
 Both remotes are green on the final content tree `625f22c`
 (the round-73 fixes plus the docgen bound). `Fuzz smoke` is green on
@@ -127,9 +127,9 @@ the goal close-out and `conformance/evidence/ci.log`.
 
 The Ubuntu conformance job also builds the OCaml binding; `ocaml_stubs.c`
 includes `<caml/fail.h>` so `caml_invalid_argument` is declared under
-modern compiler warnings. The full transcript is
-`conformance/evidence/ci.log`.
-## 5. Post-loop audit additions (2026-10-25)
+modern compiler warnings. The verdict summary is
+`conformance/evidence/ci.log`; the goal close-out records the run IDs.
+## 6. Post-loop audit additions (2026-10-26)
 
 An independent audit re-read both program checklists against the tree
 after the round-72 verdict. These surfaces were added and tested in the
@@ -159,7 +159,7 @@ same close-out (full detail in `docs/security-hardening.md`):
   `docs-site/src/reference/modes.md`, `spec/repair.md`, playground
   transcript, CI artifact retention.
 
-## 6. Accepted, documented gaps
+## 7. Accepted, documented gaps
 
 - Zed and JetBrains plugins are not implemented; the LSP host path and
   required packaging are documented in `editors/README.md`.

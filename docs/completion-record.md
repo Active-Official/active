@@ -112,14 +112,15 @@ the baseline rule (no parallel rewrites).
 
 ### Final CI (2026-10-26)
 
-Both remotes are green on the final content tree `625f22c`
-(the round-73 fixes plus the docgen bound). `Fuzz smoke` is green on
-both remotes as well (formatter target included):
+Both remotes are green on the final content tree `f6efd0d`
+(the round-73 fixes, the docgen bound, and the lint prose redaction).
+`Fuzz smoke` is green on both remotes as well (formatter target
+included):
 
 | Remote | CI | Conformance | CodSpeed | Fuzz smoke |
 |---|---|---|---|---|
-| `RatioArtificiosa/active-lang` | success (40277516911) | success (40277516922) | success (40277516915) | success (40277516919) |
-| `Active-Official/active` | success (40277520453) | success (40277520454) | success (40277520309) | success (40277520437) |
+| `RatioArtificiosa/active-lang` | success (40285705290) | success (40285705341) | success (40285705405) | success (40285705321) |
+| `Active-Official/active` | success (40285709925) | success (40285709871) | success (40285709960) | success (40285709964) |
 
 Earlier green stamps: `81ff859` (content) and `ff445b0` (docs) were
 green on CI, Conformance, and CodSpeed on both remotes; run IDs are in

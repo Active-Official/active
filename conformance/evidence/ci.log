@@ -1,19 +1,39 @@
 # CI verdicts for the final tree (2026-10-26)
 
-Content tree: 625f22c (round-73 fixes + docgen bound)
+Content tree: f6efd0d (round-73 fixes, docgen bound, lint prose redaction)
 
 RatioArtificiosa/active-lang
-  CI           40277516911  success
-  Conformance  40277516922  success
-  CodSpeed     40277516915  success
-  Fuzz smoke   40277516919  success
+  CI           40285705290  success
+  Conformance  40285705341  success
+  CodSpeed     40285705405  success
+  Fuzz smoke   40285705321  success
 
 Active-Official/active
-  CI           40277520453  success
-  Conformance  40277520454  success
-  CodSpeed     40277520309  success
-  Fuzz smoke   40277520437  success
+  CI           40285709925  success
+  Conformance  40285709871  success
+  CodSpeed     40285709960  success
+  Fuzz smoke   40285709964  success
 
-Previous stamps (81ff859 content, ff445b0 docs) were green on CI,
-Conformance, and CodSpeed on both remotes; IDs are recorded in the
-goal close-out.
+Evidence stamp 76d9246 (docs + CI log; no product code)
+  origin    CI 40281231009  success
+            Conformance 40281230859  success
+            CodSpeed 40281230864  success
+  official  CI 40281234835  success
+            Conformance 40281234812  success
+            CodSpeed 40281234871  success
+
+Earlier content tree 625f22c
+  origin    CI 40277516911  Conformance 40277516922
+            CodSpeed 40277516915  Fuzz 40277516919  (all success)
+  official  CI 40277520453  Conformance 40277520454
+            CodSpeed 40277520309  Fuzz 40277520437  (all success)
+
+Earlier stamps 81ff859 (content) and ff445b0 (docs)
+  81ff859  origin    CI 40252685433  Conformance 40252685428
+                     CodSpeed 40252685534                    (all success)
+  81ff859  official  CI 40252688421  Conformance 40252688360
+                     CodSpeed 40252688389                    (all success)
+  ff445b0  origin    CI 40255397606  Conformance 40255397631
+                     CodSpeed 40255397680                    (all success)
+  ff445b0  official  CI 40255400927  Conformance 40255400998
+                     CodSpeed 40255401002                    (all success)

@@ -192,3 +192,37 @@ fn doc_redacts_schema_prose_that_quotes_a_secret() {
     let md = doc_to_markdown("Service", &items);
     assert!(!md.contains("s3cr3t-doc"), "{md} / {raw}");
 }
+
+#[test]
+fn docgen_stays_linear_with_many_secrets_and_fields() {
+    // Regression for the quadratic docgen path: `redact_every_occurrence`
+    // rebuilt a full redactor (and its automata) per prose field. The old
+    // implementation took ~22 s on a 800-secret/310 KB probe; this
+    // 200-secret/3000-field probe must stay well under 10 s.
+    let mut src = String::new();
+    for i in 0..300 {
+        src.push_str(&format!("let s{i} = secret(\"secret-value-{i:04}\")\n"));
+    }
+    src.push_str("schema = {\n");
+    for i in 0..3000 {
+        src.push_str(&format!(
+            "  f{i} = String(description = \"prose field {i}\") \n"
+        ));
+    }
+    src.push_str("}\n");
+    for i in 0..3000 {
+        src.push_str(&format!("f{i} = \"value {i}\"\n"));
+    }
+    let module = parse(&src, "doc-perf").expect("perf document parses");
+    let engine = Engine::new();
+    let (value, _) = engine.evaluate(&module).expect("perf document evaluates");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    let started = std::time::Instant::now();
+    let items = active_core::convert::collect_items_with_profile(&module, &value, &profile);
+    let elapsed = started.elapsed();
+    assert!(items.len() >= 3000, "items: {}", items.len());
+    assert!(
+        elapsed < std::time::Duration::from_secs(3),
+        "docgen is not linear: {elapsed:?} for 300 secrets / 3000 fields"
+    );
+}

@@ -23,6 +23,7 @@ jobs:
   harness:
     name: Shared harness (all paths)
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -45,30 +46,61 @@ jobs:
           java-version: 21
       - name: Install LuaJIT (Unix only)
         if: runner.os != 'Windows'
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq luajit
+        timeout-minutes: 5
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          NEEDRESTART_MODE: a
+        run: sudo -E apt-get update -qq && sudo -E apt-get install -y -qq luajit
       - name: Install Tier-2 apt toolchains (Linux only)
-        # Distro packages from the runner's own mirrors. Retry the
-        # index/install so a mirror hiccup cannot drop a toolchain (no
-        # SKIPs). Julia and Nim are NOT in the runner's apt index, so
-        # they come from pinned upstream tarballs below.
+        # Distro packages from the runner's own mirrors. Every attempt is
+        # bounded: DEBIAN_FRONTEND/NEEDRESTART keep dpkg non-interactive
+        # (a tzdata or needrestart prompt otherwise hangs the job), and
+        # `timeout` bounds a stalled mirror. The step fails fast and the
+        # next step verifies every toolchain, so a silent partial install
+        # cannot reach the harness as a SKIP.
         if: runner.os == 'Linux'
+        timeout-minutes: 30
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          NEEDRESTART_MODE: a
         run: |
+          echo "disk before:"; df -h / | tail -n 1
+          sudo apt-get clean
+          apt_flags="-o Acquire::Retries=3 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
           for attempt in 1 2 3; do
-            if sudo apt-get update -qq \
-               && sudo apt-get install -y -qq --no-install-recommends \
+            echo "::group::apt toolchain attempt $attempt"
+            if timeout 1500 sudo -E apt-get $apt_flags update -qq \
+               && timeout 1500 sudo -E apt-get $apt_flags install -y -qq \
+                    --no-install-recommends \
                     perl libffi-platypus-perl r-base-core ghc ocaml elixir \
                     kotlin; then
+              echo "::endgroup::"
+              sudo apt-get clean
+              echo "disk after:"; df -h / | tail -n 1
               exit 0
             fi
-            echo "apt toolchain attempt $attempt failed; retrying"
+            echo "::endgroup::"
+            echo "apt toolchain attempt $attempt failed or timed out; retrying"
+            sudo dpkg --configure -a || true
             sleep 15
           done
           exit 1
+      - name: Verify Tier-2 apt toolchains (Linux only)
+        # A missing toolchain must fail here, not become a SKIP later.
+        if: runner.os == 'Linux'
+        run: |
+          perl -e 'use FFI::Platypus; print "perl+FFI::Platypus ok\n"'
+          R --version | head -n 1
+          ghc --version
+          ocaml -version
+          elixir --version | tail -n 1
+          kotlinc -version 2>&1 | head -n 1
       - name: Install Julia from the pinned tarball (Linux only)
         # juliaup's metadata DB and the runner's apt index both proved
         # unreliable; a pinned official tarball is deterministic and
         # needs no registry. Required: no SKIP.
         if: runner.os == 'Linux'
+        timeout-minutes: 10
         run: |
           for attempt in 1 2 3; do
             if curl -fsSL --retry 3 \
@@ -88,6 +120,7 @@ jobs:
         # choosenim's network bootstrap was slow and flaky; the pinned
         # linux_x64 tarball is deterministic. Required: no SKIP.
         if: runner.os == 'Linux'
+        timeout-minutes: 10
         run: |
           for attempt in 1 2 3; do
             if curl -fsSL --retry 3 \
@@ -108,6 +141,7 @@ jobs:
         # release like the Dart repo below. Required (no skip); retry the
         # upstream installer on transient network failures.
         if: runner.os == 'Linux'
+        timeout-minutes: 10
         run: |
           for attempt in 1 2 3; do
             if curl -fsSL https://crystal-lang.org/install.sh | sudo bash; then
@@ -120,15 +154,21 @@ jobs:
           exit 1
       - name: Install Dart (Linux only)
         # Required (no skip); retry the repository setup and package
-        # install on transient network failures.
+        # install on transient network failures. Non-interactive dpkg:
+        # the Dart package pulls a JRE-free set but apt can still prompt.
         if: runner.os == 'Linux'
+        timeout-minutes: 15
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          NEEDRESTART_MODE: a
         run: |
           for attempt in 1 2 3; do
-            if sudo apt-get install -y -qq apt-transport-https \
+            if sudo -E apt-get install -y -qq apt-transport-https \
                && curl -fsSL https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/dart.gpg \
                && echo "deb [signed-by=/usr/share/keyrings/dart.gpg arch=amd64] https://storage.googleapis.com/download.dartlang.org/linux/debian stable main" | sudo tee /etc/apt/sources.list.d/dart_stable.list >/dev/null \
-               && sudo apt-get update -qq \
-               && sudo apt-get install -y -qq dart; then
+               && timeout 600 sudo -E apt-get update -qq \
+               && timeout 900 sudo -E apt-get install -y -qq dart \
+               && /usr/lib/dart/bin/dart --version; then
               echo "/usr/lib/dart/bin" >> "$GITHUB_PATH"
               exit 0
             fi
@@ -136,9 +176,22 @@ jobs:
             sleep 15
           done
           exit 1
+      - name: Verify Tier-2 tarball and installer toolchains (Linux only)
+        # Every required Linux toolchain must be on PATH here. A missing
+        # one fails the job now instead of skipping a harness path later.
+        if: runner.os == 'Linux'
+        run: |
+          julia --version
+          nim --version | head -n 1
+          crystal --version | head -n 1
+          dart --version
       - name: Install Erlang NIF headers (Linux only)
         if: runner.os == 'Linux'
-        run: sudo apt-get install -y -qq erlang-dev
+        timeout-minutes: 5
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          NEEDRESTART_MODE: a
+        run: sudo -E apt-get install -y -qq erlang-dev
       # Swift and V are container-proven only. Swift's 1 GB download is not
       # worth every CI run, and V builds from source upstream (no stable
       # tags; the CI smoke compile stalled the step past 900s while the

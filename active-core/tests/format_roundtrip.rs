@@ -475,3 +475,22 @@ fn empty_table_trailing_comments_keep_the_blank_before_them() {
     assert_eq!(format(&reparsed, Style::Indent), once);
     assert!(once.contains("t = {}\n\n#A("), "{once:?}");
 }
+
+#[test]
+fn interpolation_literal_strings_with_a_carriage_return_round_trip() {
+    // Found by the formatter fuzz target: a `${`-bearing string was
+    // emitted single-quoted with a raw CR, which the parser normalizes
+    // away on re-read. Double quotes with `\${` keep both properties.
+    let src = "a = \"x\\${y}\\r7\"\n";
+    let module = parse(src, "cr-string").expect("parses");
+    let once = format(&module, Style::Brace);
+    let reparsed = parse(&once, "cr-string-2").expect("formatted output re-parses");
+    assert_eq!(format(&reparsed, Style::Brace), once);
+    let engine = Engine::new();
+    let (v1, _) = engine.evaluate(&module).expect("evaluates");
+    let (v2, _) = engine.evaluate(&reparsed).expect("re-evaluates");
+    assert_eq!(
+        active_core::convert::value_to_pretty_json(&v1),
+        active_core::convert::value_to_pretty_json(&v2)
+    );
+}

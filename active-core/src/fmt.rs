@@ -960,13 +960,11 @@ fn render_literal(v: &Value) -> String {
             s
         }
         Value::String(s) => {
-            // A string containing `${` must not interpolate when re-read, so
-            // emit it single-quoted (single-quoted strings are literal).
-            if s.contains("${") {
-                format!("'{}'", escape_single(s))
-            } else {
-                format!("\"{}\"", escape(s))
-            }
+            // Double-quoted with `\${` escapes: `${` stays literal while
+            // \r, \n, and \t keep a spelled form. A single-quoted string
+            // cannot carry a bare CR (the parser normalizes it), which
+            // broke idempotence for a `${` string containing one.
+            format!("\"{}\"", escape_interp_literal(s))
         }
         Value::DurationMs(ms) => format!("{ms}ms"),
         Value::Quantity(n, unit) => unit.format_amount(*n),
@@ -999,21 +997,6 @@ fn escape(s: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\t' => out.push_str("\\t"),
             '\r' => out.push_str("\\r"),
-            _ => out.push(ch),
-        }
-    }
-    out
-}
-
-/// Escape for a single-quoted string. Only `'` and `\` are special there:
-/// the single-quote lexer does not decode `\n`/`\t`/`\r`, so those are
-/// emitted literally (a single-quoted string may contain them).
-fn escape_single(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for ch in s.chars() {
-        match ch {
-            '\'' => out.push_str("\\'"),
-            '\\' => out.push_str("\\\\"),
             _ => out.push(ch),
         }
     }

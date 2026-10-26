@@ -1,5 +1,19 @@
 # CI verdicts for the final tree (2026-10-26)
 
+Evidence commit 1fdeaf5 (regenerated gates.log and this CI table;
+docs and evidence only over fcea0d3)
+  RatioArtificiosa/active-lang
+    CI           40343204543  success
+    Conformance  40343204510  success
+    CodSpeed     40343204597  success
+  Active-Official/active
+    CI           40343210622  success
+    Conformance  40343211064  success
+    CodSpeed     40343210683  success
+  Fuzz smoke is not path-triggered by an evidence-only commit. This table
+  was written after those runs completed; a later docs commit carries
+  identical code and is tracked in the goal close-out.
+
 Content tree fcea0d3 (round-77 review fixes: LSP hermetic steps, Enum
 formatter arguments, semantic CR strings, brace trailing comments,
 debug-build stack depth, budget:0, lint include escapes)
@@ -28,6 +42,18 @@ review-final.log: round 77 findings plus the ALL FIXED verification)
     CodSpeed     40335642928  success
   Fuzz smoke is not path-triggered by an evidence-only commit; the same
   code passed two fuzz runs on fcea0d3 above.
+
+Docs stamp b96509f (CI records and the regenerated gate log)
+  RatioArtificiosa/active-lang
+    CI           40321534211  success
+    Conformance  40321534194  success
+    CodSpeed     40321534199  success
+  Active-Official/active
+    CI           40321539145  success
+    Conformance  40321539409  success
+    CodSpeed     40321539122  success
+  Fuzz smoke is not path-triggered by an evidence-only commit; the same
+  code passed two fuzz runs on b95ea27.
 
 Content tree b95ea27 (formatter fuzz fixes: semantic edge quotes,
 empty-table comment blank, CR in interpolation-literal strings)

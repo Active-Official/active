@@ -1,9 +1,13 @@
-Final independent review and verification (rounds 73-75)
-=========================================================
+Final independent review and verification (rounds 73-77)
+========================================================
 
-Tree: ef98a2d..625f22c (the complete goal diff).
+Trees: the review ran over ef98a2d..b96509f (the complete goal diff);
+the round-73/74/75 fixes landed at 625f22c (stamp 76d9246), the round-76
+lint sweep at f6efd0d, the round-77 fixes at fcea0d3, and the round-77
+review logs at 1b5ce29.
 Reviewer: DeepSeek V4.1 Flash via the Copilot CLI BYOK route
-(CommandCode), --reasoning-effort max. The Copilot subscription quota
+(CommandCode), --reasoning-effort max for rounds 73-76 and xhigh for
+the round-77 fresh review. The Copilot subscription quota
 was exhausted for the review window (HTTP 429), so the BYOK route
 served every round; the routing is documented in the review skill and
 never carries credentials into the repository.

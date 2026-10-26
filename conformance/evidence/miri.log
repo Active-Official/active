@@ -1,3 +1,4 @@
+=== miri trace:: 2026-10-26T09:33:39.1198979-06:00 ===
 warning: unused field `description` in `workspace.package`
   --> Cargo.toml:23:1
    |
@@ -95,16 +96,24 @@ warning: `package.homepage` is redundant with `package.repository`
   = note: `cargo::redundant_homepage` is set to `warn` by default
 help: consider removing `package.homepage`
 warning: `active-lsp` (manifest) generated 1 warning
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.27s
-     Running unittests src\lib.rs (target\miri\x86_64-pc-windows-msvc\debug\build\active-core/b3801e0d02b767b2\out\active_core-b3801e0d02b767b2.exe)
+   Compiling aho-corasick v1.1.5
+   Compiling regex-automata v0.4.18
+   Compiling regex v1.13.1
+   Compiling codspeed-criterion-compat-walltime v2.10.1
+   Compiling criterion v0.5.1
+   Compiling codspeed-criterion-compat v2.10.1
+   Compiling active-core v1.4.0 (F:\QQQ-AUDIT\SOLID\active-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 15.14s
+     Running unittests src\lib.rs (target\miri\x86_64-pc-windows-msvc\debug\build\active-core/63044366c9aa353f\out\active_core-63044366c9aa353f.exe)
 
 running 3 tests
 test trace::tests::trace_carries_codes_never_values ... ok
 test trace::tests::trace_event_shape_is_closed ... ok
 test trace::tests::trace_is_off_by_default ... ok
 
-test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 2.98s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 8.74s
 
+=== miri blob ===
 warning: unused field `description` in `workspace.package`
   --> Cargo.toml:23:1
    |
@@ -202,8 +211,8 @@ warning: `package.homepage` is redundant with `package.repository`
   = note: `cargo::redundant_homepage` is set to `warn` by default
 help: consider removing `package.homepage`
 warning: `active-lsp` (manifest) generated 1 warning
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.29s
-     Running unittests src\lib.rs (target\miri\x86_64-pc-windows-msvc\debug\build\active-core/b3801e0d02b767b2\out\active_core-b3801e0d02b767b2.exe)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.34s
+     Running unittests src\lib.rs (target\miri\x86_64-pc-windows-msvc\debug\build\active-core/63044366c9aa353f\out\active_core-63044366c9aa353f.exe)
 
 running 3 tests
 test blob::tests::canonical_digest_is_pinned ... ok

@@ -4,7 +4,10 @@
 **Version:** 1.4.0 (workspace, all crates and language packages)
 **Tree:** the commit that adds this record (see `git log -- docs/completion-record.md`)
 **Programs:** Master (`PROPOSAL.md` / `CHECKLIST.md`) and Tooling
-(`tooling/TOOLING-PROPOSAL.md` / `TOOLING-CHECKLIST.md`).
+(`tooling/TOOLING-PROPOSAL.md` / `TOOLING-CHECKLIST.md`) from
+`active-master-program 4`; the checked working copies are
+`master-program/CHECKLIST.md` and `master-program/TOOLING-CHECKLIST.md`,
+and the language design proposal is `docs/proposal.md`.
 **Close-out register:** `master-program/GAPS-AND-DRIFT.md` (every row
 marked FIXED / STILL PRESENT / ACCEPTED with evidence).
 
@@ -30,10 +33,10 @@ the baseline rule (no parallel rewrites).
 | M — mode | `active_mode`, E024, W013 at 80%, memo token | `spec/mode.md`, `active-core/tests/mode.rs` |
 | GQ — graph queries | dependents/dependencies/shortest-path/secret-cone/CA-size | `active-core/tests/graph_queries.rs` |
 | CAP — capabilities | `active_capabilities`, E025, 4 sandbox profiles, handshake | `active-core/tests/capability.rs`, `agent-kit/capability.schema.json` |
-| CG — codegen | 6 targets validated by real ecosystems, byte-stable | `conformance/evidence/codegen.log` (`CODEGEN: ALL PASS`) |
+| CG — codegen | 6 targets emitted (JSON Schema, OpenAPI, TypeScript+zod, Go, Python, Rust); four validated by real ecosystems, Rust decode-checked in the log, OpenAPI shape-asserted in `codegen_check.py`, determinism stamped | `conformance/evidence/codegen.log` (`CODEGEN: ALL PASS`); byte-stability also pinned by `codegen_is_byte_stable_across_runs` |
 | D — packaging | live 1.4.0 on crates.io, npm, PyPI; per-platform archives + WASM + VSIX; CycloneDX SBOMs and their `SHA256SUMS` attached to the `v1.4.0` release; universal assembly script in `packaging/assemble-universal.py` (maintainer-run) | `docs/distribution.md`, `packaging/README.md`, registry checks |
 | T2 — tier-2 formalization | matrix + per-language SPEC maps + smoke policy | `bindings/README.md`, `conformance/NORMALIZATION.md` |
-| AK — agent kit | eval gate, 10 vectors, cone agreement, 14-task prompt pack | `conformance/evidence/agentkit-eval.json`, `prompts/results/round-master-t14.json` |
+| AK — agent kit | eval gate, 11 vectors, cone agreement, 14-task prompt pack | `conformance/evidence/agentkit-eval.json`, `prompts/results/round-master-t14.json` |
 | AUD — audit trail | re-validatable redacted Active document | `spec/audit-trail.md`, `conformance/evidence` |
 | OBS — tracing | opt-in, 4-field events, metrics mapping | `spec/observability.md`, `active-core/src/trace.rs` |
 | EVID — evidence | harness, container, Miri, catalog, research summary | `conformance/evidence/README.md` |
@@ -84,12 +87,11 @@ the baseline rule (no parallel rewrites).
 | 2.5 Audit trail as Active data | `spec/audit-trail.md`, `--audit-trail`, re-validation in `active-cli/tests/cli.rs` (`audit_records_limits_and_revalidates`) |
 | 2.6 Partial eval + memo as the agent path | `spec/partial-eval.md`, `eval --path`, incremental memo; `docs/agent-headless.md` |
 | 2.7 Compatibility as queryable data | `active compatibility`, `spec/schema-evolution.md`, `active-core/tests/compat.rs` |
-| 2.8 Stuck/unrepairable terminal state | H006 (stuck) and H008 (unrepairable) in
-           `active-core/src/convert/repair.rs` + repair tests |
+| 2.8 Stuck/unrepairable terminal state | H006 (stuck) and H008 (unrepairable) in `active-core/src/convert/repair.rs` + repair tests |
 | 2.9 Secret-safe tool-result envelope | `spec/tool-result-envelope.md`, `examples/agent-interchange/tool-result.active`, conformance test |
 | 2.10 Playground full agent loop | `playground/loop/` (`run.ps1`, `run.sh`, `transcript.txt` captured from the shipped binary) and `active-cli/tests/loop_demo.rs` |
 
-## 5. Verification battery (this tree)
+## 5. Verification battery (final tree)
 
 | Check | Result |
 |---|---|
@@ -108,21 +110,26 @@ the baseline rule (no parallel rewrites).
 | Editor smoke | 6 commands, redaction probe pass |
 | Neovim package determinism | identical hashes |
 | Dual-push CI | recorded in `conformance/evidence/ci.log` |
-| Independent review | DeepSeek V4.1 Flash (BYOK, `--reasoning-effort max`) rounds 12-77. Round 73 re-reviewed the complete goal diff and found 12 issues (2 critical, 1 high, 6 medium, 3 low); every one was fixed at the cause with a regression test on the shipped path. Round 74 verified 11 as FIXED and flagged F6 for a missing discriminating test; round 75 verified the added docgen bound (0.25 s committed vs 3.80 s with the old body). Round 76 closed the last leak (the linter's env-equal deprecated reason) and verified it in text, JSON, and SARIF. A fresh full-diff review at `b96509f` (round 77) found 7 further issues (2 high, 3 medium, 2 low), all fixed at `fcea0d3` and verified fixed by round 77b with no new findings requested. Final verdict: zero open findings (`conformance/evidence/review.log`; detail in `docs/security-hardening.md`) |
+| Independent review | DeepSeek V4.1 Flash (BYOK) at `--reasoning-effort max` for rounds 12-76 and `xhigh` for the round-77 fresh review. Round 73 re-reviewed the complete goal diff and found 12 issues (2 critical, 1 high, 6 medium, 3 low); every one was fixed at the cause with a regression test on the shipped path. Round 74 verified 11 as FIXED and flagged F6 for a missing discriminating test; round 75 verified the added docgen bound (0.25 s committed vs 3.80 s with the old body). Round 76 closed the last leak (the linter's env-equal deprecated reason) and verified it in text, JSON, and SARIF. A fresh full-diff review at `b96509f` (round 77) found 7 further issues (2 high, 3 medium, 2 low), all fixed at `fcea0d3` and verified fixed by round 77b with no new findings requested. Final verdict: zero open findings (`conformance/evidence/review.log`; detail in `docs/security-hardening.md`) |
 
 ### Final CI (2026-10-26)
 
-Both remotes are green on the final content tree `fcea0d3` (the round-77
-fixes) and on the review evidence stamp `1b5ce29`
-(`conformance/evidence/review.log` and `review-final.log`).
-`Fuzz smoke` is green on both remotes as well (formatter target
-included; an evidence-only commit does not trigger it, so the two runs
-below are the code's):
+Both remotes are green on the final content tree `fcea0d3` and on the
+two evidence stamps `1b5ce29` (review logs) and `1fdeaf5` (gate and CI
+table). CI and Conformance pass on all three trees. CodSpeed's verdict
+for `fcea0d3` itself is `cancelled` (superseded before it reported), so
+the CodSpeed proof is the `1b5ce29` run, which is the same code with
+documentation-only changes. Fuzz smoke is not path-triggered by an
+evidence-only commit; it passed twice on the content tree.
 
-| Remote | CI | Conformance | CodSpeed | Fuzz smoke |
-|---|---|---|---|---|
-| `RatioArtificiosa/active-lang` | success (40333418737) | success (40333418591) | success (40335637525) | success (40333419116, 40333502494) |
-| `Active-Official/active` | success (40333428157) | success (40333428214) | success (40335642928) | success (40333428137, 40333507485) |
+| Tree | Remote | CI | Conformance | CodSpeed | Fuzz smoke |
+|---|---|---|---|---|---|
+| `fcea0d3` | origin | success (40333418737) | success (40333418591) | cancelled (40333418771, superseded) | success (40333419116, 40333502494) |
+| `fcea0d3` | official | success (40333428157) | success (40333428214) | cancelled (40333428250, superseded) | success (40333428137, 40333507485) |
+| `1b5ce29` | origin | success (40335637519) | success (40335637847) | success (40335637525) | not triggered (same code) |
+| `1b5ce29` | official | success (40335643045) | success (40335644400) | success (40335642928) | not triggered (same code) |
+| `1fdeaf5` | origin | success (40343204543) | success (40343204510) | success (40343204597) | not triggered (same code) |
+| `1fdeaf5` | official | success (40343210622) | success (40343211064) | success (40343210683) | not triggered (same code) |
 
 Earlier green stamps: `b96509f` (docs and evidence), `b95ea27`
 (content), and `f6efd0d` (content) were green on CI, Conformance, and

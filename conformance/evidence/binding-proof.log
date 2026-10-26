@@ -1,6 +1,21 @@
-codes: [('T003', 'error', (2, 8, 2, 9))]
-resilient eval returns value with codes (binding contract)
-T001 refusal raises as expected: ActiveError
-redacted value: {"token": "***SECRET***", "out": {"pass": null}}
-redaction ok, raw absent
-BINDING-PROOF: ALL PASS
+# Binding proof at 1fdeaf5 (content tree fcea0d3), 2026-10-26T09:36:12.0208651-06:00
+# Command: python bindings/python/test_active.py (WASM-first Python binding)
+# Covers: structured diagnostic codes and spans, resilient eval value,
+# T001 units refusal, secret redaction, deterministic re-eval, stub/runtime parity,
+# WASM resolution (env override, then bundled artifact).
+
+test_check_carries_structured_spans (__main__.BindingTest.test_check_carries_structured_spans) ... ok
+test_check_clean (__main__.BindingTest.test_check_clean) ... ok
+test_closed_module_fails_closed (__main__.BindingTest.test_closed_module_fails_closed) ... ok
+test_deterministic (__main__.BindingTest.test_deterministic) ... ok
+test_eval_value (__main__.BindingTest.test_eval_value) ... ok
+test_secret_redacted (__main__.BindingTest.test_secret_redacted) ... ok
+test_stub_matches_runtime (__main__.BindingTest.test_stub_matches_runtime) ... ok
+test_units_refused_with_code (__main__.BindingTest.test_units_refused_with_code) ... ok
+test_validate_agrees_with_check (__main__.BindingTest.test_validate_agrees_with_check) ... ok
+test_wasm_resolution_prefers_env_then_bundled (__main__.BindingTest.test_wasm_resolution_prefers_env_then_bundled) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 1.454s
+
+OK

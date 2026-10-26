@@ -1,24 +1,28 @@
 # Verification evidence (Master Program close-out)
 
-Captured on the final tree (2026-10-26) by re-running the
-battery below. The commit that lands these files carries the exact
-tree; re-run the commands from the repo root to reproduce any row.
+Each artifact below names the tree and date it was captured at. Rows
+with an in-repo runner give the exact command; rows without one are
+transcripts whose assertions are pinned by the named cargo or harness
+tests. The final content tree was independently re-validated by the CI
+Conformance job on both remotes (harness, codegen, output schemas,
+agent-kit eval, and the editor smoke run on every push).
 
-| File | Verification step | Pass criterion in file |
-|---|---|---|
-| `harness.json` / `harness.log` | Step 1: shared harness + differential gate (Windows) | `ok: true`, `secret_leak: false`, `parity: []`, Tier-1 all pass |
-| `container-harness.json` / `.log` | Step 1b: zero-SKIP proof (all-toolchain container) | `ok: true`, 28/28 `pass`, 0 skipped, 0 failed, `parity: []` |
-| `binding-proof.log` | Step 2: Tier-1 fresh-consumer proof | `BINDING-PROOF: ALL PASS` (codes, resilient eval, T001 refusal, redaction) |
-| `codegen.log` | Step 3: multi-target codegen validators | `CODEGEN: ALL PASS` (jsonschema/tsc+zod/gofmt+go vet+validator/python, determinism, stamps) |
-| `cli-launch.log` / `cli.log` | Step 4: CLI launch smoke | Full demo + complete transcripts, T001 refusal, `deterministic: True`, trace events |
-| `gates.log` | Step 5: full workspace gates | `BUILD_EXIT=0`, `FMT_EXIT=0`, `CLIPPY_EXIT=0`, `TEST_EXIT=0`, `WASM_EXIT=0` |
-| `ci.log` | Step 6: real CI verdicts | Live `gh run list` for the pushed HEAD on origin+official |
-| `review-final.log` | Step 7: fresh review (BYOK xhigh) | all 12 round-73 findings FIXED, zero open findings |
-| `agentkit.log` / `agentkit-eval.json` / `agentkit-eval.log` | Step 6: agent-kit evaluation | `ok: true`, `tasks_improved` 5, mean 1.5 iterations, cone agreement true |
-| `catalog-diff.log` | Error-code catalog diff (`catalog_diff.py`) | 89 emitted, 90 catalogued, 0 missing (E009 intentionally unassigned) |
-| `harness-tests.log` | Harness enforcement unit tests | 25/25 run.py + 14/14 diff_vectors + capability 4/4 |
-| `miri.log` | Miri (nightly) over `active-core` trace + blob units | 3/3 trace + 3/3 blob pass, no UB (master program EVID.001) |
-| `research-battery.md` | Research battery + corpus summary | 1,998 RB tests, ported corpora counts, fuzz seeds, secret proofs |
+| File | Verification step | Pass criterion in file | Captured at |
+|---|---|---|---|
+| `harness.json` / `harness.log` | Step 1: shared harness + differential gate (Windows host) | `ok: true`, `secret_leak: false`, `parity: []`, Tier-1 all pass; 10 path groups pass and 18 are `skipped` because their toolchains are absent on this host (the container row is the all-language proof) | `1fdeaf5`, 2026-10-26 (`python conformance/harness/run.py --out conformance/evidence/harness.json`) |
+| `container-harness.json` / `.log` | Step 1b: zero-SKIP proof (all-toolchain container) | `ok: true`, 28/28 `pass`, 0 skipped, 0 failed, `parity: []` | `1fdeaf5`, 2026-10-26 (image `active-all-toolchains:phase2`; command in the log header) |
+| `binding-proof.log` | Step 2: Tier-1 binding proof | Python binding suite 10/10: structured codes and spans, resilient eval value, T001 refusal, redaction, determinism, stub/runtime parity, WASM resolution | `1fdeaf5`, 2026-10-26 (`python bindings/python/test_active.py`) |
+| `codegen.log` | Step 3: multi-target codegen validators | `CODEGEN: ALL PASS` (jsonschema, tsc+zod, gofmt+go vet+validator, python import, determinism and version stamps) | `1fdeaf5`, 2026-10-26 (`python conformance/evidence/codegen_check.py`) |
+| `cli-launch.log` / `cli.log` | Step 4: CLI launch smoke | Demo transcripts, T001 refusal, deterministic output, trace events | 2026-10-21 transcript (tree `427806a`); every assertion is re-checked at HEAD by `active-cli/tests/cli.rs` and `active-cli/tests/loop_demo.rs` |
+| `gates.log` | Step 5: full workspace gates | `BUILD_EXIT=0`, `FMT_EXIT=0`, `CLIPPY_EXIT=0`, `TEST_EXIT=0` (3,250 passed), `WASM_EXIT=0` | `1fdeaf5` (code = `fcea0d3`), 2026-10-26 |
+| `ci.log` | Step 6: real CI verdicts | Live `gh run list` for each pushed tree on origin+official | updated through `1fdeaf5` |
+| `review.log` / `review-final.log` | Step 7: fresh review (BYOK xhigh) and round-by-round verification | zero open findings (12 round-73 findings and 7 round-77 findings, all fixed and verified) | `1b5ce29`, 2026-10-26 |
+| `agentkit.log` / `agentkit-eval.json` / `agentkit-eval.log` | Step 6: agent-kit evaluation | `ok: true`, `tasks_improved` 5, mean 1.5 iterations, cone agreement true | `1fdeaf5`, 2026-10-26 (`python agent-kit/eval/run.py --out conformance/evidence/agentkit-eval.json`) |
+| `catalog-diff.log` | Error-code catalog diff (`catalog_diff.py`) | 89 emitted, 90 catalogued, 0 missing (E009 intentionally unassigned) | `1fdeaf5`, 2026-10-26 |
+| `harness-tests.log` | Harness enforcement unit tests | 25/25 `test_run.py`, 14/14 `test_diff_vectors.py`, self-check 15/15, capability 6/6, interchange short-circuit OK | `1fdeaf5`, 2026-10-26 |
+| `miri.log` | Miri (nightly) over `active-core` trace + blob units | 3/3 trace + 3/3 blob pass, no UB (master program EVID.001) | `1fdeaf5`, 2026-10-26 |
+| `output-schema.log` | Tooling JSON output schemas | 9/9 outputs validate, broken-lint control OK | `1fdeaf5`, 2026-10-26 |
+| `research-battery.md` | Research battery + corpus summary | 1,998 RB tests, ported corpora counts, fuzz seeds, secret proofs | as written (2026-10-24) |
 
 Supporting scripts next to the logs (`codegen_check.py`,
 `catalog_diff.py`) are the exact runners used. CI runs harness, codegen,

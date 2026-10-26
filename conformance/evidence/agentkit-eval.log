@@ -9,6 +9,16 @@ test_version_major_is_one (__main__.CapabilityTest.test_version_major_is_one) ..
 Ran 6 tests in 0.001s
 
 OK
+test_held_identity_short_circuits_and_taint_does_not_change_it (__main__.ShortCircuitTest.test_held_identity_short_circuits_and_taint_does_not_change_it) ... ok
+test_malformed_identity_never_matches (__main__.ShortCircuitTest.test_malformed_identity_never_matches) ... ok
+test_nested_payloads_are_walked_once (__main__.ShortCircuitTest.test_nested_payloads_are_walked_once) ... ok
+test_vector_matches_the_shipped_example_identity (__main__.ShortCircuitTest.test_vector_matches_the_shipped_example_identity) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.001s
+
+OK
+=== agent-kit eval (run.py --out agentkit-eval.json) ===
 {
   "loops": {
     "python": {

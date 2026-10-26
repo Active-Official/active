@@ -7,7 +7,8 @@ Master Program tree before release. It complements
 ## Method
 
 - Reviewer: DeepSeek V4.1 Flash through the Copilot CLI BYOK route
-  (CommandCode), `--reasoning-effort max`. The Copilot subscription
+  (CommandCode), `--reasoning-effort max` for rounds 12-76 and `xhigh`
+  for the round-77 fresh full-diff review. The Copilot subscription
   quota was exhausted for the review window; the routing is documented
   in the review skill and never carries credentials into the repo.
 - Loop: after every fix round the reviewer re-ran, confirmed the previous
@@ -82,8 +83,11 @@ The local working record with the full round-by-round reasoning is
 
 ## Evidence
 
-- `conformance/evidence/review-final.log` - final verification round
-  verdict: `CLEAN`, over the complete goal diff.
+- `conformance/evidence/review-final.log` - round-by-round verdicts
+  through round 77b, ending `ALL FIXED - zero open findings`, over the
+  complete goal diff.
+- `conformance/evidence/review.log` - the fresh round-77 full-diff review
+  and its verification.
 - `conformance/evidence/gates.log` - Rust gates on the final tree.
 - `active-core/tests/secrets.rs`, `inspect.rs`, `debug.rs`, `blob.rs`,
   `graph_queries.rs`, `viz.rs`; `active-cli/tests/cli.rs`;

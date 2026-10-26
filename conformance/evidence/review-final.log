@@ -48,3 +48,18 @@ redact_every_occurrence through a parsed and evaluated document).
 VERDICT: F6 FIXED
 
 Final verdict: ALL 12 FINDINGS FIXED, zero open findings.
+
+Round 76 - post-fix leak verification (no new findings requested)
+-----------------------------------------------------------------
+An independent post-fix leak sweep found one remaining surface: the
+linter printed an env-equal deprecated reason (`L005 ... use
+Zx9... instead`) because the linter is hermetic and built its redactor
+without the process environment. The CLI now sweeps every lint
+finding message with the analyzed material profile before reporting in
+text, JSON, and SARIF; the benign-prose control stays readable.
+
+Round 76 verified: the raw value appears in none of the three formats,
+`L005` and `***SECRET***` do, the regression test drives the real
+binary, and JSON/SARIF shapes stay valid.
+
+VERDICT: LINT-LEAK FIXED.

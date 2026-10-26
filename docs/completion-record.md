@@ -142,6 +142,13 @@ The commit that lands this table is documentation-only over `95c4eb3`;
 its own verdicts are tracked in the goal close-out and, for the trees up
 to `c7e4ec3`, in `conformance/evidence/ci.log`.
 
+One runner stalled for over an hour in the Tier-2 apt step because dpkg
+could block on a prompt and a mirror attempt had no bound. The workflow
+now runs every install non-interactively, bounds each attempt with
+`timeout`, sets per-step `timeout-minutes`, and verifies each toolchain
+before the harness. With those bounds the Ubuntu Conformance job
+completes in about eight minutes on the same toolchain set.
+
 Earlier green stamps: `b96509f` (docs and evidence), `b95ea27`
 (content), and `f6efd0d` (content) were green on CI, Conformance, and
 CodSpeed on both remotes; run IDs are in the goal close-out and

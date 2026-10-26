@@ -111,12 +111,12 @@ the baseline rule (no parallel rewrites).
 
 ### Final CI (2026-10-25)
 
-Both remotes are green on the final tree `4d42249`:
+Both remotes are green on the final content tree `81ff859`:
 
 | Remote | CI | Conformance | CodSpeed |
 |---|---|---|---|
-| `RatioArtificiosa/active-lang` | success (40243628554) | success (40243628539) | success (40243628521) |
-| `Active-Official/active` | success (40243630861) | success (40243630825) | success (40243630863) |
+| `RatioArtificiosa/active-lang` | success (40252685433) | success (40252685428) | success (40252685534) |
+| `Active-Official/active` | success (40252688421) | success (40252688360) | success (40252688389) |
 
 The Ubuntu conformance job also builds the OCaml binding; `ocaml_stubs.c`
 includes `<caml/fail.h>` so `caml_invalid_argument` is declared under

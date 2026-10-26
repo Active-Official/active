@@ -116,10 +116,12 @@ the baseline rule (no parallel rewrites).
 ### Final CI (2026-10-26)
 
 Both remotes are green on the final content tree `fcea0d3` and on the
-two evidence stamps `1b5ce29` (review logs) and `1fdeaf5` (gate and CI
-table). CI and Conformance pass on all three trees. CodSpeed's verdict
+four evidence stamps `1b5ce29` (review logs), `1fdeaf5` (gate and CI
+table), `c7e4ec3` (battery refresh and audit corrections), and `95c4eb3`
+(documentation reviews and refresh provenance). CI and Conformance pass
+on all five trees. CodSpeed's verdict
 for `fcea0d3` itself is `cancelled` (superseded before it reported), so
-the CodSpeed proof is the `1b5ce29` run, which is the same code with
+the CodSpeed proof is the stamp runs, which are the same code with
 documentation-only changes. Fuzz smoke is not path-triggered by an
 evidence-only commit; it passed twice on the content tree.
 
@@ -131,6 +133,14 @@ evidence-only commit; it passed twice on the content tree.
 | `1b5ce29` | official | success (40335643045) | success (40335644400) | success (40335642928) | not triggered (same code) |
 | `1fdeaf5` | origin | success (40343204543) | success (40343204510) | success (40343204597) | not triggered (same code) |
 | `1fdeaf5` | official | success (40343210622) | success (40343211064) | success (40343210683) | not triggered (same code) |
+| `c7e4ec3` | origin | success (40351595608) | success (40351595570) | success (40351595323) | not triggered (same code) |
+| `c7e4ec3` | official | success (40351601883) | success (40351601955) | success (40351602310) | not triggered (same code) |
+| `95c4eb3` | origin | success (40356645400) | success (40356645462) | success (40356645310) | not triggered (same code) |
+| `95c4eb3` | official | success (40356650512) | success (40356650518) | success (40356650637) | not triggered (same code) |
+
+The commit that lands this table is documentation-only over `95c4eb3`;
+its own verdicts are tracked in the goal close-out and, for the trees up
+to `c7e4ec3`, in `conformance/evidence/ci.log`.
 
 Earlier green stamps: `b96509f` (docs and evidence), `b95ea27`
 (content), and `f6efd0d` (content) were green on CI, Conformance, and

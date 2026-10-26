@@ -58,7 +58,7 @@ bounds every fetch and install attempt with `timeout`, carries a per-step `timeo
 and ends with a version check, so a stalled mirror or a debconf prompt
 fails fast instead of hanging the job. One runner stalled for over an
 hour on the apt step before these bounds; with them the Ubuntu
-Conformance job completes in about eight minutes.
+Conformance job completes in roughly ten minutes.
 
 ## Container harness artifacts
 

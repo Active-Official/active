@@ -23,7 +23,7 @@ jobs:
   harness:
     name: Shared harness (all paths)
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
@@ -63,7 +63,7 @@ jobs:
         # `timeout`, and the next step verifies each toolchain, so a
         # silent partial install cannot reach the harness as a SKIP.
         if: runner.os == 'Linux'
-        timeout-minutes: 30
+        timeout-minutes: 45
         env:
           DEBIAN_FRONTEND: noninteractive
           NEEDRESTART_MODE: a
@@ -72,26 +72,37 @@ jobs:
           sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get clean
           sudo systemctl stop unattended-upgrades.service apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
           sudo systemctl disable unattended-upgrades.service apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
-          apt_flags="-o Acquire::Retries=3 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold -o Dpkg::Use-Pty=0"
-          for attempt in 1 2 3; do
-            echo "::group::apt toolchain attempt $attempt"
-            timeout 300 sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
-              apt-get $apt_flags update -qq || true
-            if timeout 900 sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
-                 apt-get $apt_flags install -y -qq --no-install-recommends \
-                    perl libffi-platypus-perl r-base-core ghc ocaml elixir \
-                    kotlin; then
+          apt_flags="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold -o Dpkg::Use-Pty=0"
+          timeout 300 sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+            apt-get $apt_flags update -q || true
+          # One group at a time, each with its own bound and retry. A slow
+          # or stalled download then fails inside its group instead of
+          # consuming the whole step, and the groups that already installed
+          # stay installed for the next attempt.
+          rc=0
+          for group in "perl libffi-platypus-perl" "r-base-core" "ghc" "ocaml" "elixir" "kotlin"; do
+            ok=0
+            for attempt in 1 2; do
+              echo "::group::apt $group attempt $attempt"
+              if timeout 900 sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+                   apt-get $apt_flags install -y -q --no-install-recommends $group; then
+                ok=1
+                echo "::endgroup::"
+                break
+              fi
               echo "::endgroup::"
-              sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get clean
-              echo "disk after:"; df -h / | tail -n 1
-              exit 0
+              echo "apt group '$group' attempt $attempt failed or timed out"
+              sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a dpkg --configure -a || true
+              sleep 10
+            done
+            if [ "$ok" -ne 1 ]; then
+              echo "::error::apt group '$group' failed after two attempts"
+              rc=1
             fi
-            echo "::endgroup::"
-            echo "apt toolchain attempt $attempt failed or timed out; retrying"
-            sudo dpkg --configure -a || true
-            sleep 15
           done
-          exit 1
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get clean
+          echo "disk after:"; df -h / | tail -n 1
+          exit $rc
       - name: Verify Tier-2 apt toolchains (Linux only)
         # A missing toolchain must fail here, not become a SKIP later.
         if: runner.os == 'Linux'

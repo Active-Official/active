@@ -147,7 +147,7 @@ could block on a prompt and a mirror attempt had no bound. The workflow
 now runs every install non-interactively, bounds every fetch and install
 attempt with `timeout`, sets per-step `timeout-minutes`, and verifies each
 toolchain before the harness. With those bounds the Ubuntu Conformance
-job completes in about eight minutes on the same toolchain set.
+job completes in roughly ten minutes on the same toolchain set.
 
 Earlier green stamps: `b96509f` (docs and evidence), `b95ea27`
 (content), and `f6efd0d` (content) were green on CI, Conformance, and

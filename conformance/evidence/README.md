@@ -41,8 +41,10 @@ including `julia: pass`.
   `docker save active-all-toolchains:phase2 -o G:\Docker-Images\active-all-toolchains.tar`
 
 CI Linux runners cannot pull a local archive, so the workflow installs
-the same toolchains from upstream. Those steps are **required**: bounded
-retries plus a pinned Julia tarball fallback, never a silent SKIP.
+the same toolchains. Those steps are **required** (never a silent SKIP):
+Julia and Nim come from the Ubuntu 24.04 archive in the same apt step
+(no juliaup metadata DB), Crystal and Dart use their distro apt repos,
+and every install retries a transient mirror failure.
 
 ## Container harness artifacts
 

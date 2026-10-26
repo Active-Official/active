@@ -790,7 +790,15 @@ impl<'a> Formatter<'a> {
                 s.push_str("\"\"\"");
                 s
             }
-            Some(Node::Literal(Value::String(text))) if !text.contains("'''") => {
+            Some(Node::Literal(Value::String(text)))
+                // The verbatim form is only unambiguous when a quote at
+                // either edge cannot merge with the delimiter (four
+                // adjacent quotes re-parse as a different token) and the
+                // delimiter itself does not occur.
+                if !text.contains("'''")
+                    && !text.starts_with('\'')
+                    && !text.ends_with('\'') =>
+            {
                 format!("'''{text}'''")
             }
             Some(Node::Literal(Value::String(text))) => {

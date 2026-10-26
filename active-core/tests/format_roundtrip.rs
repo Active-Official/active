@@ -447,3 +447,17 @@ fn carriage_returns_in_comments_do_not_break_idempotence() {
     assert_eq!(format(&reparsed, Style::Brace), once);
     assert!(!once.contains('\r'), "{once:?}");
 }
+
+#[test]
+fn semantic_multiline_strings_with_edge_quotes_reparse() {
+    // Found by the formatter fuzz target: `'''` + text that starts or
+    // ends with a quote produces four adjacent quotes, which re-parse as
+    // a different token. Edge quotes force the escaped `"""` form.
+    let src = "prompt = @prompt '''\n'quoted body'\n'''\n";
+    let module = parse(src, "ml-edge").expect("parses");
+    let once = format(&module, Style::Brace);
+    let reparsed = parse(&once, "ml-edge-2")
+        .unwrap_or_else(|d| panic!("formatted output must re-parse: {d:?}\n{once}"));
+    assert_eq!(format(&reparsed, Style::Brace), once);
+    assert!(!once.contains("''''"), "{once}");
+}

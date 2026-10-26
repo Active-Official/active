@@ -50,14 +50,18 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
           NEEDRESTART_MODE: a
-        run: sudo -E apt-get update -qq && sudo -E apt-get install -y -qq luajit
+        run: |
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update -qq \
+          && sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y -qq luajit
       - name: Install Tier-2 apt toolchains (Linux only)
-        # Distro packages from the runner's own mirrors. Every attempt is
-        # bounded: DEBIAN_FRONTEND/NEEDRESTART keep dpkg non-interactive
-        # (a tzdata or needrestart prompt otherwise hangs the job), and
-        # `timeout` bounds a stalled mirror. The step fails fast and the
-        # next step verifies every toolchain, so a silent partial install
-        # cannot reach the harness as a SKIP.
+        # Distro packages from the runner's own mirrors. `sudo -E` is
+        # ignored on these runners, so the non-interactive frontend is
+        # passed with `sudo env`; without it dpkg blocks on a tzdata or
+        # needrestart prompt (observed: 25 minutes of silence, then the
+        # step timeout). Boot-time unattended-upgrades is stopped because
+        # it can hold the dpkg lock. Every attempt is bounded by
+        # `timeout`, and the next step verifies each toolchain, so a
+        # silent partial install cannot reach the harness as a SKIP.
         if: runner.os == 'Linux'
         timeout-minutes: 30
         env:
@@ -66,12 +70,15 @@ jobs:
         run: |
           echo "disk before:"; df -h / | tail -n 1
           sudo apt-get clean
-          apt_flags="-o Acquire::Retries=3 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
+          sudo systemctl stop unattended-upgrades.service apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
+          sudo systemctl disable unattended-upgrades.service apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
+          apt_flags="-o Acquire::Retries=3 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold -o Dpkg::Use-Pty=0"
           for attempt in 1 2 3; do
             echo "::group::apt toolchain attempt $attempt"
-            if timeout 1500 sudo -E apt-get $apt_flags update -qq \
-               && timeout 1500 sudo -E apt-get $apt_flags install -y -qq \
-                    --no-install-recommends \
+            timeout 300 sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+              apt-get $apt_flags update -qq || true
+            if timeout 900 sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+                 apt-get $apt_flags install -y -qq --no-install-recommends \
                     perl libffi-platypus-perl r-base-core ghc ocaml elixir \
                     kotlin; then
               echo "::endgroup::"
@@ -163,11 +170,12 @@ jobs:
           NEEDRESTART_MODE: a
         run: |
           for attempt in 1 2 3; do
-            if sudo -E apt-get install -y -qq apt-transport-https \
+            if sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+                 apt-get install -y -qq apt-transport-https \
                && curl -fsSL https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/dart.gpg \
                && echo "deb [signed-by=/usr/share/keyrings/dart.gpg arch=amd64] https://storage.googleapis.com/download.dartlang.org/linux/debian stable main" | sudo tee /etc/apt/sources.list.d/dart_stable.list >/dev/null \
-               && timeout 600 sudo -E apt-get update -qq \
-               && timeout 900 sudo -E apt-get install -y -qq dart \
+               && timeout 600 sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update -qq \
+               && timeout 900 sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y -qq dart \
                && /usr/lib/dart/bin/dart --version; then
               echo "/usr/lib/dart/bin" >> "$GITHUB_PATH"
               exit 0
@@ -191,7 +199,7 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
           NEEDRESTART_MODE: a
-        run: sudo -E apt-get install -y -qq erlang-dev
+        run: sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y -qq erlang-dev
       # Swift and V are container-proven only. Swift's 1 GB download is not
       # worth every CI run, and V builds from source upstream (no stable
       # tags; the CI smoke compile stalled the step past 900s while the

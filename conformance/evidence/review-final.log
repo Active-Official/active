@@ -1,18 +1,49 @@
-I'll start by inspecting the repository state and the relevant code/spec.
+I'll start by verifying the repository state at HEAD and locating the relevant code and tests.
 
-Now I'll rebuild the CLI at HEAD and run the exact reproduction.
+HEAD is `7aabbd2` with a clean tree. Let me inspect the fix commit and locate the test functions.
 
-Both parse-echo tests pass and the repro is clean. Now spot-checking round-69 items and gates.
+All four tests exist. Let me build the CLI while I review the fix implementation.
 
-All gates pass. Let me identify the exact N1/N10/N11 items from prior round context so the regression spot-check is precise.
+Now let me review the CLI portion of the fix and the new tests.
+
+Build succeeded. Let me create the exact reproduction fixtures and run the V1 checks.
+
+`inspect`/`debug` require the `--from` flag. Re-running those exact surfaces with `--from`.
+
+V1 is clean. Now the V2 surface sweep, including the benign control.
+
+V2 leaks are closed and benign default is emitted on 7 of 9 surfaces. Let me check whether Rust/Go generators emit defaults at all.
+
+Rust/Go generators never render defaults (unchanged by this commit). Let me confirm that in code and view the withheld output shape.
+
+V2 redaction confirmed (inspect uses the `***SECRET***` material marker; JSON Schema omits the material default). Now the four committed regression tests.
+
+All four regression tests pass. Now the gates, starting with fmt and clippy.
+
+fmt and clippy are clean. Running the full workspace test suite.
+
+Full workspace passed. Let me extract totals and run the named spot-check suites.
+
+No test is literally tagged r69ÔÇôr71. Let me identify those rounds' fixes and run the named suites explicitly.
+
+Let me identify and run the tests added by the round-69/70/71 fix commits.
+
+Running the specific round-69/70/71 regression tests by name.
+
+Let me confirm the fix is scoped: a **literal** selector must still honor an override (no over-redaction regression).
+
+Literal-selector semantics are unchanged. Let me check what T006 is, to exercise the minimizer with the target actually present.
+
+All checks pass. Final state check and cleanup.
 
 CLEAN
 
-| Check | Status | Evidence |
+| Area | Result | Evidence (HEAD `7aabbd2`, clean tree) |
 |---|---|---|
-| NEW-2 repro: `check`, `lint`, `eval` | FIXED | `s3cr3tAlpha` absent from all output; message is `E024: unknown active_mode: want "data" or "config"`; exits 1. Non-string mode path also value-free; valid `data`/`config` still evaluate. |
-| Committed parse-echo tests | PASS | `parse_diagnostic_does_not_echo_an_active_mode_value` and `..._a_version_value`: 2/2 passed. |
-| Workspace gates | PASS | `cargo fmt --all --check` exit 0; `cargo clippy --workspace --all-targets -- -D warnings` exit 0; `cargo test --workspace` 3198 passed, 0 failed (86 binaries). |
-| NEW-1, NEW-3..NEW-8, N1/N10/N11 | PASS | All 9 round-69 tests plus 2 updated tests pass; `secrets` 133/133, `debug` 83/83, `mode` 13/13; no regression. |
-| `spec/secrets.md` vs code | PASS | ┬º4 E0xx still says tokens/paths only, no evaluated values; E024 emits the field path plus fixed alternatives, a strict subset. Note: fa144bb touches only parser + test, so the claimed spec edit is absent, but the existing bullet is not contradicted. |
+| V1 (computed selector + override) | Ô£à FIXED | `eval --profile q` ÔåÆ `dup: "***SECRET***"` (q's `marker: 1` still applied); `inspect --from ÔÇª --path dup --profile q` ÔåÆ `"tainted": true, "value": "***SECRET***"`; `eval --path dup --profile q` ÔåÆ `"***SECRET***"`; `debug --minimize T006 --profile q` ÔåÆ `reduced` source shows `***SECRET***`, no raw text. Non-existent profile (`--profile nosuchprofile`): W002 warning, `dup` still `***SECRET***`, exits 1. No `Zx9-Secret-Alpha` in stdout or stderr in any run. |
+| V2 (schema surfaces vs env material) | Ô£à FIXED | 9 surfaces ├ù 2 fixtures: zero `Qq7_Env_Token` occurrences in `inspect`, `schema inspect`, `viz schema`, `generate --to jsonschema/typescript/rust/python/go/openapi`. `inspect` shows `"default": "***SECRET***"`; JSON Schema omits the material default. Benign control `Qq7_Benign_Default` is emitted by inspect, schema inspect, viz schema, jsonschema, typescript, python, openapi; rust/go generators never render defaults at all (unchanged rendering path), so the control is vacuous there. |
+| Committed tests | Ô£à 4/4 PASS | `an_override_does_not_declassify_a_computed_selector` ok; `generators_see_an_environment_material_profile` ok; `profile_override_does_not_declassify_a_computed_selector` ok; `schema_surfaces_redact_an_environment_equal_literal` ok. |
+| Gates | Ô£à ALL EXIT 0 | `cargo fmt --all --check` = 0; `cargo clippy --workspace --all-targets -- -D warnings` = 0; `cargo test --workspace` = 0 ÔåÆ **3202 passed, 0 failed, 0 ignored**. |
+| Regressions | Ô£à NONE | `secrets` 135/135, `debug` 83/83, `cli` 122/122, `redaction_paths` 5/5, `regressions` 15/15, `generate` 19/19, `viz` 13/13, `inspect` 34/34, `schema` 26/26, `docgen` 10/10. Round-69/70/71 named tests (15 secrets + 9 debug + 1 docgen) all pass. Literal-selector control: `active_profile = "p"` with `--profile q` still declassifies (emits `dup`) while no-override evaluation keeps it material ÔÇö no over-redaction. |
+| Evidence | ÔÇö | Fix scoped correctly in `active-core/src/secret.rs` (union retained only when document selection is `Computed`), profile plumbed through `convert/gen.rs` and applied to `inspect`, `schema inspect`, `viz schema`, and all six generators in `active-cli/src/main.rs`. Working tree clean; temp fixtures removed. |
 

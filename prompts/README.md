@@ -43,7 +43,7 @@ hidden. Re-run with `python3 prompts/runner/validate.py`.
   13/13 first-attempt (100%), direct 11/13 (85%). Both clear the
   ≥80% bar; the direct-backend misses are recorded verbatim in
   the results file for audit.
-- `results/round-master-t14.json` (pack 1.1.0, tasks `t1`-`t14`,
+- `results/round-master-t14.json` (recorded under pack 1.1.0 at run time; the `t1`-`t14` task set is the 1.2.0 pack,
   model `muse-spark-1.3-contributor` on both backends): copilot
   14/14 first-attempt (100%), direct 12/14 (86%). New task `t14`
   (partial-eval cones) passes on both backends.

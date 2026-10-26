@@ -51,7 +51,7 @@ prints one profile for inspection.
   profiles with tool-subset discipline).
 - WASM module: `../active-wasm/js/active-shim.js` plus the release
   `.wasm` (zero imports, plain `WebAssembly.instantiate`).
-- Prompt packs: `../prompts/` (versioned v1.1.0, tasks t1-t10, validation
+- Prompt packs: `../prompts/` (versioned v1.2.0, tasks t1-t14, validation
   runner).
 
 ## Verification status
@@ -61,4 +61,4 @@ with identical per-task verdicts, iterations, and codes
 (`tasks_improved` 5, mean 1.5 iterations to clean), `broken-parse`
 is unrepairable in all three, and no secret material appears in any
 log. Prompt pack proof: `prompts/runner/validate.py` round
-`phase2-e7` — 10/10 first-attempt on both backends, zero flakes.
+`round-master-t14` — 14/14 first-attempt on the copilot backend, 12/14 on the direct backend, zero flakes.

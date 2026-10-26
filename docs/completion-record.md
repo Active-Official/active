@@ -107,7 +107,7 @@ the baseline rule (no parallel rewrites).
 | Editor smoke | 6 commands, redaction probe pass |
 | Neovim package determinism | identical hashes |
 | Dual-push CI | recorded in `conformance/evidence/ci.log` |
-| Independent review | DeepSeek V4.1 Flash (BYOK, `--reasoning-effort max`) rounds 12-71 (rounds 70 and 71 verification-only); every finding fixed with a regression test; the final verification round reports CLEAN with no open findings (`conformance/evidence/review-final.log`; summary in `docs/security-hardening.md`) |
+| Independent review | DeepSeek V4.1 Flash (BYOK, `--reasoning-effort max`) rounds 12-72 (rounds 70, 71, and 72 verification-only); every finding fixed with a regression test; the final verification round reports CLEAN with no open findings (`conformance/evidence/review-final.log`; summary in `docs/security-hardening.md`) |
 
 ### Final CI (2026-10-25)
 

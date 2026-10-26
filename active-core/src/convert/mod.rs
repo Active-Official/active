@@ -32,8 +32,10 @@ pub use repair::{
 pub use explain::{explain_all, explain_code, explain_structured, Explanation};
 pub use export::{value_to_toml_string, value_to_yaml_string};
 pub use gen::{
-    schema_to_go, schema_to_json_schema, schema_to_openapi, schema_to_python, schema_to_rust,
-    schema_to_typescript, CODEGEN_VERSION,
+    schema_to_go, schema_to_go_with_profile, schema_to_json_schema,
+    schema_to_json_schema_with_profile, schema_to_openapi, schema_to_openapi_with_profile,
+    schema_to_python, schema_to_python_with_profile, schema_to_rust, schema_to_rust_with_profile,
+    schema_to_typescript, schema_to_typescript_with_profile, CODEGEN_VERSION,
 };
 pub use import::{
     json_text_to_active, json_value_to_active, jsonschema_to_active, toml_text_to_active,

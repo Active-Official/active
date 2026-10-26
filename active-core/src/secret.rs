@@ -1766,13 +1766,18 @@ impl SecretProfile {
         // profile scalar replaces. A computed selector cannot be
         // resolved, so **every** profile contributes material paths to
         // a taint-only set: the union never lets a later benign profile
-        // hide an earlier material one. Patches run in source order:
-        // `Set` replaces, `Remove` deletes (shifting array indices),
-        // `Rename` moves within the same parent.
+        // hide an earlier material one. An explicit override does not
+        // discharge that union when the document's own selector is
+        // computed: the evaluator can still resolve and apply it, so
+        // selecting another profile must not declassify its value.
         let mut fallback_secret_paths: HashSet<String> = HashSet::new();
+        let document_selection = profile_selection(module);
         let selection = match override_profile {
-            Some(name) => ProfileSelection::Named(name.to_string()),
-            None => profile_selection(module),
+            Some(name) if !matches!(document_selection, ProfileSelection::Computed) => {
+                ProfileSelection::Named(name.to_string())
+            }
+            Some(_) => ProfileSelection::Computed,
+            None => document_selection,
         };
         // A bound that already stopped the base walk makes every known
         // path unreliable. Profile paths must then stay unknown (fail

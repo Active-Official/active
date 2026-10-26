@@ -1,8 +1,7 @@
 use active_core::convert::{
     collect_items_with_profile, doc_to_html, doc_to_man, doc_to_markdown, json_text_to_active,
-    jsonschema_to_active, schema_inspect_with_profile, schema_to_go, schema_to_json_schema,
-    schema_to_openapi, schema_to_python, schema_to_rust, schema_to_typescript, toml_text_to_active,
-    value_to_pretty_json, value_to_toml_string, value_to_yaml_string, yaml_text_to_active,
+    jsonschema_to_active, schema_inspect_with_profile, toml_text_to_active, value_to_pretty_json,
+    value_to_toml_string, value_to_yaml_string, yaml_text_to_active,
 };
 use active_core::diag::{Diagnostic, Severity};
 use active_core::{parse_file, Budget, Engine, EvalError, ParseOptions, Style};
@@ -744,8 +743,12 @@ fn run_inspect(
             if format != "json" {
                 anyhow::bail!("schema inspection supports --format json only");
             }
-            let inspected = schema_inspect_with_profile(&module, profile.as_deref())
+            let mut inspected = schema_inspect_with_profile(&module, profile.as_deref())
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
+            // Schema prose can equal a host value; redact it with the
+            // authored + process-env material set.
+            let schema_profile = material_profile(&module);
+            schema_profile.redact_json(&mut inspected);
             println!(
                 "{}",
                 serde_json::to_string_pretty(&inspected).map_err(|e| anyhow::anyhow!("{e}"))?
@@ -1759,20 +1762,36 @@ fn main() -> anyhow::Result<()> {
         } => {
             let trust = load_trust(&trust_keys)?;
             let module = parse_input(&from, false, false, &trust)?;
+            // Generators see the same authored + process-env material
+            // set as planning, so a schema literal equal to a host
+            // value is withheld instead of emitted.
+            let profile = material_profile(&module);
             // Documents without a schema block exit non-zero (spec §5).
             let output = match to.as_str() {
-                "jsonschema" => schema_to_json_schema(&module).and_then(|schema| {
-                    serde_json::to_string_pretty(&schema)
-                        .map_err(|e| format!("generate serialize failed: {e}"))
-                }),
-                "openapi" => schema_to_openapi(&module, &name).and_then(|schema| {
-                    serde_json::to_string_pretty(&schema)
-                        .map_err(|e| format!("generate serialize failed: {e}"))
-                }),
-                "typescript" | "ts" => schema_to_typescript(&module, &name),
-                "go" => schema_to_go(&module, &name),
-                "rust" | "serde" => schema_to_rust(&module, &name),
-                "python" | "py" => schema_to_python(&module, &name),
+                "jsonschema" => {
+                    active_core::convert::schema_to_json_schema_with_profile(&module, &profile)
+                        .and_then(|schema| {
+                            serde_json::to_string_pretty(&schema)
+                                .map_err(|e| format!("generate serialize failed: {e}"))
+                        })
+                }
+                "openapi" => {
+                    active_core::convert::schema_to_openapi_with_profile(&module, &name, &profile)
+                        .and_then(|schema| {
+                            serde_json::to_string_pretty(&schema)
+                                .map_err(|e| format!("generate serialize failed: {e}"))
+                        })
+                }
+                "typescript" | "ts" => active_core::convert::schema_to_typescript_with_profile(
+                    &module, &name, &profile,
+                ),
+                "go" => active_core::convert::schema_to_go_with_profile(&module, &name, &profile),
+                "rust" | "serde" => {
+                    active_core::convert::schema_to_rust_with_profile(&module, &name, &profile)
+                }
+                "python" | "py" => {
+                    active_core::convert::schema_to_python_with_profile(&module, &name, &profile)
+                }
                 other => anyhow::bail!("unsupported target: {}", other),
             }
             .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -2150,8 +2169,10 @@ fn main() -> anyhow::Result<()> {
                     );
                 }
                 "schema" => {
-                    let data = active_core::viz::schema_data(&module)
+                    let mut data = active_core::viz::schema_data(&module)
                         .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    // Schema prose can equal a host value.
+                    material_profile(&module).redact_json(&mut data);
                     println!(
                         "{}",
                         serde_json::to_string_pretty(&data).map_err(|e| anyhow::anyhow!("{e}"))?

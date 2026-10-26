@@ -2879,3 +2879,38 @@ fn parse_diagnostic_does_not_echo_an_active_mode_value() {
         );
     }
 }
+
+#[test]
+fn an_override_does_not_declassify_a_computed_selector() {
+    // Independent verification 72: `--profile q` must not drop the
+    // computed-selector union; the evaluator can still apply the
+    // document selector.
+    let src = "active_profile = env.P ?: \"p\"\na = secret(\"base\")\nprofile \"p\" { a = { k = \"Zx9-Secret-Alpha\" } }\nprofile \"q\" { marker = 1 }\ndup = \"Zx9-Secret-Alpha\"\n";
+    let module = parse(src, "override-union").expect("parse");
+    let mut engine = Engine::hermetic();
+    engine.profile_override = Some("q".to_string());
+    let (value, _, seeds) = engine.evaluate_with_seeds(&module).expect("evaluate");
+    let profile = active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(!json.contains("Zx9-Secret-Alpha"), "{json}");
+}
+
+#[test]
+fn generators_see_an_environment_material_profile() {
+    // Independent verification 72: schema prose equal to a host value
+    // is withheld when the caller supplies the environment context.
+    let src = "seed = secret.env(\"ACTIVE_R72_TOKEN\")\nschema = { other = String(default = \"Qq7_Env_Token\") }\nother = \"x\"\n";
+    let module = parse(src, "env-gen").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("ACTIVE_R72_TOKEN".to_string(), "Qq7_Env_Token".to_string());
+    let profile = active_core::secret::SecretProfile::with_context(&module, None, Some(&env), None);
+    let jsonschema = active_core::convert::schema_to_json_schema_with_profile(&module, &profile)
+        .expect("json schema");
+    assert!(
+        !jsonschema.to_string().contains("Qq7_Env_Token"),
+        "{jsonschema}"
+    );
+    let ts = active_core::convert::schema_to_typescript_with_profile(&module, "Config", &profile)
+        .expect("typescript");
+    assert!(!ts.contains("Qq7_Env_Token"), "{ts}");
+}

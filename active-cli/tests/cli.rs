@@ -3770,3 +3770,51 @@ fn minimize_redacts_an_env_value_duplicate() {
     assert!(!text.contains("hunter2-env-dup"), "{text}");
     assert!(text.contains("***SECRET***"), "{text}");
 }
+
+#[test]
+fn schema_surfaces_redact_an_environment_equal_literal() {
+    // Independent verification 72: the CLI schema views and generators
+    // carry the process-environment material set.
+    let f = fixture(
+        "r72_env_schema.active",
+        "seed = secret.env(\"ACTIVE_R72_TOKEN\")\nschema = { other = String(default = \"Qq7_Env_Token\") }\nother = \"x\"\n",
+    );
+    let cases: [&[&str]; 4] = [
+        &["schema", "inspect", "--from"],
+        &["inspect", "--from"],
+        &["generate", "--to", "jsonschema", "--from"],
+        &["generate", "--to", "typescript", "--from"],
+    ];
+    for args in cases {
+        let out = active()
+            .args(args)
+            .arg(&f)
+            .env("ACTIVE_R72_TOKEN", "Qq7_Env_Token")
+            .output()
+            .expect("run active");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!stdout.contains("Qq7_Env_Token"), "{args:?}: {stdout}");
+        assert!(!stderr.contains("Qq7_Env_Token"), "{args:?}: {stderr}");
+    }
+}
+
+#[test]
+fn profile_override_does_not_declassify_a_computed_selector() {
+    // Independent verification 72: an unrelated --profile must not
+    // expose the computed selector's material value.
+    let f = fixture(
+        "r72_override_union.active",
+        "active_profile = env.P ?: \"p\"\na = secret(\"base\")\nprofile \"p\" { a = { k = \"Zx9-Secret-Alpha\" } }\nprofile \"q\" { marker = 1 }\ndup = \"Zx9-Secret-Alpha\"\n",
+    );
+    let out = active()
+        .args(["eval", "--profile", "q"])
+        .arg(&f)
+        .env("P", "p")
+        .output()
+        .expect("run active");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stdout.contains("Zx9-Secret-Alpha"), "{stdout}");
+    assert!(!stderr.contains("Zx9-Secret-Alpha"), "{stderr}");
+}

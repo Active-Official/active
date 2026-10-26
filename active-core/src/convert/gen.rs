@@ -209,9 +209,18 @@ fn nominal_id(module: &Module, mut id: NodeId) -> NodeId {
 /// `additionalProperties: false`), enums, arrays, constraints from
 /// static literals, static defaults, and `deprecated` flags.
 pub fn schema_to_json_schema(module: &Module) -> Result<JsonValue, String> {
-    let root = schema_root(module)?;
     let profile = crate::secret::SecretProfile::analyze(module);
-    let mut node = json_schema_node(module, &profile, root);
+    schema_to_json_schema_with_profile(module, &profile)
+}
+
+/// JSON Schema under an analyzed profile: a caller with an environment
+/// snapshot can redact schema prose that matches a host value.
+pub fn schema_to_json_schema_with_profile(
+    module: &Module,
+    profile: &crate::secret::SecretProfile,
+) -> Result<JsonValue, String> {
+    let root = schema_root(module)?;
+    let mut node = json_schema_node(module, profile, root);
     if let JsonValue::Object(ref mut map) = node {
         map.insert(
             "$comment".to_string(),
@@ -499,7 +508,17 @@ fn json_schema_field(
 /// The JSON Schema wrapped as an OpenAPI 3.1
 /// `components.schemas.<name>` fragment.
 pub fn schema_to_openapi(module: &Module, name: &str) -> Result<JsonValue, String> {
-    let schema = schema_to_json_schema(module)?;
+    let profile = crate::secret::SecretProfile::analyze(module);
+    schema_to_openapi_with_profile(module, name, &profile)
+}
+
+/// OpenAPI fragment under an analyzed profile.
+pub fn schema_to_openapi_with_profile(
+    module: &Module,
+    name: &str,
+    profile: &crate::secret::SecretProfile,
+) -> Result<JsonValue, String> {
+    let schema = schema_to_json_schema_with_profile(module, profile)?;
     let mut schemas = serde_json::Map::new();
     schemas.insert(sanitize_ident(name, "Config"), schema);
     let mut components = serde_json::Map::new();
@@ -523,14 +542,23 @@ pub fn schema_to_openapi(module: &Module, name: &str) -> Result<JsonValue, Strin
 /// Nested tables become PascalCase interfaces; `?`/`.optional()` marks
 /// defaulted/Null fields.
 pub fn schema_to_typescript(module: &Module, root_name: &str) -> Result<String, String> {
+    let profile = crate::secret::SecretProfile::analyze(module);
+    schema_to_typescript_with_profile(module, root_name, &profile)
+}
+
+/// TypeScript under an analyzed profile.
+pub fn schema_to_typescript_with_profile(
+    module: &Module,
+    root_name: &str,
+    profile: &crate::secret::SecretProfile,
+) -> Result<String, String> {
     let root = schema_root(module)?;
     if !matches!(module.get(root), Some(Node::SchemaTable { .. })) {
         return Err("schema block must be a table for code generation".to_string());
     }
-    let profile = crate::secret::SecretProfile::analyze(module);
     let mut gen = TsGen {
         module,
-        profile: &profile,
+        profile,
         out: format!("{}import {{ z }} from \"zod\";\n\n", version_header("//")),
         names: HashMap::new(),
         taken: HashSet::new(),
@@ -870,6 +898,16 @@ impl TsGen<'_> {
 /// Nested tables become PascalCase structs; enums stay strings with
 /// their members documented.
 pub fn schema_to_go(module: &Module, root_name: &str) -> Result<String, String> {
+    let profile = crate::secret::SecretProfile::analyze(module);
+    schema_to_go_with_profile(module, root_name, &profile)
+}
+
+/// Go structs under an analyzed profile.
+pub fn schema_to_go_with_profile(
+    module: &Module,
+    root_name: &str,
+    profile: &crate::secret::SecretProfile,
+) -> Result<String, String> {
     let root = schema_root(module)?;
     if !matches!(module.get(root), Some(Node::SchemaTable { .. })) {
         return Err("schema block must be a table for code generation".to_string());
@@ -885,10 +923,9 @@ pub fn schema_to_go(module: &Module, root_name: &str) -> Result<String, String> 
             }
         )
     });
-    let profile = crate::secret::SecretProfile::analyze(module);
     let mut gen = GoGen {
         module,
-        profile: &profile,
+        profile,
         out: format!(
             "{}// Validation tags follow go-playground/validator conventions.\n",
             version_header("//")
@@ -1254,6 +1291,16 @@ const RUST_KEYWORDS: &[&str] = &[
 /// The schema tree as Rust serde types: structs with `rename` tags,
 /// real enums for `Enum`, `Option` for defaulted/Null fields.
 pub fn schema_to_rust(module: &Module, root_name: &str) -> Result<String, String> {
+    let profile = crate::secret::SecretProfile::analyze(module);
+    schema_to_rust_with_profile(module, root_name, &profile)
+}
+
+/// Rust types under an analyzed profile.
+pub fn schema_to_rust_with_profile(
+    module: &Module,
+    root_name: &str,
+    profile: &crate::secret::SecretProfile,
+) -> Result<String, String> {
     let root = schema_root(module)?;
     if !matches!(module.get(root), Some(Node::SchemaTable { .. })) {
         return Err("schema block must be a table for code generation".to_string());
@@ -1269,10 +1316,9 @@ pub fn schema_to_rust(module: &Module, root_name: &str) -> Result<String, String
             }
         )
     });
-    let profile = crate::secret::SecretProfile::analyze(module);
     let mut gen = RustGen {
         module,
-        profile: &profile,
+        profile,
         out: format!(
             "{}\
             // Requires: serde = {{ version = \"1\", features = [\"derive\"] }}, serde_json = \"1\"\nuse serde::{{Deserialize, Serialize}};\n\n",
@@ -1478,6 +1524,16 @@ impl RustGen<'_> {
 /// `NotRequired`. Descriptions, formats, defaults, and `requires`
 /// render as comments above each field.
 pub fn schema_to_python(module: &Module, root_name: &str) -> Result<String, String> {
+    let profile = crate::secret::SecretProfile::analyze(module);
+    schema_to_python_with_profile(module, root_name, &profile)
+}
+
+/// Python types under an analyzed profile.
+pub fn schema_to_python_with_profile(
+    module: &Module,
+    root_name: &str,
+    profile: &crate::secret::SecretProfile,
+) -> Result<String, String> {
     let root = schema_root(module)?;
     if !matches!(module.get(root), Some(Node::SchemaTable { .. })) {
         return Err("schema block must be a table for code generation".to_string());
@@ -1493,10 +1549,9 @@ pub fn schema_to_python(module: &Module, root_name: &str) -> Result<String, Stri
             }
         )
     });
-    let profile = crate::secret::SecretProfile::analyze(module);
     let mut gen = PythonGen {
         module,
-        profile: &profile,
+        profile,
         out: format!(
             "{}from typing import Any, Literal, NotRequired, TypedDict\n\n\n",
             version_header("#")

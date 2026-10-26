@@ -461,3 +461,17 @@ fn semantic_multiline_strings_with_edge_quotes_reparse() {
     assert_eq!(format(&reparsed, Style::Brace), once);
     assert!(!once.contains("''''"), "{once}");
 }
+
+#[test]
+fn empty_table_trailing_comments_keep_the_blank_before_them() {
+    // Found by the formatter fuzz target: at the root, the canonical
+    // blank line after an empty table was emitted after its trailing
+    // comments, so the next parse re-attached those comments to the
+    // following key and the second format moved the blank.
+    let src = "t = {}\n#A(\n#(`#\nl = {}\n";
+    let module = parse(src, "cmt-blank").expect("parses");
+    let once = format(&module, Style::Indent);
+    let reparsed = parse(&once, "cmt-blank-2").expect("formatted output re-parses");
+    assert_eq!(format(&reparsed, Style::Indent), once);
+    assert!(once.contains("t = {}\n\n#A("), "{once:?}");
+}

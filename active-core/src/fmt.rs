@@ -37,6 +37,7 @@ pub fn format(module: &Module, style: Style) -> String {
         trailing: HashMap::new(),
         trailing_block: HashMap::new(),
         trailing_document: Vec::new(),
+        pending_blank: false,
         out: String::new(),
     };
     f.index_trivia();
@@ -53,6 +54,9 @@ struct Formatter<'a> {
     trailing: HashMap<String, Vec<String>>,
     trailing_block: HashMap<String, Vec<String>>,
     trailing_document: Vec<String>,
+    /// A blank separator was already emitted by an empty-table trailing
+    /// comment block; the next root entry must not add a second one.
+    pending_blank: bool,
     out: String,
 }
 
@@ -271,22 +275,25 @@ impl<'a> Formatter<'a> {
 
         // Scalars-first at the root, source order inside blocks.
         let mut first = true;
-        for (key, node) in ordered.iter() {
+        let entry_count = ordered.len();
+        for (index, (key, node)) in ordered.iter().enumerate() {
             let child_path = if path.is_empty() {
                 key.clone()
             } else {
                 format!("{path}.{key}")
             };
             let is_table = tables.iter().any(|(k, _)| k == key);
-            if is_root && !first {
+            if is_root && !first && !self.pending_blank {
                 self.out.push('\n');
             }
+            self.pending_blank = false;
             first = false;
+            let has_next = index + 1 < entry_count;
 
             let qkey = child_path.clone();
             self.emit_leading(&qkey);
             if is_table {
-                self.emit_table_block(*node, &child_path, key, depth, is_root);
+                self.emit_table_block(*node, &child_path, key, depth, is_root, has_next);
             } else {
                 let value = self.render_expr(*node);
                 let indent = INDENT.repeat(depth);
@@ -530,7 +537,15 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    fn emit_table_block(&mut self, id: NodeId, path: &str, key: &str, depth: usize, is_root: bool) {
+    fn emit_table_block(
+        &mut self,
+        id: NodeId,
+        path: &str,
+        key: &str,
+        depth: usize,
+        is_root: bool,
+        has_next: bool,
+    ) {
         match self.style {
             Style::Indent => {
                 // Indentation style cannot express a bodyless block, so an
@@ -544,8 +559,16 @@ impl<'a> Formatter<'a> {
                         .push_str(&format!("{}{key} = {{}}", INDENT.repeat(depth)));
                     self.emit_trailing(path);
                     self.out.push('\n');
-                    // An empty table can still own trailing comments.
+                    // An empty table can still own trailing comments. At
+                    // the document root, a following entry's canonical
+                    // blank line goes BEFORE those comments: leaving it
+                    // after them makes the next parse re-attach them to
+                    // the following key and breaks idempotence.
                     if let Some(comments) = self.trailing_block.get(path).cloned() {
+                        if is_root && has_next {
+                            self.out.push('\n');
+                            self.pending_blank = true;
+                        }
                         for text in comments {
                             self.out.push_str(&INDENT.repeat(depth));
                             self.out.push_str(&text);

@@ -63,3 +63,15 @@ Round 76 verified: the raw value appears in none of the three formats,
 binary, and JSON/SARIF shapes stay valid.
 
 VERDICT: LINT-LEAK FIXED.
+
+Round 77 - fresh full-diff review at the final tree
+---------------------------------------------------
+A fresh full-diff BYOK xhigh review over `ef98a2d..HEAD` at b96509f
+found 7 issues (2 high, 3 medium, 2 low). All were fixed with regression
+tests at fcea0d3 and verified fixed (round 77b, no new findings):
+LSP debugger hermeticity, Enum formatter arguments, semantic CR strings,
+brace trailing-comment idempotence, debug-build stack depth, budget:0,
+and lint include-escape reachability. Full log:
+`conformance/evidence/review.log`.
+
+VERDICT: ALL FIXED - zero open findings.

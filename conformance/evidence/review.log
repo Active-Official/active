@@ -1,0 +1,64 @@
+Final independent review log (fresh full-diff review at the final tree)
+======================================================================
+
+Reviewer: DeepSeek V4.1 Flash via the Copilot CLI BYOK route
+(CommandCode), --reasoning-effort xhigh. Subscription quota remained
+exhausted (HTTP 429), so the BYOK route served the review; routing is
+documented in the review skill and never carries credentials into the
+repository.
+
+Scope: `git diff ef98a2d..HEAD` at HEAD b96509f (the complete goal
+diff), verified against the files at HEAD with reproduction-first
+triage. The reviewer also swept every secret-bearing surface (eval,
+convert, doc, lock, inspect schema/path, viz, debug, explain, lint,
+patch, repair, compatibility, generate, graph, LSP hover/completion/
+inlay/semantic/code-action/explain/debug-steps, FFI/WASM) and found no
+raw secret material; the only oracle behaviour it noted is the
+documented blob hash/size identity.
+
+Findings (7) and fixes at fcea0d3
+---------------------------------
+F1 HIGH    LSP `active/debug/steps` used Engine::new() (ambient env), so a
+           step could show a host value hover/diagnostics report as null.
+           Fixed: Engine::hermetic() + wall clock off.
+           Test: step_bridge_is_hermetic_for_environment_reads.
+F2 HIGH    Formatter Enum branch returned before the shared argument list,
+           dropping default/description/requires (changing requiredness,
+           defaults, and descriptions; `fmt --check schemas/*` failed).
+           Fixed: Enum renders the same arguments as other leaves.
+           Tests: enum_fields_keep_every_accepted_argument,
+           every_shipped_schema_round_trips_through_the_formatter.
+F3 MEDIUM  Semantic `'''` verbatim form containing a CR normalized it to LF
+           (value change + non-idempotence). Fixed: CR payloads use the
+           escaped `"""` path.
+           Test: semantic_multiline_with_a_carriage_return_keeps_its_value.
+F4 MEDIUM  Brace output was not idempotent when a table's trailing comment
+           followed its last nested block (the next parse moved it inside).
+           Fixed: comments are hoisted into the nested block (the fixed
+           point) and empty nested tables emit `key = {}`.
+           Tests: brace_trailing_note_after_a_nested_block_is_idempotent,
+           brace_empty_tables_keep_inter_entry_comments_idempotent.
+F5 MEDIUM  59-64-level nested expressions overflowed the 1 MiB main stack
+           in unoptimized builds. Fixed: CLI and LSP run commands on a
+           32 MiB worker stack; 64 levels yield E004, never a crash.
+           Test: deep_expression_nesting_fails_with_e004_instead_of_overflowing.
+F6 LOW     `--break budget:0` was accepted although the range is 1-100.
+           Fixed: 0 matches nothing; test updated in
+           budget_breakpoints_match_on_count_and_percent.
+F7 LOW     L016 absolute/parent-escape branches were unreachable because
+           `lint` had no parse opt-in. Fixed: `lint --allow-parent-escapes`.
+           Test: lint_can_report_include_escapes_when_the_parser_allows_them.
+
+Docs updated with the fixes: spec/budgets.md (stack requirement),
+spec/linter.md and docs/lint-rules.md (lint parse flag), spec/lsp.md
+(hermetic debugger bridge).
+
+Verification (round 77b, no new findings requested)
+---------------------------------------------------
+Every finding re-checked at HEAD fcea0d3 against the code and the named
+regression test; the reviewer also formatted all eight shipped schemas
+to a copy and confirmed no `default`, `description`, `requires`,
+`descriptions`, `deprecated`, or `removed_in` occurrence was lost, and
+that the absolute-path L016 branch fires through the live CLI.
+
+VERDICT: ALL FIXED - zero open findings.

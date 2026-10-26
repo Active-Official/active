@@ -87,26 +87,31 @@ impl<'a> Formatter<'a> {
     // file-qualified keys — see the parser's (line, file) matching.
     fn index_trivia(&mut self) {
         for c in &self.module.trivia {
+            // Canonical trivia: a lone CR is a line-ending artifact, and
+            // emitting one before the formatter's own "\n" makes the
+            // next pass treat it as CRLF and drop it, breaking
+            // idempotence. Comments are non-semantic, so drop CRs.
+            let text = c.text.replace('\r', "");
             match &c.attachment {
                 Attachment::Leading(key) => self
                     .leading
                     .entry(key.clone())
                     .or_default()
-                    .push(c.text.clone()),
+                    .push(text.clone()),
                 Attachment::Trailing(key) => {
                     // Duplicate keys share one surviving statement; keep
                     // every comment so none is lost.
                     self.trailing
                         .entry(key.clone())
                         .or_default()
-                        .push(c.text.clone());
+                        .push(text.clone());
                 }
                 Attachment::TrailingBlock(path) => self
                     .trailing_block
                     .entry(path.clone())
                     .or_default()
-                    .push(c.text.clone()),
-                Attachment::TrailingDocument => self.trailing_document.push(c.text.clone()),
+                    .push(text.clone()),
+                Attachment::TrailingDocument => self.trailing_document.push(text),
             }
         }
     }

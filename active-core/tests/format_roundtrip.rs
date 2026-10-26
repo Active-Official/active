@@ -385,7 +385,10 @@ fn formatter_contract_holds_on_mutated_corpus_inputs() {
                 let line = &mut lines[index];
                 if !line.is_empty() {
                     let at = (next() % line.len() as u64) as usize;
-                    line.insert(at, ' ');
+                    // Include CR: line-ending artifacts in comments are
+                    // where the fuzz target found the idempotence bug.
+                    let ch = if next() % 4 == 0 { '\r' } else { ' ' };
+                    line.insert(at, ch);
                 }
             }
             _ => {
@@ -430,4 +433,17 @@ fn secret_env_names_without_a_bare_form_round_trip() {
     // Identifier-shaped names still canonicalize to the bare form.
     let bare = fmt("k = secret.env(\"PORT\")\n", Style::Brace);
     assert!(bare.contains("secret(env.PORT)"), "{bare}");
+}
+
+#[test]
+fn carriage_returns_in_comments_do_not_break_idempotence() {
+    // Found by the formatter fuzz target: a lone CR emitted before the
+    // formatter's newline re-parses as CRLF and disappears on the next
+    // pass. Comments are non-semantic, so CRs are dropped.
+    let src = "\r#\r\r\"\"\\\r\r\r";
+    let module = parse(src, "cr").expect("parses");
+    let once = format(&module, Style::Brace);
+    let reparsed = parse(&once, "cr2").expect("formatted output re-parses");
+    assert_eq!(format(&reparsed, Style::Brace), once);
+    assert!(!once.contains('\r'), "{once:?}");
 }

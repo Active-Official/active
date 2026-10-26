@@ -1,5 +1,56 @@
 # CI verdicts for the final tree (2026-10-26)
 
+Content tree b95ea27 (formatter fuzz fixes: semantic edge quotes,
+empty-table comment blank, CR in interpolation-literal strings)
+  RatioArtificiosa/active-lang
+    CI           40317478246  success
+    Conformance  40317478533  success
+    CodSpeed     40317478181  success
+    Fuzz smoke   40317478430  success   (push)
+    Fuzz smoke   40317525396  success   (workflow_dispatch)
+  Active-Official/active
+    CI           40317482233  success
+    Conformance  40317482084  success
+    CodSpeed     40317482060  success
+    Fuzz smoke   40317482145  success   (push)
+    Fuzz smoke   40317529494  success   (workflow_dispatch)
+
+1510d71 (superseded by b95ea27; the manual fuzz found the empty-table
+comment idempotence bug fixed in b95ea27)
+  RatioArtificiosa/active-lang
+    CI           40314843041  success
+    Conformance  40314842980  cancelled (superseded)
+    CodSpeed     40314842956  cancelled (superseded)
+    Fuzz smoke   40314842992  success
+    Fuzz smoke   40314871886  failure (empty-table trailing-comment blank)
+  Active-Official/active
+    CI           40314847964  success
+    Conformance  40314847985  cancelled (superseded)
+    CodSpeed     40314848007  cancelled (superseded)
+    Fuzz smoke   40314876082  success
+    Fuzz smoke   40314848005  failure (same formatter input)
+
+78c7a6c (CI: pinned Julia/Nim tarballs, no skips)
+  RatioArtificiosa/active-lang
+    CI 40309955904 success   Conformance 40309955979 success
+    CodSpeed 40309955949 success   Fuzz smoke 40309985859 success
+  Active-Official/active
+    CI 40309959681 success   Conformance 40309959657 success
+    CodSpeed 40309959721 success   Fuzz smoke 40309989657 success
+
+f6926c2 (superseded; formatter edge-quote fix + apt attempt)
+  origin    CI 40308390864 success   Conformance 40308390855 failure
+            (Julia has no apt candidate); Fuzz 40308417953 success
+  official  CI 40308396577 success   Conformance 40308396879 failure
+            (same); Fuzz 40308421955 success
+
+cf45d96 (superseded; juliaup PATH check failed in-step)
+  origin    CI 40306401491 success   Conformance 40306401484 success
+            Fuzz 40306447839 success   CodSpeed cancelled (superseded)
+  official  CI 40306405909 success   Conformance 40306405981 failure
+            (julia PATH); Fuzz 40306452277 failure (formatter); CodSpeed
+            cancelled
+
 HEAD f55f9b8 (CI-log stamp; superseded by the next commit)
   RatioArtificiosa/active-lang
     CI           40302574358  success

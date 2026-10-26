@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import ctypes
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -101,6 +102,13 @@ def check_values(
 
 
 def find_cdylib() -> Path | None:
+    # An explicit path wins: container/CI runs build into an isolated
+    # CARGO_TARGET_DIR, and a stale in-repo artifact must never decide
+    # which core this gate tests.
+    explicit = os.environ.get("ACTIVE_FFI_LIB")
+    if explicit:
+        candidate = Path(explicit)
+        return candidate if candidate.is_file() else None
     if sys.platform == "win32":
         names = ["active_ffi.dll"]
     elif sys.platform == "darwin":

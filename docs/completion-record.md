@@ -108,21 +108,57 @@ the baseline rule (no parallel rewrites).
 | Editor smoke | 6 commands, redaction probe pass |
 | Neovim package determinism | identical hashes |
 | Dual-push CI | recorded in `conformance/evidence/ci.log` |
-| Independent review | DeepSeek V4.1 Flash (BYOK, `--reasoning-effort max`) rounds 12-72 (rounds 70, 71, and 72 verification-only); every finding fixed with a regression test; the final verification round reports CLEAN with no open findings (`conformance/evidence/review-final.log`; summary in `docs/security-hardening.md`) |
+| Independent review | DeepSeek V4.1 Flash (BYOK, `--reasoning-effort max`) rounds 12-75. Round 73 re-reviewed the complete goal diff and found 12 issues (2 critical, 1 high, 6 medium, 3 low); every one was fixed at the cause with a regression test on the shipped path. Round 74 verified 11 as FIXED and flagged F6 for a missing discriminating test; round 75 verified the added docgen bound (0.25 s committed vs 3.80 s with the old body). Final verdict: all 12 FIXED, zero open findings (`conformance/evidence/review-final.log`; detail in `docs/security-hardening.md`) |
 
 ### Final CI (2026-10-25)
 
-Both remotes are green on the final content tree `81ff859`:
+Both remotes are green on the final content tree `625f22c`
+(the round-73 fixes plus the docgen bound). `Fuzz smoke` is green on
+both remotes as well (formatter target included):
 
-| Remote | CI | Conformance | CodSpeed |
-|---|---|---|---|
-| `RatioArtificiosa/active-lang` | success (40252685433) | success (40252685428) | success (40252685534) |
-| `Active-Official/active` | success (40252688421) | success (40252688360) | success (40252688389) |
+| Remote | CI | Conformance | CodSpeed | Fuzz smoke |
+|---|---|---|---|---|
+| `RatioArtificiosa/active-lang` | success (40277516911) | success (40277516922) | success (40277516915) | success (40277516919) |
+| `Active-Official/active` | success (40277520453) | success (40277520454) | success (40277520309) | success (40277520437) |
+
+Earlier green stamps: `81ff859` (content) and `ff445b0` (docs) were
+green on CI, Conformance, and CodSpeed on both remotes; run IDs are in
+the goal close-out and `conformance/evidence/ci.log`.
 
 The Ubuntu conformance job also builds the OCaml binding; `ocaml_stubs.c`
 includes `<caml/fail.h>` so `caml_invalid_argument` is declared under
 modern compiler warnings. The full transcript is
 `conformance/evidence/ci.log`.
+## 5. Post-loop audit additions (2026-10-25)
+
+An independent audit re-read both program checklists against the tree
+after the round-72 verdict. These surfaces were added and tested in the
+same close-out (full detail in `docs/security-hardening.md`):
+
+- **Linter:** L011-L016 (requires discipline, agent annotations,
+  ambiguous repair, canonical order, mixed syntax, include hygiene) and
+  `.active-lint.toml` project configuration (disable list, severity
+  overrides, upward discovery, `--config`). The catalog is 16 rules.
+- **Debugger:** `budget:<percent>` / `budget:nodes:<n>` breakpoints; the
+  reduction report exports env names and the effective budget;
+  `active/debug/steps` serves the trace over LSP.
+- **Formatter:** a fuzz target plus a deterministic mutation sweep (which
+  found and fixed a `secret.env` name round-trip bug), and a CI
+  `active fmt --check` gate over `tests/fmt/`.
+- **Repair browser:** code/severity/path filters; the plan stays whole.
+- **Visualizer:** `compatibility` block (version floors, deprecated
+  hints, removal schedule) in `viz schema`.
+- **Language server:** `active/capability`, `active/explain`, and
+  `active/debug/steps` custom methods; hover appends the canned fix
+  guidance.
+- **Capability descriptor:** 20 tools (was 13), matching profiles, CLI
+  mapping test, Python authority test.
+- **Interchange:** three example envelopes, directory vectors, and the
+  §7 hash short-circuit with executable helpers and a pinned vector.
+- **Docs:** README Config/Data modes section and evidence index,
+  `docs-site/src/reference/modes.md`, `spec/repair.md`, playground
+  transcript, CI artifact retention.
+
 ## 6. Accepted, documented gaps
 
 - Zed and JetBrains plugins are not implemented; the LSP host path and

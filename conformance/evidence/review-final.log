@@ -1,49 +1,50 @@
-I'll start by verifying the repository state at HEAD and locating the relevant code and tests.
+Final independent review and verification (rounds 73-75)
+=========================================================
 
-HEAD is `7aabbd2` with a clean tree. Let me inspect the fix commit and locate the test functions.
+Tree: ef98a2d..625f22c (the complete goal diff).
+Reviewer: DeepSeek V4.1 Flash via the Copilot CLI BYOK route
+(CommandCode), --reasoning-effort max. The Copilot subscription quota
+was exhausted for the review window (HTTP 429), so the BYOK route
+served every round; the routing is documented in the review skill and
+never carries credentials into the repository.
 
-All four tests exist. Let me build the CLI while I review the fix implementation.
+Round 73 - full-diff review over the complete goal diff
+-------------------------------------------------------
+12 findings (2 CRITICAL, 1 HIGH, 6 MEDIUM, 3 LOW). Every finding was
+reproduced, fixed at the cause, and pinned with a regression test on
+the shipped path. Summary (full detail in docs/security-hardening.md):
 
-Now let me review the CLI portion of the fix and the new tests.
+  F1  CRITICAL  schema inspect leaked env material under --profile      FIXED
+  F2  CRITICAL  compatibility printed env-equal enum members            FIXED
+  F3  HIGH      sub-4-byte secrets spread as substrings                 FIXED
+  F4  MEDIUM    blob payload copies exported untainted                  FIXED
+  F5  MEDIUM    minimize skipped short secrets in comments              FIXED
+  F6  MEDIUM    redact_every_occurrence rebuilt the automaton per call  FIXED
+  F7  MEDIUM    empty blob media type accepted                          FIXED
+  F8  MEDIUM    inspect --path required disagreed; $ defaults dynamic   FIXED
+  F9  MEDIUM    included active_profile silently ignored                FIXED
+  F10 LOW       nested schema evolution invisible to L006/L010          FIXED
+  F11 LOW       Rust generator emitted a marker enum variant            FIXED
+  F12 LOW       no conformance vectors for the new surfaces             FIXED
 
-Build succeeded. Let me create the exact reproduction fixtures and run the V1 checks.
+Round 74 - verification review (no new findings requested)
+----------------------------------------------------------
+F1-F5 and F7-F12 reported FIXED with file:line and passing tests.
+F6 reported NOT FIXED on one point: the code fix was present and the
+probe was linear, but no committed regression test drove the fixed
+method, so a revert would pass every test.
 
-`inspect`/`debug` require the `--from` flag. Re-running those exact surfaces with `--from`.
+Round 75 - verification of F6 only (no new findings requested)
+--------------------------------------------------------------
+`docgen_stays_linear_with_many_secrets_and_fields` was added
+(300 secrets, 3000 documented fields, 3 s bound, driving
+collect_items_with_profile -> redact_authored_text ->
+redact_every_occurrence through a parsed and evaluated document).
 
-V1 is clean. Now the V2 surface sweep, including the benign control.
+  - committed test: 0.25 s (passes)
+  - per-call redactor restored temporarily: 3.80 s (fails the bound)
+  - fixed body restored; tree clean; HEAD unchanged.
 
-V2 leaks are closed and benign default is emitted on 7 of 9 surfaces. Let me check whether Rust/Go generators emit defaults at all.
+VERDICT: F6 FIXED
 
-Rust/Go generators never render defaults (unchanged by this commit). Let me confirm that in code and view the withheld output shape.
-
-V2 redaction confirmed (inspect uses the `***SECRET***` material marker; JSON Schema omits the material default). Now the four committed regression tests.
-
-All four regression tests pass. Now the gates, starting with fmt and clippy.
-
-fmt and clippy are clean. Running the full workspace test suite.
-
-Full workspace passed. Let me extract totals and run the named spot-check suites.
-
-No test is literally tagged r69ÔÇôr71. Let me identify those rounds' fixes and run the named suites explicitly.
-
-Let me identify and run the tests added by the round-69/70/71 fix commits.
-
-Running the specific round-69/70/71 regression tests by name.
-
-Let me confirm the fix is scoped: a **literal** selector must still honor an override (no over-redaction regression).
-
-Literal-selector semantics are unchanged. Let me check what T006 is, to exercise the minimizer with the target actually present.
-
-All checks pass. Final state check and cleanup.
-
-CLEAN
-
-| Area | Result | Evidence (HEAD `7aabbd2`, clean tree) |
-|---|---|---|
-| V1 (computed selector + override) | Ô£à FIXED | `eval --profile q` ÔåÆ `dup: "***SECRET***"` (q's `marker: 1` still applied); `inspect --from ÔÇª --path dup --profile q` ÔåÆ `"tainted": true, "value": "***SECRET***"`; `eval --path dup --profile q` ÔåÆ `"***SECRET***"`; `debug --minimize T006 --profile q` ÔåÆ `reduced` source shows `***SECRET***`, no raw text. Non-existent profile (`--profile nosuchprofile`): W002 warning, `dup` still `***SECRET***`, exits 1. No `Zx9-Secret-Alpha` in stdout or stderr in any run. |
-| V2 (schema surfaces vs env material) | Ô£à FIXED | 9 surfaces ├ù 2 fixtures: zero `Qq7_Env_Token` occurrences in `inspect`, `schema inspect`, `viz schema`, `generate --to jsonschema/typescript/rust/python/go/openapi`. `inspect` shows `"default": "***SECRET***"`; JSON Schema omits the material default. Benign control `Qq7_Benign_Default` is emitted by inspect, schema inspect, viz schema, jsonschema, typescript, python, openapi; rust/go generators never render defaults at all (unchanged rendering path), so the control is vacuous there. |
-| Committed tests | Ô£à 4/4 PASS | `an_override_does_not_declassify_a_computed_selector` ok; `generators_see_an_environment_material_profile` ok; `profile_override_does_not_declassify_a_computed_selector` ok; `schema_surfaces_redact_an_environment_equal_literal` ok. |
-| Gates | Ô£à ALL EXIT 0 | `cargo fmt --all --check` = 0; `cargo clippy --workspace --all-targets -- -D warnings` = 0; `cargo test --workspace` = 0 ÔåÆ **3202 passed, 0 failed, 0 ignored**. |
-| Regressions | Ô£à NONE | `secrets` 135/135, `debug` 83/83, `cli` 122/122, `redaction_paths` 5/5, `regressions` 15/15, `generate` 19/19, `viz` 13/13, `inspect` 34/34, `schema` 26/26, `docgen` 10/10. Round-69/70/71 named tests (15 secrets + 9 debug + 1 docgen) all pass. Literal-selector control: `active_profile = "p"` with `--profile q` still declassifies (emits `dup`) while no-override evaluation keeps it material ÔÇö no over-redaction. |
-| Evidence | ÔÇö | Fix scoped correctly in `active-core/src/secret.rs` (union retained only when document selection is `Computed`), profile plumbed through `convert/gen.rs` and applied to `inspect`, `schema inspect`, `viz schema`, and all six generators in `active-cli/src/main.rs`. Working tree clean; temp fixtures removed. |
-
+Final verdict: ALL 12 FINDINGS FIXED, zero open findings.

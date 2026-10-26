@@ -1,9 +1,19 @@
-CI watch for 81ff85923577343044d3dd929effcdd581a68231
-== RatioArtificiosa/active-lang ==
-CodSpeed: completed success https://github.com/RatioArtificiosa/active-lang/actions/runs/40252685534
-CI: completed success https://github.com/RatioArtificiosa/active-lang/actions/runs/40252685433
-Conformance: completed success https://github.com/RatioArtificiosa/active-lang/actions/runs/40252685428
-== Active-Official/active ==
-CI: completed success https://github.com/Active-Official/active/actions/runs/40252688421
-CodSpeed: completed success https://github.com/Active-Official/active/actions/runs/40252688389
-Conformance: completed success https://github.com/Active-Official/active/actions/runs/40252688360
+# CI verdicts for the final tree (2026-10-26)
+
+Content tree: 625f22c (round-73 fixes + docgen bound)
+
+RatioArtificiosa/active-lang
+  CI           40277516911  success
+  Conformance  40277516922  success
+  CodSpeed     40277516915  success
+  Fuzz smoke   40277516919  success
+
+Active-Official/active
+  CI           40277520453  success
+  Conformance  40277520454  success
+  CodSpeed     40277520309  success
+  Fuzz smoke   40277520437  success
+
+Previous stamps (81ff859 content, ff445b0 docs) were green on CI,
+Conformance, and CodSpeed on both remotes; IDs are recorded in the
+goal close-out.

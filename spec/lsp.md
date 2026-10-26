@@ -297,8 +297,10 @@ Rules:
   (`agent-kit/capability.schema.json`), so an installed server answers
   the handshake without the repository tree. The descriptor is the same
   contract `active capability` serves.
-- The debugger bridge runs the shipped evaluator with the wall clock
-  disabled, so a request is deterministic regardless of machine load.
+- The debugger bridge runs the shipped evaluator hermetically
+  (`Engine::hermetic`) with the wall clock disabled: a request is
+  deterministic, and an `env.X` read renders `null` exactly as hover and
+  diagnostics report it (the server never reads the ambient environment).
 
 Hover appends the same per-code guidance to lint findings it shows
 (`_fix_: ...`), so the explainer is available where the finding is.

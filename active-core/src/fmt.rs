@@ -273,6 +273,32 @@ impl<'a> Formatter<'a> {
             .cloned()
             .collect();
 
+        // A table's own trailing comments are emitted after its last
+        // entry. When that entry is a nested non-empty block, the parser
+        // attaches those comments to the nested block on the next read
+        // (they follow its `}`), so the canonical form places them inside
+        // it. Hoist them down now: this is the fixed point the second
+        // pass reaches.
+        if let Some((last_key, last_id)) = ordered.last() {
+            if matches!(
+                self.module.get(*last_id),
+                Some(Node::Table { fields }) if !fields.is_empty()
+            ) && self.trailing_block.contains_key(path)
+            {
+                let child_path = if path.is_empty() {
+                    last_key.clone()
+                } else {
+                    format!("{path}.{last_key}")
+                };
+                if let Some(comments) = self.trailing_block.remove(path) {
+                    self.trailing_block
+                        .entry(child_path)
+                        .or_default()
+                        .extend(comments);
+                }
+            }
+        }
+
         // Scalars-first at the root, source order inside blocks.
         let mut first = true;
         let entry_count = ordered.len();
@@ -495,6 +521,22 @@ impl<'a> Formatter<'a> {
                     self.render_expr(descriptions)
                 ));
             }
+            // Enum fields accept the same optional arguments as other
+            // leaves. Dropping them changed `required`, defaults, and
+            // descriptions on the next parse (a formatter must never
+            // change meaning).
+            for (name, slot) in [
+                ("description", field.description),
+                ("requires", field.requires),
+                ("default", field.default),
+            ] {
+                if let Some(arg) = slot {
+                    out.push_str(&format!(", {name} = {}", self.render_expr(arg)));
+                }
+            }
+            if let Some(removed) = &field.removed_in {
+                out.push_str(&format!(", removed_in = \"{}\"", escape(removed)));
+            }
             out.push_str(&deprecated);
             out.push(')');
             return out;
@@ -546,14 +588,14 @@ impl<'a> Formatter<'a> {
         is_root: bool,
         has_next: bool,
     ) {
+        let empty = matches!(
+            self.module.get(id),
+            Some(Node::Table { fields }) if fields.is_empty()
+        );
         match self.style {
             Style::Indent => {
                 // Indentation style cannot express a bodyless block, so an
                 // empty table is emitted in its inline form (`key = {}`).
-                let empty = matches!(
-                    self.module.get(id),
-                    Some(Node::Table { fields }) if fields.is_empty()
-                );
                 if empty {
                     self.out
                         .push_str(&format!("{}{key} = {{}}", INDENT.repeat(depth)));
@@ -590,7 +632,28 @@ impl<'a> Formatter<'a> {
                     self.out.push_str(&format!("[{key}]"));
                     self.emit_trailing(path);
                     self.out.push('\n');
+                    // Same blank-line rule as the indentation branch: a
+                    // following entry's separator must precede the empty
+                    // table's trailing comments.
+                    if empty
+                        && has_next
+                        && self
+                            .trailing_block
+                            .get(path)
+                            .is_some_and(|comments| !comments.is_empty())
+                    {
+                        self.out.push('\n');
+                        self.pending_blank = true;
+                    }
                     self.emit_table_body(id, 0, path, false);
+                } else if empty {
+                    // Inline form: a `key {\n}` block followed by a
+                    // comment makes the next parse attach that comment
+                    // inside the empty block. `key = {}` is stable.
+                    self.out
+                        .push_str(&format!("{}{key} = {{}}", INDENT.repeat(depth)));
+                    self.emit_trailing(path);
+                    self.out.push('\n');
                 } else {
                     self.out
                         .push_str(&format!("{}{key} {{", INDENT.repeat(depth)));
@@ -819,6 +882,7 @@ impl<'a> Formatter<'a> {
                 // adjacent quotes re-parse as a different token) and the
                 // delimiter itself does not occur.
                 if !text.contains("'''")
+                    && !text.contains('\r')
                     && !text.starts_with('\'')
                     && !text.ends_with('\'') =>
             {

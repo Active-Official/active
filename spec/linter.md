@@ -81,7 +81,7 @@ port = 8080
 
 ## 4. Disablement and project configuration
 
-- CLI: `ACTIVE lint [--format text|json|sarif] [--disable-lint <rule>]... [--config FILE] <file>...`
+- CLI: `ACTIVE lint [--format text|json|sarif] [--disable-lint <rule>]... [--config FILE] [--allow-parent-escapes] <file>...`
   (repeatable; unknown rule names are an error listing the sixteen).
 - Library: `LintOptions { disabled: HashSet<String>, severity: HashMap<String, Option<Severity>> }`
   (rule IDs as above); `active_core::lint::lint_with(&module, &options)`.
@@ -99,6 +99,9 @@ port = 8080
   reporting: `off` drops the finding, the other levels replace the
   diagnostic severity in text, JSON, and SARIF. Rule evaluation itself
   stays deterministic for a fixed module and option set.
+- `--allow-parent-escapes` mirrors the other tools' parse flag: it lets the
+  parser accept absolute or `..` include paths so L016 can report them
+  (otherwise E015 refuses the document before linting).
 - No file-level suppression comments in this phase (noted future).
 
 ## 5. `ACTIVE lint` contract

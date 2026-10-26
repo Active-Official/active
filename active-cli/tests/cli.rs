@@ -4093,3 +4093,54 @@ fn lint_redacts_an_environment_equal_deprecated_reason() {
         assert!(body.contains("***SECRET***"), "lint {format}: {body}");
     }
 }
+
+#[test]
+fn lint_can_report_include_escapes_when_the_parser_allows_them() {
+    fixture_in("lint-hygiene-cli", "child.active", "shared = 1\n");
+    let root = fixture_in(
+        "lint-hygiene-cli/sub",
+        "root.active",
+        "include \"../child.active\"\n",
+    );
+    // Without the opt-in, the parser refuses the escape (E015).
+    let refused = active()
+        .arg("lint")
+        .arg(&root)
+        .output()
+        .expect("run active");
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("E015"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    // With it, L016 reports the hygiene risk the parser would otherwise
+    // make unreachable.
+    let out = active()
+        .args(["lint", "--allow-parent-escapes", "--format", "json"])
+        .arg(&root)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    let items: serde_json::Value = serde_json::from_slice(&out.stdout).expect("lint JSON");
+    let arr = items.as_array().expect("array");
+    assert!(arr.iter().any(|d| d["code"] == "L016"), "{items}");
+}
+
+#[test]
+fn deep_expression_nesting_fails_with_e004_instead_of_overflowing() {
+    // The CLI runs parsing on a 32 MB worker stack so the documented
+    // 64-level expression limit is reachable in unoptimized builds
+    // instead of aborting with a stack overflow.
+    let src = format!("a = {}1{}\n", "[".repeat(64), "]".repeat(64));
+    let f = fixture("deep_expr.active", &src);
+    let out = active().arg("check").arg(&f).output().expect("run active");
+    let body = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "{body}");
+    assert!(body.contains("E004"), "{body}");
+    assert!(!body.to_lowercase().contains("overflow"), "{body}");
+}

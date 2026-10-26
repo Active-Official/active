@@ -607,8 +607,18 @@ fn handle_notification(
 }
 
 fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
-    let (connection, io_threads) = Connection::stdio();
-    serve(connection)?;
-    io_threads.join()?;
-    Ok(())
+    // Parsing and evaluation are recursive; run the server on a worker
+    // with a generous stack so the documented 64-level expression limit
+    // stays reachable in unoptimized builds.
+    std::thread::Builder::new()
+        .stack_size(32 * 1024 * 1024)
+        .spawn(|| -> Result<(), Box<dyn Error + Sync + Send>> {
+            let (connection, io_threads) = Connection::stdio();
+            serve(connection)?;
+            io_threads.join()?;
+            Ok(())
+        })
+        .expect("spawn lsp thread")
+        .join()
+        .expect("lsp thread")
 }

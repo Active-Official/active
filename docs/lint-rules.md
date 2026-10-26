@@ -69,6 +69,10 @@ admits `^L[0-9]{3}$` codes).
 active lint --disable-lint unused-lets --disable-lint data-mode file.active
 ```
 
+`--allow-parent-escapes` lets the parser accept absolute or `..` include paths so
+`include-hygiene` (L016) can report them; without it those documents fail
+parsing with E015 first.
+
 Unknown names are an error listing the sixteen rules. Library callers pass
 `LintOptions { disabled, severity }` to `active_core::lint::lint_with`.
 

@@ -64,7 +64,9 @@ pub fn breakpoint_index_with_budget(
     }
     if let Some(percent) = selector.strip_prefix("budget:") {
         let percent = percent.parse::<u64>().ok()?;
-        if percent > 100 || (percent > 0 && max_nodes == 0) {
+        // Documented range is 1-100; 0 would match step 0 and is not a
+        // threshold.
+        if percent == 0 || percent > 100 || max_nodes == 0 {
             return None;
         }
         let limit = max_nodes.saturating_mul(percent) / 100;

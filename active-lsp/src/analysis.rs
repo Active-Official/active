@@ -3339,7 +3339,10 @@ pub fn explain_snapshot(doc: &Doc) -> JsonValue {
 /// open document, truncated through an optional breakpoint selector.
 /// Runs the shipped evaluator - the server never re-implements a walk.
 pub fn steps_snapshot(doc: &Doc, selector: Option<&str>) -> JsonValue {
-    let mut engine = Engine::new();
+    // Hermetic like every other analysis surface: the server never reads
+    // the ambient environment (spec/lsp.md §1), so a step cannot show a
+    // host value that hover and diagnostics report as absent.
+    let mut engine = Engine::hermetic();
     engine.resilient = true;
     // A language-server request must be deterministic: no wall deadline.
     engine.budget.max_wall_ms = 0;

@@ -7,6 +7,7 @@
 
 use active_core::fmt::format;
 use active_core::{parse, Engine, Style};
+use std::path::Path;
 
 fn parse_ok(src: &str) -> active_core::Module {
     parse(src, "fmt").unwrap_or_else(|d| panic!("parse failed: {d:?}"))
@@ -493,4 +494,121 @@ fn interpolation_literal_strings_with_a_carriage_return_round_trip() {
         active_core::convert::value_to_pretty_json(&v1),
         active_core::convert::value_to_pretty_json(&v2)
     );
+}
+
+#[test]
+fn brace_empty_tables_keep_inter_entry_comments_idempotent() {
+    // Root header tables and nested empty tables in brace style: a
+    // following comment must not migrate into the empty block, and the
+    // root separator must precede an empty table's trailing comments.
+    for src in [
+        "t = {}\n#A\n#(`#\nl = {}\n",
+        "[outer]\nt = {}\n# c\nk = 1\n",
+    ] {
+        let module = parse(src, "brace-comments").expect("parses");
+        for style in [Style::Brace, Style::Indent] {
+            let once = format(&module, style);
+            let reparsed = parse(&once, "brace-comments-2").unwrap_or_else(|d| {
+                panic!("formatted output must re-parse ({style:?}): {d:?}\n{once}")
+            });
+            assert_eq!(format(&reparsed, style), once, "{style:?}");
+            let engine = Engine::new();
+            let (v1, _) = engine.evaluate(&module).expect("evaluates");
+            let (v2, _) = engine.evaluate(&reparsed).expect("re-evaluates");
+            assert_eq!(
+                active_core::convert::value_to_pretty_json(&v1),
+                active_core::convert::value_to_pretty_json(&v2),
+                "{style:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn enum_fields_keep_every_accepted_argument() {
+    // Regression: the Enum branch returned before the shared argument
+    // list, silently dropping default/description/requires/removed_in.
+    let src = "schema { color = Enum(\"red\", \"green\", description = \"traffic light\", default = \"green\", requires = \"enabled\", deprecated = \"use tone\") }\ncolor = \"red\"\nenabled = true\n";
+    let module = parse(src, "enum-args").expect("parses");
+    let once = format(&module, Style::Brace);
+    for needle in ["default =", "description =", "requires =", "deprecated ="] {
+        assert!(once.contains(needle), "missing {needle}: {once}");
+    }
+    let reparsed = parse(&once, "enum-args-2").expect("formatted output re-parses");
+    assert_eq!(format(&reparsed, Style::Brace), once);
+    let engine = Engine::new();
+    let (v1, _) = engine.evaluate(&module).expect("evaluates");
+    let (v2, _) = engine.evaluate(&reparsed).expect("re-evaluates");
+    assert_eq!(
+        active_core::convert::value_to_pretty_json(&v1),
+        active_core::convert::value_to_pretty_json(&v2)
+    );
+}
+
+#[test]
+fn semantic_multiline_with_a_carriage_return_keeps_its_value() {
+    // The `'''` form normalizes a lone CR to LF, so CR payloads must use
+    // the escaped `"""` path.
+    let src = "p = @prompt \"\"\"x\\rY\"\"\"\n";
+    let module = parse(src, "semantic-cr").expect("parses");
+    let once = format(&module, Style::Brace);
+    assert!(once.contains("\"\"\""), "{once:?}");
+    let reparsed = parse(&once, "semantic-cr-2").expect("formatted output re-parses");
+    assert_eq!(format(&reparsed, Style::Brace), once);
+    let engine = Engine::new();
+    let (v1, _) = engine.evaluate(&module).expect("evaluates");
+    let (v2, _) = engine.evaluate(&reparsed).expect("re-evaluates");
+    assert_eq!(
+        active_core::convert::value_to_pretty_json(&v1),
+        active_core::convert::value_to_pretty_json(&v2)
+    );
+}
+
+#[test]
+fn brace_trailing_note_after_a_nested_block_is_idempotent() {
+    // A table's trailing comment follows the nested block's `}`, so the
+    // parser attaches it to the nested block next time; canonical output
+    // places it inside that block.
+    let src = "t:\n  inner {\n    a = 1\n  }\n# trailing note\n";
+    let module = parse(src, "brace-trail").expect("parses");
+    let once = format(&module, Style::Brace);
+    let reparsed = parse(&once, "brace-trail-2").expect("formatted output re-parses");
+    assert_eq!(format(&reparsed, Style::Brace), once);
+    assert_eq!(format(&module, Style::Brace), once);
+}
+
+#[test]
+fn every_shipped_schema_round_trips_through_the_formatter() {
+    // The Enum-argument regression first showed up in the shipped schema
+    // library: formatting dropped defaults/descriptions. Every schema must
+    // keep its evaluated value (or its exact diagnostic verdict) through a
+    // format round trip in both styles.
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../schemas");
+    let mut files: Vec<_> = std::fs::read_dir(&dir)
+        .expect("schema library")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|e| e == "active"))
+        .collect();
+    files.sort();
+    assert!(files.len() >= 8, "expected the schema library: {files:?}");
+    let engine = Engine::new();
+    for file in files {
+        let source = std::fs::read_to_string(&file).expect("read schema");
+        let module = parse(&source, "schema-fmt").unwrap_or_else(|d| panic!("{file:?}: {d:?}"));
+        let (original, _) = engine.evaluate(&module).expect("schema evaluates");
+        for style in [Style::Brace, Style::Indent] {
+            let once = format(&module, style);
+            let reparsed = parse(&once, "schema-fmt-2")
+                .unwrap_or_else(|d| panic!("{file:?} ({style:?}) must re-parse: {d:?}\n{once}"));
+            let (after, _) = engine
+                .evaluate(&reparsed)
+                .expect("formatted schema evaluates");
+            assert_eq!(
+                active_core::convert::value_to_pretty_json(&original),
+                active_core::convert::value_to_pretty_json(&after),
+                "{file:?} ({style:?}): formatting changed the value"
+            );
+        }
+    }
 }

@@ -16,6 +16,13 @@ process, not the document.
 | Static caps | Parser (per file, at parse time) | Expression nesting (64, E004), block nesting (64, E011), schema-type nesting (64, E004), include depth (32 files, E016) | Diagnose with a span and **recover** (substitute null / skip body) — parsing always terminates |
 | Runtime accountant | Evaluator (`Engine::budget`) | Nodes visited, value nesting depth, array length, total keys, wall-clock time | **Abort** with X001–X005 — no value tree is returned |
 
+The parser is recursive descent, so reaching the 64-level expression limit
+uses several stack frames per level. The shipped CLI and language server run
+parsing on a dedicated 32 MiB stack thread, which keeps the documented
+limits reachable in unoptimized builds; embedders calling the library
+directly should provide at least 4 MiB of stack (the reference tests and
+release builds stay within that).
+
 The halves compose: anything parseable is statically shallow, so the
 evaluator's walk is a finite DAG traversal whose cost is linear in
 the arena — the accountant then guards *scale* (a 50 MB monster

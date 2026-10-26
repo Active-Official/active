@@ -663,6 +663,10 @@ enum Commands {
         /// Output format: text (human), json (stable schema), sarif 2.1.0
         #[arg(long = "format", default_value = "text")]
         output_format: String,
+        /// Allow includes to use absolute paths or escape the directory
+        /// (so include-hygiene can report them)
+        #[arg(long)]
+        allow_parent_escapes: bool,
     },
     /// Schema query alias surface: `active schema inspect ...`
     Schema {
@@ -1351,6 +1355,12 @@ fn main() -> anyhow::Result<()> {
         .join()
         .expect("argument parser thread");
 
+    // Parsing and evaluation are recursive; run the command on a worker
+    // with a generous stack so the documented 64-level expression limit
+    // stays reachable in unoptimized builds (debug CLIs, test runners).
+    let worker = std::thread::Builder::new()
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || -> anyhow::Result<()> {
     match cli.command {
         Commands::Eval {
             file,
@@ -2830,9 +2840,14 @@ fn main() -> anyhow::Result<()> {
             disable,
             config_file,
             output_format,
+            allow_parent_escapes,
         } => {
             use active_core::lint;
             let format = LintFormat::parse(&output_format)?;
+            let parse_options = ParseOptions {
+                allow_parent_escapes,
+                ..Default::default()
+            };
             // An explicit file wins; otherwise each input discovers the
             // nearest `.active-lint.toml` above it (deterministic per
             // file, so a workspace can scope rules by subtree).
@@ -2862,7 +2877,7 @@ fn main() -> anyhow::Result<()> {
                     eprintln!("[Error] {e}");
                     anyhow::anyhow!("bad lint configuration")
                 })?;
-                let module = match parse_file(file, ParseOptions::default()) {
+                let module = match parse_file(file, parse_options.clone()) {
                     Ok(module) => module,
                     Err(diags) => {
                         // Parse failures are not lint findings: the
@@ -2917,6 +2932,8 @@ fn main() -> anyhow::Result<()> {
             }
         }
     }
-
     Ok(())
+        })
+        .expect("spawn command thread");
+    worker.join().expect("command thread")
 }

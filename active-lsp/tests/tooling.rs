@@ -764,3 +764,17 @@ fn explainer_and_step_bridges_use_the_shipped_engine() {
         "{unbounded}"
     );
 }
+
+#[test]
+fn step_bridge_is_hermetic_for_environment_reads() {
+    // The LSP never reads the ambient environment; a step trace must not
+    // show a host value that hover/diagnostics report as absent.
+    let name = "ACTIVE_LSP_STEPS_PROBE";
+    std::env::set_var(name, "ambient-value-xyz");
+    let doc = open("port = env.ACTIVE_LSP_STEPS_PROBE\n");
+    let steps = analysis::steps_snapshot(&doc, None);
+    std::env::remove_var(name);
+    let text = steps.to_string();
+    assert!(!text.contains("ambient-value-xyz"), "{steps}");
+    assert!(text.contains("null"), "{steps}");
+}

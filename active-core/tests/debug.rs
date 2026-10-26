@@ -1536,7 +1536,8 @@ fn budget_breakpoints_match_on_count_and_percent() {
         breakpoint_index_with_budget(&steps, "budget:100", 4),
         Some(3)
     );
-    assert_eq!(breakpoint_index_with_budget(&steps, "budget:0", 4), Some(0));
+    // Documented range is 1-100: 0 is not a threshold and never matches.
+    assert_eq!(breakpoint_index_with_budget(&steps, "budget:0", 4), None);
     // A document far under the limit never trips a percentage breakpoint.
     assert_eq!(
         breakpoint_index_with_budget(&steps, "budget:50", 100_000),

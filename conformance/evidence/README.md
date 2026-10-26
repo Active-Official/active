@@ -42,9 +42,10 @@ including `julia: pass`.
 
 CI Linux runners cannot pull a local archive, so the workflow installs
 the same toolchains. Those steps are **required** (never a silent SKIP):
-Julia and Nim come from the Ubuntu 24.04 archive in the same apt step
-(no juliaup metadata DB), Crystal and Dart use their distro apt repos,
-and every install retries a transient mirror failure.
+Julia 1.11.5 and Nim 2.2.4 come from pinned official tarballs (the
+runner's apt index has no Julia candidate and juliaup's metadata DB was
+unreliable), Crystal and Dart use their distro apt repos, and every
+install retries a transient mirror failure.
 
 ## Container harness artifacts
 

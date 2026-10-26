@@ -7,7 +7,8 @@ HEAD f55f9b8 (CI-log stamp; superseded by the next commit)
                                         runner; not a code failure. Fixed by
                                         making every Tier-2 installer required
                                         with bounded retries; Julia and Nim now
-                                        come from Ubuntu apt - no SKIPs)
+                                        come from pinned official tarballs -
+                                        no SKIPs)
     CodSpeed     40302574389  in_progress at the time of this log
                                         (superseded by the next commit)
   Active-Official/active

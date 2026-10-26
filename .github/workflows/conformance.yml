@@ -47,22 +47,59 @@ jobs:
         if: runner.os != 'Windows'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq luajit
       - name: Install Tier-2 apt toolchains (Linux only)
-        # Distro packages, not upstream installers: Ubuntu 24.04 ships
-        # Julia 1.10 and Nim 1.6, and apt goes through the same mirrors
-        # the runner already trusts. Retry the index/install so a mirror
-        # hiccup cannot drop a toolchain (no SKIPs).
+        # Distro packages from the runner's own mirrors. Retry the
+        # index/install so a mirror hiccup cannot drop a toolchain (no
+        # SKIPs). Julia and Nim are NOT in the runner's apt index, so
+        # they come from pinned upstream tarballs below.
         if: runner.os == 'Linux'
         run: |
           for attempt in 1 2 3; do
             if sudo apt-get update -qq \
                && sudo apt-get install -y -qq --no-install-recommends \
                     perl libffi-platypus-perl r-base-core ghc ocaml elixir \
-                    kotlin julia nim; then
-              julia --version
-              nim --version | head -n 1
+                    kotlin; then
               exit 0
             fi
             echo "apt toolchain attempt $attempt failed; retrying"
+            sleep 15
+          done
+          exit 1
+      - name: Install Julia from the pinned tarball (Linux only)
+        # juliaup's metadata DB and the runner's apt index both proved
+        # unreliable; a pinned official tarball is deterministic and
+        # needs no registry. Required: no SKIP.
+        if: runner.os == 'Linux'
+        run: |
+          for attempt in 1 2 3; do
+            if curl -fsSL --retry 3 \
+                 https://julialang-s3.julialang.org/bin/linux/x64/1.11/julia-1.11.5-linux-x86_64.tar.gz \
+                 -o /tmp/julia.tar.gz \
+               && sudo mkdir -p /opt/julia \
+               && sudo tar -xzf /tmp/julia.tar.gz -C /opt/julia --strip-components=1 \
+               && /opt/julia/bin/julia --version; then
+              echo "/opt/julia/bin" >> "$GITHUB_PATH"
+              exit 0
+            fi
+            echo "julia tarball attempt $attempt failed; retrying"
+            sleep 15
+          done
+          exit 1
+      - name: Install Nim from the pinned tarball (Linux only)
+        # choosenim's network bootstrap was slow and flaky; the pinned
+        # linux_x64 tarball is deterministic. Required: no SKIP.
+        if: runner.os == 'Linux'
+        run: |
+          for attempt in 1 2 3; do
+            if curl -fsSL --retry 3 \
+                 https://nim-lang.org/download/nim-2.2.4-linux_x64.tar.xz \
+                 -o /tmp/nim.tar.xz \
+               && sudo mkdir -p /opt/nim \
+               && sudo tar -xJf /tmp/nim.tar.xz -C /opt/nim --strip-components=1 \
+               && /opt/nim/bin/nim --version; then
+              echo "/opt/nim/bin" >> "$GITHUB_PATH"
+              exit 0
+            fi
+            echo "nim tarball attempt $attempt failed; retrying"
             sleep 15
           done
           exit 1

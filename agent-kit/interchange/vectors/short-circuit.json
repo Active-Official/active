@@ -1,0 +1,26 @@
+{
+  "known": [
+    "blake3:1d9e18dd83b0c5b5d5e5f2f42195a2c32e0ce2b07e7edee5f0a421f70ba7324f"
+  ],
+  "payload": {
+    "model": {
+      "$active.blob": {
+        "hash": "blake3:1d9e18dd83b0c5b5d5e5f2f42195a2c32e0ce2b07e7edee5f0a421f70ba7324f",
+        "size": 11,
+        "media_type": "application/json",
+        "tainted": false
+      }
+    },
+    "extra": {
+      "$active.blob": {
+        "hash": "blake3:abababababababababababababababababababababababababababababababab",
+        "size": 4,
+        "media_type": "text/plain",
+        "tainted": true
+      }
+    }
+  },
+  "missing": [
+    "blake3:abababababababababababababababababababababababababababababababab"
+  ]
+}

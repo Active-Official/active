@@ -37,6 +37,7 @@
 # Reference
 
 - [Syntax](reference/syntax.md)
+- [Evaluation modes](reference/modes.md)
 - [CLI](reference/cli.md)
 - [Diagnostics index](reference/diagnostics.md)
 - [Error catalog](reference/error-catalog.md)

@@ -10,7 +10,7 @@ Every emitter returns redacted JSON. Taint and budget carry
 | `graph` | `{nodes: [{id,label}], edges: [{from,to}]}` | `json` (default), `mermaid`, `dot` |
 | `taint` | `{version, nodes, edges, sources, export_points}` | `json` |
 | `budget` | `{version, mode, limits, usage, headroom, warnings}` | `json` |
-| `schema` | INSPECT v2 document plus `mode` | `json` |
+| `schema` | INSPECT v2 document plus `mode` and `compatibility` | `json` |
 | `repair` | `RepairOutcome` without `repaired_source` (goal, steps, clean/stuck/unrepairable, final_codes, findings) | `json` |
 
 ### Taint
@@ -55,3 +55,24 @@ redacted.
 Tests pin that the serialized taint, budget, schema, and repair exports
 never contain fixture secret material, and that the graph emitters
 carry names only.
+
+### Schema and compatibility
+
+`schema` is the INSPECT v2 document (field tree, types, constraints,
+defaults, descriptions, `deprecated`, `removed_in`, `requires`,
+`version`/`min_reader`/`min_writer`) plus two derived keys:
+
+- `mode` — `config` or `data`.
+- `compatibility` — the migration view:
+  - `schema_version`, `min_reader`, `min_writer` (null when the schema
+    declares none);
+  - `deprecated` — `[{path, hint}]`, sorted by path, where `hint` is
+    the authored `deprecated` message (`"deprecated"` for a bare
+    `deprecated = true`);
+  - `removals` — `[{path, removed_in, hint}]`, sorted by path, with a
+    generated `migrate before <version>` hint.
+
+Paths and schema prose only: no evaluated value enters the view. The
+whole document is still passed through the material profile by the CLI,
+so schema prose that equals a host value redacts exactly like every
+other prose surface.

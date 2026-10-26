@@ -376,7 +376,7 @@ enum Commands {
         #[arg(short, long)]
         from: PathBuf,
         /// Stop at the first matching breakpoint: taint, path:<prefix>,
-        /// code:<CODE>, or node:<n>
+        /// code:<CODE>, node:<n>, budget:<percent>, or budget:nodes:<n>
         #[arg(long = "break", conflicts_with_all = ["replay", "minimize"])]
         break_at: Option<String>,
         /// Deterministic replay: evaluate twice and compare hashes,
@@ -538,6 +538,17 @@ enum Commands {
         /// Emit the unified browser model (diagnostics + plan) as JSON
         #[arg(long)]
         browser: bool,
+        /// Browser filter: keep diagnostics with this code (repeatable)
+        #[arg(long = "filter-code", requires = "browser")]
+        filter_code: Vec<String>,
+        /// Browser filter: keep diagnostics with this severity
+        /// (error|warning|info|hint, repeatable)
+        #[arg(long = "filter-severity", requires = "browser")]
+        filter_severity: Vec<String>,
+        /// Browser filter: keep diagnostics at or under this path
+        /// prefix (repeatable)
+        #[arg(long = "filter-path", requires = "browser")]
+        filter_path: Vec<String>,
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
@@ -640,10 +651,15 @@ enum Commands {
         /// Input .active files (at least one)
         #[arg(required = true)]
         files: Vec<PathBuf>,
-        /// Disable a rule (repeatable): unused-lets, depends-on,
-        /// complexity, hardcoded-secrets, deprecated
+        /// Disable a rule (repeatable); rule IDs are listed by
+        /// `docs/lint-rules.md`
         #[arg(long = "disable-lint")]
         disable: Vec<String>,
+        /// Project configuration file (.active-lint.toml). When
+        /// absent, the nearest configuration above each input file
+        /// is discovered automatically.
+        #[arg(long = "config")]
+        config_file: Option<PathBuf>,
         /// Output format: text (human), json (stable schema), sarif 2.1.0
         #[arg(long = "format", default_value = "text")]
         output_format: String,
@@ -747,7 +763,7 @@ fn run_inspect(
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
             // Schema prose can equal a host value; redact it with the
             // authored + process-env material set.
-            let schema_profile = material_profile(&module);
+            let schema_profile = material_profile_with(&module, profile.as_deref());
             schema_profile.redact_json(&mut inspected);
             println!(
                 "{}",
@@ -1205,7 +1221,18 @@ const CAPABILITY_JSON: &str = include_str!("../../agent-kit/capability.schema.js
 /// environment values its material env reads would resolve to. Hermetic
 /// tools do not evaluate, so this is the widest context they can see.
 fn material_profile(module: &active_core::Module) -> active_core::secret::SecretProfile {
-    let mut profile = active_core::secret::SecretProfile::analyze(module);
+    material_profile_with(module, None)
+}
+
+/// Material profile under an optional `--profile` override. The
+/// override can select a path whose environment read is material, so
+/// analyzing with the document selector alone would miss it.
+fn material_profile_with(
+    module: &active_core::Module,
+    override_profile: Option<&str>,
+) -> active_core::secret::SecretProfile {
+    let mut profile =
+        active_core::secret::SecretProfile::analyze_with_profile(module, override_profile);
     let mut env = std::collections::HashMap::new();
     for node in &module.arena {
         if let active_core::ir::Node::Env { name, .. } = node {
@@ -2004,7 +2031,11 @@ fn main() -> anyhow::Result<()> {
                 .evaluate_with_steps(&module)
                 .map_err(|e| anyhow::anyhow!("cannot evaluate for stepping: {e}"))?;
             let (shown, matched) = match break_at.as_deref() {
-                Some(selector) => match active_core::debug::breakpoint_index(&steps, selector) {
+                Some(selector) => match active_core::debug::breakpoint_index_with_budget(
+                    &steps,
+                    selector,
+                    step_engine.budget.max_nodes,
+                ) {
                     Some(index) => (steps[..=index].to_vec(), Some(index)),
                     None => (Vec::new(), None),
                 },
@@ -2302,8 +2333,23 @@ fn main() -> anyhow::Result<()> {
         Commands::Compatibility { old, new, format } => {
             let old_module = parse_input(&old, false, false, &None)?;
             let new_module = parse_input(&new, false, false, &None)?;
-            let findings = active_core::convert::compare_schemas(&old_module, &new_module)
+            let mut findings = active_core::convert::compare_schemas(&old_module, &new_module)
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
+            // Findings are value-free by contract. `compare_schemas`
+            // redacts with the document selector; an env-resolved value
+            // copied into an enum member or media type is material only
+            // when the process environment is consulted, so sweep the
+            // messages again with both documents' material profiles.
+            let old_profile = material_profile(&old_module);
+            let new_profile = material_profile(&new_module);
+            for finding in &mut findings {
+                if let Some(text) = old_profile.redact_text(&finding.message) {
+                    finding.message = text;
+                }
+                if let Some(text) = new_profile.redact_text(&finding.message) {
+                    finding.message = text;
+                }
+            }
             match format.as_str() {
                 "json" => println!(
                     "{}",
@@ -2337,6 +2383,9 @@ fn main() -> anyhow::Result<()> {
             apply_step,
             cherry_pick,
             browser,
+            filter_code,
+            filter_severity,
+            filter_path,
             allow_parent_escapes,
             trust_keys,
             profile,
@@ -2381,7 +2430,7 @@ fn main() -> anyhow::Result<()> {
                 if format != "text" && format != "json" {
                     anyhow::bail!("--browser always emits JSON (--format json|text)");
                 }
-                let model = active_core::convert::repair::browser_model_with(
+                let mut model = active_core::convert::repair::browser_model_with(
                     &source,
                     goal_parsed.clone(),
                     &preserve,
@@ -2390,6 +2439,33 @@ fn main() -> anyhow::Result<()> {
                     Some(&from),
                     allow_parent_escapes,
                 );
+                // Browser filters select the diagnostics shown. The plan
+                // stays whole: filtering steps would change what
+                // `--apply-step` means, and the browser must never
+                // disagree with the shipped plan.
+                for severity in &filter_severity {
+                    let known = ["error", "warning", "info", "hint"];
+                    if !known.contains(&severity.as_str()) {
+                        anyhow::bail!(
+                            "unknown --filter-severity `{severity}` (want error|warning|info|hint)"
+                        );
+                    }
+                }
+                if !filter_code.is_empty() || !filter_severity.is_empty() || !filter_path.is_empty()
+                {
+                    if let Some(items) = model["diagnostics"].as_array_mut() {
+                        items.retain(|item| {
+                            let code = item["code"].as_str().unwrap_or_default();
+                            let severity = item["severity"].as_str().unwrap_or_default();
+                            let path = item["path"].as_str().unwrap_or_default();
+                            (filter_code.is_empty() || filter_code.iter().any(|c| c == code))
+                                && (filter_severity.is_empty()
+                                    || filter_severity.iter().any(|s| s == severity))
+                                && (filter_path.is_empty()
+                                    || filter_path.iter().any(|p| path.starts_with(p)))
+                        });
+                    }
+                }
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&model)
@@ -2752,20 +2828,40 @@ fn main() -> anyhow::Result<()> {
         Commands::Lint {
             files,
             disable,
+            config_file,
             output_format,
         } => {
             use active_core::lint;
             let format = LintFormat::parse(&output_format)?;
-            let options = lint::LintOptions::with_disabled(&disable).map_err(|e| {
-                eprintln!("[Error] {e}");
-                anyhow::anyhow!("bad --disable-lint flag")
-            })?;
+            // An explicit file wins; otherwise each input discovers the
+            // nearest `.active-lint.toml` above it (deterministic per
+            // file, so a workspace can scope rules by subtree).
+            let explicit = match &config_file {
+                Some(path) => Some(
+                    lint::LintConfig::load(path)
+                        .map_err(|e| anyhow::anyhow!("bad --config file: {e}"))?,
+                ),
+                None => None,
+            };
             // Read-only across files: every file always runs, even
             // when an earlier file fails to parse.
             let mut dirty = false;
             let mut items: Vec<(String, Diagnostic)> = Vec::new();
             for file in &files {
                 let name = file.to_string_lossy().to_string();
+                let options = if let Some(config) = &explicit {
+                    config.options(&disable)
+                } else if let Some((_, config)) = lint::LintConfig::discover(file)
+                    .map_err(|e| anyhow::anyhow!("bad .active-lint.toml: {e}"))?
+                {
+                    config.options(&disable)
+                } else {
+                    lint::LintOptions::with_disabled(&disable)
+                }
+                .map_err(|e| {
+                    eprintln!("[Error] {e}");
+                    anyhow::anyhow!("bad lint configuration")
+                })?;
                 let module = match parse_file(file, ParseOptions::default()) {
                     Ok(module) => module,
                     Err(diags) => {

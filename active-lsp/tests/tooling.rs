@@ -724,3 +724,43 @@ fn hover_redacts_a_short_path_material_copy() {
     let text = format!("{:?}", hover.contents);
     assert!(!text.contains("ABC"), "hover leaked: {text}");
 }
+
+#[test]
+fn hover_appends_deterministic_guidance_for_lint_findings() {
+    let doc = open("let idle = 1\nport = 8080\n");
+    let hover = analysis::hover_at(&doc, 0, 4).expect("hover on the binding");
+    let value = match hover.contents {
+        lsp_types::HoverContents::Markup(markup) => markup.value,
+        other => panic!("unexpected hover contents: {other:?}"),
+    };
+    assert!(value.contains("L001"), "{value}");
+    assert!(value.contains("_fix_: "), "{value}");
+    // The guidance is the shipped canned text, not a reimplementation.
+    let guidance = active_core::convert::explain::explain_code("L001");
+    assert!(value.contains(guidance), "{value}");
+}
+
+#[test]
+fn explainer_and_step_bridges_use_the_shipped_engine() {
+    let doc = open("let idle = 1\nport = 8080\n");
+    let explanations = analysis::explain_snapshot(&doc);
+    let items = explanations.as_array().expect("array");
+    assert!(items.iter().any(|e| e["code"] == "L001"), "{explanations}");
+    assert!(
+        items.iter().all(|e| e["guidance"].is_string()),
+        "{explanations}"
+    );
+
+    let steps = analysis::steps_snapshot(&doc, Some("path:port"));
+    assert_eq!(steps["breakpoint"], "path:port", "{steps}");
+    assert!(steps["matched"].is_number(), "{steps}");
+    let shown = steps["steps"].as_array().expect("steps");
+    assert!(!shown.is_empty(), "{steps}");
+    assert!(steps["total_steps"].as_u64().unwrap_or(0) >= shown.len() as u64);
+
+    let unbounded = analysis::steps_snapshot(&doc, None);
+    assert!(
+        unbounded["total_steps"].as_u64() >= Some(shown.len() as u64),
+        "{unbounded}"
+    );
+}

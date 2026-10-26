@@ -19,6 +19,12 @@ disableable and emits a stable `L0xx` code at Warning severity
 | L008 | `key-style` | Style | One table mixes cased (camel/Pascal) keys with snake_case keys | None |
 | L009 | `large-literal` | Performance / size | A string literal exceeds 65,536 bytes; consider `blob()` content addressing | None |
 | L010 | `data-mode` | Mode discipline | The document uses content-addressed values, evolution metadata, or capability declarations without `active_mode = "data"` | Config Mode only; silent in Data Mode |
+| L011 | `requires-discipline` | Schema & evolution | A schema field's `requires` target is empty, names itself, or does not resolve to another schema path | None |
+| L012 | `agent-annotations` | Agent ergonomics | A node carries `# @constraint` with no `# @intent` description, so an agent cannot read the reason behind the predicate | None |
+| L013 | `ambiguous-repair` | Agent ergonomics | Sibling keys normalize to the same case/punctuation-insensitive identity, so a rename repair cannot choose between them | None |
+| L014 | `canonical-order` | Style | `depends_on` appears after ordinary keys in its scope (canonical position: after `schema`, before keys) | None |
+| L015 | `mixed-syntax` | Style | One document declares both brace-style and indentation-style tables | None |
+| L016 | `include-hygiene` | Style | An include is absolute, escapes its directory with `..`, does not end in `.active`, or repeats a target | None |
 
 ## Examples
 
@@ -63,5 +69,31 @@ admits `^L[0-9]{3}$` codes).
 active lint --disable-lint unused-lets --disable-lint data-mode file.active
 ```
 
-Unknown names are an error listing the ten rules. Library callers pass
-`LintOptions { disabled }` to `active_core::lint::lint_with`.
+Unknown names are an error listing the sixteen rules. Library callers pass
+`LintOptions { disabled, severity }` to `active_core::lint::lint_with`.
+
+## Project configuration (`TOOLING-PROPOSAL` §2.4)
+
+`active lint` reads `.active-lint.toml` from the input file's directory
+or the nearest ancestor. `--config FILE` pins a specific file and
+skips discovery. The format is deliberately small:
+
+```toml
+disable = ["unused-lets"]
+
+[severity]
+key-style = "error"     # off | error | warning | info | hint
+```
+
+- `disable` is an array of rule IDs; it unions with `--disable-lint`.
+- `[severity]` overrides one rule's severity. `off` drops the rule's
+  findings entirely; the other levels map to the diagnostic severity
+  carried into text, JSON, and SARIF (the pinned schema admits all
+  four levels).
+- Unknown rule names and unknown keys are errors. A malformed
+  discovered file fails the run instead of being ignored, so a typo
+  cannot silently disable a rule.
+- Configuration applies per file, which lets a workspace scope rules
+  to a subtree without a global switch. Core rule evaluation stays
+  deterministic: the same module and the same options always produce
+  the same findings.

@@ -1,0 +1,16 @@
+# World-model envelope (spec/agent-interchange-profile.md §2-§3), Data Mode.
+active_mode = "data"
+active_capabilities = ["check", "eval", "graph"]
+
+envelope = {
+  version = "1.0.0",
+  capability = "data",
+  tainted = false,
+  payload = {
+    model = blob("application/json", "{\"nodes\":3}"),
+    edges = 2
+  },
+  budget = { nodes = 32, headroom = 0.97 },
+  diagnostics = [],
+  result = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+}

@@ -181,6 +181,31 @@ fn schema_data_matches_introspection() {
 }
 
 #[test]
+fn schema_data_carries_compatibility_and_migration_hints() {
+    let source = "schema = {\n  version = \"1.2.0\",\n  min_reader = \"1.0.0\",\n  min_writer = \"1.1.0\",\n  old = String(deprecated = \"use new instead\"),\n  legacy = Int(removed_in = \"2.0.0\"),\n  current = Bool,\n}\n";
+    let module = active_core::parse(source, "viz").expect("parses");
+    let data = viz::schema_data(&module).expect("schema");
+    let compatibility = &data["compatibility"];
+    assert_eq!(compatibility["schema_version"], "1.2.0", "{data}");
+    assert_eq!(compatibility["min_reader"], "1.0.0", "{data}");
+    assert_eq!(compatibility["min_writer"], "1.1.0", "{data}");
+    let deprecated = compatibility["deprecated"]
+        .as_array()
+        .expect("deprecated list");
+    assert_eq!(deprecated.len(), 1, "{data}");
+    assert_eq!(deprecated[0]["path"], "old");
+    assert_eq!(deprecated[0]["hint"], "use new instead");
+    let removals = compatibility["removals"].as_array().expect("removals");
+    assert_eq!(removals.len(), 1, "{data}");
+    assert_eq!(removals[0]["path"], "legacy");
+    assert_eq!(removals[0]["removed_in"], "2.0.0");
+    assert!(removals[0]["hint"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("2.0.0"));
+}
+
+#[test]
 fn repair_data_exposes_the_plan() {
     let source = "schema = { port = Int(default = 8080) }\n";
     let data = viz::repair_data(source, active_core::diag::RepairGoal::Validate, &[], 8);

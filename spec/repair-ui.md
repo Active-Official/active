@@ -23,6 +23,20 @@ semantics, and terminal states shared with `active repair`.
 - `plan` is the shipped `RepairOutcome`, so the browser and the CLI can
   never disagree.
 
+Filters (REPAIR-UI.002) select which diagnostics the model shows:
+
+| Flag | Keeps |
+|---|---|
+| `--filter-code CODE` (repeatable) | diagnostics with that stable code |
+| `--filter-severity LEVEL` (repeatable) | diagnostics at that severity (`error`, `warning`, `info`, `hint`) |
+| `--filter-path PREFIX` (repeatable) | diagnostics whose dotted path starts with the prefix |
+
+Filters intersect: supplying more than one narrows the list. An empty
+filter keeps everything, and an unknown severity is a usage error. The
+plan is never filtered: its step indexes are what `--apply-step` and
+`--cherry-pick` address, so hiding steps would change apply semantics.
+`--filter-*` requires `--browser`.
+
 ## 2. Apply semantics (REPAIR-UI.003)
 
 | Flag | Applies |

@@ -1,0 +1,16 @@
+# Plan envelope (spec/agent-interchange-profile.md §2-§3), Data Mode.
+active_mode = "data"
+active_capabilities = ["check", "explain", "repair"]
+
+envelope = {
+  version = "1.0.0",
+  capability = "agent",
+  tainted = false,
+  payload = {
+    goal = "raise the read timeout",
+    steps = [{ tool = "repair", path = "server.read_timeout" }]
+  },
+  budget = { nodes = 64, headroom = 0.94 },
+  diagnostics = [],
+  result = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+}

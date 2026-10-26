@@ -20,6 +20,18 @@ is a separate check tool that exits 1 when any enabled rule fires.
 | `key-style` (L008) | Mixed key style in one table | One table mixes cased (camel/Pascal) keys with snake_case keys; per table, not per document | Warning |
 | `large-literal` (L009) | Oversized string literal | A string literal exceeds 65,536 bytes (content addressing candidate) | Warning |
 | `data-mode` (L010) | Data construct without the marker | Content-addressed values, evolution metadata, or capability declarations while the document is in Config Mode | Warning |
+| `requires-discipline` (L011) | Dead conditional-presence target | A schema field's `requires` text is empty, names the field itself, or does not resolve to another schema path (the message names the field, never the target text) | Warning |
+| `agent-annotations` (L012) | Enforced predicate without prose | A node carries `@constraint` but no `@intent`; agents need the reason to repair a violation | Warning |
+| `ambiguous-repair` (L013) | Ambiguous sibling identity | Two sibling keys normalize to the same case/punctuation-insensitive identity, so a rename repair has no unique target | Warning |
+| `canonical-order` (L014) | `depends_on` out of position | A `depends_on` declaration appears after an ordinary key in its scope (canonical position is after `schema`, before keys) | Warning |
+| `mixed-syntax` (L015) | Mixed block styles | The root document declares at least one brace-style and one indentation-style table (both are legal; mixing them is a readability hazard) | Warning |
+| `include-hygiene` (L016) | Unsafe or redundant include | An include path is absolute, escapes with `..`, does not end in `.active`, or repeats an earlier target (alias included) | Warning |
+
+An implementation note for L011/L015: `requires` targets are schema
+paths, so the diagnostic can name the field path; the literal target
+text is authored metadata and is additionally kept out of messages to
+match the path-only rule for schema prose. L015 counts the root file's
+own block declarations; an included file keeps its own style count.
 
 ## 2. `depends_on` syntax and semantics
 
@@ -67,14 +79,26 @@ port = 8080
   migration message when present. Absent deprecated keys stay
   silent. Closed-table and default machinery are unaffected.
 
-## 4. Disablement
+## 4. Disablement and project configuration
 
-- CLI: `ACTIVE lint [--format text|json|sarif] [--disable-lint <rule>]... <file>...`
-  (repeatable; unknown rule names are an error listing the ten).
-- Library: `LintOptions { disabled: HashSet<String> }` (rule IDs as
-  above); `active_core::lint::lint(&module, &options)`. Reports:
-  `lint::json_report` (stable array schema) and `lint::sarif_report`
-  (SARIF 2.1.0).
+- CLI: `ACTIVE lint [--format text|json|sarif] [--disable-lint <rule>]... [--config FILE] <file>...`
+  (repeatable; unknown rule names are an error listing the sixteen).
+- Library: `LintOptions { disabled: HashSet<String>, severity: HashMap<String, Option<Severity>> }`
+  (rule IDs as above); `active_core::lint::lint_with(&module, &options)`.
+  Reports: `lint::json_report` (stable array schema) and
+  `lint::sarif_report` (SARIF 2.1.0).
+- Project configuration: `LintConfig` parses `.active-lint.toml` with
+  `disable = ["rule", ...]` and a `[severity]` table whose values are
+  `off|error|warning|info|hint`. `LintConfig::discover` walks from the
+  input file's directory to the filesystem root and returns the first
+  file it finds; `--config FILE` overrides discovery. Unknown keys and
+  unknown rule names are errors. A discovered file that fails to parse
+  is an error, never a silent fallback, so a typo cannot disable a
+  rule.
+- Severity overrides are applied after rule evaluation and before
+  reporting: `off` drops the finding, the other levels replace the
+  diagnostic severity in text, JSON, and SARIF. Rule evaluation itself
+  stays deterministic for a fixed module and option set.
 - No file-level suppression comments in this phase (noted future).
 
 ## 5. `ACTIVE lint` contract

@@ -267,3 +267,38 @@ encoding per LSP; legend fixed in the server.
 - One stdio end-to-end test driving the real binary through
   initialize → didOpen → hover/definition/diagnostics → shutdown,
   proving framing, capabilities, and redaction over the wire.
+
+## 8. Custom tooling methods
+
+The server answers six namespaced request methods besides standard LSP.
+They exist so an editor or agent can use the same machine contracts as
+the CLI without shelling out. Every method returns a success response
+with a JSON payload, or an error response with `InvalidParams` for a
+malformed request — never silence.
+
+| Method | Params | Result |
+|---|---|---|
+| `active/graph` | `{textDocument: {uri}}` | `{mermaid, dot, json}` for the open document |
+| `active/impact` | `{textDocument, position}` | `{key, paths}` — what breaks if the key changes |
+| `active/why` | `{textDocument, position}` | `{key, paths}` — what the key is built from |
+| `active/capability` | `{}` or `{requireMajor: N}` | the embedded capability descriptor; a major mismatch is `InvalidParams` (fail closed) |
+| `active/explain` | `{textDocument: {uri}}` | the structured explanation array (`code`, `path`, `span`, `guidance`) for every live diagnostic |
+| `active/debug/steps` | `{textDocument: {uri}, breakpoint?: string}` | `{breakpoint, matched, total_steps, steps}` — the redacted step trace, truncated through the same selectors as `active debug` |
+
+Rules:
+
+- Results are analysis of the open buffer, evaluated under the same
+  resilient policy as diagnostics, so a bridge never disagrees with the
+  published squiggles.
+- Secret material never appears: graph queries are path lists, step
+  values are rendered by the evaluator's redacting renderer, and
+  explanations are canned per code.
+- `active/capability` compiles the descriptor into the binary
+  (`agent-kit/capability.schema.json`), so an installed server answers
+  the handshake without the repository tree. The descriptor is the same
+  contract `active capability` serves.
+- The debugger bridge runs the shipped evaluator with the wall clock
+  disabled, so a request is deterministic regardless of machine load.
+
+Hover appends the same per-code guidance to lint findings it shows
+(`_fix_: ...`), so the explainer is available where the finding is.

@@ -47,7 +47,7 @@ prints one profile for inspection.
   every expectation holds. Required CI check
   (`.github/workflows/conformance.yml`).
 - `eval/test_capability.py` — pins the capability descriptor
-  authority (major version 1, complete 13-tool surface, 4 sandbox
+  authority (major version 1, complete 20-tool surface, 4 sandbox
   profiles with tool-subset discipline).
 - WASM module: `../active-wasm/js/active-shim.js` plus the release
   `.wasm` (zero imports, plain `WebAssembly.instantiate`).

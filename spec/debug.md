@@ -49,9 +49,14 @@ Selectors match the first step:
 | `path:<prefix>` | first step whose dotted path starts with the prefix |
 | `code:<CODE>` | first step whose diagnostic codes include the code |
 | `node:<n>` | the step at topological index `n` |
+| `budget:<percent>` | the first step whose cumulative evaluated-node count reaches `percent`% of the configured `max_nodes` (1-100; a small document under a large budget never trips it, which is what a budget breakpoint is for) |
+| `budget:nodes:<n>` | the n-th evaluated node (1-based), for deterministic small-budget checks |
 
 The CLI prints steps through the match (or nothing and exits 1 when a
-selector never matches).
+selector never matches). Budget selectors read the same resolved budget
+the step engine runs under (`--budget-profile` or the explicit
+`--max-*` flags), so a breakpoint and the limit that stopped evaluation
+can never disagree.
 
 ## 3. Replay (DEBUG.004)
 
@@ -114,6 +119,36 @@ reducer parses and evaluates candidates under the same mode, options,
 profile, and count/size limits as the run being explained (it disables
 the wall clock for candidates unless `X002` is the target, so reduction
 is deterministic).
+
+The `--minimize` report carries the reproduction inputs, not just the
+source:
+
+```json
+{
+  "target_code": "W005",
+  "target_present": true,
+  "attempts": 12,
+  "original_bytes": 480,
+  "reduced_bytes": 96,
+  "reduced": "port = 1\n",
+  "env": ["APP_PORT"],
+  "budget": {
+    "max_nodes": 100000,
+    "max_depth": 256,
+    "max_array_len": 100000,
+    "max_keys": 100000,
+    "max_wall_ms": 0,
+    "max_value_size": 10000000,
+    "max_total_value_size": 100000000
+  }
+}
+```
+
+`env` lists the environment variable names the document reads, sorted
+and deduplicated; host values are never read, and the reduced source
+already contains the same `env(...)` references. `budget` is the
+effective resolved limit the reducer used (a wall clock is shown as 0
+when it was disabled for determinism).
 
 ## 6. Secret guarantee
 

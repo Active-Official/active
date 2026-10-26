@@ -59,6 +59,8 @@ tainted = blob("text/plain", secret.env("TOKEN"))
 - `blob` is a reserved keyword (like `secret`, `env`, `let`): it cannot be used as a bare key. Arity and shape errors are **B001**, never generic codes.
 - Hashes never appear in ordinary Active source (only in evaluated JSON, lockfiles, and provenance).
 - `data` may also be a `secret(...)` / `secret.env(...)` locator: the blob is then structurally tainted and can never be materialised (B003).
+- An **empty media type is B001**, whether written as a literal (`blob("", "x")`) or resolved at evaluation (`let m = ""; blob(m, "x")`). The identity has no valid form without a media type.
+- A blob whose **payload copies material** is tainted at construction, even when the call site is not structurally material: `x = secret("s3cret-payload")` followed by `blob("text/plain", "s3cret-payload")` yields `tainted: true` with no retained payload. Deciding this at construction keeps `eval`, `convert`, `doc`, `debug`, `inspect`, `lock`, and `audit` in agreement; an identity-only export cannot inspect payload bytes later.
 - Binary content today: embed as string data. A future `blob_file` (filesystem-backed) is explicitly deferred — it needs loader plumbing with trust verification, and string blobs cover config-scale payloads. Binary payloads that must stay byte-exact should use an escaping-safe ASCII form until `blob_file` lands.
 
 ## 4. Schema surface

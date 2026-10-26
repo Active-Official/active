@@ -54,8 +54,16 @@ Evaluate it and you get exactly what you wrote:
 
 One file, one meaning, every time. Active evaluates deterministically: the same file always produces the same result, on every machine, in every pipeline. No locale quirks, no version dependent parsing, no works on my machine. The evaluator walks a dependency graph in topological order, so references resolve correctly no matter what order you wrote them in, and cycles are reported as errors instead of hanging your deploy.
 
-And when something is wrong, you get an error with an exact location, never a silent wrong answer:
+## Two modes, one language: Config and Data
 
+The same language serves two jobs, and the document says which one it is doing:
+
+- **Config Mode** is the default. It is the mode for the files that configure software: explicit, strict, and small.
+- **Data Mode** is explicit opt-in with one root key: `active_mode = "data"`. It is the mode for long-lived data an agent or service stores, replays, or hands to another agent: content-addressed payloads (`blob(...)`), schema evolution metadata (`version`, `min_reader`, `min_writer`), capability declarations, and audit-grade receipts. Budgets warn progressively there instead of failing at the last byte, and the hard ceilings still bind.
+
+Both modes run through the same parser, validator, dependency graph, and secret-taint model, so a document cannot change its meaning by changing modes. `active mode --from <file>` reports which mode a document resolves to, whether the marker was declared, and what capabilities it asks for.
+
+And when something is wrong, you get an error with an exact location, never a silent wrong answer:
 ```active
 timeout = 5s + 512MiB
 ```
@@ -314,6 +322,19 @@ implementation for the conformance suite** (contract:
 `spec/conformance.md`), and every embedding runs the same manifest.
 
 If Active saves you from one silent config failure, give it a star so the next reader, human or agent, finds it first.
+
+## Evidence
+
+Every claim above is reproducible from the repository:
+
+- `conformance/evidence/README.md` indexes the artifact set (native and
+  zero-SKIP container harness reports, codegen, output schemas, catalog,
+  agent-kit, Miri, gates, CI, and the review log).
+- `conformance/harness/run.py` is the cross-implementation gate;
+  `active-core/tests/` holds the property, determinism, and
+  secret-non-leakage suites.
+- `docs/completion-record.md` maps the delivered capability set to its
+  evidence; `docs/security-hardening.md` records the hardening review.
 
 ## License
 

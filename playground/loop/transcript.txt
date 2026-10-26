@@ -1,0 +1,29 @@
+# Playground agent-loop transcript
+
+Captured: 2026-10-25
+Binary: active 1.4.0
+Command: pwsh -File playground/loop/run.ps1 (ACTIVE_BIN=target/debug/active.exe)
+Run id: verifies the shipped CLI end to end; cargo test -p active-cli --test loop_demo asserts the same verdicts.
+
+```text
+1. generate (jsonschema)
+2. check (expected failure)
+F:\QQQ-AUDIT\SOLID\playground\loop\broken.active:3:31: [Error] T004: schema violation at 'application_database_port': missing required key (no default)
+F:\QQQ-AUDIT\SOLID\playground\loop\broken.active:4:31: [Error] T004: schema violation at 'application_database_host': missing required key (no default)
+F:\QQQ-AUDIT\SOLID\playground\loop\broken.active:7:28: [Error] T005: schema violation at 'application_database_prt': unexpected key 'application_database_prt' in closed table; did you mean 'application_database_port'?
+F:\QQQ-AUDIT\SOLID\playground\loop\broken.active:8:29: [Error] T005: schema violation at 'application_database_hots': unexpected key 'application_database_hots' in closed table; did you mean 'application_database_host'?
+F:\QQQ-AUDIT\SOLID\playground\loop\broken.active:3:31: [Error] T004: validation failed
+3. repair plan
+4. apply one step (partial repair)
+5. apply the full plan
+repair: clean
+applied rename @rename("application_database_prt", "application_database_port")
+applied rename @rename("application_database_hots", "application_database_host")
+6. eval the repaired document
+{
+  "application_cache_ttl_seconds": 30,
+  "application_database_port": 8080,
+  "application_database_host": "localhost"
+}
+loop complete: C:\Users\Usuario\AppData\Local\Temp\active-loop-<temp-guid>\repaired.active
+```

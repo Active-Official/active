@@ -1,0 +1,11 @@
+# Canonical brace-style corpus for the `ACTIVE fmt --check` CI gate.
+# Regenerate with: active fmt --style brace --write tests/fmt/brace/*.active
+[app]
+name = "svc"
+port = 8080
+limits {
+  cpu = "1"
+}
+
+[database]
+host = "db"

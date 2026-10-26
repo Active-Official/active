@@ -286,6 +286,11 @@ string-literal = String | SingleString | MlString | MlSingleString
   defaults is the domain of profiles (C-027) and patches (C-028/029). An
   included file's `let` bindings are visible to the including module but
   never exported.
+- Included root metadata: `active_mode` and `active_capabilities` stay
+  local to the main document (mode is a host decision, spec/mode.md
+  §1). A root `active_profile` is an ordinary value that the evaluator
+  reads after the merge, so an include may supply it as a default and
+  the included profile block then applies (spec/specification.md §3.5).
 - `include` statements are allowed anywhere a statement is allowed
   (document root, table bodies, brace blocks, indented blocks) and merge
   into the enclosing scope.

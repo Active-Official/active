@@ -55,9 +55,17 @@ active debug --from svc.active --minimize T003
 ```
 
 Steps are secret-safe by construction (locator subtrees redacted).
-Breakpoints: `taint`, `path:<prefix>`, `code:<CODE>`, `node:<n>`.
-Replay compares hashes, codes, and traces. Reduction deletes lines while
-the target code survives. Spec: `spec/debug.md`.
+Breakpoints: `taint`, `path:<prefix>`, `code:<CODE>`, `node:<n>`,
+`budget:<percent>` (cumulative nodes against `max_nodes`), and
+`budget:nodes:<n>` (the n-th evaluated node). Replay compares hashes,
+codes, and traces. Reduction deletes lines while the target code
+survives and exports the reproduction inputs: the reduced source, the
+environment variable names it reads, and the effective budget.
+
+The debugger also has a language-server bridge (spec/lsp.md):
+`active/debug/steps` takes `{textDocument: {uri}, breakpoint?}` and
+returns the same redacted step array, so an editor can show the trace
+without spawning the CLI. Spec: `spec/debug.md`.
 
 ## Visualizers
 
@@ -110,10 +118,15 @@ Details and stretch-target gaps: `editors/README.md`.
 
 ```sh
 active lint --format text|json|sarif --disable-lint <rule> file.active
+active lint --config project.toml file.active
 ```
 
-Ten rules (catalog: `docs/lint-rules.md`); JSON and SARIF shapes are
-pinned by `docs/schemas/lint.json` and SARIF 2.1.0.
+Sixteen rules (catalog: `docs/lint-rules.md`); JSON and SARIF shapes are
+pinned by `docs/schemas/lint.json` and SARIF 2.1.0. Project policy lives
+in `.active-lint.toml` (discovered upward from each input file, or
+pinned with `--config`): a `disable` array plus a `[severity]` table
+(`off|error|warning|info|hint`). Unknown rules, unknown keys, and a
+malformed discovered file are errors rather than silent no-ops.
 
 ## Playground loop
 
@@ -121,6 +134,7 @@ pinned by `docs/schemas/lint.json` and SARIF 2.1.0.
 generate a JSON Schema contract, check the failing document, plan the
 repair, apply one step (and see the truthful partial verdict), then
 apply the plan and evaluate the clean result. `run.ps1` and `run.sh`
-execute it; `cargo test -p active-cli --test loop_demo` asserts the same
-pipeline so the transcript stays honest.
+execute it; `transcript.txt` is a captured run of the shipped binary;
+`cargo test -p active-cli --test loop_demo` asserts the same pipeline so
+the transcript stays honest.
 

@@ -7,7 +7,7 @@
 //! min_writer).
 
 use active_core::convert::{schema_inspect, INSPECT_VERSION};
-use active_core::parse;
+use active_core::{parse, Engine};
 
 const SCHEMA_DOC: &str = r#"schema = {
   closed = true,
@@ -763,4 +763,64 @@ fn inspect_path_fails_closed_when_seeds_cannot_be_recovered() {
         error.contains("cannot recover runtime secret seeds"),
         "{error}"
     );
+}
+
+// ------------------------------------------------------------------
+// Review round 73: static defaults and nested schema metadata.
+// ------------------------------------------------------------------
+
+#[test]
+fn an_all_literal_interpolation_default_is_static_everywhere() {
+    let src = "schema = { f = String(default = \"lit-\\${x}\") }\nf = \"v\"\n";
+    let module = parse(src, "static-default").expect("parse");
+    let inspected = active_core::convert::schema_inspect(&module).expect("schema inspect");
+    let field = &inspected["fields"][0];
+    assert_eq!(field["path"], "f", "{inspected}");
+    assert_eq!(field["required"], false, "{inspected}");
+    assert_eq!(field["default"], "lit-${x}", "{inspected}");
+
+    let engine = Engine::new();
+    let (value, _) = engine.evaluate(&module).expect("evaluate");
+    let path = active_core::convert::inspect_path(&module, &value, "f").expect("inspect path");
+    assert_eq!(
+        path["schema"]["required"], false,
+        "path inspect must agree with the schema view: {path}"
+    );
+}
+
+#[test]
+fn a_dynamic_default_counts_as_required_on_every_surface() {
+    let src = "schema = { f = String(default = env.PORT) }\nf = \"v\"\n";
+    let module = parse(src, "dynamic-default").expect("parse");
+    let inspected = active_core::convert::schema_inspect(&module).expect("schema inspect");
+    let field = &inspected["fields"][0];
+    assert_eq!(field["required"], true, "{inspected}");
+    assert!(field["default"].is_null(), "{inspected}");
+
+    let engine = Engine::new();
+    let (value, _) = engine.evaluate(&module).expect("evaluate");
+    let path = active_core::convert::inspect_path(&module, &value, "f").expect("inspect path");
+    assert_eq!(
+        path["schema"]["required"], true,
+        "path inspect must agree with the schema view: {path}"
+    );
+}
+
+#[test]
+fn a_static_interpolation_default_is_fillable() {
+    let src = "schema = { f = String(default = \"lit-\\${x}\") }\n";
+    let module = parse(src, "fill-static").expect("parse");
+    let diagnostics = vec![active_core::Diagnostic {
+        severity: active_core::Severity::Error,
+        code: "T004".into(),
+        message: "missing".into(),
+        path: Some("f".into()),
+        span: None,
+        repair: None,
+        confidence: 1.0,
+        file: None,
+    }];
+    let patches = active_core::convert::suggest_patches(&module, &diagnostics);
+    assert_eq!(patches.len(), 1, "{patches:?}");
+    assert!(patches[0].contains("lit-"), "{patches:?}");
 }

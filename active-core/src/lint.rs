@@ -21,6 +21,12 @@ pub const RULE_UNKNOWN_CAPABILITY: &str = "unknown-capability";
 pub const RULE_KEY_STYLE: &str = "key-style";
 pub const RULE_LARGE_LITERAL: &str = "large-literal";
 pub const RULE_DATA_MODE: &str = "data-mode";
+pub const RULE_REQUIRES_DISCIPLINE: &str = "requires-discipline";
+pub const RULE_AGENT_ANNOTATIONS: &str = "agent-annotations";
+pub const RULE_AMBIGUOUS_REPAIR: &str = "ambiguous-repair";
+pub const RULE_CANONICAL_ORDER: &str = "canonical-order";
+pub const RULE_MIXED_SYNTAX: &str = "mixed-syntax";
+pub const RULE_INCLUDE_HYGIENE: &str = "include-hygiene";
 
 /// All rule IDs in stable order (also the CLI's unknown-name error).
 pub const ALL_RULES: &[&str] = &[
@@ -34,7 +40,43 @@ pub const ALL_RULES: &[&str] = &[
     RULE_KEY_STYLE,
     RULE_LARGE_LITERAL,
     RULE_DATA_MODE,
+    RULE_REQUIRES_DISCIPLINE,
+    RULE_AGENT_ANNOTATIONS,
+    RULE_AMBIGUOUS_REPAIR,
+    RULE_CANONICAL_ORDER,
+    RULE_MIXED_SYNTAX,
+    RULE_INCLUDE_HYGIENE,
 ];
+
+/// Stable diagnostic code ↔ rule ID, in rule order. Reports carry
+/// codes; configuration names rules, so every surface that applies
+/// configuration (severity overrides, `norm`) uses this table.
+pub const RULE_CODES: &[(&str, &str)] = &[
+    (RULE_UNUSED_LETS, "L001"),
+    (RULE_DEPENDS_ON, "L002"),
+    (RULE_COMPLEXITY, "L003"),
+    (RULE_HARDCODED_SECRETS, "L004"),
+    (RULE_DEPRECATED, "L005"),
+    (RULE_SCHEMA_EVOLUTION, "L006"),
+    (RULE_UNKNOWN_CAPABILITY, "L007"),
+    (RULE_KEY_STYLE, "L008"),
+    (RULE_LARGE_LITERAL, "L009"),
+    (RULE_DATA_MODE, "L010"),
+    (RULE_REQUIRES_DISCIPLINE, "L011"),
+    (RULE_AGENT_ANNOTATIONS, "L012"),
+    (RULE_AMBIGUOUS_REPAIR, "L013"),
+    (RULE_CANONICAL_ORDER, "L014"),
+    (RULE_MIXED_SYNTAX, "L015"),
+    (RULE_INCLUDE_HYGIENE, "L016"),
+];
+
+/// Rule ID for a stable `L0xx` diagnostic code.
+pub fn rule_for_code(code: &str) -> Option<&'static str> {
+    RULE_CODES
+        .iter()
+        .find(|(_, c)| *c == code)
+        .map(|(rule, _)| *rule)
+}
 
 /// Expression operator nodes that trip the complexity budget.
 const COMPLEXITY_LIMIT: u64 = 100;
@@ -46,10 +88,12 @@ const COMPLEXITY_LIMIT: u64 = 100;
 const ENTROPY_BITS: f64 = 4.5;
 const ENTROPY_MIN_LEN: usize = 20;
 
-/// Linter options: rules in `disabled` do not run.
+/// Linter options: rules in `disabled` do not run; `severity`
+/// overrides a rule's severity (`None` drops its findings).
 #[derive(Debug, Clone, Default)]
 pub struct LintOptions {
     pub disabled: HashSet<String>,
+    pub severity: HashMap<String, Option<Severity>>,
 }
 
 impl LintOptions {
@@ -65,11 +109,161 @@ impl LintOptions {
             }
             disabled.insert(name.clone());
         }
-        Ok(Self { disabled })
+        Ok(Self {
+            disabled,
+            severity: HashMap::new(),
+        })
     }
 
     fn enabled(&self, rule: &str) -> bool {
         !self.disabled.contains(rule)
+    }
+
+    /// Apply the configured severity to one finding. Returns `false`
+    /// when the rule is configured off (`severity = "off"`).
+    fn shape(&self, diagnostic: &mut Diagnostic) -> bool {
+        let Some(rule) = rule_for_code(&diagnostic.code) else {
+            return true;
+        };
+        match self.severity.get(rule) {
+            Some(None) => false,
+            Some(Some(severity)) => {
+                diagnostic.severity = severity.clone();
+                true
+            }
+            None => true,
+        }
+    }
+}
+
+/// Project configuration file name (TOOLING-PROPOSAL §2.4).
+pub const CONFIG_FILE: &str = ".active-lint.toml";
+
+/// Parsed `.active-lint.toml`. The format is intentionally tiny and
+/// deterministic: a `disable` array of rule names, plus a
+/// `[severity]` table mapping rule names to
+/// `off|error|warning|info|hint`. Unknown keys and unknown rule
+/// names are errors so a typo cannot silently do nothing.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LintConfig {
+    pub disabled: Vec<String>,
+    pub severity: HashMap<String, Option<Severity>>,
+}
+
+impl LintConfig {
+    /// Parse configuration text. Returns a human-readable error that
+    /// names the offending key (never file contents).
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let value: toml::Value = text
+            .parse()
+            .map_err(|e: toml::de::Error| format!("invalid TOML: {e}"))?;
+        let table = value
+            .as_table()
+            .ok_or_else(|| "configuration must be a TOML table".to_string())?;
+        let mut config = LintConfig::default();
+        for (key, value) in table {
+            match key.as_str() {
+                "disable" => {
+                    let array = value
+                        .as_array()
+                        .ok_or_else(|| "`disable` must be an array of rule names".to_string())?;
+                    for entry in array {
+                        let name = entry
+                            .as_str()
+                            .ok_or_else(|| "`disable` entries must be strings".to_string())?;
+                        if !ALL_RULES.contains(&name) {
+                            return Err(format!(
+                                "unknown lint rule `{name}` in `disable` (expected one of: {})",
+                                ALL_RULES.join(", ")
+                            ));
+                        }
+                        config.disabled.push(name.to_string());
+                    }
+                }
+                "severity" => {
+                    let table = value
+                        .as_table()
+                        .ok_or_else(|| "`severity` must be a table of rule = level".to_string())?;
+                    for (name, level) in table {
+                        if !ALL_RULES.contains(&name.as_str()) {
+                            return Err(format!(
+                                "unknown lint rule `{name}` in `[severity]` (expected one of: {})",
+                                ALL_RULES.join(", ")
+                            ));
+                        }
+                        let level = level
+                            .as_str()
+                            .ok_or_else(|| format!("`severity.{name}` must be a string"))?;
+                        let parsed = match level {
+                            "off" => None,
+                            "error" => Some(Severity::Error),
+                            "warning" => Some(Severity::Warning),
+                            "info" => Some(Severity::Info),
+                            "hint" => Some(Severity::Hint),
+                            other => {
+                                return Err(format!(
+                                    "unknown severity `{other}` for `{name}` \
+                                     (want off|error|warning|info|hint)"
+                                ))
+                            }
+                        };
+                        config.severity.insert(name.clone(), parsed);
+                    }
+                }
+                other => {
+                    return Err(format!(
+                        "unknown configuration key `{other}` \
+                         (expected `disable` or `severity`)"
+                    ))
+                }
+            }
+        }
+        config.disabled.sort();
+        config.disabled.dedup();
+        Ok(config)
+    }
+
+    /// Read and parse a configuration file.
+    pub fn load(path: &std::path::Path) -> Result<Self, String> {
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        Self::parse(&text)
+    }
+
+    /// Search `start` and its ancestors for [`CONFIG_FILE`]. Returns
+    /// the first hit, `Ok(None)` when no configuration exists, and an
+    /// error when a configuration file is present but invalid (a
+    /// broken config must never be silently ignored).
+    pub fn discover(start: &std::path::Path) -> Result<Option<(std::path::PathBuf, Self)>, String> {
+        let mut dir = if start.is_dir() {
+            Some(start.to_path_buf())
+        } else {
+            start.parent().map(|p| p.to_path_buf())
+        };
+        let mut depth = 0;
+        while let Some(current) = dir {
+            let candidate = current.join(CONFIG_FILE);
+            if candidate.is_file() {
+                return Self::load(&candidate).map(|config| Some((candidate, config)));
+            }
+            dir = current.parent().map(|p| p.to_path_buf());
+            depth += 1;
+            if depth > 64 {
+                break;
+            }
+        }
+        Ok(None)
+    }
+
+    /// Fold this configuration and explicit `--disable-lint` names
+    /// into one option set. Explicit flags win only by adding
+    /// disablements; a severity override still applies otherwise.
+    pub fn options(&self, extra_disable: &[String]) -> Result<LintOptions, String> {
+        let mut names: Vec<String> = self.disabled.clone();
+        names.extend(extra_disable.iter().cloned());
+        let mut options = LintOptions::with_disabled(&names)?;
+        options.severity = self.severity.clone();
+        Ok(options)
     }
 }
 
@@ -113,6 +307,25 @@ pub fn lint_with(module: &Module, options: &LintOptions) -> Vec<Diagnostic> {
     if options.enabled(RULE_DATA_MODE) {
         out.extend(data_mode(module));
     }
+    if options.enabled(RULE_REQUIRES_DISCIPLINE) {
+        out.extend(requires_discipline(module));
+    }
+    if options.enabled(RULE_AGENT_ANNOTATIONS) {
+        out.extend(agent_annotations(module));
+    }
+    if options.enabled(RULE_AMBIGUOUS_REPAIR) {
+        out.extend(ambiguous_repair(module));
+    }
+    if options.enabled(RULE_CANONICAL_ORDER) {
+        out.extend(canonical_order(module));
+    }
+    if options.enabled(RULE_MIXED_SYNTAX) {
+        out.extend(mixed_syntax(module));
+    }
+    if options.enabled(RULE_INCLUDE_HYGIENE) {
+        out.extend(include_hygiene(module));
+    }
+    out.retain_mut(|diagnostic| options.shape(diagnostic));
     out
 }
 
@@ -131,11 +344,18 @@ pub const KNOWN_CAPABILITIES: &[&str] = &[
     "graph",
     "generate",
     "schema-introspect",
+    "value-inspect",
     "explain",
     "patch",
     "repair",
     "compatibility",
     "capability",
+    "debug",
+    "viz",
+    "budget",
+    "mode",
+    "doc",
+    "schema-query",
 ];
 
 /// Node → dotted value path map (tables win ties, like resolution).
@@ -155,28 +375,70 @@ fn value_path_map(module: &Module) -> HashMap<NodeId, String> {
 /// negotiate; mixing `min_reader`/`min_writer`/`removed_in` with no
 /// version is the inconsistency (spec/schema-evolution.md).
 fn schema_evolution(module: &Module) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    for (id, path) in schema_nodes(module) {
+        let Some(Node::SchemaTable { fields, meta, .. }) = module.get(id) else {
+            continue;
+        };
+        let has_removed = fields.values().any(|field_id| {
+            matches!(
+                module.get(*field_id),
+                Some(Node::SchemaField { field }) if field.removed_in.is_some()
+            )
+        });
+        let partial = meta.min_reader.is_some() || meta.min_writer.is_some() || has_removed;
+        if partial && meta.version.is_none() {
+            let label = if path.is_empty() {
+                "schema".to_string()
+            } else {
+                path.clone()
+            };
+            out.push(warning(
+                module,
+                "L006",
+                format!(
+                    "schema '{label}' carries reader/writer or removal metadata but no version; \
+                     add version = \"x.y.z\" so compatibility can be checked"
+                ),
+                Some(label),
+                Some(id),
+            ));
+        }
+    }
+    out
+}
+
+/// Every schema node with its dotted path (sorted). Used by the
+/// evolution and mode rules so nested tables are not invisible.
+fn schema_nodes(module: &Module) -> Vec<(NodeId, String)> {
     let Some(root) = module.schema else {
         return Vec::new();
     };
-    let Some(Node::SchemaTable { fields, meta, .. }) = module.get(root) else {
-        return Vec::new();
-    };
-    let has_removed = fields.values().any(|id| {
-        matches!(module.get(*id), Some(Node::SchemaField { field }) if field.removed_in.is_some())
-    });
-    let partial = meta.min_reader.is_some() || meta.min_writer.is_some() || has_removed;
-    if partial && meta.version.is_none() {
-        return vec![warning(
-            module,
-            "L006",
-            "schema carries reader/writer or removal metadata but no version; \
-             add version = \"x.y.z\" so compatibility can be checked"
-                .to_string(),
-            Some("schema".to_string()),
-            Some(root),
-        )];
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    let mut stack = vec![(root, String::new())];
+    while let Some((id, prefix)) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        out.push((id, prefix.clone()));
+        match module.get(id) {
+            Some(Node::SchemaTable { fields, .. }) => {
+                for (name, child) in fields {
+                    let path = if prefix.is_empty() {
+                        name.clone()
+                    } else {
+                        format!("{prefix}.{name}")
+                    };
+                    stack.push((*child, path));
+                }
+            }
+            Some(Node::SchemaArray { element }) => stack.push((*element, prefix)),
+            _ => {}
+        }
     }
-    Vec::new()
+    out.sort_by(|a, b| a.1.cmp(&b.1).then(a.0 .0.cmp(&b.0 .0)));
+    out
 }
 
 /// L007: a declared capability the shipped descriptor does not
@@ -277,15 +539,15 @@ fn data_mode(module: &Module) -> Vec<Diagnostic> {
         .arena
         .iter()
         .any(|node| matches!(node, Node::ContentAddressed { .. }));
-    let has_evolution = module.schema.is_some_and(|root| {
+    let has_evolution = schema_nodes(module).iter().any(|(id, _)| {
         matches!(
-            module.get(root),
+            module.get(*id),
             Some(Node::SchemaTable { fields, meta, .. })
                 if meta.version.is_some()
                     || meta.min_reader.is_some()
                     || meta.min_writer.is_some()
-                    || fields.values().any(|id| matches!(
-                        module.get(*id),
+                    || fields.values().any(|field_id| matches!(
+                        module.get(*field_id),
                         Some(Node::SchemaField { field }) if field.removed_in.is_some()
                     ))
         )
@@ -300,6 +562,329 @@ fn data_mode(module: &Module) -> Vec<Diagnostic> {
         Some("active_mode".to_string()),
         module.root,
     )]
+}
+
+/// Static text of a literal node, if any (never a secret payload:
+/// `requires` and include paths are authored metadata).
+fn literal_text(module: &Module, id: Option<NodeId>) -> Option<String> {
+    match module.get(id?) {
+        Some(Node::Literal(Value::String(text))) => Some(text.clone()),
+        _ => None,
+    }
+}
+
+/// Every schema field path with its `requires` target text, sorted.
+fn schema_requires(module: &Module) -> Vec<(String, String, NodeId)> {
+    let Some(root) = module.schema else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut stack = vec![(root, String::new())];
+    let mut seen = HashSet::new();
+    while let Some((id, prefix)) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        match module.get(id) {
+            Some(Node::SchemaTable { fields, .. }) => {
+                for (name, field_id) in fields {
+                    let path = if prefix.is_empty() {
+                        name.clone()
+                    } else {
+                        format!("{prefix}.{name}")
+                    };
+                    stack.push((*field_id, path));
+                }
+            }
+            Some(Node::SchemaArray { element }) => stack.push((*element, prefix)),
+            Some(Node::SchemaField { field }) => {
+                if let Some(target) = literal_text(module, field.requires) {
+                    out.push((prefix, target, id));
+                }
+            }
+            _ => {}
+        }
+    }
+    out.sort_by(|a, b| (&a.0, &a.1, a.2 .0).cmp(&(&b.0, &b.1, b.2 .0)));
+    out
+}
+
+/// L011: `requires` discipline. A conditional-presence target must
+/// name another schema path: empty, self-referential, or dangling
+/// targets are dead conditionals that read as working contracts.
+/// Messages name the field path only, never the target text.
+fn requires_discipline(module: &Module) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    if module.schema.is_none() {
+        return out;
+    }
+    for (path, target, field_id) in schema_requires(module) {
+        let trimmed = target.trim();
+        if trimmed.is_empty() {
+            out.push(warning(
+                module,
+                "L011",
+                format!("`requires` on '{path}' is empty"),
+                Some(path),
+                Some(field_id),
+            ));
+        } else if trimmed == path {
+            out.push(warning(
+                module,
+                "L011",
+                format!("`requires` on '{path}' names itself"),
+                Some(path),
+                Some(field_id),
+            ));
+        } else if !crate::convert::schema_path_exists(module, trimmed) {
+            out.push(warning(
+                module,
+                "L011",
+                format!("`requires` on '{path}' does not name a schema path"),
+                Some(path),
+                Some(field_id),
+            ));
+        }
+    }
+    out
+}
+
+/// L012: an agent-enforced `@constraint` with no `@intent` prose.
+/// Agents need the reason to repair a violation; a bare predicate on
+/// a critical path is the agent-ergonomics gap this rule targets.
+fn agent_annotations(module: &Module) -> Vec<Diagnostic> {
+    let mut paths: Vec<(u32, &Vec<crate::ir::Annotation>)> = module
+        .annotations
+        .iter()
+        .map(|(id, annotations)| (id.0, annotations))
+        .collect();
+    paths.sort_by_key(|(id, _)| *id);
+    let mut out = Vec::new();
+    for (_, annotations) in paths {
+        let has_constraint = annotations
+            .iter()
+            .any(|a| matches!(a.kind, crate::ir::AnnotationKind::Constraint { .. }));
+        let has_intent = annotations
+            .iter()
+            .any(|a| matches!(a.kind, crate::ir::AnnotationKind::Intent(_)));
+        if !has_constraint || has_intent {
+            continue;
+        }
+        let first = annotations
+            .iter()
+            .find(|a| matches!(a.kind, crate::ir::AnnotationKind::Constraint { .. }));
+        let Some(annotation) = first else {
+            continue;
+        };
+        out.push(Diagnostic {
+            severity: Severity::Warning,
+            code: "L012".into(),
+            message: format!(
+                "@constraint on '{}' has no @intent description",
+                annotation.path
+            ),
+            path: Some(annotation.path.clone()),
+            span: Some(annotation.span.clone()),
+            repair: None,
+            confidence: 1.0,
+            file: None,
+        });
+    }
+    out
+}
+
+/// Case/punctuation-insensitive key identity used by rename repairs.
+fn normalized_key(key: &str) -> String {
+    key.chars()
+        .filter(|c| *c != '_' && *c != '-')
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+/// L013: sibling keys that normalize to the same identity. A rename
+/// repair cannot choose between them, so the ambiguity is reported
+/// before an agent burns a repair loop on it.
+fn ambiguous_repair(module: &Module) -> Vec<Diagnostic> {
+    let paths = value_path_map(module);
+    let mut out = Vec::new();
+    let mut tables: Vec<(usize, NodeId)> = module
+        .arena
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| matches!(node, Node::Table { .. }))
+        .map(|(index, _)| (index, NodeId(index as u32)))
+        .collect();
+    tables.sort_by_key(|(index, _)| *index);
+    for (_, id) in tables {
+        let Some(Node::Table { fields }) = module.get(id) else {
+            continue;
+        };
+        let mut groups: HashMap<String, Vec<&String>> = HashMap::new();
+        for key in fields.keys() {
+            groups.entry(normalized_key(key)).or_default().push(key);
+        }
+        let mut collisions: Vec<Vec<&String>> = groups
+            .into_values()
+            .filter(|group| group.len() > 1)
+            .collect();
+        collisions.sort();
+        let scope = paths.get(&id).cloned().unwrap_or_default();
+        for mut group in collisions {
+            group.sort();
+            let names: Vec<String> = group.iter().map(|k| format!("'{k}'")).collect();
+            let scope_text = if scope.is_empty() {
+                "<root>".to_string()
+            } else {
+                scope.clone()
+            };
+            out.push(warning(
+                module,
+                "L013",
+                format!(
+                    "ambiguous sibling keys {} in scope '{scope_text}': a rename repair cannot choose",
+                    names.join(" and ")
+                ),
+                if scope.is_empty() {
+                    None
+                } else {
+                    Some(scope.clone())
+                },
+                Some(id),
+            ));
+        }
+    }
+    out
+}
+
+/// L014: `depends_on` after ordinary keys in its scope. The canonical
+/// position (spec/linter.md §2) is after `schema` and before keys, so
+/// a declaration buried in the table is easy to miss.
+fn canonical_order(module: &Module) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    let mut scopes: Vec<(&NodeId, &crate::ir::DependsOn)> = module.depends_on.iter().collect();
+    scopes.sort_by_key(|a| a.1.span.line);
+    for (scope, declaration) in scopes {
+        let Some(Node::Table { fields }) = module.get(*scope) else {
+            continue;
+        };
+        let mut earlier: Option<(&String, u32)> = None;
+        for (name, field_id) in fields {
+            let Some(span) = module.node_spans.get(field_id) else {
+                continue;
+            };
+            if span.line < declaration.span.line && earlier.is_none_or(|(_, line)| span.line < line)
+            {
+                earlier = Some((name, span.line));
+            }
+        }
+        if let Some((name, _)) = earlier {
+            out.push(Diagnostic {
+                severity: Severity::Warning,
+                code: "L014".into(),
+                message: format!(
+                    "`depends_on` should precede keys (found after '{name}'); \
+                     canonical position is after `schema`"
+                ),
+                path: None,
+                span: Some(declaration.span.clone()),
+                repair: None,
+                confidence: 1.0,
+                file: None,
+            });
+        }
+    }
+    out
+}
+
+/// L015: one document mixing brace-style and indentation-style tables.
+/// Both styles are legal and clashing them is a readability hazard for
+/// humans and agents reading the same file.
+fn mixed_syntax(module: &Module) -> Vec<Diagnostic> {
+    if !module.mixed_syntax {
+        return Vec::new();
+    }
+    vec![warning(
+        module,
+        "L015",
+        "document mixes brace-style and indentation-style tables; pick one style".to_string(),
+        None,
+        module.root,
+    )]
+}
+
+/// True for `C:\...` and `C:/...` on every host platform.
+fn looks_windows_absolute(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
+}
+
+/// L016: include hygiene. Absolute paths, parent escapes, non-`.active`
+/// targets, and duplicate declarations make a document depend on the
+/// host layout or include the same file twice by accident.
+fn include_hygiene(module: &Module) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    let mut seen: HashSet<(String, Option<String>)> = HashSet::new();
+    for include in &module.includes {
+        let path = include.path.as_str();
+        let absolute = std::path::Path::new(path).is_absolute()
+            || looks_windows_absolute(path)
+            || path.starts_with('/')
+            || path.starts_with("~/")
+            || path.starts_with("~\\");
+        if absolute {
+            out.push(include_warning(
+                include.line,
+                format!("include '{path}' uses an absolute path; use a path relative to the file"),
+            ));
+        }
+        if std::path::Path::new(path)
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            out.push(include_warning(
+                include.line,
+                format!("include '{path}' escapes its directory with `..`"),
+            ));
+        }
+        let extension = std::path::Path::new(path)
+            .extension()
+            .and_then(|e| e.to_str());
+        if extension != Some("active") {
+            out.push(include_warning(
+                include.line,
+                format!("include '{path}' does not end in .active"),
+            ));
+        }
+        if !seen.insert((path.to_string(), include.alias.clone())) {
+            out.push(include_warning(
+                include.line,
+                format!("include '{path}' is declared more than once"),
+            ));
+        }
+    }
+    out
+}
+
+/// A file-level L016 finding at the include statement's line.
+fn include_warning(line: u32, message: String) -> Diagnostic {
+    Diagnostic {
+        severity: Severity::Warning,
+        code: "L016".into(),
+        message,
+        path: None,
+        span: Some(crate::diag::Span {
+            line,
+            column: 1,
+            end_line: line,
+            end_column: 1,
+        }),
+        repair: None,
+        confidence: 1.0,
+        file: None,
+    }
 }
 
 fn warning(

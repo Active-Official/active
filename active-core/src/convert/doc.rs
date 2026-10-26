@@ -183,11 +183,11 @@ fn walk_value(
         crate::secret::MARKER.to_string()
     } else {
         let rendered = render_value(val);
-        let rendered = profile.redact_authored_text(&rendered).unwrap_or(rendered);
-        profile
-            .literals()
-            .redact_text(&rendered)
-            .unwrap_or(rendered)
+        // Document value text follows the data rule: exact matches at
+        // any length, substring matches only for values of 4+ bytes.
+        // Authored prose (descriptions, comments) keeps the broader
+        // sweep above.
+        profile.redact_text(&rendered).unwrap_or(rendered)
     };
     items.push(DocItem {
         path: path.to_string(),
@@ -281,11 +281,18 @@ fn describe_schema(
                 }
                 _ => {}
             }
+            let static_default = super::static_default(module, field);
             let default_text = match field.default.and_then(|d| module.get(d)) {
                 Some(Node::Literal(value)) => Some(render_value(value)),
+                // An all-literal interpolation is a static string; a
+                // dynamic one is not a default the doc can spell.
+                Some(Node::Interpolate { .. }) => static_default
+                    .as_ref()
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string),
                 _ => None,
             };
-            let required = !matches!(field.typ, ActiveType::Null) && default_text.is_none();
+            let required = !matches!(field.typ, ActiveType::Null) && static_default.is_none();
             (
                 field.typ.name(),
                 required,

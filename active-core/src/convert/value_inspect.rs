@@ -470,7 +470,8 @@ fn schema_field_json(module: &Module, profile: &SecretProfile, field: &SchemaFie
     }
     let mut out = json!({
         "type": redact(type_name(&field.typ)),
-        "required": field.default.is_none() && !matches!(field.typ, ActiveType::Null),
+        "required": super::static_default(module, field).is_none()
+            && !matches!(field.typ, ActiveType::Null),
         "constraints": constraints,
     });
     if let Some(description) = literal_string(module, field.description) {

@@ -81,10 +81,55 @@ envelope = {
 
 ## 6. Conformance
 
-- `examples/agent-interchange/tool-result.active` is a valid envelope;
-  `active-core/tests/agent_interchange.rs` parses, evaluates, and
-  asserts the fields plus redaction.
+- `examples/agent-interchange/` ships three envelopes (tool result,
+  plan, world model). `active-core/tests/agent_interchange.rs` parses,
+  evaluates, and asserts the required fields, Data Mode, the capability
+  handshake for the named profile, and redaction for every file in the
+  directory.
 - A secret-bearing envelope is covered by the same test: the evaluated
   value carries `***SECRET***`, never the material.
 - The capability handshake is already gated by
   `active capability --check-doc` and the CAP phase tests.
+- The hash short-circuit has executable helpers plus a vector under
+  `agent-kit/interchange/` (see §7).
+
+## 7. Hash short-circuit ("I already possess hash H")
+
+Content addressing makes transfer optional. A sender advertises the
+identities it would otherwise transmit; a receiver answers with the
+subset it already holds and requests only the rest.
+
+**Message shape.** A request lists records, never payload bytes:
+
+```json
+{"needs": [
+  {"hash": "blake3:<64 hex>", "size": 11, "media_type": "application/json"}
+]}
+```
+
+A receiver replies:
+
+```json
+{"have": ["blake3:<64 hex>"], "want": [{"hash": "blake3:<64 hex>", "size": 11}]}
+```
+
+**Rules.**
+
+1. Identity is the `blake3:` digest alone. Size and media type are
+   transfer hints; they never change which bytes a hash names.
+2. Taint never affects identity. A tainted blob whose bytes the
+   receiver already holds still short-circuits; redaction applies to
+   rendering, not to matching.
+3. A malformed identity (wrong prefix, wrong length, non-hex) never
+   matches. Fail closed: request the bytes.
+4. A record is a leaf. Walking a payload for identities never opens a
+   blob payload, so a receiver cannot be forced to materialise one by a
+   short-circuit probe.
+5. The `result` field of an envelope is the same canonical hash, so a
+   receiver can compare results without a payload transfer.
+
+**Reference implementation.** `agent-kit/interchange/short_circuit.py`
+exports `normalize_identity`, `short_circuits`, and
+`missing_identities`; `agent-kit/interchange/vectors/short-circuit.json`
+pins a real identity from the shipped world-model example, and
+`test_short_circuit.py` runs in CI.

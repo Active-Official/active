@@ -142,7 +142,7 @@ jobs:
         # Hard gate: all three reference loops must converge identically
         # (same clean verdicts, iterations, and codes per task) with a
         # positive improvement count and zero secret leakage.
-        run: python agent-kit/eval/test_capability.py && python agent-kit/eval/run.py --out agentkit-eval.json
+        run: python agent-kit/eval/test_capability.py && python agent-kit/interchange/test_short_circuit.py && python agent-kit/eval/run.py --out agentkit-eval.json
       - name: Upload harness report
         if: always()
         uses: actions/upload-artifact@v4
@@ -151,6 +151,7 @@ jobs:
           path: |
             harness.json
             agentkit-eval.json
+          retention-days: 30
 
   tooling:
     name: Tooling suite (LSP, inspector, debugger, viz, editor)

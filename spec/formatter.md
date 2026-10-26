@@ -40,6 +40,14 @@ At least one file is required; an empty file list is an error
 - **`--check`**: write nothing. Print `would reformat: <file>` per
   file whose canonical form differs, and exit 1 if any differ (0
   when all are clean). This is the CI mode.
+- **CI gate:** `.github/workflows/ci.yml` job `active-fmt-check`
+  builds the CLI and runs `--check` over the canonical corpora in
+  `tests/fmt/brace/` (style `brace`) and `tests/fmt/indent/`
+  (style `indent`). Regenerate a corpus with
+  `active fmt --style <style> --write tests/fmt/<style>/*.active`.
+  The showcase documents under `examples/` are authored teaching
+  material (aligned columns, section blank lines) and sit outside
+  the gate.
 - `--write` and `--check` together are an error (contradictory).
 - Exit codes: `0` = clean / written; `1` = differences found
   (`--check`), parse errors, I/O errors, or flag misuse. Parse

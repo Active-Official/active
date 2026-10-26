@@ -1489,3 +1489,89 @@ fn minimize_does_not_join_across_a_colon() {
     let reduced = report["reduced"].as_str().expect("reduced");
     assert!(reduced.contains("\"ab\": \"cd\""), "{reduced}");
 }
+
+// ------------------------------------------------------------------
+// DEBUG.003 budget breakpoints and DEBUG.005 reproduction inputs.
+// ------------------------------------------------------------------
+
+#[test]
+fn budget_breakpoints_match_on_count_and_percent() {
+    use active_core::debug::breakpoint_index_with_budget;
+    use active_core::StepEvent;
+
+    let step = |node: u32, path: &str| StepEvent {
+        node,
+        path: Some(path.to_string()),
+        kind: "literal".into(),
+        tainted: false,
+        value: serde_json::json!(node),
+        codes: Vec::new(),
+    };
+    let steps = vec![step(0, "a"), step(1, "b"), step(2, "c"), step(3, "d")];
+
+    // `budget:nodes:<n>` is 1-based and independent of the limit.
+    assert_eq!(
+        breakpoint_index_with_budget(&steps, "budget:nodes:1", 100),
+        Some(0)
+    );
+    assert_eq!(
+        breakpoint_index_with_budget(&steps, "budget:nodes:3", 100),
+        Some(2)
+    );
+    assert_eq!(
+        breakpoint_index_with_budget(&steps, "budget:nodes:0", 100),
+        None
+    );
+    assert_eq!(
+        breakpoint_index_with_budget(&steps, "budget:nodes:5", 100),
+        None
+    );
+
+    // Percentages resolve against the configured node limit.
+    assert_eq!(
+        breakpoint_index_with_budget(&steps, "budget:50", 4),
+        Some(1)
+    );
+    assert_eq!(
+        breakpoint_index_with_budget(&steps, "budget:100", 4),
+        Some(3)
+    );
+    assert_eq!(breakpoint_index_with_budget(&steps, "budget:0", 4), Some(0));
+    // A document far under the limit never trips a percentage breakpoint.
+    assert_eq!(
+        breakpoint_index_with_budget(&steps, "budget:50", 100_000),
+        None
+    );
+    // Unlimited budgets have no threshold.
+    assert_eq!(breakpoint_index_with_budget(&steps, "budget:50", 0), None);
+    assert_eq!(breakpoint_index_with_budget(&steps, "budget:101", 4), None);
+    // Existing selectors keep working through the budget-aware entry.
+    assert_eq!(breakpoint_index_with_budget(&steps, "path:b", 4), Some(1));
+    assert_eq!(breakpoint_index_with_budget(&steps, "node:2", 4), Some(2));
+}
+
+#[test]
+fn minimal_case_exports_env_names_and_the_effective_budget() {
+    let source =
+        "schema = { port = Int }\nport = \"x\"\nprobe = env.ACTIVE_TEST_PORT ?: \"fallback\"\n";
+    let report = active_core::debug::minimal_case(source, "T002", 40);
+    assert_eq!(
+        report["env"],
+        serde_json::json!(["ACTIVE_TEST_PORT"]),
+        "{report}"
+    );
+    assert_eq!(report["budget"]["max_nodes"], 100_000);
+    assert_eq!(report["budget"]["max_depth"], 256);
+    // Candidates run without a wall deadline, so the report shows 0.
+    assert_eq!(report["budget"]["max_wall_ms"], 0);
+}
+
+#[test]
+fn minimize_redacts_a_short_secret_in_a_comment() {
+    // Comments are display prose: every occurrence counts, at any
+    // length. Document data keeps the 4-byte substring floor.
+    let source = "k = secret(\"ab\")\nschema = { port = Int }\nport = \"x\" # ab\n";
+    let report = active_core::debug::minimal_case(source, "T002", 80);
+    let reduced = report["reduced"].as_str().expect("reduced text");
+    assert!(!reduced.contains("# ab"), "{reduced}");
+}

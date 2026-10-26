@@ -112,6 +112,12 @@ parses leave it unset and tools fall back to the input filename.
 | L008 | `table '<path>' mixes cased and snake_case keys` | table node | One table mixes camel/Pascal-case keys with snake_case keys |
 | L009 | `string literal at '<path>' is <n> bytes; consider blob() content addressing` | literal node | A string literal exceeds 65,536 bytes |
 | L010 | `Data-oriented constructs without active_mode = "data"` | document root | Content-addressed values, evolution metadata, or capability declarations in Config Mode |
+| L011 | `` `requires` on '<path>' is empty`` / `names itself` / `does not name a schema path` | schema field | A conditional-presence target is empty, self-referential, or dangling |
+| L012 | `@constraint on '<path>' has no @intent description` | annotation | An enforced predicate has no prose explaining it |
+| L013 | `ambiguous sibling keys ... in scope '<path>'` | table node | Sibling keys normalize to the same case/punctuation-insensitive identity, so a rename cannot choose |
+| L014 | `` `depends_on` should precede keys ...`` | `depends_on` span | The declaration appears after an ordinary key in its scope |
+| L015 | `document mixes brace-style and indentation-style tables; pick one style` | document root | The root document declares both block styles |
+| L016 | `include '<path>' uses an absolute path` / `escapes its directory` / `does not end in .active` / `is declared more than once` | include line | Include hygiene |
 
 ### W0xx — Warnings
 | Code | Message | Span | Emitted when |

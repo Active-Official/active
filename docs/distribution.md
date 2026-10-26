@@ -7,9 +7,9 @@ State verified 2026-10-22 against the public registries.
 | crates.io | `active-core` + 6 workspace crates | **live at 1.4.0** | `cargo publish` in dependency order (release.yml) |
 | npm | `active-lang` | **live at 1.4.0** | `bindings/js` wrapper + shim; `@active-lang/active` reserved as scoped fallback |
 | PyPI | `active-lang` | **live at 1.4.0** | `bindings/python` + wasmtime; OIDC trusted publishing (`pypi.yml`) |
-| GitHub Releases | per-platform archives, WASM bundle, SBOMs | **live** | `release.yml` on `v*` tags: checksums, attestations, optional `.sig` |
+| GitHub Releases | per-platform archives, WASM bundle, SBOMs | **live** | `release.yml` on `v*` tags: checksums, attestations, optional `.sig`; CycloneDX SBOMs and their `SHA256SUMS` are attached to `v1.4.0` |
 | VS Code Marketplace / vsix | `active-lang` extension | packaged per release | `editors/vscode` + `vsce package` job |
-| Go modules | `github.com/Active-Official/active-go` | external module, pinned commit `f5bd6e2` | wazero-based, zero cgo; harness path `go-native` |
+| Go modules | `github.com/Active-Official/active-go` | external module, tagged `v1.4.0` (commit `f5bd6e2`) | wazero-based, zero cgo; harness path `go-native` |
 | Neovim | runtimepath plugin | shipped in-tree | `editors/neovim/` |
 | Maven / GitHub Packages | unclaimed | Tier-2 smoke proof only | Java binding SPEC; no artifact |
 | NuGet | unclaimed | Tier-2 smoke proof only | C# binding; no package yet |

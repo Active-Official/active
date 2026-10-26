@@ -16,9 +16,26 @@ use crate::{Engine, EvalError, Module};
 const MIN_SUBSTRING_SEED: usize = 4;
 
 /// First step index matching a breakpoint selector:
-/// `taint`, `path:<prefix>`, `code:<CODE>`, or `node:<n>` (0-based
-/// topological index). Unknown selectors match nothing.
+/// `taint`, `path:<prefix>`, `code:<CODE>`, `node:<n>` (0-based
+/// topological index), `budget:<percent>`, or `budget:nodes:<n>`.
+/// Unknown selectors match nothing. Budget selectors resolve against
+/// the shipped default limit; callers with a configured budget use
+/// [`breakpoint_index_with_budget`].
 pub fn breakpoint_index(steps: &[StepEvent], selector: &str) -> Option<usize> {
+    breakpoint_index_with_budget(steps, selector, crate::Budget::default().max_nodes)
+}
+
+/// Budget-aware breakpoint matching. `budget:<percent>` matches the
+/// first step at which the cumulative evaluated-node count reaches
+/// `percent`% of `max_nodes` (so a small document under a large budget
+/// never trips it, which is the point of a budget breakpoint);
+/// `budget:nodes:<n>` matches the n-th evaluated node (1-based) for
+/// deterministic tests and small budgets.
+pub fn breakpoint_index_with_budget(
+    steps: &[StepEvent],
+    selector: &str,
+    max_nodes: u64,
+) -> Option<usize> {
     if selector == "taint" {
         return steps.iter().position(|step| step.tainted);
     }
@@ -37,6 +54,24 @@ pub fn breakpoint_index(steps: &[StepEvent], selector: &str) -> Option<usize> {
         .and_then(|n| n.parse::<usize>().ok())
     {
         return (index < steps.len()).then_some(index);
+    }
+    // `budget:nodes:<n>` first: `budget:` is a prefix of it.
+    if let Some(n) = selector
+        .strip_prefix("budget:nodes:")
+        .and_then(|n| n.parse::<usize>().ok())
+    {
+        return (n > 0 && n <= steps.len()).then(|| n - 1);
+    }
+    if let Some(percent) = selector.strip_prefix("budget:") {
+        let percent = percent.parse::<u64>().ok()?;
+        if percent > 100 || (percent > 0 && max_nodes == 0) {
+            return None;
+        }
+        let limit = max_nodes.saturating_mul(percent) / 100;
+        return steps
+            .iter()
+            .enumerate()
+            .position(|(index, _)| (index as u64) + 1 >= limit);
     }
     None
 }
@@ -352,6 +387,18 @@ pub fn minimal_case_with_options(
     let reduced = redact_secret_literals(&reduced, &seeds.0, &seeds.1, seeds.2);
     // Measure the delivered text, after redaction can change its size.
     let reduced_bytes = reduced.len();
+    // Environment variable names the document reads, sorted. Values
+    // never enter the bundle: the reduced source already carries the
+    // same `env("NAME", ...)` references, so reproduction needs the
+    // host to supply them, and naming them leaks nothing new.
+    let env = env_names(source, file_ctx, options);
+    let mut effective_budget = options.budget.copied().unwrap_or_default();
+    // Candidates run without a wall deadline unless the wall timeout
+    // itself is the target (X002), so the report shows the limit the
+    // reducer actually enforced.
+    if target_code != "X002" {
+        effective_budget.max_wall_ms = 0;
+    }
     json!({
         "target_code": target_code,
         "target_present": target_present,
@@ -359,7 +406,58 @@ pub fn minimal_case_with_options(
         "original_bytes": source.len(),
         "reduced_bytes": reduced_bytes,
         "reduced": reduced,
+        "env": env,
+        "budget": budget_json(&effective_budget),
     })
+}
+
+/// JSON view of the effective budget so a reduced case can be replayed
+/// under exactly the limits that produced it.
+fn budget_json(budget: &crate::Budget) -> JsonValue {
+    json!({
+        "max_nodes": budget.max_nodes,
+        "max_depth": budget.max_depth,
+        "max_array_len": budget.max_array_len,
+        "max_keys": budget.max_keys,
+        "max_wall_ms": budget.max_wall_ms,
+        "max_value_size": budget.max_value_size,
+        "max_total_value_size": budget.max_total_value_size,
+    })
+}
+
+/// Environment variable names referenced by the document, sorted and
+/// deduplicated. Only names: no host value is read.
+fn env_names(
+    source: &str,
+    file_ctx: Option<&std::path::Path>,
+    options: DebugOptions<'_>,
+) -> Vec<String> {
+    let parse_options = crate::ParseOptions {
+        enable_includes: file_ctx.is_some(),
+        allow_parent_escapes: options.allow_parent_escapes,
+        resilient: options.resilient,
+        ..Default::default()
+    };
+    let (module, _) = match file_ctx {
+        Some(path) => crate::parse_text_recovering_with_file(
+            source,
+            &path.to_string_lossy(),
+            parse_options,
+            path,
+        ),
+        None => crate::parse_recovering(source, "minimize", parse_options),
+    };
+    let mut names: Vec<String> = module
+        .arena
+        .iter()
+        .filter_map(|node| match node {
+            crate::ir::Node::Env { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+    names.sort();
+    names.dedup();
+    names
 }
 
 /// Runtime secret seeds for a reduction bundle. Evaluation uses the
@@ -763,9 +861,10 @@ fn redact_secret_literals(
             continue;
         };
         let text = &source[start..end];
-        let authored_hit = authored.redact_text_min(text, MIN_SUBSTRING_SEED).is_some();
-        if fail_closed || authored_hit || seeds.redact_text_min(text, MIN_SUBSTRING_SEED).is_some()
-        {
+        // Comments are display prose: every occurrence counts, at any
+        // length (spec/debug.md §6). Document data stays length-gated.
+        let authored_hit = authored.redact_text(text).is_some();
+        if fail_closed || authored_hit || seeds.redact_text(text).is_some() {
             comment_ranges.push((start, end));
         }
     }

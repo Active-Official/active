@@ -157,7 +157,11 @@ fn secret_through_include_redacts_everywhere() {
 }
 
 #[test]
-fn included_root_metadata_inherits_nothing() {
+fn included_mode_and_capabilities_stay_local() {
+    // spec/mode.md §1: mode and capability declarations are resolved
+    // from the main document only. A profile selector is an ordinary
+    // root value, so an include may supply it as a default (covered by
+    // `an_included_profile_selector_is_a_root_default`).
     let path = fixture("meta_main.active");
     let module = parse_file(&path, ParseOptions::default()).expect("parse");
     assert_eq!(module.mode, active_core::Mode::Config);
@@ -166,13 +170,19 @@ fn included_root_metadata_inherits_nothing() {
     let active_core::Value::Table(map) = value else {
         panic!("expected a root table");
     };
-    for key in [
-        "active_mode",
-        "active_capabilities",
-        "active_profile",
-        "schema",
-    ] {
+    for key in ["active_mode", "active_capabilities", "schema"] {
         assert!(!map.contains_key(key), "included {key} leaked: {map:?}");
     }
     assert!(matches!(map.get("x"), Some(active_core::Value::Int(1))));
+}
+
+#[test]
+fn an_included_profile_selector_is_a_root_default() {
+    // spec/grammar.md §2.7: included files provide defaults, and
+    // spec/specification.md §3.5 reads the selector from the root
+    // value. An include may therefore supply `active_profile`; mode and
+    // capabilities stay local to the main document.
+    let value = eval_file("profile_selector_main.active");
+    assert_eq!(value["active_profile"], "prod", "{value}");
+    assert_eq!(value["x"], "from-prod", "{value}");
 }

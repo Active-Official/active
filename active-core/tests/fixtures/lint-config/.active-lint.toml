@@ -1,0 +1,4 @@
+disable = ["unused-lets"]
+
+[severity]
+key-style = "error"

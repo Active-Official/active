@@ -27,6 +27,20 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
 
+  active-fmt-check:
+    name: Format gate (active fmt --check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build CLI
+        run: cargo build --locked -p active-cli
+      - name: Canonical brace corpus
+        run: target/debug/active fmt --style brace --check tests/fmt/brace/*.active
+      - name: Canonical indent corpus
+        run: target/debug/active fmt --style indent --check tests/fmt/indent/*.active
+
   clippy:
     name: Lint gate (clippy -D warnings)
     runs-on: ${{ matrix.os }}

@@ -143,6 +143,14 @@ only static literals render (`minimum`, `minLength`, `pattern`,
 `default`, enum members); dynamic bounds are skipped without
 diagnostics (validation still enforces them at runtime).
 
+A **static default** is a literal or an all-literal interpolation
+(`default = "literal-\${x}"`, where the escaped dollar makes the text
+literal). Both count as a default on every surface: JSON Schema/
+OpenAPI `default`, the `required` flag in `schema inspect` and
+`inspect --path`, docgen's `Default` line, and the fill planner. A
+dynamic default (an env read, a reference, arithmetic) is not static
+and counts as required.
+
 Type mapping (SS = ACTIVE schema type):
 
 | SS | JSON Schema | TypeScript | Go | Rust serde |

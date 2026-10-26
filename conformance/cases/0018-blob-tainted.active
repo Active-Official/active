@@ -1,0 +1,2 @@
+x = secret("payload-secret")
+b = blob("text/plain", "payload-secret")

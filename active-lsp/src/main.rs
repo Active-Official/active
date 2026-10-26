@@ -14,6 +14,10 @@ use lsp_types::{
     ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, WorkDoneProgressOptions,
 };
 
+/// Embedded capability descriptor: the language server serves the same
+/// contract as `active capability` (GAP-CLOSURE §1.7).
+const CAPABILITY_JSON: &str = include_str!("../../agent-kit/capability.schema.json");
+
 fn capabilities() -> ServerCapabilities {
     ServerCapabilities {
         text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
@@ -314,6 +318,65 @@ fn handle_request(open: &mut HashMap<String, Doc>, req: Request) -> Option<Respo
                 analysis::why_at(doc, line, character)
                     .map(|(key, paths)| serde_json::json!({"key": key, "paths": paths}))
             });
+            Some(Response::new_ok(req.id, result))
+        }
+        // Capability handshake (GAP-CLOSURE §1.7): the same embedded
+        // descriptor the CLI serves, so a client can dispose tools
+        // before asking for anything else. `requireMajor` fails closed.
+        "active/capability" => {
+            let descriptor: serde_json::Value = match serde_json::from_str(CAPABILITY_JSON) {
+                Ok(descriptor) => descriptor,
+                Err(error) => {
+                    return Some(Response::new_err(
+                        req.id,
+                        ErrorCode::InternalError as i32,
+                        format!("embedded capability descriptor is invalid: {error}"),
+                    ))
+                }
+            };
+            if let Some(required) = req.params.get("requireMajor").and_then(|v| v.as_u64()) {
+                let advertised = descriptor["version"]
+                    .as_str()
+                    .and_then(|v| v.split('.').next())
+                    .and_then(|v| v.parse::<u64>().ok());
+                if advertised != Some(required) {
+                    return Some(Response::new_err(
+                        req.id,
+                        ErrorCode::InvalidParams as i32,
+                        format!(
+                            "capability major mismatch: host advertises {}, request requires {required}",
+                            advertised.map(|v| v.to_string()).unwrap_or_else(|| "?".into())
+                        ),
+                    ));
+                }
+            }
+            Some(Response::new_ok(req.id, descriptor))
+        }
+        // Deterministic repair guidance for every live diagnostic
+        // (GAP-CLOSURE §2.4): the tooling bridge over `active explain`.
+        "active/explain" => {
+            let Some(uri) = text_doc_uri(&req.params) else {
+                return Some(Response::new_err(
+                    req.id,
+                    ErrorCode::InvalidParams as i32,
+                    "active/explain needs {textDocument: {uri}}".to_string(),
+                ));
+            };
+            let result = doc_at(open, &uri).map(analysis::explain_snapshot);
+            Some(Response::new_ok(req.id, result))
+        }
+        // Debugger bridge (GAP-CLOSURE §1.5): the redacted step trace
+        // with the same breakpoint selectors as `active debug`.
+        "active/debug/steps" => {
+            let Some(uri) = text_doc_uri(&req.params) else {
+                return Some(Response::new_err(
+                    req.id,
+                    ErrorCode::InvalidParams as i32,
+                    "active/debug/steps needs {textDocument: {uri}}".to_string(),
+                ));
+            };
+            let selector = req.params.get("breakpoint").and_then(|v| v.as_str());
+            let result = doc_at(open, &uri).map(|doc| analysis::steps_snapshot(doc, selector));
             Some(Response::new_ok(req.id, result))
         }
         _ => Some(Response::new_err(

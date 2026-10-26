@@ -18,7 +18,7 @@
     {
       "name": "lint",
       "entry": "active lint [--format text|json|sarif] [--disable-lint <rule>]... <file>...",
-      "description": "Static rules beyond validation: unused lets, depends_on hygiene, complexity, hardcoded-secret heuristics, deprecated usage, partial schema evolution, unknown capabilities, mixed key style, oversized literals, and Data constructs without the mode marker. Text, stable JSON, or SARIF 2.1.0; exits nonzero when any rule fires.",
+      "description": "Static rules beyond validation: unused lets, depends_on hygiene, complexity, hardcoded-secret heuristics, deprecated usage, partial schema evolution, unknown capabilities, mixed key style, oversized literals, Data constructs without the mode marker, dead requires targets, enforced constraints without intent prose, ambiguous rename targets, depends_on ordering, mixed block syntax, and include hygiene. Text, stable JSON, or SARIF 2.1.0; exits nonzero when any rule fires. Project rules are tuned by .active-lint.toml (disable list and per-rule severity).",
       "input": {
         "files": "one or more .active source files",
         "format": "text|json|sarif (default text)",
@@ -99,6 +99,18 @@
       }
     },
     {
+      "name": "value-inspect",
+      "entry": "active inspect --from <file> --path <path> [--format text|json]",
+      "description": "Inspect one value path: type, resolved schema slot and constraints, taint, blob identity and size, and the dependency summary. Material values render ***SECRET***.",
+      "input": {
+        "file": "path to a .active source file",
+        "path": "dotted/index path to inspect"
+      },
+      "output": {
+        "value": "text line or versioned JSON; never raw secret material"
+      }
+    },
+    {
       "name": "explain",
       "entry": "active explain --from <file> [--format text|json]",
       "description": "Deterministic per-diagnostic repair guidance (stable text per code, value-free).",
@@ -136,7 +148,7 @@
     {
       "name": "repair",
       "entry": "active repair --from <file> [--goal validate|preserve-key|minimize-diff] [--preserve <path>] [--max-steps N] [--format text|json] [--output FILE]",
-      "description": "Multi-step goal-directed repair: safe @patch/@rename plans applied through the patch engine with stuck (H006) and unrepairable (H008) terminal states.",
+      "description": "Multi-step goal-directed repair: safe @patch/@rename plans applied through the patch engine with stuck (H006) and unrepairable (H008) terminal states. --browser emits the unified diagnostics+plan model, optionally narrowed by --filter-code/--filter-severity/--filter-path.",
       "input": {
         "file": "path to a .active source file"
       },
@@ -155,6 +167,75 @@
       "output": {
         "report": "text lines or JSON finding list"
       }
+    },
+    {
+      "name": "debug",
+      "entry": "active debug --from <file> [--break SELECTOR] [--replay [--expect HASH]] [--minimize CODE] [--max-attempts N] [--format json|text]",
+      "description": "Deterministic step trace with breakpoints (taint, path:<prefix>, code:<CODE>, node:<n>, budget:<percent>, budget:nodes:<n>), replay hash/code/step comparison, and minimal-case reduction. The reduction report carries the reduced source, the environment variable names it reads, and the effective budget.",
+      "input": {
+        "file": "path to a .active source file"
+      },
+      "output": {
+        "debug": "JSON {breakpoint, matched, total_steps, steps}, a replay report, or a reduction report; values are redacted"
+      }
+    },
+    {
+      "name": "viz",
+      "entry": "active viz <graph|taint|budget|schema|repair> --from <file> [--format json|mermaid|dot]",
+      "description": "Export display data for the static viewer: dependency graph, taint nodes/edges, budget limits and usage, schema field tree with compatibility and migration hints, or a repair plan without source text.",
+      "input": {
+        "file": "path to a .active source file",
+        "kind": "graph|taint|budget|schema|repair"
+      },
+      "output": {
+        "export": "JSON (Mermaid or DOT for graph); redacted, never secret material"
+      }
+    },
+    {
+      "name": "budget",
+      "entry": "active budget explain --from <file> [--format text|json]",
+      "description": "Explain the effective budget preset and the observed usage/headroom for one evaluation.",
+      "input": {
+        "file": "path to a .active source file"
+      },
+      "output": {
+        "budget": "limits, usage, and headroom (text or stable JSON)"
+      }
+    },
+    {
+      "name": "mode",
+      "entry": "active mode --from <file> [--format text|json]",
+      "description": "Report the resolved evaluation mode (config|data), whether the root document declares the marker, and the declared capabilities.",
+      "input": {
+        "file": "path to a .active source file"
+      },
+      "output": {
+        "mode": "mode, marker presence, and capability list"
+      }
+    },
+    {
+      "name": "doc",
+      "entry": "active doc --from <file> --to markdown|html|man [--title T]",
+      "description": "Render schema fields, intent annotations, constraints, defaults, and comments as documentation with material prose redacted.",
+      "input": {
+        "file": "path to a .active source file",
+        "to": "markdown|md|html|man"
+      },
+      "output": {
+        "document": "rendered documentation text"
+      }
+    },
+    {
+      "name": "schema-query",
+      "entry": "active schema inspect --from <file> [--path P] [--format json|text]",
+      "description": "Alias surface for schema inspection: the versioned INSPECT document, or one value path resolved against the schema.",
+      "input": {
+        "file": "path to a .active source file",
+        "path": "optional dotted/index path"
+      },
+      "output": {
+        "inspect": "versioned JSON field list or one path view"
+      }
     }
   ],
   "profiles": {
@@ -164,15 +245,15 @@
     },
     "data": {
       "budget": "interactive",
-      "tools": ["check", "eval", "format", "lint", "convert", "graph", "generate", "schema-introspect"]
+      "tools": ["check", "eval", "format", "lint", "convert", "graph", "generate", "schema-introspect", "value-inspect", "schema-query", "mode", "budget", "doc"]
     },
     "agent": {
       "budget": "interactive",
-      "tools": ["check", "eval", "format", "lint", "convert", "graph", "generate", "schema-introspect", "explain", "patch", "repair", "compatibility", "capability"]
+      "tools": ["check", "eval", "format", "lint", "convert", "graph", "generate", "schema-introspect", "value-inspect", "explain", "patch", "repair", "compatibility", "capability", "debug", "viz", "budget", "mode", "doc", "schema-query"]
     },
     "trusted": {
       "budget": "trusted",
-      "tools": ["check", "eval", "format", "lint", "convert", "graph", "generate", "schema-introspect", "explain", "patch", "repair", "compatibility", "capability"]
+      "tools": ["check", "eval", "format", "lint", "convert", "graph", "generate", "schema-introspect", "value-inspect", "explain", "patch", "repair", "compatibility", "capability", "debug", "viz", "budget", "mode", "doc", "schema-query"]
     }
   },
   "features": [
@@ -196,6 +277,7 @@
     "partial-evaluation",
     "sandbox-profiles",
     "lint-sarif",
+    "lint-project-config",
     "inspect-value",
     "debug-steps",
     "viz-exporters",

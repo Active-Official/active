@@ -1,0 +1,10 @@
+{
+  "b": {
+    "$active.blob": {
+      "hash": "blake3:ef8a8525ffd1d32141916f461ccb49c92ee84d57279145268364fb7c1c179eea",
+      "size": 5,
+      "media_type": "text/plain",
+      "tainted": false
+    }
+  }
+}

@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [lexer, parser, interpolation]
+        target: [lexer, parser, interpolation, formatter]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
@@ -45,3 +45,4 @@ jobs:
           name: fuzz-${{ matrix.target }}-artifacts
           path: fuzz/artifacts/
           if-no-files-found: ignore
+          retention-days: 14

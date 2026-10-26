@@ -1653,6 +1653,81 @@ fn stdio_unknown_method_returns_method_not_found() {
 }
 
 #[test]
+fn stdio_capability_explain_and_debug_bridges() {
+    let uri = "untitled:bridges";
+    let mut server = Framed::spawn();
+    let init = server.request(
+        "initialize",
+        serde_json::json!({
+            "processId": null,
+            "capabilities": {},
+        }),
+    );
+    assert!(init.get("result").is_some(), "{init}");
+    server.notify("initialized", serde_json::json!({}));
+
+    // Capability handshake: the same descriptor the CLI serves, and
+    // an unknown major fails closed instead of answering.
+    let descriptor = server.request("active/capability", serde_json::json!({}));
+    let tools = descriptor["result"]["tools"]
+        .as_array()
+        .expect("tools array");
+    assert_eq!(tools.len(), 20, "{descriptor}");
+    assert!(tools.iter().any(|t| t["name"] == "debug"), "{descriptor}");
+    let refused = server.request("active/capability", serde_json::json!({"requireMajor": 99}));
+    assert_eq!(refused["error"]["code"], -32602, "{refused}");
+
+    server.notify(
+        "textDocument/didOpen",
+        serde_json::json!({
+            "textDocument": {
+                "uri": uri,
+                "languageId": "active",
+                "version": 1,
+                "text": "let idle = 1\nport = 8080\n",
+            }
+        }),
+    );
+
+    // Explainer bridge over every live diagnostic.
+    let explain = server.request(
+        "active/explain",
+        serde_json::json!({"textDocument": {"uri": uri}}),
+    );
+    let items = explain["result"].as_array().expect("explanation array");
+    assert!(
+        items.iter().any(|e| e["code"] == "L001"),
+        "lint finding must be explained: {explain}"
+    );
+    assert!(
+        items
+            .iter()
+            .all(|e| e["guidance"].as_str().is_some_and(|g| !g.is_empty())),
+        "{explain}"
+    );
+
+    // Debugger bridge: the same breakpoint selectors as the CLI.
+    let steps = server.request(
+        "active/debug/steps",
+        serde_json::json!({"textDocument": {"uri": uri}, "breakpoint": "path:port"}),
+    );
+    assert_eq!(steps["result"]["breakpoint"], "path:port", "{steps}");
+    assert!(steps["result"]["matched"].is_number(), "{steps}");
+    assert!(
+        !steps["result"]["steps"]
+            .as_array()
+            .expect("steps")
+            .is_empty(),
+        "{steps}"
+    );
+
+    // Unknown request methods still refuse.
+    let reply = server.request("workspace/unknownMethod", serde_json::json!({}));
+    assert_eq!(reply["error"]["code"], -32601, "{reply}");
+    server.shutdown();
+}
+
+#[test]
 fn stdio_publish_completion_hints_and_close() {
     let (_uri, path) = temp_fixture("lspdiag.active", "let limit = 5\n[a]\nx = y\ny = x\n");
     let file_uri = lsp_types::Url::from_file_path(&path).expect("file uri");

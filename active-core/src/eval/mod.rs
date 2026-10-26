@@ -1689,6 +1689,14 @@ impl Engine {
                             ));
                         }
                     };
+                    if media.is_empty() {
+                        return Err(EvalError::BlobError {
+                            code: crate::blob::code::BAD_FORM,
+                            message: "blob() media type must be non-empty".to_string(),
+                            span: module.node_spans.get(&node_id).cloned(),
+                            file: module.node_files.get(&node_id).cloned(),
+                        });
+                    }
                     let structurally_material = secret_profile.as_ref().is_some_and(|profile| {
                         profile.node_is_secret(*data) || profile.node_is_secret(*media_type)
                     });
@@ -1704,6 +1712,24 @@ impl Engine {
                                 ));
                             }
                         };
+                    // A payload that copies material is tainted even when
+                    // the call site is not structurally material: the
+                    // identity-only export would otherwise publish an
+                    // untainted media type/hash slot for secret bytes.
+                    // Authored literals come from the analyzed profile;
+                    // env values from the engine's closed snapshot.
+                    if !tainted {
+                        if let Some(profile) = secret_profile.as_ref() {
+                            let text = String::from_utf8_lossy(&bytes);
+                            let authored = profile.redact_text(&text).is_some();
+                            let from_env = profile.material_envs().iter().any(|name| {
+                                self.env
+                                    .get(name)
+                                    .is_some_and(|value| !value.is_empty() && text.contains(value))
+                            });
+                            tainted = authored || from_env;
+                        }
+                    }
                     // A plain value used as a secret locator is material
                     // even without a `Value::Secret` marker: the blob is
                     // structurally tainted and can never materialise.

@@ -125,9 +125,33 @@ pub fn value_to_json(v: &Value) -> JsonValue {
 /// media type, or materialised payload bytes would otherwise render
 /// verbatim.
 pub fn redactor_with_runtime_secrets(profile: &SecretProfile, value: &Value) -> SecretRedactor {
-    fn seed(profile: &SecretProfile, redactor: &mut SecretRedactor, path: &str, value: &Value) {
+    redactor_and_exact_with_runtime_secrets(profile, value).0
+}
+
+/// Runtime secrets split into the two matching policies document data
+/// needs: an exact set at any length (a copied whole value must redact)
+/// and a substring redactor that only holds values of 4+ bytes (a
+/// 1-byte secret must not rewrite unrelated text). Display prose keeps
+/// using [`redactor_with_runtime_secrets`], where over-redaction is the
+/// safer trade.
+pub fn redactor_and_exact_with_runtime_secrets(
+    profile: &SecretProfile,
+    value: &Value,
+) -> (SecretRedactor, std::collections::HashSet<String>) {
+    fn seed(
+        profile: &SecretProfile,
+        redactor: &mut SecretRedactor,
+        exact: &mut std::collections::HashSet<String>,
+        path: &str,
+        value: &Value,
+    ) {
         match value {
-            Value::Secret(text) => redactor.insert(text.clone()),
+            Value::Secret(text) => {
+                exact.insert(text.clone());
+                if text.len() >= 4 {
+                    redactor.insert(text.clone());
+                }
+            }
             // Seed a plain string only when its node is globally
             // material. A profile selection can place a BENIGN value at
             // a material path; seeding that would hide the same value
@@ -138,11 +162,14 @@ pub fn redactor_with_runtime_secrets(profile: &SecretProfile, value: &Value) -> 
                     .value_node_at(path)
                     .is_some_and(|id| profile.node_is_secret(id)) =>
             {
-                redactor.insert(text.clone());
+                exact.insert(text.clone());
+                if text.len() >= 4 {
+                    redactor.insert(text.clone());
+                }
             }
             Value::Array(items) => {
                 for (index, item) in items.iter().enumerate() {
-                    seed(profile, redactor, &format!("{path}[{index}]"), item);
+                    seed(profile, redactor, exact, &format!("{path}[{index}]"), item);
                 }
             }
             Value::Table(map) => {
@@ -152,15 +179,16 @@ pub fn redactor_with_runtime_secrets(profile: &SecretProfile, value: &Value) -> 
                     } else {
                         format!("{path}.{key}")
                     };
-                    seed(profile, redactor, &child, item);
+                    seed(profile, redactor, exact, &child, item);
                 }
             }
             _ => {}
         }
     }
     let mut redactor = profile.literals().clone();
-    seed(profile, &mut redactor, "", value);
-    redactor
+    let mut exact = std::collections::HashSet::new();
+    seed(profile, &mut redactor, &mut exact, "", value);
+    (redactor, exact)
 }
 
 /// True when a blob payload's raw bytes carry a secret. The bytes are
@@ -189,6 +217,54 @@ pub(crate) fn blob_payload_is_material(
             .redact_text(&String::from_utf8_lossy(bytes))
             .is_some()
     })
+}
+
+/// Static text of a literal, or of an interpolation whose parts are
+/// all literals (`"a${}b"` cannot occur: a literal part is plain text).
+/// Anything that needs evaluation returns `None`, so callers never call
+/// a dynamic value "static".
+pub(crate) fn static_string(
+    module: &crate::ir::Module,
+    id: Option<crate::ir::NodeId>,
+) -> Option<String> {
+    match module.get(id?) {
+        Some(crate::ir::Node::Literal(crate::ir::Value::String(text))) => Some(text.clone()),
+        Some(crate::ir::Node::Interpolate { parts }) => {
+            let mut out = String::new();
+            for part in parts {
+                match part {
+                    crate::ir::InterpPart::Literal(text) => out.push_str(text),
+                    crate::ir::InterpPart::Expr(_) => return None,
+                }
+            }
+            Some(out)
+        }
+        _ => None,
+    }
+}
+
+/// Static default value: a scalar/array/table literal, or an
+/// all-literal interpolation (a string). Dynamic defaults (env reads,
+/// refs, arithmetic) return `None` and count as required, matching the
+/// generators and the schema view.
+pub(crate) fn static_default(
+    module: &crate::ir::Module,
+    field: &crate::ir::SchemaField,
+) -> Option<JsonValue> {
+    match module.get(field.default?) {
+        Some(crate::ir::Node::Literal(value)) => Some(value_to_json(value)),
+        Some(crate::ir::Node::Interpolate { parts }) => {
+            let mut out = String::new();
+            for part in parts {
+                match part {
+                    crate::ir::InterpPart::Literal(text) => out.push_str(text),
+                    crate::ir::InterpPart::Expr(_) => return None,
+                }
+            }
+            Some(JsonValue::String(out))
+        }
+        _ => None,
+    }
 }
 
 /// True when a dotted path resolves to a schema node. Used to tell a
@@ -248,12 +324,13 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
     profile.begin_redaction_pass();
     // Runtime secrets live in the evaluated tree; authored literals
     // live in the profile. Copies need both.
-    let redactor = redactor_with_runtime_secrets(profile, value);
+    let (redactor, runtime_exact) = redactor_and_exact_with_runtime_secrets(profile, value);
     let mut blob_material: std::collections::HashMap<[u8; 32], bool> =
         std::collections::HashMap::new();
     fn walk(
         profile: &SecretProfile,
         redactor: &SecretRedactor,
+        runtime_exact: &std::collections::HashSet<String>,
         blob_material: &mut std::collections::HashMap<[u8; 32], bool>,
         path: &str,
         value: &Value,
@@ -267,6 +344,7 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
                         walk(
                             profile,
                             redactor,
+                            runtime_exact,
                             blob_material,
                             &format!("{path}[{index}]"),
                             item,
@@ -284,7 +362,14 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
                     };
                     out.insert(
                         key.clone(),
-                        walk(profile, redactor, blob_material, &child, item),
+                        walk(
+                            profile,
+                            redactor,
+                            runtime_exact,
+                            blob_material,
+                            &child,
+                            item,
+                        ),
                     );
                 }
                 Value::Table(out)
@@ -344,7 +429,11 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
             // A whole value identical to a material value (at any
             // length) is material too; short values never enter the
             // substring redactor.
-            Value::String(text) if profile.is_material_text(text) => Value::Secret(String::new()),
+            Value::String(text)
+                if profile.is_material_text(text) || runtime_exact.contains(text) =>
+            {
+                Value::Secret(String::new())
+            }
             Value::String(text) => match redactor.redact_text(text) {
                 Some(redacted) => Value::String(redacted),
                 None => value.clone(),
@@ -352,7 +441,14 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
             _ => value.clone(),
         }
     }
-    walk(profile, &redactor, &mut blob_material, "", value)
+    walk(
+        profile,
+        &redactor,
+        &runtime_exact,
+        &mut blob_material,
+        "",
+        value,
+    )
 }
 
 /// Drop retained blob payloads, keeping identity and taint. Content

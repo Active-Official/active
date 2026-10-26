@@ -31,11 +31,11 @@ the baseline rule (no parallel rewrites).
 | GQ — graph queries | dependents/dependencies/shortest-path/secret-cone/CA-size | `active-core/tests/graph_queries.rs` |
 | CAP — capabilities | `active_capabilities`, E025, 4 sandbox profiles, handshake | `active-core/tests/capability.rs`, `agent-kit/capability.schema.json` |
 | CG — codegen | 6 targets validated by real ecosystems, byte-stable | `conformance/evidence/codegen.log` (`CODEGEN: ALL PASS`) |
-| D — packaging | live 1.4.0 on crates.io, npm, PyPI; universal artifact; SBOMs | `docs/distribution.md`, `packaging/README.md`, registry checks |
+| D — packaging | live 1.4.0 on crates.io, npm, PyPI; per-platform archives + WASM + VSIX; CycloneDX SBOMs and their `SHA256SUMS` attached to the `v1.4.0` release; universal assembly script in `packaging/assemble-universal.py` (maintainer-run) | `docs/distribution.md`, `packaging/README.md`, registry checks |
 | T2 — tier-2 formalization | matrix + per-language SPEC maps + smoke policy | `bindings/README.md`, `conformance/NORMALIZATION.md` |
 | AK — agent kit | eval gate, 10 vectors, cone agreement, 14-task prompt pack | `conformance/evidence/agentkit-eval.json`, `prompts/results/round-master-t14.json` |
 | AUD — audit trail | re-validatable redacted Active document | `spec/audit-trail.md`, `conformance/evidence` |
-| OBS — tracing | opt-in, 4-field events, metrics mapping | `spec/observability.md`, `trace.rs` |
+| OBS — tracing | opt-in, 4-field events, metrics mapping | `spec/observability.md`, `active-core/src/trace.rs` |
 | EVID — evidence | harness, container, Miri, catalog, research summary | `conformance/evidence/README.md` |
 | FINAL | suite green, docs/positioning, this record | this file + `gates.log` |
 
@@ -45,7 +45,7 @@ the baseline rule (no parallel rewrites).
 |---|---|---|
 | LSP | 14 capabilities incl. formatting, symbols, plan actions, custom tokens | `active-lsp/tests/tooling.rs`, `spec/lsp.md` |
 | FMT | canonical modes, idempotence, LSP wiring | `active-core/tests/format_roundtrip.rs`, `active-fmt/tests/cli.rs` |
-| LINT | 10 rules, JSON + SARIF, catalog doc, CLI formats | `active-core/tests/lint.rs`, `docs/lint-rules.md` |
+| LINT | 16 rules, project config, JSON + SARIF, catalog doc, CLI formats | `active-core/tests/lint.rs`, `docs/lint-rules.md` |
 | INSPECT | path/value/taint/size/blob/schema/provenance explorer | `active-core/tests/inspect.rs`, `active-core/src/convert/value_inspect.rs` |
 | DEBUG | step trace, breakpoints, replay, reduction | `active-core/tests/debug.rs`, `spec/debug.md` |
 | VIZ | graph/taint/budget/schema/repair exports + static viewer | `active-core/tests/viz.rs`, `viz/index.html`, `spec/viz.md` |
@@ -64,11 +64,11 @@ the baseline rule (no parallel rewrites).
 |---|---|
 | 1.1 Cross-implementation gate | the shared harness is a required CI job on both remotes; `conformance/evidence/harness.json` (`parity: []`) and the zero-SKIP `container-harness.json` |
 | 1.2 Content-addressed values + blob | `spec/blob.md`, `active-core/tests/blob.rs`, `agent-kit/vectors/blob-clean.active`; identity, equality, taint, budget, materialisation, and JSON-shape vectors |
-| 1.3 Multi-step repair | `spec/repair.md`, `active-core/tests/repair.rs`, `active-core/src/convert/repair.rs`; single/multi-step, stuck (H008), unrepairable, side-effect listing |
+| 1.3 Multi-step repair | `spec/repair.md`, `active-core/tests/repair.rs`, `active-core/src/convert/repair.rs`; single/multi-step, stuck (H006), unrepairable (H008), side-effect listing |
 | 1.4 Inspector productized | `active-core/tests/inspect.rs`, `active-core/src/convert/value_inspect.rs`, `docs/schemas/inspect*.json`; library + CLI golden tests, no raw secrets |
 | 1.5 Debugger/stepper/replay | `active-core/tests/debug.rs`, `spec/debug.md`; determinism + redaction tests, headless and LSP |
 | 1.6 Visualizers | `active-core/tests/viz.rs`, `viz/index.html`, `spec/viz.md`; stable JSON/DOT/Mermaid, redaction checks |
-| 1.7 Capability descriptor | `agent-kit/capability.schema.json`, `active capability`, `active-lsp` handshake; 13 tools, 4 profiles, unknown-major rejection |
+| 1.7 Capability descriptor | `agent-kit/capability.schema.json`, `active capability`, `active-lsp` handshake; 20 tools, 4 profiles, unknown-major rejection |
 | 1.8 SARIF + stable JSON | `active lint --format sarif`, `docs/schemas/lint*.json`, `active-core/tests/lint.rs`; SARIF validated in evidence |
 | 1.9 Data Mode | `spec/mode.md`, `active-core/tests/mode.rs`; Config unchanged, Data vectors for progressive warnings and hard ceilings |
 | 1.10 Evidence pack | `conformance/evidence/README.md` plus this tree's gates/harness/container/codegen/catalog/agent-kit logs |
@@ -77,16 +77,17 @@ the baseline rule (no parallel rewrites).
 
 | Item | Deliverable |
 |---|---|
-| 2.1 Agent-to-agent interchange profile | `spec/agent-interchange-profile.md` + `active-core/tests/agent_interchange.rs` |
+| 2.1 Agent-to-agent interchange profile | `spec/agent-interchange-profile.md`, three example envelopes under `examples/agent-interchange/`, and `active-core/tests/agent_interchange.rs` (fields, mode, handshake, redaction, directory vectors) |
 | 2.2 "I already possess hash H" short-circuit | protocol note in the profile (hash short-circuit section) + agent-kit helpers/vectors |
 | 2.3 Capability negotiation handshake | capability handshake in the profile and `active capability --profile`; agent-kit reference |
 | 2.4 Deterministic explainer | `active-core/src/convert/explain.rs`, `active explain` (text/JSON), LSP hover texts |
-| 2.5 Audit trail as Active data | `spec/audit-trail.md`, `--audit-trail`, re-validation in `active-core/tests` |
+| 2.5 Audit trail as Active data | `spec/audit-trail.md`, `--audit-trail`, re-validation in `active-cli/tests/cli.rs` (`audit_records_limits_and_revalidates`) |
 | 2.6 Partial eval + memo as the agent path | `spec/partial-eval.md`, `eval --path`, incremental memo; `docs/agent-headless.md` |
 | 2.7 Compatibility as queryable data | `active compatibility`, `spec/schema-evolution.md`, `active-core/tests/compat.rs` |
-| 2.8 Stuck/unrepairable terminal state | H008 in `active-core/src/convert/repair.rs` + repair tests |
+| 2.8 Stuck/unrepairable terminal state | H006 (stuck) and H008 (unrepairable) in
+           `active-core/src/convert/repair.rs` + repair tests |
 | 2.9 Secret-safe tool-result envelope | `spec/tool-result-envelope.md`, `examples/agent-interchange/tool-result.active`, conformance test |
-| 2.10 Playground full agent loop | `playground/loop/` (`run.ps1`, `run.sh`, transcript) and `active-cli/tests/loop_demo.rs` driving the shipped binary |
+| 2.10 Playground full agent loop | `playground/loop/` (`run.ps1`, `run.sh`, `transcript.txt` captured from the shipped binary) and `active-cli/tests/loop_demo.rs` |
 
 ## 5. Verification battery (this tree)
 
@@ -103,7 +104,7 @@ the baseline rule (no parallel rewrites).
 | Agent-kit eval | `ok: true`, 5 improved per loop, mean 1.5 |
 | Catalog diff | 83 emitted, 84 catalogued, 0 missing (E009 intentionally unassigned) |
 | Prompt pack | 14/14 copilot, 12/14 direct |
-| Output schemas | 8/8 documents validate |
+| Output schemas | 9/9 documents validate (`output-schema.log`) |
 | Editor smoke | 6 commands, redaction probe pass |
 | Neovim package determinism | identical hashes |
 | Dual-push CI | recorded in `conformance/evidence/ci.log` |

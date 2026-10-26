@@ -1,0 +1,15 @@
+{
+  "active_mode": "data",
+  "active_capabilities": [
+    "check",
+    "eval"
+  ],
+  "b": {
+    "$active.blob": {
+      "hash": "blake3:7862093d173aeb2bf7dd36f295742c85d226dff449ad91b3e5a847a19e16bc58",
+      "size": 2,
+      "media_type": "application/json",
+      "tainted": false
+    }
+  }
+}

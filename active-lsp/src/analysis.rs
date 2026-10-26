@@ -1128,6 +1128,13 @@ pub fn hover_at(doc: &Doc, line: u32, character: u32) -> Option<Hover> {
         .filter(|d| d.path.as_deref() == Some(path.as_str()))
     {
         lines.push(format!("{}: {}", diag.code, diag.message));
+        // Deterministic repair guidance (the same canned text as
+        // `active explain`): an agent fixing a hover-visible finding
+        // should not need a second command.
+        let guidance = active_core::convert::explain::explain_code(&diag.code);
+        if !guidance.is_empty() {
+            lines.push(format!("_fix_: {guidance}"));
+        }
     }
     Some(Hover {
         contents: HoverContents::Markup(MarkupContent {
@@ -3299,4 +3306,59 @@ pub fn why_at(doc: &Doc, line: u32, character: u32) -> Option<(String, Vec<Strin
         Target::Key { path, node } => (*node, path.clone()),
     };
     Some((path, active_core::graph::why_paths(&doc.module, node)))
+}
+
+// ------------------------------------------------------------------
+// Tooling bridge: explainer and debugger over the open document.
+// ------------------------------------------------------------------
+
+/// Deterministic repair guidance for every diagnostic the live
+/// analysis holds (parse, evaluation, and lint). Guidance is canned
+/// per code, so no message text or value enters the payload.
+pub fn explain_snapshot(doc: &Doc) -> JsonValue {
+    let mut items: Vec<(String, Option<String>, Option<String>)> = Vec::new();
+    for diagnostic in doc
+        .parse_diags
+        .iter()
+        .chain(doc.eval_diags.iter())
+        .chain(doc.lint_diags.iter())
+    {
+        let span = diagnostic.span.as_ref().map(|span| {
+            format!(
+                "{}:{}-{}:{}",
+                span.line, span.column, span.end_line, span.end_column
+            )
+        });
+        items.push((diagnostic.code.clone(), diagnostic.path.clone(), span));
+    }
+    serde_json::to_value(active_core::convert::explain::explain_structured(&items))
+        .unwrap_or_else(|_| serde_json::json!([]))
+}
+
+/// Debugger bridge (spec/debug.md): the redacted step trace for the
+/// open document, truncated through an optional breakpoint selector.
+/// Runs the shipped evaluator - the server never re-implements a walk.
+pub fn steps_snapshot(doc: &Doc, selector: Option<&str>) -> JsonValue {
+    let mut engine = Engine::new();
+    engine.resilient = true;
+    // A language-server request must be deterministic: no wall deadline.
+    engine.budget.max_wall_ms = 0;
+    let steps = match engine.evaluate_with_steps(&doc.module) {
+        Ok((_, _, steps)) => steps,
+        Err(error) => return serde_json::json!({"error": format!("{error}")}),
+    };
+    let total = steps.len();
+    let matched = selector.and_then(|selector| {
+        active_core::debug::breakpoint_index_with_budget(&steps, selector, engine.budget.max_nodes)
+    });
+    let mut shown = steps;
+    if let Some(index) = matched {
+        shown.truncate(index + 1);
+    }
+    serde_json::json!({
+        "breakpoint": selector,
+        "matched": matched,
+        "total_steps": total,
+        "steps": shown,
+    })
 }

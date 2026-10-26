@@ -253,14 +253,111 @@ fn budget_data_with_redactor(
     })
 }
 
-/// Schema view: the versioned introspection document plus mode.
+/// Schema view: the versioned introspection document plus mode,
+/// compatibility guarantees, and migration hints.
+///
+/// The introspection document already carries the field tree with
+/// constraints, `deprecated`, and `removed_in`. This view adds the two
+/// things a migration UI needs at a glance: the declared reader/writer
+/// guarantees (compatibility) and the actionable migration list
+/// (deprecated fields with their authored hint, plus scheduled
+/// removals). Paths and schema prose only: no evaluated values.
 pub fn schema_data(module: &Module) -> Result<JsonValue, String> {
     let mut inspected = crate::convert::schema_inspect(module)?;
     inspected["mode"] = json!(match module.mode {
         crate::ir::Mode::Data => "data",
         crate::ir::Mode::Config => "config",
     });
+    inspected["compatibility"] = compatibility_data(module);
     Ok(inspected)
+}
+
+/// Compatibility guarantees plus the migration list derived from the
+/// schema tree. Sorted by field path so the view is deterministic.
+fn compatibility_data(module: &Module) -> JsonValue {
+    let mut deprecated: Vec<JsonValue> = Vec::new();
+    let mut removals: Vec<JsonValue> = Vec::new();
+    let mut version = JsonValue::Null;
+    let mut min_reader = JsonValue::Null;
+    let mut min_writer = JsonValue::Null;
+    if let Some(root) = module.schema {
+        if let Some(crate::ir::Node::SchemaTable { meta, .. }) = module.get(root) {
+            version = meta
+                .version
+                .clone()
+                .map(JsonValue::from)
+                .unwrap_or(JsonValue::Null);
+            min_reader = meta
+                .min_reader
+                .clone()
+                .map(JsonValue::from)
+                .unwrap_or(JsonValue::Null);
+            min_writer = meta
+                .min_writer
+                .clone()
+                .map(JsonValue::from)
+                .unwrap_or(JsonValue::Null);
+        }
+        let mut stack = vec![(root, String::new())];
+        let mut seen = std::collections::HashSet::new();
+        while let Some((id, prefix)) = stack.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            match module.get(id) {
+                Some(crate::ir::Node::SchemaTable { fields, .. }) => {
+                    for (name, child) in fields {
+                        let path = if prefix.is_empty() {
+                            name.clone()
+                        } else {
+                            format!("{prefix}.{name}")
+                        };
+                        stack.push((*child, path));
+                    }
+                }
+                Some(crate::ir::Node::SchemaArray { element }) => stack.push((*element, prefix)),
+                Some(crate::ir::Node::SchemaField { field }) => {
+                    if let Some(hint) = &field.deprecated {
+                        deprecated.push(json!({
+                            "path": prefix,
+                            "hint": if hint.is_empty() {
+                                JsonValue::from("deprecated")
+                            } else {
+                                JsonValue::from(hint.clone())
+                            },
+                        }));
+                    }
+                    if let Some(removed) = &field.removed_in {
+                        removals.push(json!({
+                            "path": prefix,
+                            "removed_in": removed,
+                            "hint": format!("migrate before {removed}"),
+                        }));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    deprecated.sort_by(|a, b| {
+        a["path"]
+            .as_str()
+            .unwrap_or_default()
+            .cmp(b["path"].as_str().unwrap_or_default())
+    });
+    removals.sort_by(|a, b| {
+        a["path"]
+            .as_str()
+            .unwrap_or_default()
+            .cmp(b["path"].as_str().unwrap_or_default())
+    });
+    json!({
+        "schema_version": version,
+        "min_reader": min_reader,
+        "min_writer": min_writer,
+        "deprecated": deprecated,
+        "removals": removals,
+    })
 }
 
 /// Repair plan view: the shipped multi-step planner's outcome without

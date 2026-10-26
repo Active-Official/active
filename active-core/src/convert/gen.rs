@@ -41,10 +41,7 @@ fn literal_float(module: &Module, id: Option<NodeId>) -> Option<f64> {
 
 /// Static literal string bound.
 pub(crate) fn literal_string(module: &Module, id: Option<NodeId>) -> Option<String> {
-    match id.and_then(|node| module.get(node)) {
-        Some(Node::Literal(crate::ir::Value::String(s))) => Some(s.clone()),
-        _ => None,
-    }
+    super::static_string(module, id)
 }
 
 /// Field `description` slot for doc comments across codegen targets.
@@ -98,10 +95,7 @@ fn enum_descriptions_text(module: &Module, field: &SchemaField) -> Option<String
 /// Static literal default as JSON (any literal kind, redacted like
 /// every export — secrets never leak through generated defaults).
 pub(crate) fn literal_default(module: &Module, field: &SchemaField) -> Option<JsonValue> {
-    match field.default.and_then(|node| module.get(node)) {
-        Some(Node::Literal(value)) => Some(super::value_to_json(value)),
-        _ => None,
-    }
+    super::static_default(module, field)
 }
 
 /// Required unless a static default exists or the field is Null
@@ -1426,7 +1420,18 @@ impl RustGen<'_> {
             Some(Node::SchemaArray { element }) => self.emit_nested(name, *element),
             Some(Node::SchemaField { field }) => {
                 if let ActiveType::Enum(members) = &field.typ {
-                    self.emit_enum(name, members);
+                    // A material member cannot be redacted into a valid
+                    // wire value, and a `***SECRET***` variant would
+                    // accept the marker instead of the real document.
+                    // Degrade the field to `String` on every target.
+                    if members
+                        .iter()
+                        .any(|member| self.profile.blob_identity_is_material(member))
+                    {
+                        self.out.push_str(&format!("pub type {name} = String;\n"));
+                    } else {
+                        self.emit_enum(name, members);
+                    }
                 }
             }
             _ => {}

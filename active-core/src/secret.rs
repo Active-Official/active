@@ -30,6 +30,13 @@ use crate::ir::{InterpPart, Module, Node, NodeId, PatchOp, Value};
 /// JSON mapping so every surface emits the same marker.
 pub const MARKER: &str = "***SECRET***";
 
+/// Shortest value allowed into a substring set. Whole-value (exact)
+/// matching still covers shorter secrets; spreading a 1-3 byte value as
+/// a substring would rewrite unrelated text (`secret("a")` must not
+/// turn "banana" into confetti). Authored prose opts into the full set
+/// deliberately (spec/secrets.md §3).
+const MIN_SUBSTRING_BYTES: usize = 4;
+
 /// Direct value-producing children of a node. Schema nodes are
 /// excluded: they describe contracts and never evaluate to document
 /// data, so following them would taint unrelated values.
@@ -377,14 +384,10 @@ impl SecretRedactor {
     /// leak. Never use it on document data: a one-byte value would
     /// rewrite unrelated text.
     pub fn redact_every_occurrence(&self, text: &str) -> Option<String> {
-        if self.is_empty() {
-            return None;
-        }
-        let mut all = SecretRedactor::new();
-        for value in self.values.borrow().iter() {
-            all.insert(value.clone());
-        }
-        all.redact_text(text)
+        // The redactor's own automaton already covers every inserted
+        // value at any length; rebuilding a copy per call made docgen
+        // quadratic (a 310 KB document with 800 secrets took ~22 s).
+        self.redact_text(text)
     }
 
     /// Replace every occurrence of a known value of at least
@@ -446,6 +449,22 @@ impl SecretRedactor {
         let values = other.values.borrow().clone();
         for value in values {
             self.insert(value);
+        }
+    }
+
+    /// Merge only values at least `min_bytes` long. Callers that keep a
+    /// length-gated substring set (document data) use this so a short
+    /// secret cannot rewrite unrelated text, while exact matching still
+    /// covers the value elsewhere.
+    pub fn merge_min(&mut self, other: &SecretRedactor, min_bytes: usize) {
+        if std::ptr::eq(self, other) {
+            return;
+        }
+        let values = other.values.borrow().clone();
+        for value in values {
+            if value.len() >= min_bytes {
+                self.insert(value);
+            }
         }
     }
 
@@ -1693,7 +1712,11 @@ impl SecretProfile {
         let mut literals = SecretRedactor::new();
         for id in &nodes {
             if let Some(Node::Literal(Value::String(text))) = module.get(*id) {
-                literals.insert(text.clone());
+                // Short structural values are exact-only; spreading a
+                // 1-3 byte value as a substring rewrites unrelated text.
+                if text.len() >= MIN_SUBSTRING_BYTES {
+                    literals.insert(text.clone());
+                }
             }
         }
 
@@ -2313,7 +2336,12 @@ impl SecretProfile {
             }
             if let Some(text) = static_strings.get(module, id) {
                 exact_literals.insert(text.to_string());
-                literals.insert(text.to_string());
+                // Whole-value matching covers a short structural value;
+                // spreading it as a substring would rewrite unrelated
+                // text (a `secret("a")` must not corrupt "banana").
+                if text.len() >= MIN_SUBSTRING_BYTES {
+                    literals.insert(text.to_string());
+                }
             }
         }
         // A computed selector cannot prove which profile ran, so its
@@ -2337,7 +2365,7 @@ impl SecretProfile {
                 continue;
             };
             exact_literals.insert(text.to_string());
-            if !nodes.contains(node) && text.len() < 4 {
+            if text.len() < MIN_SUBSTRING_BYTES {
                 continue;
             }
             literals.insert(text.to_string());
@@ -2434,7 +2462,7 @@ impl SecretProfile {
     /// (a `let` binding, a computed interpolation, a lazy host env
     /// lookup), so any copy of their text redacts on every surface.
     pub fn absorb_secrets(&mut self, seeds: &SecretRedactor) {
-        self.literals.merge(seeds);
+        self.literals.merge_min(seeds, MIN_SUBSTRING_BYTES);
         self.exact_literals.merge(seeds);
     }
 
@@ -2450,7 +2478,9 @@ impl SecretProfile {
             .filter_map(|name| env.get(name).cloned())
             .collect();
         for value in values {
-            self.literals.insert(value.clone());
+            if value.len() >= MIN_SUBSTRING_BYTES {
+                self.literals.insert(value.clone());
+            }
             self.exact_literals.insert(value);
         }
     }
@@ -2571,6 +2601,13 @@ impl SecretProfile {
     /// Authored literal strings inside material nodes.
     pub fn literals(&self) -> &SecretRedactor {
         &self.literals
+    }
+
+    /// Environment names whose values are material under this profile.
+    /// The evaluator consults them to mark a blob whose payload copies
+    /// a host value, without materialising every payload first.
+    pub fn material_envs(&self) -> &HashSet<String> {
+        &self.material_envs
     }
 
     /// Marks the start of an output pass. Pending literals are folded

@@ -231,15 +231,17 @@ fn fill_for(
     if field.deprecated.is_some() {
         return None;
     }
-    if !matches!(
-        field.default.and_then(|id| module.get(id)),
+    // A static default is a literal or an all-literal interpolation;
+    // anything dynamic cannot be filled without evaluating.
+    let static_text = super::static_string(module, field.default);
+    match field.default.and_then(|id| module.get(id)) {
         Some(Node::Literal(Value::String(_)))
-            | Some(Node::Literal(Value::Int(_)))
-            | Some(Node::Literal(Value::Float(_)))
-            | Some(Node::Literal(Value::Bool(_)))
-            | Some(Node::Literal(Value::Null))
-    ) {
-        return None;
+        | Some(Node::Literal(Value::Int(_)))
+        | Some(Node::Literal(Value::Float(_)))
+        | Some(Node::Literal(Value::Bool(_)))
+        | Some(Node::Literal(Value::Null)) => {}
+        Some(Node::Interpolate { .. }) if static_text.is_some() => {}
+        _ => return None,
     }
     let value = match field.default.and_then(|id| module.get(id)) {
         // Anything composite (tables, arrays, quantities, durations)
@@ -279,6 +281,23 @@ fn fill_for(
         }
         Some(Node::Literal(Value::Bool(b))) => b.to_string(),
         Some(Node::Literal(Value::Null)) => "null".to_string(),
+        Some(Node::Interpolate { .. }) => {
+            let s = static_text?;
+            if profile.blob_identity_is_material(&s) {
+                return None;
+            }
+            if has_unrepresentable_control(&s) {
+                return None;
+            }
+            if s.contains("${") {
+                if s.chars().any(|c| (c as u32) < 0x20) {
+                    return None;
+                }
+                format!("'{}'", escape_single_quoted(&s))
+            } else {
+                format!("\"{}\"", escape_directive_str(&s))
+            }
+        }
         _ => return None,
     };
     // Paths interpolate raw: `path` is built from schema field and

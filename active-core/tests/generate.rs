@@ -493,3 +493,21 @@ fn blob_codegen_emits_identity_shape_on_all_targets() {
         "python must model the wire wrapper:\n{py}"
     );
 }
+
+#[test]
+fn a_material_enum_member_degrades_to_string_on_every_target() {
+    let src = "x = secret(\"RoleAdmin\")\nschema = { role = Enum(\"RoleAdmin\", \"user\") }\nrole = \"user\"\n";
+    let module = active_core::parse(src, "enum-material").expect("parse");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    let rust = active_core::convert::schema_to_rust_with_profile(&module, "Config", &profile)
+        .expect("rust generation");
+    assert!(
+        rust.contains("pub type ConfigRole = String;"),
+        "material enum member must degrade to String: {rust}"
+    );
+    assert!(!rust.contains("___SECRET___"), "{rust}");
+    assert!(!rust.contains("***SECRET***"), "{rust}");
+    let ts = active_core::convert::schema_to_typescript_with_profile(&module, "Config", &profile)
+        .expect("ts generation");
+    assert!(ts.contains("role"), "{ts}");
+}

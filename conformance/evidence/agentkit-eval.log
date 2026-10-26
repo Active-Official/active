@@ -1,3 +1,14 @@
+test_codegen_targets_and_features (__main__.CapabilityTest.test_codegen_targets_and_features) ... ok
+test_every_tool_described (__main__.CapabilityTest.test_every_tool_described) ... ok
+test_output_descriptions_cover_formats_and_query_shapes (__main__.CapabilityTest.test_output_descriptions_cover_formats_and_query_shapes) ... ok
+test_sandbox_profiles_match_code (__main__.CapabilityTest.test_sandbox_profiles_match_code) ... ok
+test_tool_surface_complete (__main__.CapabilityTest.test_tool_surface_complete) ... ok
+test_version_major_is_one (__main__.CapabilityTest.test_version_major_is_one) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.002s
+
+OK
 {
   "loops": {
     "python": {

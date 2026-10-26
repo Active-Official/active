@@ -689,6 +689,18 @@ impl<'a> Formatter<'a> {
                 None => format!("env.{name}"),
             },
             Some(Node::Secret { locator }) => {
+                // `secret.env("NAME")` with a name that cannot be a
+                // bare identifier has no `env.NAME` spelling. Keep the
+                // string form so the name survives a round trip.
+                if let Some(Node::Env {
+                    name,
+                    default: None,
+                }) = self.module.get(*locator)
+                {
+                    if !is_bare_identifier(name) {
+                        return format!("secret.env(\"{}\")", escape(name));
+                    }
+                }
                 format!("secret({})", self.render_expr(*locator))
             }
             Some(Node::ContentAddressed { media_type, data }) => {
@@ -882,6 +894,18 @@ fn op_symbol(op: BinOp) -> &'static str {
         BinOp::And => "&&",
         BinOp::Or => "||",
     }
+}
+
+/// Whether a name can be written in the bare `env.NAME` form: an
+/// identifier-shaped ASCII name. Anything else keeps the
+/// `secret.env("...")` spelling so the value round-trips exactly.
+fn is_bare_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 fn render_literal(v: &Value) -> String {

@@ -381,6 +381,7 @@ fn parse_recovering_impl(
     } else {
         Style::Brace
     };
+    parser.module.mixed_syntax = parser.brace_tables > 0 && parser.indent_tables > 0;
     parser.build_graph();
     (parser.module, parser.errors)
 }
@@ -1805,14 +1806,14 @@ impl Parser {
         spliced: &mut std::collections::HashSet<String>,
     ) {
         // Included root metadata never enters the composed tree: the
-        // host resolves mode/capabilities/profile from the main file
-        // only (spec/mode.md §1; includes inherit nothing). A root
-        // `schema` IS composable: included schemas are a supported
-        // contract-sharing feature (spec §2.7).
-        if matches!(
-            key.as_str(),
-            "active_mode" | "active_capabilities" | "active_profile"
-        ) {
+        // host resolves mode/capabilities from the main file only
+        // (spec/mode.md §1; includes inherit nothing). A root `schema`
+        // IS composable: included schemas are a supported
+        // contract-sharing feature (spec §2.7). A root
+        // `active_profile` is an ordinary value the evaluator reads
+        // after the merge, so an include may supply it as a default
+        // (spec/grammar.md §2.7, spec/specification.md §3.5).
+        if matches!(key.as_str(), "active_mode" | "active_capabilities") {
             return;
         }
         match fields.get(&key) {

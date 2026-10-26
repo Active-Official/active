@@ -18,6 +18,16 @@ fn fixture(name: &str, contents: &str) -> PathBuf {
     path
 }
 
+/// Fixture inside a named subdirectory, for tests that need a scoped
+/// project configuration without leaking it to every other test.
+fn fixture_in(dir_name: &str, name: &str, contents: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join("active-cli-tests").join(dir_name);
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join(name);
+    std::fs::write(&path, contents).expect("write fixture");
+    path
+}
+
 // ------------------------------------------------------------------
 // `active fmt` contract (C-040/C-041, spec/formatter.md).
 // ------------------------------------------------------------------
@@ -245,6 +255,79 @@ fn lint_disable_flag_silences_one_rule() {
     assert!(!out.status.success());
     assert!(
         String::from_utf8_lossy(&out.stderr).contains("unused-lets"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn lint_project_config_is_discovered_and_can_be_explicit() {
+    // Discovery: the configuration above the input file applies, so a
+    // rule the project disabled does not fail the run.
+    let doc = fixture_in(
+        "lint-config-discovery",
+        "doc.active",
+        "let idle = 1\nport = 8080\n",
+    );
+    fixture_in(
+        "lint-config-discovery",
+        ".active-lint.toml",
+        "disable = [\"unused-lets\"]\n",
+    );
+    let out = active().arg("lint").arg(&doc).output().expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Explicit --config applies regardless of where the file lives.
+    let other = fixture("lint_config_other.active", "let idle = 1\nport = 8080\n");
+    let config = fixture_in(
+        "lint-config-explicit",
+        "project.toml",
+        "disable = [\"unused-lets\"]\n",
+    );
+    let out = active()
+        .args(["lint", "--config"])
+        .arg(&config)
+        .arg(&other)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // A severity override reaches the report.
+    let config = fixture_in(
+        "lint-config-severity",
+        "project.toml",
+        "[severity]\nunused-lets = \"error\"\n",
+    );
+    let out = active()
+        .args(["lint", "--config"])
+        .arg(&config)
+        .arg(&other)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("L001"), "{stderr}");
+    assert!(stderr.contains("[Error]"), "{stderr}");
+
+    // A malformed discovered configuration fails loudly.
+    let bad = fixture_in("lint-config-broken", "doc.active", "port = 8080\n");
+    fixture_in(
+        "lint-config-broken",
+        ".active-lint.toml",
+        "disable = [\"nope\"]\n",
+    );
+    let out = active().arg("lint").arg(&bad).output().expect("run active");
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains(".active-lint.toml"),
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
@@ -1513,11 +1596,18 @@ fn capability_tools_all_map_to_real_subcommands() {
     mapping.insert("graph", vec!["graph", "impact", "why"]);
     mapping.insert("generate", vec!["generate"]);
     mapping.insert("schema-introspect", vec!["inspect"]);
+    mapping.insert("value-inspect", vec!["inspect"]);
+    mapping.insert("schema-query", vec!["schema"]);
     mapping.insert("explain", vec!["explain"]);
     mapping.insert("patch", vec!["patch"]);
     mapping.insert("repair", vec!["repair"]);
     mapping.insert("compatibility", vec!["compatibility"]);
     mapping.insert("capability", vec!["capability"]);
+    mapping.insert("debug", vec!["debug"]);
+    mapping.insert("viz", vec!["viz"]);
+    mapping.insert("budget", vec!["budget"]);
+    mapping.insert("mode", vec!["mode"]);
+    mapping.insert("doc", vec!["doc"]);
     for tool in tools {
         let name = tool["name"].as_str().expect("tool name");
         let cmds = mapping
@@ -2023,6 +2113,46 @@ fn audit_hash_reproduces_under_the_profile_override() {
 }
 
 #[test]
+fn debug_budget_breakpoint_and_minimize_reproduction_inputs() {
+    let f = fixture("debug_budget_break.active", "a = 1\nb = 2\nc = 3\n");
+    let out = active()
+        .args(["debug", "--from"])
+        .arg(&f)
+        .args(["--break", "budget:nodes:2", "--format", "json"])
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("debug JSON");
+    assert_eq!(report["breakpoint"], "budget:nodes:2", "{report}");
+    assert_eq!(report["matched"], 1, "{report}");
+    assert_eq!(report["total_steps"], 4, "{report}");
+    assert_eq!(report["steps"].as_array().map(|s| s.len()), Some(2));
+
+    let source = fixture(
+        "debug_minimize.active",
+        "schema = { port = Int }\nport = \"x\"\nprobe = env.ACTIVE_DBG_PORT ?: \"f\"\n",
+    );
+    let out = active()
+        .args(["debug", "--from"])
+        .arg(&source)
+        .args(["--minimize", "T002"])
+        .output()
+        .expect("run active");
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("minimize JSON");
+    assert_eq!(report["target_present"], true, "{report}");
+    assert_eq!(
+        report["env"],
+        serde_json::json!(["ACTIVE_DBG_PORT"]),
+        "{report}"
+    );
+    assert_eq!(report["budget"]["max_wall_ms"], 0, "{report}");
+}
+
+#[test]
 fn exports_redact_structural_material() {
     let f = fixture(
         "export_redact.active",
@@ -2191,6 +2321,56 @@ fn repair_browser_type_error_messages_are_value_free() {
         "type error leaked a value: {body}"
     );
     assert!(body.contains("T001"), "expected a type diagnostic: {body}");
+}
+
+#[test]
+fn repair_browser_filters_select_diagnostics_without_touching_the_plan() {
+    let f = fixture(
+        "browser_filter.active",
+        "schema = { a = Int, b = String }\na = \"x\"\nb = 1\n",
+    );
+    let full = active()
+        .args(["repair", "--from"])
+        .arg(&f)
+        .arg("--browser")
+        .output()
+        .expect("run active");
+    let model: serde_json::Value = serde_json::from_slice(&full.stdout).expect("browser JSON");
+    let diagnostics = model["diagnostics"].as_array().expect("diagnostics");
+    assert!(diagnostics.len() >= 2, "{model}");
+    let code = diagnostics[0]["code"].as_str().expect("code").to_string();
+    let expected = diagnostics
+        .iter()
+        .filter(|d| d["code"] == code.as_str())
+        .count();
+
+    let filtered = active()
+        .args(["repair", "--from"])
+        .arg(&f)
+        .args(["--browser", "--filter-code", &code])
+        .output()
+        .expect("run active");
+    let filtered: serde_json::Value =
+        serde_json::from_slice(&filtered.stdout).expect("filtered JSON");
+    let kept = filtered["diagnostics"].as_array().expect("diagnostics");
+    assert_eq!(kept.len(), expected, "{filtered}");
+    assert!(kept.iter().all(|d| d["code"] == code.as_str()));
+    // The plan is not filtered: apply-step addresses plan indexes.
+    assert_eq!(filtered["plan"], model["plan"], "{filtered}");
+
+    // Unknown severity levels fail loudly.
+    let out = active()
+        .args(["repair", "--from"])
+        .arg(&f)
+        .args(["--browser", "--filter-severity", "loud"])
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("filter-severity"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]
@@ -3817,4 +3997,67 @@ fn profile_override_does_not_declassify_a_computed_selector() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!stdout.contains("Zx9-Secret-Alpha"), "{stdout}");
     assert!(!stderr.contains("Zx9-Secret-Alpha"), "{stderr}");
+}
+
+#[test]
+fn inspect_schema_redacts_material_under_a_profile_override() {
+    // `--profile p` selects an env-resolved value; schema prose that
+    // copies it must redact under the override too, not only under the
+    // document's own selector.
+    let value = "Zx9QwErTySeCrEtVaLuE";
+    let f = fixture(
+        "inspect_profile_material.active",
+        "schema { f = String(description = \"Zx9QwErTySeCrEtVaLuE prose\", default = \"d\") }\n\
+         base = secret(\"base-secret\")\n\
+         profile \"p\" { base = env.ACTIVE_PROFILE_MATERIAL }\n\
+         f = \"v\"\n",
+    );
+    let out = active()
+        .args(["inspect", "--from"])
+        .arg(&f)
+        .args(["--profile", "p"])
+        .env("ACTIVE_PROFILE_MATERIAL", value)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.contains(value), "schema prose leaked: {stdout}");
+    assert!(stdout.contains("***SECRET***"), "{stdout}");
+}
+
+#[test]
+fn compatibility_redacts_an_environment_equal_enum_member() {
+    let value = "Zx9QwErTySeCrEtVaLuE";
+    let old = fixture(
+        "compat_env_old.active",
+        "x = secret(env.ACTIVE_COMPAT)\nschema = { role = Enum(\"Zx9QwErTySeCrEtVaLuE\", \"user\") }\nrole = \"user\"\n",
+    );
+    let new = fixture(
+        "compat_env_new.active",
+        "x = secret(env.ACTIVE_COMPAT)\nschema = { role = Enum(\"Zx9QwErTySeCrEtVaLuE\", \"user\", \"admin\") }\nrole = \"user\"\n",
+    );
+    let out = active()
+        .arg("compatibility")
+        .arg(&old)
+        .arg(&new)
+        .env("ACTIVE_COMPAT", value)
+        .output()
+        .expect("run active");
+    let body = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !body.contains(value),
+        "compatibility leaked a value: {body}"
+    );
+    assert!(
+        body.contains("C04"),
+        "expected a compatibility finding: {body}"
+    );
 }

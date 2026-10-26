@@ -77,6 +77,12 @@ pub struct Module {
     /// `active capability --check-doc` handshake and `--sandbox`
     /// gate); evaluation itself never branches on this list.
     pub capabilities: Vec<String>,
+    /// Whether the root document declared at least one brace-style
+    /// table and at least one indentation-style table (spec/dual-syntax.md).
+    /// Both styles are legal; mixing them in one document is a style
+    /// smell the linter reports (L015). Included files are counted in
+    /// their own parse, so this reflects the root file only.
+    pub mixed_syntax: bool,
 }
 
 /// A parsed `# @…` annotation attached to a node (spec/annotations.md).
@@ -272,6 +278,7 @@ impl Module {
             mode: Mode::default(),
             mode_marker: false,
             capabilities: Vec::new(),
+            mixed_syntax: false,
         }
     }
 

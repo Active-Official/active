@@ -2914,3 +2914,77 @@ fn generators_see_an_environment_material_profile() {
         .expect("typescript");
     assert!(!ts.contains("Qq7_Env_Token"), "{ts}");
 }
+
+// ------------------------------------------------------------------
+// Review round 73 regressions: short structural secrets, blob taint.
+// ------------------------------------------------------------------
+
+#[test]
+fn a_short_structural_secret_never_rewrites_unrelated_text() {
+    // Substring spreading is limited to values of 4+ bytes; a 1-byte
+    // secret must still redact its own whole-value copies.
+    let src = "x = secret(\"a\")\nmsg = \"banana\"\nnote = \"a normal sentence\"\n";
+    let module = parse(src, "short-secret").expect("parse");
+    let engine = Engine::new();
+    let (value, _, seeds) = engine.evaluate_with_seeds(&module).expect("evaluate");
+    let profile = active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(json.contains("\"banana\""), "{json}");
+    assert!(json.contains("a normal sentence"), "{json}");
+    assert!(!json.contains("b***SECRET***"), "{json}");
+
+    // The exact value still redacts wherever it is copied whole.
+    let copy = "x = secret(\"a\")\ncopy = \"a\"\n";
+    let module = parse(copy, "short-copy").expect("parse");
+    let engine = Engine::new();
+    let (value, _, seeds) = engine.evaluate_with_seeds(&module).expect("evaluate");
+    let profile = active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(json.contains("\"***SECRET***\""), "{json}");
+    assert!(!json.contains("\"copy\": \"a\""), "{json}");
+}
+
+#[test]
+fn a_blob_whose_payload_copies_a_secret_is_tainted() {
+    // The export path evaluates identity-only, so taint must be decided
+    // at construction: a payload that copies material is a tainted blob
+    // (no payload retained, no untainted identity slot).
+    let src =
+        "x = secret(\"blob-payload-secret\")\nb = blob(\"text/plain\", \"blob-payload-secret\")\n";
+    let module = parse(src, "blob-taint").expect("parse");
+    let engine = Engine::new();
+    let (value, _, seeds) = engine.evaluate_with_seeds(&module).expect("evaluate");
+    let active_core::Value::Table(root) = &value else {
+        panic!("root table");
+    };
+    match root.get("b") {
+        Some(active_core::Value::Blob {
+            tainted, payload, ..
+        }) => {
+            assert!(*tainted, "payload copies a secret: {value:?}");
+            assert!(payload.is_none(), "tainted blobs retain no payload");
+        }
+        other => panic!("expected a blob, got {other:?}"),
+    }
+    let profile = active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
+    let json = active_core::convert::value_to_pretty_json_with(&profile, &value);
+    assert!(
+        !json.contains("blob-payload-secret"),
+        "raw payload in export: {json}"
+    );
+    assert!(json.contains("\"tainted\": true"), "{json}");
+}
+
+#[test]
+fn an_empty_blob_media_type_is_b001() {
+    let module = parse("b = blob(\"\", \"x\")\n", "blob-empty").expect("parse");
+    let error = Engine::new().evaluate(&module).expect_err("must fail");
+    assert_eq!(error.code(), "B001", "{error:?}");
+}
+
+#[test]
+fn a_dynamic_empty_blob_media_type_is_b001() {
+    let module = parse("m = \"\"\nb = blob(m, \"x\")\n", "blob-empty-dyn").expect("parse");
+    let error = Engine::new().evaluate(&module).expect_err("must fail");
+    assert_eq!(error.code(), "B001", "{error:?}");
+}

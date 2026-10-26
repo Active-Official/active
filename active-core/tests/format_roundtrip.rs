@@ -336,3 +336,98 @@ fn schema_evolution_metadata_survives_formatting() {
         assert!(out.contains("min_writer = \"1.1.0\""), "{style:?}: {out}");
     }
 }
+
+#[test]
+fn formatter_contract_holds_on_mutated_corpus_inputs() {
+    // Deterministic mutation sweep standing in for the formatter fuzz
+    // target on hosts where libFuzzer cannot run: the same contract
+    // (no panic, output re-parses, formatting is idempotent) over
+    // pseudo-random edits of real corpus files.
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/positive");
+    let mut sources: Vec<String> = std::fs::read_dir(&dir)
+        .expect("positive corpus")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "active"))
+        .filter_map(|p| std::fs::read_to_string(p).ok())
+        .collect();
+    sources.sort();
+    assert!(!sources.is_empty());
+
+    // LCG: fixed seed, so a failure reproduces exactly.
+    let mut state: u64 = 0x5dce_2a17_9f31_c4b1;
+    let mut next = move || {
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        state
+    };
+
+    let mut checked = 0;
+    for _ in 0..1500 {
+        let base = &sources[(next() % sources.len() as u64) as usize];
+        let mut lines: Vec<String> = base.lines().map(str::to_string).collect();
+        if lines.is_empty() {
+            continue;
+        }
+        match next() % 4 {
+            0 => {
+                let index = (next() % lines.len() as u64) as usize;
+                lines.remove(index);
+            }
+            1 => {
+                let index = (next() % lines.len() as u64) as usize;
+                let copy = lines[index].clone();
+                lines.insert(index, copy);
+            }
+            2 => {
+                let index = (next() % lines.len() as u64) as usize;
+                let line = &mut lines[index];
+                if !line.is_empty() {
+                    let at = (next() % line.len() as u64) as usize;
+                    line.insert(at, ' ');
+                }
+            }
+            _ => {
+                lines.push("mutated = \"value\"".to_string());
+            }
+        }
+        let mutated = lines.join("\n") + "\n";
+        let Ok(module) = parse(&mutated, "fmt-mutation") else {
+            continue;
+        };
+        for style in [Style::Brace, Style::Indent] {
+            let once = format(&module, style);
+            let reparsed = match parse(&once, "fmt-mutation") {
+                Ok(module) => module,
+                Err(diagnostics) => panic!(
+                    "formatted output must re-parse ({style:?}): {diagnostics:?}\ninput:\n{mutated}\noutput:\n{once}"
+                ),
+            };
+            let twice = format(&reparsed, style);
+            assert_eq!(
+                once, twice,
+                "not idempotent ({style:?})\ninput:\n{mutated}\noutput:\n{once}"
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked > 500,
+        "mutation sweep exercised too few inputs: {checked}"
+    );
+}
+
+#[test]
+fn secret_env_names_without_a_bare_form_round_trip() {
+    // Found by the mutation sweep: `env.NAME` cannot spell a name with
+    // spaces, so the formatter keeps the string form instead of
+    // emitting an unquoted name that re-parses shorter.
+    let src = "k = secret.env(\"NAME WITH SPACE\")\n";
+    let once = fmt(src, Style::Brace);
+    assert!(once.contains("secret.env(\"NAME WITH SPACE\")"), "{once}");
+    assert_eq!(fmt(&once, Style::Brace), once);
+    // Identifier-shaped names still canonicalize to the bare form.
+    let bare = fmt("k = secret.env(\"PORT\")\n", Style::Brace);
+    assert!(bare.contains("secret(env.PORT)"), "{bare}");
+}

@@ -7,7 +7,7 @@
 //! structurally; L004 additionally asserts the suspected value
 //! appears nowhere.
 
-use active_core::lint::{lint, lint_with, LintOptions, ALL_RULES};
+use active_core::lint::{lint, lint_with, LintOptions, ALL_RULES, RULE_CODES};
 use active_core::{parse, Engine};
 use std::collections::HashSet;
 use std::path::Path;
@@ -44,8 +44,20 @@ fn rule_ids_are_stable_and_complete() {
             "unknown-capability",
             "key-style",
             "large-literal",
-            "data-mode"
+            "data-mode",
+            "requires-discipline",
+            "agent-annotations",
+            "ambiguous-repair",
+            "canonical-order",
+            "mixed-syntax",
+            "include-hygiene"
         ]
+    );
+    // The code table stays in the same order as the rule list, so a
+    // report code always maps back to exactly one rule name.
+    assert_eq!(
+        RULE_CODES.iter().map(|(rule, _)| *rule).collect::<Vec<_>>(),
+        ALL_RULES
     );
 }
 
@@ -305,6 +317,7 @@ fn rules_disable_independently() {
     for rule in ["unused-lets", "hardcoded-secrets"] {
         let options = LintOptions {
             disabled: [rule.to_string()].into_iter().collect::<HashSet<_>>(),
+            ..Default::default()
         };
         let codes = lint_with(&parse_ok(src), &options)
             .iter()
@@ -316,6 +329,7 @@ fn rules_disable_independently() {
         disabled: ["unused-lets".to_string(), "hardcoded-secrets".to_string()]
             .into_iter()
             .collect::<HashSet<_>>(),
+        ..Default::default()
     };
     assert!(lint_with(&parse_ok(src), &options).is_empty());
     // Unknown rules are an error listing the valid ones.
@@ -348,7 +362,20 @@ fn clean_corpus_and_examples_raise_nothing() {
         }
     }
     assert!(!files.is_empty(), "corpus must exist");
+    // The dual-syntax acceptance fixture deliberately declares one
+    // brace table and one indentation table in the same document to
+    // prove both styles parse together (spec/dual-syntax.md). L015
+    // exists to flag exactly that mix, so this file is the one
+    // intentional exemption from the lint-clean invariant.
+    let exempt = ["22_brace_blocks.active"];
     for path in files {
+        if path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|name| exempt.contains(&name))
+        {
+            continue;
+        }
         let module = active_core::parse_file(&path, active_core::ParseOptions::default())
             .unwrap_or_else(|d| panic!("{}: {d:?}", path.display()));
         let diags = lint(&module);
@@ -434,6 +461,7 @@ fn new_rules_disable_independently() {
             .into_iter()
             .map(str::to_string)
             .collect(),
+        ..Default::default()
     };
     let codes: Vec<String> = lint_with(&parse_ok(src), &options)
         .iter()
@@ -528,4 +556,191 @@ fn unicode_literals_do_not_panic_the_url_check() {
     let diags = lint(&parse_ok("token = \"éé\"\n"));
     assert!(diags.iter().all(|d| d.code == "L004"), "{diags:?}");
     let _ = lint(&parse_ok("token = \"éé://x\"\n"));
+}
+
+// ------------------------------------------------------------------
+// Tooling-phase rules L011-L016 and project configuration.
+// ------------------------------------------------------------------
+
+#[test]
+fn requires_discipline_flags_dangling_self_and_empty_targets() {
+    let dangling = r#"schema = { tls = Bool, cert = String(requires = "tlsz") }"#;
+    let codes = lint_codes(dangling);
+    assert!(codes.contains(&"L011".to_string()), "{codes:?}");
+    let selfref = r#"schema = { a = String(requires = "a") }"#;
+    assert!(lint_codes(selfref).contains(&"L011".to_string()));
+    let empty = r#"schema = { tls = Bool, cert = String(requires = "  ") }"#;
+    assert!(lint_codes(empty).contains(&"L011".to_string()));
+    // A real schema path is the supported form and stays silent.
+    let good = r#"schema = { tls = Bool, cert = String(requires = "tls") }"#;
+    assert!(!lint_codes(good).contains(&"L011".to_string()));
+    // Messages name the field, never the target text.
+    let messages = lint_messages(dangling);
+    assert!(messages.iter().any(|m| m.contains("cert")), "{messages:?}");
+    assert!(messages.iter().all(|m| !m.contains("tlsz")), "{messages:?}");
+}
+
+#[test]
+fn agent_annotations_require_intent_alongside_constraints() {
+    let bare = "# @constraint: value > 0\nport = 1\n";
+    let diags = lint(&parse_ok(bare));
+    assert!(diags.iter().any(|d| d.code == "L012"), "{diags:?}");
+    assert!(diags[0].message.contains("port"), "{:?}", diags[0]);
+    let documented = "# @intent: \"public port\"\n# @constraint: value > 0\nport = 1\n";
+    assert!(!lint_codes(documented).contains(&"L012".to_string()));
+}
+
+#[test]
+fn ambiguous_repair_flags_normalized_sibling_collisions() {
+    let collide = "[db]\nuser_name = \"a\"\nusername = \"b\"\n";
+    let codes = lint_codes(collide);
+    assert!(codes.contains(&"L013".to_string()), "{codes:?}");
+    let distinct = "[db]\nuser_name = \"a\"\nremote = \"b\"\n";
+    assert!(!lint_codes(distinct).contains(&"L013".to_string()));
+}
+
+#[test]
+fn canonical_order_flags_depends_on_after_keys() {
+    let late = "[server]\nport = 1\ndepends_on = [\"db\"]\n[db]\nurl = \"x\"\n";
+    let codes = lint_codes(late);
+    assert!(codes.contains(&"L014".to_string()), "{codes:?}");
+    let early = "[server]\ndepends_on = [\"db\"]\nport = 1\n[db]\nurl = \"x\"\n";
+    assert!(!lint_codes(early).contains(&"L014".to_string()));
+}
+
+#[test]
+fn mixed_syntax_flags_only_when_both_block_styles_appear() {
+    let mixed = "a {\n  x = 1\n}\n\nb:\n  y = 2\n";
+    assert!(lint_codes(mixed).contains(&"L015".to_string()));
+    let braces = "a {\n  x = 1\n}\n";
+    assert!(!lint_codes(braces).contains(&"L015".to_string()));
+    let indent = "a:\n  x = 1\n";
+    assert!(!lint_codes(indent).contains(&"L015".to_string()));
+}
+
+#[test]
+fn include_hygiene_flags_escapes_and_non_active_targets() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/lint-hygiene");
+    let root = fixtures.join("sub/root.active");
+    let options = active_core::ParseOptions {
+        allow_parent_escapes: true,
+        ..Default::default()
+    };
+    let module = active_core::parse_file(&root, options).expect("fixture parses");
+    let diags = lint(&module);
+    let codes: Vec<&str> = diags.iter().map(|d| d.code.as_str()).collect();
+    assert_eq!(
+        codes.iter().filter(|c| **c == "L016").count(),
+        3,
+        "{diags:?}"
+    );
+    assert!(codes.iter().all(|c| *c == "L016"), "{diags:?}");
+    let messages: Vec<&str> = diags.iter().map(|d| d.message.as_str()).collect();
+    assert!(
+        messages.iter().any(|m| m.contains("escapes its directory")),
+        "{messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("does not end in .active")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn include_hygiene_flags_duplicates_and_absolute_paths() {
+    // Absolute and duplicate declarations need the metadata layer:
+    // the parser refuses an absolute path unless the caller opts in,
+    // and a duplicate include re-merges the same keys.
+    let mut module = active_core::Module::new("synthetic");
+    for (path, alias, line) in [
+        ("/etc/active.conf", None, 1u32),
+        ("shared.active", Some("a"), 2),
+        ("shared.active", Some("a"), 3),
+    ] {
+        module.includes.push(active_core::ir::IncludeStmt {
+            path: path.to_string(),
+            alias: alias.map(str::to_string),
+            private: false,
+            scope_path: Vec::new(),
+            line,
+        });
+    }
+    let diags = lint(&module);
+    let messages: Vec<&str> = diags.iter().map(|d| d.message.as_str()).collect();
+    assert!(
+        messages.iter().any(|m| m.contains("absolute")),
+        "{messages:?}"
+    );
+    assert!(
+        messages.iter().any(|m| m.contains("more than once")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn project_config_disables_rules_and_overrides_severity() {
+    use active_core::lint::LintConfig;
+
+    let config = LintConfig::parse("disable = [\"unused-lets\"]\n").expect("valid config");
+    let options = config.options(&[]).expect("options");
+    assert!(lint_with(&parse_ok("let idle = 1\nport = 2\n"), &options).is_empty());
+
+    let config = LintConfig::parse("[severity]\nunused-lets = \"error\"\n").expect("valid config");
+    let options = config.options(&[]).expect("options");
+    let diags = lint_with(&parse_ok("let idle = 1\nport = 2\n"), &options);
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert_eq!(diags[0].severity, active_core::Severity::Error);
+
+    let config = LintConfig::parse("[severity]\nunused-lets = \"off\"\n").expect("valid config");
+    let options = config.options(&[]).expect("options");
+    assert!(lint_with(&parse_ok("let idle = 1\nport = 2\n"), &options).is_empty());
+
+    // Typos fail loudly instead of silently doing nothing.
+    assert!(LintConfig::parse("disable = [\"nope\"]\n").is_err());
+    assert!(LintConfig::parse("unknown = 1\n").is_err());
+    assert!(LintConfig::parse("[severity]\nunused-lets = \"loud\"\n").is_err());
+}
+
+#[test]
+fn project_config_is_discovered_from_parent_directories() {
+    use active_core::lint::LintConfig;
+
+    let doc =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/lint-config/sub/doc.active");
+    let (path, config) = LintConfig::discover(&doc)
+        .expect("discovery is infallible here")
+        .expect("config discovered");
+    assert!(path.ends_with(".active-lint.toml"));
+    assert_eq!(config.disabled, vec!["unused-lets".to_string()]);
+    let options = config.options(&[]).expect("options");
+    let module = active_core::parse_file(&doc, active_core::ParseOptions::default())
+        .expect("fixture parses");
+    assert!(lint_with(&module, &options).is_empty());
+}
+
+#[test]
+fn evolution_rules_see_nested_schema_tables() {
+    // Nested table metadata is parsed, formatted, and emitted by
+    // inspect; the rules must not stop at the root table.
+    let nested = r#"schema = { db = Table { min_reader = "1.0.0" } }"#;
+    assert!(
+        lint_codes(nested).contains(&"L006".to_string()),
+        "{:?}",
+        lint_codes(nested)
+    );
+    let nested_removed = r#"schema = { db = Table { old = Int(removed_in = "2.0.0") } }"#;
+    assert!(
+        lint_codes(nested_removed).contains(&"L006".to_string()),
+        "{:?}",
+        lint_codes(nested_removed)
+    );
+    let nested_version = "schema = { db = Table { version = \"1.0.0\" } }";
+    assert!(!lint_codes(nested_version).contains(&"L006".to_string()));
+    assert!(
+        lint_codes(nested_version).contains(&"L010".to_string()),
+        "nested evolution metadata in Config Mode is a data construct: {:?}",
+        lint_codes(nested_version)
+    );
 }

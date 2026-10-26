@@ -96,6 +96,31 @@ id = "0016-enum-descriptions"
 file = "cases/0016-enum-descriptions.active"
 kind = "clean"
 
+[[cases]]
+id = "0017-blob-identity"
+file = "cases/0017-blob-identity.active"
+kind = "clean"
+
+[[cases]]
+id = "0018-blob-tainted"
+file = "cases/0018-blob-tainted.active"
+kind = "clean"
+
+[[cases]]
+id = "0019-mode-data"
+file = "cases/0019-mode-data.active"
+kind = "clean"
+
+[[cases]]
+id = "0020-mode-invalid"
+file = "cases/0020-mode-invalid.active"
+kind = "refused"
+
+[[cases]]
+id = "0021-capability-shape"
+file = "cases/0021-capability-shape.active"
+kind = "refused"
+
 # Host-feature pins (G-017 spirit): cases needing capabilities a v1 host
 # shim does not expose. Runners record these as pins with reason, never as
 # failures and never silently. Removing a pin means the host grew the

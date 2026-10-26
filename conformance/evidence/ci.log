@@ -1,5 +1,66 @@
 # CI verdicts for the final tree (2026-10-26)
 
+Evidence commits after the review stamp (all documentation, evidence, and
+CI-installer changes; code unchanged since fcea0d3)
+
+3ed0a4a (final: non-interactive frontend through sudo env)
+  RatioArtificiosa/active-lang
+    CI           40412714510  success
+    Conformance  40412714566  success
+    CodSpeed     40412714540  success
+  Active-Official/active
+    CI           40412718716  success
+    Conformance  40412718753  success
+    CodSpeed     40412718664  success
+
+11a4bfa (installer documentation; first run of the bounded installers)
+  RatioArtificiosa/active-lang
+    CI           40408358601  success
+    Conformance  40408358654  success
+    CodSpeed     40408358563  success
+  Active-Official/active
+    CI           40408363255  success
+    Conformance  40408363113  failure   (apt step timed out: sudo -E is
+                                        ignored, so DEBIAN_FRONTEND never
+                                        reached dpkg and a prompt blocked;
+                                        fixed at 3ed0a4a)
+    CodSpeed     40408363266  success
+
+dd544f0 (bounded Tier-2 installers)
+  RatioArtificiosa/active-lang
+    CI           40403489812  success
+    Conformance  40403489911  success   (8 min, versus a 1 h+ hang before)
+    CodSpeed     40403489802  success
+  Active-Official/active
+    CI           40403495695  success
+    Conformance  40403501383  success
+    CodSpeed     40403495723  success
+
+9378aed (every green stamp in the CI table)
+  RatioArtificiosa/active-lang
+    CI           40388950381  success
+    Conformance  40388950941  cancelled (superseded by dd544f0)
+    CodSpeed     40388950327  success
+  Active-Official/active
+    CI           40388959495  success
+    Conformance  40388959517  success
+    CodSpeed     40388959667  success
+
+95c4eb3 (documentation reviews and refresh provenance)
+  RatioArtificiosa/active-lang
+    CI           40356645400  success
+    Conformance  40356645462  success
+    CodSpeed     40356645310  success
+  Active-Official/active
+    CI           40356650512  success
+    Conformance  40356650518  success
+    CodSpeed     40356650637  success
+
+Fuzz smoke is not path-triggered by evidence-only commits; the code is the
+same as fcea0d3, which passed two full fuzz runs per remote. The commit
+that lands this table is documentation-only over 3ed0a4a; its own
+verdicts are in the goal close-out.
+
 Evidence commit c7e4ec3 (battery re-run at the final tree, evidence-audit
 corrections; docs and evidence only)
   RatioArtificiosa/active-lang

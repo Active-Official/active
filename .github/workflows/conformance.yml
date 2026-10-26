@@ -51,8 +51,8 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
           NEEDRESTART_MODE: a
         run: |
-          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update -qq \
-          && sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y -qq luajit
+          timeout 120 sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update -qq \
+          && timeout 300 sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y -qq luajit
       - name: Install Tier-2 apt toolchains (Linux only)
         # Distro packages from the runner's own mirrors. `sudo -E` is
         # ignored on these runners, so the non-interactive frontend is
@@ -69,7 +69,7 @@ jobs:
           NEEDRESTART_MODE: a
         run: |
           echo "disk before:"; df -h / | tail -n 1
-          sudo apt-get clean
+          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get clean
           sudo systemctl stop unattended-upgrades.service apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
           sudo systemctl disable unattended-upgrades.service apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
           apt_flags="-o Acquire::Retries=3 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold -o Dpkg::Use-Pty=0"
@@ -82,7 +82,7 @@ jobs:
                     perl libffi-platypus-perl r-base-core ghc ocaml elixir \
                     kotlin; then
               echo "::endgroup::"
-              sudo apt-get clean
+              sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get clean
               echo "disk after:"; df -h / | tail -n 1
               exit 0
             fi
@@ -110,7 +110,7 @@ jobs:
         timeout-minutes: 10
         run: |
           for attempt in 1 2 3; do
-            if curl -fsSL --retry 3 \
+            if timeout 300 curl -fsSL --retry 3 \
                  https://julialang-s3.julialang.org/bin/linux/x64/1.11/julia-1.11.5-linux-x86_64.tar.gz \
                  -o /tmp/julia.tar.gz \
                && sudo mkdir -p /opt/julia \
@@ -130,7 +130,7 @@ jobs:
         timeout-minutes: 10
         run: |
           for attempt in 1 2 3; do
-            if curl -fsSL --retry 3 \
+            if timeout 300 curl -fsSL --retry 3 \
                  https://nim-lang.org/download/nim-2.2.4-linux_x64.tar.xz \
                  -o /tmp/nim.tar.xz \
                && sudo mkdir -p /opt/nim \
@@ -151,8 +151,9 @@ jobs:
         timeout-minutes: 10
         run: |
           for attempt in 1 2 3; do
-            if curl -fsSL https://crystal-lang.org/install.sh | sudo bash; then
-              crystal --version
+            if timeout 120 curl -fsSL https://crystal-lang.org/install.sh -o /tmp/crystal-install.sh \
+               && timeout 600 sudo bash /tmp/crystal-install.sh \
+               && crystal --version; then
               exit 0
             fi
             echo "crystal installer attempt $attempt failed; retrying"
@@ -172,7 +173,7 @@ jobs:
           for attempt in 1 2 3; do
             if sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
                  apt-get install -y -qq apt-transport-https \
-               && curl -fsSL https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/dart.gpg \
+               && timeout 60 curl -fsSL https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/dart.gpg \
                && echo "deb [signed-by=/usr/share/keyrings/dart.gpg arch=amd64] https://storage.googleapis.com/download.dartlang.org/linux/debian stable main" | sudo tee /etc/apt/sources.list.d/dart_stable.list >/dev/null \
                && timeout 600 sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update -qq \
                && timeout 900 sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y -qq dart \
@@ -199,7 +200,7 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
           NEEDRESTART_MODE: a
-        run: sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y -qq erlang-dev
+        run: timeout 300 sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y -qq erlang-dev
       # Swift and V are container-proven only. Swift's 1 GB download is not
       # worth every CI run, and V builds from source upstream (no stable
       # tags; the CI smoke compile stalled the step past 900s while the

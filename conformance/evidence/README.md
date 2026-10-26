@@ -54,7 +54,7 @@ runner's apt index has no Julia candidate and juliaup's metadata DB was
 unreliable), Crystal and Dart use their distro apt repos, and every
 install retries a transient mirror failure. Each step also runs dpkg
 non-interactively (`DEBIAN_FRONTEND=noninteractive`, `NEEDRESTART_MODE=a`),
-bounds every attempt with `timeout`, carries a per-step `timeout-minutes`,
+bounds every fetch and install attempt with `timeout`, carries a per-step `timeout-minutes`,
 and ends with a version check, so a stalled mirror or a debconf prompt
 fails fast instead of hanging the job. One runner stalled for over an
 hour on the apt step before these bounds; with them the Ubuntu

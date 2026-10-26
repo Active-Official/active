@@ -1,26 +1,53 @@
 # CI verdicts for the final tree (2026-10-26)
 
-Content tree: f6efd0d (round-73 fixes, docgen bound, lint prose redaction)
+HEAD 8badded (docs/evidence-only commit on top of content tree f6efd0d)
+  RatioArtificiosa/active-lang
+    CI           40291728278  success
+    Conformance  40291728223  success
+    CodSpeed     40291728248  success
+    Fuzz smoke   40292402257  success   (workflow_dispatch on main)
+  Active-Official/active
+    CI           40291732207  success
+    Conformance  40291732195  success   (rerun after an apt step hang)
+    CodSpeed     40291732158  success
+    Fuzz smoke   40292406332  success   (workflow_dispatch on main)
 
-RatioArtificiosa/active-lang
-  CI           40285705290  success
-  Conformance  40285705341  success
-  CodSpeed     40285705405  success
-  Fuzz smoke   40285705321  success
+Content tree f6efd0d (round-73 fixes, docgen bound, lint prose redaction)
+  RatioArtificiosa/active-lang
+    CI           40285705290  success
+    Conformance  40285705341  success
+    CodSpeed     40285705405  success
+    Fuzz smoke   40285705321  success
+  Active-Official/active
+    CI           40285709925  success
+    Conformance  40285709871  success
+    CodSpeed     40285709960  success
+    Fuzz smoke   40285709964  success
 
-Active-Official/active
-  CI           40285709925  success
-  Conformance  40285709871  success
-  CodSpeed     40285709960  success
-  Fuzz smoke   40285709964  success
+Docs/evidence stamps (same code as f6efd0d)
 
-Evidence stamp 76d9246 (docs + CI log; no product code)
-  origin    CI 40281231009  success
-            Conformance 40281230859  success
-            CodSpeed 40281230864  success
-  official  CI 40281234835  success
-            Conformance 40281234812  success
-            CodSpeed 40281234871  success
+  9c7c762  (gate log regenerated)
+    origin    CI 40289642601 success   Conformance 40289642484 success
+              CodSpeed 40289642576 cancelled (superseded by 8badded)
+    official  CI 40289645494 success   Conformance 40289645496 success
+              CodSpeed 40289645536 cancelled (superseded by 8badded)
+    Fuzz smoke: not triggered (docs-only path filter); the same code ran
+    fuzz green under f6efd0d and 8badded.
+
+  1c63e12  (CI log + completion record)
+    origin    CI 40289358569 success
+              Conformance 40289358447 cancelled (superseded by 9c7c762)
+              CodSpeed 40289358574 cancelled (superseded by 9c7c762)
+    official  CI 40289362542 success
+              Conformance 40289362506 cancelled (superseded by 9c7c762)
+              CodSpeed 40289362488 cancelled (superseded by 9c7c762)
+    Fuzz smoke: not triggered (docs-only path filter).
+
+  76d9246  (CI record + container-harness input override)
+    origin    CI 40281231009 success   Conformance 40281230859 success
+              CodSpeed 40281230864 success
+    official  CI 40281234835 success   Conformance 40281234812 success
+              CodSpeed 40281234871 success
 
 Earlier content tree 625f22c
   origin    CI 40277516911  Conformance 40277516922

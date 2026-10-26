@@ -62,3 +62,38 @@ to a copy and confirmed no `default`, `description`, `requires`,
 that the absolute-path L016 branch fires through the live CLI.
 
 VERDICT: ALL FIXED - zero open findings.
+
+Close-out documentation reviews (2026-10-26, post-round-77)
+----------------------------------------------------------
+After the evidence refresh at c7e4ec3, two independent reviewers re-read
+the close-out files: DeepSeek V4.1 Flash (Copilot BYOK, xhigh) and Meta
+Muse Spark 1.3 Contributor (local BYOK proxy, xhigh). Together they
+reported 13 documentation-precision issues (9 and 3, with two overlaps),
+none in product code:
+
+- the evidence README named 1fdeaf5 as the capture tree for gates.log,
+  which its own header places at 1b5ce29;
+- the research-battery capture date was wrong (2026-10-22 capture,
+  2026-10-23 commit, not 2026-10-24);
+- two historical ci.log blocks still said "HEAD" and "in_progress" for
+  runs whose final conclusions are known (cancelled/superseded);
+- review-final.log was labelled as unchanged since 1b5ce29 although its
+  header was corrected later (verdicts unchanged);
+- the evidence README repeated "Step 6" for the agent-kit row;
+- the round-73/75/76 commit attribution in review-final.log was too
+  broad (round-73 fixes landed at e06df6d, the round-75 bound at
+  625f22c, the round-76 sweep at f6efd0d);
+- the reasoning-effort scope read differently in two files;
+- an orphaned C ABI/WASM paragraph read as part of round 77;
+- the external tooling-proposal path looked repo-relative;
+- deterministic artifacts that reproduce byte-for-byte need a provenance
+  record, because a re-run leaves no git trace.
+
+All were fixed. conformance/evidence/REFRESH.md now records the re-run at
+1fdeaf5 with a SHA-256 pin per unchanged artifact, the README gives the
+true capture tree per row, ci.log records final conclusions only, and the
+commit attribution and effort scope are stated once and consistently.
+Neither reviewer found a contradiction in the round counts, test counts,
+run verdicts, vector/tool counts, or the review verdicts themselves.
+
+VERDICT: all documentation findings fixed.

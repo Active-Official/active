@@ -3,11 +3,12 @@
 **Date:** 2026-10-26
 **Version:** 1.4.0 (workspace, all crates and language packages)
 **Tree:** the commit that adds this record (see `git log -- docs/completion-record.md`)
-**Programs:** Master (`PROPOSAL.md` / `CHECKLIST.md`) and Tooling
-(`tooling/TOOLING-PROPOSAL.md` / `TOOLING-CHECKLIST.md`) from
-`active-master-program 4`; the checked working copies are
-`master-program/CHECKLIST.md` and `master-program/TOOLING-CHECKLIST.md`,
-and the language design proposal is `docs/proposal.md`.
+**Programs:** the program folder `active-master-program 4` holds the Master
+program (`PROPOSAL.md` / `CHECKLIST.md`) and the Tooling program
+(`tooling/TOOLING-PROPOSAL.md` / `TOOLING-CHECKLIST.md`). The checked
+working copies are `master-program/CHECKLIST.md` and
+`master-program/TOOLING-CHECKLIST.md`, and the language design proposal is
+`docs/proposal.md`.
 **Close-out register:** `master-program/GAPS-AND-DRIFT.md` (every row
 marked FIXED / STILL PRESENT / ACCEPTED with evidence).
 

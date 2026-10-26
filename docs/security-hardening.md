@@ -168,8 +168,9 @@ exemption.
 A `formatter` fuzz target was added (no panic, output re-parses,
 idempotent) and the same contract is exercised by a deterministic
 mutation sweep over the positive corpus, so the claim is testable where
-libFuzzer cannot run. The sweep found a real defect: `secret.env("NAME
-WITH SPACE")` formatted to the bare `secret(env.NAME WITH SPACE)` form,
+libFuzzer cannot run. The sweep found a real defect: the string form
+`secret.env("NAME WITH SPACE")` was formatted to the bare
+`secret(env.NAME WITH SPACE)` spelling,
 which re-parses as a shorter name. Names that are not bare identifiers
 now keep the string form (`is_bare_identifier`), so the value survives a
 round trip byte-for-byte in both styles.
@@ -427,6 +428,6 @@ confirmed no `default`, `description`, `requires`, `descriptions`,
 absolute-path L016 branch fires through the live CLI. Final verdict: all
 seven fixed, zero open findings (`conformance/evidence/review.log`).
 
-The round also rebuilt the release C ABI and the debug WASM module so
-the differential gate exercises the fixed core rather than a stale
-artifact.
+The round-73/75 close also rebuilt the release C ABI and the debug WASM
+module so the differential gate exercises the fixed core rather than a
+stale artifact (`ACTIVE_FFI_LIB` / `ACTIVE_WASM_PATH` in the harness).

@@ -1,5 +1,19 @@
 # CI verdicts for the final tree (2026-10-26)
 
+Evidence commit c7e4ec3 (battery re-run at the final tree, evidence-audit
+corrections; docs and evidence only)
+  RatioArtificiosa/active-lang
+    CI           40351595608  success
+    Conformance  40351595570  success
+    CodSpeed     40351595323  success
+  Active-Official/active
+    CI           40351601883  success
+    Conformance  40351601955  success
+    CodSpeed     40351602310  success
+  Fuzz smoke is not path-triggered by an evidence-only commit; the same
+  code passed two fuzz runs on fcea0d3. The commit after this one carries
+  identical code and is tracked in the goal close-out.
+
 Evidence commit 1fdeaf5 (regenerated gates.log and this CI table;
 docs and evidence only over fcea0d3)
   RatioArtificiosa/active-lang
@@ -106,7 +120,7 @@ cf45d96 (superseded; juliaup PATH check failed in-step)
             (julia PATH); Fuzz 40306452277 failure (formatter); CodSpeed
             cancelled
 
-HEAD f55f9b8 (CI-log stamp; superseded by the next commit)
+Stamp f55f9b8 (CI-log stamp; superseded by the next commit)
   RatioArtificiosa/active-lang
     CI           40302574358  success
     Conformance  40302574380  failure   (juliaup download timed out on the
@@ -115,16 +129,16 @@ HEAD f55f9b8 (CI-log stamp; superseded by the next commit)
                                         with bounded retries; Julia and Nim now
                                         come from pinned official tarballs -
                                         no SKIPs)
-    CodSpeed     40302574389  in_progress at the time of this log
-                                        (superseded by the next commit)
+    CodSpeed     40302574389  cancelled (superseded by the next commit;
+                                        observed in progress when first read)
   Active-Official/active
     CI           40302578427  success
-    Conformance  40302578352  in_progress at the time of this log
-                                        (superseded by the next commit)
+    Conformance  40302578352  cancelled (superseded by the next commit;
+                                        observed in progress when first read)
     CodSpeed     40302578338  success
     Fuzz smoke   40304341629  success
 
-HEAD 8badded (docs/evidence-only commit on top of content tree f6efd0d)
+Stamp 8badded (docs/evidence-only commit on top of content tree f6efd0d)
   RatioArtificiosa/active-lang
     CI           40291728278  success
     Conformance  40291728223  success

@@ -57,37 +57,76 @@ jobs:
           perl libffi-platypus-perl r-base-core ghc ocaml elixir
           kotlin
       - name: Install Nim via choosenim (Linux only)
-        # Tier-2 SKIP policy: a failed upstream installer must surface as
-        # a documented harness SKIP, never as a red gate.
-        continue-on-error: true
-        if: runner.os == 'Linux'
-        run: curl -fsSL https://nim-lang.org/choosenim/init.sh -o /tmp/choosenim.sh && sh /tmp/choosenim.sh -y -- 2.2.12 && echo "$HOME/.nimble/bin" >> "$GITHUB_PATH"
-      - name: Install Crystal (Linux only)
-        # OBS devel:languages:crystal repo for noble; tracks the stable
-        # release like the Dart repo below. Tier-2 SKIP policy: a failed
-        # upstream installer is a documented SKIP, never a red gate.
-        continue-on-error: true
-        if: runner.os == 'Linux'
-        run: curl -fsSL https://crystal-lang.org/install.sh | sudo bash
-      - name: Install Dart (Linux only)
-        # Tier-2 SKIP policy: a failed upstream installer must surface as
-        # a documented harness SKIP, never as a red gate.
-        continue-on-error: true
+        # Tier-2 toolchains are required, not skippable: retry transient
+        # upstream failures so the harness always sees the real toolchain.
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get install -y -qq apt-transport-https
-          curl -fsSL https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/dart.gpg
-          echo "deb [signed-by=/usr/share/keyrings/dart.gpg arch=amd64] https://storage.googleapis.com/download.dartlang.org/linux/debian stable main" | sudo tee /etc/apt/sources.list.d/dart_stable.list
-          sudo apt-get update -qq && sudo apt-get install -y -qq dart
-          echo "/usr/lib/dart/bin" >> "$GITHUB_PATH"
+          for attempt in 1 2 3; do
+            if curl -fsSL https://nim-lang.org/choosenim/init.sh -o /tmp/choosenim.sh \
+               && sh /tmp/choosenim.sh -y -- 2.2.12; then
+              echo "$HOME/.nimble/bin" >> "$GITHUB_PATH"
+              exit 0
+            fi
+            echo "nim installer attempt $attempt failed; retrying"
+            sleep 15
+          done
+          exit 1
+      - name: Install Crystal (Linux only)
+        # OBS devel:languages:crystal repo for noble; tracks the stable
+        # release like the Dart repo below. Required (no skip); retry the
+        # upstream installer on transient network failures.
+        if: runner.os == 'Linux'
+        run: |
+          for attempt in 1 2 3; do
+            if curl -fsSL https://crystal-lang.org/install.sh | sudo bash; then
+              exit 0
+            fi
+            echo "crystal installer attempt $attempt failed; retrying"
+            sleep 15
+          done
+          exit 1
+      - name: Install Dart (Linux only)
+        # Required (no skip); retry the repository setup and package
+        # install on transient network failures.
+        if: runner.os == 'Linux'
+        run: |
+          for attempt in 1 2 3; do
+            if sudo apt-get install -y -qq apt-transport-https \
+               && curl -fsSL https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/dart.gpg \
+               && echo "deb [signed-by=/usr/share/keyrings/dart.gpg arch=amd64] https://storage.googleapis.com/download.dartlang.org/linux/debian stable main" | sudo tee /etc/apt/sources.list.d/dart_stable.list >/dev/null \
+               && sudo apt-get update -qq \
+               && sudo apt-get install -y -qq dart; then
+              echo "/usr/lib/dart/bin" >> "$GITHUB_PATH"
+              exit 0
+            fi
+            echo "dart installer attempt $attempt failed; retrying"
+            sleep 15
+          done
+          exit 1
       - name: Install Julia via juliaup (Linux only)
         # Follows the stable release channel; the smoke needs any working
         # toolchain since it drives the frozen C ABI. Proof pins 1.13.2.
-        # Tier-2 SKIP policy: a juliaup outage is a documented SKIP, never
-        # a red gate.
-        continue-on-error: true
+        # Required (no skip): retry the juliaup download and install, then
+        # fall back to the pinned upstream tarball so a juliaup metadata
+        # outage cannot drop the Julia path.
         if: runner.os == 'Linux'
-        run: curl -fsSL https://install.julialang.org -o /tmp/juliaup && sh /tmp/juliaup -y && echo "$HOME/.juliaup/bin" >> "$GITHUB_PATH"
+        run: |
+          for attempt in 1 2 3; do
+            if curl -fsSL https://install.julialang.org -o /tmp/juliaup \
+               && sh /tmp/juliaup -y; then
+              echo "$HOME/.juliaup/bin" >> "$GITHUB_PATH"
+              julia --version
+              exit 0
+            fi
+            echo "juliaup attempt $attempt failed; retrying"
+            sleep 15
+          done
+          echo "juliaup failed; falling back to the pinned Julia tarball"
+          curl -fsSL https://julialang-s3.julialang.org/bin/linux/x64/1.11/julia-1.11.5-linux-x86_64.tar.gz -o /tmp/julia.tar.gz
+          sudo mkdir -p /opt/julia
+          sudo tar -xzf /tmp/julia.tar.gz -C /opt/julia --strip-components=1
+          echo "/opt/julia/bin" >> "$GITHUB_PATH"
+          /opt/julia/bin/julia --version
       - name: Install Erlang NIF headers (Linux only)
         if: runner.os == 'Linux'
         run: sudo apt-get install -y -qq erlang-dev

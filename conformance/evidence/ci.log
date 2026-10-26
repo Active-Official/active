@@ -5,9 +5,9 @@ HEAD f55f9b8 (CI-log stamp; superseded by the next commit)
     CI           40302574358  success
     Conformance  40302574380  failure   (juliaup download timed out on the
                                         runner; not a code failure. Fixed by
-                                        making Tier-2 upstream installers
-                                        continue-on-error, so an installer
-                                        outage becomes a harness SKIP)
+                                        making every Tier-2 installer required
+                                        with bounded retries plus a pinned
+                                        Julia tarball fallback - no SKIPs)
     CodSpeed     40302574389  in_progress at the time of this log
                                         (superseded by the next commit)
   Active-Official/active

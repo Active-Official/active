@@ -26,6 +26,24 @@ and the agent-kit gate on every push and PR (see
 `.github/workflows/conformance.yml`); green runs on the pushed tree are
 recorded in the phase gates and the completion record.
 
+## All-toolchain image (zero-SKIP proof)
+
+The authoritative all-language environment is the owner-provided Docker
+image `active-all-toolchains:phase2` (Ubuntu 24.04 plus every harness
+toolchain: Rust/wasm32, Node, Go, Python/wasmtime, Java, Ruby, PHP, Perl,
+R, Julia, Nim, GHC, OCaml, Elixir, Dart, .NET, Zig, LuaJIT, gfortran,
+kotlinc, Swift, V). The 28/28 container report above was produced there,
+including `julia: pass`.
+
+- Archive: `G:\Docker-Images\active-all-toolchains.tar` (~3.2 GB)
+- Restore: `docker load -i G:\Docker-Images\active-all-toolchains.tar`
+- Re-save after changes:
+  `docker save active-all-toolchains:phase2 -o G:\Docker-Images\active-all-toolchains.tar`
+
+CI Linux runners cannot pull a local archive, so the workflow installs
+the same toolchains from upstream. Those steps are **required**: bounded
+retries plus a pinned Julia tarball fallback, never a silent SKIP.
+
 ## Container harness artifacts
 
 The zero-SKIP container build uses an isolated `CARGO_TARGET_DIR`. Set

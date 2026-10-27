@@ -298,6 +298,42 @@ fn schema_nesting_depth_is_bounded() {
 }
 
 #[test]
+fn over_deep_expression_chain_diagnostics_are_bounded() {
+    // 300 unclosed brackets must fail closed with E004, but the
+    // diagnostic tail must be bounded. Uncapped, a 6KB file emits
+    // thousands of identical errors (CLI stderr flood, LSP publish
+    // storm per keystroke, agent-log bloat). The root-cause E004 is
+    // first in emission order and always retained; only the
+    // pathological tail is dropped. Occurrence preservation below
+    // the cap is pinned by active-wasm's envelope repeats test.
+    let src = format!("value = {}", "[".repeat(300));
+    let diags = parse(&src, "depth-flood").expect_err("over-deep input must fail");
+    assert!(diags.iter().any(|d| d.code == "E004"), "E004 expected");
+    assert_eq!(diags[0].code, "E004", "root cause first");
+    assert!(
+        diags.len() <= 1024,
+        "diagnostic output bounded, got {}",
+        diags.len()
+    );
+}
+
+#[test]
+fn lexer_error_volume_is_bounded() {
+    // 5000 invalid bytes must fail closed, but the diagnostic tail
+    // must be bounded just like parser errors: one E005 per byte
+    // would turn a 100KB file into megabytes of errors.
+    let src = "v = 1\n".to_string() + &"\u{0}".repeat(5000);
+    let diags = parse(&src, "lex-flood").expect_err("invalid bytes must fail");
+    assert!(diags.iter().any(|d| d.code == "E005"), "E005 expected");
+    assert_eq!(diags[0].code, "E005", "root cause first");
+    assert!(
+        diags.len() <= 1024,
+        "lexer diagnostic output bounded, got {}",
+        diags.len()
+    );
+}
+
+#[test]
 fn empty_schema_round_trips_in_both_styles() {
     let module = parse_ok("schema = {}\nport = 1\n");
     for style in [Style::Brace, Style::Indent] {

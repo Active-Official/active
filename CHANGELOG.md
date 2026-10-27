@@ -96,6 +96,13 @@ stability policy (spec/packaging.md §7, docs/version-and-abi-policy).
 - **Lint JSON stays lint-only.** Parse diagnostics for a broken file
   go to stderr; the pinned `^L[0-9]{3}$` array schema is unchanged and
   the gate covers the broken-file case.
+- **Bounded diagnostic output.** Parser and lexer errors are retained
+  up to 1024 diagnostics per parse in emission order (lexer errors
+  first, then parser errors; the root cause of a single-phase flood
+  is first). Beyond that only the pathological tail is dropped; the
+  parse still fails, and occurrence reporting below the cap is
+  unchanged. Validation (T-code) diagnostics are not capped: every
+  violation is still reported.
 - **Taint edges** use containment (`a -> a[0]`), never an
   empty-string parent, and inspect provenance keeps real keys such as
   `node_id`. `--max-attempts` requires `--minimize` (clap usage

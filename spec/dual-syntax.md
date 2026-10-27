@@ -153,7 +153,9 @@ reader would expect, and no statement is lost.
 
 E007 recovery: as specified in §4.2, the offending column is discarded (the
 stack does not push), so subsequent lines are classified against the surviving
-levels. One diagnostic per offending line.
+levels. One diagnostic per offending line, up to the retained-diagnostics
+bound (the parser keeps the first 1024 diagnostics in emission order;
+only a pathological tail is dropped and the parse still fails).
 
 ## 7. Comment and annotation attachment
 

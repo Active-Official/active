@@ -76,6 +76,38 @@ fn alias_nests_and_private_stays_hidden() {
 }
 
 #[test]
+fn include_merge_totals_stay_bounded() {
+    // Four included files at 400 unclosed brackets each would merge
+    // ~1344 diagnostics without a merge bound. Includes sub-parse on
+    // the shared parser (capped pushes) and merge through extend_diags,
+    // so the merged total stays within the per-parse bound. Written to
+    // the OS temp dir (unique per process) so the repo stays clean.
+    // Contract guard: the bound lives in push_diag/extend_diags; this
+    // pins the include-merge path inherits it end to end.
+    let dir = std::env::temp_dir().join(format!("active_include_flood_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut mains = vec!["v = 1\n".to_string()];
+    for i in 0..4 {
+        let name = format!("flood{i}.active");
+        std::fs::write(dir.join(&name), format!("x = {}", "[".repeat(400))).unwrap();
+        mains.push(format!("include \"{name}\"\n"));
+    }
+    let main = dir.join("main_flood.active");
+    std::fs::write(&main, mains.concat()).unwrap();
+    let diags = parse_file(&main, ParseOptions::default()).expect_err("must fail");
+    assert!(
+        diags.iter().any(|d| d.code == "E004"),
+        "depth refusal present"
+    );
+    assert!(
+        diags.len() <= 1024,
+        "merged diagnostics bounded, got {}",
+        diags.len()
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn private_binding_leak_attempts_fail() {
     // A file that references a private name WITHOUT including it gets
     // null + W001, never the value. Written to the OS temp dir (unique

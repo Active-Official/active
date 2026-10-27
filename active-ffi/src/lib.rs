@@ -1299,6 +1299,24 @@ mod tests {
     }
 
     #[test]
+    fn check_flood_input_fails_closed_at_handle_creation() {
+        // 300 unclosed brackets through the shipped FFI entry points:
+        // the record-mode parse fails, so handle creation returns null
+        // with ACTIVE_ERR_PARSE and no diagnostic vector ever crosses
+        // the boundary (the flood is contained at parse time).
+        unsafe {
+            let src = format!("value = {}", "[".repeat(300));
+            let module = active_module_parse(src.as_ptr(), src.len(), std::ptr::null());
+            assert!(module.is_null());
+            assert_eq!(active_last_error(), ACTIVE_ERR_PARSE);
+            // Null-handle check path stays defined (no dereference).
+            let set = active_check(std::ptr::null_mut(), std::ptr::null());
+            assert!(set.is_null());
+            assert_eq!(active_last_error(), ACTIVE_ERR_NULL_HANDLE);
+        }
+    }
+
+    #[test]
     fn check_broken_units_reports_t001_with_span() {
         unsafe {
             let src = b"timeout = 5s + 512MiB\n";

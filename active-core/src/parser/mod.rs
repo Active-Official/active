@@ -97,6 +97,15 @@ const MAX_BLOCK_DEPTH: usize = 64;
 /// input; exceeding it is E004 (see C-037).
 const MAX_SCHEMA_DEPTH: usize = 64;
 
+/// Maximum diagnostics retained per parse. Bounds output (not input):
+/// a kilobytes-long adversarial file can otherwise emit thousands of
+/// identical errors (megabytes of stderr, an LSP publish storm per
+/// keystroke, agent-log bloat) while staying fail-closed. The first
+/// diagnostics — including the root-cause error — are retained in
+/// emission order, so the cap only drops the pathological tail; the
+/// parse still fails. Deterministic: emission order is deterministic.
+const MAX_PARSE_DIAGNOSTICS: usize = 1024;
+
 use crate::diag::{thresholds, Diagnostic, Repair, RepairKind, Severity, Span};
 use crate::ir::{NodeId, SchemaField, SemanticTag, *};
 use crate::types::{ActiveType, Unit};
@@ -361,7 +370,7 @@ fn parse_recovering_impl(
         }
     }
     parser.module.healing.extend(lexed.repairs);
-    parser.errors.extend(lexed.errors);
+    parser.extend_diags(lexed.errors);
     parser.parse_document();
     // Schema extraction before graph build: `schema` tables leave value
     // fields for the schema tree (spec §2.10), so neither sibling
@@ -793,9 +802,29 @@ impl Parser {
         }
     }
 
+    /// Push a diagnostic unless the per-parse bound is reached (see
+    /// MAX_PARSE_DIAGNOSTICS). Single choke point for direct pushes:
+    /// every error site routes through here so no input shape can
+    /// grow the error vector without bound.
+    fn push_diag(&mut self, diag: Diagnostic) {
+        if self.errors.len() < MAX_PARSE_DIAGNOSTICS {
+            self.errors.push(diag);
+        }
+    }
+
+    /// Extend the error vector with another error vector, keeping only
+    /// up to the bound. Lexer and sub-parse merges use this so many
+    /// includes cannot push the total past the cap. Order-preserving:
+    /// existing entries keep their positions and the incoming tail
+    /// is dropped, deterministically.
+    fn extend_diags(&mut self, more: Vec<Diagnostic>) {
+        let room = MAX_PARSE_DIAGNOSTICS.saturating_sub(self.errors.len());
+        self.errors.extend(more.into_iter().take(room));
+    }
+
     fn error(&mut self, code: &str, message: impl Into<String>) {
         let t = self.peek();
-        self.errors.push(Diagnostic {
+        self.push_diag(Diagnostic {
             severity: Severity::Error,
             code: code.into(),
             message: message.into(),
@@ -1582,7 +1611,7 @@ impl Parser {
                 d.file = lex_file.clone();
             }
         }
-        self.errors.extend(sub_errors);
+        self.extend_diags(sub_errors);
         self.module.healing.extend(sub_repairs);
         // The outer token stream is NOT exhausted (table bodies end
         // mid-stream), so save and restore it around the sub-parse.
@@ -1753,7 +1782,7 @@ impl Parser {
     fn report_profile_schema(&mut self, schema_id: NodeId) {
         let span = self.module.node_spans.get(&schema_id).cloned();
         let file = self.module.node_files.get(&schema_id).cloned();
-        self.errors.push(Diagnostic {
+        self.push_diag(Diagnostic {
             severity: Severity::Error,
             code: "E020".into(),
             message: "schemas may not appear inside profiles, including through includes; move the schema to the document root".into(),
@@ -2319,7 +2348,7 @@ impl Parser {
 
     /// Diagnostic at an explicit token's span.
     fn error_at(&mut self, code: &str, message: impl Into<String>, tok: &Token) {
-        self.errors.push(Diagnostic {
+        self.push_diag(Diagnostic {
             severity: Severity::Error,
             code: code.into(),
             message: message.into(),
@@ -2334,7 +2363,7 @@ impl Parser {
     /// Diagnostic at an explicit span (for comment-anchored diagnostics
     /// such as malformed annotations, which have no token).
     fn error_at_span(&mut self, code: &str, message: impl Into<String>, span: &Span) {
-        self.errors.push(Diagnostic {
+        self.push_diag(Diagnostic {
             severity: Severity::Error,
             code: code.into(),
             message: message.into(),
@@ -2510,7 +2539,7 @@ impl Parser {
             _ => {
                 let bad = self.module.node_spans.get(marker).cloned();
                 let file = self.module.node_files.get(marker).cloned();
-                self.errors.push(Diagnostic {
+                self.push_diag(Diagnostic {
                     severity: Severity::Error,
                     code: "E024".into(),
                     message: "active_mode must be \"data\" or \"config\"".into(),
@@ -2529,7 +2558,7 @@ impl Parser {
             _ => {
                 let span = self.module.node_spans.get(&tok).cloned();
                 let file = self.module.node_files.get(&tok).cloned();
-                self.errors.push(Diagnostic {
+                self.push_diag(Diagnostic {
                     severity: Severity::Error,
                     code: "E024".into(),
                     // Names and paths only: the value is data and may
@@ -2598,7 +2627,7 @@ impl Parser {
             _ => ok = false,
         }
         if !ok {
-            self.errors.push(Diagnostic {
+            self.push_diag(Diagnostic {
                 severity: Severity::Error,
                 code: "E025".into(),
                 message: "active_capabilities must be an array of strings".into(),
@@ -3431,8 +3460,8 @@ impl Parser {
                 d.file = self.current_file_name();
             }
         }
-        self.errors.extend(sub_lex_errors);
-        self.errors.extend(sub_errors);
+        self.extend_diags(sub_lex_errors);
+        self.extend_diags(sub_errors);
         self.module = std::mem::replace(&mut sub.module, Module::new(""));
         if let Some(scope) = self.ident_scopes.last_mut() {
             scope.extend(new_idents);
@@ -5321,8 +5350,8 @@ impl Parser {
                 d.file = sub_file.clone();
             }
         }
-        self.errors.extend(sub_lex_errors);
-        self.errors.extend(sub_errors);
+        self.extend_diags(sub_lex_errors);
+        self.extend_diags(sub_errors);
         self.module.healing.extend(sub_lex_repairs);
         self.module.healing.extend(sub_repairs);
         id

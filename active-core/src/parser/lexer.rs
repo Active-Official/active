@@ -48,6 +48,22 @@ pub struct Lexed {
     pub comments: Vec<(String, Span)>,
 }
 
+/// Maximum lexical diagnostics retained per tokenization. Same bound
+/// rationale as the parser's MAX_PARSE_DIAGNOSTICS: one error per
+/// invalid byte would turn a kilobytes-long file into megabytes of
+/// identical E005 errors. First diagnostics are retained in emission
+/// order; only the pathological tail is dropped.
+pub(crate) const MAX_LEX_DIAGNOSTICS: usize = 1024;
+
+/// Push a lexical error unless the per-tokenization bound is reached.
+/// Single choke point: every lexer error site uses this so no input
+/// shape can grow the error vector without bound.
+fn push_lex_error(errors: &mut Vec<Diagnostic>, diag: Diagnostic) {
+    if errors.len() < MAX_LEX_DIAGNOSTICS {
+        errors.push(diag);
+    }
+}
+
 /// Build the H001 repair for a string that reached EOF without its closing
 /// delimiter: insert the missing delimiter. Safe repair (confidence ≥ 0.95).
 fn unclosed_string_repair(line: u32, col: u32, delimiter: &str) -> Diagnostic {
@@ -408,22 +424,25 @@ impl Lexer {
         }
 
         if let Some((l, col)) = tab_span {
-            errors.push(Diagnostic {
-                severity: Severity::Error,
-                code: "E006".into(),
-                message: "tab character in leading whitespace; use spaces".into(),
-                path: None,
-                span: Some(Span {
-                    line: l,
-                    column: col,
-                    end_line: l,
-                    end_column: col + 1,
-                }),
-                repair: None,
-                confidence: 0.0,
-                // The parser stamps the session file (includes get theirs).
-                file: None,
-            });
+            push_lex_error(
+                errors,
+                Diagnostic {
+                    severity: Severity::Error,
+                    code: "E006".into(),
+                    message: "tab character in leading whitespace; use spaces".into(),
+                    path: None,
+                    span: Some(Span {
+                        line: l,
+                        column: col,
+                        end_line: l,
+                        end_column: col + 1,
+                    }),
+                    repair: None,
+                    confidence: 0.0,
+                    // The parser stamps the session file (includes get theirs).
+                    file: None,
+                },
+            );
         }
 
         // Blank line, or a line whose first content is a comment: no tokens
@@ -455,22 +474,25 @@ impl Lexer {
             if self.indent_stack.last().copied() != Some(column) {
                 // Unmatched dedentation: the stack has already popped to the
                 // nearest level below, and the column is not pushed.
-                errors.push(Diagnostic {
-                    severity: Severity::Error,
-                    code: "E007".into(),
-                    message: format!("inconsistent dedentation to column {column}"),
-                    path: None,
-                    span: Some(Span {
-                        line,
-                        column: start_col,
-                        end_line: line,
-                        end_column: start_col + column as u32,
-                    }),
-                    repair: None,
-                    confidence: 0.0,
-                    // The parser stamps the session file.
-                    file: None,
-                });
+                push_lex_error(
+                    errors,
+                    Diagnostic {
+                        severity: Severity::Error,
+                        code: "E007".into(),
+                        message: format!("inconsistent dedentation to column {column}"),
+                        path: None,
+                        span: Some(Span {
+                            line,
+                            column: start_col,
+                            end_line: line,
+                            end_column: start_col + column as u32,
+                        }),
+                        repair: None,
+                        confidence: 0.0,
+                        // The parser stamps the session file.
+                        file: None,
+                    },
+                );
             }
         }
 
@@ -963,22 +985,25 @@ impl Lexer {
                 _ => {
                     let (l, col) = (self.line, self.col);
                     self.bump();
-                    errors.push(Diagnostic {
-                        severity: Severity::Error,
-                        code: "E005".into(),
-                        message: format!("unexpected character {:?}", c),
-                        path: None,
-                        span: Some(Span {
-                            line: l,
-                            column: col,
-                            end_line: l,
-                            end_column: col + 1,
-                        }),
-                        repair: None,
-                        confidence: 0.0,
-                        // The parser stamps the session file.
-                        file: None,
-                    });
+                    push_lex_error(
+                        &mut errors,
+                        Diagnostic {
+                            severity: Severity::Error,
+                            code: "E005".into(),
+                            message: format!("unexpected character {:?}", c),
+                            path: None,
+                            span: Some(Span {
+                                line: l,
+                                column: col,
+                                end_line: l,
+                                end_column: col + 1,
+                            }),
+                            repair: None,
+                            confidence: 0.0,
+                            // The parser stamps the session file.
+                            file: None,
+                        },
+                    );
                 }
             }
         }

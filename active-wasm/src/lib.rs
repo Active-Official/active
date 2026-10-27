@@ -349,6 +349,34 @@ mod tests {
     }
 
     #[test]
+    fn envelope_flood_input_items_are_bounded() {
+        // 300 unclosed brackets through the shipped envelope: fail-closed
+        // with E004 items, total bounded by the parser diagnostic cap.
+        // Contract guard (passes via the cap): prevents unbounded
+        // envelope growth from reaching JSON hosts.
+        let src = format!("value = {}", "[".repeat(300));
+        let env = envelope_of(&src);
+        assert_eq!(env["ok"], false);
+        let items = env["items"].as_array().expect("items array");
+        assert!(!items.is_empty(), "flood input must fail");
+        assert!(
+            items.len() <= 1024,
+            "envelope items bounded, got {}",
+            items.len()
+        );
+        assert!(
+            items.iter().any(|it| it["code"] == "E004"),
+            "depth refusal present"
+        );
+        assert!(
+            items
+                .iter()
+                .all(|it| it["code"] == "E004" || it["code"] == "E001"),
+            "only the depth family (E004 over-depth, E001 unclosed)"
+        );
+    }
+
+    #[test]
     fn envelope_redacts_secrets() {
         let env = envelope_of("let pw = secret(\"hunter2\")\n[out]\npass = pw\n");
         assert_eq!(env["ok"], true);

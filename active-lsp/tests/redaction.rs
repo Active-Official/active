@@ -71,6 +71,27 @@ fn diagnostics_carry_no_secrets() {
 }
 
 #[test]
+fn flood_input_publishes_bounded_diagnostics() {
+    // 300 unclosed brackets through the shipped LSP path: the publish
+    // list must stay bounded (parser cap) so one adversarial buffer
+    // cannot storm the client with thousands of diagnostics per keystroke.
+    // Contract guard: the bound lives in the parser; this pins the LSP
+    // surface inherits it end to end.
+    let src = format!("value = {}", "[".repeat(300));
+    let doc = analysis::open_doc(Url::parse("untitled:flood").expect("uri"), src, 1, None);
+    let diags = analysis::diagnostics_for(&doc);
+    assert!(!diags.is_empty(), "flood input must fail");
+    assert!(
+        diags.len() <= 1024,
+        "published diagnostics bounded, got {}",
+        diags.len()
+    );
+    for d in &diags {
+        scrubbed(&d.message, "flood diagnostic");
+    }
+}
+
+#[test]
 fn code_actions_carry_no_secrets() {
     // Source-to-source actions (reformat) echo the user's own locator
     // text — the same contract as the formatter — so they must equal

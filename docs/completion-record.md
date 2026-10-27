@@ -110,9 +110,9 @@ the baseline rule (no parallel rewrites).
 | Output schemas | 9/9 documents validate (`output-schema.log`) |
 | Editor smoke | 6 commands, redaction probe pass |
 | Neovim package determinism | identical hashes |
-| Dual-push CI | `conformance/evidence/ci.log` through `c5366f4`, plus the per-tree table below |
+| Dual-push CI | `conformance/evidence/ci.log` through `ebc8ca0`, plus the per-tree table below and the goal close-out for later evidence commits |
 | Packaging audit | twine check on sdist+wheel, npm file list, version coherence, and every documented install (`pip`, `npm`, `cargo install`, `cargo add`): `PACKAGING-AUDIT: PASS` (`packaging-audit.log`) |
-| Independent review | DeepSeek V4.1 Flash (BYOK) at `--reasoning-effort max` for rounds 12-76 and `xhigh` for the round-77 fresh review. Round 73 re-reviewed the complete goal diff and found 12 issues (2 critical, 1 high, 6 medium, 3 low); every one was fixed at the cause with a regression test on the shipped path. Round 74 verified 11 as FIXED and flagged F6 for a missing discriminating test; round 75 verified the added docgen bound (0.25 s committed vs 3.80 s with the old body). Round 76 closed the last leak (the linter's env-equal deprecated reason) and verified it in text, JSON, and SARIF. A fresh full-diff review at `b96509f` (round 77) found 7 further issues (2 high, 3 medium, 2 low), all fixed at `fcea0d3` and verified fixed by round 77b with no new findings requested. Final verdict: zero open findings (`conformance/evidence/review.log`; detail in `docs/security-hardening.md`). The goal's required full-diff review through the local meta-muse-spark proxy at xhigh then ran five passes over the complete diff (26, 3, 4, 3, and 2 findings); every real finding was fixed with a regression test and three were rejected with a documented contract. Full transcript: `conformance/evidence/review-muse-fulldiff.log` |
+| Independent review | DeepSeek V4.1 Flash (BYOK) at `--reasoning-effort max` for rounds 12-76 and `xhigh` for the round-77 fresh review. Round 73 re-reviewed the complete goal diff and found 12 issues (2 critical, 1 high, 6 medium, 3 low); every one was fixed at the cause with a regression test on the shipped path. Round 74 verified 11 as FIXED and flagged F6 for a missing discriminating test; round 75 verified the added docgen bound (0.25 s committed vs 3.80 s with the old body). Round 76 closed the last leak (the linter's env-equal deprecated reason) and verified it in text, JSON, and SARIF. A fresh full-diff review at `b96509f` (round 77) found 7 further issues (2 high, 3 medium, 2 low), all fixed at `fcea0d3` and verified fixed by round 77b with no new findings requested. Final verdict: zero open findings (`conformance/evidence/review.log`; detail in `docs/security-hardening.md`). The goal's required full-diff review through the local meta-muse-spark proxy at xhigh then ran seven passes over the complete diff (26, 3, 4, 3, 2, 2, and 0 findings, the last three evidence-only); every real finding was fixed with a regression test and three were rejected with a documented contract. Full transcript: `conformance/evidence/review-muse-fulldiff.log` |
 
 ### Final CI (2026-10-26)
 
@@ -162,9 +162,9 @@ tree.
 The two official Conformance failures (`11a4bfa`, `b47b951`) are the
 installer bug and the slow-mirror timeout that the grouped, bounded,
 non-interactive installers fixed at `3ed0a4a` and `c5366f4`. They stay in
-the table rather than being hidden. Every verdict through `c5366f4` is in
-`conformance/evidence/ci.log`; the commit that lands this table is
-documentation-only over `c5366f4` and its verdicts are in the goal
+the table rather than being hidden. Every verdict through `ebc8ca0` is in
+`conformance/evidence/ci.log`; the later evidence commits (`cd3b625`,
+`a98b652`, `e54c1ba`, `b3c2172`) and their verdicts are in the goal
 close-out.
 
 One runner stalled for over an hour in the Tier-2 apt step because dpkg

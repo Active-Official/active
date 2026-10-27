@@ -1,5 +1,37 @@
 # CI verdicts for the final tree (2026-10-26)
 
+Review-fix trees (goal section 8.6 review loop; code changes)
+
+ebc8ca0 (NaN ordering scope, descriptor checks, refreshed test logs)
+  RatioArtificiosa/active-lang
+    CI           40437358343  success
+    Conformance  40437358346  success
+    CodSpeed     40437358446  cancelled (superseded)
+  Active-Official/active
+    CI           40437361678  success
+    Conformance  40437361630  success
+    CodSpeed     40437361627  cancelled (superseded)
+
+39daa44 (pipefail, flag matching, release permissions)
+  RatioArtificiosa/active-lang
+    CI           40436015212  success
+    Conformance  40436015186  success
+    CodSpeed     40436015204  cancelled (superseded)
+  Active-Official/active
+    CI           40436019074  success
+    Conformance  40436019053  success
+    CodSpeed     40436018812  cancelled (superseded)
+
+0cde3fa (numeric ordering, parse-null tests, workflow hardening)
+  RatioArtificiosa/active-lang
+    CI           40435211203  success
+    Conformance  40435210941  cancelled (superseded)
+    CodSpeed     40435210907  cancelled (superseded)
+  Active-Official/active
+    CI           40435214623  success
+    Conformance  40435214626  cancelled (superseded)
+    CodSpeed     40435214744  cancelled (superseded)
+
 Evidence commits after the review stamp (all documentation, evidence, and
 CI-installer changes; code unchanged since fcea0d3)
 

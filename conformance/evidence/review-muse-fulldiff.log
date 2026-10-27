@@ -1,0 +1,49 @@
+Fresh full-diff review (goal section 8.6) - meta-muse-spark-1.3-contributor
+============================================================================
+Reviewer: Meta Muse Spark 1.3 Contributor through the Copilot CLI BYOK
+route (local proxy, OpenAI-compatible responses API) at --reasoning-effort
+xhigh. Scope: git diff ef98a2d..ebc8ca0 (the complete goal diff, including
+the CI workflows, packaging, conformance harness, and evidence). Read-only;
+no files modified by the reviewer.
+
+Passes: c5366f4 (26 findings), 2721e98 (3 residual/new), 0cde3fa (4), and
+39daa44 (3). Every real finding was fixed at the cause; three earlier
+findings were rejected with a documented contract (the FFI budget zero
+means "shipped default" per docs/FFI.md and active.h; the prompt result
+pack label 1.1.0 is a historical run label documented in prompts/README.md;
+the phantom --budget-profile was a misread of a real flag). The transcript
+below is the pass over 39daa44; the final pass over the evidence commit is
+appended at the end.
+
+Full-diff review ÔÇö verifying prior fixes and sweeping for new issues.
+
+Prior fixes look addressed on the surface ÔÇö now digging into surrounding context and the wider tree.
+
+Core ordering logic checks out ÔÇö now auditing CI, conformance, and packaging surfaces.
+
+Evidence cross-check in progress ÔÇö verifying the remaining gates and redaction paths.
+
+Workflow hardening verified ÔÇö now checking evidence integrity and version coherence.
+
+No blockers so far ÔÇö final spot-checks on versions, SBOMs, and redaction.
+
+Found an evidence gap on the new tests ÔÇö confirming scope before writing the verdict.
+
+Prior items (all FIXED):
+
+- Pipefail verify step: FIXED ÔÇö `.github/workflows/conformance.yml:114` adds `set -o pipefail` to the apt-toolchain verify block; all piped checks (`R|head`, `elixir|tail`, `kotlinc|head`) now fail closed. Other piped steps already had it (:74,:189,:210).
+- Word-boundary flag matching: FIXED ÔÇö `agent-kit/eval/test_capability.py:178-180` uses `(?<![\w-])ÔÇª(?![\w-])` + `assertRegex`, so `--to` no longer matches `--toml`.
+- Top-level release permissions: FIXED ÔÇö `.github/workflows/release.yml:12-13` sets `contents: read`; only the publish job escalates (:176-179).
+- Stale codegen log: FIXED ÔÇö committed log moved `c5366f4ÔåÆ0cde3fa` (the code tree; `39daa44` touches no shipped code). Working tree already regenerates it to `39daa44` (uncommitted ÔÇö commit it).
+
+New findings:
+
+| # | Severity | File | Lines | Vulnerability | Confidence |
+|---|----------|------|-------|---------------|------------|
+| 1 | ­ƒƒí MEDIUM | conformance/evidence/harness-tests.log (+README.md:26, REFRESH.md:18, agentkit-eval.log:1-9) | 31-63 | Committed logs predate `0cde3fa`: diff-vectors section shows 14 tests but the file now has 20 (missing `ParseNullContractTest` ├ù6); capability shows 6 but the file has 8 (missing the 2 new entry/flag tests). README counts (14/14, 6/6) now contradict the code. Live CI runs them, so this is evidence lag, not a CI bypass ÔÇö regenerate logs + counts. | 9/10 |
+| 2 | ÔÜ¬ LOW | spec/specification.md | 261 | "NaN ÔÇª unreachable because float division by zero is a TypeError" overstates: `inf - inf` via overflow (e.g. `1e308*10`) can still yield NaN. Helper handles it defensively (all orderings false, IEEE `!=`); scope the claim. Same comment in `active-core/tests/regressions.rs:325`. | 7/10 |
+| 3 | ÔÜ¬ LOW | agent-kit/eval/test_capability.py | 138-151 | Live flag check skips openly (exit 0) when the binary is absent and covers only 6 flat commands; `generate`/`doc`/`inspect` entries never live-checked. CI builds first so covered there; consider fail-closed locally. | 6/10 |
+
+Checked with no findings: `cmp_int_float` exactness (range guards, trunc/fraction split, ┬▒inf/ÔêÆ0 correct), mixed-arithmetic promotion with zero-division fallthrough to kind-only T001, secret-redaction paths (no values in new messages), remaining workflows (permissions/timeouts), SBOMs at 1.4.0 matching the 8-member workspace, vsix glob.
+
+VERDICT: 3 FINDINGS

@@ -112,7 +112,7 @@ the baseline rule (no parallel rewrites).
 | Neovim package determinism | identical hashes |
 | Dual-push CI | `conformance/evidence/ci.log` through `c5366f4`, plus the per-tree table below |
 | Packaging audit | twine check on sdist+wheel, npm file list, version coherence, and every documented install (`pip`, `npm`, `cargo install`, `cargo add`): `PACKAGING-AUDIT: PASS` (`packaging-audit.log`) |
-| Independent review | DeepSeek V4.1 Flash (BYOK) at `--reasoning-effort max` for rounds 12-76 and `xhigh` for the round-77 fresh review. Round 73 re-reviewed the complete goal diff and found 12 issues (2 critical, 1 high, 6 medium, 3 low); every one was fixed at the cause with a regression test on the shipped path. Round 74 verified 11 as FIXED and flagged F6 for a missing discriminating test; round 75 verified the added docgen bound (0.25 s committed vs 3.80 s with the old body). Round 76 closed the last leak (the linter's env-equal deprecated reason) and verified it in text, JSON, and SARIF. A fresh full-diff review at `b96509f` (round 77) found 7 further issues (2 high, 3 medium, 2 low), all fixed at `fcea0d3` and verified fixed by round 77b with no new findings requested. Final verdict: zero open findings (`conformance/evidence/review.log`; detail in `docs/security-hardening.md`) |
+| Independent review | DeepSeek V4.1 Flash (BYOK) at `--reasoning-effort max` for rounds 12-76 and `xhigh` for the round-77 fresh review. Round 73 re-reviewed the complete goal diff and found 12 issues (2 critical, 1 high, 6 medium, 3 low); every one was fixed at the cause with a regression test on the shipped path. Round 74 verified 11 as FIXED and flagged F6 for a missing discriminating test; round 75 verified the added docgen bound (0.25 s committed vs 3.80 s with the old body). Round 76 closed the last leak (the linter's env-equal deprecated reason) and verified it in text, JSON, and SARIF. A fresh full-diff review at `b96509f` (round 77) found 7 further issues (2 high, 3 medium, 2 low), all fixed at `fcea0d3` and verified fixed by round 77b with no new findings requested. Final verdict: zero open findings (`conformance/evidence/review.log`; detail in `docs/security-hardening.md`). The goal's required full-diff review through the local meta-muse-spark proxy at xhigh then ran five passes over the complete diff (26, 3, 4, 3, and 2 findings); every real finding was fixed with a regression test and three were rejected with a documented contract. Full transcript: `conformance/evidence/review-muse-fulldiff.log` |
 
 ### Final CI (2026-10-26)
 
@@ -149,6 +149,15 @@ tree.
 | `b47b951` | official | success (40418182893) | failure (40418183024) | success (40418182972) | not triggered (same code) |
 | `c5366f4` | origin | success (40422151217) | success (40422151188) | success (40422151236) | not triggered (same code) |
 | `c5366f4` | official | success (40422154628) | success (40422154620) | success (40422154909) | not triggered (same code) |
+
+| `2721e98` | origin | success (40433133984) | success (40433133922) | cancelled (40433133970, superseded) | success (40433134038) |
+| `2721e98` | official | success (40433137911) | success (40433137699) | cancelled (40433137758, superseded) | success (40433137892) |
+| `0cde3fa` | origin | success (40435211203) | cancelled (40435210941, superseded) | cancelled (40435210907, superseded) | success (40435211210) |
+| `0cde3fa` | official | success (40435214623) | cancelled (40435214626, superseded) | cancelled (40435214744, superseded) | success (40435214639) |
+| `39daa44` | origin | success (40436015212) | success (40436015186) | cancelled (40436015204, superseded) | not triggered |
+| `39daa44` | official | success (40436019074) | success (40436019053) | cancelled (40436018812, superseded) | not triggered |
+| `ebc8ca0` | origin | success (40437358343) | success (40437358346) | cancelled (40437358446, superseded) | success (40437358387) |
+| `ebc8ca0` | official | success (40437361678) | success (40437361630) | cancelled (40437361627, superseded) | success (40437361563) |
 
 The two official Conformance failures (`11a4bfa`, `b47b951`) are the
 installer bug and the slow-mirror timeout that the grouped, bounded,

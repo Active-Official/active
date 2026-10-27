@@ -5,15 +5,20 @@ For one fixture schema covering every core type plus constraints,
 defaults, enums, nested tables, blob, deprecated, and requires:
   1. Generate all six targets with `active generate` (the shipped CLI).
   2. Validate a VALID and an INVALID document with each target's NATIVE
-     toolchain (python jsonschema/pydantic, tsc, go vet) plus the
-     reference core.
+     toolchain where one exists: python jsonschema/pydantic, tsc and zod,
+     gofmt and go vet, plus the reference core. Rust and OpenAPI get
+     generation success and cross-target field agreement; they have no
+     external validator in this battery.
   3. Assert identical accept/reject verdicts everywhere.
 
-Exit 0 only on full parity. Writes codegen-equivalence.log next to itself.
+Exit 0 only on full parity. A failed toolchain install is a FAIL, never a
+SKIP. Writes codegen-equivalence.log next to itself with the tree and
+capture time in the header.
 """
 
 from __future__ import annotations
 
+import datetime
 import json
 import shutil
 import subprocess
@@ -22,7 +27,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-LOG = Path(__file__).resolve().parent / "codegen-equivalence.log"
+LOG = Path(__file__).resolve().parent / "evidence" / "codegen-equivalence.log"
 lines: list[str] = []
 failed = False
 
@@ -100,6 +105,14 @@ INVALID_DOC = {
 
 def main() -> int:
     log("=== codegen equivalence battery ===")
+    head = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    stamp = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+    log(f"tree: {head or 'unknown'}  captured: {stamp}")
     tmp = Path(tempfile.mkdtemp(prefix="active-codegen-eq-"))
     (tmp / "svc.active").write_text(SCHEMA, encoding="utf-8", newline="\n")
 
@@ -249,12 +262,16 @@ def main() -> int:
             ["npm", "install", "zod", "--no-audit", "--no-fund"], cwd=tmp, timeout=600
         )
         if p.returncode != 0:
-            log(
-                "(skip) npm install zod failed; cannot typecheck or runtime-check zod schemas"
-            )
-            log("OVERALL: SKIP (toolchain)")
+            # A failed install is a real gap in the TypeScript proof: the
+            # gate must not report PASS when a target could not be
+            # validated. Fail instead of skipping.
+            tail = (p.stdout + p.stderr).strip().splitlines()[-3:]
+            log("(fail) npm install zod failed; TypeScript cannot be checked")
+            for line in tail:
+                log("  " + line[:200])
+            log("OVERALL: FAIL (toolchain: zod unavailable)")
             LOG.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
-            return 0
+            return 1
         p = run(
             [
                 "tsc",

@@ -19,6 +19,7 @@ SHA-256 pin for each unchanged artifact.
 | `miri.log` | `cargo +nightly miri test -p active-core --lib trace::` and `--lib blob` | - | regenerated; 3/3 and 3/3 |
 | `binding-proof.log` | `python bindings/python/test_active.py` | - | regenerated; 10/10 |
 | `ci.log` | `gh run list` / `gh run view` on both remotes | - | updated with each pushed tree's verdicts |
+| `packaging-audit.log` | `pwsh -NoProfile -File conformance/evidence/packaging_audit.ps1` | - | regenerated; `PACKAGING-AUDIT: PASS` |
 
 The deterministic rows above were captured before this record (their
 last-touching commits are named); the re-run at `1fdeaf5` produced the

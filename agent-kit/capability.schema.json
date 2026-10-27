@@ -41,7 +41,7 @@
     },
     {
       "name": "format",
-      "entry": "active fmt <file>",
+      "entry": "active fmt [--style brace|indent|preserve] [--write|--check] <files>...",
       "description": "Format a file in the canonical style without changing its meaning.",
       "input": {
         "file": "path to a .active source file"
@@ -52,7 +52,7 @@
     },
     {
       "name": "convert",
-      "entry": "active convert <file> --to json|yaml|toml",
+      "entry": "active convert <file> --to json|yaml|toml [--resilient] [--allow-parent-escapes --trust-keys <toml>]",
       "description": "Convert an evaluated result to another format with redaction preserved.",
       "input": {
         "file": "path to a .active source file",

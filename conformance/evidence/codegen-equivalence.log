@@ -1,0 +1,26 @@
+=== codegen equivalence battery ===
+tree: c5366f4  captured: 2026-10-26T19:31:33-06:00
+[PASS] generate jsonschema bytes=1697 rc=0
+[PASS] generate openapi bytes=2273 rc=0
+[PASS] generate typescript bytes=840 rc=0
+[PASS] generate go bytes=887 rc=0
+[PASS] generate rust bytes=971 rc=0
+[PASS] generate python bytes=573 rc=0
+[PASS] jsonschema accepts valid doc 
+[PASS] jsonschema rejects invalid doc 
+[PASS] python target carries all fields 
+(info) pydantic available: True
+[PASS] pydantic model imports PYDANTIC-VALID-OK
+[PASS] tsc typechecks generated types 
+[PASS] zod accepts valid doc ZOD-INVALID:false
+[PASS] zod rejects invalid doc 
+[PASS] gofmt clean 
+[PASS] go vet clean 
+[PASS] jsonschema names all fields missing=[]
+[PASS] openapi names all fields missing=[]
+[PASS] typescript names all fields missing=[]
+[PASS] go names all fields missing=[]
+[PASS] rust names all fields missing=[]
+[PASS] python names all fields missing=[]
+
+OVERALL: PASS

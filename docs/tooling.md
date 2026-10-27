@@ -118,7 +118,7 @@ Details and stretch-target gaps: `editors/README.md`.
 
 ```sh
 active lint --format text|json|sarif --disable-lint <rule> file.active
-active lint --config project.toml file.active
+active lint --config .active-lint.toml file.active
 ```
 
 Sixteen rules (catalog: `docs/lint-rules.md`); JSON and SARIF shapes are

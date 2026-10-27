@@ -427,7 +427,13 @@ def main() -> int:
         )
     if checked == 0:
         return fail("no hermetic cases exercised (zero-proof pass refused)")
-    print(f"DIFFERENTIAL-OK ({checked} cases, codes+spans+values identical)")
+    # Pin the count: a case that silently disappears must not shrink the
+    # gate. `checked` counts every non-pinned manifest case, so a skipped
+    # case fails here instead of passing with a smaller tally.
+    expected = len(cases) - sum(1 for c in cases if c["id"] in pins)
+    if checked != expected:
+        return fail(f"checked {checked} of {expected} non-pinned cases")
+    print(f"DIFFERENTIAL-OK ({checked}/{expected} cases, codes+spans+values identical)")
     return 0
 
 

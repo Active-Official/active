@@ -23,7 +23,7 @@ oracle and double the maintenance tail for zero user benefit.
   (library package, not a command; `go 1.25+`). Verified 2026-10-21:
   module `github.com/Active-Official/active-go`, `abiMajor = 1` gate
   in `active.go`, HEAD `f5bd6e2` matching the harness pin
-  (`f5bd6e223dde0a0fd47ef3aa24343e9de1e4` in `run-tests.py`).
+  (`f5bd6e223dde0a0fd47ef3aa241f45443e9de1e4` in `run-tests.py`).
 - **Version alignment:** the binding versions against the release
   artifact, not the Rust workspace (DERIVED decision above). Contract
   compatibility is the frozen C ABI v1 (`abiMajor = 1` gate at load);

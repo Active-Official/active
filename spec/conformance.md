@@ -23,16 +23,15 @@ Two suites serve different jobs and must both stay green:
   strings (13). Each pair asserts an ACCEPTED document's evaluated
   value tree, byte for byte.
 - `conformance/manifest.toml` is the **cross-embedding suite**
-  (16 cases today, including negative and host-feature pins)
+  (21 cases today, including negative and host-feature pins)
   driven by `conformance/harness/run.py` across the reference,
   C ABI, WASM, and binding paths. Its normalization contract is
   `conformance/NORMALIZATION.md`; the differential gate
-  (`conformance/harness/diff_vectors.py`) is the strictest proof.
-  The shared manifest predates Blob and mode; those surfaces are
-  pinned by the Rust suites, `agent-kit/vectors/`, and the codegen
-  gate instead, because the pinned external partner suite rejects
-  syntax it does not know until it is re-pinned (documented
-  deviation, not a silent gap).
+  (`conformance/harness/diff_vectors.py`) is the strictest proof and
+  runs 19 of the 21 (cases 0008 and 0011 are pinned because their
+  include/profile host paths are not portable). Blob (0017-0018),
+  mode (0019-0020), and capability-shape (0021) vectors carry the
+  newer surfaces through the same gate.
 
 ### 2.1 Harness contract (what "passing" means)
 

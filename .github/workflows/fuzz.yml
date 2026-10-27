@@ -22,21 +22,22 @@ jobs:
   fuzz:
     name: libFuzzer (${{ matrix.target }})
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         target: [lexer, parser, interpolation, formatter]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: "fuzz -> target"
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
       - name: Fuzz ${{ matrix.target }} (bounded)
         run: |
-          cargo fuzz run ${{ matrix.target }} -- \
+          cargo +nightly fuzz run ${{ matrix.target }} -- \
             -max_total_time=60 -rss_limit_mb=4096 -print_final_stats=1
       - name: Upload crash artifacts
         if: failure()

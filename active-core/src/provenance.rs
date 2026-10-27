@@ -244,9 +244,15 @@ pub fn collect_provenance_with_seeds(
 /// Content hash over the canonical redacted form: compact JSON with
 /// sorted keys, secrets already replaced by `***SECRET***`
 /// (`value_to_json`). Same tree → same `sha256:<hex>` on every
-/// platform. Raw secret values never enter the hash. Retained blob
-/// payloads are stripped first, so `--materialise-blobs` cannot change
-/// a document's identity.
+/// platform.
+///
+/// Caller obligation: pass a tree whose plain strings are already
+/// redacted against the analyzed material profile (the CLI `lock` path
+/// and the `debug --minimize` digest both do). `value_to_json` redacts
+/// `Value::Secret` nodes; it cannot know that a plain `String` came from
+/// an environment read, so an unredacted tree would hash the raw bytes.
+/// Retained blob payloads are stripped first, so `--materialise-blobs`
+/// cannot change a document's identity.
 pub fn content_hash(value: &crate::ir::Value) -> String {
     let canonical = serde_json::to_string(&crate::convert::value_to_json(
         &crate::convert::strip_blob_payloads(value),
@@ -369,7 +375,10 @@ impl LockManifest {
                 let mut entry = toml::map::Map::new();
                 entry.insert("path".to_string(), toml::Value::String(blob.path.clone()));
                 entry.insert("hash".to_string(), toml::Value::String(blob.hash.clone()));
-                entry.insert("size".to_string(), toml::Value::Integer(blob.size as i64));
+                entry.insert(
+                    "size".to_string(),
+                    toml::Value::Integer(i64::try_from(blob.size).unwrap_or(i64::MAX)),
+                );
                 entry.insert(
                     "media_type".to_string(),
                     toml::Value::String(blob.media_type.clone()),

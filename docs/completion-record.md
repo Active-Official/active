@@ -110,20 +110,20 @@ the baseline rule (no parallel rewrites).
 | Output schemas | 9/9 documents validate (`output-schema.log`) |
 | Editor smoke | 6 commands, redaction probe pass |
 | Neovim package determinism | identical hashes |
-| Dual-push CI | recorded in `conformance/evidence/ci.log` |
+| Dual-push CI | `conformance/evidence/ci.log` through `c5366f4`, plus the per-tree table below |
+| Packaging audit | twine check on sdist+wheel, npm file list, version coherence, and every documented install (`pip`, `npm`, `cargo install`, `cargo add`): `PACKAGING-AUDIT: PASS` (`packaging-audit.log`) |
 | Independent review | DeepSeek V4.1 Flash (BYOK) at `--reasoning-effort max` for rounds 12-76 and `xhigh` for the round-77 fresh review. Round 73 re-reviewed the complete goal diff and found 12 issues (2 critical, 1 high, 6 medium, 3 low); every one was fixed at the cause with a regression test on the shipped path. Round 74 verified 11 as FIXED and flagged F6 for a missing discriminating test; round 75 verified the added docgen bound (0.25 s committed vs 3.80 s with the old body). Round 76 closed the last leak (the linter's env-equal deprecated reason) and verified it in text, JSON, and SARIF. A fresh full-diff review at `b96509f` (round 77) found 7 further issues (2 high, 3 medium, 2 low), all fixed at `fcea0d3` and verified fixed by round 77b with no new findings requested. Final verdict: zero open findings (`conformance/evidence/review.log`; detail in `docs/security-hardening.md`) |
 
 ### Final CI (2026-10-26)
 
-Both remotes are green on the final content tree `fcea0d3` and on the
-four evidence stamps `1b5ce29` (review logs), `1fdeaf5` (gate and CI
-table), `c7e4ec3` (battery refresh and audit corrections), and `95c4eb3`
-(documentation reviews and refresh provenance). CI and Conformance pass
-on all five trees. CodSpeed's verdict
-for `fcea0d3` itself is `cancelled` (superseded before it reported), so
-the CodSpeed proof is the stamp runs, which are the same code with
-documentation-only changes. Fuzz smoke is not path-triggered by an
-evidence-only commit; it passed twice on the content tree.
+Both remotes are green on the final content tree `fcea0d3` and on every
+evidence and CI-installer commit after it. CI and Conformance pass on all
+trees except the two official Conformance runs that exposed the installer
+bug; CodSpeed's verdict for `fcea0d3` itself is `cancelled` (superseded
+before it reported), so the CodSpeed proof is the stamp runs, which are
+the same code with documentation-only changes. Fuzz smoke is not
+path-triggered by an evidence-only commit; it passed twice on the content
+tree.
 
 | Tree | Remote | CI | Conformance | CodSpeed | Fuzz smoke |
 |---|---|---|---|---|---|
@@ -137,17 +137,34 @@ evidence-only commit; it passed twice on the content tree.
 | `c7e4ec3` | official | success (40351601883) | success (40351601955) | success (40351602310) | not triggered (same code) |
 | `95c4eb3` | origin | success (40356645400) | success (40356645462) | success (40356645310) | not triggered (same code) |
 | `95c4eb3` | official | success (40356650512) | success (40356650518) | success (40356650637) | not triggered (same code) |
+| `9378aed` | origin | success (40388950381) | cancelled (40388950941, superseded) | success (40388950327) | not triggered (same code) |
+| `9378aed` | official | success (40388959495) | success (40388959517) | success (40388959667) | not triggered (same code) |
+| `dd544f0` | origin | success (40403489812) | success (40403489911) | success (40403489802) | not triggered (same code) |
+| `dd544f0` | official | success (40403495695) | success (40403501383) | success (40403495723) | not triggered (same code) |
+| `11a4bfa` | origin | success (40408358601) | success (40408358654) | success (40408358563) | not triggered (same code) |
+| `11a4bfa` | official | success (40408363255) | failure (40408363113) | success (40408363266) | not triggered (same code) |
+| `3ed0a4a` | origin | success (40412714510) | success (40412714566) | success (40412714540) | not triggered (same code) |
+| `3ed0a4a` | official | success (40412718716) | success (40412718753) | success (40412718664) | not triggered (same code) |
+| `b47b951` | origin | success (40418178714) | success (40418178511) | success (40418178655) | not triggered (same code) |
+| `b47b951` | official | success (40418182893) | failure (40418183024) | success (40418182972) | not triggered (same code) |
+| `c5366f4` | origin | success (40422151217) | success (40422151188) | success (40422151236) | not triggered (same code) |
+| `c5366f4` | official | success (40422154628) | success (40422154620) | success (40422154909) | not triggered (same code) |
 
-The commit that lands this table is documentation-only over `95c4eb3`;
-its own verdicts are tracked in the goal close-out and, for the trees up
-to `c7e4ec3`, in `conformance/evidence/ci.log`.
+The two official Conformance failures (`11a4bfa`, `b47b951`) are the
+installer bug and the slow-mirror timeout that the grouped, bounded,
+non-interactive installers fixed at `3ed0a4a` and `c5366f4`. They stay in
+the table rather than being hidden. Every verdict through `c5366f4` is in
+`conformance/evidence/ci.log`; the commit that lands this table is
+documentation-only over `c5366f4` and its verdicts are in the goal
+close-out.
 
 One runner stalled for over an hour in the Tier-2 apt step because dpkg
 could block on a prompt and a mirror attempt had no bound. The workflow
 now runs every install non-interactively, bounds every fetch and install
-attempt with `timeout`, sets per-step `timeout-minutes`, and verifies each
-toolchain before the harness. With those bounds the Ubuntu Conformance
-job completes in roughly ten minutes on the same toolchain set.
+attempt with `timeout`, installs the apt set in per-package groups, sets
+per-step `timeout-minutes`, and verifies each toolchain before the
+harness. With those bounds the Ubuntu Conformance job completes in
+roughly ten minutes on the same toolchain set.
 
 Earlier green stamps: `b96509f` (docs and evidence), `b95ea27`
 (content), and `f6efd0d` (content) were green on CI, Conformance, and

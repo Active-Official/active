@@ -16,6 +16,7 @@ agent-kit eval, and the editor smoke run on every push).
 | `container-harness.json` / `.log` | Step 1b: zero-SKIP proof (all-toolchain container) | `ok: true`, 28/28 `pass`, 0 skipped, 0 failed, `parity: []` | `1fdeaf5`, 2026-10-26 (image `active-all-toolchains:phase2`; command in the log header) |
 | `binding-proof.log` | Step 2: Tier-1 binding proof | Python binding suite 10/10: structured codes and spans, resilient eval value, T001 refusal, redaction, determinism, stub/runtime parity, WASM resolution | `1fdeaf5`, 2026-10-26 (`python bindings/python/test_active.py`) |
 | `codegen.log` | Step 3: multi-target codegen validators | `CODEGEN: ALL PASS` (jsonschema, tsc+zod, gofmt+go vet+validator, python import, determinism and version stamps) | re-run at `1fdeaf5` with `python conformance/evidence/codegen_check.py`; byte-identical to the `56ef612` capture (`REFRESH.md`) |
+| `codegen-equivalence.log` | Step 3b: cross-runtime codegen battery (six targets; native validators for JSON Schema, Python/pydantic, TypeScript/zod, Go) | `OVERALL: PASS`, header names the tree and capture time | `c5366f4`, 2026-10-26 (`python conformance/codegen_equivalence.py`; local battery, not CI-wired because it needs tsc, zod, and pydantic) |
 | `cli-launch.log` / `cli.log` | Step 4: CLI launch smoke | Demo transcripts, T001 refusal, deterministic output, trace events | 2026-10-21 transcript (tree `427806a`); every assertion is re-checked at HEAD by `active-cli/tests/cli.rs` and `active-cli/tests/loop_demo.rs` |
 | `gates.log` | Step 5: full workspace gates | `BUILD_EXIT=0`, `FMT_EXIT=0`, `CLIPPY_EXIT=0`, `TEST_EXIT=0` (3,250 passed), `WASM_EXIT=0` | generated at `1b5ce29` (content tree `fcea0d3`), 2026-10-26; committed at `1fdeaf5` |
 | `ci.log` | Step 6: real CI verdicts | Live `gh run list` for each pushed tree on origin+official | updated through `c7e4ec3` |
@@ -25,6 +26,7 @@ agent-kit eval, and the editor smoke run on every push).
 | `harness-tests.log` | Harness enforcement unit tests | 25/25 `test_run.py`, 14/14 `test_diff_vectors.py`, self-check 15/15, capability 6/6, interchange short-circuit 4/4 | `1fdeaf5`, 2026-10-26 |
 | `miri.log` | Miri (nightly) over `active-core` trace + blob units | 3/3 trace + 3/3 blob pass, no UB (master program EVID.001) | `1fdeaf5`, 2026-10-26 |
 | `output-schema.log` | Tooling JSON output schemas | 9/9 outputs validate, broken-lint control OK | re-run at `1fdeaf5` with `python conformance/evidence/output_schema_check.py`; byte-identical to the `ad77d31` capture (`REFRESH.md`) |
+| `packaging-audit.log` | Step 8: packaging and install-surface audit (§8.3) | `PACKAGING-AUDIT: PASS`: twine check on sdist+wheel, npm file list, version coherence, and every documented install command (pip, npm, cargo install, cargo add) | `c5366f4`, 2026-10-26 (`packaging_audit.ps1` procedure: build, pack, install, run) |
 | `research-battery.md` | Research battery + corpus summary | 1,998 RB tests, ported corpora counts, fuzz seeds, secret proofs | captured 2026-10-22, committed 2026-10-23 (`204af76`) |
 
 Supporting scripts next to the logs (`codegen_check.py`,

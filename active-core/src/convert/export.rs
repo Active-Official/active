@@ -141,7 +141,10 @@ fn build_toml_value(v: &Value, path: &str, diags: &mut Vec<Diagnostic>) -> Optio
                 "hash".to_string(),
                 toml::Value::String(format!("blake3:{}", crate::blob::hash_hex(hash))),
             );
-            inner.insert("size".to_string(), toml::Value::Integer(*size as i64));
+            inner.insert(
+                "size".to_string(),
+                toml::Value::Integer(i64::try_from(*size).unwrap_or(i64::MAX)),
+            );
             inner.insert(
                 "media_type".to_string(),
                 toml::Value::String(

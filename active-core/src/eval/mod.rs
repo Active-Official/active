@@ -2897,11 +2897,17 @@ pub(crate) fn eval_binary(op: BinOp, lhs: &Value, rhs: &Value) -> Result<Value, 
         (Mul, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
         (Div, Value::Float(a), Value::Float(b)) if *b != 0.0 => Ok(Value::Float(a / b)),
 
-        // Mixed int/float
+        // Mixed int/float: the spec says mixed arithmetic promotes to
+        // Float, so every operator gets both operand orders. Division by
+        // zero still falls through to T001.
         (Add, Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 + b)),
         (Add, Value::Float(a), Value::Int(b)) => Ok(Value::Float(a + *b as f64)),
+        (Sub, Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 - b)),
+        (Sub, Value::Float(a), Value::Int(b)) => Ok(Value::Float(a - *b as f64)),
         (Mul, Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 * b)),
         (Mul, Value::Float(a), Value::Int(b)) => Ok(Value::Float(a * *b as f64)),
+        (Div, Value::Int(a), Value::Float(b)) if *b != 0.0 => Ok(Value::Float(*a as f64 / b)),
+        (Div, Value::Float(a), Value::Int(b)) if *b != 0 => Ok(Value::Float(a / *b as f64)),
 
         (Eq, a, b) => Ok(Value::Bool(value_eq(a, b))),
         (Ne, a, b) => Ok(Value::Bool(!value_eq(a, b))),
@@ -2936,7 +2942,9 @@ pub(crate) fn eval_binary(op: BinOp, lhs: &Value, rhs: &Value) -> Result<Value, 
             Ok(Value::DurationMs(scale_dur(*a, 1.0 / *b)))
         }
         (Div, Value::DurationMs(a), Value::DurationMs(b)) if *b != 0 => {
-            Ok(Value::Int((*a / *b) as i64))
+            // A ratio can exceed i64::MAX (both operands saturate at
+            // u64::MAX); saturate the result rather than wrapping.
+            Ok(Value::Int(i64::try_from(*a / *b).unwrap_or(i64::MAX)))
         }
         (Lt, Value::DurationMs(a), Value::DurationMs(b)) => Ok(Value::Bool(a < b)),
         (Le, Value::DurationMs(a), Value::DurationMs(b)) => Ok(Value::Bool(a <= b)),
@@ -3022,7 +3030,10 @@ fn value_eq(a: &Value, b: &Value) -> bool {
         (Value::Null, Value::Null) => true,
         (Value::Bool(x), Value::Bool(y)) => x == y,
         (Value::Int(x), Value::Int(y)) => x == y,
-        (Value::Float(x), Value::Float(y)) => (x - y).abs() < f64::EPSILON,
+        // Structural equality (spec section 3.3): exact f64 comparison,
+        // not an epsilon window, so two distinct values never compare
+        // equal. NaN stays unequal to itself, as IEEE defines it.
+        (Value::Float(x), Value::Float(y)) => x == y,
         (Value::String(x), Value::String(y)) => x == y,
         (Value::DurationMs(x), Value::DurationMs(y)) => x == y,
         (Value::Quantity(x, ux), Value::Quantity(y, uy)) => x == y && ux == uy,

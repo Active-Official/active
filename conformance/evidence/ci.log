@@ -3,7 +3,30 @@
 Evidence commits after the review stamp (all documentation, evidence, and
 CI-installer changes; code unchanged since fcea0d3)
 
-3ed0a4a (final: non-interactive frontend through sudo env)
+c5366f4 (final: apt packages installed in bounded groups)
+  RatioArtificiosa/active-lang
+    CI           40422151217  success
+    Conformance  40422151188  success
+    CodSpeed     40422151236  success
+  Active-Official/active
+    CI           40422154628  success
+    Conformance  40422154620  success
+    CodSpeed     40422154909  success
+
+b47b951 (bounded fetches; every tree recorded here)
+  RatioArtificiosa/active-lang
+    CI           40418178714  success
+    Conformance  40418178511  success
+    CodSpeed     40418178655  success
+  Active-Official/active
+    CI           40418182893  success
+    Conformance  40418183024  failure   (the all-in-one apt install hit
+                                        the 900 s bound on this runner's
+                                        mirror; fixed by the grouped
+                                        installer at c5366f4)
+    CodSpeed     40418182972  success
+
+3ed0a4a (non-interactive frontend through sudo env)
   RatioArtificiosa/active-lang
     CI           40412714510  success
     Conformance  40412714566  success
@@ -58,7 +81,7 @@ dd544f0 (bounded Tier-2 installers)
 
 Fuzz smoke is not path-triggered by evidence-only commits; the code is the
 same as fcea0d3, which passed two full fuzz runs per remote. The commit
-that lands this table is documentation-only over 3ed0a4a; its own
+that lands this table is documentation-only over c5366f4; its own
 verdicts are in the goal close-out.
 
 Evidence commit c7e4ec3 (battery re-run at the final tree, evidence-audit

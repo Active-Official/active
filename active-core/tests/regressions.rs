@@ -248,3 +248,49 @@ fn literal_u_e000_in_patch_path_is_not_interpolation() {
         "no false interpolation guard, got: {diags:?}"
     );
 }
+
+#[test]
+fn mixed_int_float_arithmetic_promotes_for_every_operator() {
+    // Bug: only Add/Mul had mixed arms, so `1 - 0.5` and `1 / 0.5` fell
+    // through to T001 although spec section 3.3 says mixed arithmetic
+    // promotes to Float.
+    let json = eval_json("[t]\na = 1 - 0.5\nb = 1.0 - 1\nc = 1 / 0.5\nd = 1.0 / 2\n");
+    assert!(json.contains("\"a\": 0.5"), "{json}");
+    assert!(json.contains("\"b\": 0.0"), "{json}");
+    assert!(json.contains("\"c\": 2.0"), "{json}");
+    assert!(json.contains("\"d\": 0.5"), "{json}");
+}
+
+#[test]
+fn mixed_division_by_zero_still_refuses() {
+    // Promotion must not turn division by zero into infinity.
+    for src in ["[t]\nv = 1 / 0.0\n", "[t]\nv = 1.0 / 0\n"] {
+        let module = parse(src, "regression").expect("must parse");
+        let engine = Engine::new();
+        let err = engine
+            .evaluate(&module)
+            .expect_err("division by zero must refuse");
+        assert_eq!(err.code(), "T001", "expected T001 for {src:?}, got: {err}");
+    }
+}
+
+#[test]
+fn float_equality_is_structural_not_epsilon() {
+    // Spec section 3.3: `==` is structural. A sum that differs from the
+    // literal by one ulp must compare unequal; exact values must match.
+    let json = eval_json("[t]\nexact = 0.5 == 0.5\nnear = (0.1 + 0.2) == 0.3\nkinds = 1 == 1.0\n");
+    assert!(json.contains("\"exact\": true"), "{json}");
+    assert!(json.contains("\"near\": false"), "{json}");
+    assert!(json.contains("\"kinds\": false"), "{json}");
+}
+
+#[test]
+fn duration_ratio_saturates_instead_of_wrapping() {
+    // Bug: a ratio above i64::MAX cast to a negative Int. Durations
+    // saturate at u64::MAX, so the ratio must saturate at i64::MAX.
+    let json = eval_json("[t]\na = 9223372036854775807s\nb = 1ms\nc = a / b\n");
+    assert!(
+        json.contains("\"c\": 9223372036854775807"),
+        "ratio must saturate at i64::MAX, got: {json}"
+    );
+}

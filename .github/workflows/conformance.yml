@@ -15,6 +15,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -46,7 +49,7 @@ jobs:
           java-version: 21
       - name: Install LuaJIT (Unix only)
         if: runner.os != 'Windows'
-        timeout-minutes: 5
+        timeout-minutes: 10
         env:
           DEBIAN_FRONTEND: noninteractive
           NEEDRESTART_MODE: a
@@ -182,7 +185,7 @@ jobs:
           NEEDRESTART_MODE: a
         run: |
           for attempt in 1 2 3; do
-            if sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+            if timeout 300 sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
                  apt-get install -y -qq apt-transport-https \
                && timeout 60 curl -fsSL https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/dart.gpg \
                && echo "deb [signed-by=/usr/share/keyrings/dart.gpg arch=amd64] https://storage.googleapis.com/download.dartlang.org/linux/debian stable main" | sudo tee /etc/apt/sources.list.d/dart_stable.list >/dev/null \
@@ -207,7 +210,7 @@ jobs:
           dart --version
       - name: Install Erlang NIF headers (Linux only)
         if: runner.os == 'Linux'
-        timeout-minutes: 5
+        timeout-minutes: 10
         env:
           DEBIAN_FRONTEND: noninteractive
           NEEDRESTART_MODE: a
@@ -288,6 +291,7 @@ jobs:
   tooling:
     name: Tooling suite (LSP, inspector, debugger, viz, editor)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -310,6 +314,7 @@ jobs:
   fuzz:
     name: Tooling fuzz (bounded cargo-fuzz)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@nightly

@@ -320,10 +320,10 @@ fn mixed_ordering_is_exact_above_two_to_the_53() {
 }
 
 #[test]
-fn division_by_zero_float_refuses_before_nan_can_arise() {
-    // The grammar has no NaN literal and float division by zero is
-    // refused, so a NaN can never reach the ordering helper from a
-    // document; its NaN arm stays defensive.
+fn division_by_zero_float_refuses() {
+    // Float division by zero is refused. A NaN is still reachable through
+    // overflow arithmetic (infinity minus infinity); there, ordering is
+    // false per IEEE, which the Float/Float arms cover.
     let module = parse("[t]\nv = 0.0 / 0.0\nw = v < 1.0\n", "regression").expect("must parse");
     let engine = Engine::new();
     let err = engine

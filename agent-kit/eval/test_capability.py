@@ -156,7 +156,20 @@ class CapabilityTest(unittest.TestCase):
             "value-inspect": "inspect",
             "schema-query": "schema",
         }
-        flat = ("check", "format", "convert", "lint", "eval", "capability")
+        flat = (
+            "check",
+            "format",
+            "convert",
+            "lint",
+            "eval",
+            "capability",
+            "generate",
+            "doc",
+            "schema-introspect",
+            "value-inspect",
+            "patch",
+            "repair",
+        )
         by_name = {t["name"]: t for t in self.doc["tools"]}
         for name in flat:
             tool = by_name[name]

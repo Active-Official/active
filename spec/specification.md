@@ -258,8 +258,10 @@ evaluate(module):
 - `Quantity(f64, Unit)`: equality requires equal value **and** equal unit.
 - Ordering (`<` `<=` `>` `>=`) compares numerically: `Float`/`Float`,
   `Int`/`Int`, and mixed `Int`/`Float` (promoted exactly, including
-  values beyond 2^53). NaN has no ordering; it is unreachable from a
-  document because float division by zero is a `TypeError`.
+  values beyond 2^53). `Float` ordering follows IEEE 754, so a NaN —
+  reachable through overflow arithmetic such as infinity minus
+  infinity — compares false with every value; mixed comparisons with a
+  NaN are likewise false.
 - `==`/`!=` are structural for all values (see `value_eq`): an `Int` and a
   `Float` are different structures even when numerically equal, while
   ordering between them is numeric. Float equality is exact, not an

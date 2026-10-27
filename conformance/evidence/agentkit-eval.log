@@ -1,4 +1,7 @@
+=== agent-kit eval ===
 test_codegen_targets_and_features (__main__.CapabilityTest.test_codegen_targets_and_features) ... ok
+test_entry_commands_name_their_flags (__main__.CapabilityTest.test_entry_commands_name_their_flags) ... ok
+test_entry_flags_exist_in_the_cli_help (__main__.CapabilityTest.test_entry_flags_exist_in_the_cli_help) ... ok
 test_every_tool_described (__main__.CapabilityTest.test_every_tool_described) ... ok
 test_output_descriptions_cover_formats_and_query_shapes (__main__.CapabilityTest.test_output_descriptions_cover_formats_and_query_shapes) ... ok
 test_sandbox_profiles_match_code (__main__.CapabilityTest.test_sandbox_profiles_match_code) ... ok
@@ -6,7 +9,7 @@ test_tool_surface_complete (__main__.CapabilityTest.test_tool_surface_complete) 
 test_version_major_is_one (__main__.CapabilityTest.test_version_major_is_one) ... ok
 
 ----------------------------------------------------------------------
-Ran 6 tests in 0.001s
+Ran 8 tests in 0.197s
 
 OK
 test_held_identity_short_circuits_and_taint_does_not_change_it (__main__.ShortCircuitTest.test_held_identity_short_circuits_and_taint_does_not_change_it) ... ok
@@ -18,7 +21,6 @@ test_vector_matches_the_shipped_example_identity (__main__.ShortCircuitTest.test
 Ran 4 tests in 0.001s
 
 OK
-=== agent-kit eval (run.py --out agentkit-eval.json) ===
 {
   "loops": {
     "python": {

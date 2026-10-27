@@ -1,4 +1,4 @@
-=== harness unit tests 2026-10-26T09:24:55.0166843-06:00 ===
+=== harness unit tests 2026-10-26T20:10:21.6977839-06:00 ===
 test_missing_binary_skips (__main__.ClassifyTest.test_missing_binary_skips) ... ok
 test_missing_tally_is_fail (__main__.ClassifyTest.test_missing_tally_is_fail) ... ok
 test_raw_secret_never_counts_clean (__main__.ClassifyTest.test_raw_secret_never_counts_clean) ... ok
@@ -26,7 +26,7 @@ test_timeout_always_fails (__main__.ParityTest.test_timeout_always_fails) ... ok
 test_wired_paths_complete (__main__.RegistryTest.test_wired_paths_complete) ... ok
 
 ----------------------------------------------------------------------
-Ran 25 tests in 0.023s
+Ran 25 tests in 0.020s
 
 OK
 === differential helper tests ===
@@ -39,6 +39,12 @@ test_valued_case_without_expectation_file_fails (__main__.CheckValuesTest.test_v
 test_empty_stays_empty (__main__.NormCodesTest.test_empty_stays_empty) ... ok
 test_order_and_duplicates_collapse (__main__.NormCodesTest.test_order_and_duplicates_collapse) ... ok
 test_single_sorted_trivially (__main__.NormCodesTest.test_single_sorted_trivially) ... ok
+test_agreeing_refusal_is_clean (__main__.ParseNullContractTest.test_agreeing_refusal_is_clean) ... ok
+test_divergent_codes_fail (__main__.ParseNullContractTest.test_divergent_codes_fail) ... ok
+test_kind_clean_with_codes_fails (__main__.ParseNullContractTest.test_kind_clean_with_codes_fails) ... ok
+test_refused_without_codes_fails (__main__.ParseNullContractTest.test_refused_without_codes_fails) ... ok
+test_secret_marker_fails (__main__.ParseNullContractTest.test_secret_marker_fails) ... ok
+test_value_after_parse_refusal_fails (__main__.ParseNullContractTest.test_value_after_parse_refusal_fails) ... ok
 test_load_pins_empty_without_section (__main__.PinsTest.test_load_pins_empty_without_section) ... ok
 test_load_pins_maps_id_to_reason (__main__.PinsTest.test_load_pins_maps_id_to_reason) ... ok
 test_clean_text_untouched (__main__.ScrubTest.test_clean_text_untouched) ... ok
@@ -46,13 +52,15 @@ test_fail_output_is_scrubbed (__main__.ScrubTest.test_fail_output_is_scrubbed) .
 test_raw_marker_redacted (__main__.ScrubTest.test_raw_marker_redacted) ... ok
 
 ----------------------------------------------------------------------
-Ran 14 tests in 0.001s
+Ran 20 tests in 0.001s
 
 OK
 === harness self-check ===
 self-check: 15/15
 === capability tests ===
 test_codegen_targets_and_features (__main__.CapabilityTest.test_codegen_targets_and_features) ... ok
+test_entry_commands_name_their_flags (__main__.CapabilityTest.test_entry_commands_name_their_flags) ... ok
+test_entry_flags_exist_in_the_cli_help (__main__.CapabilityTest.test_entry_flags_exist_in_the_cli_help) ... ok
 test_every_tool_described (__main__.CapabilityTest.test_every_tool_described) ... ok
 test_output_descriptions_cover_formats_and_query_shapes (__main__.CapabilityTest.test_output_descriptions_cover_formats_and_query_shapes) ... ok
 test_sandbox_profiles_match_code (__main__.CapabilityTest.test_sandbox_profiles_match_code) ... ok
@@ -60,7 +68,7 @@ test_tool_surface_complete (__main__.CapabilityTest.test_tool_surface_complete) 
 test_version_major_is_one (__main__.CapabilityTest.test_version_major_is_one) ... ok
 
 ----------------------------------------------------------------------
-Ran 6 tests in 0.001s
+Ran 8 tests in 0.178s
 
 OK
 test_held_identity_short_circuits_and_taint_does_not_change_it (__main__.ShortCircuitTest.test_held_identity_short_circuits_and_taint_does_not_change_it) ... ok
@@ -69,6 +77,6 @@ test_nested_payloads_are_walked_once (__main__.ShortCircuitTest.test_nested_payl
 test_vector_matches_the_shipped_example_identity (__main__.ShortCircuitTest.test_vector_matches_the_shipped_example_identity) ... ok
 
 ----------------------------------------------------------------------
-Ran 4 tests in 0.001s
+Ran 4 tests in 0.008s
 
 OK

@@ -30,11 +30,16 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: read
+
 jobs:
   pypi:
     name: Build and publish active-lang to PyPI
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
+      contents: read
       id-token: write # OIDC only; no API token, no secrets
     steps:
       # Actions pinned to commit SHAs (ratchet-verified 2026-10-22):

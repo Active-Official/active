@@ -18,7 +18,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from diff_vectors import check_values, fail, load_pins, norm_codes, scrub
+from diff_vectors import (
+    check_values,
+    fail,
+    load_pins,
+    norm_codes,
+    parse_null_problems,
+    scrub,
+)
 
 
 class NormCodesTest(unittest.TestCase):
@@ -87,6 +94,55 @@ class CheckValuesTest(unittest.TestCase):
         v = ({"port": 0}, {"port": 0}, {"port": 0})
         problems = check_values(False, v, False, {"port": 1})
         self.assertTrue(any("committed expectation" in p for p in problems))
+
+
+
+class ParseNullContractTest(unittest.TestCase):
+    """The C ABI parse-refusal branch: numeric detail only, no value."""
+
+    def call(self, **over):
+        base = dict(
+            kind="refused",
+            py_codes=["E002"],
+            js_codes=["E002"],
+            py_spans=[(0, 1, 0, 2)],
+            js_spans=[(0, 1, 0, 2)],
+            py_sev=["error"],
+            js_sev=["error"],
+            py_refused=True,
+            js_refused=True,
+            py_value=None,
+            js_value=None,
+            want_codes=["E002"],
+        )
+        base.update(over)
+        return parse_null_problems(**base)
+
+    def test_agreeing_refusal_is_clean(self) -> None:
+        self.assertEqual(self.call(), [])
+
+    def test_divergent_codes_fail(self) -> None:
+        self.assertTrue(any("codes diverge" in p for p in self.call(js_codes=["E003"])))
+
+    def test_kind_clean_with_codes_fails(self) -> None:
+        problems = self.call(kind="clean")
+        self.assertTrue(any("kind=clean but codes surfaced" in p for p in problems))
+        self.assertTrue(any("kind=clean but an embedding refused" in p for p in problems))
+
+    def test_value_after_parse_refusal_fails(self) -> None:
+        self.assertTrue(
+            any("value came back" in p for p in self.call(py_value={"a": 1}))
+        )
+
+    def test_secret_marker_fails(self) -> None:
+        self.assertTrue(
+            any("raw secret marker" in p for p in self.call(py_value="hunter2-SECRET"))
+        )
+
+    def test_refused_without_codes_fails(self) -> None:
+        self.assertTrue(
+            any("no codes surfaced" in p for p in self.call(py_codes=[], js_codes=[]))
+        )
 
 
 if __name__ == "__main__":

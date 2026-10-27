@@ -256,7 +256,14 @@ evaluate(module):
   comparisons on two durations. Adding a duration to a non-duration is a
   `TypeError` — dimensional safety is preserved.
 - `Quantity(f64, Unit)`: equality requires equal value **and** equal unit.
-- `==`/`!=` are structural for all values (see `value_eq`).
+- Ordering (`<` `<=` `>` `>=`) compares numerically: `Float`/`Float`,
+  `Int`/`Int`, and mixed `Int`/`Float` (promoted exactly, including
+  values beyond 2^53). NaN has no ordering; it is unreachable from a
+  document because float division by zero is a `TypeError`.
+- `==`/`!=` are structural for all values (see `value_eq`): an `Int` and a
+  `Float` are different structures even when numerically equal, while
+  ordering between them is numeric. Float equality is exact, not an
+  epsilon window.
 - Any unsupported operator/operand combination is a `TypeError` (T001) with
   the operator and both operand *kinds* in the message. Values never
   appear, so material assembled from a plain secret locator cannot leak

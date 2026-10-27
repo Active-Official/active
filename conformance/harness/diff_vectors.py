@@ -275,6 +275,56 @@ def run_node(src_file: Path) -> tuple[list[str], list, bool, object, list]:
     return env["codes"], items, bool(env["refused"]), env["value"], sev
 
 
+def parse_null_problems(
+    *,
+    kind: str,
+    py_codes: list[str],
+    js_codes: list[str],
+    py_spans: list,
+    js_spans: list,
+    py_sev: list[str],
+    js_sev: list[str],
+    py_refused: bool,
+    js_refused: bool,
+    py_value,
+    js_value,
+    want_codes: list[str],
+) -> list[str]:
+    """Problems for the C ABI parse-refusal contract.
+
+    When the C ABI cannot even parse the source it reports numeric detail
+    only (`active_parse_null`, n) instead of string codes. The two
+    WASM-backed embeddings must still agree with each other and with the
+    committed expectation, and nothing may evaluate.
+    """
+    problems: list[str] = []
+    if not (py_codes == js_codes):
+        problems.append(f"parse-refused codes diverge: python={py_codes} js={js_codes}")
+    if kind != "refused":
+        problems.append(f"kind={kind} but embeddings parse-refused (no value)")
+    if norm_codes(py_codes) != want_codes:
+        problems.append(f"codes {norm_codes(py_codes)} != expected {want_codes}")
+    if not (py_spans == js_spans):
+        problems.append("parse-refused spans diverge")
+    if not (py_sev == js_sev):
+        problems.append("parse-refused severities diverge")
+    if not (py_refused and js_refused):
+        problems.append("parse-refused but an embedding evaluated")
+    if py_value is not None or js_value is not None:
+        problems.append("parse-refused but a value came back")
+    if kind == "refused" and not py_codes:
+        problems.append("kind=refused but no codes surfaced")
+    if kind == "clean" and py_codes:
+        problems.append(f"kind=clean but codes surfaced: {py_codes}")
+    if kind == "clean" and (py_refused or js_refused):
+        problems.append("kind=clean but an embedding refused")
+    if RAW_SECRET in json.dumps(
+        {"py": py_value, "js": js_value, "codes": py_codes + js_codes}
+    ):
+        problems.append("raw secret marker in captured output")
+    return problems
+
+
 def main() -> int:
     with open(MANIFEST, "rb") as f:
         manifest = tomllib.load(f)
@@ -331,34 +381,20 @@ def main() -> int:
             # C ABI parse refusal: numeric detail only, by frozen contract.
             # Strict string-code equality still holds between the two
             # WASM-backed embeddings and the committed expectation.
-            if not (py_codes == js_codes):
-                problems.append(
-                    f"parse-refused codes diverge: python={py_codes} js={js_codes}"
-                )
-            if kind != "refused":
-                problems.append(f"kind={kind} but embeddings parse-refused (no value)")
-            if norm_codes(py_codes) != want_codes:
-                problems.append(
-                    f"codes {norm_codes(py_codes)} != expected {want_codes}"
-                )
-            if not (py_spans == js_spans):
-                problems.append("parse-refused spans diverge")
-            if not (py_sev == js_sev):
-                problems.append("parse-refused severities diverge")
-            if not (py_refused and js_refused):
-                problems.append("parse-refused but an embedding evaluated")
-            if py_value is not None or js_value is not None:
-                problems.append("parse-refused but a value came back")
-            if kind == "refused" and not py_codes:
-                problems.append("kind=refused but no codes surfaced")
-            if kind == "clean" and py_codes:
-                problems.append(f"kind=clean but codes surfaced: {py_codes}")
-            if kind == "clean" and (py_refused or js_refused):
-                problems.append("kind=clean but an embedding refused")
-            if RAW_SECRET in json.dumps(
-                {"py": py_value, "js": js_value, "codes": py_codes + js_codes}
-            ):
-                problems.append("raw secret marker in captured output")
+            problems = parse_null_problems(
+                kind=kind,
+                py_codes=py_codes,
+                js_codes=js_codes,
+                py_spans=py_spans,
+                js_spans=js_spans,
+                py_sev=py_sev,
+                js_sev=js_sev,
+                py_refused=py_refused,
+                js_refused=js_refused,
+                py_value=py_value,
+                js_value=js_value,
+                want_codes=want_codes,
+            )
             if problems:
                 return fail(f"{cid}: " + "; ".join(problems))
             checked += 1

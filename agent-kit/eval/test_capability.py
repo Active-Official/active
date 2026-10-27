@@ -119,6 +119,65 @@ class CapabilityTest(unittest.TestCase):
                 tool.get("description"), f"{tool.get('name')}: no description"
             )
 
+    def test_entry_commands_name_their_flags(self) -> None:
+        # The descriptor is the authority agents read; an entry that omits
+        # a shipped flag sends them to a command that rejects it. Pin the
+        # flags on the entries where drift is most likely.
+        entries = {t["name"]: t.get("entry", "") for t in self.doc["tools"]}
+        for name in ("check", "format", "convert"):
+            self.assertTrue(entries.get(name), f"{name}: entry must be present")
+        for flag in ("--profile", "--trace", "--budget-profile"):
+            self.assertIn(flag, entries["check"], f"check entry lost {flag}")
+        for flag in ("--style", "--write", "--check"):
+            self.assertIn(flag, entries["format"], f"format entry lost {flag}")
+        self.assertIn("--to", entries["convert"], "convert entry lost --to")
+        for tool in self.doc["tools"]:
+            self.assertTrue(tool.get("description"), f"{tool['name']}: description")
+
+    def test_entry_flags_exist_in_the_cli_help(self) -> None:
+        # When the CLI is built, every --flag named by an entry must appear
+        # in that command's help. Skips openly when the binary is absent
+        # (the pinned assertions above still run).
+        import subprocess
+
+        binary = ROOT / "target" / "debug" / "active.exe"
+        if not binary.exists():
+            binary = ROOT / "target" / "debug" / "active"
+        if not binary.exists():
+            self.skipTest("active binary not built")
+        # Descriptor names are agent-facing; several map to a differently
+        # named CLI subcommand. Entries with their own subcommands (graph,
+        # schema, debug, ...) are covered by the pinned assertions above;
+        # this live check covers the flat commands.
+        cli = {
+            "format": "fmt",
+            "schema-introspect": "inspect",
+            "value-inspect": "inspect",
+            "schema-query": "schema",
+        }
+        flat = ("check", "format", "convert", "lint", "eval", "capability")
+        by_name = {t["name"]: t for t in self.doc["tools"]}
+        for name in flat:
+            tool = by_name[name]
+            command = cli.get(name, name)
+            help_text = subprocess.run(
+                [str(binary), command, "--help"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+            ).stdout
+            for token in (
+                tool.get("entry", "")
+                .replace("[", " ")
+                .replace("]", " ")
+                .replace("|", " ")
+                .split()
+            ):
+                if token.startswith("--"):
+                    self.assertIn(
+                        token, help_text, f"{tool['name']}: {token} not in --help"
+                    )
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

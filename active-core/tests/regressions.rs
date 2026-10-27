@@ -294,3 +294,40 @@ fn duration_ratio_saturates_instead_of_wrapping() {
         "ratio must saturate at i64::MAX, got: {json}"
     );
 }
+
+#[test]
+fn float_and_mixed_ordering_compares_numerically() {
+    // Bug: only Int/Int ordering existed, so `1.5 < 2.5` and mixed
+    // comparisons raised T001.
+    let json =
+        eval_json("[t]\na = 1.5 < 2.5\nb = 1 < 2.5\nc = 1.5 >= 2\nd = 2.0 <= 2\ne = -1 > -1.5\n");
+    assert!(json.contains("\"a\": true"), "{json}");
+    assert!(json.contains("\"b\": true"), "{json}");
+    assert!(json.contains("\"c\": false"), "{json}");
+    assert!(json.contains("\"d\": true"), "{json}");
+    assert!(json.contains("\"e\": true"), "{json}");
+}
+
+#[test]
+fn mixed_ordering_is_exact_above_two_to_the_53() {
+    // 2^53 + 1 is not representable as f64 (it rounds to 2^53), so a
+    // naive `i as f64` comparison would call these equal.
+    let json = eval_json(
+        "[t]\na = 9007199254740993 > 9007199254740992.0\nb = 9007199254740993 <= 9007199254740992.0\n",
+    );
+    assert!(json.contains("\"a\": true"), "{json}");
+    assert!(json.contains("\"b\": false"), "{json}");
+}
+
+#[test]
+fn division_by_zero_float_refuses_before_nan_can_arise() {
+    // The grammar has no NaN literal and float division by zero is
+    // refused, so a NaN can never reach the ordering helper from a
+    // document; its NaN arm stays defensive.
+    let module = parse("[t]\nv = 0.0 / 0.0\nw = v < 1.0\n", "regression").expect("must parse");
+    let engine = Engine::new();
+    let err = engine
+        .evaluate(&module)
+        .expect_err("division by zero must refuse");
+    assert_eq!(err.code(), "T001", "got: {err}");
+}

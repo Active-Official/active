@@ -2917,6 +2917,42 @@ pub(crate) fn eval_binary(op: BinOp, lhs: &Value, rhs: &Value) -> Result<Value, 
         (Gt, Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a > b)),
         (Ge, Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
 
+        // Ordering is numeric and promotes mixed Int/Float (spec section
+        // 3.3). `cmp_int_float` compares exactly even beyond 2^53, where
+        // a plain `as f64` conversion would round.
+        (Lt, Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a < b)),
+        (Le, Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a <= b)),
+        (Gt, Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a > b)),
+        (Ge, Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a >= b)),
+        (Lt, Value::Int(a), Value::Float(b)) => Ok(Value::Bool(
+            cmp_int_float(*a, *b) == Some(std::cmp::Ordering::Less),
+        )),
+        (Lt, Value::Float(a), Value::Int(b)) => Ok(Value::Bool(
+            cmp_int_float(*b, *a) == Some(std::cmp::Ordering::Greater),
+        )),
+        (Le, Value::Int(a), Value::Float(b)) => Ok(Value::Bool(matches!(
+            cmp_int_float(*a, *b),
+            Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+        ))),
+        (Le, Value::Float(a), Value::Int(b)) => Ok(Value::Bool(matches!(
+            cmp_int_float(*b, *a),
+            Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
+        ))),
+        (Gt, Value::Int(a), Value::Float(b)) => Ok(Value::Bool(
+            cmp_int_float(*a, *b) == Some(std::cmp::Ordering::Greater),
+        )),
+        (Gt, Value::Float(a), Value::Int(b)) => Ok(Value::Bool(
+            cmp_int_float(*b, *a) == Some(std::cmp::Ordering::Less),
+        )),
+        (Ge, Value::Int(a), Value::Float(b)) => Ok(Value::Bool(matches!(
+            cmp_int_float(*a, *b),
+            Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
+        ))),
+        (Ge, Value::Float(a), Value::Int(b)) => Ok(Value::Bool(matches!(
+            cmp_int_float(*b, *a),
+            Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+        ))),
+
         // Duration arithmetic (time is the only dimension with a dedicated
         // Value; bytes normalize to Int). Scalar mul/div, same-dimension
         // add/sub and ordering. Mismatched dimensions (e.g. DurationMs + Int)
@@ -3022,6 +3058,31 @@ pub(crate) fn eval_unary(op: UnOp, v: &Value) -> Result<Value, String> {
             "unsupported unary op {op:?} on {}",
             value_kind_name(v)
         )),
+    }
+}
+
+/// Exact ordering between an Int and a Float. `None` when the float is
+/// NaN. A plain `i as f64` comparison rounds above 2^53, so this compares
+/// the integral part as i64 and only looks at the fractional part when
+/// the integer parts are equal.
+fn cmp_int_float(i: i64, f: f64) -> Option<std::cmp::Ordering> {
+    use std::cmp::Ordering;
+    if f.is_nan() {
+        return None;
+    }
+    // Beyond the i64 range the ordering is decided by the sign alone.
+    if f >= i64::MAX as f64 {
+        return Some(Ordering::Less);
+    }
+    if f < i64::MIN as f64 {
+        return Some(Ordering::Greater);
+    }
+    let trunc = f.trunc();
+    let ti = trunc as i64;
+    match i.cmp(&ti) {
+        Ordering::Equal if f > trunc => Some(Ordering::Less),
+        Ordering::Equal if f < trunc => Some(Ordering::Greater),
+        other => Some(other),
     }
 }
 

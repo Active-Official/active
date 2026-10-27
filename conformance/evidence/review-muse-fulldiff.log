@@ -6,8 +6,9 @@ xhigh. Scope: git diff ef98a2d..a98b652 (the complete goal diff, including
 the CI workflows, packaging, conformance harness, and evidence). Read-only;
 no files modified by the reviewer.
 
-Passes: c5366f4 (26 findings), 2721e98 (3 residual/new), 0cde3fa (4), and
-39daa44 (3). Every real finding was fixed at the cause; three earlier
+Passes: c5366f4 (26 findings), 2721e98 (3), 0cde3fa (4), 39daa44 (3),
+ebc8ca0 (2), cd3b625 (2), and a98b652 (0, CLEAN). The last two
+two-finding passes were evidence-only. Every real finding was fixed at the cause; three earlier
 findings were rejected with a documented contract (the FFI budget zero
 means "shipped default" per docs/FFI.md and active.h; the prompt result
 pack label 1.1.0 is a historical run label documented in prompts/README.md;

@@ -13,6 +13,7 @@ CI runs this before the eval harness (see conformance.yml).
 from __future__ import annotations
 
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -174,8 +175,12 @@ class CapabilityTest(unittest.TestCase):
                 .split()
             ):
                 if token.startswith("--"):
-                    self.assertIn(
-                        token, help_text, f"{tool['name']}: {token} not in --help"
+                    # Word boundary: `--to` must not match `--toml`.
+                    pattern = r"(?<![\w-])" + re.escape(token) + r"(?![\w-])"
+                    self.assertRegex(
+                        help_text,
+                        pattern,
+                        f"{tool['name']}: {token} not in --help",
                     )
 
 

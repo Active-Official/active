@@ -111,6 +111,7 @@ jobs:
         # A missing toolchain must fail here, not become a SKIP later.
         if: runner.os == 'Linux'
         run: |
+          set -o pipefail
           perl -e 'use FFI::Platypus; print "perl+FFI::Platypus ok\n"'
           R --version | head -n 1
           ghc --version

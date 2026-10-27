@@ -1,5 +1,5 @@
 === codegen equivalence battery ===
-tree: c5366f4  captured: 2026-10-26T19:31:33-06:00
+tree: 0cde3fa  captured: 2026-10-26T19:53:42-06:00
 [PASS] generate jsonschema bytes=1697 rc=0
 [PASS] generate openapi bytes=2273 rc=0
 [PASS] generate typescript bytes=840 rc=0

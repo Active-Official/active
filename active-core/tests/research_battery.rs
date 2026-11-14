@@ -31269,7 +31269,7 @@ fn rb_1411_syn122_small_array_accepts() {
 /// E004). The 32-deep neighbour accepts: the boundary is real, not noise.
 #[test]
 fn rb_1412_syn122_comment_depth_counted() {
-    let src = "case_0122_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]] # bounded-depth control\n";
+    let src = "case_0122_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]] # bounded-depth control\n";
     let diags = parse(src, "research").expect_err("must fail E004");
     let e = diags.iter().find(|d| d.code == "E004").expect("E004");
     assert_eq!(
@@ -31280,7 +31280,7 @@ fn rb_1412_syn122_comment_depth_counted() {
     );
     // Positive control: the comment-free twin trips identically (same result
     // with and without the comment — the catalogue assertion verbatim).
-    let bare = "case_0122_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n";
+    let bare = "case_0122_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n";
     let diags = parse(bare, "research").expect_err("must fail E004");
     assert!(diags.iter().any(|d| d.code == "E004"), "{diags:?}");
     // Positive control: 32-deep stays below the bound and accepts.
@@ -31489,7 +31489,7 @@ fn rb_1420_syn123_small_array_accepts() {
 /// comment, trips identically without it, and 32-deep accepts.
 #[test]
 fn rb_1421_syn123_comment_depth_counted() {
-    let src = "case_0123_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]] # bounded-depth control\n";
+    let src = "case_0123_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]] # bounded-depth control\n";
     let diags = parse(src, "research").expect_err("must fail E004");
     let e = diags.iter().find(|d| d.code == "E004").expect("E004");
     assert_eq!(
@@ -31499,7 +31499,7 @@ fn rb_1421_syn123_comment_depth_counted() {
         e.severity
     );
     // Positive control: the comment-free twin trips identically.
-    let bare = "case_0123_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n";
+    let bare = "case_0123_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n";
     let diags = parse(bare, "research").expect_err("must fail E004");
     assert!(diags.iter().any(|d| d.code == "E004"), "{diags:?}");
     // Positive control: 32-deep stays below the bound and accepts.
@@ -35757,7 +35757,7 @@ fn rb_1618_syn145_small_array_accepts() {
 /// comment, trips identically without it, and 32-deep accepts.
 #[test]
 fn rb_1619_syn145_comment_depth_counted() {
-    let src = "case_0145_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]] # bounded-depth control\n";
+    let src = "case_0145_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]] # bounded-depth control\n";
     let diags = parse(src, "research").expect_err("must fail E004");
     let e = diags.iter().find(|d| d.code == "E004").expect("E004");
     assert_eq!(
@@ -35767,7 +35767,7 @@ fn rb_1619_syn145_comment_depth_counted() {
         e.severity
     );
     // Positive control: the comment-free twin trips identically.
-    let bare = "case_0145_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n";
+    let bare = "case_0145_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n";
     let diags = parse(bare, "research").expect_err("must fail E004");
     assert!(diags.iter().any(|d| d.code == "E004"), "{diags:?}");
     // Positive control: 32-deep stays below the bound and accepts.
@@ -35960,7 +35960,7 @@ fn rb_1627_syn146_small_array_accepts() {
 /// the comment; 32-deep accepts.
 #[test]
 fn rb_1628_syn146_comment_depth_counted() {
-    let src = "case_0146_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]] # bounded-depth control\n";
+    let src = "case_0146_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]] # bounded-depth control\n";
     let diags = parse(src, "research").expect_err("must fail E004");
     let e = diags.iter().find(|d| d.code == "E004").expect("E004");
     assert_eq!(
@@ -35970,7 +35970,7 @@ fn rb_1628_syn146_comment_depth_counted() {
         e.severity
     );
     // Positive control: the comment-free twin trips identically.
-    let bare = "case_0146_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n";
+    let bare = "case_0146_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n";
     let diags = parse(bare, "research").expect_err("must fail E004");
     assert!(diags.iter().any(|d| d.code == "E004"), "{diags:?}");
     // Positive control: 32-deep stays below the bound and accepts.
@@ -36162,7 +36162,7 @@ fn rb_1636_syn147_small_array_accepts() {
 /// without the comment; 32-deep accepts.
 #[test]
 fn rb_1637_syn147_comment_depth_counted() {
-    let src = "case_0147_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]] # bounded-depth control\n";
+    let src = "case_0147_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]] # bounded-depth control\n";
     let diags = parse(src, "research").expect_err("must fail E004");
     let e = diags.iter().find(|d| d.code == "E004").expect("E004");
     assert_eq!(
@@ -36172,7 +36172,7 @@ fn rb_1637_syn147_comment_depth_counted() {
         e.severity
     );
     // Positive control: the comment-free twin trips identically.
-    let bare = "case_0147_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n";
+    let bare = "case_0147_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n";
     let diags = parse(bare, "research").expect_err("must fail E004");
     assert!(diags.iter().any(|d| d.code == "E004"), "{diags:?}");
     // Positive control: 32-deep stays below the bound and accepts.
@@ -36364,7 +36364,7 @@ fn rb_1645_syn148_small_array_accepts() {
 /// and without the comment; 32-deep accepts.
 #[test]
 fn rb_1646_syn148_comment_depth_counted() {
-    let src = "case_0148_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]] # bounded-depth control\n";
+    let src = "case_0148_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]] # bounded-depth control\n";
     let diags = parse(src, "research").expect_err("must fail E004");
     let e = diags.iter().find(|d| d.code == "E004").expect("E004");
     assert_eq!(
@@ -36374,7 +36374,7 @@ fn rb_1646_syn148_comment_depth_counted() {
         e.severity
     );
     // Positive control: the comment-free twin trips identically.
-    let bare = "case_0148_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n";
+    let bare = "case_0148_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n";
     let diags = parse(bare, "research").expect_err("must fail E004");
     assert!(diags.iter().any(|d| d.code == "E004"), "{diags:?}");
     // Positive control: 32-deep stays below the bound and accepts.
@@ -36759,7 +36759,7 @@ fn rb_1663_syn150_small_array_accepts() {
 /// with and without the comment; 32-deep accepts.
 #[test]
 fn rb_1664_syn150_comment_depth_counted() {
-    let src = "case_0150_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]] # bounded-depth control\n";
+    let src = "case_0150_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]] # bounded-depth control\n";
     let diags = parse(src, "research").expect_err("must fail E004");
     let e = diags.iter().find(|d| d.code == "E004").expect("E004");
     assert_eq!(
@@ -36769,7 +36769,7 @@ fn rb_1664_syn150_comment_depth_counted() {
         e.severity
     );
     // Positive control: the comment-free twin trips identically.
-    let bare = "case_0150_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n";
+    let bare = "case_0150_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n";
     let diags = parse(bare, "research").expect_err("must fail E004");
     assert!(diags.iter().any(|d| d.code == "E004"), "{diags:?}");
     // Positive control: 32-deep stays below the bound and accepts.
@@ -36961,7 +36961,7 @@ fn rb_1672_syn151_small_array_accepts() {
 /// with and without comment; 32-deep accepts.
 #[test]
 fn rb_1673_syn151_comment_depth_counted() {
-    let src = "case_0151_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]] # bounded-depth control\n";
+    let src = "case_0151_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]] # bounded-depth control\n";
     let diags = parse(src, "research").expect_err("must fail E004");
     let e = diags.iter().find(|d| d.code == "E004").expect("E004");
     assert_eq!(
@@ -36971,7 +36971,7 @@ fn rb_1673_syn151_comment_depth_counted() {
         e.severity
     );
     // Positive control: the comment-free twin trips identically.
-    let bare = "case_0151_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n";
+    let bare = "case_0151_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n";
     let diags = parse(bare, "research").expect_err("must fail E004");
     assert!(diags.iter().any(|d| d.code == "E004"), "{diags:?}");
     // Positive control: 32-deep stays below the bound and accepts.
@@ -37293,7 +37293,7 @@ fn rb_1688_syn153_array_interpolation_refused() {
 /// trips E004 with and without the comment; 32-deep accepts.
 #[test]
 fn rb_1689_syn153_comment_depth_counted() {
-    let src = "case_0153_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]] # bounded-depth control\n";
+    let src = "case_0153_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]] # bounded-depth control\n";
     let diags = parse(src, "research").expect_err("must fail E004");
     let e = diags.iter().find(|d| d.code == "E004").expect("E004");
     assert_eq!(
@@ -37303,7 +37303,7 @@ fn rb_1689_syn153_comment_depth_counted() {
         e.severity
     );
     // Positive control: the comment-free twin trips identically.
-    let bare = "case_0153_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n";
+    let bare = "case_0153_07 = [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]\n";
     let diags = parse(bare, "research").expect_err("must fail E004");
     assert!(diags.iter().any(|d| d.code == "E004"), "{diags:?}");
     // Positive control: 32-deep stays below the bound and accepts.
@@ -43735,8 +43735,8 @@ fn rb_1946_syn182_depth_boundary_exact() {
     let v = eval_json(&accept);
     assert!(codes_of(&accept).is_empty());
     assert!(v["case_0182_03"].is_array(), "{v}");
-    // The 64-deep twin trips E004 at (1:80).
-    let src = format!("case_0182_03 = {}0{}\n", "[".repeat(64), "]".repeat(64));
+    // The 65-deep twin trips E004 at (1:81); 64 is the last legal level.
+    let src = format!("case_0182_03 = {}0{}\n", "[".repeat(65), "]".repeat(65));
     let diags = parse(&src, "research").expect_err("must fail E004");
     let e = diags.iter().find(|d| d.code == "E004").expect("E004");
     assert_eq!(
@@ -43746,7 +43746,7 @@ fn rb_1946_syn182_depth_boundary_exact() {
         e.severity
     );
     let span = e.span.clone().expect("E004 carries a span");
-    assert_eq!((span.line, span.column), (1, 80), "{span:?}");
+    assert_eq!((span.line, span.column), (1, 81), "{span:?}");
     // Positive control: shallow nesting evaluates exactly.
     assert_eq!(eval_json("case_0182_03 = [[0]]\n")["case_0182_03"][0][0], 0);
 }
@@ -43770,7 +43770,7 @@ fn rb_1947_syn182_deep_nesting_terminates() {
         e.severity
     );
     let span = e.span.clone().expect("E004 carries a span");
-    assert_eq!((span.line, span.column), (1, 80), "{span:?}");
+    assert_eq!((span.line, span.column), (1, 81), "{span:?}");
     assert!(
         diags.iter().all(|d| d.code == "E004"),
         "only E004 expected, got {} diags",

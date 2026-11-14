@@ -528,7 +528,13 @@ nesting-limit = 64
 
 Expression nesting (parentheses, unary chains, array elements, inline-table
 values) is capped at 64 levels. Exceeding it emits **E004** and substitutes a
-`null` value. This is the parser-side half of the execution budget (C-037
+`null` value. The limit counts nesting *inside* a value: a value wrapped in 64
+parentheses is legal, the 65th trips; the same rule applies to brace blocks
+(64 nested tables parse, the 65th is E011) and to schema wrappers (64
+`Array<…>`/`Table {…}` levels parse, the 65th is E004). One over-deep
+construct produces one root-cause diagnostic: recovery consumes the offending
+balanced construct rather than emitting one follow-on error per enclosing
+level. This is the parser-side half of the execution budget (C-037
 adds the evaluator-side budgets).
 
 ---

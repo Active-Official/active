@@ -964,7 +964,10 @@ impl Parser {
         pending: &mut Vec<PendingInclude>,
     ) {
         self.block_depth += 1;
-        if self.block_depth > MAX_BLOCK_DEPTH {
+        // The document root body consumes one level; the documented
+        // budget is MAX_BLOCK_DEPTH nested tables (63 nested below the
+        // root parse; 64 trips). (LANG-A-003)
+        if self.block_depth > MAX_BLOCK_DEPTH + 1 {
             self.error(
                 "E011",
                 format!("maximum block nesting depth ({MAX_BLOCK_DEPTH}) exceeded"),
@@ -3570,18 +3573,75 @@ impl Parser {
     fn parse_expression(&mut self) -> NodeId {
         let guard_tok = self.peek().clone();
         self.depth += 1;
-        if self.depth > MAX_EXPR_DEPTH {
+        // The outermost value parse consumes one level; the documented
+        // budget is MAX_EXPR_DEPTH *nesting* levels, so 64 parentheses
+        // parse and 65 trip. (LANG-A-003)
+        if self.depth > MAX_EXPR_DEPTH + 1 {
             self.error(
                 "E004",
                 format!("maximum expression nesting depth ({MAX_EXPR_DEPTH}) exceeded"),
             );
             self.depth -= 1;
-            self.bump(); // consume the current token to guarantee progress
+            // Recover to a stable point instead of bubbling one error per
+            // enclosing level (LANG-A-006): consume the offending opener
+            // and, for brackets/braces/parens, everything through its
+            // balanced closer, so each enclosing construct still finds
+            // its own delimiter. One root-cause E004, no E001 cascade.
+            self.skip_over_deep_construct();
             return self.add_spanned(Node::Literal(Value::Null), &guard_tok);
         }
         let node = self.parse_or();
         self.depth -= 1;
         node
+    }
+
+    /// Recover from an over-depth expression: consume the offending token
+    /// and, when it opens a delimiter, everything through the matching
+    /// closer (depth-counted). Newline/EOF terminate the recovery so a
+    /// single malformed statement never swallows the next one. This is
+    /// what keeps one depth failure to one diagnostic (LANG-A-006).
+    fn skip_over_deep_construct(&mut self) {
+        let open = self.peek_kind().clone();
+        self.bump(); // always consume the offending token
+        let mut level: usize = 1;
+        loop {
+            let k = self.peek_kind().clone();
+            if matches!(k, TokenKind::Eof | TokenKind::Newline) {
+                return;
+            }
+            let opens_here = matches!(
+                (&open, &k),
+                (TokenKind::LParen, TokenKind::LParen)
+                    | (TokenKind::LBracket, TokenKind::LBracket)
+                    | (TokenKind::LBrace, TokenKind::LBrace)
+            );
+            let closes_here = matches!(
+                (&open, &k),
+                (TokenKind::LParen, TokenKind::RParen)
+                    | (TokenKind::LBracket, TokenKind::RBracket)
+                    | (TokenKind::LBrace, TokenKind::RBrace)
+            );
+            let delimited = matches!(
+                open,
+                TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace
+            );
+            if !delimited {
+                // No matching closer for this construct (literal, ident,
+                // operator): one token consumed above is the whole fix.
+                return;
+            }
+            if opens_here {
+                level += 1;
+            } else if closes_here {
+                level -= 1;
+                self.bump();
+                if level == 0 {
+                    return;
+                }
+                continue;
+            }
+            self.bump();
+        }
     }
 
     fn parse_or(&mut self) -> NodeId {
@@ -3715,7 +3775,9 @@ impl Parser {
                 // Unary chains recurse through parse_unary, so the depth
                 // guard must live here too (parse_expression cannot see it).
                 self.depth += 1;
-                if self.depth > MAX_EXPR_DEPTH {
+                // Same outermost-level accounting as parse_expression:
+                // a chain of 64 unary operators parses, 65 trips.
+                if self.depth > MAX_EXPR_DEPTH + 1 {
                     self.error(
                         "E004",
                         format!("maximum expression nesting depth ({MAX_EXPR_DEPTH}) exceeded"),
@@ -4684,6 +4746,10 @@ impl Parser {
     /// matching `exit_schema_depth` must follow the non-bail path.
     fn enter_schema_depth(&mut self, tok: &Token) -> bool {
         self.schema_depth += 1;
+        // Each wrapper (`Array<...>` / `Table {...}`) is exactly one
+        // nesting level — there is no outer level to discount here, so
+        // the plain comparison gives the documented budget: 64 wrappers
+        // parse, 65 trips. (LANG-A-003)
         if self.schema_depth > MAX_SCHEMA_DEPTH {
             self.schema_depth -= 1;
             self.error_at(

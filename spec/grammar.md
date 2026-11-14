@@ -131,7 +131,12 @@ float        = integer "." digit { digit }
 number       = integer | float
 ```
 
-Underscores are digit separators and are stripped (`1_000` → 1000). A dot must
+Underscores are digit separators and are stripped (`1_000` → 1000). The
+grammar accepts an underscore anywhere in an integer, so a leading, trailing,
+or doubled underscore is stripped as well (`1_` → 1, `1__000` → 1000). Leading
+zeros are accepted and stripped: `010` is ten, never octal. These acceptances
+are deliberate and pinned by the research corpus (LANG-A-008): Active has one
+numeric base — decimal — and no digits-as-octal reading. A dot must
 be followed by a digit to be part of the number; `1.` lexes as `integer(1)`
 then a `.` operator token. There are no negative literals — `-5` is unary
 minus applied to 5.

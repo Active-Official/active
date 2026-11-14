@@ -2897,9 +2897,17 @@ pub(crate) fn eval_binary(op: BinOp, lhs: &Value, rhs: &Value) -> Result<Value, 
         (Mul, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
         (Div, Value::Float(a), Value::Float(b)) if *b != 0.0 => Ok(Value::Float(a / b)),
 
+        // Division by zero names itself (LANG-A-007): the generic
+        // "unsupported binary op" text sent readers hunting for a type
+        // error when the operands were fine and the divisor was zero.
+        (Div, Value::Int(_), Value::Int(0)) => Err("division by zero".to_string()),
+        (Div, Value::Float(_), Value::Float(b)) if *b == 0.0 => Err("division by zero".to_string()),
+        (Div, Value::Int(_), Value::Float(b)) if *b == 0.0 => Err("division by zero".to_string()),
+        (Div, Value::Float(_), Value::Int(0)) => Err("division by zero".to_string()),
+
         // Mixed int/float: the spec says mixed arithmetic promotes to
-        // Float, so every operator gets both operand orders. Division by
-        // zero still falls through to T001.
+        // Float, so every operator gets both operand orders. Every
+        // operand combination has its division-by-zero arm above.
         (Add, Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 + b)),
         (Add, Value::Float(a), Value::Int(b)) => Ok(Value::Float(a + *b as f64)),
         (Sub, Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 - b)),

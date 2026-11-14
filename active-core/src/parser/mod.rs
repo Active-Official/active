@@ -1276,12 +1276,49 @@ impl Parser {
                         && !quirk_duplicate_number
                         && !quirk_trailing_dot
                     {
-                        self.warn_at(
-                            "W015",
-                            "trailing token after a complete value is ignored; \
-                             separate statements with a newline (spec/grammar.md §2.1)",
-                            &tok,
-                        );
+                        // Name the real cause when the shape is one of the
+                        // three near-misses the audit found (LANG-A-007):
+                        // exponent/hex-looking literals, a detached unit
+                        // suffix, or an unknown unit spelled with a space.
+                        let prev_numeric = prev.as_ref().is_some_and(|p| {
+                            matches!(p.kind, TokenKind::Integer | TokenKind::Float)
+                        });
+                        let message =
+                            if matches!(tok.kind, TokenKind::Unit(_)) {
+                                "unit suffixes must attach directly to the number (no space)"
+                                    .to_string()
+                            } else if prev_numeric {
+                                match &tok.kind {
+                                TokenKind::Ident
+                                    if matches!(prev.as_ref().map(|p| p.text.as_str()), Some("0"))
+                                        && (tok.text.starts_with('x')
+                                            || tok.text.starts_with('X')) =>
+                                {
+                                    "hex literals are not supported; write the number in decimal"
+                                        .to_string()
+                                }
+                                TokenKind::Ident
+                                    if (tok.text.starts_with('e') || tok.text.starts_with('E'))
+                                        && tok.text[1..].chars().all(|c| c.is_ascii_digit()) =>
+                                {
+                                    "exponent notation is not supported; write the number in full"
+                                        .to_string()
+                                }
+                                TokenKind::Ident => format!(
+                                    "unknown unit suffix `{}` (units are case-sensitive and \
+                                     attach directly to the number)",
+                                    tok.text
+                                ),
+                                _ => "trailing token after a complete value is ignored; \
+                                      separate statements with a newline (spec/grammar.md §2.1)"
+                                    .to_string(),
+                            }
+                            } else {
+                                "trailing token after a complete value is ignored; \
+                             separate statements with a newline (spec/grammar.md §2.1)"
+                                    .to_string()
+                            };
+                        self.warn_at("W015", message, &tok);
                     }
                     self.bump();
                 }
@@ -1386,8 +1423,38 @@ impl Parser {
             TokenKind::LBrace => self.parse_table_block(fields),
             _ => {
                 // Not a statement form the grammar accepts; keep progress.
+                // The message names the real cause for the two shapes users
+                // actually type (LANG-A-007): a unit/exponent/hex tail glued
+                // to a number, and a bare identifier that is missing its
+                // `=`/`:`/`{`.
                 let tok = self.peek().clone();
-                self.error_at("E002", "unexpected token after identifier", &tok);
+                let prev = self
+                    .pos
+                    .checked_sub(1)
+                    .and_then(|p| self.tokens.get(p))
+                    .cloned();
+                let key = start.text.clone();
+                let message = match &prev {
+                    Some(p) if matches!(p.kind, TokenKind::Integer | TokenKind::Float) => {
+                        if p.text == "0" && (key.starts_with('x') || key.starts_with('X')) {
+                            "hex literals are not supported; write the number in decimal"
+                                .to_string()
+                        } else if (key.starts_with('e') || key.starts_with('E'))
+                            && key[1..].chars().all(|c| c.is_ascii_digit())
+                            && key.len() > 1
+                        {
+                            "exponent notation is not supported; write the number in full"
+                                .to_string()
+                        } else {
+                            format!(
+                                "unknown unit suffix `{key}` — unit suffixes are \
+                                 case-sensitive and attach directly to the number (no space)"
+                            )
+                        }
+                    }
+                    _ => "unexpected token after identifier".to_string(),
+                };
+                self.error_at("E002", message, &tok);
                 self.bump();
             }
         }

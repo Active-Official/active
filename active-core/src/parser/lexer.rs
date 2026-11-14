@@ -984,13 +984,24 @@ impl Lexer {
                 // configuration. Reported with a precise span.
                 _ => {
                     let (l, col) = (self.line, self.col);
+                    // `%`/`‰` have exactly one meaning in Active — a unit
+                    // suffix — and the attached form is already a Unit
+                    // token, so any occurrence here is detached. Name the
+                    // real cause instead of "unexpected character"
+                    // (LANG-A-007).
+                    let detached_unit = matches!(c, '%' | '\u{2030}');
                     self.bump();
                     push_lex_error(
                         &mut errors,
                         Diagnostic {
                             severity: Severity::Error,
                             code: "E005".into(),
-                            message: format!("unexpected character {:?}", c),
+                            message: if detached_unit {
+                                "unit suffixes must attach directly to the number (no space)"
+                                    .to_string()
+                            } else {
+                                format!("unexpected character {:?}", c)
+                            },
                             path: None,
                             span: Some(Span {
                                 line: l,

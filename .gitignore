@@ -67,6 +67,12 @@ goal-prompts/
 # working state; the normative originals live outside the repository)
 master-program/
 
+# Audit fix-phase working area: the 2026-11-14 audit pack, BLOCKS.md,
+# and the append-only fix record. Local engineering record only.
+audit-pack/
+FIX-RECORD.md
+BLOCKS.md
+
 # Generated wasm-bindgen glue (regenerated in CI and releases via
 # `wasm-bindgen`; never committed, always rebuilt from the .wasm)
 active-wasm/pkg-nodejs/

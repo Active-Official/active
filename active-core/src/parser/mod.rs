@@ -104,7 +104,21 @@ const MAX_SCHEMA_DEPTH: usize = 64;
 /// diagnostics — including the root-cause error — are retained in
 /// emission order, so the cap only drops the pathological tail; the
 /// parse still fails. Deterministic: emission order is deterministic.
+///
+/// Healing diagnostics (`module.healing`: H001/H003/W011) count against
+/// the same budget as errors, through the same choke point
+/// (`push_heal`/`extend_heal`). They are the same flood through a
+/// different door — a comma-less array or a duplicate-key pile emits one
+/// healing record per element — so a separate cap would only hide it
+/// (see LANG-A-001 / LANG-A-901).
 const MAX_PARSE_DIAGNOSTICS: usize = 1024;
+
+/// Set when the shared diagnostic budget dropped at least one record.
+/// The retained set gains a single synthetic notice so truncation is
+/// visible, never silent; the parse still fails/behaves as before.
+const TRUNCATED_CODE: &str = "W014";
+const TRUNCATED_MESSAGE: &str =
+    "further diagnostics truncated: the 1024-diagnostic output budget was reached";
 
 use crate::diag::{thresholds, Diagnostic, Repair, RepairKind, Severity, Span};
 use crate::ir::{NodeId, SchemaField, SemanticTag, *};
@@ -342,6 +356,7 @@ fn parse_recovering_impl(
         errors: Vec::new(),
         ident_scopes: Vec::new(),
         depth: 0,
+        diag_truncated: false,
         options,
         block_depth: 0,
         schema_depth: 0,
@@ -369,7 +384,7 @@ fn parse_recovering_impl(
             d.file = lex_file.clone();
         }
     }
-    parser.module.healing.extend(lexed.repairs);
+    parser.extend_heal(lexed.repairs);
     parser.extend_diags(lexed.errors);
     parser.parse_document();
     // Schema extraction before graph build: `schema` tables leave value
@@ -392,6 +407,9 @@ fn parse_recovering_impl(
     };
     parser.module.mixed_syntax = parser.brace_tables > 0 && parser.indent_tables > 0;
     parser.build_graph();
+    // Shared diagnostic budget: make any truncation visible in the
+    // retained set (LANG-A-001/A-901), after every channel has merged.
+    parser.finalize_diagnostics();
     (parser.module, parser.errors)
 }
 
@@ -610,6 +628,10 @@ struct Parser {
     ident_scopes: Vec<Vec<(String, NodeId)>>,
     /// Current expression nesting depth, guarded by MAX_EXPR_DEPTH.
     depth: usize,
+    /// Set when the shared diagnostic budget (errors + healing) dropped
+    /// at least one record; the finalize pass then appends one visible
+    /// truncation notice (LANG-A-001/A-901).
+    diag_truncated: bool,
     /// Healing mode for this parse.
     options: ParseOptions,
     /// Current block nesting depth, guarded by MAX_BLOCK_DEPTH.
@@ -805,11 +827,23 @@ impl Parser {
     /// Push a diagnostic unless the per-parse bound is reached (see
     /// MAX_PARSE_DIAGNOSTICS). Single choke point for direct pushes:
     /// every error site routes through here so no input shape can
-    /// grow the error vector without bound.
+    /// grow the error vector without bound. Errors and healing share
+    /// one budget (LANG-A-001/A-901): both are diagnostic volume.
     fn push_diag(&mut self, diag: Diagnostic) {
-        if self.errors.len() < MAX_PARSE_DIAGNOSTICS {
-            self.errors.push(diag);
+        if self.budget_full() {
+            return;
         }
+        self.errors.push(diag);
+    }
+
+    /// Push a healing diagnostic (H001/H003/W011/W012…) through the
+    /// same shared budget as errors. Healing is the same flood through
+    /// a different door: one record per array element or duplicate key.
+    fn push_heal(&mut self, diag: Diagnostic) {
+        if self.budget_full() {
+            return;
+        }
+        self.module.healing.push(diag);
     }
 
     /// Extend the error vector with another error vector, keeping only
@@ -818,8 +852,67 @@ impl Parser {
     /// existing entries keep their positions and the incoming tail
     /// is dropped, deterministically.
     fn extend_diags(&mut self, more: Vec<Diagnostic>) {
-        let room = MAX_PARSE_DIAGNOSTICS.saturating_sub(self.errors.len());
+        let room = MAX_PARSE_DIAGNOSTICS.saturating_sub(self.diag_budget_used());
+        if more.len() > room {
+            self.diag_truncated = true;
+        }
         self.errors.extend(more.into_iter().take(room));
+    }
+
+    /// Merge a healing batch (lexer repairs, sub-parse healing) through
+    /// the shared budget, with the same order-preserving truncation.
+    fn extend_heal(&mut self, more: Vec<Diagnostic>) {
+        let room = MAX_PARSE_DIAGNOSTICS.saturating_sub(self.diag_budget_used());
+        if more.len() > room {
+            self.diag_truncated = true;
+        }
+        self.module.healing.extend(more.into_iter().take(room));
+    }
+
+    /// Diagnostics retained so far across both channels.
+    fn diag_budget_used(&self) -> usize {
+        self.errors.len() + self.module.healing.len()
+    }
+
+    /// Whether the shared retention budget is exhausted; records that a
+    /// drop happened so the finalize pass can emit the notice.
+    fn budget_full(&mut self) -> bool {
+        if self.diag_budget_used() >= MAX_PARSE_DIAGNOSTICS {
+            self.diag_truncated = true;
+            return true;
+        }
+        false
+    }
+
+    /// Make truncation visible and keep the total within the budget:
+    /// when any record was dropped, trim the retained tail to
+    /// `MAX_PARSE_DIAGNOSTICS - 1` and append ONE synthetic notice, so
+    /// the final count stays <= MAX and a reader can tell that the list
+    /// was cut. Deterministic: the trim order is fixed (healing tail
+    /// first, then error tail), so the same input always yields the
+    /// same retained set.
+    fn finalize_diagnostics(&mut self) {
+        if !self.diag_truncated {
+            return;
+        }
+        let keep = MAX_PARSE_DIAGNOSTICS.saturating_sub(1);
+        while self.diag_budget_used() > keep {
+            if self.module.healing.pop().is_none() {
+                self.errors.pop();
+            }
+        }
+        // Deliberately outside the budget: the notice takes the slot
+        // just trimmed, so the total stays exactly `keep + 1`.
+        self.module.healing.push(Diagnostic {
+            severity: Severity::Warning,
+            code: TRUNCATED_CODE.into(),
+            message: TRUNCATED_MESSAGE.into(),
+            path: None,
+            span: None,
+            repair: None,
+            confidence: 1.0,
+            file: None,
+        });
     }
 
     fn error(&mut self, code: &str, message: impl Into<String>) {
@@ -1612,7 +1705,7 @@ impl Parser {
             }
         }
         self.extend_diags(sub_errors);
-        self.module.healing.extend(sub_repairs);
+        self.extend_heal(sub_repairs);
         // The outer token stream is NOT exhausted (table bodies end
         // mid-stream), so save and restore it around the sub-parse.
         let saved_tokens = std::mem::take(&mut self.tokens);
@@ -2384,7 +2477,7 @@ impl Parser {
     /// this (cross-file composition is designed, not accidental).
     fn note_duplicate_key(&mut self, key: &str, span: Option<Span>, existed: bool) {
         if existed {
-            self.module.healing.push(Diagnostic {
+            self.push_heal(Diagnostic {
                 severity: Severity::Warning,
                 code: "W011".into(),
                 message: format!("duplicate key '{key}'; last wins"),
@@ -2747,7 +2840,7 @@ impl Parser {
         if !applies {
             return false;
         }
-        self.module.healing.push(Diagnostic {
+        self.push_heal(Diagnostic {
             severity: if confidence >= thresholds::AUTO_APPLY {
                 Severity::Info
             } else {
@@ -3364,6 +3457,7 @@ impl Parser {
             errors: Vec::new(),
             ident_scopes: self.ident_scopes.clone(),
             depth: self.depth,
+            diag_truncated: self.diag_truncated,
             options: self.options.clone(),
             block_depth: 0,
             schema_depth: self.schema_depth,
@@ -5215,6 +5309,7 @@ impl Parser {
             errors: Vec::new(),
             ident_scopes: self.ident_scopes.clone(),
             depth: self.depth,
+            diag_truncated: self.diag_truncated,
             options: self.options.clone(),
             block_depth: 0,
             schema_depth: self.schema_depth,
@@ -5352,8 +5447,8 @@ impl Parser {
         }
         self.extend_diags(sub_lex_errors);
         self.extend_diags(sub_errors);
-        self.module.healing.extend(sub_lex_repairs);
-        self.module.healing.extend(sub_repairs);
+        self.extend_heal(sub_lex_repairs);
+        self.extend_heal(sub_repairs);
         id
     }
 

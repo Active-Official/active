@@ -153,14 +153,23 @@ For each `Ident(name)` encountered while parsing a scope S:
 2. If `name` is another key of S → rewrite to `Ref(that key's node)`, record
    the edge. S includes the enclosing table body, inline table, or document
    root.
-3. Otherwise leave as `Ident` for step 4.
+3. If `name` is not a key of S, look it up in each **enclosing** table, from
+   the innermost outward, and rewrite to a `Ref` when found (parent fallback).
+   The snapshot of an enclosing table holds the keys declared above the nested
+   body; a key declared after it does not participate. Profile bodies keep
+   their own root-fallback pass (§2.8) and are exempt here.
+4. A dotted name `a.b.c` resolves its first segment by steps 2–3 and then
+   requires each remaining segment to be a key of a table. Any missing step
+   leaves the `Ident` unresolved (step 5).
+5. Otherwise leave as `Ident` for the `let` pass below.
 
 After parsing completes, `build_graph` resolves remaining `Ident` nodes against
 `bindings` (module-level `let`s), rewriting to `Ref` and recording edges.
 Anything still `Ident` at evaluation time is unresolved → W001 + `null`.
 
 Resolution runs after a scope is fully parsed, so **forward references within
-a scope resolve**.
+a scope resolve**; parent fallback sees the enclosing keys declared above the
+nested body.
 
 ### 2.5 Include lowering (C-025)
 

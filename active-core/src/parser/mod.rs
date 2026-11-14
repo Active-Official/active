@@ -355,6 +355,7 @@ fn parse_recovering_impl(
         module: Module::new(name),
         errors: Vec::new(),
         ident_scopes: Vec::new(),
+        parent_field_scopes: Vec::new(),
         depth: 0,
         diag_truncated: false,
         options,
@@ -626,6 +627,12 @@ struct Parser {
     /// table). The owning key prevents a key's own value from resolving to
     /// itself.
     ident_scopes: Vec<Vec<(String, NodeId)>>,
+    /// Enclosing tables' field maps, innermost last. Lets a nested table
+    /// reference a key defined in an enclosing table (LANG-A-002 parent
+    /// fallback): `[t] x = a` resolves `a` from the root when `t` has no
+    /// sibling `a`. Snapshots are taken when the nested body starts, so
+    /// they hold every key declared above it.
+    parent_field_scopes: Vec<indexmap::IndexMap<String, NodeId>>,
     /// Current expression nesting depth, guarded by MAX_EXPR_DEPTH.
     depth: usize,
     /// Set when the shared diagnostic budget (errors + healing) dropped
@@ -1552,6 +1559,7 @@ impl Parser {
         let profile_stmt = self.statements.len() - 1;
         self.current_path.push(name.clone());
         self.ident_scopes.push(Vec::new());
+        self.parent_field_scopes.push(indexmap::IndexMap::new());
         let mut fields = indexmap::IndexMap::new();
         let mut pending = Vec::new();
         let saved_in_profile = self.in_profile;
@@ -1563,6 +1571,7 @@ impl Parser {
             }
         }
         self.in_profile = saved_in_profile;
+        self.parent_field_scopes.pop();
         self.splice_includes(&mut fields, pending, true);
         let idents = self.ident_scopes.pop().unwrap_or_default();
         // Sibling resolution against the profile's own fields happens in
@@ -2526,10 +2535,12 @@ impl Parser {
         self.ident_scopes.push(Vec::new());
         let mut fields = indexmap::IndexMap::new();
         let mut pending = Vec::new();
+        self.parent_field_scopes.push(parent.clone());
         self.parse_body(&mut fields, BodyEnd::Block(level), &mut pending);
         self.splice_includes(&mut fields, pending, false);
         let idents = self.ident_scopes.pop().unwrap_or_default();
         let _ = self.resolve_sibling_refs(idents, &fields);
+        self.parent_field_scopes.pop();
         // Tables carry their name-token span (and file stamp) like
         // every value node: tooling scopes extents off them (C-043).
         let table_id = self.add_spanned(Node::Table { fields }, &key_tok);
@@ -2586,10 +2597,12 @@ impl Parser {
         self.ident_scopes.push(Vec::new());
         let mut fields = indexmap::IndexMap::new();
         let mut pending = Vec::new();
+        self.parent_field_scopes.push(parent.clone());
         self.parse_body(&mut fields, BodyEnd::Brace, &mut pending);
         self.splice_includes(&mut fields, pending, false);
         let idents = self.ident_scopes.pop().unwrap_or_default();
         let _ = self.resolve_sibling_refs(idents, &fields);
+        self.parent_field_scopes.pop();
         // Name-token span and file stamp, as above (C-043 scopes).
         let table_id = self.add_spanned(Node::Table { fields }, &key_tok);
         self.statements[stmt_idx].end_line = self.last_end_line();
@@ -3149,6 +3162,27 @@ impl Parser {
     // [table] … key = expr
     // ------------------------------------------------------------------
 
+    /// Fields of the table a dotted header nests under (`[a.b]` -> `a`).
+    /// Returns `None` when the chain does not exist yet, so the caller
+    /// simply adds no snapshot.
+    fn dotted_enclosing_fields(
+        &self,
+        segments: &[String],
+    ) -> Option<indexmap::IndexMap<String, NodeId>> {
+        let root = self.module.root?;
+        let mut cur = root;
+        for seg in &segments[..segments.len().saturating_sub(1)] {
+            cur = match self.module.get(cur) {
+                Some(Node::Table { fields }) => fields.get(seg).copied()?,
+                _ => return None,
+            };
+        }
+        match self.module.get(cur) {
+            Some(Node::Table { fields }) => Some(fields.clone()),
+            _ => None,
+        }
+    }
+
     fn parse_table_header(&mut self, parent: &mut indexmap::IndexMap<String, NodeId>) {
         let open = self.peek().clone();
         // Source columns are 1-based; indentation levels are 0-based.
@@ -3256,10 +3290,21 @@ impl Parser {
         self.ident_scopes.push(Vec::new());
         let mut fields = indexmap::IndexMap::new();
         let mut pending = Vec::new();
+        // Snapshot the enclosing scopes: the live parent map (always
+        // available mid-parse) and, for a dotted header, the table the
+        // path nests under (its fields already exist in the arena).
+        let scope_base = self.parent_field_scopes.len();
+        self.parent_field_scopes.push(parent.clone());
+        if segments.len() > 1 {
+            if let Some(map) = self.dotted_enclosing_fields(&segments) {
+                self.parent_field_scopes.push(map);
+            }
+        }
         self.parse_body(&mut fields, BodyEnd::HeaderBody(header_level), &mut pending);
         self.splice_includes(&mut fields, pending, false);
         let idents = self.ident_scopes.pop().unwrap_or_default();
         let _ = self.resolve_sibling_refs(idents, &fields);
+        self.parent_field_scopes.truncate(scope_base);
         // Name-token span and file stamp, as above (C-043 scopes),
         // widened to the full header so dotted tables point at
         // `[a.b]`, not just `a`.
@@ -3390,6 +3435,40 @@ impl Parser {
         Some((key, value))
     }
 
+    /// Resolve an identifier (possibly dotted) to the node it names.
+    /// The first segment resolves sibling-first, then through enclosing
+    /// scopes (parent fallback); each further segment must be a key of a
+    /// table. Returns `None` when any step does not resolve, so the caller
+    /// can fall through to `let` bindings and finally W001 (LANG-A-002).
+    fn resolve_dotted(
+        &self,
+        name: &str,
+        owner_key: &str,
+        fields: &indexmap::IndexMap<String, NodeId>,
+    ) -> Option<NodeId> {
+        let mut parts = name.split('.');
+        let first = parts.next()?;
+        if first == owner_key && !name.contains('.') {
+            return None;
+        }
+        let mut cur = fields.get(first).copied().or_else(|| {
+            if self.in_profile {
+                return None;
+            }
+            self.parent_field_scopes
+                .iter()
+                .rev()
+                .find_map(|scope| scope.get(first).copied())
+        })?;
+        for seg in parts {
+            cur = match self.module.get(cur) {
+                Some(Node::Table { fields }) => fields.get(seg).copied()?,
+                _ => return None,
+            };
+        }
+        Some(cur)
+    }
+
     /// Rewrite Ident nodes collected in `idents` that match a sibling key of
     /// the just-parsed scope into Ref nodes with dependency edges. Runs after
     /// the whole scope is parsed, so forward references within the scope
@@ -3412,7 +3491,10 @@ impl Parser {
                 leftover.push((owner_key, id));
                 continue;
             }
-            if let Some(&target) = fields.get(&name) {
+            // Resolve sibling-first, then through enclosing scopes, then
+            // along dotted member access (LANG-A-002).
+            let found = self.resolve_dotted(&name, &owner_key, fields);
+            if let Some(target) = found {
                 if let Some(slot) = self.module.get_mut(id) {
                     *slot = Node::Ref(target);
                 }
@@ -3616,6 +3698,7 @@ impl Parser {
             module,
             errors: Vec::new(),
             ident_scopes: self.ident_scopes.clone(),
+            parent_field_scopes: self.parent_field_scopes.clone(),
             depth: self.depth,
             diag_truncated: self.diag_truncated,
             options: self.options.clone(),
@@ -4302,10 +4385,20 @@ impl Parser {
 
             TokenKind::Ident => {
                 self.bump();
-                // Will be turned into Ref during build_graph if it matches a
-                // let, or during sibling resolution if it matches a key in the
-                // enclosing table scope.
-                let text = tok.text.clone();
+                // Dotted member access (LANG-A-002): `server.port` reads a
+                // key from a named table. The whole path becomes one Ident
+                // node; resolution walks the table chain. `env.` and
+                // `secret.env(...)` are handled earlier and never reach here.
+                let mut text = tok.text.clone();
+                while matches!(self.peek_kind(), TokenKind::Dot)
+                    && matches!(self.peek_kind_at(1), TokenKind::Ident)
+                {
+                    self.bump(); // `.`
+                    let seg = self.peek().clone();
+                    self.bump();
+                    text.push('.');
+                    text.push_str(&seg.text);
+                }
                 let id = self.add_spanned(Node::Ident(text), &tok);
                 if let Some(scope) = self.ident_scopes.last_mut() {
                     scope.push((String::new(), id));
@@ -5579,6 +5672,7 @@ impl Parser {
             module,
             errors: Vec::new(),
             ident_scopes: self.ident_scopes.clone(),
+            parent_field_scopes: self.parent_field_scopes.clone(),
             depth: self.depth,
             diag_truncated: self.diag_truncated,
             options: self.options.clone(),
@@ -5915,6 +6009,7 @@ impl Parser {
         self.expect_closing_healing(TokenKind::RBrace, "H004");
         let idents = self.ident_scopes.pop().unwrap_or_default();
         let _ = self.resolve_sibling_refs(idents, &fields);
+        self.parent_field_scopes.pop();
         self.add_spanned(Node::Table { fields }, &open)
     }
 

@@ -127,7 +127,7 @@ Explicitness all the way down, including in the error taxonomy.
 
 Most config formats parse into a tree and hope for the best. Active builds a dependency graph first and evaluates it in topological order, and that single architectural choice pays off everywhere.
 
-Declaration order stops mattering. Reference a value defined fifty lines below or in another table and it resolves, because evaluation follows dependencies, not file order. You write in the order humans prefer; the machine evaluates in the order logic requires.
+Declaration order stops mattering. Reference a value defined fifty lines below, in an enclosing table, or through a dotted path such as `server.port`, and it resolves, because evaluation follows dependencies, not file order. You write in the order humans prefer; the machine evaluates in the order logic requires.
 
 Cycles become errors instead of hangs:
 

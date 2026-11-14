@@ -281,11 +281,24 @@ pub fn sentinel_meaning(word: &str) -> Option<&'static str> {
 pub fn coerce_string_to(value: &str, target: &ActiveType) -> Option<crate::ir::Value> {
     match target {
         ActiveType::Int => try_coerce_int(value).map(crate::ir::Value::Int),
-        ActiveType::Float => value
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .map(crate::ir::Value::Float),
+        ActiveType::Float => {
+            // `nan`/`inf` spellings are not Active float literals; a
+            // coercion to a non-finite value would export as null
+            // (LANG-B-009). Reject, so the T002 stands.
+            let trimmed = value.trim();
+            let lowered = trimmed.to_ascii_lowercase();
+            if matches!(
+                lowered.as_str(),
+                "nan" | "inf" | "-inf" | "+inf" | "infinity" | "-infinity" | "+infinity"
+            ) {
+                return None;
+            }
+            trimmed
+                .parse::<f64>()
+                .ok()
+                .filter(|f| f.is_finite())
+                .map(crate::ir::Value::Float)
+        }
         ActiveType::Bool => match value.to_lowercase().as_str() {
             "true" | "yes" | "1" | "on" => Some(crate::ir::Value::Bool(true)),
             "false" | "no" | "0" | "off" => Some(crate::ir::Value::Bool(false)),

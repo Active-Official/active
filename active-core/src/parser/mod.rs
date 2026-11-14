@@ -4218,7 +4218,27 @@ impl Parser {
 
             TokenKind::Float => {
                 self.bump();
-                let f: f64 = tok.text.parse().unwrap_or(0.0);
+                let parsed: f64 = tok.text.parse().unwrap_or(0.0);
+                // Rust's f64 parser returns Ok(inf) on overflow. A literal
+                // that cannot be represented is E023 (never a silent inf
+                // that later exports as null): LANG-B-009.
+                let f = if parsed.is_finite() {
+                    parsed
+                } else {
+                    self.error_at(
+                        "E023",
+                        format!(
+                            "float literal out of range: `{}`; saturating at the largest representable value",
+                            tok.text
+                        ),
+                        &tok,
+                    );
+                    if parsed.is_sign_negative() {
+                        f64::MIN
+                    } else {
+                        f64::MAX
+                    }
+                };
                 let mut node = self.add_spanned(Node::Literal(Value::Float(f)), &tok);
                 if let TokenKind::Unit(_) = self.peek_kind() {
                     let unit_tok = self.bump();

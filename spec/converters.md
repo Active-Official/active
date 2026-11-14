@@ -59,6 +59,8 @@ silent drops.
 
 ## 4. Reverse direction (JSON / YAML / TOML → ACTIVE)
 
+
+**Non-finite floats never cross a converter.** `inf`, `-inf`, and `NaN` are rejected at parse (E023 for an overflowing literal), at arithmetic (T001), and at resilient coercion (the T002 stands). No exporter maps a number to `null`; the JSON model's inf→null behaviour is never used (LANG-B-009).
 `json_to_active`, `yaml_to_active`, `toml_to_active` return
 `(String, Vec<Diagnostic>)`: best-effort ACTIVE source plus
 diagnostics for lossy corners. Emission style is brace blocks

@@ -60,7 +60,19 @@ pub fn value_to_json(v: &Value) -> JsonValue {
         Value::Null => JsonValue::Null,
         Value::Bool(b) => json!(b),
         Value::Int(i) => json!(i),
-        Value::Float(f) => json!(f),
+        // Non-finite floats are rejected at parse, at arithmetic, and at
+        // coercion (LANG-B-009/B-901), so this arm is defense in depth:
+        // serde would map inf/NaN to JSON null, silently turning a number
+        // into a different value. Render an explicit marker instead so an
+        // unreachable value can never masquerade as data.
+        Value::Float(f) if f.is_finite() => json!(f),
+        Value::Float(f) => json!(if f.is_nan() {
+            "NaN"
+        } else if f.is_sign_negative() {
+            "-inf"
+        } else {
+            "inf"
+        }),
         Value::String(s) => json!(s),
         Value::DurationMs(ms) => json!({ "ms": ms }),
         Value::Quantity(n, unit) => json!({ unit.suffix(): n }),

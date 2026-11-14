@@ -2906,9 +2906,11 @@ pub(crate) fn eval_binary(op: BinOp, lhs: &Value, rhs: &Value) -> Result<Value, 
             Ok(Value::Int(a.checked_div(*b).unwrap_or(i64::MAX)))
         }
 
-        (Add, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
-        (Sub, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
-        (Mul, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
+        // A float result that cannot be represented is an error, not
+        // an `inf` that later exports as null (LANG-B-901).
+        (Add, Value::Float(a), Value::Float(b)) => float_result(a + b),
+        (Sub, Value::Float(a), Value::Float(b)) => float_result(a - b),
+        (Mul, Value::Float(a), Value::Float(b)) => float_result(a * b),
         (Div, Value::Float(a), Value::Float(b)) if *b != 0.0 => Ok(Value::Float(a / b)),
 
         // Division by zero names itself (LANG-A-007): the generic
@@ -2922,12 +2924,12 @@ pub(crate) fn eval_binary(op: BinOp, lhs: &Value, rhs: &Value) -> Result<Value, 
         // Mixed int/float: the spec says mixed arithmetic promotes to
         // Float, so every operator gets both operand orders. Every
         // operand combination has its division-by-zero arm above.
-        (Add, Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 + b)),
-        (Add, Value::Float(a), Value::Int(b)) => Ok(Value::Float(a + *b as f64)),
-        (Sub, Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 - b)),
-        (Sub, Value::Float(a), Value::Int(b)) => Ok(Value::Float(a - *b as f64)),
-        (Mul, Value::Int(a), Value::Float(b)) => Ok(Value::Float(*a as f64 * b)),
-        (Mul, Value::Float(a), Value::Int(b)) => Ok(Value::Float(a * *b as f64)),
+        (Add, Value::Int(a), Value::Float(b)) => float_result(*a as f64 + b),
+        (Add, Value::Float(a), Value::Int(b)) => float_result(a + *b as f64),
+        (Sub, Value::Int(a), Value::Float(b)) => float_result(*a as f64 - b),
+        (Sub, Value::Float(a), Value::Int(b)) => float_result(a - *b as f64),
+        (Mul, Value::Int(a), Value::Float(b)) => float_result(*a as f64 * b),
+        (Mul, Value::Float(a), Value::Int(b)) => float_result(a * *b as f64),
         (Div, Value::Int(a), Value::Float(b)) if *b != 0.0 => Ok(Value::Float(*a as f64 / b)),
         (Div, Value::Float(a), Value::Int(b)) if *b != 0 => Ok(Value::Float(a / *b as f64)),
 
@@ -3108,6 +3110,19 @@ fn cmp_int_float(i: i64, f: f64) -> Option<std::cmp::Ordering> {
     }
 }
 
+/// Wrap a float arithmetic result: a non-finite outcome (overflow,
+/// NaN) is a hard T001 instead of a value that exports as null.
+/// (LANG-B-901; the division-by-zero arms above name that cause
+/// specifically.)
+fn float_result(v: f64) -> Result<Value, String> {
+    if v.is_finite() {
+        Ok(Value::Float(v))
+    } else if v.is_nan() {
+        Err("float operation produced NaN".to_string())
+    } else {
+        Err("float overflow: the result is not representable".to_string())
+    }
+}
 fn value_eq(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Null, Value::Null) => true,

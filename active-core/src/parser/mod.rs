@@ -5817,6 +5817,22 @@ impl Parser {
         id
     }
 
+    /// Whether the cursor sits on an identifier that directly abuts a
+    /// number literal (`1e308` -> Integer 1 then Ident e308, no space and
+    /// no comma). That shape is a malformed literal, never a missing
+    /// comma, so H003 must not heal it (LANG-L-001).
+    fn number_ident_abutment(&self) -> Option<Token> {
+        let prev = self.pos.checked_sub(1).and_then(|p| self.tokens.get(p))?;
+        let here = self.peek();
+        let numeric = matches!(prev.kind, TokenKind::Integer | TokenKind::Float);
+        let ident = matches!(here.kind, TokenKind::Ident);
+        if numeric && ident && here.col == prev.end_col {
+            Some(here.clone())
+        } else {
+            None
+        }
+    }
+
     fn parse_array(&mut self) -> NodeId {
         let open = self.peek().clone();
         self.bump(); // [
@@ -5885,6 +5901,22 @@ impl Parser {
                 self.peek_kind(),
                 TokenKind::RBracket | TokenKind::RBrace | TokenKind::Eof
             ) {
+                // A number glued to an identifier is a malformed literal
+                // (`[1e308]`), not a missing comma. Healing it would bake a
+                // phantom identifier into the source (LANG-L-001).
+                if let Some(tok) = self.number_ident_abutment() {
+                    self.error_at(
+                        "E002",
+                        format!(
+                            "unknown unit suffix `{}` — unit suffixes are case-sensitive and \
+                             attach directly to the number (no space)",
+                            tok.text
+                        ),
+                        &tok,
+                    );
+                    self.bump();
+                    continue;
+                }
                 // Missing comma between elements.
                 let tok = self.peek().clone();
                 if !self.heal(
@@ -5983,6 +6015,19 @@ impl Parser {
                 self.peek_kind(),
                 TokenKind::RBrace | TokenKind::RBracket | TokenKind::Eof
             ) {
+                if let Some(tok) = self.number_ident_abutment() {
+                    self.error_at(
+                        "E002",
+                        format!(
+                            "unknown unit suffix `{}` — unit suffixes are case-sensitive and \
+                             attach directly to the number (no space)",
+                            tok.text
+                        ),
+                        &tok,
+                    );
+                    self.bump();
+                    continue;
+                }
                 let tok = self.peek().clone();
                 if !self.heal(
                     "H003",

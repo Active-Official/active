@@ -54,6 +54,16 @@ pub enum EvalError {
         span: Option<Span>,
         file: Option<String>,
     },
+    /// A profile body tried to rewrite document metadata that the mode
+    /// and capability handshake already read (LANG-A-009). Distinct from
+    /// `PatchError`: no patch directive was involved, and agents that
+    /// match on error kinds must not misclassify it.
+    #[error("{message}")]
+    ProfileError {
+        message: String,
+        span: Option<Span>,
+        file: Option<String>,
+    },
     #[error("secret used in unsafe context")]
     SecretLeak { file: Option<String> },
     /// Blob materialisation failures (spec/blob.md §8): tainted
@@ -245,6 +255,7 @@ impl EvalError {
             EvalError::MissingNode(_) => "S003",
             EvalError::TypeError { .. } => "T001",
             EvalError::PatchError { .. } => "E019",
+            EvalError::ProfileError { .. } => "E027",
             EvalError::SecretLeak { .. } => "S004",
             EvalError::BlobError { code, .. } => code,
             EvalError::BudgetExceeded { kind, .. } => match kind {
@@ -278,7 +289,9 @@ impl EvalError {
     /// Source span when the error can be attributed to a node position.
     pub fn span(&self) -> Option<&Span> {
         match self {
-            EvalError::TypeError { span, .. } | EvalError::PatchError { span, .. } => span.as_ref(),
+            EvalError::TypeError { span, .. }
+            | EvalError::PatchError { span, .. }
+            | EvalError::ProfileError { span, .. } => span.as_ref(),
             EvalError::BlobError { span, .. } => span.as_ref(),
             EvalError::BudgetExceeded { span, .. } => span.as_ref(),
             EvalError::ValidationFailed { diagnostics } => {
@@ -292,9 +305,9 @@ impl EvalError {
     /// (multi-file documents via includes, C-025).
     pub fn file(&self) -> Option<&str> {
         match self {
-            EvalError::TypeError { file, .. } | EvalError::PatchError { file, .. } => {
-                file.as_deref()
-            }
+            EvalError::TypeError { file, .. }
+            | EvalError::PatchError { file, .. }
+            | EvalError::ProfileError { file, .. } => file.as_deref(),
             EvalError::BlobError { file, .. } => file.as_deref(),
             EvalError::SecretLeak { file } => file.as_deref(),
             EvalError::BudgetExceeded { file, .. } => file.as_deref(),
@@ -2448,11 +2461,12 @@ impl Engine {
         // handshake read them.
         if let Some(Node::Table { fields, .. }) = module.get(profile_id) {
             if let Some(key) = fields.keys().find(|key| is_document_metadata(key)) {
-                return Err(EvalError::patch_error(
-                    format!("profile cannot rewrite document metadata `{key}`"),
-                    module,
-                    profile_id,
-                ));
+                let message = format!("profile cannot rewrite document metadata `{key}`");
+                return Err(EvalError::ProfileError {
+                    message,
+                    span: module.node_spans.get(&profile_id).cloned(),
+                    file: module.node_files.get(&profile_id).cloned(),
+                });
             }
         }
         let profile_value = values.get(&profile_id).cloned().unwrap_or(Value::Null);

@@ -13,7 +13,6 @@ fn patches_and_profiles_cannot_rewrite_document_metadata() {
         "active_mode = \"config\"\n@patch(\"active_mode\", \"data\")\nx = 1\n",
         "active_mode = \"config\"\n@remove(\"active_mode\")\nx = 1\n",
         "active_capabilities = [\"check\"]\n@patch(\"active_capabilities\", [\"eval\"])\nx = 1\n",
-        "active_mode = \"config\"\nprofile \"p\" { active_mode = \"data\" }\nactive_profile = \"p\"\nx = 1\n",
         "active_profile = \"a\"\nprofile \"a\" { x = 1 }\nprofile \"b\" { x = 2 }\n@patch(\"active_profile\", \"b\")\n",
     ] {
         let module = parse(src, "mode-metadata").expect("must parse");
@@ -22,6 +21,17 @@ fn patches_and_profiles_cannot_rewrite_document_metadata() {
             .expect_err("metadata rewrite must fail closed");
         assert_eq!(err.code(), "E019", "{src}: {err}");
     }
+    // A profile body is not a patch: its own taxonomy code (LANG-A-009).
+    let src = "active_mode = \"config\"\nprofile \"p\" { active_mode = \"data\" }\nactive_profile = \"p\"\nx = 1\n";
+    let module = parse(src, "mode-metadata").expect("must parse");
+    let err = Engine::new()
+        .evaluate(&module)
+        .expect_err("profile metadata rewrite must fail closed");
+    assert_eq!(err.code(), "E027", "{src}: {err}");
+    assert!(
+        format!("{err}").contains("profile cannot rewrite document metadata"),
+        "message text is preserved: {err}"
+    );
 }
 
 fn mode_of(src: &str) -> active_core::Mode {

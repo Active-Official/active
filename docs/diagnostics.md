@@ -55,6 +55,7 @@ parses leave it unset and tools fall back to the input filename.
 | E023 | `integer literal out of i64 range: \`<text>\`` | the literal token | An integer literal exceeds the i64 range (spec/specification.md §1.3): recorded as an error and the value saturates at `i64::MAX` — never a silent `0` |
 | E024 | `active_mode must be "data" or "config"` / `unknown mode '<text>': want "data" or "config"` | marker key | Bad mode marker (Phase M): the `active_mode` key is not one of the two valid strings |
 | E025 | `active_capabilities must be an array of strings` | marker key | Bad capabilities declaration (Phase CAP): entries must be tool-name strings; unknown names are refused at handshake time |
+| E027 | `profile cannot rewrite document metadata `<key>`` | profile block | A profile body tried to set document metadata (`active_mode`, `active_capabilities`) that the mode/capability handshake already read (LANG-A-009). Distinct from E019: no patch directive was involved. |
 | E032 | `<file>: unsigned (no signature sidecar …)` / `<file>: unknown signing key '<kid>'` / `<file>: signature mismatch (key '<kid>')` | include statement | An included file failed overlay enforcement (C-052): no sibling sidecar, a key outside the trusted set, or a bad signature. Fail-closed before a byte parses; key material never quoted |
 
 ### S0xx — Semantic (evaluation, severity Error)

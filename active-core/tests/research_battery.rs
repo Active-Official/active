@@ -3042,7 +3042,14 @@ fn rb_170_bare_cr_is_whitespace() {
         serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
     assert_eq!(v["a"], 1);
     assert_eq!(v["b"], 2);
-    assert!(diags.is_empty(), "{diags:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        diags
+            .iter()
+            .all(|d| d.code == "W015" && d.severity == active_core::Severity::Warning),
+        "only the W015 trailing-token announcement is allowed: {diags:?}"
+    );
 }
 
 /// RB-171 — Upstream `bare-formfeed` analogue (SRC-TOML-0022 §H, MEDIUM).
@@ -3124,7 +3131,14 @@ fn rb_174_tab_is_whitespace_stray_skipped() {
     let v: serde_json::Value =
         serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
     assert_eq!(v["value"], 1);
-    assert!(diags.is_empty(), "{diags:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        diags
+            .iter()
+            .all(|d| d.code == "W015" && d.severity == active_core::Severity::Warning),
+        "only the W015 trailing-token announcement is allowed: {diags:?}"
+    );
 }
 
 /// RB-175 — Upstream `multi-lf` analogue (SRC-TOML-0026 §H, MEDIUM).
@@ -3595,7 +3609,12 @@ fn rb_201_double_dot_keeps_first_value() {
     assert_eq!(v["value"], 1);
     assert!(v["value"].is_i64());
     let codes = codes_of("value = 1..2\n");
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the clean float evaluates with its type.
     let v = eval_json("value = 1.2\n");
     assert_eq!(v["value"], 1.2);
@@ -4571,7 +4590,12 @@ fn rb_256_double_point_keeps_first_float() {
     assert_eq!(v["value"], 0.1);
     assert!(v["value"].is_f64());
     let codes = codes_of("value = 0.1.2\n");
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the clean float evaluates identically.
     assert_eq!(eval_json("value = 0.1\n")["value"], 0.1);
 }
@@ -11747,7 +11771,12 @@ fn rb_588_syn31_offset_without_datetimes() {
         "must degrade to arithmetic + colon pair only, got {v}"
     );
     let codes = codes_of(src);
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the quoted neighbour stays the exact string.
     assert_eq!(
         eval_json("case_0031_02 = \"2024-02-29T12:30:00+25:00\"\n")["case_0031_02"],
@@ -11843,7 +11872,12 @@ fn rb_592_syn31_offset_degrades_cleanly() {
         "must degrade to arithmetic + colon pair only, got {v}"
     );
     let codes = codes_of(src);
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the quoted neighbour stays the exact string.
     assert_eq!(
         eval_json("case_0031_06 = \"2024-01-01T12:30:00-07:00\"\n")["case_0031_06"],
@@ -11961,7 +11995,12 @@ fn rb_597_syn32_offset_twin_degrades() {
         "must degrade to arithmetic + colon pair only, got {v}"
     );
     let codes = codes_of(src);
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the quoted neighbour stays the exact string.
     assert_eq!(
         eval_json("case_0032_02 = \"2024-02-29T12:30:00+25:00\"\n")["case_0032_02"],
@@ -12054,7 +12093,12 @@ fn rb_601_syn32_offset_twin_degrades() {
         "must degrade to arithmetic + colon pair only, got {v}"
     );
     let codes = codes_of(src);
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the quoted neighbour stays the exact string.
     assert_eq!(
         eval_json("case_0032_06 = \"2024-01-01T12:30:00-07:00\"\n")["case_0032_06"],
@@ -12176,7 +12220,12 @@ fn rb_606_syn33_offset_twins_collide() {
         "must degrade to arithmetic + colon pair only, got {v}"
     );
     let codes = codes_of(src);
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Twin collision: both offset forms in one document share one loud T12.
     let src =
         "case_0031_02 = 2024-02-29T12:30:00+25:00\ncase_0033_02 = 2024-02-29T12:30:00+25:00\n";
@@ -12282,7 +12331,12 @@ fn rb_610_syn33_offset_third_degrades() {
         "must degrade to arithmetic + colon pair only, got {v}"
     );
     let codes = codes_of(src);
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the quoted neighbour stays the exact string.
     assert_eq!(
         eval_json("case_0033_06 = \"2024-01-01T12:30:00-07:00\"\n")["case_0033_06"],
@@ -12400,7 +12454,12 @@ fn rb_615_syn34_offset_fourth_degrades() {
         "must degrade to arithmetic + colon pair only, got {v}"
     );
     let codes = codes_of(src);
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the quoted neighbour stays the exact string.
     assert_eq!(
         eval_json("case_0034_02 = \"2024-02-29T12:30:00+25:00\"\n")["case_0034_02"],
@@ -12495,7 +12554,12 @@ fn rb_619_syn34_offset_fourth_degrades() {
         "must degrade to arithmetic + colon pair only, got {v}"
     );
     let codes = codes_of(src);
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the quoted neighbour stays the exact string.
     assert_eq!(
         eval_json("case_0034_06 = \"2024-01-01T12:30:00-07:00\"\n")["case_0034_06"],
@@ -12614,7 +12678,12 @@ fn rb_624_syn35_offset_fifth_degrades() {
         "must degrade to arithmetic + colon pair only, got {v}"
     );
     let codes = codes_of(src);
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the quoted neighbour stays the exact string.
     assert_eq!(
         eval_json("case_0035_02 = \"2024-02-29T12:30:00+25:00\"\n")["case_0035_02"],
@@ -12710,7 +12779,12 @@ fn rb_628_syn35_offset_fifth_degrades() {
         "must degrade to arithmetic + colon pair only, got {v}"
     );
     let codes = codes_of(src);
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the quoted neighbour stays the exact string.
     assert_eq!(
         eval_json("case_0035_06 = \"2024-01-01T12:30:00-07:00\"\n")["case_0035_06"],
@@ -12829,7 +12903,12 @@ fn rb_633_syn36_offset_sixth_degrades() {
         "must degrade to arithmetic + colon pair only, got {v}"
     );
     let codes = codes_of(src);
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the quoted neighbour stays the exact string.
     assert_eq!(
         eval_json("case_0036_02 = \"2024-02-29T12:30:00+25:00\"\n")["case_0036_02"],
@@ -12925,7 +13004,12 @@ fn rb_637_syn36_offset_sixth_degrades() {
         "must degrade to arithmetic + colon pair only, got {v}"
     );
     let codes = codes_of(src);
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the quoted neighbour stays the exact string.
     assert_eq!(
         eval_json("case_0036_06 = \"2024-01-01T12:30:00-07:00\"\n")["case_0036_06"],
@@ -13045,7 +13129,12 @@ fn rb_642_syn37_offset_seventh_degrades() {
         "must degrade to arithmetic + colon pair only, got {v}"
     );
     let codes = codes_of(src);
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the quoted neighbour stays the exact string.
     assert_eq!(
         eval_json("case_0037_02 = \"2024-02-29T12:30:00+25:00\"\n")["case_0037_02"],
@@ -13141,7 +13230,12 @@ fn rb_646_syn37_offset_seventh_degrades() {
         "must degrade to arithmetic + colon pair only, got {v}"
     );
     let codes = codes_of(src);
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the quoted neighbour stays the exact string.
     assert_eq!(
         eval_json("case_0037_06 = \"2024-01-01T12:30:00-07:00\"\n")["case_0037_06"],
@@ -13262,7 +13356,12 @@ fn rb_651_syn38_offset_eighth_degrades() {
         "must degrade to arithmetic + colon pair only, got {v}"
     );
     let codes = codes_of(src);
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the quoted neighbour stays the exact string.
     assert_eq!(
         eval_json("case_0038_02 = \"2024-02-29T12:30:00+25:00\"\n")["case_0038_02"],
@@ -13359,7 +13458,12 @@ fn rb_655_syn38_offset_eighth_degrades() {
         "must degrade to arithmetic + colon pair only, got {v}"
     );
     let codes = codes_of(src);
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the quoted neighbour stays the exact string.
     assert_eq!(
         eval_json("case_0038_06 = \"2024-01-01T12:30:00-07:00\"\n")["case_0038_06"],
@@ -13479,7 +13583,12 @@ fn rb_660_syn39_offset_ninth_degrades() {
         "must degrade to arithmetic + colon pair only, got {v}"
     );
     let codes = codes_of(src);
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the quoted neighbour stays the exact string.
     assert_eq!(
         eval_json("case_0039_02 = \"2024-02-29T12:30:00+25:00\"\n")["case_0039_02"],
@@ -13576,7 +13685,12 @@ fn rb_664_syn39_offset_ninth_degrades() {
         "must degrade to arithmetic + colon pair only, got {v}"
     );
     let codes = codes_of(src);
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the quoted neighbour stays the exact string.
     assert_eq!(
         eval_json("case_0039_06 = \"2024-01-01T12:30:00-07:00\"\n")["case_0039_06"],
@@ -13696,7 +13810,12 @@ fn rb_669_syn40_offset_tenth_degrades() {
         "must degrade to arithmetic + colon pair only, got {v}"
     );
     let codes = codes_of(src);
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the quoted neighbour stays the exact string.
     assert_eq!(
         eval_json("case_0040_02 = \"2024-02-29T12:30:00+25:00\"\n")["case_0040_02"],
@@ -13794,7 +13913,12 @@ fn rb_673_syn40_offset_tenth_degrades() {
         "must degrade to arithmetic + colon pair only, got {v}"
     );
     let codes = codes_of(src);
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the quoted neighbour stays the exact string.
     assert_eq!(
         eval_json("case_0040_06 = \"2024-01-01T12:30:00-07:00\"\n")["case_0040_06"],
@@ -13916,7 +14040,12 @@ fn rb_678_syn41_offset_eleventh_degrades() {
         "must degrade to arithmetic + colon pair only, got {v}"
     );
     let codes = codes_of(src);
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the quoted neighbour stays the exact string.
     assert_eq!(
         eval_json("case_0041_02 = \"2024-02-29T12:30:00+25:00\"\n")["case_0041_02"],
@@ -14013,7 +14142,12 @@ fn rb_682_syn41_offset_eleventh_degrades() {
         "must degrade to arithmetic + colon pair only, got {v}"
     );
     let codes = codes_of(src);
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the quoted neighbour stays the exact string.
     assert_eq!(
         eval_json("case_0041_06 = \"2024-01-01T12:30:00-07:00\"\n")["case_0041_06"],
@@ -14135,7 +14269,12 @@ fn rb_687_syn42_offset_twelfth_degrades() {
         "must degrade to arithmetic + colon pair only, got {v}"
     );
     let codes = codes_of(src);
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the quoted neighbour stays the exact string.
     assert_eq!(
         eval_json("case_0042_02 = \"2024-02-29T12:30:00+25:00\"\n")["case_0042_02"],
@@ -14233,7 +14372,12 @@ fn rb_691_syn42_offset_twelfth_degrades() {
         "must degrade to arithmetic + colon pair only, got {v}"
     );
     let codes = codes_of(src);
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the quoted neighbour stays the exact string.
     assert_eq!(
         eval_json("case_0042_06 = \"2024-01-01T12:30:00-07:00\"\n")["case_0042_06"],
@@ -14356,7 +14500,12 @@ fn rb_696_syn43_offset_thirteenth_degrades() {
         "must degrade to arithmetic + colon pair only, got {v}"
     );
     let codes = codes_of(src);
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the quoted neighbour stays the exact string.
     assert_eq!(
         eval_json("case_0043_02 = \"2024-02-29T12:30:00+25:00\"\n")["case_0043_02"],
@@ -14455,7 +14604,12 @@ fn rb_700_syn43_offset_thirteenth_degrades() {
         "must degrade to arithmetic + colon pair only, got {v}"
     );
     let codes = codes_of(src);
-    assert!(codes.is_empty(), "{codes:?}");
+    // LANG-A-005: the trailing token is now ANNOUNCED (W015) instead
+    // of silently dropped; the value is unchanged.
+    assert!(
+        codes.iter().all(|c| c == "W015"),
+        "only the W015 trailing-token announcement is allowed: {codes:?}"
+    );
     // Positive control: the quoted neighbour stays the exact string.
     assert_eq!(
         eval_json("case_0043_06 = \"2024-01-01T12:30:00-07:00\"\n")["case_0043_06"],

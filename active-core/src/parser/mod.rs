@@ -915,6 +915,21 @@ impl Parser {
         });
     }
 
+    /// Warning at an explicit token's span, through the same shared
+    /// budget as errors and healing (LANG-A-001).
+    fn warn_at(&mut self, code: &str, message: impl Into<String>, tok: &Token) {
+        self.push_heal(Diagnostic {
+            severity: Severity::Warning,
+            code: code.into(),
+            message: message.into(),
+            path: None,
+            span: Some(span_of(tok)),
+            repair: None,
+            confidence: 1.0,
+            file: self.current_file_name(),
+        });
+    }
+
     fn error(&mut self, code: &str, message: impl Into<String>) {
         let t = self.peek();
         self.push_diag(Diagnostic {
@@ -1111,6 +1126,7 @@ impl Parser {
                             return;
                         }
                     }
+                    self.note_same_line_statement();
                     self.parse_ident_statement(fields, pending);
                 }
                 TokenKind::Let => self.parse_let(),
@@ -1193,49 +1209,123 @@ impl Parser {
                     self.bump();
                 }
                 _ => {
-                    // Alpha resilience: skip an unexpected token.
-                    // NOTE (research P1-ST-002): stray value tokens after
-                    // a complete statement are silently absorbed here by
-                    // explicit design (spec/grammar.md §4.1 quirks:
-                    // `x = 5 5` evaluates to `5`). Only string literals
-                    // above are loud (no quirk protects them).
+                    // A token that follows a complete value on the same line
+                    // is absorbed only for the two documented §4.1 quirks;
+                    // everything else is a loud E002 (LANG-A-005). Before
+                    // this change `a = 1 2 3`, `e = 1.2.3`, and `a = 1 b = 2`
+                    // all yielded the first value with zero diagnostics —
+                    // silent truncation in a language that promises none.
                     //
-                    // Exception: a VALUE token starting a statement (at
-                    // the body's statement column) can never be a quirk
-                    // stray — nothing routes value-first tokens — so a
-                    // bare `true = 1` or `2 = 1` line would vanish with
-                    // zero diagnostics. Loud E002 instead (research
-                    // P1-TI-011); same-line strays keep the quirk.
+                    // A comma between entries is a separator, not a stray:
+                    // `profile "p" { x = p, y = p }` stays legal.
+                    //
+                    // Quirk 1 (`x = 5 5`): a single stray number whose text
+                    // equals the value token immediately before it.
+                    // Quirk 2 (`d = 1.`): a lone trailing dot right after a
+                    // numeric literal. Both are pinned by §4.1.
+                    //
+                    // Kept from research P1-TI-011: a VALUE token starting a
+                    // statement (at the body's statement column) is always
+                    // loud, because nothing routes value-first tokens.
                     let tok = self.peek().clone();
                     let stmt_col = match end {
                         BodyEnd::Block(l) | BodyEnd::HeaderBody(l) => (l + 1) as u32,
                         _ => 1,
                     };
-                    match &tok.kind {
-                        TokenKind::Integer
-                        | TokenKind::Float
-                        | TokenKind::True
-                        | TokenKind::False
-                        | TokenKind::Null
-                        | TokenKind::Env
-                        | TokenKind::Secret
-                        | TokenKind::Blob
-                        | TokenKind::Minus
-                        | TokenKind::Bang
-                        | TokenKind::LParen
-                            if tok.col == stmt_col =>
-                        {
-                            self.error_at(
-                                "E002",
-                                "unexpected value at statement position (values need a key: `name = …`)",
-                                &tok,
-                            );
-                        }
-                        _ => {}
+                    let prev = self
+                        .pos
+                        .checked_sub(1)
+                        .and_then(|p| self.tokens.get(p))
+                        .cloned();
+                    let next_is_line_end =
+                        matches!(self.peek_kind_at(1), TokenKind::Newline | TokenKind::Eof);
+                    let quirk_duplicate_number = next_is_line_end
+                        && matches!(
+                            (&tok.kind, prev.as_ref().map(|p| &p.kind)),
+                            (TokenKind::Integer, Some(TokenKind::Integer))
+                                | (TokenKind::Float, Some(TokenKind::Float))
+                        )
+                        && prev.as_ref().is_some_and(|p| p.text == tok.text);
+                    let quirk_trailing_dot = matches!(tok.kind, TokenKind::Dot)
+                        && next_is_line_end
+                        && prev.as_ref().is_some_and(|p| {
+                            matches!(p.kind, TokenKind::Integer | TokenKind::Float)
+                        });
+                    let value_at_statement = tok.col == stmt_col
+                        && matches!(
+                            tok.kind,
+                            TokenKind::Integer
+                                | TokenKind::Float
+                                | TokenKind::True
+                                | TokenKind::False
+                                | TokenKind::Null
+                                | TokenKind::Env
+                                | TokenKind::Secret
+                                | TokenKind::Blob
+                                | TokenKind::Minus
+                                | TokenKind::Bang
+                                | TokenKind::LParen
+                        );
+                    if value_at_statement {
+                        self.error_at(
+                            "E002",
+                            "unexpected value at statement position (values need a key: `name = ...`)",
+                            &tok,
+                        );
+                    } else if !matches!(tok.kind, TokenKind::Comma)
+                        && !quirk_duplicate_number
+                        && !quirk_trailing_dot
+                    {
+                        self.warn_at(
+                            "W015",
+                            "trailing token after a complete value is ignored; \
+                             separate statements with a newline (spec/grammar.md §2.1)",
+                            &tok,
+                        );
                     }
                     self.bump();
                 }
             }
+        }
+    }
+
+    /// A new statement starting on the same physical line as the value
+    /// that ended the previous one (`a = 1 b = 2`) is announced (W015):
+    /// statements are newline-separated, and silently accepting the
+    /// second one hides both from a reader scanning the left margin.
+    /// A `{` before it is legal (`server { host = "a" }`), so only a
+    /// value-ending predecessor counts. (LANG-A-005)
+    fn note_same_line_statement(&mut self) {
+        let prev = self.pos.checked_sub(1).and_then(|p| self.tokens.get(p));
+        let Some(prev) = prev else {
+            return;
+        };
+        let ends_value = matches!(
+            prev.kind,
+            TokenKind::Integer
+                | TokenKind::Float
+                | TokenKind::True
+                | TokenKind::False
+                | TokenKind::Null
+                | TokenKind::String(_)
+                | TokenKind::SingleString
+                | TokenKind::MlString(_)
+                | TokenKind::MlSingleString
+                | TokenKind::Ident
+                | TokenKind::Unit(_)
+                | TokenKind::RParen
+                | TokenKind::RBracket
+                | TokenKind::RBrace
+        );
+        let here = self.peek().clone();
+        if ends_value && prev.line == here.line {
+            self.warn_at(
+                "W015",
+                "a second statement on the same line after a complete value is \
+                 accepted but discouraged; separate statements with a newline \
+                 (spec/grammar.md §2.1)",
+                &here,
+            );
         }
     }
 
@@ -3644,10 +3734,32 @@ impl Parser {
         }
     }
 
+    /// Whether the token at the cursor cannot start an expression, which
+    /// after an operator means the operand is missing (`a = 1 +`). Only
+    /// hard terminators count, so every real expression start passes.
+    /// Makes the missing operand an E001 at parse time instead of a null
+    /// that later fails as a type error (LANG-A-005).
+    fn missing_operand(&self) -> bool {
+        matches!(
+            self.peek_kind(),
+            TokenKind::Newline
+                | TokenKind::Eof
+                | TokenKind::RParen
+                | TokenKind::RBracket
+                | TokenKind::RBrace
+                | TokenKind::Comma
+                | TokenKind::Dot
+        )
+    }
+
     fn parse_or(&mut self) -> NodeId {
         let mut left = self.parse_and();
         while matches!(self.peek_kind(), TokenKind::OrOr) {
             let op_tok = self.bump();
+            if self.missing_operand() {
+                self.error_at("E001", "expected an expression after the operator", &op_tok);
+                return left;
+            }
             let right = self.parse_and();
             left = self.add_spanned(
                 Node::Binary {
@@ -3665,6 +3777,10 @@ impl Parser {
         let mut left = self.parse_equality();
         while matches!(self.peek_kind(), TokenKind::AndAnd) {
             let op_tok = self.bump();
+            if self.missing_operand() {
+                self.error_at("E001", "expected an expression after the operator", &op_tok);
+                return left;
+            }
             let right = self.parse_equality();
             left = self.add_spanned(
                 Node::Binary {
@@ -3687,6 +3803,10 @@ impl Parser {
                 _ => break,
             };
             let op_tok = self.bump();
+            if self.missing_operand() {
+                self.error_at("E001", "expected an expression after the operator", &op_tok);
+                return left;
+            }
             let right = self.parse_comparison();
             left = self.add_spanned(
                 Node::Binary {
@@ -3711,6 +3831,10 @@ impl Parser {
                 _ => break,
             };
             let op_tok = self.bump();
+            if self.missing_operand() {
+                self.error_at("E001", "expected an expression after the operator", &op_tok);
+                return left;
+            }
             let right = self.parse_term();
             left = self.add_spanned(
                 Node::Binary {
@@ -3733,6 +3857,10 @@ impl Parser {
                 _ => break,
             };
             let op_tok = self.bump();
+            if self.missing_operand() {
+                self.error_at("E001", "expected an expression after the operator", &op_tok);
+                return left;
+            }
             let right = self.parse_factor();
             left = self.add_spanned(
                 Node::Binary {
@@ -3755,6 +3883,10 @@ impl Parser {
                 _ => break,
             };
             let op_tok = self.bump();
+            if self.missing_operand() {
+                self.error_at("E001", "expected an expression after the operator", &op_tok);
+                return left;
+            }
             let right = self.parse_unary();
             left = self.add_spanned(
                 Node::Binary {
@@ -3784,6 +3916,12 @@ impl Parser {
                     );
                     self.depth -= 1;
                     self.bump(); // consume the operator to guarantee progress
+                                 // Also consume its operand so the chain leaves no
+                                 // stray token behind (one diagnostic, not an E002
+                                 // follower): a balanced construct when it is one.
+                    if !matches!(self.peek_kind(), TokenKind::Newline | TokenKind::Eof) {
+                        self.skip_over_deep_construct();
+                    }
                     return self.add_spanned(Node::Literal(Value::Null), &op_tok);
                 }
                 let op = if matches!(self.peek_kind(), TokenKind::Minus) {

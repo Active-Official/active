@@ -4131,8 +4131,9 @@ fn lint_can_report_include_escapes_when_the_parser_allows_them() {
 fn deep_expression_nesting_fails_with_e004_instead_of_overflowing() {
     // The CLI runs parsing on a 32 MB worker stack so the documented
     // 64-level expression limit is reachable in unoptimized builds
-    // instead of aborting with a stack overflow.
-    let src = format!("a = {}1{}\n", "[".repeat(64), "]".repeat(64));
+    // instead of aborting with a stack overflow. 64 levels are legal;
+    // the 65th is E004 (LANG-A-003).
+    let src = format!("a = {}1{}\n", "[".repeat(65), "]".repeat(65));
     let f = fixture("deep_expr.active", &src);
     let out = active().arg("check").arg(&f).output().expect("run active");
     let body = format!(

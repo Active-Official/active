@@ -222,6 +222,8 @@ key-value     = identifier ( "=" | ":" ) expression
 
 ### 2.1 Document
 
+
+A statement ends at the newline. A token that follows a complete value on the same line is announced as **W015** (the documented value is kept): two statements must not share a line, and a trailing token such as `1 2 3` or `1.2.3` is not silently dropped. The two intentional quirks in §4.1 (`x = 5 5` and `d = 1.`) are the only exception. A comma between entries inside a block or inline table is a separator, not a stray. A missing operand after a binary or unary operator is **E001** at parse time.
 ```
 document     = { newline } { statement { newline } } { newline } EOF
 statement    = let-decl | table-header | key-value | skip

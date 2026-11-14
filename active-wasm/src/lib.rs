@@ -335,8 +335,10 @@ mod tests {
         assert_eq!(items[0]["code"], "W001");
         assert_eq!(items[0]["severity"], "warning");
         assert!(items[0]["span"].is_object());
-        // Recovery can repeat a code: every occurrence is an item
-        // (conformance 0006: depth trips on open and close brackets).
+        // Recovery is now single-diagnostic per over-deep construct
+        // (LANG-A-006): the 65-deep fixture yields exactly one E004, not
+        // one per bracket. Occurrence preservation below the depth bound
+        // is still pinned by the parser's own tests.
         let deep_src = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../conformance/cases/0006-budget-depth.active"
@@ -344,8 +346,8 @@ mod tests {
         .expect("budget fixture readable");
         let deep = envelope_of(&deep_src);
         let items = deep["items"].as_array().expect("items array");
-        assert!(items.len() > 1, "depth refusal repeats: {items:?}");
-        assert!(items.iter().all(|it| it["code"] == "E004"));
+        assert_eq!(items.len(), 1, "one root-cause item: {items:?}");
+        assert_eq!(items[0]["code"], "E004");
     }
 
     #[test]

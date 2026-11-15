@@ -89,6 +89,10 @@ fn field_required(field: &SchemaField) -> bool {
 struct Row {
     path: String,
     signature: String,
+    /// Static constraints, compared with direction awareness. A
+    /// type-only signature reported min/pattern/format/closed
+    /// tightenings as `no schema changes` (LANG-B-004).
+    constraints: Constraints,
     required: bool,
     removed_in: Option<String>,
     blob: Option<(Option<i64>, Option<String>)>,
@@ -105,6 +109,140 @@ fn node_signature(module: &Module, id: crate::ir::NodeId) -> String {
     }
 }
 
+/// Static constraint set for one schema field. Direction matters: raising
+/// a minimum (or lowering a maximum) can only invalidate documents that
+/// validated before, while the reverse only widens the accepted set
+/// (LANG-B-004).
+#[derive(Clone, Default, PartialEq)]
+struct Constraints {
+    min: Option<f64>,
+    max: Option<f64>,
+    min_len: Option<f64>,
+    max_len: Option<f64>,
+    pattern: Option<String>,
+    format: Option<String>,
+    members: Option<Vec<String>>,
+    closed: Option<bool>,
+    has_computed: bool,
+}
+
+fn constraints_of(module: &Module, field: &SchemaField) -> Constraints {
+    fn number(module: &Module, id: Option<crate::ir::NodeId>) -> (Option<f64>, bool) {
+        match id.and_then(|n| module.get(n)) {
+            Some(Node::Literal(crate::ir::Value::Int(n))) => (Some(*n as f64), false),
+            Some(Node::Literal(crate::ir::Value::Float(f))) => (Some(*f), false),
+            Some(_) => (None, true),
+            None => (None, false),
+        }
+    }
+    fn text(module: &Module, id: Option<crate::ir::NodeId>) -> (Option<String>, bool) {
+        match id.and_then(|n| module.get(n)) {
+            Some(Node::Literal(crate::ir::Value::String(s))) => (Some(s.clone()), false),
+            Some(_) => (None, true),
+            None => (None, false),
+        }
+    }
+    let (min, c1) = number(module, field.min);
+    let (max, c2) = number(module, field.max);
+    let (min_len, c3) = number(module, field.min_len);
+    let (max_len, c4) = number(module, field.max_len);
+    let (pattern, c5) = text(module, field.pattern);
+    let (format, c6) = text(module, field.format);
+    let (members, closed) = match &field.typ {
+        crate::types::ActiveType::Enum(members) => (Some(members.clone()), None),
+        crate::types::ActiveType::Table { closed } => (None, Some(*closed)),
+        _ => (None, None),
+    };
+    Constraints {
+        min,
+        max,
+        min_len,
+        max_len,
+        pattern,
+        format,
+        members,
+        closed,
+        has_computed: c1 || c2 || c3 || c4 || c5 || c6,
+    }
+}
+
+/// True when `new` can reject a document `old` accepted.
+fn tightened(old: &Constraints, new: &Constraints) -> bool {
+    // A computed constraint cannot be compared statically; any change in
+    // its presence is surfaced rather than assumed safe.
+    if old.has_computed != new.has_computed {
+        return true;
+    }
+    let raises = |o: Option<f64>, n: Option<f64>| match (o, n) {
+        (None, Some(_)) => true,
+        (Some(o), Some(n)) => n > o,
+        _ => false,
+    };
+    let lowers = |o: Option<f64>, n: Option<f64>| match (o, n) {
+        (None, Some(_)) => true,
+        (Some(o), Some(n)) => n < o,
+        _ => false,
+    };
+    if raises(old.min, new.min)
+        || lowers(old.max, new.max)
+        || raises(old.min_len, new.min_len)
+        || lowers(old.max_len, new.max_len)
+    {
+        return true;
+    }
+    if old.pattern != new.pattern || old.format != new.format {
+        // Any edit can narrow the accepted set; report rather than guess.
+        return old.pattern != new.pattern || old.format != new.format;
+    }
+    match (&old.members, &new.members) {
+        (Some(o), Some(n)) => n.iter().any(|m| !o.contains(m)),
+        (None, Some(_)) => true,
+        _ => false,
+    }
+    .then_some(true)
+    .unwrap_or(matches!(
+        (old.closed, new.closed),
+        (Some(false), Some(true)) | (None, Some(true))
+    ))
+}
+
+/// Render the constraints that are set, for the finding message.
+fn describe_constraints(c: &Constraints) -> String {
+    let mut parts = Vec::new();
+    if let Some(v) = c.min {
+        parts.push(format!("min={v}"));
+    }
+    if let Some(v) = c.max {
+        parts.push(format!("max={v}"));
+    }
+    if let Some(v) = c.min_len {
+        parts.push(format!("min_len={v}"));
+    }
+    if let Some(v) = c.max_len {
+        parts.push(format!("max_len={v}"));
+    }
+    if let Some(v) = &c.pattern {
+        parts.push(format!("pattern={v:?}"));
+    }
+    if let Some(v) = &c.format {
+        parts.push(format!("format={v:?}"));
+    }
+    if let Some(v) = &c.members {
+        parts.push(format!("enum={}", v.join("|")));
+    }
+    if let Some(v) = c.closed {
+        parts.push(format!("closed={v}"));
+    }
+    if c.has_computed {
+        parts.push("computed".to_string());
+    }
+    if parts.is_empty() {
+        "none".to_string()
+    } else {
+        parts.join(", ")
+    }
+}
+
 fn row_for_field(module: &Module, path: &str, field: &SchemaField) -> Row {
     let blob = matches!(field.typ, crate::types::ActiveType::Blob).then(|| {
         (
@@ -115,6 +253,7 @@ fn row_for_field(module: &Module, path: &str, field: &SchemaField) -> Row {
     Row {
         path: path.to_string(),
         signature: field.typ.name(),
+        constraints: constraints_of(module, field),
         required: field_required(field),
         removed_in: field.removed_in.clone(),
         blob,
@@ -135,10 +274,17 @@ fn collect_rows(module: &Module, root: crate::ir::NodeId, prefix: &str, out: &mu
         };
         match module.get(*id) {
             Some(Node::SchemaField { field }) => out.push(row_for_field(module, &path, field)),
-            Some(Node::SchemaTable { .. }) => {
+            Some(Node::SchemaTable { closed, .. }) => {
                 out.push(Row {
                     path: path.clone(),
                     signature: "Table".to_string(),
+                    // The `closed` flag lives on the table node; a
+                    // false->true flip rejects previously valid keys
+                    // (LANG-B-004).
+                    constraints: Constraints {
+                        closed: Some(*closed),
+                        ..Constraints::default()
+                    },
                     required: true,
                     removed_in: None,
                     blob: None,
@@ -149,6 +295,7 @@ fn collect_rows(module: &Module, root: crate::ir::NodeId, prefix: &str, out: &mu
                 out.push(Row {
                     path: path.clone(),
                     signature: format!("Array<{}>", node_signature(module, *element)),
+                    constraints: Constraints::default(),
                     required: true,
                     removed_in: None,
                     blob: None,
@@ -185,6 +332,7 @@ fn collect_element_rows(
             out.push(Row {
                 path: prefix.to_string(),
                 signature: format!("Array<{}>", node_signature(module, *inner)),
+                constraints: Constraints::default(),
                 required: true,
                 removed_in: None,
                 blob: None,
@@ -307,6 +455,16 @@ pub fn compare(old: &Module, new: &Module) -> Result<Vec<CompatFinding>, String>
                         format!(
                             "field '{path}' type changed from {} to {}",
                             old_field.signature, new_field.signature
+                        ),
+                    ));
+                } else if tightened(&old_field.constraints, &new_field.constraints) {
+                    findings.push(CompatFinding::error(
+                        code::TYPE_CHANGED,
+                        path,
+                        format!(
+                            "field '{path}' constraints tightened ({} -> {}): documents that validated before may fail now",
+                            describe_constraints(&old_field.constraints),
+                            describe_constraints(&new_field.constraints)
                         ),
                     ));
                 } else if old_field.required != new_field.required && new_field.required {

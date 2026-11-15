@@ -310,3 +310,50 @@ fn large_schema_comparison_is_linear() {
     let findings = compare_docs(&src, &src);
     assert!(findings.is_empty(), "{}", findings.len());
 }
+#[test]
+fn constraint_tightening_is_breaking_c042() {
+    // LANG-B-004: a type-only signature reported every one of these as
+    // "no schema changes" while the old document genuinely fails the new
+    // schema.
+    let cases: [(&str, &str, &str); 4] = [
+        (
+            "min tighten",
+            "schema = { n = Int(min = 0) }\nn = 1\n",
+            "schema = { n = Int(min = 10) }\nn = 1\n",
+        ),
+        (
+            "pattern add",
+            "schema = { s = String }\ns = \"abc\"\n",
+            "schema = { s = String(pattern = \"^[a-z]+$\") }\ns = \"abc\"\n",
+        ),
+        (
+            "format change",
+            "schema = { s = String(format = \"email\") }\ns = \"a@b.co\"\n",
+            "schema = { s = String(format = \"uuid\") }\ns = \"a@b.co\"\n",
+        ),
+        (
+            "closed add",
+            "schema = { t = Table { a = Int } }\nt = { a = 1 }\n",
+            "schema = { t = Table { closed = true, a = Int } }\nt = { a = 1 }\n",
+        ),
+    ];
+    for (what, old, new) in cases {
+        let findings = compare_docs(old, new);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.code == code::TYPE_CHANGED && f.severity == "error"),
+            "{what}: tightening must be C042: {findings:?}"
+        );
+    }
+}
+
+#[test]
+fn loosening_a_constraint_is_not_reported() {
+    // Removing a bound widens the accepted set: old documents still pass.
+    let findings = compare_docs(
+        "schema = { n = Int(min = 10) }\nn = 1\n",
+        "schema = { n = Int }\nn = 1\n",
+    );
+    assert!(findings.is_empty(), "{findings:?}");
+}

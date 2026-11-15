@@ -116,8 +116,9 @@ the embedder accepts the risk explicitly):
 Static shape checks (nodes, arrays, keys) run **before** the
 walk as an iterative arena scan — deterministic, span-attributed to
 the offending node (arrays) or global (nodes, keys), zero walk
-overhead. Wall-clock samples during the walk (every 1024 nodes),
-during validation (every 64 nodes), around every constraint check,
+overhead. Wall-clock samples during the walk (every 64 nodes, and
+every 1 MiB of charged bytes), during validation (every 64 nodes),
+around every constraint check,
 and once more at the end of `evaluate()` (small documents take zero
 walk samples). The sampling — not the limit — is what keeps C-055
 green.
@@ -169,6 +170,16 @@ verdict: set `max_wall_ms: 0` to disable it wherever determinism
 must be total (conformance runs do this). Never assert wall-clock
 trips in tests except through decade-margin inputs (evil regexes
 that take seconds against a millisecond limit).
+
+The deadline is sampled on **two** axes, whichever comes first
+(LANG-C-006): every 64 visited nodes, and every 1 MiB of value bytes the
+accountant charges (`WALL_SAMPLE_BYTES`). The node axis alone never fires
+on the documents that need it most - an 8-level environment doubling has
+27 nodes and materialises megabytes, so its only check used to be the
+closing one, 6-17x past the limit. The byte axis also runs *before* the
+clone that pays for it (a `Ref` charges its measured delta first), so a
+trip stops the walk ahead of the allocation. Byte sampling changes no
+limit value, only when the deadline is observed.
 
 ## 4. Hard-error semantics
 

@@ -495,7 +495,21 @@ fn check_result_depth(result: &Value, max_depth: u64) -> Result<(), EvalError> {
 pub(crate) struct Accountant {
     spent: u64,
     limit: u64,
+    /// Wall-clock sampling on materialised bytes (LANG-C-006). The walk
+    /// samples the deadline every 64 nodes, which few-node/huge-work
+    /// documents never reach (an 8-level environment doubling has 27
+    /// nodes), so the clock also fires after every `WALL_SAMPLE_BYTES`
+    /// charged bytes - whichever comes first.
+    deadline: Option<Instant>,
+    wall_limit: u64,
+    bytes_since_sample: u64,
 }
+
+/// Charged bytes between wall-clock samples: 1 MiB. One clock read per MiB
+/// is far below the cost of materialising it (~10 us against ~250 us of
+/// memcpy), and it bounds how far past the deadline a byte-heavy walk can
+/// run to a single MiB of work.
+pub const WALL_SAMPLE_BYTES: u64 = 1 << 20;
 
 impl Accountant {
     pub(crate) fn charge(
@@ -515,6 +529,23 @@ impl Accountant {
                 module,
                 node,
             ));
+        }
+        // Byte-driven wall-clock sample (LANG-C-006): the caller charges
+        // BEFORE materialising, so a trip here fires before the allocation
+        // it would have paid for.
+        if let Some(end) = self.deadline {
+            self.bytes_since_sample = self.bytes_since_sample.saturating_add(amount);
+            if self.bytes_since_sample >= WALL_SAMPLE_BYTES {
+                self.bytes_since_sample = 0;
+                if Instant::now() >= end {
+                    return Err(EvalError::budget_exceeded(
+                        BudgetKind::WallClock,
+                        self.wall_limit,
+                        module,
+                        node,
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -1485,6 +1516,9 @@ impl Engine {
         let mut account = Accountant {
             spent: dp_total,
             limit: self.budget.max_total_value_size,
+            deadline,
+            wall_limit: self.budget.max_wall_ms,
+            bytes_since_sample: 0,
         };
         // Actual materialized sizes for dynamic values (env- and
         // secret-backed strings): the DP counts 1 per node, so each
@@ -1850,7 +1884,6 @@ impl Engine {
                 }
 
                 Node::Ref(id) => {
-                    let v = values.get(id).cloned().unwrap_or(Value::Null);
                     // Dynamic targets (env/secret actuals recorded at
                     // production) charge actual-minus-bound per clone;
                     // static targets stay within DP bounds (delta zero,
@@ -1862,6 +1895,11 @@ impl Engine {
                     // ANY target, not only dynamic leaves: a container of
                     // dynamic values is far larger than its static bound,
                     // and cloning it duplicates every byte (LANG-C-001).
+                    //
+                    // Charge BEFORE the clone (LANG-C-006): clone-then-
+                    // charge lets one huge clone reach the allocator before
+                    // any ceiling fires, and the byte-driven wall sample
+                    // inside `charge` can then stop the walk first.
                     let actual = actuals
                         .get(id)
                         .copied()
@@ -1870,16 +1908,16 @@ impl Engine {
                         let bound = dp_bounds.get(id.0 as usize).copied().unwrap_or(1);
                         account.charge(module, Some(node_id), actual.saturating_sub(bound))?;
                     }
-                    if let Value::Blob {
-                        payload: Some(bytes),
-                        ..
-                    } = &v
-                    {
-                        if !self.taint_probe {
+                    if !self.taint_probe {
+                        if let Some(Value::Blob {
+                            payload: Some(bytes),
+                            ..
+                        }) = values.get(id)
+                        {
                             account.charge(module, Some(node_id), bytes.len() as u64)?;
                         }
                     }
-                    v
+                    values.get(id).cloned().unwrap_or(Value::Null)
                 }
 
                 // Semantic tags are tool treatment only: transparent to the value.

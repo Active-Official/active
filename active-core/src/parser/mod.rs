@@ -156,10 +156,51 @@ pub struct ParseOptions {
     /// When true, include paths may be absolute or escape the including
     /// directory via `..`. False by default (E015 otherwise).
     pub allow_parent_escapes: bool,
+    /// Maximum source bytes accepted (LANG-C-003). Parsing is linear in
+    /// input size, so this is the primary total-work bound: it rejects an
+    /// oversized body by metadata before a byte is allocated. 4 MiB is
+    /// more than an order of magnitude above the largest real
+    /// configuration in this repository (the biggest shipped fixture is
+    /// ~250 KB) and still small enough that a hostile body cannot
+    /// monopolize a serving thread.
+    pub max_input_bytes: usize,
+    /// Parse wall-clock base budget in milliseconds; 0 disables the clock
+    /// entirely (LANG-C-003). The effective deadline is this base plus
+    /// `PARSE_MS_PER_KIB` (30 ms) per KiB of input, so the bound scales
+    /// with the document: a document near the size cap earns the time its
+    /// own size justifies, and a hostile superlinear shape fails within a
+    /// small multiple of that legitimate cost. Sampled in the lexer and
+    /// the statement loop, so a pathological shape fails with E029
+    /// instead of hanging the embedding thread.
+    ///
+    /// The default base is 100 ms (the same number as the evaluator's
+    /// wall backstop). Measured on the reference machine, 1 MiB of
+    /// `k = v` statements parses in ~0.82 s unoptimized and ~0.24 s
+    /// optimized, against a 1 MiB budget of 30.8 s; the slowest shape
+    /// measured (5,000 tables in 160 KB) takes ~3.0 s against a 4.9 s
+    /// budget.
+    pub max_wall_ms: u64,
+    /// Parse-phase arena cap (LANG-C-003): the parser stops and fails
+    /// once the arena reaches this many nodes, so a document cannot hand
+    /// evaluation a 300k-node arena it will reject anyway. Deterministic
+    /// (unlike the clock): the same document trips at the same point on
+    /// every machine.
+    pub max_nodes: usize,
     /// Host-provided source resolver consulted INSTEAD of the filesystem
     /// read when set (F-016). `None` preserves all legacy behavior.
     pub include_loader: Option<IncludeLoader>,
 }
+
+/// Default parse input cap: 4 MiB (LANG-C-003). Above any real
+/// configuration, and large enough to hold a 1 MB scalar literal plus the
+/// rest of a document (spec/budgets.md §6 keeps such scalars ordinary).
+pub const DEFAULT_MAX_INPUT_BYTES: usize = 4 * 1024 * 1024;
+/// Default parse wall-clock base budget in milliseconds (LANG-C-003).
+/// The effective deadline adds `PARSE_MS_PER_KIB` (30 ms) per KiB of
+/// input.
+pub const DEFAULT_MAX_PARSE_WALL_MS: u64 = 100;
+/// Default parse arena cap in nodes (LANG-C-003).
+pub const DEFAULT_MAX_PARSE_NODES: usize = 1_000_000;
 
 impl Default for ParseOptions {
     fn default() -> Self {
@@ -168,6 +209,9 @@ impl Default for ParseOptions {
             enable_includes: false,
             resolve_includes: true,
             allow_parent_escapes: false,
+            max_input_bytes: DEFAULT_MAX_INPUT_BYTES,
+            max_wall_ms: DEFAULT_MAX_PARSE_WALL_MS,
+            max_nodes: DEFAULT_MAX_PARSE_NODES,
             include_loader: None,
         }
     }
@@ -181,6 +225,9 @@ impl ParseOptions {
             enable_includes: false,
             resolve_includes: true,
             allow_parent_escapes: false,
+            max_input_bytes: DEFAULT_MAX_INPUT_BYTES,
+            max_wall_ms: DEFAULT_MAX_PARSE_WALL_MS,
+            max_nodes: DEFAULT_MAX_PARSE_NODES,
             include_loader: None,
         }
     }
@@ -192,6 +239,9 @@ impl ParseOptions {
             enable_includes: false,
             resolve_includes: true,
             allow_parent_escapes: false,
+            max_input_bytes: DEFAULT_MAX_INPUT_BYTES,
+            max_wall_ms: DEFAULT_MAX_PARSE_WALL_MS,
+            max_nodes: DEFAULT_MAX_PARSE_NODES,
             include_loader: None,
         }
     }
@@ -257,11 +307,18 @@ pub fn parse_text_recovering_with_file(
 /// against the file's directory (spec §2.7). Includes are enabled
 /// regardless of the passed options' `enable_includes` flag; every other
 /// option is honored as given.
-pub fn parse_file(
+/// Read a document from disk under the input-size cap (LANG-C-003).
+///
+/// The metadata check runs BEFORE the read, so a hostile or accidental
+/// multi-gigabyte file is rejected without allocating it. The
+/// post-read cap inside `parse_recovering_impl` still binds, which covers
+/// a file that grew between the stat and the read: no check/use gap.
+fn read_document_file(
     path: &std::path::Path,
-    options: ParseOptions,
-) -> Result<Module, Vec<Diagnostic>> {
-    let src = std::fs::read_to_string(path).map_err(|e| {
+    max_input_bytes: usize,
+) -> Result<String, Vec<Diagnostic>> {
+    let file = path.to_string_lossy().into_owned();
+    let unreadable = |e: std::io::Error| {
         vec![Diagnostic {
             severity: Severity::Error,
             code: "E017".into(),
@@ -270,9 +327,37 @@ pub fn parse_file(
             span: None,
             repair: None,
             confidence: 1.0,
-            file: Some(path.to_string_lossy().into_owned()),
+            file: Some(file.clone()),
         }]
-    })?;
+    };
+    if max_input_bytes != 0 {
+        if let Ok(meta) = std::fs::metadata(path) {
+            if meta.len() > max_input_bytes as u64 {
+                return Err(vec![Diagnostic {
+                    severity: Severity::Error,
+                    code: "E029".into(),
+                    message: format!(
+                        "parse budget exceeded: input is {} bytes; the limit is {}",
+                        meta.len(),
+                        max_input_bytes
+                    ),
+                    path: None,
+                    span: None,
+                    repair: None,
+                    confidence: 1.0,
+                    file: Some(file),
+                }]);
+            }
+        }
+    }
+    std::fs::read_to_string(path).map_err(unreadable)
+}
+
+pub fn parse_file(
+    path: &std::path::Path,
+    options: ParseOptions,
+) -> Result<Module, Vec<Diagnostic>> {
+    let src = read_document_file(path, options.max_input_bytes)?;
     let mut options = options;
     options.enable_includes = true;
     let (module, errors) =
@@ -294,18 +379,7 @@ pub fn parse_file_with_trust(
     options: ParseOptions,
     trusted: &crate::sign::TrustedKeys,
 ) -> Result<Module, Vec<Diagnostic>> {
-    let src = std::fs::read_to_string(path).map_err(|e| {
-        vec![Diagnostic {
-            severity: Severity::Error,
-            code: "E017".into(),
-            message: format!("cannot read file {}: {e}", path.display()),
-            path: None,
-            span: None,
-            repair: None,
-            confidence: 1.0,
-            file: Some(path.to_string_lossy().into_owned()),
-        }]
-    })?;
+    let src = read_document_file(path, options.max_input_bytes)?;
     let mut options = options;
     options.enable_includes = true;
     let (module, errors) = parse_recovering_impl(
@@ -335,6 +409,71 @@ pub fn parse_recovering(
     parse_recovering_impl(source, name, options, None, None)
 }
 
+/// Build the fail-closed result for a parse that exceeded a LANG-C-003
+/// bound: one E029 diagnostic over an empty module. Every parse-budget
+/// exit (input size, lexer clock, parser clock, arena cap) funnels through
+/// here, so hosts see one stable shape regardless of which bound tripped.
+fn parse_budget_exceeded(
+    name: &str,
+    root_file: Option<&std::path::Path>,
+    message: String,
+) -> (Module, Vec<Diagnostic>) {
+    let mut module = Module::new(name);
+    module.diagnostics.push(Diagnostic {
+        severity: Severity::Error,
+        code: "E029".into(),
+        message,
+        path: None,
+        span: None,
+        repair: None,
+        confidence: 1.0,
+        file: root_file.map(|p| p.to_string_lossy().into_owned()),
+    });
+    let diags = module.diagnostics.clone();
+    (module, diags)
+}
+
+/// Parse wall budget per KiB of input, in milliseconds (LANG-C-003).
+/// Parsing is linear in the document's own input bytes, so the deadline
+/// scales with the legal input: a tiny document gets no more than the
+/// base budget, while a document near the size cap gets the time its own
+/// size justifies.
+///
+/// The rate is calibrated against the slowest shipped shape rather than
+/// the average: table-dense documents (one snapshot of the enclosing
+/// field map per child table) measure 18.6 ms/KiB unoptimized at 5,000
+/// tables on the reference machine, against 0.7-2.0 ms/KiB for flat keys,
+/// strings, arrays, and interpolation-heavy input. 30 ms/KiB is ~1.6x the
+/// slowest measured cost and an order of magnitude above the rest, so a
+/// linear parse never trips the clock on any build; the clock stays a
+/// backstop against superlinear work, and the size and node caps remain
+/// the primary, deterministic bounds.
+pub const PARSE_MS_PER_KIB: u64 = 30;
+
+/// Total parse wall budget for an input of `input_bytes`, in
+/// milliseconds: the configured base plus the size-scaled allowance.
+/// `0` means the bound is disabled.
+pub fn parse_wall_budget_ms(max_wall_ms: u64, input_bytes: usize) -> u64 {
+    if max_wall_ms == 0 {
+        return 0;
+    }
+    let kib = (input_bytes as u64).div_ceil(1024);
+    max_wall_ms.saturating_add(kib.saturating_mul(PARSE_MS_PER_KIB))
+}
+
+/// Absolute parse deadline for the configured wall budget, mirroring the
+/// evaluation engine's policy (spec/budgets.md §2): `0` disables it,
+/// targets without a monotonic clock (wasm32-unknown-unknown, miri) have
+/// none, and an absurd configured duration degrades to no deadline
+/// instead of panicking on `Instant` overflow.
+fn parse_deadline(max_wall_ms: u64, input_bytes: usize) -> Option<std::time::Instant> {
+    let budget = parse_wall_budget_ms(max_wall_ms, input_bytes);
+    if budget == 0 || !crate::eval::Budget::wall_supported() {
+        return None;
+    }
+    std::time::Instant::now().checked_add(std::time::Duration::from_millis(budget))
+}
+
 fn parse_recovering_impl(
     source: &str,
     name: &str,
@@ -342,8 +481,35 @@ fn parse_recovering_impl(
     root_file: Option<&std::path::Path>,
     trust: Option<crate::sign::TrustedKeys>,
 ) -> (Module, Vec<Diagnostic>) {
+    // Input-size cap first (LANG-C-003): parsing is linear in size, so
+    // this bounds total work before a byte is lexed. Without it a peer
+    // can hand the embedder an arbitrarily large body and pin the
+    // serving thread.
+    if options.max_input_bytes != 0 && source.len() > options.max_input_bytes {
+        return parse_budget_exceeded(
+            name,
+            root_file,
+            format!(
+                "parse budget exceeded: input is {} bytes; the limit is {}",
+                source.len(),
+                options.max_input_bytes
+            ),
+        );
+    }
+    let deadline = parse_deadline(options.max_wall_ms, source.len());
+    let wall_budget_ms = parse_wall_budget_ms(options.max_wall_ms, source.len());
     let mut lexer = Lexer::new(source);
+    lexer.deadline = deadline;
     let mut lexed = lexer.tokenize();
+    if lexed.budget_exceeded {
+        return parse_budget_exceeded(
+            name,
+            root_file,
+            format!(
+                "parse budget exceeded: the {wall_budget_ms} ms parse wall budget was reached while lexing"
+            ),
+        );
+    }
     let n_comments = lexed.comments.len();
     // Root comments stamp with the session file (None for string
     // input): annotation block scans match on (line, file), so the
@@ -372,6 +538,10 @@ fn parse_recovering_impl(
         include_stack: Vec::new(),
         includes_resolved: 0,
         included_bytes: 0,
+        deadline,
+        wall_budget_ms,
+        ticks: 0,
+        budget_violation: None,
         in_include: false,
         in_profile: false,
         array_depth: 0,
@@ -390,6 +560,12 @@ fn parse_recovering_impl(
     parser.extend_heal(lexed.repairs);
     parser.extend_diags(lexed.errors);
     parser.parse_document();
+    // Parse budget (LANG-C-003): a bound that tripped mid-document left a
+    // prefix arena that is not a document. Fail closed with the single
+    // E029 rather than handing evaluation a truncated tree.
+    if let Some(message) = parser.budget_violation.take() {
+        return parse_budget_exceeded(name, root_file, message);
+    }
     // Schema extraction before graph build: `schema` tables leave value
     // fields for the schema tree (spec §2.10), so neither sibling
     // resolution nor evaluation ever sees them as data.
@@ -676,6 +852,24 @@ struct Parser {
     includes_resolved: usize,
     /// Bytes read through includes so far in this parse.
     included_bytes: usize,
+    /// Parse-phase deadline (LANG-C-003): sampled in the statement loop,
+    /// the array loop, and the lexer. `None` disables the wall bound
+    /// (tests and hosts that opt out, and clock-less targets).
+    deadline: Option<std::time::Instant>,
+    /// The effective wall budget that `deadline` encodes, in
+    /// milliseconds: the configured base plus `PARSE_MS_PER_KIB` per KiB
+    /// of input. Carried for the diagnostic message (0 = disabled).
+    wall_budget_ms: u64,
+    /// Statement-loop iterations since this parser started; the sampling
+    /// divisor for the wall-clock check.
+    ticks: u32,
+    /// Set to the E029 message once a parse budget trips, so one
+    /// pathological document yields one diagnostic rather than a flood.
+    /// Doubles as the halt latch: every enclosing statement loop unwinds
+    /// without emitting follow-on syntax errors, and
+    /// `parse_recovering_impl` returns the fail-closed module instead of
+    /// the partial one.
+    budget_violation: Option<String>,
     /// True while parsing an included file: `let` bindings use
     /// first-wins (local) semantics instead of overwriting.
     in_include: bool,
@@ -970,6 +1164,52 @@ impl Parser {
         }
     }
 
+    /// Statement-loop iterations between wall-clock reads (LANG-C-003).
+    /// A statement costs microseconds, so 16 keeps the sample interval
+    /// under ~50 µs while the `Instant::now()` cost stays well below a
+    /// percent of parse time.
+    const BUDGET_SAMPLE_EVERY: u32 = 16;
+
+    /// Budget hook for the parse phase (LANG-C-003), called once per
+    /// statement and per array element. Returns true when parsing must
+    /// stop: a trip records one E029 and latches the halt so enclosing
+    /// loops unwind instead of emitting phantom syntax errors.
+    ///
+    /// The arena check is unconditional because it is load-independent
+    /// (determinism: the same document must fail at the same point on
+    /// every machine). The clock check samples, because its outcome
+    /// depends on host speed by nature.
+    fn check_parse_budget(&mut self) -> bool {
+        if self.budget_violation.is_some() {
+            return true;
+        }
+        if self.options.max_nodes != 0 && self.module.arena.len() >= self.options.max_nodes {
+            let message = format!(
+                "parse budget exceeded: node limit {} reached",
+                self.options.max_nodes
+            );
+            self.budget_violation = Some(message.clone());
+            self.error("E029", message);
+            return true;
+        }
+        self.ticks = self.ticks.wrapping_add(1);
+        if !self.ticks.is_multiple_of(Self::BUDGET_SAMPLE_EVERY) {
+            return false;
+        }
+        if let Some(end) = self.deadline {
+            if std::time::Instant::now() >= end {
+                let message = format!(
+                    "parse budget exceeded: the {} ms parse wall budget was reached",
+                    self.wall_budget_ms
+                );
+                self.budget_violation = Some(message.clone());
+                self.error("E029", message);
+                return true;
+            }
+        }
+        false
+    }
+
     /// Token kind `n` positions ahead (0 = current). Used for the two-token
     /// lookahead that distinguishes `key =`, `key:`, and `key {`.
     fn peek_kind_at(&self, n: usize) -> TokenKind {
@@ -1066,6 +1306,11 @@ impl Parser {
         pending: &mut Vec<PendingInclude>,
     ) {
         loop {
+            // Parse budget (LANG-C-003): one pathological document must
+            // fail with E029 rather than hold the embedding thread.
+            if self.check_parse_budget() {
+                return;
+            }
             self.skip_newlines();
             match self.peek_kind() {
                 TokenKind::Eof => {
@@ -1854,16 +2099,46 @@ impl Parser {
                     );
                 }
             },
-            None => match std::fs::read_to_string(&canonical) {
-                Ok(s) => s,
-                Err(e) => {
-                    return fail(
-                        self,
-                        "E017",
-                        format!("cannot read include file `{}`: {e}", canonical.display()),
-                    );
+            None => {
+                // Size pre-check before allocating (LANG-C-003): an
+                // include over the remaining byte budget must be rejected
+                // by its metadata, never read into memory first.
+                if let Ok(meta) = std::fs::metadata(&canonical) {
+                    let remaining = Self::MAX_INCLUDED_BYTES.saturating_sub(self.included_bytes);
+                    if meta.len() > remaining as u64 {
+                        return fail(
+                            self,
+                            "E028",
+                            format!(
+                                "include size budget exceeded ({} bytes read); a document may include at most {} bytes",
+                                self.included_bytes,
+                                Self::MAX_INCLUDED_BYTES
+                            ),
+                        );
+                    }
+                    if self.options.max_input_bytes != 0
+                        && meta.len() > self.options.max_input_bytes as u64
+                    {
+                        let message = format!(
+                            "parse budget exceeded: input is {} bytes; the limit is {}",
+                            meta.len(),
+                            self.options.max_input_bytes
+                        );
+                        self.budget_violation = Some(message.clone());
+                        return fail(self, "E029", message);
+                    }
                 }
-            },
+                match std::fs::read_to_string(&canonical) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        return fail(
+                            self,
+                            "E017",
+                            format!("cannot read include file `{}`: {e}", canonical.display()),
+                        );
+                    }
+                }
+            }
         };
         if let Some(keys) = &trust {
             let label = canonical.to_string_lossy().into_owned();
@@ -1896,9 +2171,20 @@ impl Parser {
         // An included file is a fresh document: profiles allowed at its
         // root, with resolution deferred to the outer document end.
         self.in_profile = false;
-        // Included files lex fresh (their own Indent/Dedent stacks).
+        // Included files lex fresh (their own Indent/Dedent stacks),
+        // under the same deadline as the document that included them:
+        // an include graph is one parse from the host's point of view.
         let mut lexer = Lexer::new(&src);
+        lexer.deadline = self.deadline;
         let lexed = lexer.tokenize();
+        if lexed.budget_exceeded {
+            let message = format!(
+                "parse budget exceeded: the {} ms parse wall budget was reached while lexing an include",
+                self.wall_budget_ms
+            );
+            self.budget_violation = Some(message.clone());
+            return fail(self, "E029", message);
+        }
         let lex_file = self.current_file_name();
         // Included comments join the shared stream with their file
         // stamped, so annotation extraction sees included bindings'
@@ -3810,6 +4096,10 @@ impl Parser {
             include_stack: Vec::new(),
             includes_resolved: self.includes_resolved,
             included_bytes: self.included_bytes,
+            deadline: self.deadline,
+            wall_budget_ms: self.wall_budget_ms,
+            ticks: 0,
+            budget_violation: self.budget_violation.take(),
             in_include: self.in_include,
             in_profile: self.in_profile,
             binding_spliced: self.binding_spliced.clone(),
@@ -3868,15 +4158,19 @@ impl Parser {
             };
             (line, col)
         };
-        for (node, span) in sub.module.node_spans.iter_mut() {
-            if node.0 >= node_base {
-                let (line, col) = lift(span.line, span.column);
-                span.line = line;
-                span.column = col;
-                let (line, col) = lift(span.end_line, span.end_column);
-                span.end_line = line;
-                span.end_column = col;
-            }
+        // Rebase exactly the nodes this predicate created (ids at or above
+        // `node_base`), addressed by id: scanning the whole span map per
+        // annotation makes a document with N annotations cost O(N^2).
+        for id in node_base..sub.module.arena.len() as u32 {
+            let Some(span) = sub.module.node_spans.get_mut(&NodeId(id)) else {
+                continue;
+            };
+            let (line, col) = lift(span.line, span.column);
+            span.line = line;
+            span.column = col;
+            let (line, col) = lift(span.end_line, span.end_column);
+            span.end_line = line;
+            span.end_column = col;
         }
         let mut sub_errors = std::mem::take(&mut sub.errors);
         let mut sub_lex_errors = lexed.errors;
@@ -3896,6 +4190,11 @@ impl Parser {
         self.extend_diags(sub_lex_errors);
         self.extend_diags(sub_errors);
         self.module = std::mem::replace(&mut sub.module, Module::new(""));
+        // A budget trip inside the embedded expression (shared arena,
+        // shared deadline) halts the enclosing document too.
+        if let Some(message) = sub.budget_violation.take() {
+            self.budget_violation = Some(message);
+        }
         if let Some(scope) = self.ident_scopes.last_mut() {
             scope.extend(new_idents);
         }
@@ -5790,14 +6089,24 @@ impl Parser {
         // Length of the inherited scope: only identifiers created *by this
         // expression* are transferred back, so repeated interpolations cannot
         // duplicate the enclosing scope.
+        // Hand the scope state to the sub-parser by move, not by clone:
+        // cloning the ident and parent-scope stacks per interpolation makes
+        // a document with N interpolations cost O(N^2) string copies
+        // (measured: 200 us per line at 2,000 lines, unoptimized). The
+        // sub-parse only appends to the innermost scope, so the state is
+        // reconstructed below from the inherited shape plus this
+        // expression's own identifiers.
+        let inherited_depth = self.ident_scopes.len();
         let inherited_len = self.ident_scopes.last().map_or(0, |s| s.len());
+        let inherited_parents = self.parent_field_scopes.len();
+        let inherited_path = self.current_path.len();
         let mut sub = Parser {
             tokens: lexed.tokens,
             pos: 0,
             module,
             errors: Vec::new(),
-            ident_scopes: self.ident_scopes.clone(),
-            parent_field_scopes: self.parent_field_scopes.clone(),
+            ident_scopes: std::mem::take(&mut self.ident_scopes),
+            parent_field_scopes: std::mem::take(&mut self.parent_field_scopes),
             depth: self.depth,
             diag_truncated: self.diag_truncated,
             options: self.options.clone(),
@@ -5807,17 +6116,21 @@ impl Parser {
             comment_files: Vec::new(),
             statements: Vec::new(),
             blocks: Vec::new(),
-            current_path: self.current_path.clone(),
+            current_path: std::mem::take(&mut self.current_path),
             brace_tables: 0,
             indent_tables: 0,
             current_file: self.current_file.clone(),
             include_stack: Vec::new(),
             includes_resolved: self.includes_resolved,
             included_bytes: self.included_bytes,
+            deadline: self.deadline,
+            wall_budget_ms: self.wall_budget_ms,
+            ticks: 0,
+            budget_violation: self.budget_violation.take(),
             in_include: self.in_include,
             in_profile: self.in_profile,
             array_depth: self.array_depth,
-            binding_spliced: self.binding_spliced.clone(),
+            binding_spliced: std::mem::take(&mut self.binding_spliced),
             pending_profiles: Vec::new(),
             trust: self.trust.clone(),
         };
@@ -5890,23 +6203,48 @@ impl Parser {
                 }
             }
         };
-        for (node, span) in sub.module.node_spans.iter_mut() {
-            if node.0 >= node_base {
-                if let Some((line, col)) = lift(span.line, span.column) {
-                    span.line = line;
-                    span.column = col;
-                }
-                if let Some((line, col)) = lift(span.end_line, span.end_column) {
-                    span.end_line = line;
-                    span.end_column = col;
-                }
+        // Rebase exactly the nodes this expression created (ids at or above
+        // `node_base`), addressed by id: scanning the whole span map per
+        // interpolation makes a document with N interpolations cost
+        // O(N^2) map iterations.
+        for id in node_base..sub.module.arena.len() as u32 {
+            let Some(span) = sub.module.node_spans.get_mut(&NodeId(id)) else {
+                continue;
+            };
+            if let Some((line, col)) = lift(span.line, span.column) {
+                span.line = line;
+                span.column = col;
+            }
+            if let Some((line, col)) = lift(span.end_line, span.end_column) {
+                span.end_line = line;
+                span.end_column = col;
             }
         }
         self.module = std::mem::replace(&mut sub.module, Module::new(""));
+        // A budget trip inside the interpolated expression (shared arena,
+        // shared deadline) halts the enclosing document too.
+        if let Some(message) = sub.budget_violation.take() {
+            self.budget_violation = Some(message);
+        }
 
-        if let Some(scope) = self.ident_scopes.last_mut() {
+        // Reconstruct the inherited scope shape: surplus scopes or entries
+        // a recovery path may have left behind are dropped, then this
+        // expression's own identifiers are merged exactly as the previous
+        // clone-and-extend did.
+        let mut idents = std::mem::take(&mut sub.ident_scopes);
+        idents.truncate(inherited_depth);
+        if let Some(scope) = idents.last_mut() {
+            scope.truncate(inherited_len.min(scope.len()));
             scope.extend(new_idents);
         }
+        self.ident_scopes = idents;
+        let mut parents = std::mem::take(&mut sub.parent_field_scopes);
+        parents.truncate(inherited_parents);
+        self.parent_field_scopes = parents;
+        let mut path = std::mem::take(&mut sub.current_path);
+        path.truncate(inherited_path);
+        self.current_path = path;
+        self.binding_spliced = std::mem::take(&mut sub.binding_spliced);
         // Rebase embedded diagnostics onto the string's source position
         // through the same lift: expression-local → stripped → source.
         let rebase = |d: &mut Diagnostic| {
@@ -5968,6 +6306,11 @@ impl Parser {
         self.array_depth += 1;
         let mut elements = Vec::new();
         loop {
+            // Parse budget (LANG-C-003): a single huge array literal is
+            // one statement, so the statement loop alone cannot bound it.
+            if self.check_parse_budget() {
+                break;
+            }
             self.skip_newlines();
             // RBrace is a mismatched closer: stop so the closing-delimiter
             // healer (H004) can see it instead of parse_primary eating it.

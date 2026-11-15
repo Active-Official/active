@@ -16,8 +16,11 @@ fields, lets, literals, units, mode/capability keys), code actions
 formatting, document and workspace symbols, and the custom
 `active/graph`, `active/impact`, `active/why` methods.
 
-Analysis is hermetic (no ambient environment) and evaluates under the
-strict budget; a trip publishes an X0xx diagnostic instead of hanging.
+Analysis is hermetic (no ambient environment) and budgeted on both
+halves; a trip publishes a coded diagnostic instead of hanging: E029 when
+a parse bound trips (4 MiB input, 1,000,000 arena nodes, a parse wall
+budget that scales with input), X0xx when evaluation exceeds the strict
+budget.
 
 ## Inspector
 

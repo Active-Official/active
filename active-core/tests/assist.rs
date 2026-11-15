@@ -55,17 +55,17 @@ fn explain_structured_matches_text_field_for_field() {
 
 #[test]
 fn explain_covers_every_documented_code() {
-    // The explainer's contract: these 20 codes always get canned
+    // The explainer's contract: these 42 codes always get canned
     // guidance; anything else must fall back explicitly. Adding a
     // diagnostic code requires updating this list AND the table —
     // silent fallback for a known code is a bug.
     let covered = [
         "E001", "E002", "E003", "E004", "E006", "E007", "E011", "E019", "E020", "E023", "E024",
         "E025", "E032", "T001", "T002", "T003", "T004", "T005", "T007", "W004", "W005", "W013",
-        "W014", "W015", "E027", "E028", "H005", "H006", "H008", "S001", "B001", "B002", "B003",
-        "B004", "B005", "C040", "C041", "C042", "C043", "C044", "E040",
+        "W014", "W015", "E027", "E028", "E029", "H005", "H006", "H008", "S001", "B001", "B002",
+        "B003", "B004", "B005", "C040", "C041", "C042", "C043", "C044", "E040",
     ];
-    assert_eq!(covered.len(), 41);
+    assert_eq!(covered.len(), 42);
     for code in covered {
         let g = explain_code(code);
         assert!(

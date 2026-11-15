@@ -15,8 +15,35 @@ use std::path::{Path, PathBuf};
     about = "Active configuration language toolchain"
 )]
 struct Cli {
+    /// Maximum document size the parser accepts, in bytes (default
+    /// 4194304; LANG-C-003). Oversized input fails with E029 before it
+    /// is read or lexed. `0` disables the cap.
+    #[arg(long, global = true, value_name = "BYTES")]
+    max_input_bytes: Option<usize>,
+    /// Parse-phase wall-clock base budget in milliseconds (default 100;
+    /// LANG-C-003). The effective deadline adds 30 ms per KiB of input, so
+    /// the bound scales with the document; `0` disables it. Raise the base
+    /// only for hosts slower than the reference measured in
+    /// spec/budgets.md §1b.
+    #[arg(long, global = true, value_name = "MS")]
+    parse_wall_ms: Option<u64>,
     #[command(subcommand)]
     command: Commands,
+}
+
+/// Process-wide parse limits from the global flags (LANG-C-003): the
+/// parser is constructed in several command paths, and the limits are a
+/// property of the process invocation, so they are resolved once here.
+static PARSE_LIMITS: std::sync::OnceLock<(usize, u64)> = std::sync::OnceLock::new();
+
+/// Apply the process-wide parse limits (LANG-C-003) to a constructed
+/// option set. Absent flags leave the library defaults intact.
+fn with_parse_limits(mut options: ParseOptions) -> ParseOptions {
+    if let Some((bytes, ms)) = PARSE_LIMITS.get() {
+        options.max_input_bytes = *bytes;
+        options.max_wall_ms = *ms;
+    }
+    options
 }
 
 /// Evaluator resource limits (spec/budgets.md, C-037). Omitted flags
@@ -861,11 +888,11 @@ fn run_inspect(
 }
 
 fn options(resilient: bool, allow_parent_escapes: bool) -> ParseOptions {
-    ParseOptions {
+    with_parse_limits(ParseOptions {
         resilient,
         allow_parent_escapes,
         ..ParseOptions::default()
-    }
+    })
 }
 
 /// Load a trusted-keys file for overlay enforcement (C-052), or
@@ -996,10 +1023,10 @@ fn source_verdict(engine: &Engine, source: &str, file: &std::path::Path) -> (boo
                 .unwrap_or_default()
         )
     }
-    let options = ParseOptions {
+    let options = with_parse_limits(ParseOptions {
         enable_includes: true,
         ..Default::default()
-    };
+    });
     let name = file.to_string_lossy();
     let (module, parse_diags) =
         active_core::parse_text_recovering_with_file(source, &name, options, file);
@@ -1414,6 +1441,14 @@ fn main() -> anyhow::Result<()> {
         .expect("spawn argument parser")
         .join()
         .expect("argument parser thread");
+    // Resolve the global parse limits once, before any command runs
+    // (LANG-C-003): every parse path then reads the same values.
+    let _ = PARSE_LIMITS.set((
+        cli.max_input_bytes
+            .unwrap_or(active_core::parser::DEFAULT_MAX_INPUT_BYTES),
+        cli.parse_wall_ms
+            .unwrap_or(active_core::parser::DEFAULT_MAX_PARSE_WALL_MS),
+    ));
 
     // Parsing and evaluation are recursive; run the command on a worker
     // with a generous stack so the documented 64-level expression limit
@@ -2868,10 +2903,10 @@ fn main() -> anyhow::Result<()> {
             // Formatting parses strictly with includes unresolved: the
             // composition structure survives and files needing repair
             // fail instead of being rewritten.
-            let options = ParseOptions {
+            let options = with_parse_limits(ParseOptions {
                 resolve_includes: false,
                 ..ParseOptions::default()
-            };
+            });
             let mut dirty = false;
             for file in &files {
                 let name = file.to_string_lossy().to_string();
@@ -2913,10 +2948,10 @@ fn main() -> anyhow::Result<()> {
         } => {
             use active_core::lint;
             let format = LintFormat::parse(&output_format)?;
-            let parse_options = ParseOptions {
+            let parse_options = with_parse_limits(ParseOptions {
                 allow_parent_escapes,
                 ..Default::default()
-            };
+            });
             // An explicit file wins; otherwise each input discovers the
             // nearest `.active-lint.toml` above it (deterministic per
             // file, so a workspace can scope rules by subtree).

@@ -46,6 +46,12 @@ pub struct Lexed {
     pub repairs: Vec<Diagnostic>,
     pub errors: Vec<Diagnostic>,
     pub comments: Vec<(String, Span)>,
+    /// True when tokenization stopped because the host-supplied deadline
+    /// passed (LANG-C-003). The token stream is then a prefix of the
+    /// document, so the caller must discard it and report E029; parsing a
+    /// truncated token stream would emit a cascade of phantom syntax
+    /// errors instead of the one honest budget diagnostic.
+    pub budget_exceeded: bool,
 }
 
 /// Maximum lexical diagnostics retained per tokenization. Same bound
@@ -203,7 +209,17 @@ pub struct Lexer {
     indent_stack: Vec<usize>,
     /// True at the start of a physical line that still needs measurement.
     at_line_start: bool,
+    /// Absolute tokenization deadline (LANG-C-003), or `None` for no wall
+    /// bound. Sampled every `DEADLINE_SAMPLE_EVERY` source-loop iterations
+    /// so the clock read stays off the hot path: a 4 MiB document costs
+    /// about 2,000 samples, each ~20 ns.
+    pub deadline: Option<std::time::Instant>,
 }
+
+/// Source-loop iterations between deadline samples. Small enough that a
+/// tripped bound is observed within a few hundred microseconds, large
+/// enough that clock reads stay under a percent of lexing cost.
+const DEADLINE_SAMPLE_EVERY: u32 = 2048;
 
 impl Lexer {
     pub fn new(src: &str) -> Self {
@@ -219,6 +235,7 @@ impl Lexer {
             open_delims: Vec::new(),
             indent_stack: vec![0],
             at_line_start: true,
+            deadline: None,
         }
     }
 
@@ -505,8 +522,24 @@ impl Lexer {
         let mut repairs: Vec<Diagnostic> = Vec::new();
         let mut errors: Vec<Diagnostic> = Vec::new();
         let mut comments: Vec<(String, Span)> = Vec::new();
+        let mut steps: u32 = 0;
+        let mut budget_exceeded = false;
 
         loop {
+            // Wall-clock sampling (LANG-C-003): a pathological body must
+            // fail with E029 instead of pinning the embedding thread.
+            if self.deadline.is_some() {
+                steps = steps.wrapping_add(1);
+                if steps.is_multiple_of(DEADLINE_SAMPLE_EVERY) {
+                    if let Some(end) = self.deadline {
+                        if std::time::Instant::now() >= end {
+                            budget_exceeded = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
             // Indentation is measured at the start of each physical line, and
             // only at bracket depth 0 (spec/dual-syntax.md §3).
             if self.at_line_start {
@@ -1019,6 +1052,19 @@ impl Lexer {
             }
         }
 
+        if budget_exceeded {
+            // The token stream is a prefix; the caller reports E029 and
+            // drops it. Skipping the closing indentation pass keeps this
+            // path free of invented Dedent/Eof tokens.
+            return Lexed {
+                tokens: Vec::new(),
+                repairs,
+                errors,
+                comments,
+                budget_exceeded: true,
+            };
+        }
+
         // End of input closes every open indentation block
         // (spec/dual-syntax.md §4.2).
         while self.indent_stack.len() > 1 {
@@ -1038,6 +1084,7 @@ impl Lexer {
             repairs,
             errors,
             comments,
+            budget_exceeded: false,
         }
     }
 

@@ -13,8 +13,8 @@ process, not the document.
 
 | Half | Where | What it caps | Failure mode |
 |---|---|---|---|
-| Static caps | Parser (per file, at parse time) | Expression nesting (64, E004), block nesting (64, E011), schema-type nesting (64, E004), include depth (32 files, E016) | Diagnose with a span and **recover** (substitute null / skip body) — parsing always terminates |
-| Runtime accountant | Evaluator (`Engine::budget`) | Nodes visited, value nesting depth, array length, total keys, wall-clock time | **Abort** with X001–X005 — no value tree is returned |
+| Static caps | Parser (per file, at parse time) | Input bytes (1 MiB, E029), arena nodes (1,000,000, E029), parse wall clock (2 s, E029), expression nesting (64, E004), block nesting (64, E011), schema-type nesting (64, E004), include depth (32 files, E016), include fan-out (256 resolutions / 16 MiB, E028) | **Fail closed** on the three work bounds (no tree is returned); diagnose with a span and **recover** on the shape bounds (substitute null / skip body) — parsing always terminates |
+| Runtime accountant | Evaluator (`Engine::budget`) | Nodes visited, value nesting depth, array length, total keys, wall-clock time | **Abort** with X001–X006 — no value tree is returned |
 
 The parser is recursive descent, so reaching the 64-level expression limit
 uses several stack frames per level. The shipped CLI and language server run
@@ -29,6 +29,73 @@ the arena — the accountant then guards *scale* (a 50 MB monster
 config fails fast with an X-code instead of eating CI) and
 *pathological dynamics* (regex backtracking, merged nesting deeper
 than any single file allows).
+
+## 1b. The parse-phase work bounds (LANG-C-003)
+
+Parsing runs before evaluation and before any runtime limit exists, so it
+carries its own three bounds (`ParseOptions`). They are **hard ceilings
+with a fail-closed exit**: when one trips, the partial arena is discarded,
+the module carries exactly one E029, and nothing is evaluated. Handing a
+truncated tree to evaluation would report phantom syntax errors for a
+document whose only problem is size.
+
+| Field | Default | Checked | Trip message |
+|---|---|---|---|
+| `max_input_bytes` | 4,194,304 (4 MiB) | String entry: `source.len()` before lexing. File entry (`parse_file`, `parse_file_with_trust`): file length from metadata **before** the read. Includes: metadata before the read, per file. | `parse budget exceeded: input is <n> bytes; the limit is <n>` |
+| `max_nodes` | 1,000,000 | Arena length, once per statement and per array element | `parse budget exceeded: node limit <n> reached` |
+| `max_wall_ms` (base) | 100, plus 30 ms per KiB of input | Lexer loop every 2,048 iterations; statement loop every 16 statements; once per include | `parse budget exceeded: the <n> ms parse wall budget was reached` |
+
+Design rules:
+
+- **The size cap is the primary bound and it is deterministic.** Parsing
+  is linear in input bytes, so capping bytes caps total parse work: the
+  same document is rejected by the same bound on every machine, and the
+  metadata check means an oversized file is never allocated. 4 MiB is
+  more than an order of magnitude above the largest fixture in this
+  repository (~250 KB) and leaves room for the 1 MB scalar literals §6
+  keeps ordinary, plus the rest of a document around them.
+- **The node cap is the deterministic backstop for expansion.** Includes
+  compose up to 16 MiB of source into one arena, so a small root can
+  still describe a large tree. 1,000,000 nodes is ten times the default
+  evaluator `max_nodes` (100,000): a document that would be rejected by
+  evaluation anyway never gets built.
+- **The clock is a backstop against superlinear shape, not the routine
+  bound.** It is excluded from the determinism contract for the same
+  reason as X002 (§3). The budget is `base + 30 ms per KiB of input`, so
+  it scales with the document: the effective deadline for a maximum-size
+  input is 122,980 ms, and for a 160 KB input 4,900 ms. The rate is
+  calibrated against the slowest shipped shape rather than the average:
+  table-dense documents (one enclosing-field-map snapshot per child
+  table) measure 18.6 ms/KiB unoptimized at 5,000 tables on the reference
+  machine, while flat keys, strings, arrays, and interpolation-heavy input
+  measure 0.7-2.0 ms/KiB. 30 ms/KiB is ~1.6x the slowest measured cost and
+  an order of magnitude above the rest, so a *linear* parse of a legal
+  document never trips the clock on any build, while a superlinear shape
+  (or an include graph whose total work dwarfs the root) fails within a
+  small multiple of its legitimate cost. Raise the base when you raise
+  `max_input_bytes` for faster hardware expectations; the per-KiB
+  allowance follows the size automatically. Generated documents with tens
+  of thousands of tables exceed the shipped rate today; raise
+  `--parse-wall-ms` (or `ParseOptions::max_wall_ms`) for them.
+- **Clock-less targets have no parse clock.** `wasm32-unknown-unknown`
+  and miri return no deadline (`Budget::wall_supported()` is false), and
+  the size and node caps still bound the parse there. Termination never
+  depends on the clock.
+
+Tuning:
+
+- Library: set the three `ParseOptions` fields; `0` disables a bound
+  (the embedder accepts the risk explicitly). `ParseOptions::default()`,
+  `::strict()`, and `::resilient_mode()` share the shipped values.
+- CLI: `--max-input-bytes <BYTES>` and `--parse-wall-ms <MS>` (the base)
+  are global flags on every subcommand (defaults above; `0` disables).
+  Raise `--max-input-bytes` for generated input larger than 4 MiB; the
+  wall allowance follows the size.
+- FFI (C ABI v1): `active_parse_limits_set(max_input_bytes, max_wall_ms)`
+  sets the same two bounds process-wide for every later parse; `0` keeps
+  the shipped default, and the C boundary deliberately has no "unlimited".
+- The parse bounds and the evaluator budget are separate: a document can
+  parse cleanly and still fail X001. Sizing a host means choosing both.
 
 ## 2. The seven runtime limits
 

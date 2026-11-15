@@ -85,6 +85,23 @@ typedef struct ActiveBudget {
 } ActiveBudget;
 
 /**
+ * Set the process-wide parse bounds used by every later parse on this
+ * library (LANG-C-003). `0` keeps the library default for that field
+ * (4 MiB input, a wall budget that scales with input). Returns
+ * `ACTIVE_ERR_OK`.
+ *
+ * There is deliberately no way to disable the bounds through the C ABI:
+ * the boundary always keeps hard parse ceilings, and a host that needs
+ * larger documents raises them to explicit values.
+ *
+ * # Safety
+ *
+ * No preconditions; always safe to call. The settings are process-wide
+ * and take effect for parses that start after the call.
+ */
+int32_t active_parse_limits_set(uintptr_t max_input_bytes, uint64_t max_wall_ms);
+
+/**
  * ABI version constant for bindings to check at load time.
  * # Safety
  *

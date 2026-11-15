@@ -51,6 +51,15 @@ thread, must not re-enter eval on the same module, and return owned buffers
 under Model A below. Callback failures surface as diagnostics; they never
 hang the call.
 
+Parse bounds: `active_parse_limits_set(max_input_bytes, max_wall_ms)` sets
+process-wide parse ceilings used by every later parse (LANG-C-003); `0`
+keeps the shipped default for that field (4 MiB input, a wall budget
+that scales with input).
+Defaults apply without any call: an oversize document fails parse with
+`PARSE` (1) instead of being lexed. The C boundary intentionally offers no
+"unlimited" request — a host that needs larger documents raises the ceilings
+to explicit values.
+
 ## 3. Error codes (F-002; codes are API per G-025)
 
 Stable `ACTIVE_ERR_*` integers: OK(0), PARSE(1), UNRESOLVED_REF(2),

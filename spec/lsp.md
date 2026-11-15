@@ -17,8 +17,12 @@ ACTIVE-core directly (parse recovering, evaluate, lint, format).
 - Analysis is hermetic and budgeted: the server evaluates buffers
   with an empty environment snapshot and the strict budget preset,
   so ambient host values never leak into hover/completion and a
-  pathological document fails closed as an X0xx diagnostic instead
-  of hanging the editor. Non-file buffers (`untitled:`) record
+  pathological document fails closed with a coded diagnostic instead
+  of hanging the editor — E029 when a parse bound trips (4 MiB input,
+  1,000,000 arena nodes, a parse wall budget that scales with input;
+  LANG-C-003) before
+  evaluation starts, X0xx when evaluation exceeds the runtime budget.
+  Non-file buffers (`untitled:`) record
   `include` statements without resolving them, so the server never
   reads its working directory on their behalf.
 - `textDocument/didOpen` (full text, `languageId: ACTIVE`),

@@ -30,6 +30,16 @@ schema = {
 - First wins on repetition, like every other schema argument.
 - Includes: metadata follows local-wins — absent local keys inherit the included document's values.
 
+**The floors are advisory metadata (LANG-B-021).** `min_reader` and `min_writer`
+are checked by `active compatibility` against a peer document's `version`; the
+evaluator does not enforce them, because evaluation has no reader version to
+compare against (the reader is the host, and the C ABI does not carry a host
+version). A document declaring `min_reader = "9.9.9"` still evaluates: the floor
+is a publication-time contract, not a runtime gate. Enforcing it at evaluation
+would require the host to declare its version — recorded as a 2.0 ABI item, not
+implemented in v1.
+
+
 Per-field removal schedule:
 
 ```active

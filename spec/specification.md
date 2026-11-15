@@ -259,7 +259,12 @@ evaluate(module):
 - `Int`/`Float` arithmetic is homogeneous or mixed (mixed promotes to `Float`);
   integer division by zero is a `TypeError` (T001). `Int` `+`/`-`/`*` and
   unary `-` saturate at the i64 bounds (never panic, never wrap);
-  `i64::MIN / -1` saturates at `i64::MAX`.
+  `i64::MIN / -1` saturates at `i64::MAX`. Saturation is deliberate and is
+  not a diagnostic (LANG-B-023): arithmetic never panics, never wraps, and
+  never aborts a configuration. Float arithmetic is the opposite: a
+  non-finite result (overflow to infinity, NaN) is T001 (LANG-B-901),
+  because a float has no honest clamp and would export as a different
+  value.
 - `DurationMs` arithmetic: `+`/`-` with another duration, `*`/`÷` with an
   `Int`/`Float` scalar, `÷` duration-by-duration ⇒ `Int` ratio; ordering
   comparisons on two durations. Adding a duration to a non-duration is a

@@ -357,3 +357,23 @@ fn loosening_a_constraint_is_not_reported() {
     );
     assert!(findings.is_empty(), "{findings:?}");
 }
+
+#[test]
+fn a_defaulted_addition_qualifies_the_strict_mode_caveat() {
+    // LANG-B-016: the report must not claim plain "old documents still
+    // validate" - strict mode still requires the value (T004).
+    let findings = compare_docs(
+        "schema = { host = String }\nhost = \"x\"\n",
+        "schema = { host = String, replicas = Int(default = 1) }\nhost = \"x\"\n",
+    );
+    let added = findings
+        .iter()
+        .find(|f| f.code == code::ADDED_REQUIRED && f.path == "replicas")
+        .expect("addition reported");
+    assert_eq!(added.severity, "info");
+    assert!(
+        added.message.contains("resilient mode") && added.message.contains("strict mode"),
+        "{}",
+        added.message
+    );
+}

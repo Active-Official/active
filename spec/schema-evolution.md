@@ -47,7 +47,7 @@ schema = {
 | Change | Code | Severity | Rationale |
 |---|---|---|---|
 | Added field without default (and non-Null) | C040 | error | Old documents fail the new schema |
-| Added field with default or Null type | C040 | info | Old documents still validate |
+| Added field with default or Null type | C040 | info | Old documents still validate under resilient evaluation; strict mode still requires the value explicitly (T004) |
 | Removed field | C041 | error | Old readers/writers lose data |
 | Removed field with `removed_in` ≤ new version | C041 | info | Removal was scheduled |
 | Type changed | C042 | error | Existing values may fail |

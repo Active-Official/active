@@ -441,7 +441,7 @@ pub fn compare(old: &Module, new: &Module) -> Result<Vec<CompatFinding>, String>
                         code::ADDED_REQUIRED,
                         path,
                         format!(
-                            "field '{path}' added with a default or Null type: old documents still validate"
+                            "field '{path}' added with a default or Null type: old documents still validate in resilient mode; strict mode still requires the value explicitly (T004)"
                         ),
                     ));
                 }

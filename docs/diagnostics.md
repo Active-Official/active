@@ -92,7 +92,7 @@ parses leave it unset and tools fall back to the input filename.
 
 | Code | Message | Span | Emitted when |
 |---|---|---|---|
-| C040 | `field '<name>' added without a default: old documents fail the new schema` (info variant when defaulted/Null) | compatibility report path | A required field was added; old documents fail the new schema |
+| C040 | `field '<name>' added without a default: old documents fail the new schema` (info variant when defaulted/Null) | compatibility report path | A required field was added; old documents fail the new schema. The info variant (defaulted/Null addition) means resilient evaluation still accepts old documents; strict mode still requires the value explicitly (T004) |
 | C041 | `field '<name>' removed: old readers and writers lose data` (info variant when removed on schedule) | compatibility report path | A field was removed; scheduled removals (`removed_in` at or before the new version) are info |
 | C042 | `field '<name>' type changed from <a> to <b>` / `blob '<path>' max_size tightened …` / `blob '<path>' media type changed …` | compatibility report path | A field type changed or a blob constraint tightened |
 | C043 | `version regressed from <old> to <new>` | schema.version | The new schema version is older than the old one |

@@ -107,13 +107,17 @@ impl Emitter {
         let mut seen = HashSet::new();
         for (key, val) in map {
             let (clean, renamed) = self.block_key(key, val);
+            let base = clean.clone();
+            let clean = disambiguate(clean, &mut seen);
             if renamed {
-                self.note("W007", format!("imported key '{key}' renamed to '{clean}'"));
+                self.note("W007", format!("imported key '{key}' renamed to '{base}'"));
             }
-            if !seen.insert(clean.clone()) {
+            if clean != base {
                 self.note(
                     "W007",
-                    format!("duplicate key '{clean}' after sanitization; last wins"),
+                    format!(
+                        "key '{key}' collided with an earlier sanitized key; emitted as '{clean}'"
+                    ),
                 );
             }
             let child = if path.is_empty() {
@@ -216,11 +220,10 @@ impl Emitter {
                     if clean != *key {
                         self.note("W007", format!("imported key '{key}' renamed to '{clean}'"));
                     }
-                    if !seen.insert(clean.clone()) {
-                        self.note(
-                            "W007",
-                            format!("duplicate key '{clean}' after sanitization; last wins"),
-                        );
+                    let base = clean.clone();
+                    let clean = disambiguate(clean, &mut seen);
+                    if clean != base {
+                        self.note("W007", format!("key '{key}' collided with an earlier sanitized key; emitted as '{clean}'"));
                     }
                     let inline = self.inline(item);
                     parts.push(format!("{clean} = {inline}"));
@@ -446,6 +449,24 @@ fn sanitize_key(key: &str) -> String {
         clean.push('_');
     }
     clean
+}
+
+/// Make a sanitized key unique within its object. Two distinct source
+/// keys can collapse to the same ASCII shape (`café` -> `caf_`,
+/// `caf_` -> `caf_`); suffixing keeps both values instead of dropping
+/// one (LANG-B-008). Deterministic: source order decides the suffix.
+fn disambiguate(clean: String, taken: &mut std::collections::HashSet<String>) -> String {
+    if taken.insert(clean.clone()) {
+        return clean;
+    }
+    let mut n = 2u32;
+    loop {
+        let candidate = format!("{clean}_{n}");
+        if taken.insert(candidate.clone()) {
+            return candidate;
+        }
+        n += 1;
+    }
 }
 
 /// Contextual renames, applied after `sanitize_key` wherever a value
@@ -717,8 +738,16 @@ impl SchemaConverter {
         path: &str,
     ) -> String {
         let mut parts = Vec::new();
+        let mut taken: std::collections::HashSet<String> = std::collections::HashSet::new();
         for (key, subschema) in props {
-            let name = self.field_name(key);
+            let base = self.field_name(key);
+            // Schema field names collide the same way values do
+            // (LANG-B-008): suffix instead of emitting two fields with
+            // the same name.
+            let name = disambiguate(base.clone(), &mut taken);
+            if name != base {
+                self.note_code("W007", format!("schema field '{key}' collided with an earlier sanitized field; emitted as '{name}'"));
+            }
             let child = if path.is_empty() {
                 name.clone()
             } else {

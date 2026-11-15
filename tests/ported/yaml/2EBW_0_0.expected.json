@@ -1,5 +1,7 @@
 {
-  "_foo": "safe dash",
+  "_foo": "safe question mark",
+  "_foo_2": "safe colon",
+  "_foo_3": "safe dash",
   "a_______________09_______AZ______az____": "safe",
   "this_is_not": "a comment"
 }

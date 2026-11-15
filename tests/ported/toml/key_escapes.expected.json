@@ -1,5 +1,8 @@
 {
-  "_": "latin capital letter A with grave",
+  "_": "bell",
+  "__2": "newline",
+  "__3": "just a quote",
+  "__4": "latin capital letter A with grave",
   "_quoted_": {
     "quote": true
   },

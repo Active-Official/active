@@ -61,6 +61,14 @@ silent drops.
 
 
 **Non-finite floats never cross a converter.** `inf`, `-inf`, and `NaN` are rejected at parse (E023 for an overflowing literal), at arithmetic (T001), and at resilient coercion (the T002 stands). No exporter maps a number to `null`; the JSON model's inf→null behaviour is never used (LANG-B-009).
+
+**Keys are ASCII identifiers.** Active identifiers are ASCII-only, so the
+reverse converters sanitize every foreign key: characters outside
+`[A-Za-z0-9_]` become `_`, a leading digit gains `_`, and reserved words gain a
+trailing `_`. Sanitization is announced (W007). Two distinct source keys can
+collapse to the same shape (`café` and `caf_` both become `caf_`); the later key
+is suffixed (`caf__2`, `caf__3`, ...) so **no value is lost**, and the collision
+is announced (W007) on both value and schema imports (LANG-B-008).
 `json_to_active`, `yaml_to_active`, `toml_to_active` return
 `(String, Vec<Diagnostic>)`: best-effort ACTIVE source plus
 diagnostics for lossy corners. Emission style is brace blocks

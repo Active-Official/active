@@ -1,7 +1,8 @@
 {
   "Section": {
     "M": "latin letter M",
-    "_": "greek small letter mu",
+    "_": "greek capital letter MU",
+    "__2": "greek small letter mu",
     "name": "different section!!"
   },
   "sectioN": "NN",

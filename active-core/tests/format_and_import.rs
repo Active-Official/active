@@ -48,3 +48,43 @@ fn i64_min_round_trips_through_import() {
     assert_eq!(json["a"], i64::MIN, "{json}");
     assert_eq!(json["b"], i64::MAX, "{json}");
 }
+
+#[test]
+fn sanitized_key_collisions_keep_every_value() {
+    // `café` and `caf_` both sanitize to `caf_`; the importer must not
+    // drop one value. The second is suffixed and announced (LANG-B-008).
+    let doc = serde_json::json!({ "café": 1, "caf_": 2 });
+    let (text, notes) = active_core::convert::import::json_value_to_active(&doc);
+    assert_eq!(text.matches("caf_").count(), 2, "{text}");
+    assert!(text.contains("caf__2 = 2"), "{text}");
+    assert!(
+        notes
+            .iter()
+            .any(|d| d.code == "W007" && d.message.contains("collided")),
+        "{notes:?}"
+    );
+    // Both values survive the round trip.
+    let module = parse(&text, "collision").expect("parse");
+    let (value, _d) = Engine::new().evaluate(&module).expect("evaluate");
+    let json: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(json["caf_"], 1, "{json}");
+    assert_eq!(json["caf__2"], 2, "{json}");
+}
+
+#[test]
+fn schema_field_collisions_are_disambiguated() {
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": { "café": {"type": "string"}, "caf_": {"type": "string"} }
+    });
+    let (text, notes) =
+        active_core::convert::import::jsonschema_to_active(&schema.to_string()).expect("import");
+    assert!(text.contains("caf__2"), "{text}");
+    assert!(
+        notes
+            .iter()
+            .any(|d| d.code == "W007" && d.message.contains("collided")),
+        "{notes:?}"
+    );
+}

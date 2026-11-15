@@ -242,20 +242,75 @@ pub fn range_of_span(text: &str, span: &active_core::diag::Span) -> Range {
     }
 }
 
-/// Core 1-based (line, char column) → LSP position. Out-of-range
-/// lines/columns clamp to the document (spans from recovering parses
-/// can point past truncated text).
-fn core_to_lsp(text: &str, line_1: u32, col_1: u32) -> Position {
-    let lines: Vec<&str> = text.split('\n').collect();
+/// Precomputed line starts for a document, so converting many diagnostics
+/// is linear in the diagnostics instead of quadratic in the text:
+/// `core_to_lsp` used to `split('\n').collect()` per position, which cost
+/// ~2.8 s to publish 20k duplicate-key warnings on a 120 KB buffer.
+pub(crate) struct LineIndex<'a> {
+    text: &'a str,
+    /// Byte offset of each line's first character (line 0 first).
+    starts: Vec<usize>,
+}
+
+impl<'a> LineIndex<'a> {
+    pub(crate) fn new(text: &'a str) -> Self {
+        Self {
+            text,
+            starts: line_starts(text),
+        }
+    }
+
+    pub(crate) fn position(&self, line_1: u32, col_1: u32) -> Position {
+        position_in(self.text, &self.starts, line_1, col_1)
+    }
+}
+
+/// Byte offset of each line's first character. Bulk callers cache this per
+/// file so many diagnostics cost one pass over the text.
+pub(crate) fn line_starts(text: &str) -> Vec<usize> {
+    let mut starts = Vec::with_capacity(text.len() / 24 + 1);
+    starts.push(0);
+    for (offset, byte) in text.bytes().enumerate() {
+        if byte == b'\n' {
+            starts.push(offset + 1);
+        }
+    }
+    starts
+}
+
+/// Core 1-based (line, char column) -> LSP position. Out-of-range
+/// lines/columns clamp to the document (spans from recovering parses can
+/// point past truncated text).
+pub(crate) fn position_in(text: &str, starts: &[usize], line_1: u32, col_1: u32) -> Position {
     let line_0 = line_1
         .saturating_sub(1)
-        .min(lines.len().saturating_sub(1) as u32);
-    let line_text = lines.get(line_0 as usize).copied().unwrap_or("");
+        .min(starts.len().saturating_sub(1) as u32);
+    let start = starts[line_0 as usize];
+    let end = starts
+        .get(line_0 as usize + 1)
+        .copied()
+        .unwrap_or(text.len());
+    let raw = &text[start..end];
+    let line_text = raw.strip_suffix('\n').unwrap_or(raw);
     let char_idx = (col_1.saturating_sub(1) as usize).min(line_text.chars().count());
     Position {
         line: line_0,
         character: char_to_utf16(line_text, char_idx),
     }
+}
+
+pub(crate) fn range_in(text: &str, starts: &[usize], span: &active_core::diag::Span) -> Range {
+    Range {
+        start: position_in(text, starts, span.line, span.column),
+        end: position_in(text, starts, span.end_line, span.end_column),
+    }
+}
+
+/// Core 1-based (line, char column) -> LSP position via a one-shot index.
+/// Single-shot callers use this; bulk conversion builds a [`LineIndex`]
+/// once and calls `position` directly.
+fn core_to_lsp(text: &str, line_1: u32, col_1: u32) -> Position {
+    LineIndex::new(text).position(line_1, col_1)
 }
 
 /// Identifier characters for symbol lookup.
@@ -2356,10 +2411,22 @@ pub fn workspace_symbols<'a>(
 /// diagnostics publish as zero-length ranges at (0,0) rather than
 /// vanishing.
 fn to_lsp_diagnostic(text: &str, diag: &Diagnostic) -> lsp_types::Diagnostic {
+    let starts = line_starts(text);
+    to_lsp_diagnostic_indexed(text, &starts, diag)
+}
+
+/// Bulk-conversion form: the caller supplies the document text and its
+/// cached line starts, so a thousand diagnostics cost one pass over the
+/// text, not a thousand.
+fn to_lsp_diagnostic_indexed(
+    text: &str,
+    starts: &[usize],
+    diag: &Diagnostic,
+) -> lsp_types::Diagnostic {
     let range = diag
         .span
         .as_ref()
-        .map(|span| range_of_span(text, span))
+        .map(|span| range_in(text, starts, span))
         .unwrap_or(Range {
             start: Position {
                 line: 0,
@@ -2441,6 +2508,13 @@ pub fn diagnostics_by_file(
     // The open document always publishes (possibly empty): clients
     // clear stale markers on every open/change.
     groups.insert(doc.uri.to_string(), (doc.uri.clone(), Vec::new()));
+    // One line index per file, not per diagnostic (LANG-C-005 follow-up):
+    // a duplicate-key document publishes one warning per duplicate, and
+    // re-splitting the text for each of them made publishing quadratic
+    // (2.8 s for 20k warnings on a 120 KB buffer, 80 s for a 3 MB one).
+    let mut indexes: std::collections::HashMap<String, (String, Vec<usize>)> =
+        std::collections::HashMap::new();
+    let doc_index = line_starts(&doc.text);
     for diag in doc
         .parse_diags
         .iter()
@@ -2452,11 +2526,17 @@ pub fn diagnostics_by_file(
                 .entry(doc.uri.to_string())
                 .or_insert_with(|| (doc.uri.clone(), Vec::new()))
                 .1
-                .push(to_lsp_diagnostic(&doc.text, diag));
+                .push(to_lsp_diagnostic_indexed(&doc.text, &doc_index, diag));
         } else if let Some(stamped) = diag.file.as_deref() {
             let uri = Url::from_file_path(stamped).unwrap_or_else(|_| doc.uri.clone());
             let converted = match lookup(stamped) {
-                Some(text) => to_lsp_diagnostic(&text, diag),
+                Some(text) => {
+                    let entry = indexes.entry(stamped.to_string()).or_insert_with(|| {
+                        let starts = line_starts(&text);
+                        (text, starts)
+                    });
+                    to_lsp_diagnostic_indexed(&entry.0, &entry.1, diag)
+                }
                 None => {
                     let mut fallback = to_lsp_diagnostic("", diag);
                     fallback.range = zero_range();

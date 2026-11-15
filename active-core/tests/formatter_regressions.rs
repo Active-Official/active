@@ -42,3 +42,32 @@ fn references_to_tables_render_as_blocks() {
         assert_eq!(once, fmt::format(&reparsed, style), "{style:?}:\n{once}");
     }
 }
+
+#[test]
+fn an_aliased_empty_table_renders_inline_and_stays_idempotent() {
+    // Fuzz seed crash-f438d19: `ye` resolves to an EMPTY table through a
+    // Ref. The empty-vs-block decision read the Ref node (not a table), so
+    // pass one emitted `ye {\n}`; that re-parses as an empty table node
+    // whose inline form is `ye = {}`, so pass two differed.
+    let src = "e=o[o]+++++[o]ye=o[oo]";
+    let module = parse(src, "fmt-alias-empty").expect("parse");
+    for style in [Style::Brace, Style::Indent] {
+        let once = fmt::format(&module, style);
+        let reparsed = parse(&once, "fmt-alias-empty").expect("re-parse");
+        let twice = fmt::format(&reparsed, style);
+        assert_eq!(once, twice, "{style:?} not idempotent:\n{once}");
+        assert!(
+            !once.contains("ye {\n}"),
+            "{style:?} must emit the inline empty form: {once}"
+        );
+    }
+
+    // The same shape by hand: an alias to an empty table.
+    let src = "empty = {}\nalias = empty\n";
+    let module = parse(src, "fmt-alias-empty-2").expect("parse");
+    for style in [Style::Brace, Style::Indent] {
+        let once = fmt::format(&module, style);
+        let reparsed = parse(&once, "fmt-alias-empty-2").expect("re-parse");
+        assert_eq!(once, fmt::format(&reparsed, style), "{style:?}:\n{once}");
+    }
+}

@@ -37,11 +37,15 @@ fn cdylib_path() -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
-/// A clean document just over the 1 MiB default cap.
+/// A clean document just over the shipped parse input cap. The cap comes
+/// from the library constant, so raising the default cannot silently turn
+/// this test into a no-op (it did: the test hard-coded 1 MiB and kept
+/// passing locally only because the cdylib was stale).
 fn oversize_document() -> String {
+    let cap = active_core::parser::DEFAULT_MAX_INPUT_BYTES;
     let mut src = String::new();
     let mut i = 0usize;
-    while src.len() <= 1024 * 1024 {
+    while src.len() <= cap {
         src.push_str(&format!("k{i} = {i}\n"));
         i += 1;
     }
@@ -69,13 +73,15 @@ fn parse_limits_set_raises_and_restores_the_default_cap() {
             lib.get(b"active_last_error").expect("symbol");
 
         let src = oversize_document();
-        assert!(src.len() > 1024 * 1024);
+        let cap = active_core::parser::DEFAULT_MAX_INPUT_BYTES;
+        assert!(src.len() > cap);
 
         // Default cap: the same document fails to parse.
         let handle = parse(src.as_ptr(), src.len(), std::ptr::null());
         assert!(
             handle.is_null(),
-            "the default 1 MiB cap must reject an oversize document"
+            "the shipped {cap}-byte cap must reject a {}-byte document",
+            src.len()
         );
         assert_eq!(last_error(), 1, "PARSE is the coded failure");
 
@@ -88,7 +94,9 @@ fn parse_limits_set_raises_and_restores_the_default_cap() {
         );
         free(handle);
 
-        // Resetting to 0 restores the shipped default.
+        // The order matters: the original test never reset the process-wide
+        // limits, so a second test in this binary would inherit the raised
+        // cap. Resetting to 0 restores the shipped default.
         assert_eq!(set_limits(0, 0), 0);
         let handle = parse(src.as_ptr(), src.len(), std::ptr::null());
         assert!(

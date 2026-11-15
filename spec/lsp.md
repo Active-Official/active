@@ -20,8 +20,8 @@ ACTIVE-core directly (parse recovering, evaluate, lint, format).
   pathological document fails closed with a coded diagnostic instead
   of hanging the editor — E029 when a parse bound trips (4 MiB input,
   1,000,000 arena nodes, a parse wall budget that scales with input;
-  LANG-C-003) before
-  evaluation starts, X0xx when evaluation exceeds the runtime budget.
+  LANG-C-003) before evaluation starts, X0xx when evaluation exceeds the
+  runtime budget.
   Non-file buffers (`untitled:`) record
   `include` statements without resolving them, so the server never
   reads its working directory on their behalf.
@@ -36,6 +36,37 @@ ACTIVE-core directly (parse recovering, evaluate, lint, format).
   reach any response (C-036): hover values render redacted.
 - Positions are LSP UTF-16: core 1-based character columns convert
   explicitly at every boundary (covered by Unicode tests).
+
+
+### Transport limits (LANG-C-005, DEC-001 §3)
+
+The server owns its stdio framing instead of delegating it, because the
+framing is where a hostile peer does damage before any analysis runs:
+
+- **Frame cap before allocation.** Headers are read under an 8 KiB budget,
+  `Content-Length` must appear once with digits only, and a declared length
+  above 16 MiB is refused from the header alone — the payload buffer is
+  never allocated. The stream cannot be resynchronised after a framing
+  violation, so the server reports the cause on stderr and exits.
+- **Document cap.** A buffer over 4 MiB (the parse input cap) is refused
+  with an error `window/showMessage`; it is not opened (didOpen) or not
+  re-analysed (didChange, which keeps the last good state). Analysis
+  therefore always runs on a document the parser can accept.
+- **Open-document cap.** At most 64 documents are retained. Opening one
+  more evicts the least recently used (touching a document on didChange
+  refreshes it), withdraws its published diagnostics, and tells the client
+  which document was closed with a warning `window/showMessage`.
+- **Backpressure and coalescing.** The inbound queue is bounded (64
+  messages), so a client that outruns the server blocks on its own pipe
+  instead of growing server memory. The server drains the queue in batches
+  and keeps only the newest `textDocument/didChange` per document in a
+  batch: full-sync changes are snapshots, so superseded edits are dropped
+  while requests, responses, and every other notification keep their order.
+- **Latency report, not silent stall.** Parse and evaluation are hard
+  bounded, so no request can run unbounded. A single message whose handling
+  still exceeds 1 s publishes a warning `window/showMessage` naming the
+  method and elapsed time, so a pathological document is visible instead of
+  presenting as a frozen editor.
 
 ## 2. Hover (C-043)
 

@@ -23,6 +23,9 @@ path = "src/lib.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+# Same channel types lsp-server uses: the bounded inbound queue is the
+# backpressure point (LANG-C-005).
+crossbeam-channel = "0.5"
 lsp-server = "0.7"
 lsp-types = "0.94"
 serde_json = { workspace = true }

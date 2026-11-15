@@ -2275,3 +2275,180 @@ fn carried_memo_turns_reanalysis_into_hits() {
         "carried memo must hit on unchanged content"
     );
 }
+
+// ------------------------------------------------------------------
+// Transport limits (LANG-C-005): frame cap, document cap, open-map cap.
+// ------------------------------------------------------------------
+
+#[test]
+fn an_oversize_frame_is_rejected_before_allocation() {
+    // A peer that declares a ~4 GiB frame must be refused from the header
+    // alone: the payload buffer is never allocated, and the operator sees
+    // why instead of a silent disconnect.
+    use std::io::Write as _;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_active-lsp"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn active-lsp");
+    {
+        let stdin = child.stdin.as_mut().expect("stdin");
+        stdin
+            .write_all(b"Content-Length: 4294967295\r\n\r\n")
+            .expect("write header");
+        stdin.flush().expect("flush");
+    }
+    drop(child.stdin.take());
+    let output = child.wait_with_output().expect("server exits");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("exceeds the") && stderr.contains("rejected before allocation"),
+        "framing cap must be reported: {stderr}"
+    );
+}
+
+#[test]
+fn an_oversize_document_is_refused_with_a_visible_message() {
+    let uri = lsp_types::Url::parse("file:///lsp-oversize.active").expect("uri");
+    let mut server = Framed::spawn();
+    let init = server.request(
+        "initialize",
+        serde_json::json!({"processId": null, "capabilities": {}}),
+    );
+    assert!(init["result"]["capabilities"]["hoverProvider"]
+        .as_bool()
+        .unwrap());
+    server.notify("initialized", serde_json::json!({}));
+
+    // One byte over the shipped 4 MiB parse cap.
+    let mut text = "a = 1\n".repeat((4 * 1024 * 1024) / 6 + 1);
+    assert!(text.len() > 4 * 1024 * 1024);
+    text.push('\n');
+    server.notify(
+        "textDocument/didOpen",
+        serde_json::json!({
+            "textDocument": {
+                "uri": uri,
+                "languageId": "active",
+                "version": 1,
+                "text": text,
+            }
+        }),
+    );
+    let notice = server.recv_notification("window/showMessage");
+    assert_eq!(notice["params"]["type"], 1, "error severity: {notice}");
+    let message = notice["params"]["message"].as_str().expect("message");
+    assert!(message.contains("not opened"), "{message}");
+
+    // Refused, not half-opened: hover finds no document.
+    let hover = server.request(
+        "textDocument/hover",
+        serde_json::json!({
+            "textDocument": {"uri": uri},
+            "position": {"line": 0, "character": 0},
+        }),
+    );
+    assert!(hover["result"].is_null(), "{hover}");
+    server.shutdown();
+}
+
+#[test]
+fn the_open_document_map_evicts_the_least_recently_used() {
+    let mut server = Framed::spawn();
+    let init = server.request(
+        "initialize",
+        serde_json::json!({"processId": null, "capabilities": {}}),
+    );
+    assert!(init["result"]["capabilities"]["hoverProvider"]
+        .as_bool()
+        .unwrap());
+    server.notify("initialized", serde_json::json!({}));
+
+    // Open one more document than the cap. The server must evict the
+    // least recently used (the first) and say so.
+    let over = 65usize;
+    for i in 0..over {
+        let uri = lsp_types::Url::parse(&format!("file:///lsp-cap-{i}.active")).expect("uri");
+        server.notify(
+            "textDocument/didOpen",
+            serde_json::json!({
+                "textDocument": {
+                    "uri": uri,
+                    "languageId": "active",
+                    "version": 1,
+                    "text": format!("key{i} = {i}\n"),
+                }
+            }),
+        );
+    }
+    let notice = server.recv_notification("window/showMessage");
+    assert_eq!(notice["params"]["type"], 2, "warning severity: {notice}");
+    let message = notice["params"]["message"].as_str().expect("message");
+    assert!(
+        message.contains("lsp-cap-0.active") && message.contains("64 open documents"),
+        "eviction names the victim and the cap: {message}"
+    );
+
+    // The victim is gone; the newest document is still served.
+    let evicted = lsp_types::Url::parse("file:///lsp-cap-0.active").expect("uri");
+    let hover = server.request(
+        "textDocument/hover",
+        serde_json::json!({
+            "textDocument": {"uri": evicted},
+            "position": {"line": 0, "character": 0},
+        }),
+    );
+    assert!(hover["result"].is_null(), "{hover}");
+
+    let kept = lsp_types::Url::parse("file:///lsp-cap-64.active").expect("uri");
+    let hover = server.request(
+        "textDocument/hover",
+        serde_json::json!({
+            "textDocument": {"uri": kept},
+            "position": {"line": 0, "character": 0},
+        }),
+    );
+    assert!(
+        !hover["result"].is_null(),
+        "newest document stays open: {hover}"
+    );
+    server.shutdown();
+}
+
+#[test]
+fn a_slow_analysis_is_reported_on_the_visible_channel() {
+    // LANG-C-005: parse and evaluation are hard-bounded, so "abandon a
+    // pathological analysis" is delivered as (1) the parse cap refusing
+    // oversized documents and (2) a visible latency report for a message
+    // that still outran the budget. A ~3.8 MiB document is legal but slow
+    // in an unoptimized build, which makes the report deterministic.
+    let uri = lsp_types::Url::parse("file:///lsp-slow.active").expect("uri");
+    let mut server = Framed::spawn();
+    server.request(
+        "initialize",
+        serde_json::json!({"processId": null, "capabilities": {}}),
+    );
+    server.notify("initialized", serde_json::json!({}));
+    let text = "k = 1\n".repeat((3 * 1024 * 1024) / 6);
+    assert!(text.len() > 2 * 1024 * 1024 && text.len() < 4 * 1024 * 1024);
+    server.notify(
+        "textDocument/didOpen",
+        serde_json::json!({
+            "textDocument": {
+                "uri": uri,
+                "languageId": "active",
+                "version": 1,
+                "text": text,
+            }
+        }),
+    );
+    let notice = server.recv_notification("window/showMessage");
+    assert_eq!(notice["params"]["type"], 2, "warning severity: {notice}");
+    let message = notice["params"]["message"].as_str().expect("message");
+    assert!(
+        message.contains("analysis budget"),
+        "latency report names the budget: {message}"
+    );
+    server.shutdown();
+}

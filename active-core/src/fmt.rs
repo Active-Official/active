@@ -611,6 +611,13 @@ impl<'a> Formatter<'a> {
         is_root: bool,
         has_next: bool,
     ) {
+        // Resolve the alias first: a field can be a `Ref` to a table
+        // definition, and the empty-vs-block decision must look at the
+        // table it names. Reading the raw node made an aliased EMPTY table
+        // render as a block (`ye {\n}`) that re-parsed as an empty table
+        // and then rendered inline (`ye = {}`) on the second pass - fuzz
+        // seed crash-f438d19.
+        let id = self.resolve_ref(id);
         let empty = matches!(
             self.module.get(id),
             Some(Node::Table { fields }) if fields.is_empty()

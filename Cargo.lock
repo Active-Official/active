@@ -75,6 +75,7 @@ dependencies = [
  "anyhow",
  "codspeed-criterion-compat",
  "criterion",
+ "crossbeam-channel",
  "lsp-server",
  "lsp-types",
  "serde_json",

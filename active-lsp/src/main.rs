@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::error::Error;
 
 use active_ls::analysis::{self, Doc};
+use active_ls::transport::{self, Batch};
 use lsp_server::{Connection, ErrorCode, Message, Request, Response};
 use lsp_types::{
     CodeActionProviderCapability, CompletionOptions, HoverProviderCapability, OneOf, RenameOptions,
@@ -56,6 +57,24 @@ fn lookup_text(open: &HashMap<String, Doc>, path: &str) -> Option<String> {
     analysis::lookup_text(open, path)
 }
 
+/// Maximum open documents retained by the server (LANG-C-005). Beyond it
+/// the least recently used document is evicted and its published
+/// diagnostics withdrawn, so a client cannot grow the map without bound.
+const MAX_OPEN_DOCS: usize = 64;
+
+/// Maximum document text accepted from the client, in bytes: the parse
+/// input cap (LANG-C-003). A larger buffer is refused with a visible
+/// message instead of being parsed (and rejected as E029 anyway) so the
+/// editor learns why analysis stopped updating.
+const MAX_DOCUMENT_BYTES: usize = 4 * 1024 * 1024;
+
+/// Per-message analysis budget (LANG-C-005). Parse and evaluation are hard
+/// bounded (E029 / X0xx), so no request can run unbounded; this reports a
+/// single message whose handling still exceeded the budget, so a
+/// pathological document is visible to the client instead of presenting as
+/// a silent stall.
+const ANALYSIS_BUDGET_MS: u128 = 1_000;
+
 fn serve(connection: Connection) -> Result<(), Box<dyn Error + Sync + Send>> {
     let server_capabilities = serde_json::to_value(capabilities())?;
     let _params = connection.initialize(server_capabilities)?;
@@ -63,25 +82,50 @@ fn serve(connection: Connection) -> Result<(), Box<dyn Error + Sync + Send>> {
     // URIs ever published per open document, for stale-group
     // withdrawal and full close-clears (spec/lsp.md §4).
     let mut published: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
-    for msg in &connection.receiver {
-        match msg {
-            Message::Request(req) => {
-                if connection.handle_shutdown(&req)? {
-                    return Ok(());
+    // Least-recently-used order for the open-document cap.
+    let mut lru: Vec<String> = Vec::new();
+    loop {
+        let batch = match transport::next_batch(&connection.receiver) {
+            Batch::Messages(batch) => batch,
+            Batch::Closed => return Ok(()),
+        };
+        for msg in batch {
+            let started = std::time::Instant::now();
+            let method = match &msg {
+                Message::Request(req) => Some(req.method.clone()),
+                Message::Notification(note) => Some(note.method.clone()),
+                Message::Response(_) => None,
+            };
+            match msg {
+                Message::Request(req) => {
+                    if connection.handle_shutdown(&req)? {
+                        return Ok(());
+                    }
+                    if let Some(response) = handle_request(&mut open, req) {
+                        connection.sender.send(Message::Response(response))?;
+                    }
                 }
-                if let Some(response) = handle_request(&mut open, req) {
-                    connection.sender.send(Message::Response(response))?;
+                Message::Notification(note) => {
+                    for outgoing in handle_notification(&mut open, &mut published, &mut lru, note) {
+                        connection.sender.send(outgoing)?;
+                    }
                 }
+                Message::Response(_) => {}
             }
-            Message::Notification(note) => {
-                for outgoing in handle_notification(&mut open, &mut published, note) {
-                    connection.sender.send(outgoing)?;
-                }
+            let elapsed = started.elapsed().as_millis();
+            if elapsed > ANALYSIS_BUDGET_MS {
+                connection.sender.send(show_message(
+                    MESSAGE_TYPE_WARNING,
+                    format!(
+                        "active: handling {} took {elapsed} ms, over the \
+                         {ANALYSIS_BUDGET_MS} ms analysis budget (parse and evaluation \
+                         stay hard-bounded; this is a latency report)",
+                        method.as_deref().unwrap_or("a response")
+                    ),
+                ))?;
             }
-            Message::Response(_) => {}
         }
     }
-    Ok(())
 }
 
 fn parse_request<R>(req: &Request) -> Result<R::Params, Box<Response>>
@@ -533,9 +577,54 @@ fn withdraw(
     outgoing
 }
 
+/// LSP `MessageType` values for `window/showMessage`
+/// (1 = Error, 2 = Warning, 3 = Info).
+const MESSAGE_TYPE_ERROR: u8 = 1;
+const MESSAGE_TYPE_WARNING: u8 = 2;
+
+/// A client-visible notice (`window/showMessage`): the transport must not
+/// fail silently when it refuses a document.
+fn show_message(kind: u8, message: String) -> Message {
+    Message::Notification(lsp_server::Notification {
+        method: "window/showMessage".into(),
+        params: serde_json::json!({ "type": kind, "message": message }),
+    })
+}
+
+/// Store a document under the open-document cap (LANG-C-005): past
+/// `MAX_OPEN_DOCS` the least recently used entry is evicted, its published
+/// diagnostics withdrawn, and the client told which document was closed.
+fn remember(
+    open: &mut HashMap<String, Doc>,
+    published: &mut HashMap<String, std::collections::HashSet<String>>,
+    lru: &mut Vec<String>,
+    key: String,
+    doc: Doc,
+) -> Vec<Message> {
+    let mut outgoing = Vec::new();
+    if !open.contains_key(&key) && open.len() >= MAX_OPEN_DOCS {
+        if let Some(victim) = lru.first().cloned() {
+            lru.remove(0);
+            open.remove(&victim);
+            if let Some(uris) = published.remove(&victim) {
+                outgoing.extend(withdraw(open, published, &victim, uris));
+            }
+            outgoing.push(show_message(
+                MESSAGE_TYPE_WARNING,
+                format!("active: closed '{victim}' to stay within {MAX_OPEN_DOCS} open documents"),
+            ));
+        }
+    }
+    lru.retain(|k| k != &key);
+    lru.push(key.clone());
+    open.insert(key, doc);
+    outgoing
+}
+
 fn handle_notification(
     open: &mut HashMap<String, Doc>,
     published: &mut HashMap<String, std::collections::HashSet<String>>,
+    lru: &mut Vec<String>,
     note: lsp_server::Notification,
 ) -> Vec<Message> {
     match note.method.as_str() {
@@ -545,14 +634,24 @@ fn handle_notification(
             {
                 let version = params.text_document.version;
                 let key = params.text_document.uri.to_string();
+                if params.text_document.text.len() > MAX_DOCUMENT_BYTES {
+                    return vec![show_message(
+                        MESSAGE_TYPE_ERROR,
+                        format!(
+                            "active: '{key}' is {} bytes; this server analyses documents up to \
+                             {MAX_DOCUMENT_BYTES} bytes, so it was not opened",
+                            params.text_document.text.len()
+                        ),
+                    )];
+                }
                 let doc = analysis::open_doc(
                     params.text_document.uri.clone(),
                     params.text_document.text,
                     params.text_document.version,
                     None,
                 );
-                let outgoing = publish_all(open, published, &key, &doc, Some(version));
-                open.insert(key, doc);
+                let mut outgoing = publish_all(open, published, &key, &doc, Some(version));
+                outgoing.extend(remember(open, published, lru, key, doc));
                 return outgoing;
             }
         }
@@ -563,6 +662,23 @@ fn handle_notification(
                 if let Some(change) = params.content_changes.into_iter().last() {
                     let version = params.text_document.version;
                     let key = params.text_document.uri.to_string();
+                    // A change for a document this server never opened is a
+                    // protocol error; ignoring it keeps the map honest.
+                    if !open.contains_key(&key) {
+                        return Vec::new();
+                    }
+                    if change.text.len() > MAX_DOCUMENT_BYTES {
+                        // Keep the last analysis and tell the client why it
+                        // stopped updating, instead of dropping the state.
+                        return vec![show_message(
+                            MESSAGE_TYPE_ERROR,
+                            format!(
+                                "active: '{key}' is {} bytes; this server analyses documents \
+                                 up to {MAX_DOCUMENT_BYTES} bytes, so analysis is paused",
+                                change.text.len()
+                            ),
+                        )];
+                    }
                     // Carry the previous revision's memo: unchanged
                     // documents re-evaluate as microsecond cache hits.
                     let memo = open.remove(&key).map(|doc| doc.memo);
@@ -572,8 +688,8 @@ fn handle_notification(
                         params.text_document.version,
                         memo,
                     );
-                    let outgoing = publish_all(open, published, &key, &doc, Some(version));
-                    open.insert(key, doc);
+                    let mut outgoing = publish_all(open, published, &key, &doc, Some(version));
+                    outgoing.extend(remember(open, published, lru, key, doc));
                     return outgoing;
                 }
             }
@@ -590,6 +706,7 @@ fn handle_notification(
             {
                 let key = params.text_document.uri.to_string();
                 open.remove(&key);
+                lru.retain(|k| k != &key);
                 // Clear everything this document ever published, but
                 // preserve URIs another open document still owns
                 // (shared includes, still-open files): those
@@ -613,10 +730,22 @@ fn main() -> Result<(), Box<dyn Error + Sync + Send>> {
     std::thread::Builder::new()
         .stack_size(32 * 1024 * 1024)
         .spawn(|| -> Result<(), Box<dyn Error + Sync + Send>> {
-            let (connection, io_threads) = Connection::stdio();
-            serve(connection)?;
-            io_threads.join()?;
-            Ok(())
+            // Bounded framing (LANG-C-005, DEC-001 §3): the frame cap is
+            // enforced from the header alone, before any payload buffer is
+            // allocated, and the inbound queue is bounded so a flood applies
+            // backpressure instead of growing memory.
+            let (connection, reader) = transport::spawn_stdio(transport::DEFAULT_MAX_FRAME_BYTES);
+            let served = serve(connection);
+            // The reader thread ends with the stream; surface a framing
+            // violation (which desynchronises the pipe beyond recovery)
+            // instead of exiting silently.
+            let framed = reader.join().map_err(|_| "lsp reader thread panicked")?;
+            // A framing violation is the root cause of the disconnected
+            // channel `serve` reports, so always surface it.
+            if let Err(e) = framed {
+                eprintln!("[active-lsp] {e}");
+            }
+            served
         })
         .expect("spawn lsp thread")
         .join()

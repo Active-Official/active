@@ -216,6 +216,13 @@ impl<'a> Formatter<'a> {
     /// `schema` is this table's schema node for parallel emission:
     /// a `schema = { … }` block leads the body (spec §2.10).
     fn emit_table_body(&mut self, id: NodeId, depth: usize, path: &str, is_root: bool) {
+        // Only a REF to a named table is rendered as its name by the
+        // caller; a table definition emits its own body.
+        if matches!(self.module.get(id), Some(Node::Ref(_)))
+            && self.names.contains_key(&self.resolve_ref(id))
+        {
+            return;
+        }
         let fields = match self.module.get(self.resolve_ref(id)) {
             Some(Node::Table { fields }) => fields.clone(),
             _ => return,
@@ -251,8 +258,19 @@ impl<'a> Formatter<'a> {
         // scalar expression (`key = { ... }`) made the next pass
         // expand it into a block instead, so formatting was not a
         // fixed point (fuzz crash, formatter target 2026-11-15).
-        let is_table_node = |f: &Formatter, n: &NodeId| {
-            matches!(f.module.get(f.resolve_ref(*n)), Some(Node::Table { .. }))
+        let is_table_node = |f: &Formatter, n: &NodeId| match f.module.get(*n) {
+            // A table definition is always a block, whatever its name.
+            Some(Node::Table { .. }) => true,
+            // A reference to a NAMED table stays a reference
+            // (`key = other`): the next parse resolves the same name,
+            // so formatting is a fixed point. Only an unnamed target (a
+            // parser-synthesized node) is expanded as a block.
+            Some(Node::Ref(_)) => {
+                let resolved = f.resolve_ref(*n);
+                !f.names.contains_key(&resolved)
+                    && matches!(f.module.get(resolved), Some(Node::Table { .. }))
+            }
+            _ => false,
         };
         // At the document root, scalars must be hoisted above tables: a
         // `key = value` line after a table header would otherwise be

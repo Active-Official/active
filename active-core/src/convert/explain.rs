@@ -36,6 +36,7 @@ pub fn explain_code(code: &str) -> &'static str {
         "E025" => "Bad capabilities declaration: active_capabilities must be an array of strings naming tools the host offers. Fix the shapes; unknown names are refused at handshake time, not here.",
         "E032" => "Signature or trust failure: the sidecar is missing, mismatched, or untrusted. Verify against the trust file for the recorded key id; never bypass verification to make it pass.",
 
+        "E028" => "Include budget: the include graph resolved more than 256 files or read more than 16 MiB. Flatten the graph (a diamond re-reads the same file) or move shared content into fewer files.",
         "E027" => "Profile metadata rewrite: a profile body tried to set document metadata (active_mode / active_capabilities). The mode and capability handshake read those keys at parse time; declare them at the document root.",        "T001" => "Unit or quantity violation at the span: an unsupported operator or dimension mismatch. Fix the unit expression; the code names the exact mismatch.",
         "T002" => "Type mismatch: the value's type does not satisfy the schema or operator at the span. Change the value to the expected type (or widen the schema deliberately), not the other way around.",
         "T003" => "Schema or format violation: the value breaks a constraint (format, pattern, range, membership). Fix the VALUE to a well-formed one, or correct the schema if the constraint itself is wrong — never delete the constraint to silence it. Unknown format names are schema bugs: use email|uri|uuid|semver.",

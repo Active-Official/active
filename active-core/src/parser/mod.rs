@@ -370,6 +370,8 @@ fn parse_recovering_impl(
         indent_tables: 0,
         current_file: root_file.map(|p| p.to_path_buf()),
         include_stack: Vec::new(),
+        includes_resolved: 0,
+        included_bytes: 0,
         in_include: false,
         in_profile: false,
         array_depth: 0,
@@ -668,6 +670,12 @@ struct Parser {
     current_file: Option<std::path::PathBuf>,
     /// Canonicalized files on the include stack (cycle detection, C-025).
     include_stack: Vec<std::path::PathBuf>,
+    /// Includes resolved so far in this parse (LANG-C-002): a diamond
+    /// or a fan-out graph re-reads the same file, so depth alone does
+    /// not bound the work. Each successful resolution counts.
+    includes_resolved: usize,
+    /// Bytes read through includes so far in this parse.
+    included_bytes: usize,
     /// True while parsing an included file: `let` bindings use
     /// first-wins (local) semantics instead of overwriting.
     in_include: bool,
@@ -1590,6 +1598,17 @@ impl Parser {
 
     /// Maximum include nesting depth (files within files).
     const MAX_INCLUDE_DEPTH: usize = 32;
+    /// Maximum include resolutions per parse (LANG-C-002). Depth is
+    /// bounded separately; this bounds BREADTH and repetition, which is
+    /// what makes a 1 KB fan-out graph exponential. 256 resolutions is
+    /// far above any real document (the repo's own include fixtures use
+    /// fewer than ten) and still bounds work to a linear scan of that
+    /// many files.
+    const MAX_INCLUDES_PER_PARSE: usize = 256;
+    /// Maximum bytes read through includes per parse: 16 MiB. Bounds
+    /// the parse-phase arena growth a hostile graph can force, even when
+    /// the file count stays under the resolution cap.
+    const MAX_INCLUDED_BYTES: usize = 16 * 1024 * 1024;
 
     /// Parse an `include` statement. The path must be a string literal;
     /// anything else is E015. The statement is recorded for resolution
@@ -1788,6 +1807,31 @@ impl Parser {
                 ),
             );
         }
+        // Breadth/repetition bound (LANG-C-002): a fan-out graph resolves
+        // exponentially many includes at a small depth. Fail fast with a
+        // dedicated code instead of grinding through gigabytes of arena.
+        if self.includes_resolved >= Self::MAX_INCLUDES_PER_PARSE {
+            return fail(
+                self,
+                "E028",
+                format!(
+                    "include fan-out budget exceeded ({} resolutions); a document may include at most {} files",
+                    self.includes_resolved,
+                    Self::MAX_INCLUDES_PER_PARSE
+                ),
+            );
+        }
+        if self.included_bytes >= Self::MAX_INCLUDED_BYTES {
+            return fail(
+                self,
+                "E028",
+                format!(
+                    "include size budget exceeded ({} bytes read); a document may include at most {} bytes",
+                    self.included_bytes,
+                    Self::MAX_INCLUDED_BYTES
+                ),
+            );
+        }
         // Signed overlays (C-052): with a trusted set, the include
         // must carry a valid sibling signature — fail closed before
         // a single byte is parsed. The content below is read once
@@ -1845,6 +1889,8 @@ impl Parser {
         let saved_in_include = self.in_include;
         let saved_in_profile = self.in_profile;
         self.current_file = Some(canonical.clone());
+        self.includes_resolved = self.includes_resolved.saturating_add(1);
+        self.included_bytes = self.included_bytes.saturating_add(src.len());
         self.include_stack.push(canonical);
         self.in_include = true;
         // An included file is a fresh document: profiles allowed at its
@@ -3762,6 +3808,8 @@ impl Parser {
             indent_tables: 0,
             current_file: self.current_file.clone(),
             include_stack: Vec::new(),
+            includes_resolved: self.includes_resolved,
+            included_bytes: self.included_bytes,
             in_include: self.in_include,
             in_profile: self.in_profile,
             binding_spliced: self.binding_spliced.clone(),
@@ -5764,6 +5812,8 @@ impl Parser {
             indent_tables: 0,
             current_file: self.current_file.clone(),
             include_stack: Vec::new(),
+            includes_resolved: self.includes_resolved,
+            included_bytes: self.included_bytes,
             in_include: self.in_include,
             in_profile: self.in_profile,
             array_depth: self.array_depth,

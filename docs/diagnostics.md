@@ -56,7 +56,8 @@ parses leave it unset and tools fall back to the input filename.
 | E024 | `active_mode must be "data" or "config"` / `unknown mode '<text>': want "data" or "config"` | marker key | Bad mode marker (Phase M): the `active_mode` key is not one of the two valid strings |
 | E025 | `active_capabilities must be an array of strings` | marker key | Bad capabilities declaration (Phase CAP): entries must be tool-name strings; unknown names are refused at handshake time |
 | E027 | `profile cannot rewrite document metadata `<key>`` | profile block | A profile body tried to set document metadata (`active_mode`, `active_capabilities`) that the mode/capability handshake already read (LANG-A-009). Distinct from E019: no patch directive was involved. |
-| E032 | `<file>: unsigned (no signature sidecar …)` / `<file>: unknown signing key '<kid>'` / `<file>: signature mismatch (key '<kid>')` | include statement | An included file failed overlay enforcement (C-052): no sibling sidecar, a key outside the trusted set, or a bad signature. Fail-closed before a byte parses; key material never quoted |
+
+| E028 | `include fan-out budget exceeded (<n> resolutions); a document may include at most <n> files` / `include size budget exceeded (<n> bytes read); a document may include at most <n> bytes` | include statement | A document's include graph resolved more than 256 files or read more than 16 MiB through includes (LANG-C-002). Depth is bounded separately (32); this bounds breadth and repetition, which is what makes a fan-out graph exponential. || E032 | `<file>: unsigned (no signature sidecar …)` / `<file>: unknown signing key '<kid>'` / `<file>: signature mismatch (key '<kid>')` | include statement | An included file failed overlay enforcement (C-052): no sibling sidecar, a key outside the trusted set, or a bad signature. Fail-closed before a byte parses; key material never quoted |
 
 ### S0xx — Semantic (evaluation, severity Error)
 

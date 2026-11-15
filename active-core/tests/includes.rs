@@ -218,3 +218,49 @@ fn an_included_profile_selector_is_a_root_default() {
     assert_eq!(value["active_profile"], "prod", "{value}");
     assert_eq!(value["x"], "from-prod", "{value}");
 }
+
+#[test]
+fn include_fan_out_fails_fast_with_e028() {
+    // LANG-C-002: a fan-out graph resolves 2^depth includes at a small
+    // depth (depth 16 = 65k files scanned, a 196k-node arena). The
+    // resolution budget must stop it with a dedicated code.
+    let dir = std::env::temp_dir().join(format!("active_fanout_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for i in 0..16 {
+        let next = format!("d{}.active", i + 1);
+        std::fs::write(
+            dir.join(format!("d{i}.active")),
+            format!("include \"{next}\"\ninclude \"{next}\"\n"),
+        )
+        .unwrap();
+    }
+    std::fs::write(dir.join("d16.active"), "leaf = 1\n").unwrap();
+    let diags = parse_file(&dir.join("d0.active"), ParseOptions::default())
+        .expect_err("fan-out must fail fast");
+    assert!(
+        diags.iter().any(|d| d.code == "E028"),
+        "fan-out must be E028: {:?}",
+        diags.iter().map(|d| d.code.clone()).collect::<Vec<_>>()
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_normal_include_chain_stays_within_budget() {
+    // Control: a linear chain of includes (the real-world shape) is far
+    // below the budget and still parses.
+    let dir = std::env::temp_dir().join(format!("active_chain_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for i in 0..8 {
+        std::fs::write(
+            dir.join(format!("c{i}.active")),
+            format!("include \"c{}.active\"\nk{i} = {i}\n", i + 1),
+        )
+        .unwrap();
+    }
+    std::fs::write(dir.join("c8.active"), "leaf = 1\n").unwrap();
+    let module = parse_file(&dir.join("c0.active"), ParseOptions::default())
+        .expect("linear chain must parse");
+    assert!(module.root.is_some());
+    std::fs::remove_dir_all(&dir).ok();
+}

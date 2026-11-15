@@ -716,15 +716,20 @@ impl Parser {
         stmts: &[StmtInfo],
         blocks: &[BlockInfo],
     ) -> Option<BlockInfo> {
-        // Score prefers an exact indentation-level match, then the
-        // INNERMOST block (deepest path), then a deeper indentation level,
-        // then a later start. Path depth is what disambiguates brace-style
-        // blocks, which share indentation with their parent: a comment
-        // after a nested block's closing brace has to attach to that nested
-        // block in both directions, or reformatting moves it inside on the
-        // next parse (fuzz seed crash-8e989b62).
-        fn score(b: &BlockInfo, level: usize) -> (u8, usize, usize, u32) {
+        // Score prefers, in order: a block with a statement after the
+        // comment (that statement is the comment's leading target, Rule 2),
+        // an exact indentation-level match, the innermost block (deepest
+        // path), a deeper indentation level, then a later start.
+        //
+        // The first component is what keeps a comment between two sibling
+        // blocks attached to the ENCLOSING block, so Rule 2 can find the
+        // following header. Without it a brace-style nested block (same
+        // indentation as its parent) wins and the comment re-attaches
+        // inside that block on the next parse (fuzz seeds crash-8e989b62 /
+        // crash-d1726a54).
+        fn score(b: &BlockInfo, level: usize, has_following: bool) -> (u8, u8, usize, usize, u32) {
             (
+                if has_following { 1 } else { 0 },
                 if b.level == level { 1 } else { 0 },
                 b.path.matches('.').count(),
                 b.level,
@@ -747,9 +752,17 @@ impl Parser {
             if line >= next_sibling {
                 continue;
             }
+            let has_following = stmts
+                .iter()
+                .any(|s| &s.file == file && s.start_line > line && s.path == b.path);
             let better = match best {
                 None => true,
-                Some(prev) => score(b, level) >= score(prev, level),
+                Some(prev) => {
+                    let prev_following = stmts
+                        .iter()
+                        .any(|s| &s.file == file && s.start_line > line && s.path == prev.path);
+                    score(b, level, has_following) >= score(prev, level, prev_following)
+                }
             };
             if better {
                 best = Some(b);

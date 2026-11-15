@@ -63,6 +63,22 @@ struct Formatter<'a> {
 /// Map every named node back to its name (let bindings and table keys,
 /// including profile trees so profile-internal references render).
 fn build_names(module: &Module) -> HashMap<NodeId, String> {
+    /// Schema trees are detached from value fields, so a reference that
+    /// resolved to a schema node had no name and rendered as `<?>` -
+    /// unparseable output (local random search, seed 33). Name them by
+    /// their declaring key, like value tables.
+    fn walk_schema(module: &Module, id: NodeId, names: &mut HashMap<NodeId, String>) {
+        let children: Vec<(String, NodeId)> = match module.get(id) {
+            Some(Node::SchemaTable { fields, .. }) => {
+                fields.iter().map(|(k, v)| (k.clone(), *v)).collect()
+            }
+            _ => return,
+        };
+        for (key, child) in children {
+            names.entry(child).or_insert(key);
+            walk_schema(module, child, names);
+        }
+    }
     fn walk(module: &Module, id: NodeId, names: &mut HashMap<NodeId, String>) {
         if let Some(Node::Table { fields }) = module.get(id) {
             for (key, child) in fields {
@@ -80,6 +96,10 @@ fn build_names(module: &Module) -> HashMap<NodeId, String> {
     }
     for id in module.profiles.values() {
         walk(module, *id, &mut names);
+    }
+    if let Some(schema) = module.schema {
+        names.entry(schema).or_insert_with(|| "schema".to_string());
+        walk_schema(module, schema, &mut names);
     }
     names
 }
@@ -132,7 +152,7 @@ impl<'a> Formatter<'a> {
         });
         for (name, id) in lets {
             let id = *id;
-            self.emit_leading(name);
+            self.emit_leading(name, 0);
             let value = self.render_expr(id);
             self.out.push_str(&format!("let {name} = {value}"));
             self.emit_trailing(name);
@@ -142,7 +162,7 @@ impl<'a> Formatter<'a> {
         // The root schema block, when the document declares one
         // (spec §2.10). Schemas are metadata: position is canonical.
         if let Some(schema) = self.module.schema {
-            self.emit_leading("schema");
+            self.emit_leading("schema", 0);
             self.emit_schema_table(schema, 0);
         }
 
@@ -155,7 +175,7 @@ impl<'a> Formatter<'a> {
             .map(|(k, v)| (k.clone(), *v))
             .collect();
         for (name, id) in &profiles {
-            self.emit_leading(name);
+            self.emit_leading(name, 0);
             self.emit_profile(*id, name, 0);
         }
 
@@ -346,7 +366,7 @@ impl<'a> Formatter<'a> {
             let has_next = index + 1 < entry_count;
 
             let qkey = child_path.clone();
-            self.emit_leading(&qkey);
+            self.emit_leading(&qkey, depth);
             if is_table {
                 self.emit_table_block(*node, &child_path, key, depth, is_root, has_next);
             } else {
@@ -777,15 +797,26 @@ impl<'a> Formatter<'a> {
             },
             _ => return,
         };
-        self.emit_leading(&key);
+        self.emit_leading(&key, 0);
         self.out.push_str(&text);
         self.emit_trailing(&key);
         self.out.push('\n');
     }
 
-    fn emit_leading(&mut self, key: &str) {
-        if let Some(comments) = self.leading.get(key).cloned() {
+    /// Emit a statement's leading comments at `depth`. The indentation is
+    /// part of the comment's meaning to the PARSER: attachment is scored by
+    /// the comment's column, so a nested comment rewritten to column 0 can
+    /// re-attach to a different block on the next parse (a formatter must
+    /// preserve the column it was written at).
+    fn emit_leading(&mut self, key: &str, depth: usize) {
+        // Take, not get: a comment bucket is emitted exactly once. Repeated
+        // statements share a qualified key (two `@remove("a")` patches), and
+        // re-reading the bucket emitted the same comment for each of them,
+        // doubling it on the next pass (local random search: identical patch
+        // lines).
+        if let Some(comments) = self.leading.remove(key) {
             for text in comments {
+                self.out.push_str(&INDENT.repeat(depth));
                 self.out.push_str(&text);
                 self.out.push('\n');
             }
@@ -793,7 +824,8 @@ impl<'a> Formatter<'a> {
     }
 
     fn emit_trailing(&mut self, key: &str) {
-        if let Some(texts) = self.trailing.get(key).cloned() {
+        // Same one-shot rule as `emit_leading`.
+        if let Some(texts) = self.trailing.remove(key) {
             for text in texts {
                 self.out.push(' ');
                 self.out.push_str(&text);
@@ -905,7 +937,11 @@ impl<'a> Formatter<'a> {
             Some(Node::Semantic { tag, inner }) => {
                 format!("@{} {}", tag.as_str(), self.render_ml(*inner))
             }
-            _ => "<?>".into(),
+            // Unreachable for every node the parser builds (named nodes
+            // render by name, literals and containers by structure); the
+            // old `<?>` placeholder broke re-parsing for the WHOLE
+            // document, so the fallback is a parseable literal.
+            _ => "null".into(),
         }
     }
 

@@ -120,3 +120,42 @@ fn a_header_form_schema_is_metadata_and_formats_stably() {
         assert_eq!(once, fmt::format(&reparsed, style), "{style:?}:\n{once}");
     }
 }
+
+#[test]
+fn repeated_patch_comments_are_emitted_once_each() {
+    // Local random search: comments attach by qualified key, and two
+    // `@remove("a")` statements share one. Re-reading the bucket emitted
+    // the same comment once per patch, and the next pass doubled it again.
+    // Input found by the search at 371066.
+    let src = "# cx@remove(\"a\")\n@remove(\"a\")\n@remove(\"a\")\n";
+    let module = parse(src, "fmt-patch-dup").expect("parse");
+    for style in [Style::Brace, Style::Indent] {
+        let once = fmt::format(&module, style);
+        let reparsed = parse(&once, "fmt-patch-dup").expect("re-parse");
+        let twice = fmt::format(&reparsed, style);
+        assert_eq!(once, twice, "{style:?} not idempotent:\n{once}");
+        assert_eq!(
+            once.matches("# cx").count(),
+            1,
+            "{style:?} emits the comment once: {once:?}"
+        );
+    }
+}
+
+#[test]
+fn a_reference_to_a_schema_node_renders_by_name() {
+    // Local random search (seed 33): an expression that resolved to the
+    // schema node had no name in the formatter's index, so the Ref arm fell
+    // through to `<?>` and the output did not re-parse at all.
+    let src = "t1schemat = schema+Int(min = 1)[schema    ]";
+    let module = parse(src, "fmt-schema-ref").expect("parse");
+    for style in [Style::Brace, Style::Indent] {
+        let once = fmt::format(&module, style);
+        assert!(
+            !once.contains("<?>"),
+            "{style:?} must not emit an unparseable placeholder: {once:?}"
+        );
+        let reparsed = parse(&once, "fmt-schema-ref").expect("re-parse");
+        assert_eq!(once, fmt::format(&reparsed, style), "{style:?}:\n{once}");
+    }
+}

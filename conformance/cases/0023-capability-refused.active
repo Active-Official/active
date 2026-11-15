@@ -1,0 +1,3 @@
+active_mode = "data"
+active_capabilities = ["eval", "teleport"]
+x = 1

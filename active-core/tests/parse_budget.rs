@@ -138,11 +138,41 @@ fn node_cap_fails_closed_and_is_load_independent() {
 }
 
 #[test]
-fn the_clock_trips_when_work_far_exceeds_the_legitimate_cost_of_the_input() {
-    // The clock is a backstop for work that dwarfs the input: a small root
-    // that includes 60 files of ~10 KB each is ~600 KB of parsing under a
-    // ~11 ms budget (the base is 1 ms). Includes come from the host loader,
-    // so no filesystem is touched.
+fn the_lexer_trips_on_an_expired_deadline_and_reports_a_prefix_free_stop() {
+    // The clock is a backstop against superlinear work: with the per-KiB
+    // allowance, a linear parse of a legal document never trips it (by
+    // construction - measured worst case 18.6 ms/KiB, allowance 30). This
+    // drives the sampling mechanism itself with a deadline that has already
+    // passed, which is the only deterministic way to observe a trip.
+    let mut src = String::new();
+    for i in 0..5_000 {
+        src.push_str(&format!("k{i} = {i}\n"));
+    }
+    let mut lexer = active_core::parser::Lexer::new(&src);
+    lexer.deadline = Some(std::time::Instant::now());
+    let lexed = lexer.tokenize();
+    assert!(lexed.budget_exceeded, "an expired deadline must trip");
+    assert!(
+        lexed.tokens.is_empty(),
+        "a tripped lex must not hand a truncated token stream to the parser"
+    );
+
+    // Control: the same source with the clock off tokenizes fully.
+    let mut lexer = active_core::parser::Lexer::new(&src);
+    lexer.deadline = None;
+    let lexed = lexer.tokenize();
+    assert!(!lexed.budget_exceeded);
+    assert!(lexed.tokens.len() > 5_000);
+}
+
+#[test]
+fn include_bytes_extend_the_wall_budget_they_consume() {
+    // The budget scales with the bytes charged, and include sources are
+    // charged as they are read: an include-heavy document is legitimate
+    // work, not a pathological shape. With a 1 ms base the root alone would
+    // allow ~1 ms; the included 600 KB earn their own allowance and the
+    // document parses. (Before the bytes were charged, an unrelated
+    // include fixture failed intermittently under parallel test load.)
     let loader: active_core::parser::IncludeLoader = std::sync::Arc::new(|_path: &str| {
         let mut body = String::new();
         for i in 0..750 {
@@ -154,37 +184,15 @@ fn the_clock_trips_when_work_far_exceeds_the_legitimate_cost_of_the_input() {
     for i in 0..60 {
         root.push_str(&format!("include \"inc{i}.active\"\n"));
     }
-    let timed = ParseOptions {
+    let options = ParseOptions {
         enable_includes: true,
-        include_loader: Some(loader.clone()),
-        max_input_bytes: 0,
-        max_nodes: 0,
+        include_loader: Some(loader),
         max_wall_ms: 1,
         ..ParseOptions::default()
     };
-    let started = std::time::Instant::now();
-    let err = parse_with(&root, "include-clock", timed.clone()).expect_err("wall bound must trip");
-    let elapsed = started.elapsed();
-    assert_eq!(codes(&err), ["E029"], "exactly one diagnostic: {err:?}");
-    assert!(
-        err[0].message.contains("ms parse wall budget"),
-        "message names the bound: {}",
-        err[0].message
-    );
-    assert!(
-        elapsed < std::time::Duration::from_secs(5),
-        "a tripped clock must stop promptly, took {elapsed:?}"
-    );
-
-    // Negative control: the same graph with the clock disabled parses (the
-    // include fan-out and node caps stay off so only the clock can act).
-    let untimed = ParseOptions {
-        max_wall_ms: 0,
-        ..timed
-    };
-    let module =
-        parse_with(&root, "include-clock-off", untimed).expect("clock disabled: graph parses");
-    assert!(module.arena.len() > 40_000);
+    let module = parse_with(&root, "include-budget", options)
+        .expect("charged include bytes earn their own wall allowance");
+    assert!(module.arena.len() > 40_000, "includes really merged");
 }
 
 #[test]

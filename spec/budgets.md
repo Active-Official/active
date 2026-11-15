@@ -43,7 +43,7 @@ document whose only problem is size.
 |---|---|---|---|
 | `max_input_bytes` | 4,194,304 (4 MiB) | String entry: `source.len()` before lexing. File entry (`parse_file`, `parse_file_with_trust`): file length from metadata **before** the read. Includes: metadata before the read, per file. | `parse budget exceeded: input is <n> bytes; the limit is <n>` |
 | `max_nodes` | 1,000,000 | Arena length, once per statement and per array element | `parse budget exceeded: node limit <n> reached` |
-| `max_wall_ms` (base) | 100, plus 30 ms per KiB of input | Lexer loop every 2,048 iterations; statement loop every 16 statements; once per include | `parse budget exceeded: the <n> ms parse wall budget was reached` |
+| `max_wall_ms` (base) | 100, plus 30 ms per KiB of charged input | Lexer loop every 2,048 iterations; statement loop every 16 statements; once per include | `parse budget exceeded: the <n> ms parse wall budget was reached` |
 
 Design rules:
 
@@ -61,9 +61,11 @@ Design rules:
   evaluation anyway never gets built.
 - **The clock is a backstop against superlinear shape, not the routine
   bound.** It is excluded from the determinism contract for the same
-  reason as X002 (§3). The budget is `base + 30 ms per KiB of input`, so
-  it scales with the document: the effective deadline for a maximum-size
-  input is 122,980 ms, and for a 160 KB input 4,900 ms. The rate is
+  reason as X002 (§3). The budget is `base + 30 ms per KiB of charged
+  input` - the root source plus every included source read so far, so an
+  include graph is one parse whose bytes extend the budget they consume.
+  The deadline therefore scales with the document: 122,980 ms for a
+  maximum-size 4 MiB root, 4,900 ms for a 160 KB one. The rate is
   calibrated against the slowest shipped shape rather than the average:
   table-dense documents (one enclosing-field-map snapshot per child
   table) measure 18.6 ms/KiB unoptimized at 5,000 tables on the reference
@@ -71,10 +73,9 @@ Design rules:
   measure 0.7-2.0 ms/KiB. 30 ms/KiB is ~1.6x the slowest measured cost and
   an order of magnitude above the rest, so a *linear* parse of a legal
   document never trips the clock on any build, while a superlinear shape
-  (or an include graph whose total work dwarfs the root) fails within a
-  small multiple of its legitimate cost. Raise the base when you raise
-  `max_input_bytes` for faster hardware expectations; the per-KiB
-  allowance follows the size automatically. Generated documents with tens
+  fails within a small multiple of its legitimate cost. Raise the base
+  when you raise `max_input_bytes` for faster hardware expectations; the
+  per-KiB allowance follows the size automatically. Generated documents with tens
   of thousands of tables exceed the shipped rate today; raise
   `--parse-wall-ms` (or `ParseOptions::max_wall_ms`) for them.
 - **Clock-less targets have no parse clock.** `wasm32-unknown-unknown`

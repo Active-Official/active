@@ -28,7 +28,10 @@ plain JSON cannot carry taint, budgets, or content-addressed identity.
 3. **Honor budgets.** Evaluation under the envelope uses the declared
    or profile budget; ceilings are never silently raised.
 4. **Version gate.** A missing or non-parseable `version` is rejected;
-   an unknown major is rejected.
+   an unknown major is rejected. The gate runs before evaluation on the
+   default path (spec/agent-interchange-profile.md §4): `E033` for the
+   version, `E034` for capabilities outside the receiver's offered set,
+   fatal in strict and resilient modes alike.
 5. **Content addressing.** A blob payload is identified by
    `blake3:<hex>`, size, and media type; receivers may short-circuit on
    identity equality.

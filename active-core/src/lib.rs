@@ -7,6 +7,7 @@ pub mod blob;
 pub mod convert;
 pub mod debug;
 pub mod diag;
+pub mod envelope;
 pub mod eval;
 pub mod fmt;
 pub mod graph;
@@ -23,6 +24,7 @@ pub mod validate;
 pub mod viz;
 
 pub use diag::{Diagnostic, Repair, RepairKind, Severity};
+pub use envelope::{EnvelopeGate, SUPPORTED_ENVELOPE_MAJORS};
 pub use eval::{Budget, BudgetKind, Engine, EnvLookup, EvalError, IncrementalMemo, StepEvent};
 pub use ir::{
     Annotation, AnnotationKind, Attachment, BinOp, DependsOn, IncludeStmt, InterpPart, Mode,

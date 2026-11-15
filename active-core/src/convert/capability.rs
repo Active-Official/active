@@ -107,6 +107,24 @@ pub fn profile(name: &str) -> Option<SandboxProfile> {
     profiles().into_iter().find(|p| p.name == name)
 }
 
+/// Every tool name this library ships: the union of the sandbox profiles'
+/// tool lists, in first-seen order. This is the receiver's offered set for
+/// the capability handshake when a host does not narrow it
+/// (`envelope::EnvelopeGate::shipped`), and it must equal the capability
+/// descriptor's `tools` names (a test pins the two renderings together).
+pub fn known_tools() -> Vec<&'static str> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for profile in profiles() {
+        for tool in profile.tools {
+            if seen.insert(*tool) {
+                out.push(*tool);
+            }
+        }
+    }
+    out
+}
+
 /// Declared capabilities the host does not offer, in document order
 /// without duplicates. Empty means the handshake passes.
 pub fn refused<'a>(declared: &'a [String], host_tools: &[&str]) -> Vec<&'a str> {

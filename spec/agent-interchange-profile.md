@@ -61,6 +61,16 @@ envelope = {
 
 ## 4. Receiver rules
 
+The receiver gate runs before evaluation on the default path: unknown
+envelope major, capabilities outside the host's advertised set, and
+missing/unparseable `version` are rejected. It is part of evaluation
+(`Engine::envelope_gate`, default-on with the shipped policy: major 1
+and every tool this library ships), refuses with `E033` (version) and
+`E034` (capabilities), and is fatal in strict and resilient modes alike.
+`--sandbox` and `capability --check-doc` remain the explicit forms; a
+host narrows the offered set with `EnvelopeGate::with_tools` and disables
+the gate only for documents it already trusts.
+
 1. Reject unknown envelope majors and unknown capabilities.
 2. Honor taint: never render a payload containing secrets without
    redaction, and never copy secret material into logs.

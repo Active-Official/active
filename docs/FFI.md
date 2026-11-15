@@ -71,6 +71,11 @@ change only additively within 1.x. Diagnostics export stable code, span
 (path or index, line, column, end line, end column), severity, and optional
 UTF-8 message.
 
+The receiver gate's refusals (`E033` envelope version, `E034` capability)
+surface numerically as `SCHEMA_FAIL` (8) from `active_eval`; the precise
+code and message arrive through `active_check`'s diagnostic set, which is
+how a host tells a negotiation refusal from a schema failure.
+
 ## 4. Budget struct (F-014, G-016)
 
 ```c

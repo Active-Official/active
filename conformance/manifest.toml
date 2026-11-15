@@ -121,6 +121,16 @@ id = "0021-capability-shape"
 file = "cases/0021-capability-shape.active"
 kind = "refused"
 
+[[cases]]
+id = "0022-envelope-major"
+file = "cases/0022-envelope-major.active"
+kind = "refused"
+
+[[cases]]
+id = "0023-capability-refused"
+file = "cases/0023-capability-refused.active"
+kind = "refused"
+
 # Host-feature pins (G-017 spirit): cases needing capabilities a v1 host
 # shim does not expose. Runners record these as pins with reason, never as
 # failures and never silently. Removing a pin means the host grew the

@@ -389,6 +389,13 @@ pub struct Engine {
     /// payload-resident secret but never emit them, so alias copies
     /// must not fail a document that exported within its budget.
     pub taint_probe: bool,
+    /// Receiver-side interchange gate (spec/agent-interchange-profile.md
+    /// §4, LANG-C-004): refuses an unknown envelope major and
+    /// capabilities this host does not offer BEFORE any evaluation work.
+    /// Default-on with the shipped policy; `None` disables it, which a
+    /// receiver must do only for documents it already trusts (the gate is
+    /// the negotiation layer, not a validation nicety).
+    pub envelope_gate: Option<crate::envelope::EnvelopeGate>,
 }
 
 impl Default for Engine {
@@ -1299,6 +1306,7 @@ impl Engine {
             materialise_blobs: false,
             reader_version: None,
             taint_probe: false,
+            envelope_gate: Some(crate::envelope::EnvelopeGate::shipped()),
         }
     }
 
@@ -1452,6 +1460,12 @@ impl Engine {
         // advisory, as documented.
         if let Some(reader) = self.reader_version.as_deref() {
             check_reader_floor(module, reader)?;
+        }
+        // Receiver gate (LANG-C-004): a peer document must not negotiate
+        // this host into evaluating semantics it does not implement.
+        // Refusals are fatal in strict and resilient modes alike.
+        if let Some(gate) = &self.envelope_gate {
+            gate.check(module)?;
         }
         // Budgets first: fail fast on monsters before any real work.
         check_static_budgets(module, &self.budget)?;

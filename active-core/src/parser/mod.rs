@@ -461,17 +461,17 @@ pub fn parse_wall_budget_ms(max_wall_ms: u64, input_bytes: usize) -> u64 {
     max_wall_ms.saturating_add(kib.saturating_mul(PARSE_MS_PER_KIB))
 }
 
-/// Absolute parse deadline for the configured wall budget, mirroring the
-/// evaluation engine's policy (spec/budgets.md §2): `0` disables it,
-/// targets without a monotonic clock (wasm32-unknown-unknown, miri) have
-/// none, and an absurd configured duration degrades to no deadline
-/// instead of panicking on `Instant` overflow.
-fn parse_deadline(max_wall_ms: u64, input_bytes: usize) -> Option<std::time::Instant> {
-    let budget = parse_wall_budget_ms(max_wall_ms, input_bytes);
-    if budget == 0 || !crate::eval::Budget::wall_supported() {
+/// Start of the parse's wall-clock accounting, or `None` when the clock is
+/// disabled (`max_wall_ms == 0`) or the target has no monotonic clock
+/// (wasm32-unknown-unknown, miri). The deadline is derived from this
+/// anchor plus the budget for the bytes charged so far, so a document that
+/// pulls in includes earns the time its own total size justifies instead
+/// of a budget sized by its root alone.
+fn parse_wall_anchor(max_wall_ms: u64) -> Option<std::time::Instant> {
+    if max_wall_ms == 0 || !crate::eval::Budget::wall_supported() {
         return None;
     }
-    std::time::Instant::now().checked_add(std::time::Duration::from_millis(budget))
+    Some(std::time::Instant::now())
 }
 
 fn parse_recovering_impl(
@@ -496,8 +496,11 @@ fn parse_recovering_impl(
             ),
         );
     }
-    let deadline = parse_deadline(options.max_wall_ms, source.len());
+    let wall_base_ms = options.max_wall_ms;
+    let wall_anchor = parse_wall_anchor(wall_base_ms);
     let wall_budget_ms = parse_wall_budget_ms(options.max_wall_ms, source.len());
+    let deadline = wall_anchor
+        .and_then(|anchor| anchor.checked_add(std::time::Duration::from_millis(wall_budget_ms)));
     let mut lexer = Lexer::new(source);
     lexer.deadline = deadline;
     let mut lexed = lexer.tokenize();
@@ -538,7 +541,9 @@ fn parse_recovering_impl(
         include_stack: Vec::new(),
         includes_resolved: 0,
         included_bytes: 0,
-        deadline,
+        wall_anchor,
+        wall_base_ms,
+        wall_bytes: source.len(),
         wall_budget_ms,
         ticks: 0,
         budget_violation: None,
@@ -852,13 +857,19 @@ struct Parser {
     includes_resolved: usize,
     /// Bytes read through includes so far in this parse.
     included_bytes: usize,
-    /// Parse-phase deadline (LANG-C-003): sampled in the statement loop,
-    /// the array loop, and the lexer. `None` disables the wall bound
-    /// (tests and hosts that opt out, and clock-less targets).
-    deadline: Option<std::time::Instant>,
-    /// The effective wall budget that `deadline` encodes, in
-    /// milliseconds: the configured base plus `PARSE_MS_PER_KIB` per KiB
-    /// of input. Carried for the diagnostic message (0 = disabled).
+    /// Start of the wall-clock accounting (LANG-C-003), or `None` when the
+    /// clock is off (base 0, clock-less target). The deadline slides with
+    /// the bytes charged so far: `anchor + budget(wall_bytes)`.
+    wall_anchor: Option<std::time::Instant>,
+    /// Configured base budget in milliseconds (the `max_wall_ms` option).
+    wall_base_ms: u64,
+    /// Bytes charged to the wall budget: the root source plus every
+    /// included source read so far. Includes are parsed under the same
+    /// clock, so their bytes extend the budget they consume.
+    wall_bytes: usize,
+    /// Current effective budget in milliseconds, recomputed whenever
+    /// `wall_bytes` grows. Carried for the diagnostic message (0 =
+    /// disabled).
     wall_budget_ms: u64,
     /// Statement-loop iterations since this parser started; the sampling
     /// divisor for the wall-clock check.
@@ -1164,6 +1175,24 @@ impl Parser {
         }
     }
 
+    /// Current absolute deadline: the parse anchor plus the budget for the
+    /// bytes charged so far. Recomputed on every sample so include bytes
+    /// extend the budget they consume.
+    fn wall_deadline(&self) -> Option<std::time::Instant> {
+        self.wall_anchor.and_then(|anchor| {
+            anchor.checked_add(std::time::Duration::from_millis(self.wall_budget_ms))
+        })
+    }
+
+    /// Charge `bytes` of newly read include source to the wall budget and
+    /// to the include-byte budget (LANG-C-003): an include-heavy document
+    /// earns the time its own total size justifies instead of being held
+    /// to a budget sized by its root alone.
+    fn charge_include_bytes(&mut self, bytes: usize) {
+        self.wall_bytes = self.wall_bytes.saturating_add(bytes);
+        self.wall_budget_ms = parse_wall_budget_ms(self.wall_base_ms, self.wall_bytes);
+    }
+
     /// Statement-loop iterations between wall-clock reads (LANG-C-003).
     /// A statement costs microseconds, so 16 keeps the sample interval
     /// under ~50 µs while the `Instant::now()` cost stays well below a
@@ -1196,7 +1225,7 @@ impl Parser {
         if !self.ticks.is_multiple_of(Self::BUDGET_SAMPLE_EVERY) {
             return false;
         }
-        if let Some(end) = self.deadline {
+        if let Some(end) = self.wall_deadline() {
             if std::time::Instant::now() >= end {
                 let message = format!(
                     "parse budget exceeded: the {} ms parse wall budget was reached",
@@ -2172,10 +2201,12 @@ impl Parser {
         // root, with resolution deferred to the outer document end.
         self.in_profile = false;
         // Included files lex fresh (their own Indent/Dedent stacks),
-        // under the same deadline as the document that included them:
-        // an include graph is one parse from the host's point of view.
+        // under the same sliding deadline as the document that included
+        // them: an include graph is one parse from the host's point of
+        // view, and its bytes extend the budget they consume.
+        self.charge_include_bytes(src.len());
         let mut lexer = Lexer::new(&src);
-        lexer.deadline = self.deadline;
+        lexer.deadline = self.wall_deadline();
         let lexed = lexer.tokenize();
         if lexed.budget_exceeded {
             let message = format!(
@@ -4096,7 +4127,9 @@ impl Parser {
             include_stack: Vec::new(),
             includes_resolved: self.includes_resolved,
             included_bytes: self.included_bytes,
-            deadline: self.deadline,
+            wall_anchor: self.wall_anchor,
+            wall_base_ms: self.wall_base_ms,
+            wall_bytes: self.wall_bytes,
             wall_budget_ms: self.wall_budget_ms,
             ticks: 0,
             budget_violation: self.budget_violation.take(),
@@ -6123,7 +6156,9 @@ impl Parser {
             include_stack: Vec::new(),
             includes_resolved: self.includes_resolved,
             included_bytes: self.included_bytes,
-            deadline: self.deadline,
+            wall_anchor: self.wall_anchor,
+            wall_base_ms: self.wall_base_ms,
+            wall_bytes: self.wall_bytes,
             wall_budget_ms: self.wall_budget_ms,
             ticks: 0,
             budget_violation: self.budget_violation.take(),

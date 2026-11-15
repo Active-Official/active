@@ -34,6 +34,8 @@ pub fn explain_code(code: &str) -> &'static str {
         "E023" => "Integer out of range: positive literals saturate at i64::MAX, and negating the minimum yields MIN+1. Use a smaller magnitude or a different unit.",
         "E024" => "Bad mode marker: active_mode must be the string \"data\" or \"config\". Fix the spelling; Data Mode is explicit opt-in, Config is the default when the marker is absent.",
         "E025" => "Bad capabilities declaration: active_capabilities must be an array of strings naming tools the host offers. Fix the shapes; unknown names are refused at handshake time, not here.",
+        "E033" => "Envelope version refused: the Data Mode envelope's version is missing, is not a major.minor.patch string, or names a major this receiver does not implement. Send a version this receiver supports; never rewrite the receiver's gate to accept a foreign major.",
+        "E034" => "Capability refused: the document declares a capability this receiver does not offer. Request only capabilities the receiver advertises, or widen the receiver's offered set deliberately (EnvelopeGate::with_tools).",
         "E032" => "Signature or trust failure: the sidecar is missing, mismatched, or untrusted. Verify against the trust file for the recorded key id; never bypass verification to make it pass.",
 
         "E028" => "Include budget: the include graph resolved more than 256 files or read more than 16 MiB. Flatten the graph (a diamond re-reads the same file) or move shared content into fewer files.",

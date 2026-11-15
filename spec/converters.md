@@ -14,8 +14,13 @@ from the value tree with the same shapes:
 - Null/Bool/Int/Float/String → the JSON same-kind value.
 - DurationMs(ms) → `{"ms": ms}` (pinned by
   `tests/spec/02_unit_normalization.expected.json`).
-- Quantity(n, unit) → `{suffix: n}` with the normalized suffix
-  (e.g. `{"MiB": 5}`).
+- Quantity(n, unit) → `{"$active.quantity": {"unit": <suffix>, "value": n}}`.
+  The wrapper is reserved and identifier-safe: the old bare `{suffix: n}` form
+  was table-shaped, and suffixes such as `%`, `/s`, and `req/s` are not
+  identifiers, so import mangled the unit and lost the type. Import recognises
+  the wrapper and re-emits the typed literal, so the mapping is a fixed point
+  for every quantity kind (LANG-B-019). `%` is stored normalized (0.25) and
+  re-emitted as `25%`.
 - Array/Table → JSON array/object, recursively.
 - Secret(_) → `"***SECRET***"` (never the value, C-036).
 - Blob → `{"$active.blob": {hash, size, media_type, tainted}}`, the
@@ -56,6 +61,16 @@ so JSON and YAML exports always agree. Secrets redact identically.
 
 Failures (unrepresentable shapes beyond Null) are hard errors, not
 silent drops.
+
+**TOML duration/quantity export is one-way (LANG-B-018).** TOML has no duration
+or quantity type, so `t = 5s` exports as the string `"5000ms"` and `q = 5MiB` as
+`"5MiB"`. Importing that TOML back yields a **String**, not a typed value: a
+strict evaluation against `t = Duration` then fails with T002 (resilient mode
+would coerce it back, which is the wrong direction for a migration that should
+preserve types). Migration path: keep durations and quantities in Active source,
+or re-declare the type after import (`active import` output is ordinary Active —
+add `t = 5s` and delete the imported string). The JSON/YAML forms carry the same
+loss; only Active source preserves the declared unit.
 
 ## 4. Reverse direction (JSON / YAML / TOML → ACTIVE)
 

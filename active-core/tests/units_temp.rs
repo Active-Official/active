@@ -27,19 +27,19 @@ fn codes_of(src: &str) -> Vec<String> {
 fn temp_canonical_kelvin() {
     assert_eq!(
         eval_json("t = 20Cel\n")["t"],
-        serde_json::json!({"K": 293.15})
+        serde_json::json!({"$active.quantity": {"unit": "K", "value": 293.15}})
     );
     assert_eq!(
         eval_json("t = 0Cel\n")["t"],
-        serde_json::json!({"K": 273.15})
+        serde_json::json!({"$active.quantity": {"unit": "K", "value": 273.15}})
     );
     assert_eq!(
         eval_json("t = 273.15K\n")["t"],
-        serde_json::json!({"K": 273.15})
+        serde_json::json!({"$active.quantity": {"unit": "K", "value": 273.15}})
     );
     assert_eq!(
         eval_json("t = 68Fahr\n")["t"],
-        serde_json::json!({"K": 293.15})
+        serde_json::json!({"$active.quantity": {"unit": "K", "value": 293.15}})
     );
     assert!(codes_of("t = 20Cel\n").is_empty());
 }
@@ -63,7 +63,7 @@ fn temp_explicit_negation_preserved() {
     // produce negative kelvin. Linear dims keep negate-preserved values.
     assert_eq!(
         eval_json("t = -300Cel\n")["t"],
-        serde_json::json!({"K": 0.0})
+        serde_json::json!({"$active.quantity": {"unit": "K", "value": 0.0}})
     );
     assert!(codes_of("t = -300Cel\n").is_empty());
 }
@@ -86,7 +86,10 @@ fn temp_arithmetic_refused() {
 
 #[test]
 fn db_ordering_only() {
-    assert_eq!(eval_json("l = 3dB\n")["l"], serde_json::json!({"dB": 3.0}));
+    assert_eq!(
+        eval_json("l = 3dB\n")["l"],
+        serde_json::json!({"$active.quantity": {"unit": "dB", "value": 3.0}})
+    );
     assert_eq!(eval_json("l = 3dB == 3dB\n")["l"], true);
     assert_eq!(eval_json("l = 6dB > 3dB\n")["l"], true);
     // Log values do not add: 3dB + 3dB is not 6dB.

@@ -27,11 +27,11 @@ fn codes_of(src: &str) -> Vec<String> {
 fn angle_canonical_radians() {
     assert_eq!(
         eval_json("a = 180deg\n")["a"],
-        serde_json::json!({"rad": std::f64::consts::PI})
+        serde_json::json!({"$active.quantity": {"unit": "rad", "value": std::f64::consts::PI}})
     );
     assert_eq!(
         eval_json("a = 1rad\n")["a"],
-        serde_json::json!({"rad": 1.0})
+        serde_json::json!({"$active.quantity": {"unit": "rad", "value": 1.0}})
     );
     assert_eq!(eval_json("a = 180deg == 3.141592653589793rad\n")["a"], true);
     assert!(codes_of("a = 180deg\n").is_empty());
@@ -40,11 +40,11 @@ fn angle_canonical_radians() {
 #[test]
 fn angle_arithmetic() {
     assert_eq!(
-        eval_json("a = 90deg + 90deg\n")["a"]["rad"],
+        eval_json("a = 90deg + 90deg\n")["a"]["$active.quantity"]["value"],
         serde_json::json!(std::f64::consts::PI)
     );
     assert_eq!(
-        eval_json("a = 180deg - 90deg\n")["a"]["rad"],
+        eval_json("a = 180deg - 90deg\n")["a"]["$active.quantity"]["value"],
         serde_json::json!(std::f64::consts::FRAC_PI_2)
     );
     assert_eq!(eval_json("a = 90deg < 180deg\n")["a"], true);
@@ -54,11 +54,11 @@ fn angle_arithmetic() {
 fn rotation_retained_rpm() {
     assert_eq!(
         eval_json("r = 60rpm\n")["r"],
-        serde_json::json!({"rpm": 60.0})
+        serde_json::json!({"$active.quantity": {"unit": "rpm", "value": 60.0}})
     );
     assert_eq!(
         eval_json("r = 60rpm + 60rpm\n")["r"],
-        serde_json::json!({"rpm": 120.0})
+        serde_json::json!({"$active.quantity": {"unit": "rpm", "value": 120.0}})
     );
     // Rotation is a rate dimension: rpm + deg refuses.
     let codes = codes_of("x = 60rpm + 1deg\n");
@@ -69,16 +69,16 @@ fn rotation_retained_rpm() {
 fn length_longform_meters() {
     assert_eq!(
         eval_json("l = 1km\n")["l"],
-        serde_json::json!({"meter": 1000.0})
+        serde_json::json!({"$active.quantity": {"unit": "meter", "value": 1000.0}})
     );
     assert_eq!(
         eval_json("l = 500meter\n")["l"],
-        serde_json::json!({"meter": 500.0})
+        serde_json::json!({"$active.quantity": {"unit": "meter", "value": 500.0}})
     );
     assert_eq!(eval_json("l = 1km == 1000meter\n")["l"], true);
     assert_eq!(
         eval_json("l = 1km + 500meter\n")["l"],
-        serde_json::json!({"meter": 1500.0})
+        serde_json::json!({"$active.quantity": {"unit": "meter", "value": 1500.0}})
     );
     // `m` stays minutes: 1m is a duration, never a length.
     assert_eq!(eval_json("t = 1m\n")["t"], serde_json::json!({"ms": 60000}));
@@ -86,12 +86,18 @@ fn length_longform_meters() {
 
 #[test]
 fn mass_canonical_kg() {
-    assert_eq!(eval_json("m = 1kg\n")["m"], serde_json::json!({"kg": 1.0}));
-    assert_eq!(eval_json("m = 500g\n")["m"], serde_json::json!({"kg": 0.5}));
+    assert_eq!(
+        eval_json("m = 1kg\n")["m"],
+        serde_json::json!({"$active.quantity": {"unit": "kg", "value": 1.0}})
+    );
+    assert_eq!(
+        eval_json("m = 500g\n")["m"],
+        serde_json::json!({"$active.quantity": {"unit": "kg", "value": 0.5}})
+    );
     assert_eq!(eval_json("m = 1kg == 1000g\n")["m"], true);
     assert_eq!(
         eval_json("m = 2kg - 500g\n")["m"],
-        serde_json::json!({"kg": 1.5})
+        serde_json::json!({"$active.quantity": {"unit": "kg", "value": 1.5}})
     );
 }
 

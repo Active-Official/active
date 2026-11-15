@@ -26,14 +26,14 @@ fn codes_of(src: &str) -> Vec<String> {
 fn pressure_canonical_pa() {
     assert_eq!(
         eval_json("p = 101325Pa\n")["p"],
-        serde_json::json!({"Pa": 101325.0})
+        serde_json::json!({"$active.quantity": {"unit": "Pa", "value": 101325.0}})
     );
     assert_eq!(
         eval_json("p = 1bar\n")["p"],
-        serde_json::json!({"Pa": 100000.0})
+        serde_json::json!({"$active.quantity": {"unit": "Pa", "value": 100000.0}})
     );
     assert_eq!(
-        eval_json("p = 14.7psi\n")["p"]["Pa"],
+        eval_json("p = 14.7psi\n")["p"]["$active.quantity"]["value"],
         serde_json::json!(101352.9322095696)
     );
     assert!(codes_of("p = 1bar\n").is_empty());
@@ -44,16 +44,25 @@ fn pressure_cross_spellings_agree() {
     assert_eq!(eval_json("p = 1bar == 100000Pa\n")["p"], true);
     assert_eq!(
         eval_json("p = 2bar + 50000Pa\n")["p"],
-        serde_json::json!({"Pa": 250000.0})
+        serde_json::json!({"$active.quantity": {"unit": "Pa", "value": 250000.0}})
     );
     assert_eq!(eval_json("p = 1bar > 50000Pa\n")["p"], true);
 }
 
 #[test]
 fn electrical_dimensions_distinct() {
-    assert_eq!(eval_json("v = 12V\n")["v"], serde_json::json!({"V": 12.0}));
-    assert_eq!(eval_json("i = 2A\n")["i"], serde_json::json!({"A": 2.0}));
-    assert_eq!(eval_json("w = 60W\n")["w"], serde_json::json!({"W": 60.0}));
+    assert_eq!(
+        eval_json("v = 12V\n")["v"],
+        serde_json::json!({"$active.quantity": {"unit": "V", "value": 12.0}})
+    );
+    assert_eq!(
+        eval_json("i = 2A\n")["i"],
+        serde_json::json!({"$active.quantity": {"unit": "A", "value": 2.0}})
+    );
+    assert_eq!(
+        eval_json("w = 60W\n")["w"],
+        serde_json::json!({"$active.quantity": {"unit": "W", "value": 60.0}})
+    );
     // Volts + amps is the mistake that burns hardware: TypeError, always.
     for src in [
         "x = 12V + 2A\n",
@@ -70,15 +79,15 @@ fn electrical_dimensions_distinct() {
 fn electrical_same_dimension_arithmetic() {
     assert_eq!(
         eval_json("v = 12V + 12V\n")["v"],
-        serde_json::json!({"V": 24.0})
+        serde_json::json!({"$active.quantity": {"unit": "V", "value": 24.0}})
     );
     assert_eq!(
         eval_json("w = 100W - 40W\n")["w"],
-        serde_json::json!({"W": 60.0})
+        serde_json::json!({"$active.quantity": {"unit": "W", "value": 60.0}})
     );
     assert_eq!(
         eval_json("i = 2A * 3\n")["i"],
-        serde_json::json!({"A": 6.0})
+        serde_json::json!({"$active.quantity": {"unit": "A", "value": 6.0}})
     );
     assert_eq!(eval_json("v = 9V < 12V\n")["v"], true);
 }
@@ -87,25 +96,28 @@ fn electrical_same_dimension_arithmetic() {
 fn energy_canonical_joules() {
     assert_eq!(
         eval_json("e = 100J\n")["e"],
-        serde_json::json!({"J": 100.0})
+        serde_json::json!({"$active.quantity": {"unit": "J", "value": 100.0}})
     );
     assert_eq!(
         eval_json("e = 1kWh\n")["e"],
-        serde_json::json!({"J": 3600000.0})
+        serde_json::json!({"$active.quantity": {"unit": "J", "value": 3600000.0}})
     );
     assert_eq!(eval_json("e = 1kWh == 3600000J\n")["e"], true);
     assert_eq!(
         eval_json("e = 2kWh + 500000J\n")["e"],
-        serde_json::json!({"J": 7700000.0})
+        serde_json::json!({"$active.quantity": {"unit": "J", "value": 7700000.0}})
     );
 }
 
 #[test]
 fn force_canonical_newtons() {
-    assert_eq!(eval_json("f = 9.8N\n")["f"], serde_json::json!({"N": 9.8}));
+    assert_eq!(
+        eval_json("f = 9.8N\n")["f"],
+        serde_json::json!({"$active.quantity": {"unit": "N", "value": 9.8}})
+    );
     assert_eq!(
         eval_json("f = 9.8N + 0.2N\n")["f"],
-        serde_json::json!({"N": 10.0})
+        serde_json::json!({"$active.quantity": {"unit": "N", "value": 10.0}})
     );
     // Force + energy refuses: different dimensions, no matter the intuition.
     let codes = codes_of("x = 9.8N + 100J\n");

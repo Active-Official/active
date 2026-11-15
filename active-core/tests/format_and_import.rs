@@ -103,3 +103,27 @@ fn duplicate_keys_follow_one_documented_policy_per_format() {
         active_core::convert::import::json_text_to_active("{\"a\": 1, \"a\": 2}").expect("json");
     assert_eq!(text.trim(), "a = 2", "{text}");
 }
+
+#[test]
+fn quantities_round_trip_through_the_json_wrapper() {
+    // LANG-B-019: `{"%": n}` was table-shaped and `%` is not an
+    // identifier, so the unit was mangled on import. The reserved wrapper
+    // is a fixed point for every quantity kind.
+    for src in [
+        "p = 25%\n",
+        "r = 100req/s\n",
+        "t = 500tok/s\n",
+        "f = 2kHz\n",
+        "pr = 2Pa\n",
+    ] {
+        let module = parse(src, "qty").expect("parse");
+        let (value, _d) = Engine::new().evaluate(&module).expect("evaluate");
+        let json = active_core::convert::value_to_pretty_json(&value);
+        let (imported, _notes) =
+            active_core::convert::import::json_text_to_active(&json).expect("import");
+        let back = parse(&imported, "qty-back").expect("imported source parses");
+        let (value2, _d2) = Engine::new().evaluate(&back).expect("evaluate");
+        let json2 = active_core::convert::value_to_pretty_json(&value2);
+        assert_eq!(json, json2, "round trip for {src:?}");
+    }
+}

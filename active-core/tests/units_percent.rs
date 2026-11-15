@@ -26,7 +26,11 @@ fn codes_of(src: &str) -> Vec<String> {
 #[test]
 fn pct_basic_canonical_ratio() {
     let v = eval_json("p = 25%\n");
-    assert_eq!(v["p"], serde_json::json!({"%": 0.25}), "{v}");
+    assert_eq!(
+        v["p"],
+        serde_json::json!({"$active.quantity": {"unit": "%", "value": 0.25}}),
+        "{v}"
+    );
     assert!(codes_of("p = 25%\n").is_empty());
 }
 
@@ -36,7 +40,7 @@ fn pct_spelled_forms_agree() {
     assert_eq!(eval_json("p = 25%\n")["p"], eval_json("p = 25.0%\n")["p"]);
     assert_eq!(
         eval_json("p = 12.5%\n")["p"],
-        serde_json::json!({"%": 0.125})
+        serde_json::json!({"$active.quantity": {"unit": "%", "value": 0.125}})
     );
 }
 
@@ -56,19 +60,19 @@ fn pct_export_is_percent_form() {
 fn pct_same_dimension_arithmetic() {
     assert_eq!(
         eval_json("p = 25% + 25%\n")["p"],
-        serde_json::json!({"%": 0.5})
+        serde_json::json!({"$active.quantity": {"unit": "%", "value": 0.5}})
     );
     assert_eq!(
         eval_json("p = 50% - 25%\n")["p"],
-        serde_json::json!({"%": 0.25})
+        serde_json::json!({"$active.quantity": {"unit": "%", "value": 0.25}})
     );
     assert_eq!(
         eval_json("p = 25% * 2\n")["p"],
-        serde_json::json!({"%": 0.5})
+        serde_json::json!({"$active.quantity": {"unit": "%", "value": 0.5}})
     );
     assert_eq!(
         eval_json("p = 50% / 2\n")["p"],
-        serde_json::json!({"%": 0.25})
+        serde_json::json!({"$active.quantity": {"unit": "%", "value": 0.25}})
     );
     assert_eq!(eval_json("p = 50% / 25%\n")["p"], 2.0);
     assert_eq!(eval_json("p = 25% < 50%\n")["p"], true);
@@ -100,8 +104,14 @@ fn pct_equality_never_coerces() {
 #[test]
 fn pct_no_clamp() {
     // Over-100 and negative percents are meaningful (growth, discounts).
-    assert_eq!(eval_json("p = 150%\n")["p"], serde_json::json!({"%": 1.5}));
-    assert_eq!(eval_json("p = -5%\n")["p"], serde_json::json!({"%": -0.05}));
+    assert_eq!(
+        eval_json("p = 150%\n")["p"],
+        serde_json::json!({"$active.quantity": {"unit": "%", "value": 1.5}})
+    );
+    assert_eq!(
+        eval_json("p = -5%\n")["p"],
+        serde_json::json!({"$active.quantity": {"unit": "%", "value": -0.05}})
+    );
 }
 
 #[test]
@@ -119,10 +129,14 @@ fn pct_spaced_suffix_refused() {
 fn rates_same_suffix_arithmetic() {
     // Same mechanism as percent: same-suffix rates compute.
     let v = eval_json("r = 100/req/s + 50/req/s\n");
-    assert_eq!(v["r"], serde_json::json!({"req/s": 150.0}), "{v}");
+    assert_eq!(
+        v["r"],
+        serde_json::json!({"$active.quantity": {"unit": "req/s", "value": 150.0}}),
+        "{v}"
+    );
     assert_eq!(
         eval_json("r = 100/req/s - 25/req/s\n")["r"],
-        serde_json::json!({"req/s": 75.0})
+        serde_json::json!({"$active.quantity": {"unit": "req/s", "value": 75.0}})
     );
     assert_eq!(eval_json("r = 50/req/s < 100/req/s\n")["r"], true);
     // Cross-suffix stays a dimensional TypeError (class T001).
@@ -137,5 +151,9 @@ fn pct_schema_kind_is_quantity_percent() {
     let src = "p = 25%\n";
     assert!(codes_of(src).is_empty());
     let v = eval_json(src);
-    assert_eq!(v["p"], serde_json::json!({"%": 0.25}), "{v}");
+    assert_eq!(
+        v["p"],
+        serde_json::json!({"$active.quantity": {"unit": "%", "value": 0.25}}),
+        "{v}"
+    );
 }

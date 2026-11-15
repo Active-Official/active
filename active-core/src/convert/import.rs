@@ -137,6 +137,10 @@ impl Emitter {
             } else {
                 format!("{path}.{clean}")
             };
+            if let Some(lit) = quantity_literal(val) {
+                out.push_str(&format!("{pad}{clean} = {lit}\n"));
+                continue;
+            }
             match val {
                 JsonValue::Object(nested) => {
                     out.push_str(&format!("{pad}{clean} {{\n"));
@@ -224,6 +228,9 @@ impl Emitter {
                 format!("[{}]", parts.join(", "))
             }
             JsonValue::Object(map) => {
+                if let Some(lit) = quantity_literal(val) {
+                    return lit;
+                }
                 let mut parts = Vec::with_capacity(map.len());
                 let mut seen = HashSet::new();
                 for (key, item) in map {
@@ -479,6 +486,25 @@ fn disambiguate(clean: String, taken: &mut std::collections::HashSet<String>) ->
         }
         n += 1;
     }
+}
+
+/// Recognise the reserved quantity wrapper (`{"$active.quantity":
+/// {"unit": "%", "value": 0.25}}`) and render the Active literal it
+/// stands for (`0.25%`). Round-trip fixed point for every unit kind
+/// (LANG-B-019).
+fn quantity_literal(val: &JsonValue) -> Option<String> {
+    let obj = val.as_object()?;
+    if obj.len() != 1 {
+        return None;
+    }
+    let inner = obj.get("$active.quantity")?.as_object()?;
+    let unit = inner.get("unit")?.as_str()?;
+    let value = inner.get("value")?.as_f64()?;
+    // `%` normalises by /100 at evaluation, so the emitted amount must be
+    // the pre-normalisation percentage (0.25 -> `25%`); every other unit
+    // is linear (LANG-B-019).
+    let amount = if unit == "%" { value * 100.0 } else { value };
+    Some(format!("{amount}{unit}"))
 }
 
 /// Contextual renames, applied after `sanitize_key` wherever a value

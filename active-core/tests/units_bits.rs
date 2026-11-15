@@ -25,18 +25,21 @@ fn codes_of(src: &str) -> Vec<String> {
 
 #[test]
 fn bits_canonical_bits() {
-    assert_eq!(eval_json("b = 8b\n")["b"], serde_json::json!({"b": 8.0}));
+    assert_eq!(
+        eval_json("b = 8b\n")["b"],
+        serde_json::json!({"$active.quantity": {"unit": "b", "value": 8.0}})
+    );
     assert_eq!(
         eval_json("b = 1Kb\n")["b"],
-        serde_json::json!({"b": 1000.0})
+        serde_json::json!({"$active.quantity": {"unit": "b", "value": 1000.0}})
     );
     assert_eq!(
         eval_json("b = 2Mb\n")["b"],
-        serde_json::json!({"b": 2000000.0})
+        serde_json::json!({"$active.quantity": {"unit": "b", "value": 2000000.0}})
     );
     assert_eq!(
         eval_json("b = 1Gb\n")["b"],
-        serde_json::json!({"b": 1000000000.0})
+        serde_json::json!({"$active.quantity": {"unit": "b", "value": 1000000000.0}})
     );
     assert!(codes_of("b = 1Kb\n").is_empty());
 }
@@ -45,24 +48,24 @@ fn bits_canonical_bits() {
 fn rates_canonical_bps() {
     assert_eq!(
         eval_json("r = 1bps\n")["r"],
-        serde_json::json!({"bps": 1.0})
+        serde_json::json!({"$active.quantity": {"unit": "bps", "value": 1.0}})
     );
     assert_eq!(
         eval_json("r = 1Kbps\n")["r"],
-        serde_json::json!({"bps": 1000.0})
+        serde_json::json!({"$active.quantity": {"unit": "bps", "value": 1000.0}})
     );
     assert_eq!(
         eval_json("r = 100Mbps\n")["r"],
-        serde_json::json!({"bps": 100000000.0})
+        serde_json::json!({"$active.quantity": {"unit": "bps", "value": 100000000.0}})
     );
     assert_eq!(
         eval_json("r = 1Gbps\n")["r"],
-        serde_json::json!({"bps": 1000000000.0})
+        serde_json::json!({"$active.quantity": {"unit": "bps", "value": 1000000000.0}})
     );
     // MB/s converts through megabytes: 1 MB/s = 8,000,000 bps.
     assert_eq!(
         eval_json("r = 1MB/s\n")["r"],
-        serde_json::json!({"bps": 8000000.0})
+        serde_json::json!({"$active.quantity": {"unit": "bps", "value": 8000000.0}})
     );
     assert!(codes_of("r = 1MB/s\n").is_empty());
 }
@@ -79,19 +82,19 @@ fn cross_spelled_rates_compare_equal() {
 fn bits_rates_arithmetic() {
     assert_eq!(
         eval_json("b = 1Kb + 500b\n")["b"],
-        serde_json::json!({"b": 1500.0})
+        serde_json::json!({"$active.quantity": {"unit": "b", "value": 1500.0}})
     );
     assert_eq!(
         eval_json("r = 100Mbps + 50Mbps\n")["r"],
-        serde_json::json!({"bps": 150000000.0})
+        serde_json::json!({"$active.quantity": {"unit": "bps", "value": 150000000.0}})
     );
     assert_eq!(
         eval_json("r = 1Gbps - 250Mbps\n")["r"],
-        serde_json::json!({"bps": 750000000.0})
+        serde_json::json!({"$active.quantity": {"unit": "bps", "value": 750000000.0}})
     );
     assert_eq!(
         eval_json("r = 100Mbps * 2\n")["r"],
-        serde_json::json!({"bps": 200000000.0})
+        serde_json::json!({"$active.quantity": {"unit": "bps", "value": 200000000.0}})
     );
     assert_eq!(eval_json("r = 1Gbps / 1Mbps\n")["r"], 1000.0);
     assert_eq!(eval_json("r = 500Mbps < 1Gbps\n")["r"], true);
@@ -116,12 +119,12 @@ fn case_discipline_bits_vs_bytes() {
     // `Kb` (kilobits) and `KB` (kilobytes) coexist without confusion.
     assert_eq!(
         eval_json("b = 1Kb\n")["b"],
-        serde_json::json!({"b": 1000.0})
+        serde_json::json!({"$active.quantity": {"unit": "b", "value": 1000.0}})
     );
     assert_eq!(eval_json("b = 1KB\n")["b"], 1000);
     assert_eq!(
         eval_json("b = 1Mb\n")["b"],
-        serde_json::json!({"b": 1000000.0})
+        serde_json::json!({"$active.quantity": {"unit": "b", "value": 1000000.0}})
     );
     assert_eq!(eval_json("b = 1MB\n")["b"], 1000000);
     // ...and never equal each other: 1KB (8000 bits) != 1Kb (1000 bits).

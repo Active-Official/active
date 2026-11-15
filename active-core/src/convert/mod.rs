@@ -75,7 +75,13 @@ pub fn value_to_json(v: &Value) -> JsonValue {
         }),
         Value::String(s) => json!(s),
         Value::DurationMs(ms) => json!({ "ms": ms }),
-        Value::Quantity(n, unit) => json!({ unit.suffix(): n }),
+        // Quantities export under a reserved wrapper so the mapping is
+        // a fixed point: the bare `{ "%": n }` / `{ "MiB": n }` forms
+        // were table-shaped, and `%` is not even an identifier, so
+        // import mangled the unit and lost the type (LANG-B-019).
+        Value::Quantity(n, unit) => json!({
+            "$active.quantity": { "unit": unit.suffix(), "value": n }
+        }),
         Value::Array(arr) => JsonValue::Array(arr.iter().map(value_to_json).collect()),
         Value::Table(map) => {
             let mut obj = serde_json::Map::new();

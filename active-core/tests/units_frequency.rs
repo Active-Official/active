@@ -27,23 +27,23 @@ fn codes_of(src: &str) -> Vec<String> {
 fn freq_canonical_hertz() {
     assert_eq!(
         eval_json("f = 60Hz\n")["f"],
-        serde_json::json!({"Hz": 60.0})
+        serde_json::json!({"$active.quantity": {"unit": "Hz", "value": 60.0}})
     );
     assert_eq!(
         eval_json("f = 1kHz\n")["f"],
-        serde_json::json!({"Hz": 1000.0})
+        serde_json::json!({"$active.quantity": {"unit": "Hz", "value": 1000.0}})
     );
     assert_eq!(
         eval_json("f = 2.4GHz\n")["f"],
-        serde_json::json!({"Hz": 2400000000.0})
+        serde_json::json!({"$active.quantity": {"unit": "Hz", "value": 2400000000.0}})
     );
     assert_eq!(
         eval_json("f = 1MHz\n")["f"],
-        serde_json::json!({"Hz": 1000000.0})
+        serde_json::json!({"$active.quantity": {"unit": "Hz", "value": 1000000.0}})
     );
     assert_eq!(
         eval_json("f = 1THz\n")["f"],
-        serde_json::json!({"Hz": 1000000000000.0})
+        serde_json::json!({"$active.quantity": {"unit": "Hz", "value": 1000000000000.0}})
     );
     assert!(codes_of("f = 1kHz\n").is_empty());
 }
@@ -53,9 +53,9 @@ fn freq_fractional_kept() {
     // Fractional hertz are real (audio, drift): no int coercion.
     assert_eq!(
         eval_json("f = 0.5Hz\n")["f"],
-        serde_json::json!({"Hz": 0.5})
+        serde_json::json!({"$active.quantity": {"unit": "Hz", "value": 0.5}})
     );
-    assert!(!eval_json("f = 0.5Hz\n")["f"]["Hz"].is_i64());
+    assert!(!eval_json("f = 0.5Hz\n")["f"]["$active.quantity"]["value"].is_i64());
 }
 
 #[test]
@@ -73,19 +73,19 @@ fn freq_export_is_hz_form() {
 fn freq_same_dimension_arithmetic() {
     assert_eq!(
         eval_json("f = 1kHz + 500Hz\n")["f"],
-        serde_json::json!({"Hz": 1500.0})
+        serde_json::json!({"$active.quantity": {"unit": "Hz", "value": 1500.0}})
     );
     assert_eq!(
         eval_json("f = 2GHz - 500MHz\n")["f"],
-        serde_json::json!({"Hz": 1500000000.0})
+        serde_json::json!({"$active.quantity": {"unit": "Hz", "value": 1500000000.0}})
     );
     assert_eq!(
         eval_json("f = 100Hz * 2\n")["f"],
-        serde_json::json!({"Hz": 200.0})
+        serde_json::json!({"$active.quantity": {"unit": "Hz", "value": 200.0}})
     );
     assert_eq!(
         eval_json("f = 1kHz / 2\n")["f"],
-        serde_json::json!({"Hz": 500.0})
+        serde_json::json!({"$active.quantity": {"unit": "Hz", "value": 500.0}})
     );
     assert_eq!(eval_json("f = 2kHz / 1kHz\n")["f"], 2.0);
     assert_eq!(eval_json("f = 500Hz < 1kHz\n")["f"], true);
@@ -131,7 +131,7 @@ fn freq_explicit_negation_preserved() {
     // Literal magnitudes clamp at zero, but explicit unary minus is kept.
     assert_eq!(
         eval_json("f = -5Hz\n")["f"],
-        serde_json::json!({"Hz": -5.0})
+        serde_json::json!({"$active.quantity": {"unit": "Hz", "value": -5.0}})
     );
     // Positive control: plain literals canonicalize silently.
     assert!(codes_of("f = 5Hz\n").is_empty());

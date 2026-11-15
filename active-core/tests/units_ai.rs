@@ -27,19 +27,19 @@ fn codes_of(src: &str) -> Vec<String> {
 fn tokens_canonical_counts() {
     assert_eq!(
         eval_json("c = 128ktokens\n")["c"],
-        serde_json::json!({"tokens": 128000.0})
+        serde_json::json!({"$active.quantity": {"unit": "tokens", "value": 128000.0}})
     );
     assert_eq!(
         eval_json("c = 4ktokens\n")["c"],
-        serde_json::json!({"tokens": 4000.0})
+        serde_json::json!({"$active.quantity": {"unit": "tokens", "value": 4000.0}})
     );
     assert_eq!(
         eval_json("c = 2Mtokens\n")["c"],
-        serde_json::json!({"tokens": 2000000.0})
+        serde_json::json!({"$active.quantity": {"unit": "tokens", "value": 2000000.0}})
     );
     assert_eq!(
         eval_json("c = 512tokens\n")["c"],
-        serde_json::json!({"tokens": 512.0})
+        serde_json::json!({"$active.quantity": {"unit": "tokens", "value": 512.0}})
     );
     assert!(codes_of("c = 128ktokens\n").is_empty());
 }
@@ -48,15 +48,15 @@ fn tokens_canonical_counts() {
 fn tokens_arithmetic() {
     assert_eq!(
         eval_json("c = 128ktokens + 4ktokens\n")["c"],
-        serde_json::json!({"tokens": 132000.0})
+        serde_json::json!({"$active.quantity": {"unit": "tokens", "value": 132000.0}})
     );
     assert_eq!(
         eval_json("c = 2Mtokens - 500ktokens\n")["c"],
-        serde_json::json!({"tokens": 1500000.0})
+        serde_json::json!({"$active.quantity": {"unit": "tokens", "value": 1500000.0}})
     );
     assert_eq!(
         eval_json("c = 4ktokens * 2\n")["c"],
-        serde_json::json!({"tokens": 8000.0})
+        serde_json::json!({"$active.quantity": {"unit": "tokens", "value": 8000.0}})
     );
     assert_eq!(eval_json("c = 128ktokens / 4ktokens\n")["c"], 32.0);
     assert_eq!(eval_json("c = 4ktokens < 128ktokens\n")["c"], true);
@@ -103,11 +103,11 @@ fn tokens_leading_digit_form_announced() {
 fn toks_canonical_throughput() {
     assert_eq!(
         eval_json("t = 500tok/s\n")["t"],
-        serde_json::json!({"tok/s": 500.0})
+        serde_json::json!({"$active.quantity": {"unit": "tok/s", "value": 500.0}})
     );
     assert_eq!(
         eval_json("t = 500tok/s + 250tok/s\n")["t"],
-        serde_json::json!({"tok/s": 750.0})
+        serde_json::json!({"$active.quantity": {"unit": "tok/s", "value": 750.0}})
     );
     assert_eq!(eval_json("t = 100tok/s < 500tok/s\n")["t"], true);
     // Cross-dimension with plain rates stays refused.
@@ -119,19 +119,19 @@ fn toks_canonical_throughput() {
 fn flops_canonical_compute() {
     assert_eq!(
         eval_json("f = 2TFLOPS\n")["f"],
-        serde_json::json!({"FLOPS": 2000000000000.0})
+        serde_json::json!({"$active.quantity": {"unit": "FLOPS", "value": 2000000000000.0}})
     );
     assert_eq!(
         eval_json("f = 15PFLOPS\n")["f"],
-        serde_json::json!({"FLOPS": 15000000000000000.0})
+        serde_json::json!({"$active.quantity": {"unit": "FLOPS", "value": 15000000000000000.0}})
     );
     assert_eq!(
         eval_json("f = 100FLOPS\n")["f"],
-        serde_json::json!({"FLOPS": 100.0})
+        serde_json::json!({"$active.quantity": {"unit": "FLOPS", "value": 100.0}})
     );
     assert_eq!(
         eval_json("f = 2TFLOPS + 500TFLOPS\n")["f"],
-        serde_json::json!({"FLOPS": 502000000000000.0})
+        serde_json::json!({"$active.quantity": {"unit": "FLOPS", "value": 502000000000000.0}})
     );
     assert_eq!(eval_json("f = 1PFLOPS == 1000TFLOPS\n")["f"], true);
     // Case discipline: `flops`/`Tflops` are not units.

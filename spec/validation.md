@@ -272,3 +272,18 @@ functions) is coercible:
   warning is recorded (value-free, per §7), and the coerced value
   is constraint-checked like a written one (an out-of-range
   coercion still reports T003).
+
+**Accepted coercion vocabulary (LANG-B-024).** Coercion accepts exactly these
+spellings; anything else keeps the T002:
+
+| Target | Accepted spellings |
+|---|---|
+| `Int` | an optional sign and decimal digits (`"42"`, `"-7"`) |
+| `Float` | an optional sign, digits, and at most one fraction (`"1.5"`, `"2"`, `"-0.25"`) |
+| `Bool` | `true`/`yes`/`on`/`1` and `false`/`no`/`off`/`0`, case-insensitive |
+| `Duration` | a non-negative number followed by a known unit suffix (`"5s"`, `"1.5h"`, `"300ms"`) |
+
+Float coercion rejects exponent notation (`"1e3"`) and the `nan`/`inf`
+spellings: the grammar has no exponent notation and non-finite values are
+errors (LANG-B-009), so coercion never invents a spelling the language
+cannot parse nor a value it cannot represent.

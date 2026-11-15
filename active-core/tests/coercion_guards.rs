@@ -58,3 +58,22 @@ fn negative_durations_are_rejected_not_clamped() {
     let (v, _c) = resilient("schema = { t = Duration }\nt = \"1.5s\"\n");
     assert_eq!(v["t"]["ms"], 1500, "{v}");
 }
+
+#[test]
+fn float_coercion_accepts_only_plain_decimal_spellings() {
+    // LANG-B-024: the grammar has no exponent notation, so `"1e3"` must not
+    // coerce; the documented plain spellings still do.
+    for (src, want) in [("2.5", 2.5f64), ("-0.25", -0.25), ("7", 7.0), ("+3.5", 3.5)] {
+        let doc = format!("schema = {{ x = Float }}\nx = \"{src}\"\n");
+        let (v, codes) = resilient(&doc);
+        assert_eq!(v["x"], serde_json::json!(want), "{src}: {v}");
+        assert!(codes.iter().any(|c| c == "H007"), "{src}: {codes:?}");
+    }
+    for bad in ["1e3", "1E3", "nan", "inf", "0x10", "", "1.2.3"] {
+        let doc = format!("schema = {{ x = Float }}\nx = \"{bad}\"\n");
+        let (v, codes) = resilient(&doc);
+        assert_eq!(v["x"], bad, "{bad} must stay a string: {v}");
+        assert!(codes.iter().any(|c| c == "T002"), "{bad}: {codes:?}");
+        assert!(!codes.iter().any(|c| c == "H007"), "{bad}: {codes:?}");
+    }
+}

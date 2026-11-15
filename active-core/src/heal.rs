@@ -301,6 +301,26 @@ pub fn coerce_string_to(value: &str, target: &ActiveType) -> Option<crate::ir::V
             ) {
                 return None;
             }
+            // Only spellings the grammar itself accepts: an optional
+            // sign, digits, and one optional fraction. Exponents are
+            // rejected - the grammar has no exponent notation, so
+            // coercing `1e3` would invent a spelling the language
+            // does not have (LANG-B-024).
+            let plain_decimal = {
+                let digits = trimmed.strip_prefix(['+', '-']).unwrap_or(trimmed);
+                let mut parts = digits.split('.');
+                let int_part = parts.next().unwrap_or("");
+                let frac_ok = parts
+                    .next()
+                    .is_none_or(|f| !f.is_empty() && f.chars().all(|c| c.is_ascii_digit()));
+                parts.next().is_none()
+                    && !int_part.is_empty()
+                    && int_part.chars().all(|c| c.is_ascii_digit())
+                    && frac_ok
+            };
+            if !plain_decimal {
+                return None;
+            }
             trimmed
                 .parse::<f64>()
                 .ok()

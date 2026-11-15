@@ -4145,3 +4145,39 @@ fn deep_expression_nesting_fails_with_e004_instead_of_overflowing() {
     assert!(body.contains("E004"), "{body}");
     assert!(!body.to_lowercase().contains("overflow"), "{body}");
 }
+
+#[test]
+fn reader_version_flag_enforces_the_floor() {
+    // LANG-B-021: declaring the host's reader version turns the schema's
+    // min_reader floor into a hard T007 refusal; omitting the flag keeps
+    // the documented advisory behaviour.
+    let src = "schema = { min_reader = \"9.9.9\", host = String }\nhost = \"x\"\n";
+    let f = fixture("reader_floor.active", src);
+    let advisory = active().arg("eval").arg(&f).output().expect("run");
+    assert!(advisory.status.success(), "advisory evaluates");
+
+    let refused = active()
+        .arg("eval")
+        .arg("--reader-version")
+        .arg("1.4.0")
+        .arg(&f)
+        .output()
+        .expect("run");
+    let body = format!(
+        "{}{}",
+        String::from_utf8_lossy(&refused.stdout),
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(!refused.status.success(), "{body}");
+    assert!(body.contains("T007"), "{body}");
+    assert!(body.contains("requires reader 9.9.9"), "{body}");
+
+    let ok = active()
+        .arg("eval")
+        .arg("--reader-version")
+        .arg("9.9.9")
+        .arg(&f)
+        .output()
+        .expect("run");
+    assert!(ok.status.success(), "equal reader evaluates");
+}

@@ -41,7 +41,8 @@ pub fn explain_code(code: &str) -> &'static str {
         "T003" => "Schema or format violation: the value breaks a constraint (format, pattern, range, membership). Fix the VALUE to a well-formed one, or correct the schema if the constraint itself is wrong — never delete the constraint to silence it. Unknown format names are schema bugs: use email|uri|uuid|semver.",
         "T004" => "Missing required key: add the named key. When the message names a trigger (`required by present`), the key is conditional on that trigger — set it or unset the trigger, but do not remove the requires rule.",
         "T005" => "Unexpected key in a closed table: remove the key, move it to the table it belongs to, or follow the did-you-mean suggestion (`@rename`). Opening the table trades a typo guard for silence.",
-        "W004" => "Patch target warning: a @remove/@rename names a path that does not exist. Nothing was changed; check the path spelling.",
+
+        "T007" => "Reader version floor: the document declares a min_reader above the version this host declared. Upgrade the reader, or evaluate without declaring a version (the floors are advisory then).",        "W004" => "Patch target warning: a @remove/@rename names a path that does not exist. Nothing was changed; check the path spelling.",
         "W005" => "Resilient default fill (informational): the engine inserted a schema default for a missing key. Harmless in resilient mode; strict mode requires the key written out.",
         "W013" => "Data Mode progressive warning: a budget is at 80% of its hard ceiling. Finish or shrink the document, or raise the limit explicitly and deliberately — hard ceilings bind Data Mode exactly as Config.",
 

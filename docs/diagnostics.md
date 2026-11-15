@@ -78,6 +78,7 @@ parses leave it unset and tools fall back to the input filename.
 | T005 | `schema violation at '<path>': unexpected key '<key>' in closed table` | value expression span when resolvable (the token that produced the value), else the schema table span | A value key has no schema field inside a `closed = true` table (C-032). Key names are author-written identifiers, safe to quote |
 | T006 | `constraint violation at '<path>': <source> does not hold (actual: <rendered>)` / `constraint violation at '<path>': <source> must evaluate to a boolean, got <kind>` | value span when resolvable, else the annotation comment span | A `@constraint` predicate fails (C-034). `<source>` is the author-written payload, truncated at 120 chars and rendered generic when it contains `secret(…)`; `<rendered>` is the actual value rendered safely (a material actual of any kind becomes `***SECRET***`, a string containing a known secret is redacted in place, and output truncates at 120 chars) |
 
+| T007 | `document requires reader <min_reader>; this reader is <version>` | none (evaluation gate) | The host declared its reader version and the document's schema `min_reader` is above it (spec/schema-evolution.md §1, LANG-B-021). Without a declared version the floors stay advisory. |
 ### B0xx — Blob / content-addressed values (evaluation + validation, severity Error)
 
 | Code | Message | Span | Emitted when |

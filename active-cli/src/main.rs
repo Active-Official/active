@@ -224,6 +224,12 @@ enum Commands {
         /// documents declaring capabilities outside the profile
         #[arg(long)]
         sandbox: Option<String>,
+        /// Declare this host's reader version (`major.minor.patch`).
+        /// A document whose schema `min_reader` is above it is refused
+        /// with T007; without the flag the floors stay advisory
+        /// (spec/schema-evolution.md §1).
+        #[arg(long)]
+        reader_version: Option<String>,
         #[command(flatten)]
         budget: BudgetArgs,
     },
@@ -246,6 +252,12 @@ enum Commands {
         /// only, never values, sources, or secrets) as JSONL on stderr
         #[arg(long)]
         trace: bool,
+        /// Declare this host's reader version (`major.minor.patch`).
+        /// A document whose schema `min_reader` is above it is refused
+        /// with T007; without the flag the floors stay advisory
+        /// (spec/schema-evolution.md §1).
+        #[arg(long)]
+        reader_version: Option<String>,
         #[command(flatten)]
         budget: BudgetArgs,
     },
@@ -326,6 +338,12 @@ enum Commands {
         /// Select a profile by name, overriding the active_profile key
         #[arg(long)]
         profile: Option<String>,
+        /// Declare this host's reader version (`major.minor.patch`).
+        /// A document whose schema `min_reader` is above it is refused
+        /// with T007; without the flag the floors stay advisory
+        /// (spec/schema-evolution.md §1).
+        #[arg(long)]
+        reader_version: Option<String>,
         #[command(flatten)]
         budget: BudgetArgs,
     },
@@ -409,6 +427,12 @@ enum Commands {
         allow_parent_escapes: bool,
         /// Resource limits for stepping, replay, and reduction; pass
         /// the same limits the audited run used to reproduce its hash
+        /// Declare this host's reader version (`major.minor.patch`).
+        /// A document whose schema `min_reader` is above it is refused
+        /// with T007; without the flag the floors stay advisory
+        /// (spec/schema-evolution.md §1).
+        #[arg(long)]
+        reader_version: Option<String>,
         #[command(flatten)]
         budget: BudgetArgs,
         /// Require sibling signatures on includes (C-052)
@@ -458,6 +482,12 @@ enum Commands {
         /// Require sibling signatures on includes (C-052)
         #[arg(long)]
         trust_keys: Option<PathBuf>,
+        /// Declare this host's reader version (`major.minor.patch`).
+        /// A document whose schema `min_reader` is above it is refused
+        /// with T007; without the flag the floors stay advisory
+        /// (spec/schema-evolution.md §1).
+        #[arg(long)]
+        reader_version: Option<String>,
         #[command(flatten)]
         budget: BudgetArgs,
     },
@@ -475,6 +505,12 @@ enum Commands {
         /// Require sibling signatures on includes (C-052)
         #[arg(long)]
         trust_keys: Option<PathBuf>,
+        /// Declare this host's reader version (`major.minor.patch`).
+        /// A document whose schema `min_reader` is above it is refused
+        /// with T007; without the flag the floors stay advisory
+        /// (spec/schema-evolution.md §1).
+        #[arg(long)]
+        reader_version: Option<String>,
         #[command(flatten)]
         budget: BudgetArgs,
     },
@@ -558,6 +594,12 @@ enum Commands {
         /// Select a profile by name, overriding the active_profile key
         #[arg(long)]
         profile: Option<String>,
+        /// Declare this host's reader version (`major.minor.patch`).
+        /// A document whose schema `min_reader` is above it is refused
+        /// with T007; without the flag the floors stay advisory
+        /// (spec/schema-evolution.md §1).
+        #[arg(long)]
+        reader_version: Option<String>,
         #[command(flatten)]
         budget: BudgetArgs,
     },
@@ -581,6 +623,12 @@ enum Commands {
         /// Require sibling signatures on includes (C-052)
         #[arg(long)]
         trust_keys: Option<PathBuf>,
+        /// Declare this host's reader version (`major.minor.patch`).
+        /// A document whose schema `min_reader` is above it is refused
+        /// with T007; without the flag the floors stay advisory
+        /// (spec/schema-evolution.md §1).
+        #[arg(long)]
+        reader_version: Option<String>,
         #[command(flatten)]
         budget: BudgetArgs,
     },
@@ -603,6 +651,12 @@ enum Commands {
         /// Select a profile by name, overriding the active_profile key
         #[arg(long)]
         profile: Option<String>,
+        /// Declare this host's reader version (`major.minor.patch`).
+        /// A document whose schema `min_reader` is above it is refused
+        /// with T007; without the flag the floors stay advisory
+        /// (spec/schema-evolution.md §1).
+        #[arg(long)]
+        reader_version: Option<String>,
         #[command(flatten)]
         budget: BudgetArgs,
     },
@@ -1092,7 +1146,7 @@ fn run_graph_query(
 ) -> anyhow::Result<()> {
     let trust = load_trust(trust_keys)?;
     let module = parse_input(from, resilient, allow_parent_escapes, &trust)?;
-    let mut evaluation_engine = engine(resilient, profile, Budget::default());
+    let mut evaluation_engine = engine(resilient, profile, Budget::default(), None);
     let name = from.to_string_lossy().to_string();
     for d in &module.healing {
         report(d, &name);
@@ -1195,12 +1249,18 @@ fn run_graph_query(
     }
 }
 
-fn engine(resilient: bool, profile: &Option<String>, budget: Budget) -> Engine {
+fn engine(
+    resilient: bool,
+    profile: &Option<String>,
+    budget: Budget,
+    reader_version: Option<&str>,
+) -> Engine {
     let mut engine = Engine::new(); // The CLI is strict by default: only --resilient tolerates
                                     // violations. Engine::new stays resilient for library use.
     engine.resilient = resilient;
     engine.profile_override = profile.clone();
     engine.budget = budget;
+    engine.reader_version = reader_version.map(str::to_string);
     engine
 }
 
@@ -1255,7 +1315,7 @@ fn material_profile_with(
 /// errors abort in parse_input; validation diagnostics are the working
 /// set; any other engine failure is fatal and reported.
 fn collect_diags(module: &active_core::Module, filename: &str, budget: Budget) -> Vec<Diagnostic> {
-    match engine(false, &None, budget).evaluate(module) {
+    match engine(false, &None, budget, None).evaluate(module) {
         Ok((_, diags)) => diags,
         Err(EvalError::ValidationFailed { diagnostics }) => diagnostics,
         Err(e) => {
@@ -1375,6 +1435,7 @@ fn main() -> anyhow::Result<()> {
             audit_trail,
             sandbox,
             budget,
+            reader_version,
         } => {
             let name = file.to_string_lossy().to_string();
             let trust = load_trust(&trust_keys)?;
@@ -1417,7 +1478,7 @@ fn main() -> anyhow::Result<()> {
                 }
             }
 
-            let mut eng = engine(resilient, &profile, budget);
+            let mut eng = engine(resilient, &profile, budget, reader_version.as_deref());
             eng.materialise_blobs = materialise_blobs;
             let engine = eng;
             if audit_trail.is_some() {
@@ -1562,12 +1623,13 @@ fn main() -> anyhow::Result<()> {
             profile,
             trace,
             budget,
+            reader_version,
         } => {
             let name = file.to_string_lossy().to_string();
             let trust = load_trust(&trust_keys)?;
             match parse_input(&file, resilient, allow_parent_escapes, &trust) {
                 Ok(module) => {
-                    let engine = engine(resilient, &profile, budget.resolve()?);
+                    let engine = engine(resilient, &profile, budget.resolve()?, reader_version.as_deref());
                     active_core::trace::set_tracing(trace);
                     match engine.evaluate(&module) {
                         Ok((_, diags)) => {
@@ -1737,11 +1799,12 @@ fn main() -> anyhow::Result<()> {
             trust_keys,
             profile,
             budget,
+            reader_version,
         } => {
             let name = file.to_string_lossy().to_string();
             let trust = load_trust(&trust_keys)?;
             let module = parse_input(&file, resilient, allow_parent_escapes, &trust)?;
-            let engine = engine(resilient, &profile, budget.resolve()?);
+            let engine = engine(resilient, &profile, budget.resolve()?, reader_version.as_deref());
             let (value, diags, seeds) = engine
                 .evaluate_with_seeds(&module)
                 .inspect_err(|e| report_eval_error(e, &name))?;
@@ -1949,6 +2012,7 @@ fn main() -> anyhow::Result<()> {
             allow_parent_escapes,
             budget,
             trust_keys,
+            reader_version: _,
         } => {
             if minimize.is_some() && trust_keys.is_some() {
                 anyhow::bail!(
@@ -2231,6 +2295,7 @@ fn main() -> anyhow::Result<()> {
             allow_parent_escapes,
             trust_keys,
             budget,
+            reader_version: _,
         } => {
             let filename = from.to_string_lossy().to_string();
             let trust = load_trust(&trust_keys)?;
@@ -2259,6 +2324,7 @@ fn main() -> anyhow::Result<()> {
             allow_parent_escapes,
             trust_keys,
             budget,
+            reader_version: _,
         } => {
             let filename = from.to_string_lossy().to_string();
             let trust = load_trust(&trust_keys)?;
@@ -2400,6 +2466,7 @@ fn main() -> anyhow::Result<()> {
             trust_keys,
             profile,
             budget,
+            reader_version,
         } => {
             use active_core::diag::RepairGoal;
             if max_steps > 64 {
@@ -2429,7 +2496,7 @@ fn main() -> anyhow::Result<()> {
                 // same as every other tool path.
                 parse_input(&from, false, allow_parent_escapes, &trust)?;
             }
-            let mut eng = engine(false, &profile, budget.resolve()?);
+            let mut eng = engine(false, &profile, budget.resolve()?, reader_version.as_deref());
             eng.materialise_blobs = false;
             if browser {
                 if apply_step.is_some() || cherry_pick.is_some() || output.is_some() {
@@ -2615,6 +2682,7 @@ fn main() -> anyhow::Result<()> {
             allow_parent_escapes,
             trust_keys,
             budget,
+            reader_version,
         } => {
             let filename = from.to_string_lossy().to_string();
             let title = title.unwrap_or_else(|| {
@@ -2624,7 +2692,7 @@ fn main() -> anyhow::Result<()> {
             });
             let trust = load_trust(&trust_keys)?;
             let module = parse_input(&from, resilient, allow_parent_escapes, &trust)?;
-            let engine = engine(resilient, &None, budget.resolve()?);
+            let engine = engine(resilient, &None, budget.resolve()?, reader_version.as_deref());
             let (value, diags, seeds) = engine
                 .evaluate_with_seeds(&module)
                 .map_err(|e| anyhow::anyhow!("evaluation failed: {e}"))?;
@@ -2652,11 +2720,12 @@ fn main() -> anyhow::Result<()> {
             trust_keys,
             profile,
             budget,
+            reader_version,
         } => {
             let name = file.to_string_lossy().to_string();
             let trust = load_trust(&trust_keys)?;
             let module = parse_input(&file, resilient, allow_parent_escapes, &trust)?;
-            let engine = engine(resilient, &profile, budget.resolve()?);
+            let engine = engine(resilient, &profile, budget.resolve()?, reader_version.as_deref());
             let (value, diags, seeds) = engine
                 .evaluate_with_seeds(&module)
                 .inspect_err(|e| report_eval_error(e, &name))?;

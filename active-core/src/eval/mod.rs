@@ -377,6 +377,12 @@ pub struct Engine {
     /// against the materialised-size budgets); otherwise values carry
     /// identity only. Tainted blobs never retain payloads either way.
     pub materialise_blobs: bool,
+    /// The version of the reader THIS host acts as (`"1.4.0"`), when the
+    /// host declares one. `min_reader`/`min_writer` are advisory without
+    /// it; with it, a document whose `min_reader` is above this version
+    /// is refused with T007 (LANG-B-021). The C ABI does not carry a host
+    /// version, so FFI hosts leave this `None` until a future ABI major.
+    pub reader_version: Option<String>,
     /// Read-only taint probe: materialise payloads but do not charge
     /// the per-alias payload copy. Analysis surfaces (inspect, taint
     /// queries, audit/lock hashing) need the bytes to notice a
@@ -388,6 +394,57 @@ pub struct Engine {
 impl Default for Engine {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Version floors (spec/schema-evolution.md §1): when the host declares
+/// its reader version, a document whose `min_reader` is above it is
+/// refused with T007. Without a declared version the floors stay
+/// advisory (LANG-B-021).
+fn check_reader_floor(module: &Module, reader: &str) -> Result<(), EvalError> {
+    let Some(root) = module.schema else {
+        return Ok(());
+    };
+    let Some(Node::SchemaTable { meta, .. }) = module.get(root) else {
+        return Ok(());
+    };
+    let Some(floor) = meta.min_reader.as_deref() else {
+        return Ok(());
+    };
+    if !version_at_least(reader, floor) {
+        return Err(EvalError::ValidationFailed {
+            diagnostics: vec![Diagnostic {
+                severity: Severity::Error,
+                code: "T007".into(),
+                message: format!("document requires reader {floor}; this reader is {reader}"),
+                path: None,
+                span: None,
+                repair: None,
+                confidence: 1.0,
+                file: None,
+            }],
+        });
+    }
+    Ok(())
+}
+
+/// Whether `have` satisfies the `need` floor, comparing numeric triplets
+/// component-wise. Unparseable input fails closed (the caller has
+/// already validated metadata syntax, so this is defense in depth).
+fn version_at_least(have: &str, need: &str) -> bool {
+    fn parts(v: &str) -> Option<(u64, u64, u64)> {
+        let mut it = v.split('.');
+        let a = it.next()?.parse().ok()?;
+        let b = it.next()?.parse().ok()?;
+        let c = it.next()?.parse().ok()?;
+        if it.next().is_some() {
+            return None;
+        }
+        Some((a, b, c))
+    }
+    match (parts(have), parts(need)) {
+        (Some(h), Some(n)) => h >= n,
+        _ => false,
     }
 }
 
@@ -1240,6 +1297,7 @@ impl Engine {
             env: std::collections::HashMap::new(),
             env_fallback: None,
             materialise_blobs: false,
+            reader_version: None,
             taint_probe: false,
         }
     }
@@ -1388,6 +1446,13 @@ impl Engine {
         // validation share one clock.
         let deadline = self.budget.wall_deadline();
         crate::trace::record("eval_start", module.arena.len() as u64, &module.diagnostics);
+        // Version floors (LANG-B-021): refuse before any work when the
+        // host declared its reader version and the document needs a
+        // newer one. Without a declared version the floors stay
+        // advisory, as documented.
+        if let Some(reader) = self.reader_version.as_deref() {
+            check_reader_floor(module, reader)?;
+        }
         // Budgets first: fail fast on monsters before any real work.
         check_static_budgets(module, &self.budget)?;
         // `petgraph::is_cyclic_directed` walks the graph recursively and

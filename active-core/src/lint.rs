@@ -539,20 +539,11 @@ fn data_mode(module: &Module) -> Vec<Diagnostic> {
         .arena
         .iter()
         .any(|node| matches!(node, Node::ContentAddressed { .. }));
-    let has_evolution = schema_nodes(module).iter().any(|(id, _)| {
-        matches!(
-            module.get(*id),
-            Some(Node::SchemaTable { fields, meta, .. })
-                if meta.version.is_some()
-                    || meta.min_reader.is_some()
-                    || meta.min_writer.is_some()
-                    || fields.values().any(|field_id| matches!(
-                        module.get(*field_id),
-                        Some(Node::SchemaField { field }) if field.removed_in.is_some()
-                    ))
-        )
-    });
-    if !has_ca && !has_evolution && module.capabilities.is_empty() {
+    // Evolution metadata (`version`/`min_reader`/`min_writer`/
+    // `removed_in`) is a CONFIG-schema feature, not a data-mode surface:
+    // including it made every versioned config schema permanently lint-
+    // dirty (LANG-B-026). L006 owns that metadata's hygiene.
+    if !has_ca && module.capabilities.is_empty() {
         return Vec::new();
     }
     vec![warning(

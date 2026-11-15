@@ -738,9 +738,37 @@ fn evolution_rules_see_nested_schema_tables() {
     );
     let nested_version = "schema = { db = Table { version = \"1.0.0\" } }";
     assert!(!lint_codes(nested_version).contains(&"L006".to_string()));
+    // Version metadata is a CONFIG-schema feature, not a data-mode surface,
+    // so it no longer triggers L010 (LANG-B-026): a versioned config schema
+    // can lint clean, which is the whole point of the evolution feature.
     assert!(
-        lint_codes(nested_version).contains(&"L010".to_string()),
-        "nested evolution metadata in Config Mode is a data construct: {:?}",
+        !lint_codes(nested_version).contains(&"L010".to_string()),
+        "version metadata must not be a data-mode trigger: {:?}",
         lint_codes(nested_version)
     );
+}
+
+#[test]
+fn l010_ignores_evolution_metadata() {
+    // LANG-B-026: every versioned config schema was permanently lint-dirty.
+    let versioned = parse(
+        "schema = { version = \"1.2.0\", min_reader = \"1.0.0\", host = String }\nhost = \"x\"\n",
+        "lint",
+    )
+    .expect("parse");
+    let findings = lint_with(&versioned, &LintOptions::default());
+    assert!(!findings.iter().any(|d| d.code == "L010"), "{findings:?}");
+
+    // Content-addressed values and capability declarations still trigger it.
+    for src in [
+        "x = blob(\"text/plain\", \"hi\")\n",
+        "active_capabilities = [\"check\"]\nx = 1\n",
+    ] {
+        let module = parse(src, "lint").expect("parse");
+        let findings = lint_with(&module, &LintOptions::default());
+        assert!(
+            findings.iter().any(|d| d.code == "L010"),
+            "{src:?} must still be flagged: {findings:?}"
+        );
+    }
 }

@@ -348,6 +348,25 @@ fn literal_number(module: &Module, id: Option<NodeId>) -> Option<JsonValue> {
     }
 }
 
+/// Add prose to a generated `description` instead of overwriting it.
+/// Enum member docs, the field description, and the deprecation reason
+/// are all information a consumer needs; the last writer used to win
+/// (LANG-B-017).
+fn append_description(obj: &mut serde_json::Map<String, JsonValue>, text: String) {
+    if text.is_empty() {
+        return;
+    }
+    match obj.get_mut("description") {
+        Some(JsonValue::String(existing)) if !existing.is_empty() => {
+            existing.push_str(". ");
+            existing.push_str(&text);
+        }
+        _ => {
+            obj.insert("description".to_string(), JsonValue::String(text));
+        }
+    }
+}
+
 fn json_schema_field(
     module: &Module,
     profile: &crate::secret::SecretProfile,
@@ -457,11 +476,10 @@ fn json_schema_field(
                     JsonValue::Array(members.iter().cloned().map(JsonValue::String).collect()),
                 );
             }
+            // Member descriptions join the field description instead
+            // of replacing it (LANG-B-017).
             if let Some(joined) = enum_descriptions_text(module, field) {
-                obj.insert(
-                    "description".to_string(),
-                    JsonValue::String(redact_prose(profile, joined)),
-                );
+                append_description(&mut obj, redact_prose(profile, joined));
             }
         }
         // Secrets export as redacted strings.
@@ -525,20 +543,15 @@ fn json_schema_field(
             );
         }
     }
-    if field.description.is_some() {
-        if let Some(doc) = literal_string(module, field.description) {
-            obj.insert(
-                "description".to_string(),
-                JsonValue::String(redact_prose(profile, doc)),
-            );
-        }
+    if let Some(doc) = literal_string(module, field.description) {
+        append_description(&mut obj, redact_prose(profile, doc));
     }
     if let Some(reason) = field.deprecated.as_deref() {
         obj.insert("deprecated".to_string(), JsonValue::Bool(true));
         if !reason.is_empty() {
-            obj.insert(
-                "description".to_string(),
-                JsonValue::String(redact_prose(profile, reason.to_string())),
+            append_description(
+                &mut obj,
+                format!("deprecated: {}", redact_prose(profile, reason.to_string())),
             );
         }
     }

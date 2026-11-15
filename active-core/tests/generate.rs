@@ -531,3 +531,18 @@ fn static_bounds_reach_the_generated_contract() {
     let json = active_core::convert::gen::schema_to_json_schema(&module).expect("generate");
     assert_eq!(json["properties"]["n"]["minimum"], 1.0, "{json}");
 }
+
+#[test]
+fn field_and_deprecation_prose_compose_instead_of_overwriting() {
+    // LANG-B-017: three description writers used to overwrite each other,
+    // so a deprecated field lost its documentation.
+    let src = "schema = { e = Enum(\"a\", \"b\", description = \"field doc\", deprecated = \"use f\") }\ne = \"a\"\n";
+    let module = active_core::parse(src, "descr").expect("parse");
+    let json = active_core::convert::gen::schema_to_json_schema(&module).expect("generate");
+    let descr = json["properties"]["e"]["description"]
+        .as_str()
+        .expect("description present");
+    assert!(descr.contains("field doc"), "{descr}");
+    assert!(descr.contains("deprecated: use f"), "{descr}");
+    assert_eq!(json["properties"]["e"]["deprecated"], true, "{json}");
+}

@@ -457,19 +457,34 @@ fn closed_table_typo_suggests_in_strict() {
 
 #[test]
 fn resilient_renames_confident_typo_and_retracts_absence() {
+    // Auto-rename requires edit similarity >= AUTO_APPLY (0.95), the same
+    // bar as the `safe` repair flag (LANG-B-010). `prt` -> `port` is edit
+    // 0.75: it stays a suggestion (T005 + T004), the value is untouched.
     let (v, diags) = resilient_eval("schema = { closed = true, port = Int }\nprt = 8080\n");
-    assert_eq!(v["port"], 8080);
-    assert!(v.get("prt").is_none(), "{v}");
-    // Exactly one diagnostic: the H005 warning. The stale T004 for
-    // the healed absence is retracted; no T005 remains.
-    assert_eq!(diags.len(), 1, "{diags:?}");
-    assert_eq!(diags[0].code, "H005");
-    assert_eq!(diags[0].severity, Severity::Warning);
-    assert!(diags[0].confidence >= 0.85, "{:?}", diags[0]);
+    assert_eq!(v["prt"], 8080, "{v}");
+    assert!(v.get("port").is_none(), "{v}");
+    assert!(diags.iter().any(|d| d.code == "T005"), "{diags:?}");
     assert!(
-        diags[0].message.contains("renamed key 'prt' to 'port'"),
-        "{:?}",
-        diags[0]
+        !diags.iter().any(|d| d.message.contains("renamed key")),
+        "no auto-rename below 0.95: {diags:?}"
+    );
+    // A near-identical long key clears the bar and renames, retracting the
+    // stale absence for the healed path.
+    let long = "configuration_timeout";
+    let typo = "configuration_timeoutt";
+    let src = format!("schema = {{ closed = true, {long} = Int }}\n{typo} = 8080\n");
+    let (v, diags) = resilient_eval(&src);
+    assert_eq!(v[long], 8080, "{v}");
+    assert!(v.get(typo).is_none(), "{v}");
+    assert!(
+        diags.iter().any(|d| d.message.contains("renamed key")),
+        "{diags:?}"
+    );
+    assert!(
+        !diags
+            .iter()
+            .any(|d| d.code == "T004" && d.path.as_deref() == Some(long)),
+        "absence retracted: {diags:?}"
     );
 }
 
@@ -552,36 +567,35 @@ fn sentinel_word_is_recognized_not_mapped() {
 
 #[test]
 fn nested_rename_revalidates_subtree() {
-    // Typos at two levels: the outer rename exposes the inner one,
-    // which the fixpoint pass then heals too.
+    // Both typos are below the 0.95 edit bar, so nothing is renamed and
+    // the subtree is untouched (LANG-B-010). The closed tables report the
+    // suggestion as T005 plus the missing-key T004.
     let src = "schema = { closed = true, server = Table { closed = true, port = Int } }\n\
          serverr = { prot = 1 }\n";
     let (v, diags) = resilient_eval(src);
-    assert_eq!(v["server"]["port"], 1, "{v}");
-    assert!(v.get("serverr").is_none(), "{v}");
-    let h005: Vec<_> = diags.iter().filter(|d| d.code == "H005").collect();
-    assert_eq!(h005.len(), 2, "{diags:?}");
-    assert!(!diags.iter().any(|d| d.code.starts_with('T')), "{diags:?}");
+    assert_eq!(v["serverr"]["prot"], 1, "{v}");
+    assert!(diags.iter().any(|d| d.code == "T005"), "{diags:?}");
+    assert!(
+        !diags.iter().any(|d| d.message.contains("renamed key")),
+        "{diags:?}"
+    );
 }
 
 #[test]
 fn rename_wins_over_default_fill() {
-    // The walk queues both a fill (port missing, has a default) and
-    // a rename (prt typo): the healed user value must survive, not
-    // be clobbered by the default afterwards.
-    let src = "schema = { closed = true, port = Int(default = 1) }\nprt = 8080\n";
+    // The walk queues both a fill (port missing, has a default) and a
+    // rename: the healed user value must survive, not be clobbered by
+    // the default. Uses a key at edit similarity >= 0.95 (LANG-B-010).
+    let src = "schema = { closed = true, port_configuration_timeout = Int(default = 1) }\n\
+         port_configuration_timeou = 8080\n";
     let (v, diags) = resilient_eval(src);
-    assert_eq!(v["port"], 8080, "{v}");
-    assert!(v.get("prt").is_none(), "{v}");
+    assert_eq!(v["port_configuration_timeout"], 8080, "{v}");
+    assert!(v.get("port_configuration_timeou").is_none(), "{v}");
     assert!(diags.iter().any(|d| d.code == "H005"), "{diags:?}");
     assert!(
         !diags.iter().any(|d| d.code == "W005"),
         "healed path must not fill: {diags:?}"
     );
-    // Strict still fails explicitly (T004 + T005, no rename).
-    let diags = strict_diags(src);
-    assert!(diags.iter().any(|d| d.code == "T004"), "{diags:?}");
-    assert!(diags.iter().any(|d| d.code == "T005"), "{diags:?}");
 }
 
 #[test]

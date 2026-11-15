@@ -521,8 +521,17 @@ impl<'a> Validator<'a> {
                 // for constraints afterwards. Shared borrows end here;
                 // the push below needs `&mut self`.
                 let candidate: Option<(NodeId, bool)> = match &suggestion {
+                    // Auto-rename is irreversible, so it uses the
+                    // SAME bar as the `safe` repair flag: the edit
+                    // similarity must clear AUTO_APPLY (0.95). The
+                    // composite score (keyboard/phonetic) keeps
+                    // ranking suggestions, but `pert`/`pory`/`gost`
+                    // are plausible distinct keys and must never be
+                    // silently moved (LANG-B-010).
                     Some((suggested, score))
-                        if *score >= thresholds::HIGH && map.get(suggested).is_none() =>
+                        if *score >= thresholds::HIGH
+                            && normalized_levenshtein(key, suggested) >= thresholds::AUTO_APPLY
+                            && map.get(suggested).is_none() =>
                     {
                         match fields.get(suggested) {
                             Some(field_id) => match self.module.get(*field_id) {
@@ -1018,6 +1027,16 @@ impl<'a> Validator<'a> {
                     self.rename_fallback(&req);
                     continue;
                 };
+                // Apply-time bar (LANG-B-010): auto-rename is
+                // irreversible, so it needs the same edit similarity
+                // the `safe` flag uses (AUTO_APPLY, 0.95). Below it,
+                // the request degrades to a suggestion. Enforced here
+                // as well as at queue time so no request source can
+                // bypass the bar.
+                if normalized_levenshtein(&req.from, &req.to) < thresholds::AUTO_APPLY {
+                    self.rename_fallback(&req);
+                    continue;
+                }
                 // Recheck at apply time: a sibling rename may have
                 // taken the target since the walk (two typos, one
                 // field) — first wins, the other degrades.

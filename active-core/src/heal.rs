@@ -255,6 +255,14 @@ pub fn try_coerce_duration(s: &str) -> Option<u64> {
     match split {
         Some(pos) if pos > 0 => {
             let num: f64 = trimmed[..pos].parse().ok()?;
+            // A negative duration is not a duration. Clamping it to
+            // 0ms turned an authoring error (or a "no timeout"
+            // sentinel) into "expires immediately", announced only as
+            // a generic H007 coercion (LANG-B-011). Reject, so the
+            // T002 stands and the author sees the real problem.
+            if !num.is_finite() || num < 0.0 {
+                return None;
+            }
             let suffix = &trimmed[pos..];
             Unit::from_suffix(suffix)?.normalize_time_to_ms(num)
         }

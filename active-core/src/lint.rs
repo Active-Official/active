@@ -636,7 +636,7 @@ fn requires_discipline(module: &Module) -> Vec<Diagnostic> {
                 Some(path),
                 Some(field_id),
             ));
-        } else if !crate::convert::schema_path_exists(module, trimmed) {
+        } else if !crate::convert::requires_target_exists(module, field_id, trimmed) {
             out.push(warning(
                 module,
                 "L011",

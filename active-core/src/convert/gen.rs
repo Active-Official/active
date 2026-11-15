@@ -289,7 +289,7 @@ fn json_schema_node(
                         // A real field reference stays raw so the
                         // generated contract resolves; dangling text is
                         // data and is withheld.
-                        if !crate::convert::schema_path_exists(module, &target) {
+                        if !crate::convert::requires_target_exists(module, *field_id, &target) {
                             continue;
                         }
                         dependent

@@ -303,6 +303,55 @@ pub(crate) fn schema_path_exists(module: &crate::ir::Module, path: &str) -> bool
     )
 }
 
+/// True when a `requires` target names a schema path relative to the
+/// field that declares it (its containing table), falling back to a
+/// root-absolute path. One rule for validation, lint (L011), and codegen
+/// (`dependentRequired`), so the surfaces cannot contradict each other
+/// (LANG-B-002).
+pub(crate) fn requires_target_exists(
+    module: &crate::ir::Module,
+    field_id: crate::ir::NodeId,
+    target: &str,
+) -> bool {
+    if schema_path_exists(module, target) {
+        return true;
+    }
+    let Some(parent) = field_parent_path(module, field_id) else {
+        return false;
+    };
+    if parent.is_empty() {
+        return false;
+    }
+    schema_path_exists(module, &format!("{parent}.{target}"))
+}
+
+/// Dotted path of the table that contains `field_id`, or `None` when the
+/// schema tree does not reach it.
+fn field_parent_path(module: &crate::ir::Module, field_id: crate::ir::NodeId) -> Option<String> {
+    let root = module.schema?;
+    let mut stack = vec![(root, String::new())];
+    while let Some((id, prefix)) = stack.pop() {
+        match module.get(id) {
+            Some(crate::ir::Node::SchemaTable { fields, .. }) => {
+                for (name, child) in fields {
+                    if *child == field_id {
+                        return Some(prefix);
+                    }
+                    let path = if prefix.is_empty() {
+                        name.clone()
+                    } else {
+                        format!("{prefix}.{name}")
+                    };
+                    stack.push((*child, path));
+                }
+            }
+            Some(crate::ir::Node::SchemaArray { element }) => stack.push((*element, prefix)),
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Identity shape for a blob whose identity must be withheld: the
 /// payload is absent and the media type is the marker, wrapped exactly
 /// like every other export (spec/blob.md §5).

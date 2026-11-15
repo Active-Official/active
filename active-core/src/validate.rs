@@ -780,8 +780,32 @@ impl<'a> Validator<'a> {
                 _ => None,
             };
             if let Some(target) = target {
+                // `requires` makes the field required only while its
+                // trigger is present AND enabled (spec/validation.md
+                // section 5). An absent, empty, false, or zero trigger
+                // excuses the field completely: no T004 and no fill
+                // (LANG-B-001).
+                if !table_has(table, &target) {
+                    // Not required. Resilient mode still fills a
+                    // declared default (pinned by
+                    // schema_library::tls_terminator_schema); strict
+                    // mode reports nothing because the field is not
+                    // required (LANG-B-001).
+                    if let Some(default_id) = default_arg {
+                        if self.resilient && !root_metadata {
+                            self.fills.push(FillRequest {
+                                segments: segments.to_vec(),
+                                field_id,
+                                default_id,
+                                span,
+                                file,
+                            });
+                        }
+                    }
+                    return;
+                }
                 let filled = default_arg.is_some() && self.resilient;
-                if !filled && table_has(table, &target) {
+                if !filled {
                     // A requires target is a real reference only when it
                     // resolves to a schema path; otherwise the text is
                     // data and must not be echoed.

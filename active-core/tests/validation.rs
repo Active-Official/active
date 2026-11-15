@@ -660,15 +660,44 @@ fn requires_fires_only_when_trigger_present() {
             .any(|d| d.code == "T004" && d.message.contains("required by present 'mode'")),
         "{diags:?}"
     );
-    // Trigger absent: no requires diagnostic.
+    // Trigger absent: the field is excused entirely - no T004 for
+    // `replicas` and no fill (LANG-B-001). The assertion checks the
+    // VERDICT, not a message phrase, so it cannot pass on the buggy
+    // behaviour again.
     let src = "schema = { mode = String, replicas = Int(requires = \"mode\") }\n";
     let (v, diags) = resilient_eval(src);
     assert!(v.get("replicas").is_none(), "{v}");
     assert!(
         !diags
             .iter()
-            .any(|d| d.message.contains("required by present")),
-        "{diags:?}"
+            .any(|d| d.code == "T004" && d.message.contains("'replicas'")),
+        "requires must excuse the field: {diags:?}"
+    );
+    // Disabled triggers excuse it too: empty string, false, zero.
+    for (trigger, ty, body) in [
+        ("mode", "String", "mode = \"\"\n"),
+        ("on", "Bool", "on = false\n"),
+        ("n", "Int", "n = 0\n"),
+    ] {
+        let src = format!(
+            "schema = {{ {trigger} = {ty}, replicas = Int(requires = \"{trigger}\") }}\n{body}"
+        );
+        let (_v, diags) = resilient_eval(&src);
+        assert!(
+            !diags
+                .iter()
+                .any(|d| d.code == "T004" && d.message.contains("'replicas'")),
+            "{trigger}={body:?} must excuse replicas: {diags:?}"
+        );
+    }
+    // Enabled trigger still demands the field.
+    let src = "schema = { mode = String, replicas = Int(requires = \"mode\") }\nmode = \"prod\"\n";
+    let (_v, diags) = resilient_eval(src);
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == "T004" && d.message.contains("'replicas'")),
+        "enabled trigger must require the field: {diags:?}"
     );
 }
 

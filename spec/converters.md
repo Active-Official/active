@@ -79,6 +79,8 @@ loss; only Active source preserves the declared unit.
 
 **Duplicate keys on import.** YAML rejects duplicate mapping keys (the YAML specification makes them an error); the failure names the rule. JSON keeps the last value, because the JSON document model has no duplicate concept to report (LANG-B-012). Neither format silently drops data in the other's way.
 
+**Extreme floats import as long decimals (LANG-B-028).** Active has no exponent notation, so the shortest *parseable* spelling of a subnormal (5e−324) or a maximal value is its full decimal expansion (≈320 digits). The importer emits exactly that shortest exponent-free form, and the value round-trips bit-for-bit; ordinary magnitudes stay short (`1.5`). A compact `5e-324` spelling would require exponent literals in the grammar, which is a language feature, not an import choice.
+
 **Keys are ASCII identifiers.** Active identifiers are ASCII-only, so the
 reverse converters sanitize every foreign key: characters outside
 `[A-Za-z0-9_]` become `_`, a leading digit gains `_`, and reserved words gain a

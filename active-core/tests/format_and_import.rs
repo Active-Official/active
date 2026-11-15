@@ -127,3 +127,35 @@ fn quantities_round_trip_through_the_json_wrapper() {
         assert_eq!(json, json2, "round trip for {src:?}");
     }
 }
+
+#[test]
+fn extreme_floats_round_trip_exactly_through_import() {
+    // LANG-B-028: exponent-free output for a subnormal is necessarily ~320
+    // digits (Active has no exponent notation). What matters is exactness:
+    // the emitted literal must parse back to the identical f64.
+    let doc = serde_json::json!({
+        "c": f64::from_bits(1),            // 5e-324, the smallest subnormal
+        "big": f64::MAX,
+    });
+    let (text, _notes) = active_core::convert::import::json_value_to_active(&doc);
+    let module = parse(&text, "floats").expect("imported source parses");
+    let (value, _d) = Engine::new().evaluate(&module).expect("evaluate");
+    let out: serde_json::Value =
+        serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
+    assert_eq!(
+        out["c"].as_f64().unwrap().to_bits(),
+        f64::from_bits(1).to_bits()
+    );
+    assert_eq!(out["big"].as_f64().unwrap().to_bits(), f64::MAX.to_bits());
+}
+
+#[test]
+fn ordinary_floats_import_compactly() {
+    let doc = serde_json::json!({ "x": 1.5, "y": 0.25, "z": -3.75 });
+    let (text, _n) = active_core::convert::import::json_value_to_active(&doc);
+    assert!(text.contains("1.5"), "{text}");
+    assert!(
+        !text.contains("0000"),
+        "no zero padding for ordinary values: {text}"
+    );
+}

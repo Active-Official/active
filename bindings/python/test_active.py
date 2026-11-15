@@ -49,7 +49,11 @@ class BindingTest(unittest.TestCase):
 
     def test_secret_redacted(self) -> None:
         value = self.mod.eval('token = secret("hunter2")\n[out]\npass = token\n')
-        self.assertEqual(value, {"token": "***SECRET***", "out": {"pass": None}})
+        # Parent-scope resolution (spec §2.4) makes `pass` a real reference
+        # to the root secret, so it redacts rather than reading null.
+        self.assertEqual(
+            value, {"token": "***SECRET***", "out": {"pass": "***SECRET***"}}
+        )
         self.assertNotIn("hunter2", json.dumps(value))
         diags = self.mod.check('token = secret("hunter2")\n[out]\nv = token + 1\n')
         self.assertTrue(diags, "expected a diagnostic")

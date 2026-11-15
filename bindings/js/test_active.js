@@ -47,7 +47,12 @@ const { load } = require("./active.js");
 	}
 	assert.throws(() => m.evaluate("timeout = 5s + 512MiB\n"), /refused/);
 	const v = m.evaluate('token = secret("hunter2")\n[out]\npass = token\n');
-	assert.deepStrictEqual(v, { token: "***SECRET***", out: { pass: null } });
+	// Parent-scope resolution (spec §2.4) resolves `pass` to the root
+	// secret, so it redacts instead of reading null.
+	assert.deepStrictEqual(v, {
+		token: "***SECRET***",
+		out: { pass: "***SECRET***" },
+	});
 	assert.ok(!JSON.stringify(v).includes("hunter2"));
 	const src = "let x = 1 + 2\n[out]\nv = x * 3\n";
 	assert.deepStrictEqual(m.evaluate(src), m.evaluate(src));

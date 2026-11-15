@@ -91,6 +91,12 @@ pub enum EvalError {
     BudgetExceeded {
         kind: BudgetKind,
         limit: u64,
+        /// Diagnostics collected before the abort (currently the Data Mode
+        /// progressive warnings, W013). A trip replaces the diagnostic list
+        /// with this error, so without them an agent watching W013 as its
+        /// "approaching a ceiling" signal would never see it on a slow host
+        /// (LANG-C-009). Read with [`EvalError::attached_warnings`].
+        warnings: Vec<Diagnostic>,
         span: Option<Span>,
         file: Option<String>,
     },
@@ -333,10 +339,21 @@ impl EvalError {
         EvalError::BudgetExceeded {
             kind,
             limit,
+            warnings: Vec::new(),
             span: node.and_then(|n| module.node_spans.get(&n).cloned()),
             file: node.and_then(|n| module.node_files.get(&n).cloned()),
         }
     }
+    /// Diagnostics that preceded an abort: the Data Mode progressive
+    /// warnings (W013) collected before a budget trip. Empty for every
+    /// other error kind, and for a clean evaluation.
+    pub fn attached_warnings(&self) -> &[Diagnostic] {
+        match self {
+            EvalError::BudgetExceeded { warnings, .. } => warnings,
+            _ => &[],
+        }
+    }
+
     /// Attach a source position to a patch error (rename conflicts and
     /// invalid paths discovered at apply time).
     fn patch_error(message: impl Into<String>, module: &Module, node: NodeId) -> Self {
@@ -467,6 +484,7 @@ fn check_result_depth(result: &Value, max_depth: u64) -> Result<(), EvalError> {
             return Err(EvalError::BudgetExceeded {
                 kind: BudgetKind::Depth,
                 limit: max_depth,
+                warnings: Vec::new(),
                 span: None,
                 file: None,
             });
@@ -573,6 +591,91 @@ impl Accountant {
     }
 }
 
+/// Data Mode progressive warnings (PROPOSAL §0.2, Phase M): at 80% of any
+/// nonzero limit except wall-clock (which has no static bound to warn on -
+/// documented, not an omission), warn that the hard ceiling (which never
+/// moves) is approaching. Informational only - evaluation continues and the
+/// same ceilings bind both modes.
+///
+/// Split out of the walk so an aborted evaluation can re-derive the same
+/// list for the error it returns (LANG-C-009): the walk replaces its
+/// diagnostics with a budget error, and an agent watching W013 as its
+/// "approaching a ceiling" signal must still see it on a slow host.
+fn progressive_warnings(module: &Module, budget: &Budget) -> Vec<Diagnostic> {
+    if module.mode != Mode::Data {
+        return Vec::new();
+    }
+    let Ok(order) = toposort(&module.graph, None) else {
+        return Vec::new();
+    };
+    let Ok((dp_total, dp_bounds, dp_max_depth)) = check_dp_bounds(module, &order, budget) else {
+        return Vec::new();
+    };
+    let max_node_size = dp_bounds.iter().copied().max().unwrap_or(0);
+    let warn_at = |used: u64, limit: u64| limit != 0 && (used as u128) * 5 >= (limit as u128) * 4;
+    // Static shape scan (same counting as `check_static_budgets`): longest
+    // array and total value-table keys for the progressive warnings.
+    let mut keys = 0u64;
+    let mut max_arr = 0u64;
+    for node in &module.arena {
+        match node {
+            Node::Table { fields } => keys += fields.len() as u64,
+            Node::Array { elements } => max_arr = max_arr.max(elements.len() as u64),
+            _ => {}
+        }
+    }
+    let mut diagnostics = Vec::new();
+    let mut warn = |kind: BudgetKind, used: u64, limit: u64| {
+        if warn_at(used, limit) {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                code: "W013".into(),
+                message: format!(
+                    "approaching {} ({} of limit {}); hard ceilings apply in Data Mode exactly as in Config",
+                    kind, used, limit
+                ),
+                path: None,
+                span: None,
+                repair: None,
+                confidence: 1.0,
+                file: None,
+            });
+        }
+    };
+    warn(
+        BudgetKind::Nodes,
+        module.arena.len() as u64,
+        budget.max_nodes,
+    );
+    warn(BudgetKind::ValueSize, max_node_size, budget.max_value_size);
+    warn(BudgetKind::Depth, dp_max_depth, budget.max_depth);
+    warn(BudgetKind::TotalSize, dp_total, budget.max_total_value_size);
+    warn(BudgetKind::ArrayLength, max_arr, budget.max_array_len);
+    warn(BudgetKind::Keys, keys, budget.max_keys);
+    diagnostics
+}
+
+/// Carry the progressive warnings a trip would otherwise discard
+/// (LANG-C-009).
+fn attach_progressive_warnings(module: &Module, budget: &Budget, error: EvalError) -> EvalError {
+    match error {
+        EvalError::BudgetExceeded {
+            kind,
+            limit,
+            warnings,
+            span,
+            file,
+        } if warnings.is_empty() => EvalError::BudgetExceeded {
+            kind,
+            limit,
+            warnings: progressive_warnings(module, budget),
+            span,
+            file,
+        },
+        other => other,
+    }
+}
+
 /// Budget context threaded through validation (spec/budgets.md §2):
 /// the shared evaluation deadline, its configured limit for messages,
 /// and the cumulative materialization account. Bundled so validation
@@ -621,6 +724,7 @@ fn check_static_budgets(module: &Module, budget: &Budget) -> Result<(), EvalErro
         return Err(EvalError::BudgetExceeded {
             kind: BudgetKind::Nodes,
             limit: budget.max_nodes,
+            warnings: Vec::new(),
             span: None,
             file: None,
         });
@@ -638,6 +742,7 @@ fn check_static_budgets(module: &Module, budget: &Budget) -> Result<(), EvalErro
                         return Err(EvalError::BudgetExceeded {
                             kind: BudgetKind::Keys,
                             limit: budget.max_keys,
+                            warnings: Vec::new(),
                             span: None,
                             file: None,
                         });
@@ -1498,6 +1603,21 @@ impl Engine {
     fn evaluate_inner(
         &self,
         module: &Module,
+        memo: Option<&mut IncrementalMemo>,
+        steps: Option<&mut Vec<StepEvent>>,
+        seeds: Option<&mut SecretRedactor>,
+    ) -> Result<(Value, Vec<Diagnostic>), EvalError> {
+        // LANG-C-009: a budget trip replaces the diagnostic list with the
+        // error, so re-derive the progressive warnings the walk had already
+        // collected and carry them on the error. Only the abort path pays
+        // for this (one extra static scan).
+        self.evaluate_walk(module, memo, steps, seeds)
+            .map_err(|e| attach_progressive_warnings(module, &self.budget, e))
+    }
+
+    fn evaluate_walk(
+        &self,
+        module: &Module,
         mut memo: Option<&mut IncrementalMemo>,
         steps: Option<&mut Vec<StepEvent>>,
         mut seeds: Option<&mut SecretRedactor>,
@@ -1533,8 +1653,10 @@ impl Engine {
         // linear even for exponential shapes. Returns the cumulative
         // bound plus the per-node bounds and the maximum depth bound,
         // seeding the transform accountant below.
-        let (dp_total, dp_bounds, dp_max_depth) = check_dp_bounds(module, &order, &self.budget)?;
-        let max_node_size = dp_bounds.iter().copied().max().unwrap_or(0);
+        // The walk needs the cumulative bound and per-node bounds; the
+        // depth bound and max node size only feed the progressive warnings
+        // (recomputed by `progressive_warnings` on the abort path).
+        let (dp_total, dp_bounds, _dp_max_depth) = check_dp_bounds(module, &order, &self.budget)?;
         let mut account = Accountant {
             spent: dp_total,
             limit: self.budget.max_total_value_size,
@@ -1559,65 +1681,7 @@ impl Engine {
         let mut values: HashMap<NodeId, Value> = HashMap::new();
         let mut diagnostics = module.diagnostics.clone();
         diagnostics.extend(module.healing.iter().cloned());
-        // Data Mode progressive warnings (PROPOSAL §0.2, Phase M): at
-        // 80% of any nonzero limit except wall-clock (which has no
-        // static bound to warn on — documented, not an omission),
-        // warn that the hard ceiling (which never moves) is
-        // approaching. Informational only — evaluation continues and
-        // the same ceilings bind both modes. Emitted here (after the
-        // DP pass, before the walk) so the numbers are final bounds,
-        // not samples.
-        if module.mode == Mode::Data {
-            let warn_at =
-                |used: u64, limit: u64| limit != 0 && (used as u128) * 5 >= (limit as u128) * 4;
-            // Static shape scan (same counting as
-            // check_static_budgets): longest array and total
-            // value-table keys for the progressive warnings.
-            let mut keys = 0u64;
-            let mut max_arr = 0u64;
-            for node in &module.arena {
-                match node {
-                    Node::Table { fields } => keys += fields.len() as u64,
-                    Node::Array { elements } => max_arr = max_arr.max(elements.len() as u64),
-                    _ => {}
-                }
-            }
-            let mut warn = |kind: BudgetKind, used: u64, limit: u64| {
-                if warn_at(used, limit) {
-                    diagnostics.push(Diagnostic {
-                        severity: Severity::Warning,
-                        code: "W013".into(),
-                        message: format!(
-                            "approaching {} ({} of limit {}); hard ceilings apply in Data Mode exactly as in Config",
-                            kind, used, limit
-                        ),
-                        path: None,
-                        span: None,
-                        repair: None,
-                        confidence: 1.0,
-                        file: None,
-                    });
-                }
-            };
-            warn(
-                BudgetKind::Nodes,
-                module.arena.len() as u64,
-                self.budget.max_nodes,
-            );
-            warn(
-                BudgetKind::ValueSize,
-                max_node_size,
-                self.budget.max_value_size,
-            );
-            warn(BudgetKind::Depth, dp_max_depth, self.budget.max_depth);
-            warn(
-                BudgetKind::TotalSize,
-                dp_total,
-                self.budget.max_total_value_size,
-            );
-            warn(BudgetKind::ArrayLength, max_arr, self.budget.max_array_len);
-            warn(BudgetKind::Keys, keys, self.budget.max_keys);
-        }
+        diagnostics.extend(progressive_warnings(module, &self.budget));
         // Wall-clock backstop (spec/budgets.md §2): sampled every 1024
         // nodes so the overhead is unmeasurable. Counts already passed
         // their static and DP checks; only time needs watching mid-walk.

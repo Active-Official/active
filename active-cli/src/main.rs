@@ -1449,6 +1449,12 @@ fn report_eval_error(e: &EvalError, name: &str) {
             report(d, name);
         }
     }
+    // LANG-C-009: a budget trip replaces the diagnostics the walk had
+    // collected, so the progressive warnings that preceded it travel on the
+    // error. Print them first: they are the operator's advance notice.
+    for d in e.attached_warnings() {
+        report(d, name);
+    }
     let file = e.file().unwrap_or(name);
     match e.span() {
         Some(s) => eprintln!(

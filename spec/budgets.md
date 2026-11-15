@@ -188,8 +188,12 @@ first-tripped kind, the offending node's span when attributable,
 and its file. There is no resilient downgrade: an over-budget
 evaluation returns no tree in either mode. The CLI prints the X-code
 like any error and exits 1. Normal diagnostics already collected
-(warnings etc.) are discarded with the tree — the budget error
-replaces them, because continuing would defeat the protection.
+(warnings etc.) are discarded with the tree, because continuing would
+defeat the protection - with one exception: when a budget trip aborts
+evaluation, any already-collected progressive warnings (W013) are
+attached to the `BudgetExceeded` error (`EvalError::attached_warnings`,
+printed by the CLI before the X-code), so the operator sees both the trip
+and the warning that preceded it.
 
 ## 5. Tuning
 

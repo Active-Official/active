@@ -43,7 +43,7 @@ the embedder accepts the risk explicitly):
 | `max_keys` | X005 | 100,000 | Total **value-table** keys across the arena (schema tables excluded: metadata with their own parser-side limits) |
 | `max_wall_ms` | X002 | 100 | Wall-clock backstop (P-033's 50–100 ms). Guards what counts cannot: pathological dynamics and unknown-unknowns. (Patterns specifically cannot burn wall-clock: the regex engine is automata-based, linear-time by construction.) |
 | `max_value_size` | X006 | 10,000,000 | Materialized value size in data units (see §2b). Kills exponential reference expansion before anything materializes |
-| `max_total_value_size` | X006 | 100,000,000 | Cumulative materialized size across evaluation: the DP total seeds it, and every post-walk clone (patch sets, profile merges, default fills) charges against it. Caps the sum where per-node bounds cap each clone |
+| `max_total_value_size` | X006 | 100,000,000 | Cumulative materialized size across evaluation: the DP total seeds it, and every post-walk clone (patch sets, profile merges, default fills) charges against it. Caps the sum where per-node bounds cap each clone  It also charges **measured dynamic growth** (LANG-C-001): a doubling interpolation charges the string it builds, and every clone charges the target's real measured size above its DP bound, so a small document that amplifies an environment value into megabytes trips X006 deterministically instead of exhausting memory. |
 
 Static shape checks (nodes, arrays, keys) run **before** the
 walk as an iterative arena scan — deterministic, span-attributed to

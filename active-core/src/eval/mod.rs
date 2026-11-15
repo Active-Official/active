@@ -1478,6 +1478,14 @@ impl Engine {
         // targets need no entry — DP soundness guarantees actuals stay
         // within bounds, hence zero delta without measuring.
         let mut actuals: HashMap<NodeId, u64> = HashMap::new();
+        // Actual (measured) size of every evaluated node, in DP units.
+        // The DP pass is sound for static shapes; a container holding
+        // dynamic content is larger than its bound, and cloning it
+        // duplicates that content, so the accountant needs the real
+        // number (LANG-C-001). Computed bottom-up as nodes evaluate
+        // (children precede parents in the walk order), so this stays
+        // O(nodes), never a subtree re-measure per clone.
+        let mut actual_sizes: Vec<u64> = vec![0u64; module.arena.len()];
         let mut values: HashMap<NodeId, Value> = HashMap::new();
         let mut diagnostics = module.diagnostics.clone();
         diagnostics.extend(module.healing.iter().cloned());
@@ -1836,7 +1844,15 @@ impl Engine {
                     // the exception: cloning duplicates the bytes in
                     // memory, so every alias charges the payload again
                     // (fail-safe over-counting, same as the DP total).
-                    if let Some(actual) = actuals.get(id) {
+                    // Charge the clone's real size above its DP bound for
+                    // ANY target, not only dynamic leaves: a container of
+                    // dynamic values is far larger than its static bound,
+                    // and cloning it duplicates every byte (LANG-C-001).
+                    let actual = actuals
+                        .get(id)
+                        .copied()
+                        .unwrap_or_else(|| actual_sizes.get(id.0 as usize).copied().unwrap_or(0));
+                    if actual > 0 {
                         let bound = dp_bounds.get(id.0 as usize).copied().unwrap_or(1);
                         account.charge(module, Some(node_id), actual.saturating_sub(bound))?;
                     }
@@ -1964,6 +1980,37 @@ impl Engine {
 
                 _ => Value::Null,
             };
+            // Record the node's real size (LANG-C-001) and charge the
+            // growth of a dynamically built string at its producer, so a
+            // doubling interpolation is accounted once per step and every
+            // later alias is charged through the Ref arm.
+            if (node_id.0 as usize) < actual_sizes.len() {
+                let actual = match module.get(node_id) {
+                    Some(Node::Array { elements }) => 1u64.saturating_add(
+                        elements
+                            .iter()
+                            .map(|e| actual_sizes.get(e.0 as usize).copied().unwrap_or(0))
+                            .fold(0u64, u64::saturating_add),
+                    ),
+                    Some(Node::Table { fields }) => 1u64.saturating_add(
+                        fields
+                            .values()
+                            .map(|e| actual_sizes.get(e.0 as usize).copied().unwrap_or(0))
+                            .fold(0u64, u64::saturating_add),
+                    ),
+                    Some(Node::Ref(t)) => actual_sizes.get(t.0 as usize).copied().unwrap_or(0),
+                    Some(Node::Interpolate { .. }) => match &value {
+                        Value::String(text) => 1u64.saturating_add(text.len() as u64),
+                        _ => measure_value(&value),
+                    },
+                    _ => measure_value(&value),
+                };
+                actual_sizes[node_id.0 as usize] = actual;
+                if matches!(module.get(node_id), Some(Node::Interpolate { .. })) {
+                    let bound = dp_bounds.get(node_id.0 as usize).copied().unwrap_or(1);
+                    account.charge(module, Some(node_id), actual.saturating_sub(bound))?;
+                }
+            }
             // Memoize the fresh result under its fingerprint for
             // later calls (misses only — hits continued above).
             if let Some(memo) = memo.as_mut() {

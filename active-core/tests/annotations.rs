@@ -669,3 +669,24 @@ fn crlf_terminators_never_reach_annotation_payloads() {
         "{anns:?}"
     );
 }
+
+#[test]
+fn the_summary_code_is_the_first_violation_family() {
+    // LANG-B-020: `EvalError::code()` used to collapse everything except
+    // T003/T004/B002/B004 to T002, so a T006 or T005 failure printed the
+    // wrong code on the summary line.
+    let src = "# @constraint: value >= 1 && value <= 10\nport = 99\n";
+    let module = parse(src, "summary").expect("parse");
+    let mut engine = Engine::new();
+    engine.resilient = false;
+    let err = engine.evaluate(&module).expect_err("must fail");
+    assert_eq!(err.code(), "T006", "{err}");
+
+    // T005 (unexpected key in a closed table) passes through too.
+    let src = "schema = { closed = true, host = String }\nhost = \"x\"\nzzzz = 1\n";
+    let module = parse(src, "summary").expect("parse");
+    let mut engine = Engine::new();
+    engine.resilient = false;
+    let err = engine.evaluate(&module).expect_err("must fail");
+    assert_eq!(err.code(), "T005", "{err}");
+}

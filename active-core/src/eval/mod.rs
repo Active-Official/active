@@ -248,7 +248,7 @@ impl Budget {
 
 impl EvalError {
     /// Stable diagnostic code for this error class (see docs/diagnostics.md).
-    pub fn code(&self) -> &'static str {
+    pub fn code(&self) -> &str {
         match self {
             EvalError::CycleDetected => "S001",
             EvalError::MissingRoot => "S002",
@@ -268,20 +268,13 @@ impl EvalError {
                 BudgetKind::TotalSize => "X006",
             },
             EvalError::ValidationFailed { diagnostics } => {
-                // Pass through the stable code of the first diagnostic
-                // for the documented families. Only B002/B004 can head
-                // a validation failure (B001 is a parse diagnostic;
-                // B003/B005 are materialisation-time eval errors), but
-                // the full family is listed so the contract is explicit.
-                // Constants (not borrows) keep the 'static contract.
-                use crate::blob::code as blob_code;
-                match diagnostics.first().map(|d| d.code.as_str()) {
-                    Some("T003") => "T003",
-                    Some("T004") => "T004",
-                    Some("B002") => blob_code::TOO_LARGE,
-                    Some("B004") => blob_code::MEDIA_MISMATCH,
-                    _ => "T002",
-                }
+                // Pass the first diagnostic's stable code through
+                // verbatim: every validation family (T002-T006, B002,
+                // B004) keeps its own code on the summary line. The
+                // old fixed list collapsed T005/T006 to T002, so log
+                // greps and the report_eval_error contract saw the
+                // wrong code (LANG-B-020).
+                diagnostics.first().map_or("T002", |d| d.code.as_str())
             }
         }
     }

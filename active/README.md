@@ -53,7 +53,7 @@ Non-Rust hosts do not use this crate: they link the frozen C ABI
 
 ## Minimum supported Rust version
 
-Rust 1.85 or newer.
+Rust 1.89 or newer.
 
 ## License
 

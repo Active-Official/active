@@ -10,7 +10,7 @@ println!("active-infinity {}", active_infinity::VERSION);
 
 ## Minimum supported Rust version
 
-Rust 1.85 or newer.
+Rust 1.89 or newer.
 
 ## License
 

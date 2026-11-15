@@ -51,6 +51,6 @@ protection regresses. "Residual" = accepted risk written in the model itself.
 
 ## 4. Supply chain
 
-`cargo audit` (CI gate, G6), committed lockfile, MSRV 1.85 gate,
+`cargo audit` (CI gate, G6), committed lockfile, MSRV 1.89 gate,
 `cargo package` file-inclusion gate (`packaging.rs`), signed release
 binaries + attestations (release.yml, C-056).

@@ -221,7 +221,7 @@ Temperature and decibels follow affine and logarithmic rules instead of pretendi
 
 You might wonder whether adopting a new language is worth the switching cost. Migration kits walk you through it with verified diagnostics at each step, and the converters let you move JSON, YAML, and TOML in rather than rewriting by hand. The surface is small on purpose: tables, keys, `let`, env defaults, secrets, interpolation, units. Most developers are productive in an afternoon, and the formatter keeps every file idiomatic from day one.
 
-You might wonder about stability. The 1.x line avoids breaking changes by policy: diagnostic codes are never reused, changes are additive, the C ABI is versioned, and the changelog is honest about every release. MSRV is Rust 1.85, pinned and tested in CI.
+You might wonder about stability. The 1.x line avoids breaking changes by policy: diagnostic codes are never reused, changes are additive, the C ABI is versioned, and the changelog is honest about every release. MSRV is Rust 1.89, pinned and tested in CI.
 
 You might wonder about performance. Evaluation is a single topological walk over an explicit graph, budgets bound every dimension of growth, and the benchmark suite tracks 10k node documents plus incremental re evaluation with CodSpeed regression tracking. If it ever gets slow, the numbers will show it before you feel it.
 
@@ -232,7 +232,7 @@ You might wonder where to get help. The docs site carries the reference, tutoria
 ## Install
 
 ```bash
-cargo install active-cli active-fmt active-lsp   # needs Rust 1.85+
+cargo install active-cli active-fmt active-lsp   # needs Rust 1.89+
 ```
 
 Release archives (Linux/macOS/Windows x x86_64/ARM64, with SHA256SUMS

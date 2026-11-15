@@ -14,7 +14,7 @@ members = [
 [workspace.package]
 version = "1.4.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.89"
 license = "MIT OR Apache-2.0"
 authors = ["Active Language Team"]
 repository = "https://github.com/Active-Official/active"

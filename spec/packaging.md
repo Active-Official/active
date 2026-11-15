@@ -13,7 +13,7 @@ signing, crates.io publication, and editor distribution.
 - SemVer: `0.x` alphas may break the surface (documented in
   CHANGELOG entries); `1.0.0` ships with C-090 and freezes the
   surface (grammar + IR + diagnostics codes + CLI flags).
-- MSRV (`rust-version = 1.85`) advances only with a minor/major
+- MSRV (`rust-version = 1.89`) advances only with a minor/major
   bump and a checklist note, never silently.
 - Tags: `v<version>` on main cut releases (drives release.yml).
 

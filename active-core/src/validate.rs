@@ -421,7 +421,7 @@ impl<'a> Validator<'a> {
     /// validated node compares against the evaluation deadline.
     fn tick(&mut self, node: NodeId) -> Result<(), EvalError> {
         self.ticks += 1;
-        if self.ticks % 64 != 0 {
+        if !self.ticks.is_multiple_of(64) {
             return Ok(());
         }
         if let Some(end) = self.deadline {

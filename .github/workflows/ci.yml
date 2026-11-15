@@ -86,17 +86,21 @@ jobs:
           cargo run -q -p active-cli -- check examples/complete.active
 
   msrv:
-    name: MSRV gate (1.85)
+    name: MSRV gate (1.89)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.85.0"
+          toolchain: "1.89.0"
       - uses: Swatinem/rust-cache@v2
       - name: Build on declared MSRV
         run: cargo build --workspace --locked
+      - name: Compile the test suite on declared MSRV
+        # The dev-dependencies require the same floor; this is the gate
+        # that proves the AGENTS.md `cargo test --workspace` path builds.
+        run: cargo test --workspace --no-run --locked
 
   package:
     name: Packaging gate (C-056)

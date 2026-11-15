@@ -1605,7 +1605,7 @@ impl Engine {
         };
         for node_idx in order {
             visited += 1;
-            if visited % 1024 == 0 {
+            if visited.is_multiple_of(1024) {
                 if let Some(end) = deadline {
                     if Instant::now() >= end {
                         let node_id = module.graph[node_idx];

@@ -1,6 +1,6 @@
 # Getting started
 
-Install the toolchain (Rust 1.85+), then evaluate your first file.
+Install the toolchain (Rust 1.89+), then evaluate your first file.
 
 ```bash
 cargo install active-cli active-fmt active-lsp

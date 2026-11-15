@@ -1069,11 +1069,11 @@ fn decode_hex(value: &str) -> Option<String> {
         .trim_start_matches("0x")
         .to_string();
     let chars: Vec<char> = compact.chars().collect();
-    if chars.len() < 2 || chars.len() % 2 != 0 {
+    if chars.len() < 2 || !chars.len().is_multiple_of(2) {
         return None;
     }
     let mut bytes = Vec::with_capacity(chars.len() / 2);
-    for pair in chars.chunks_exact(2) {
+    for pair in chars.as_chunks::<2>().0 {
         let digit = |c: char| c.to_digit(16).map(|d| d as u8);
         bytes.push(digit(pair[0])? * 16 + digit(pair[1])?);
     }

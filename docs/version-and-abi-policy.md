@@ -9,7 +9,7 @@ before depending on anything Active ships.
 The Rust workspace releases as one version (`[workspace.package]
 version` in the root `Cargo.toml`; every member crate uses
 `version.workspace = true`). Current line: **1.4.0**. Tags are
-`v<version>` on main and drive `release.yml`. MSRV 1.85 advances
+`v<version>` on main and drive `release.yml`. MSRV 1.89 advances
 only with a minor/major bump and a checklist note.
 
 `active-infinity` is the single exception: an independent `1.0.0`

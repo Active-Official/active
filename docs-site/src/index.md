@@ -29,7 +29,7 @@ takes you from zero to validated configs. The
 [Reference](reference/syntax.md) is the precise surface.
 
 Install in one line (`cargo install active-cli active-fmt active-lsp`,
-Rust 1.85+), or grab a release archive from
+Rust 1.89+), or grab a release archive from
 [GitHub releases](https://github.com/Active-Official/active/releases).
 The language server ships as a VS Code extension (`editors/vscode`)
 and a Neovim plugin (`editors/neovim`).

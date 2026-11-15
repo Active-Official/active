@@ -1394,7 +1394,30 @@ impl<'a> Validator<'a> {
             };
             let (numerically_less, numerically_greater) = match bound {
                 Value::Int(b) => (n < *b, n > *b),
-                Value::Float(b) if allow_float_bounds => ((n as f64) < *b, (n as f64) > *b),
+                // Exact comparison, not `n as f64`: beyond 2^53 the
+                // cast rounds, so `max = 9007199254740993.0` could
+                // accept an out-of-range integer (or reject a legal
+                // one). A NaN bound is incomparable and reports once
+                // (LANG-B-006).
+                Value::Float(b) if allow_float_bounds => match crate::eval::cmp_int_float(n, *b) {
+                    Some(ord) => (
+                        ord == std::cmp::Ordering::Less,
+                        ord == std::cmp::Ordering::Greater,
+                    ),
+                    None => {
+                        if self.bug_once(field_id, name) {
+                            self.violation(
+                                path,
+                                &format!(
+                                    "incomparable {name} bound for {} fields",
+                                    field.typ.name()
+                                ),
+                                spans.clone(),
+                            );
+                        }
+                        continue;
+                    }
+                },
                 _ => {
                     // A broken bound reports once per field even when
                     // array elements re-trigger it (spec §4).

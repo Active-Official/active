@@ -3089,7 +3089,7 @@ pub(crate) fn eval_unary(op: UnOp, v: &Value) -> Result<Value, String> {
 /// NaN. A plain `i as f64` comparison rounds above 2^53, so this compares
 /// the integral part as i64 and only looks at the fractional part when
 /// the integer parts are equal.
-fn cmp_int_float(i: i64, f: f64) -> Option<std::cmp::Ordering> {
+pub(crate) fn cmp_int_float(i: i64, f: f64) -> Option<std::cmp::Ordering> {
     use std::cmp::Ordering;
     if f.is_nan() {
         return None;

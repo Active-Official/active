@@ -2669,14 +2669,6 @@ impl Parser {
         });
     }
 
-    /// Duplicate-key notice (W011): a same-scope redefinition keeps
-    /// last-wins (long-standing behavior everywhere), but silence is not
-    /// allowed (research P1-TI-012/HIST-YAML-004). Warning-class, recorded
-    /// on module.healing so strict parsing still succeeds and the notice
-    /// surfaces through evaluation diagnostics. Call BEFORE overwriting;
-    /// pass whether the key already exists. Include-merge paths never call
-    /// this (cross-file composition is designed, not accidental).
-
     /// A repeated table definition replaces the whole earlier table,
     /// so the warning says that: an author splitting a long section
     /// loses every key the first block held (LANG-B-014).
@@ -2692,6 +2684,14 @@ impl Parser {
             file: self.current_file_name(),
         });
     }
+
+    /// Duplicate-key notice (W011): a same-scope redefinition keeps
+    /// last-wins (long-standing behavior everywhere), but silence is not
+    /// allowed (research P1-TI-012/HIST-YAML-004). Warning-class, recorded
+    /// on module.healing so strict parsing still succeeds and the notice
+    /// surfaces through evaluation diagnostics. Call BEFORE overwriting;
+    /// pass whether the key already exists. Include-merge paths never call
+    /// this (cross-file composition is designed, not accidental).
     fn note_duplicate_key(&mut self, key: &str, span: Option<Span>, existed: bool) {
         if existed {
             self.push_heal(Diagnostic {

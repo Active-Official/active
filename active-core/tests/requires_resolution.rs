@@ -53,3 +53,18 @@ fn validation_enforces_the_sibling_target() {
         "nested sibling target must be enforced: {diags:?}"
     );
 }
+
+#[test]
+fn a_let_bound_target_names_the_literal() {
+    // `let t = "mode"` + `requires = t` must name the target, not fall
+    // back to the generic wording (LANG-B-025).
+    let src = "let t = \"mode\"\nschema = { mode = String, replicas = Int(requires = t) }\nmode = \"prod\"\n";
+    let module = parse(src, "requires").expect("parse");
+    let (_v, diags) = Engine::new().evaluate(&module).expect("evaluate");
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == "T004" && d.message.contains("'mode'")),
+        "{diags:?}"
+    );
+}

@@ -818,19 +818,30 @@ impl<'a> Validator<'a> {
                     // A requires target is a real reference only when it
                     // resolves to a schema path; otherwise the text is
                     // data and must not be echoed.
-                    let named = matches!(
-                        self.module.get(requires_id),
-                        Some(Node::Literal(Value::String(_)))
-                    ) && crate::convert::schema_path_exists(self.module, &target);
+                    // A `let`-bound literal resolves to its text, so
+                    // `let t = "mode"` + `requires = t` still names
+                    // the target in the message (LANG-B-025).
+                    let resolved = match self.module.get(requires_id) {
+                        Some(Node::Literal(Value::String(text))) => Some(text.clone()),
+                        Some(Node::Ref(to)) => match self.module.get(*to) {
+                            Some(Node::Literal(Value::String(text))) => Some(text.clone()),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    let named = resolved
+                        .as_deref()
+                        .is_some_and(|text| crate::convert::schema_path_exists(self.module, text));
+                    let rendered_target = resolved.clone().unwrap_or_else(|| target.clone());
                     let message = if named {
                         format!(
                             "schema violation at '{}': missing required key (required by present '{}')",
                             display_path(&path),
-                            target,
+                            rendered_target,
                         )
                     } else {
                         format!(
-                            "schema violation at '{}': missing required key (required by a material or computed requires target)",
+                            "schema violation at '{}': missing required key (required by a computed requires target)",
                             display_path(&path),
                         )
                     };

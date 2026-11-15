@@ -216,7 +216,7 @@ impl<'a> Formatter<'a> {
     /// `schema` is this table's schema node for parallel emission:
     /// a `schema = { … }` block leads the body (spec §2.10).
     fn emit_table_body(&mut self, id: NodeId, depth: usize, path: &str, is_root: bool) {
-        let fields = match self.module.get(id) {
+        let fields = match self.module.get(self.resolve_ref(id)) {
             Some(Node::Table { fields }) => fields.clone(),
             _ => return,
         };
@@ -247,8 +247,13 @@ impl<'a> Formatter<'a> {
             // §2), ahead of the keys it constrains.
             self.emit_depends_on(id, depth);
         }
-        let is_table_node =
-            |f: &Formatter, n: &NodeId| matches!(f.module.get(*n), Some(Node::Table { .. }));
+        // A reference to a table is a table here: rendering it as a
+        // scalar expression (`key = { ... }`) made the next pass
+        // expand it into a block instead, so formatting was not a
+        // fixed point (fuzz crash, formatter target 2026-11-15).
+        let is_table_node = |f: &Formatter, n: &NodeId| {
+            matches!(f.module.get(f.resolve_ref(*n)), Some(Node::Table { .. }))
+        };
         // At the document root, scalars must be hoisted above tables: a
         // `key = value` line after a table header would otherwise be
         // absorbed by that table (spec §5.1). Inside a block, the original
@@ -769,6 +774,19 @@ impl<'a> Formatter<'a> {
     // Expressions
     // ------------------------------------------------------------------
 
+    /// Follow `Ref` links to the node that holds the value. The
+    /// dependency graph is acyclic (S001 refuses cycles), so this
+    /// terminates; the step bound is defense in depth.
+    fn resolve_ref(&self, mut id: NodeId) -> NodeId {
+        for _ in 0..1024 {
+            match self.module.get(id) {
+                Some(Node::Ref(next)) => id = *next,
+                _ => return id,
+            }
+        }
+        id
+    }
+
     fn render_expr(&self, id: NodeId) -> String {
         match self.module.get(id) {
             Some(Node::Literal(v)) => render_literal(v),
@@ -801,11 +819,17 @@ impl<'a> Formatter<'a> {
                     self.render_expr(*data)
                 )
             }
-            Some(Node::Ref(target)) => self
-                .names
-                .get(target)
-                .cloned()
-                .unwrap_or_else(|| "<?>".into()),
+            // A Ref usually names a key or `let`, but it can point at
+            // an unnamed expression node (an inline value that the
+            // resolver rewrote). Rendering `<?>` there produced text
+            // that does not parse, which the formatter contract
+            // forbids; inline the target expression instead. The
+            // dependency graph is acyclic (S001 refuses cycles), so
+            // this recursion terminates.
+            Some(Node::Ref(target)) => match self.names.get(target).cloned() {
+                Some(name) => name,
+                None => self.render_expr(*target),
+            },
             Some(Node::Ident(name)) => name.clone(),
             Some(Node::Interpolate { parts }) => {
                 let mut s = String::from("\"");

@@ -854,14 +854,21 @@ impl SchemaConverter {
                 }
             }
             if ok && !strs.is_empty() {
-                if obj.contains_key("default") {
-                    // Enum takes members only: a default has nowhere to
-                    // attach, so it drops loudly instead of smuggling into
-                    // the member list (which E020 rejects).
-                    self.note(format!(
-                        "default at '{}' dropped: Enum members must be bare string literals",
-                        display_path(path)
-                    ));
+                // Enum does take `default = "<member>"` (the generator
+                // emits it), so a string default rides along instead of
+                // being dropped (LANG-B-030). A non-string default still
+                // has no Active spelling and drops loudly.
+                match obj.get("default") {
+                    Some(serde_json::Value::String(d)) => {
+                        strs.push(format!("default = {}", Emitter::quote_schema(d)));
+                    }
+                    Some(serde_json::Value::Null) | None => {}
+                    Some(_) => {
+                        self.note(format!(
+                            "non-string default at '{}' dropped: Enum defaults must be string members",
+                            display_path(path)
+                        ));
+                    }
                 }
                 return format!("Enum({})", strs.join(", "));
             }

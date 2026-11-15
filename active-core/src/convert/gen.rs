@@ -465,6 +465,10 @@ fn json_schema_field(
             }
         }
         ActiveType::Enum(members) => {
+            // An enum is a string with a closed member list. Omitting
+            // `type` made the generated schema typeless, so importing it
+            // back lost the whole Enum type (LANG-B-030).
+            obj.insert("type".to_string(), JsonValue::String("string".to_string()));
             // A material member cannot be redacted into a valid enum
             // contract; withhold the member list and keep `string`.
             if !members

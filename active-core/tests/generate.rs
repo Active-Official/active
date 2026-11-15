@@ -546,3 +546,30 @@ fn field_and_deprecation_prose_compose_instead_of_overwriting() {
     assert!(descr.contains("deprecated: use f"), "{descr}");
     assert_eq!(json["properties"]["e"]["deprecated"], true, "{json}");
 }
+
+#[test]
+fn enum_type_and_default_survive_the_real_gen_import_round_trip() {
+    // LANG-B-030: the generator omitted `"type"` for Enum fields, so the
+    // real generated schema imported back as `Any`; the default was then
+    // dropped as well. Drive the SHIPPED generate -> import path.
+    let src = r#"schema = { mode = Enum("dev", "prod", default = "dev") }
+"#;
+    let module = active_core::parse(src, "enum").expect("parse");
+    let schema = active_core::convert::gen::schema_to_json_schema(&module).expect("generate");
+    assert_eq!(schema["properties"]["mode"]["type"], "string", "{schema}");
+    let text = serde_json::to_string(&schema).expect("json");
+    let (active, notes) =
+        active_core::convert::import::jsonschema_to_active(&text).expect("import");
+    assert!(active.contains("Enum("), "{active}");
+    assert!(active.contains("default = \"dev\""), "{active}");
+    assert!(
+        !active.contains("Any"),
+        "the Enum type must survive: {active}"
+    );
+    assert!(notes.is_empty(), "{notes:?}");
+    // The imported source parses and evaluates.
+    let back = active_core::parse(&active, "enum-back").expect("imported source parses");
+    let (_v, _d) = active_core::Engine::new()
+        .evaluate(&back)
+        .expect("evaluate");
+}

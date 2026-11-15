@@ -448,8 +448,11 @@ fn jsonschema_maps_types_ranges_and_closed_tables() {
     let module = parse(&source, "convert").expect("must parse");
     match Engine::new().evaluate(&module) {
         Ok((_, diags)) => assert!(
-            diags.iter().all(|d| d.code == "T004"),
-            "only missing-value T004s allowed: {diags:?}"
+            // T004: values absent by construction. W005: a resilient fill of
+            // a default the importer now preserves (Enum defaults included,
+            // LANG-B-030). Anything else is a malformed schema.
+            diags.iter().all(|d| d.code == "T004" || d.code == "W005"),
+            "only missing-value T004s and default fills allowed: {diags:?}"
         ),
         Err(e) => panic!("bare schema must not hard-fail: {}", e.code()),
     }

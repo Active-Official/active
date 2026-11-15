@@ -98,3 +98,25 @@ fn a_parent_trailing_comment_hoists_into_an_aliased_last_table() {
         assert_eq!(once, fmt::format(&reparsed, style), "{style:?}:\n{once}");
     }
 }
+
+#[test]
+fn a_header_form_schema_is_metadata_and_formats_stably() {
+    // Fuzz seed crash-504a8155: `[schema]` used to parse as a DATA table
+    // named schema. Indent style renders such a table with schema syntax
+    // (`schema = {}` / `schema:`), so the next parse saw a schema block and
+    // the output moved to the canonical schema position - non-idempotent,
+    // and a meaning change. The grammar makes `schema` contextual on a
+    // table value (spec/grammar.md section 2.10), so the header form is a
+    // schema block in every style.
+    let src = "prompte=o[schema]";
+    let module = parse(src, "fmt-hdr-schema").expect("parse");
+    assert!(
+        module.schema.is_some(),
+        "a header-form schema is schema metadata"
+    );
+    for style in [Style::Brace, Style::Indent] {
+        let once = fmt::format(&module, style);
+        let reparsed = parse(&once, "fmt-hdr-schema").expect("re-parse");
+        assert_eq!(once, fmt::format(&reparsed, style), "{style:?}:\n{once}");
+    }
+}

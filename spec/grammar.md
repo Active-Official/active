@@ -387,6 +387,13 @@ schema-arg    = identifier "=" expression
   as a schema block; a `schema` key with any other value stays ordinary
   data. A schema table whose entries are not valid type expressions is
   E020 (a mistyped schema must never silently become data).
+  The table value includes the header form: `[schema]` (and `[t.schema]`
+  for a nested scope) declares the same schema block as `schema { ... }`
+  and `schema:`, with its body ending at the next header or document-level
+  statement. The header form is what brace-style formatting emits for a
+  root schema whose body is not empty; treating it as data let a formatter
+  change a document's meaning when it re-emitted the indented form
+  (LANG-C-004 follow-up, fuzz seed crash-504a8155).
 - Named arguments per type (anything else is E020): `Int`/`Float` take
   `min`, `max`, `default`; `Duration`/`Bytes` take `min`, `max`,
   `default`; `String` takes `min_len`, `max_len`, `pattern`, `format`,

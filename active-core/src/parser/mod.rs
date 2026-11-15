@@ -1003,6 +1003,10 @@ enum SchemaEnd {
     Brace,
     /// A Dedent (or EOF) closes an indentation-form schema body.
     Indent,
+    /// A header-form schema (`[schema]`, `[t.schema]`) ends at the next
+    /// header, at the next document-level `let`/`profile`/`include`, or at
+    /// a stray closer. Carries the header's indentation level.
+    Header(usize),
 }
 
 /// A profile scope stashed for the final resolution pass: ident nodes
@@ -3720,6 +3724,69 @@ impl Parser {
             file: self.current_file_name(),
         });
 
+        // A header whose leaf is `schema` declares a schema block, exactly
+        // like the `schema { ... }` and `schema:` forms: the grammar makes
+        // `schema` contextual on a table value (spec/grammar.md §2.10), and
+        // treating `[schema]` as data let a formatter change its meaning by
+        // emitting the indented form (fuzz seed crash-504a8155).
+        if leaf == "schema" && !self.in_profile && self.array_depth == 0 {
+            let (fields, closed, meta) = self.parse_schema_entries(SchemaEnd::Header(header_level));
+            let schema_id = self.module.add_node(Node::SchemaTable {
+                fields,
+                closed,
+                meta,
+            });
+            self.module.record_span(
+                schema_id,
+                Span {
+                    line: open.line,
+                    column: open.col,
+                    end_line: close.end_line,
+                    end_column: close.end_col,
+                },
+            );
+            if let Some(file) = self.current_file_name() {
+                self.module.record_file(schema_id, file);
+            }
+            self.statements[stmt_idx].end_line = self.last_end_line();
+            for _ in &segments {
+                self.current_path.pop();
+            }
+            self.extract_annotations(&name, schema_id, open.line);
+            match scope {
+                None => {
+                    if parent.contains_key(&leaf) {
+                        self.warn_duplicate_table(&leaf, span_of(&open));
+                    }
+                    parent.insert(leaf, schema_id);
+                }
+                Some(pid) => {
+                    let existed = matches!(
+                        self.module.get(pid),
+                        Some(Node::Table { fields }) if fields.contains_key(&leaf)
+                    );
+                    if existed {
+                        self.warn_duplicate_table(&leaf, span_of(&open));
+                    }
+                    match self.module.get_mut(pid) {
+                        Some(Node::Table { fields }) => {
+                            fields.insert(leaf, schema_id);
+                        }
+                        _ => {
+                            self.error(
+                                "E001",
+                                format!(
+                                    "table path '{}' conflicts with a non-table value",
+                                    segments.join(".")
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+            return;
+        }
+
         self.ident_scopes.push(Vec::new());
         let mut fields = indexmap::IndexMap::new();
         let mut pending = Vec::new();
@@ -5407,7 +5474,26 @@ impl Parser {
                     self.bump();
                     continue;
                 }
+                TokenKind::LBracket if matches!(end, SchemaEnd::Header(_)) => {
+                    // The next `[header]` owns the following statements.
+                    break;
+                }
+                TokenKind::Let if matches!(end, SchemaEnd::Header(_)) => break,
                 TokenKind::Ident => {
+                    if let SchemaEnd::Header(level) = end {
+                        // A document-level `profile`/`include` ends the
+                        // body, exactly like `parse_body`'s header rule.
+                        let t = self.peek().clone();
+                        if (t.text == "profile" || t.text == "include")
+                            && t.col.saturating_sub(1) as usize <= level
+                            && !matches!(
+                                self.peek_kind_at(1),
+                                TokenKind::Assign | TokenKind::Colon | TokenKind::LBrace
+                            )
+                        {
+                            break;
+                        }
+                    }
                     let name_tok = self.bump();
                     let name = name_tok.text.clone();
                     if self.expect(TokenKind::Assign).is_none() {

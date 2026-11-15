@@ -479,3 +479,44 @@ fn a_redefined_schema_field_warns_w011() {
     assert_eq!(w011.len(), 1, "{:?}", module.healing);
     assert!(w011[0].message.contains("'a'"), "{:?}", w011[0]);
 }
+
+#[test]
+fn the_header_form_declares_a_schema_block_too() {
+    // spec/grammar.md 2.10: `schema` is contextual on a table value, and a
+    // `[schema]` header is a table value. Treating it as data let a
+    // formatter change the document's meaning by emitting the indented
+    // form (fuzz seed crash-504a8155).
+    let module = parse_ok("[schema]\nport = Int\n");
+    let schema = module.schema.expect("root schema");
+    match module.get(schema) {
+        Some(Node::SchemaTable { fields, .. }) => {
+            assert!(fields.contains_key("port"), "port entry parsed as a type");
+        }
+        other => panic!("header schema must be a SchemaTable, got {other:?}"),
+    }
+    // The empty header form is an empty schema, exactly like `schema = {}`.
+    assert!(parse_ok("[schema]").schema.is_some());
+
+    // Nested header form: `[t.schema]` declares t's schema.
+    let module = parse_ok("[t]\na = 1\n[t.schema]\na = Int\n");
+    let root_schema = module.schema.expect("nested schemas create a root");
+    match module.get(root_schema) {
+        Some(Node::SchemaTable { fields, .. }) => {
+            assert!(fields.contains_key("t"), "t's schema nests under root");
+        }
+        other => panic!("root schema must be a SchemaTable, got {other:?}"),
+    }
+
+    // A bad type expression under the header form is E020, never data.
+    let bad = "schema";
+    let diags = parse("[schema]\nport = NotAType(1)\n", bad).expect_err("E020");
+    assert!(
+        diags.iter().any(|d| d.code == "E020"),
+        "{}",
+        diags
+            .iter()
+            .map(|d| d.code.clone())
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+}

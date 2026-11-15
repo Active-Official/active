@@ -96,6 +96,9 @@ struct Row {
     required: bool,
     removed_in: Option<String>,
     blob: Option<(Option<i64>, Option<String>)>,
+    /// A blob bound argument exists but is not a literal, so it cannot
+    /// be compared statically (LANG-B-029).
+    blob_dynamic: bool,
 }
 
 fn node_signature(module: &Module, id: crate::ir::NodeId) -> String {
@@ -250,6 +253,12 @@ fn row_for_field(module: &Module, path: &str, field: &SchemaField) -> Row {
             literal_string(module, field.blob_media_type),
         )
     });
+    let blob_dynamic = field
+        .blob_max_size
+        .is_some_and(|id| literal_int(module, Some(id)).is_none())
+        || field
+            .blob_media_type
+            .is_some_and(|id| literal_string(module, Some(id)).is_none());
     Row {
         path: path.to_string(),
         signature: field.typ.name(),
@@ -257,6 +266,7 @@ fn row_for_field(module: &Module, path: &str, field: &SchemaField) -> Row {
         required: field_required(field),
         removed_in: field.removed_in.clone(),
         blob,
+        blob_dynamic,
     }
 }
 
@@ -288,6 +298,7 @@ fn collect_rows(module: &Module, root: crate::ir::NodeId, prefix: &str, out: &mu
                     required: true,
                     removed_in: None,
                     blob: None,
+                    blob_dynamic: false,
                 });
                 collect_rows(module, *id, &path, out);
             }
@@ -299,6 +310,7 @@ fn collect_rows(module: &Module, root: crate::ir::NodeId, prefix: &str, out: &mu
                     required: true,
                     removed_in: None,
                     blob: None,
+                    blob_dynamic: false,
                 });
                 // Every element shape is addressable: tables expand to
                 // fields, nested arrays recurse, and a scalar element is
@@ -336,6 +348,7 @@ fn collect_element_rows(
                 required: true,
                 removed_in: None,
                 blob: None,
+                blob_dynamic: false,
             });
             collect_element_rows(module, *inner, &format!("{prefix}[]"), out);
         }
@@ -457,7 +470,12 @@ pub fn compare(old: &Module, new: &Module) -> Result<Vec<CompatFinding>, String>
                             old_field.signature, new_field.signature
                         ),
                     ));
-                } else if tightened(&old_field.constraints, &new_field.constraints) {
+                }
+                // These checks are INDEPENDENT (LANG-B-029): the old
+                // else-if chain reported only the first change and hid
+                // the rest (a simultaneous requiredness + blob change
+                // dropped the blob finding entirely).
+                if tightened(&old_field.constraints, &new_field.constraints) {
                     findings.push(CompatFinding::error(
                         code::TYPE_CHANGED,
                         path,
@@ -467,7 +485,8 @@ pub fn compare(old: &Module, new: &Module) -> Result<Vec<CompatFinding>, String>
                             describe_constraints(&new_field.constraints)
                         ),
                     ));
-                } else if old_field.required != new_field.required && new_field.required {
+                }
+                if old_field.required != new_field.required && new_field.required {
                     // Removing a default makes the field required
                     // without changing its type: old documents that
                     // omitted it now fail.
@@ -478,17 +497,29 @@ pub fn compare(old: &Module, new: &Module) -> Result<Vec<CompatFinding>, String>
                             "field '{path}' became required (default removed): old documents fail the new schema"
                         ),
                     ));
-                } else if let (Some((old_max, old_media)), Some((new_max, new_media))) =
+                }
+                if let (Some((old_max, old_media)), Some((new_max, new_media))) =
                     (&old_field.blob, &new_field.blob)
                 {
-                    check_blob_tightening(
+                    if old_max.is_some() || new_max.is_some() || old_media != new_media {
+                        check_blob_tightening(
+                            path,
+                            old_max,
+                            old_media,
+                            new_max,
+                            new_media,
+                            &mut findings,
+                        );
+                    }
+                }
+                if old_field.blob_dynamic || new_field.blob_dynamic {
+                    findings.push(CompatFinding::info(
+                        code::TYPE_CHANGED,
                         path,
-                        old_max,
-                        old_media,
-                        new_max,
-                        new_media,
-                        &mut findings,
-                    );
+                        format!(
+                            "field '{path}' blob bounds are computed; compatibility cannot compare them"
+                        ),
+                    ));
                 }
             }
         }

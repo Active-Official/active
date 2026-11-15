@@ -377,3 +377,44 @@ fn a_defaulted_addition_qualifies_the_strict_mode_caveat() {
         added.message
     );
 }
+
+#[test]
+fn simultaneous_required_and_blob_tightening_report_both() {
+    // LANG-B-029: the old else-if chain reported only the first change, so
+    // a field that both lost its default and tightened its blob bound
+    // reported the requiredness change alone.
+    let old = "schema = { f = Blob(max_size = 100, default = blob(\"text/plain\", \"x\")) }\nf = blob(\"text/plain\", \"hi\")\n";
+    let new = "schema = { f = Blob(max_size = 2) }\nf = blob(\"text/plain\", \"hi\")\n";
+    let findings = compare_docs(old, new);
+    let messages: Vec<&str> = findings.iter().map(|f| f.message.as_str()).collect();
+    assert_eq!(findings.len(), 2, "{messages:?}");
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.message.contains("became required")),
+        "{messages:?}"
+    );
+    assert!(
+        findings.iter().any(|f| f.message.contains("max_size")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn computed_blob_bounds_are_reported_as_incomparable() {
+    let old = "schema = { f = Blob(max_size = 100) }\nf = blob(\"text/plain\", \"hi\")\n";
+    let new = "schema = { f = Blob(max_size = 2) }\nf = blob(\"text/plain\", \"hi\")\n";
+    let findings = compare_docs(old, new);
+    assert!(!findings.is_empty(), "{findings:?}");
+
+    // A non-literal bound cannot be compared: an info finding says so.
+    let dynamic_old = "schema = { f = Blob(max_size = 100) }\nf = blob(\"text/plain\", \"hi\")\n";
+    let dynamic_new = "schema = { f = Blob(max_size = 1 + 1) }\nf = blob(\"text/plain\", \"hi\")\n";
+    let findings = compare_docs(dynamic_old, dynamic_new);
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.severity == "info" && f.message.contains("computed")),
+        "{findings:?}"
+    );
+}

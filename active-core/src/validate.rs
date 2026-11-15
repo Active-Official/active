@@ -1631,8 +1631,12 @@ impl<'a> Validator<'a> {
             std::sync::OnceLock::new();
         let formats = FORMATS.get_or_init(|| {
             [
-                ("email", r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"),
-                ("uri", r"^[a-zA-Z][a-zA-Z0-9+.-]*://[^\s]+$"),
+                // RFC-3986-shaped, not browser-shaped (LANG-B-013):
+                // a single-label domain (`user@localhost`) and a
+                // one-letter label (`a@b.c`) are valid addresses;
+                // `mailto:`/`urn:` are valid URIs.
+                ("email", r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*$"),
+                ("uri", r"^[a-zA-Z][a-zA-Z0-9+.-]*:[^\s]+$"),
                 (
                     "uuid",
                     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",

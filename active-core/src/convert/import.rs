@@ -158,6 +158,14 @@ impl Emitter {
             JsonValue::Bool(b) => b.to_string(),
             JsonValue::Number(n) => {
                 if let Some(i) = n.as_i64() {
+                    // i64::MIN has no negative literal in Active
+                    // (`-` is unary on a literal that must first
+                    // fit i64), so the plain digits would be E023 on
+                    // the round trip. Emit `MIN+1 - 1`, which parses
+                    // and evaluates exactly (LANG-B-007).
+                    if i == i64::MIN {
+                        return "-9223372036854775807 - 1".to_string();
+                    }
                     i.to_string()
                 } else if let Some(u) = n.as_u64() {
                     self.note(

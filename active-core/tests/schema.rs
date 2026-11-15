@@ -468,3 +468,14 @@ fn schema_in_plain_inline_table_still_extracts() {
         "inline schema must not export: {v}"
     );
 }
+
+#[test]
+fn a_redefined_schema_field_warns_w011() {
+    // Last-wins is announced for value keys; a schema redefinition hid
+    // the same mistake in silence (LANG-B-015).
+    let module =
+        parse("schema = { a = Int, a = String }\na = 1\n", "schema").expect("recovering parse");
+    let w011: Vec<_> = module.healing.iter().filter(|d| d.code == "W011").collect();
+    assert_eq!(w011.len(), 1, "{:?}", module.healing);
+    assert!(w011[0].message.contains("'a'"), "{:?}", w011[0]);
+}

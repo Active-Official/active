@@ -2547,7 +2547,21 @@ impl Parser {
         self.statements[stmt_idx].end_line = self.last_end_line();
         self.current_path.pop();
         self.extract_annotations(&key, table_id, key_tok.line);
-        self.note_duplicate_key(&key, Some(span_of(&key_tok)), parent.contains_key(&key));
+        // A redefined table replaces the WHOLE earlier one, so the warning
+        // says that rather than the generic key wording: an author splitting
+        // a long section loses every key the first block held (LANG-B-014).
+        if parent.contains_key(&key) {
+            self.push_heal(Diagnostic {
+                severity: Severity::Warning,
+                code: "W011".into(),
+                message: format!("duplicate table '{key}'; previous body discarded"),
+                path: None,
+                span: Some(span_of(&key_tok)),
+                repair: None,
+                confidence: 1.0,
+                file: self.current_file_name(),
+            });
+        }
         parent.insert(key, table_id);
     }
 
@@ -2608,7 +2622,21 @@ impl Parser {
         self.statements[stmt_idx].end_line = self.last_end_line();
         self.current_path.pop();
         self.extract_annotations(&key, table_id, key_tok.line);
-        self.note_duplicate_key(&key, Some(span_of(&key_tok)), parent.contains_key(&key));
+        // A redefined table replaces the WHOLE earlier one, so the warning
+        // says that rather than the generic key wording: an author splitting
+        // a long section loses every key the first block held (LANG-B-014).
+        if parent.contains_key(&key) {
+            self.push_heal(Diagnostic {
+                severity: Severity::Warning,
+                code: "W011".into(),
+                message: format!("duplicate table '{key}'; previous body discarded"),
+                path: None,
+                span: Some(span_of(&key_tok)),
+                repair: None,
+                confidence: 1.0,
+                file: self.current_file_name(),
+            });
+        }
         parent.insert(key, table_id);
     }
 
@@ -2648,6 +2676,22 @@ impl Parser {
     /// surfaces through evaluation diagnostics. Call BEFORE overwriting;
     /// pass whether the key already exists. Include-merge paths never call
     /// this (cross-file composition is designed, not accidental).
+
+    /// A repeated table definition replaces the whole earlier table,
+    /// so the warning says that: an author splitting a long section
+    /// loses every key the first block held (LANG-B-014).
+    fn warn_duplicate_table(&mut self, key: &str, span: Span) {
+        self.push_heal(Diagnostic {
+            severity: Severity::Warning,
+            code: "W011".into(),
+            message: format!("duplicate table '{key}'; previous body discarded"),
+            path: None,
+            span: Some(span),
+            repair: None,
+            confidence: 1.0,
+            file: self.current_file_name(),
+        });
+    }
     fn note_duplicate_key(&mut self, key: &str, span: Option<Span>, existed: bool) {
         if existed {
             self.push_heal(Diagnostic {
@@ -3328,7 +3372,9 @@ impl Parser {
         self.extract_annotations(&name, table_id, open.line);
         match scope {
             None => {
-                self.note_duplicate_key(&leaf, Some(span_of(&open)), parent.contains_key(&leaf));
+                if parent.contains_key(&leaf) {
+                    self.warn_duplicate_table(&leaf, span_of(&open));
+                }
                 parent.insert(leaf, table_id);
             }
             Some(pid) => {
@@ -3336,7 +3382,9 @@ impl Parser {
                     self.module.get(pid),
                     Some(Node::Table { fields }) if fields.contains_key(&leaf)
                 );
-                self.note_duplicate_key(&leaf, Some(span_of(&open)), existed);
+                if existed {
+                    self.warn_duplicate_table(&leaf, span_of(&open));
+                }
                 match self.module.get_mut(pid) {
                     Some(Node::Table { fields }) => {
                         fields.insert(leaf, table_id);
@@ -5040,6 +5088,15 @@ impl Parser {
                             name_tok.col.saturating_sub(1) as usize,
                         );
                     }
+                    // A redefined schema field is last-wins like any
+                    // other key, so it gets the same announcement
+                    // (LANG-B-015). Silence here hid a schema bug
+                    // that changes validation.
+                    self.note_duplicate_key(
+                        &name,
+                        Some(span_of(&name_tok)),
+                        fields.contains_key(&name),
+                    );
                     fields.insert(name, id);
                     self.skip_newlines();
                     if matches!(self.peek_kind(), TokenKind::Comma) {

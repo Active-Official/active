@@ -18,8 +18,20 @@ pub fn json_text_to_active(text: &str) -> Result<(String, Vec<Diagnostic>), Stri
 
 /// Active source plus import notes for YAML text.
 pub fn yaml_text_to_active(text: &str) -> Result<(String, Vec<Diagnostic>), String> {
-    let yaml: serde_yaml::Value =
-        serde_yaml::from_str(text).map_err(|e| hard_error("invalid YAML", &e.to_string()))?;
+    let yaml: serde_yaml::Value = serde_yaml::from_str(text).map_err(|e| {
+        let detail = e.to_string();
+        // Duplicate mapping keys are a YAML error, and the parser
+        // reports them as such. Name the policy so the split with
+        // JSON (whose model cannot see duplicates, so the last
+        // value wins) is documented rather than surprising
+        // (LANG-B-012).
+        let suffix = if detail.contains("duplicate") {
+            ": duplicate mapping keys are rejected by YAML import (JSON import keeps the last value, because a JSON document model has no duplicate concept)"
+        } else {
+            ""
+        };
+        hard_error("invalid YAML", &format!("{detail}{suffix}"))
+    })?;
     let mut emitter = Emitter::new();
     let value = emitter.yaml_to_json(&yaml, "");
     let (source, mut diags) = emitter.finish(&value);

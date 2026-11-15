@@ -88,3 +88,18 @@ fn schema_field_collisions_are_disambiguated() {
         "{notes:?}"
     );
 }
+
+#[test]
+fn duplicate_keys_follow_one_documented_policy_per_format() {
+    // YAML rejects duplicates (the YAML spec makes them an error) and the
+    // message names the JSON difference; JSON keeps the last value because
+    // its document model cannot see duplicates (LANG-B-012).
+    let err = active_core::convert::import::yaml_text_to_active("a: 1\na: 2\n")
+        .expect_err("YAML duplicates must fail");
+    assert!(err.contains("duplicate mapping keys"), "{err}");
+    assert!(err.contains("JSON import keeps the last value"), "{err}");
+
+    let (text, _notes) =
+        active_core::convert::import::json_text_to_active("{\"a\": 1, \"a\": 2}").expect("json");
+    assert_eq!(text.trim(), "a = 2", "{text}");
+}

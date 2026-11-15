@@ -62,6 +62,8 @@ silent drops.
 
 **Non-finite floats never cross a converter.** `inf`, `-inf`, and `NaN` are rejected at parse (E023 for an overflowing literal), at arithmetic (T001), and at resilient coercion (the T002 stands). No exporter maps a number to `null`; the JSON model's inf→null behaviour is never used (LANG-B-009).
 
+**Duplicate keys on import.** YAML rejects duplicate mapping keys (the YAML specification makes them an error); the failure names the rule. JSON keeps the last value, because the JSON document model has no duplicate concept to report (LANG-B-012). Neither format silently drops data in the other's way.
+
 **Keys are ASCII identifiers.** Active identifiers are ASCII-only, so the
 reverse converters sanitize every foreign key: characters outside
 `[A-Za-z0-9_]` become `_`, a leading digit gains `_`, and reserved words gain a

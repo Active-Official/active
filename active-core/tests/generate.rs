@@ -511,3 +511,23 @@ fn a_material_enum_member_degrades_to_string_on_every_target() {
         .expect("ts generation");
     assert!(ts.contains("role"), "{ts}");
 }
+
+#[test]
+fn static_bounds_reach_the_generated_contract() {
+    // LANG-B-005: the generated JSON Schema accepted values the Active
+    // schema rejects because Int/Duration/Bytes bounds were dropped.
+    let src = "schema = {\n  i = Int(min = 1, max = 10),\n  d = Duration(min = 1s, max = 2m),\n  b = Bytes(min = 2, max = 8),\n}\n";
+    let module = active_core::parse(src, "bounds").expect("parse");
+    let json = active_core::convert::gen::schema_to_json_schema(&module).expect("generate");
+    let props = &json["properties"];
+    assert_eq!(props["i"]["minimum"], 1, "{json}");
+    assert_eq!(props["i"]["maximum"], 10, "{json}");
+    assert_eq!(props["d"]["properties"]["ms"]["minimum"], 1000, "{json}");
+    assert_eq!(props["d"]["properties"]["ms"]["maximum"], 120000, "{json}");
+    assert_eq!(props["b"]["minimum"], 2, "{json}");
+    assert_eq!(props["b"]["maximum"], 8, "{json}");
+    // A float-spelled Int bound is still a bound.
+    let module = active_core::parse("schema = { n = Int(min = 1.0) }\n", "bounds").expect("parse");
+    let json = active_core::convert::gen::schema_to_json_schema(&module).expect("generate");
+    assert_eq!(json["properties"]["n"]["minimum"], 1.0, "{json}");
+}

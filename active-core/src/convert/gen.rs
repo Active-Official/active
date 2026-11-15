@@ -320,6 +320,34 @@ fn json_schema_node(
     }
 }
 
+/// Any numeric bound literal as a JSON number, preserving the value
+/// validation compares against (integers stay integers, a duration
+/// bound is its canonical millisecond count). LANG-B-005.
+fn literal_number(module: &Module, id: Option<NodeId>) -> Option<JsonValue> {
+    match id.and_then(|node| module.get(node)) {
+        Some(Node::Literal(crate::ir::Value::Int(n))) => Some(JsonValue::from(*n)),
+        Some(Node::Literal(crate::ir::Value::Float(f))) if f.is_finite() => {
+            Some(JsonValue::from(*f))
+        }
+        Some(Node::Literal(crate::ir::Value::DurationMs(ms))) => Some(JsonValue::from(*ms)),
+        // A bound written with a unit (1s, 500ms) parses as a Quantity
+        // node; render its canonical milliseconds.
+        Some(Node::Quantity { value, unit }) => match module.get(*value) {
+            Some(Node::Literal(crate::ir::Value::Int(n))) => {
+                unit.normalize_time_to_ms(*n as f64).map(JsonValue::from)
+            }
+            Some(Node::Literal(crate::ir::Value::Float(f))) => {
+                unit.normalize_time_to_ms(*f).map(JsonValue::from)
+            }
+            _ => None,
+        },
+        Some(Node::Literal(crate::ir::Value::Quantity(n, unit))) => {
+            unit.normalize_time_to_ms(*n).map(JsonValue::from)
+        }
+        _ => None,
+    }
+}
+
 fn json_schema_field(
     module: &Module,
     profile: &crate::secret::SecretProfile,
@@ -335,11 +363,13 @@ fn json_schema_field(
         }
         ActiveType::Int => {
             obj.insert("type".to_string(), JsonValue::String("integer".to_string()));
-            if let Some(min) = literal_int(module, field.min) {
-                obj.insert("minimum".to_string(), JsonValue::from(min));
+            // A bound spelled as a float (min = 1.0) is still a bound;
+            // `literal_int` alone dropped it (LANG-B-005).
+            if let Some(min) = literal_number(module, field.min) {
+                obj.insert("minimum".to_string(), min);
             }
-            if let Some(max) = literal_int(module, field.max) {
-                obj.insert("maximum".to_string(), JsonValue::from(max));
+            if let Some(max) = literal_number(module, field.max) {
+                obj.insert("maximum".to_string(), max);
             }
         }
         ActiveType::Float => {
@@ -380,14 +410,34 @@ fn json_schema_field(
         // Matches the §1 export shape: durations serialize as
         // `{"ms": n}` objects.
         ActiveType::Duration => {
+            // Bounds live on the exported `ms` integer, in canonical
+            // milliseconds (LANG-B-005): a bare object accepted
+            // durations the Active schema rejects.
+            let mut ms = serde_json::Map::new();
+            ms.insert("type".to_string(), JsonValue::String("integer".to_string()));
+            if let Some(min) = literal_number(module, field.min) {
+                ms.insert("minimum".to_string(), min);
+            }
+            if let Some(max) = literal_number(module, field.max) {
+                ms.insert("maximum".to_string(), max);
+            }
             obj.insert("type".to_string(), JsonValue::String("object".to_string()));
-            obj.insert("properties".to_string(), json!({"ms": {"type": "integer"}}));
+            obj.insert(
+                "properties".to_string(),
+                json!({ "ms": JsonValue::Object(ms) }),
+            );
             obj.insert("required".to_string(), json!(["ms"]));
             obj.insert("additionalProperties".to_string(), JsonValue::Bool(false));
         }
         // Bytes normalize to integers on export.
         ActiveType::Bytes => {
             obj.insert("type".to_string(), JsonValue::String("integer".to_string()));
+            if let Some(min) = literal_number(module, field.min) {
+                obj.insert("minimum".to_string(), min);
+            }
+            if let Some(max) = literal_number(module, field.max) {
+                obj.insert("maximum".to_string(), max);
+            }
         }
         ActiveType::Table { closed } => {
             obj.insert("type".to_string(), JsonValue::String("object".to_string()));

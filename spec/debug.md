@@ -64,8 +64,10 @@ can never disagree.
 diagnostic codes, and the full step arrays. A wall-bounded preflight
 runs with the same identity-only blobs as `eval` (no step collection),
 so a document that evaluated successfully cannot fail replay on the
-heavier canonical work; two canonical materialised step passes then run
-without a wall deadline and provide the hash, codes, and steps.
+heavier canonical work (the preflight always runs: a caller's unlimited
+wall clock is replaced by the canonical budget for it); two canonical
+materialised step passes then run under the finite canonical wall budget
+(`eval::CANONICAL_WALL_MS`, 30 s) and provide the hash, codes, and steps.
 `--expect sha256:...` additionally pins the hash (the audit trail's
 `result` value). Any mismatch exits non-zero. Replay hashes the
 redacted, payload-free tree, so `--materialise-blobs` and

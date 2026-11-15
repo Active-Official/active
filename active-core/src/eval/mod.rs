@@ -505,6 +505,28 @@ pub(crate) struct Accountant {
     bytes_since_sample: u64,
 }
 
+/// Wall budget for canonical (identity) and analysis passes (LANG-C-008).
+///
+/// These passes exist to produce a reproducible artifact (audit/lock hash,
+/// replay steps, minimizer verdicts, language-server steps), so they cannot
+/// inherit a caller's wall clock: a document that just passed under a
+/// tighter limit would fail the second pass on machine load alone. They
+/// must NOT run without a clock either - that was the hole LANG-C-008
+/// closed: with `max_wall_ms = 0` the amp fixtures returned multi-megabyte
+/// outputs with no time bound at all. Every such surface uses
+/// [`canonical_budget`], which pins this single finite value, so the pass
+/// is reproducible (same deadline everywhere) and still bounded.
+pub const CANONICAL_WALL_MS: u64 = 30_000;
+
+/// Budget for a canonical/analysis pass: every limit from `base` except the
+/// wall clock, which becomes [`CANONICAL_WALL_MS`]. A caller's `0`
+/// (unlimited) is replaced too, so no surface runs unbounded.
+pub fn canonical_budget(base: &Budget) -> Budget {
+    let mut out = *base;
+    out.max_wall_ms = CANONICAL_WALL_MS;
+    out
+}
+
 /// Charged bytes between wall-clock samples: 1 MiB. One clock read per MiB
 /// is far below the cost of materialising it (~10 us against ~250 us of
 /// memcpy), and it bounds how far past the deadline a byte-heavy walk can

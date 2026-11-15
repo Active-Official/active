@@ -1563,8 +1563,12 @@ fn minimal_case_exports_env_names_and_the_effective_budget() {
     );
     assert_eq!(report["budget"]["max_nodes"], 100_000);
     assert_eq!(report["budget"]["max_depth"], 256);
-    // Candidates run without a wall deadline, so the report shows 0.
-    assert_eq!(report["budget"]["max_wall_ms"], 0);
+    // LANG-C-008: candidates run under the finite canonical wall budget, and
+    // the report names the limit the reducer actually enforced.
+    assert_eq!(
+        report["budget"]["max_wall_ms"],
+        active_core::eval::CANONICAL_WALL_MS
+    );
 }
 
 #[test]

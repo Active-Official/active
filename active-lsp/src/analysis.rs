@@ -3424,8 +3424,10 @@ pub fn steps_snapshot(doc: &Doc, selector: Option<&str>) -> JsonValue {
     // host value that hover and diagnostics report as absent.
     let mut engine = Engine::hermetic();
     engine.resilient = true;
-    // A language-server request must be deterministic: no wall deadline.
-    engine.budget.max_wall_ms = 0;
+    // A language-server request must be reproducible: the canonical
+    // finite wall budget, never the caller's clock and never none
+    // (LANG-C-008).
+    engine.budget = active_core::eval::canonical_budget(&engine.budget);
     let steps = match engine.evaluate_with_steps(&doc.module) {
         Ok((_, _, steps)) => steps,
         Err(error) => return serde_json::json!({"error": format!("{error}")}),

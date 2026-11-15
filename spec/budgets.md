@@ -205,12 +205,17 @@ replaces them, because continuing would defeat the protection.
   defaulting to the shipped profile; `0` disables). Absurd durations
   use `checked_add` (degrading to no deadline where the platform
   would overflow) instead of panicking. `debug --replay` honors the
-  same limits: a wall-bounded preflight mirrors `eval`, then two
-  identical canonical step/hash passes run without a wall deadline
-  (count, depth, array, key, and size limits still bind), so a
-  successful export cannot be followed by a timing-dependent audit or
-  replay failure. The audit/lock canonical hashing passes likewise run
-  without a wall deadline.
+  same limits: a wall-bounded preflight mirrors `eval` and always runs
+  (a caller's `max_wall_ms: 0` still gets the preflight under the
+  canonical budget), then two identical canonical step/hash passes run
+  under the finite **canonical wall budget** (`eval::CANONICAL_WALL_MS`,
+  30 s - the `trusted` preset's wall clock; count, depth, array, key,
+  and size limits still bind). Canonical passes cannot inherit the
+  caller's clock (a document that just passed could fail the second pass
+  on load alone) and never run without one (LANG-C-008): the same finite
+  deadline everywhere keeps the pass reproducible and bounded. The
+  audit/lock canonical hashing passes and the language server's step
+  surface use the same policy.
 - Performance work (C-055) tunes these numbers with measurements,
   never hunches: if the 10k-node benchmark regresses, the limits
   move only with a recorded rationale.

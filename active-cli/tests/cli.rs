@@ -2174,7 +2174,13 @@ fn debug_budget_breakpoint_and_minimize_reproduction_inputs() {
         serde_json::json!(["ACTIVE_DBG_PORT"]),
         "{report}"
     );
-    assert_eq!(report["budget"]["max_wall_ms"], 0, "{report}");
+    // LANG-C-008: the reducer runs under the finite canonical wall budget
+    // (30 s), and the report names the limit it actually enforced.
+    assert_eq!(
+        report["budget"]["max_wall_ms"],
+        active_core::eval::CANONICAL_WALL_MS,
+        "{report}"
+    );
 }
 
 #[test]

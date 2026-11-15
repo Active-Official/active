@@ -119,3 +119,81 @@ fn the_sample_interval_is_one_mebibyte_of_charged_bytes() {
         "byte-driven wall sampling interval"
     );
 }
+
+#[test]
+fn canonical_passes_use_one_finite_wall_budget() {
+    // LANG-C-008: audit, lock, replay, minimizer, and language-server step
+    // passes must not inherit a caller's clock (a document that just passed
+    // could fail the second pass on load) and must not run without one
+    // (the amp fixtures returned multi-megabyte outputs with max_wall_ms =
+    // 0). Every one of those surfaces calls this function.
+    let base = Budget {
+        max_nodes: 7,
+        max_depth: 9,
+        max_array_len: 11,
+        max_keys: 13,
+        max_wall_ms: 0,
+        max_value_size: 17,
+        max_total_value_size: 19,
+    };
+    let canonical = active_core::eval::canonical_budget(&base);
+    assert_eq!(canonical.max_wall_ms, active_core::eval::CANONICAL_WALL_MS);
+    assert_eq!(canonical.max_wall_ms, 30_000);
+    assert_eq!(canonical.max_wall_ms, Budget::trusted().max_wall_ms);
+    // Only the clock moves; every other limit is the caller's.
+    assert_eq!(canonical.max_nodes, base.max_nodes);
+    assert_eq!(canonical.max_depth, base.max_depth);
+    assert_eq!(canonical.max_array_len, base.max_array_len);
+    assert_eq!(canonical.max_keys, base.max_keys);
+    assert_eq!(canonical.max_value_size, base.max_value_size);
+    assert_eq!(canonical.max_total_value_size, base.max_total_value_size);
+    // A caller's finite clock is replaced too: one value everywhere.
+    let timed = Budget {
+        max_wall_ms: 100,
+        ..base
+    };
+    assert_eq!(
+        active_core::eval::canonical_budget(&timed).max_wall_ms,
+        active_core::eval::CANONICAL_WALL_MS
+    );
+}
+
+#[test]
+fn no_shipped_surface_clears_the_wall_budget() {
+    // Structural guard for LANG-C-008: the fix replaced every
+    // `max_wall_ms = 0` assignment on the audit/lock/replay/minimizer/LSP
+    // surfaces with `canonical_budget`. A new assignment would reintroduce
+    // the unbounded pass this finding closed.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut offenders = Vec::new();
+    for crate_dir in ["active-core/src", "active-cli/src", "active-lsp/src"] {
+        let base = root.join(crate_dir);
+        let mut stack = vec![base];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                for (index, line) in text.lines().enumerate() {
+                    let code = line.split("//").next().unwrap_or("");
+                    if code.contains("max_wall_ms = 0") {
+                        offenders.push(format!("{}:{}", path.display(), index + 1));
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "surfaces must use eval::canonical_budget instead of clearing the clock: {offenders:?}"
+    );
+}

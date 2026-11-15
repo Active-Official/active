@@ -120,20 +120,25 @@ pub fn replay_with_budget(
     // The wall-bounded preflight mirrors `eval` exactly: identity-only
     // blobs, no step collection. Materialising for the canonical passes
     // below would copy every payload per alias and could trip X002 on a
-    // document `eval` accepted.
-    if budget.max_wall_ms != 0 {
-        let _preflight = engine
-            .evaluate_with_seeds(module)
-            .map_err(|e| e.to_string())?;
+    // document `eval` accepted. It ALWAYS runs (LANG-C-008): a caller that
+    // asked for an unlimited wall clock still gets the preflight under the
+    // finite canonical budget, so the pass keeps a second line of defence.
+    let mut preflight = engine.clone();
+    if budget.max_wall_ms == 0 {
+        preflight.budget = crate::eval::canonical_budget(budget);
     }
+    let _preflight = preflight
+        .evaluate_with_seeds(module)
+        .map_err(|e| e.to_string())?;
     // Canonical audit form: materialise so payload-resident secrets are
     // visible to the redactor, then strip payloads so the identity does
     // not depend on the flag the audited run used. The probe skips
     // per-alias payload accounting; count/size limits still bind so an
     // untrusted document fails fast instead of exhausting memory. These
-    // passes have no wall deadline, so step bookkeeping cannot turn a
-    // successful evaluation into a timing-dependent failure.
-    engine.budget.max_wall_ms = 0;
+    // passes run under the finite canonical wall budget (LANG-C-008): they
+    // cannot inherit a caller's tighter clock, and they never run without
+    // one.
+    engine.budget = crate::eval::canonical_budget(&engine.budget);
     engine.materialise_blobs = true;
     engine.taint_probe = true;
     let (first, first_diags, first_steps, first_seeds) = engine
@@ -332,7 +337,8 @@ fn still_fails(
     // a wall deadline (count/size limits still bind), except when the
     // wall-clock code itself is the target.
     if target_code != "X002" {
-        engine.budget.max_wall_ms = 0;
+        // Candidates run under the canonical finite clock (LANG-C-008).
+        engine.budget = crate::eval::canonical_budget(&engine.budget);
     }
     match engine.evaluate(&module) {
         Ok((_, diagnostics)) => diagnostics.iter().any(|d| d.code == target_code),
@@ -399,7 +405,7 @@ pub fn minimal_case_with_options(
     // itself is the target (X002), so the report shows the limit the
     // reducer actually enforced.
     if target_code != "X002" {
-        effective_budget.max_wall_ms = 0;
+        effective_budget = crate::eval::canonical_budget(&effective_budget);
     }
     json!({
         "target_code": target_code,
@@ -508,7 +514,7 @@ fn bundle_seeds(
     if let Some(budget) = options.budget {
         engine.budget = *budget;
     }
-    engine.budget.max_wall_ms = 0;
+    engine.budget = crate::eval::canonical_budget(&engine.budget);
     let (outcome, mut seeds) = engine.evaluate_collecting_seeds(&module);
     // A hard error can stop the walk before later secret nodes; the
     // bundle then fails closed by redacting every string literal.

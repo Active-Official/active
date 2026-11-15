@@ -1653,7 +1653,8 @@ fn main() -> anyhow::Result<()> {
                     // A second pass must not fail on the caller's wall
                     // clock after the first succeeded; counts and sizes
                     // still bind.
-                    canonical_engine.budget.max_wall_ms = 0;
+                    canonical_engine.budget =
+                        active_core::eval::canonical_budget(&canonical_engine.budget);
                     let (canonical_value, _, canonical_seeds) = canonical_engine
                         .evaluate_with_seeds(&module)
                         .map_err(|e| anyhow::anyhow!("audit evaluation failed: {e}"))?;
@@ -2825,7 +2826,8 @@ fn main() -> anyhow::Result<()> {
                 let mut canonical_engine = engine.clone();
                 canonical_engine.materialise_blobs = true;
                 canonical_engine.taint_probe = true;
-                canonical_engine.budget.max_wall_ms = 0;
+                canonical_engine.budget =
+                    active_core::eval::canonical_budget(&canonical_engine.budget);
                 let (canonical_value, _, canonical_seeds) = canonical_engine
                     .evaluate_with_seeds(&module)
                     .map_err(|e| anyhow::anyhow!("lock evaluation failed: {e}"))?;

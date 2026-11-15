@@ -27,7 +27,7 @@ protection regresses. "Residual" = accepted risk written in the model itself.
 | Include paths literal/relative, no escapes (E015) | Test: `includes.rs` |
 | Include cycles/depth rejected (E016) | Test: `includes.rs` |
 | Private includes never leak bindings | Test: `includes.rs` (private cases) |
-| Signed includes with `--trust-keys` (E032) | Test: `sign.rs`, CLI trust-keys paths |
+| Signed root document and includes with `--trust-keys` (E032; LANG-C-007 covers the root, C-052 the includes) | Test: `sign.rs` (`the_root_document_is_verified_against_the_trust_set`), CLI trust-keys paths |
 | Patches overlapping `@ai_immutable` fail | Test: `annotations.rs::immutable_keys_reject_all_patch_ops` |
 | Schemas constrain, never inject | Test: `schema.rs` + `generate.rs` (defaults render, dynamic bounds skipped) |
 | AI writes go through validated parses | Test: `prompts.rs` + `prompts/runner/validate.py` gate |

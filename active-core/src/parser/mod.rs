@@ -380,15 +380,31 @@ pub fn parse_file_with_trust(
     trusted: &crate::sign::TrustedKeys,
 ) -> Result<Module, Vec<Diagnostic>> {
     let src = read_document_file(path, options.max_input_bytes)?;
+    // Root verification first (LANG-C-007): with a trust set the receiver
+    // authenticates the document it was handed, not only its includes. The
+    // bytes read above are the bytes verified, so there is no check/use
+    // window; includes verify their own reads the same way.
+    let label = path.to_string_lossy().into_owned();
+    let root_failure = |reason: String| {
+        vec![Diagnostic {
+            severity: Severity::Error,
+            code: "E032".into(),
+            message: reason,
+            path: None,
+            span: None,
+            repair: None,
+            confidence: 1.0,
+            file: Some(label.clone()),
+        }]
+    };
+    let sidecar = crate::sign::read_sidecar(path, &label).map_err(root_failure)?;
+    if let Err(reason) = crate::sign::verify_bytes(&label, src.as_bytes(), &sidecar, trusted) {
+        return Err(root_failure(reason));
+    }
     let mut options = options;
     options.enable_includes = true;
-    let (module, errors) = parse_recovering_impl(
-        &src,
-        &path.to_string_lossy(),
-        options,
-        Some(path),
-        Some(trusted.clone()),
-    );
+    let (module, errors) =
+        parse_recovering_impl(&src, &label, options, Some(path), Some(trusted.clone()));
     if errors.is_empty() {
         Ok(module)
     } else {
@@ -700,10 +716,20 @@ impl Parser {
         stmts: &[StmtInfo],
         blocks: &[BlockInfo],
     ) -> Option<BlockInfo> {
-        // Score prefers an exact indentation-level match, then a deeper
-        // block, then a later start.
-        fn score(b: &BlockInfo, level: usize) -> (u8, usize, u32) {
-            (if b.level == level { 1 } else { 0 }, b.level, b.start_line)
+        // Score prefers an exact indentation-level match, then the
+        // INNERMOST block (deepest path), then a deeper indentation level,
+        // then a later start. Path depth is what disambiguates brace-style
+        // blocks, which share indentation with their parent: a comment
+        // after a nested block's closing brace has to attach to that nested
+        // block in both directions, or reformatting moves it inside on the
+        // next parse (fuzz seed crash-8e989b62).
+        fn score(b: &BlockInfo, level: usize) -> (u8, usize, usize, u32) {
+            (
+                if b.level == level { 1 } else { 0 },
+                b.path.matches('.').count(),
+                b.level,
+                b.start_line,
+            )
         }
         let mut best: Option<&BlockInfo> = None;
         for b in blocks {

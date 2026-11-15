@@ -219,7 +219,9 @@ enum Commands {
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
-        /// Require sibling signatures on includes (C-052)
+        /// Verify the root document and its includes against a
+        /// trusted-keys file (E032; C-052 signed includes, LANG-C-007
+        /// root). Before LANG-C-007 this covered includes only.
         #[arg(long)]
         trust_keys: Option<PathBuf>,
         /// Select a profile by name, overriding the active_profile key
@@ -269,7 +271,9 @@ enum Commands {
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
-        /// Require sibling signatures on includes (C-052)
+        /// Verify the root document and its includes against a
+        /// trusted-keys file (E032; C-052 signed includes, LANG-C-007
+        /// root). Before LANG-C-007 this covered includes only.
         #[arg(long)]
         trust_keys: Option<PathBuf>,
         /// Select a profile by name, overriding the active_profile key
@@ -305,7 +309,9 @@ enum Commands {
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
-        /// Require sibling signatures on includes (C-052)
+        /// Verify the root document and its includes against a
+        /// trusted-keys file (E032; C-052 signed includes, LANG-C-007
+        /// root). Before LANG-C-007 this covered includes only.
         #[arg(long)]
         trust_keys: Option<PathBuf>,
         /// Select a profile by name, overriding the active_profile key
@@ -326,7 +332,9 @@ enum Commands {
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
-        /// Require sibling signatures on includes (C-052)
+        /// Verify the root document and its includes against a
+        /// trusted-keys file (E032; C-052 signed includes, LANG-C-007
+        /// root). Before LANG-C-007 this covered includes only.
         #[arg(long)]
         trust_keys: Option<PathBuf>,
     },
@@ -344,7 +352,9 @@ enum Commands {
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
-        /// Require sibling signatures on includes (C-052)
+        /// Verify the root document and its includes against a
+        /// trusted-keys file (E032; C-052 signed includes, LANG-C-007
+        /// root). Before LANG-C-007 this covered includes only.
         #[arg(long)]
         trust_keys: Option<PathBuf>,
     },
@@ -359,7 +369,9 @@ enum Commands {
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
-        /// Require sibling signatures on includes (C-052)
+        /// Verify the root document and its includes against a
+        /// trusted-keys file (E032; C-052 signed includes, LANG-C-007
+        /// root). Before LANG-C-007 this covered includes only.
         #[arg(long)]
         trust_keys: Option<PathBuf>,
         /// Select a profile by name, overriding the active_profile key
@@ -393,7 +405,9 @@ enum Commands {
         /// Root type name
         #[arg(long, default_value = "Config")]
         name: String,
-        /// Require sibling signatures on includes (C-052)
+        /// Verify the root document and its includes against a
+        /// trusted-keys file (E032; C-052 signed includes, LANG-C-007
+        /// root). Before LANG-C-007 this covered includes only.
         #[arg(long)]
         trust_keys: Option<PathBuf>,
     },
@@ -408,7 +422,9 @@ enum Commands {
         /// Output format: json (default) or text (path mode)
         #[arg(long, default_value = "json")]
         format: String,
-        /// Require sibling signatures on includes (C-052)
+        /// Verify the root document and its includes against a
+        /// trusted-keys file (E032; C-052 signed includes, LANG-C-007
+        /// root). Before LANG-C-007 this covered includes only.
         #[arg(long)]
         trust_keys: Option<PathBuf>,
         /// Select a profile by name, overriding the active_profile key
@@ -462,7 +478,9 @@ enum Commands {
         reader_version: Option<String>,
         #[command(flatten)]
         budget: BudgetArgs,
-        /// Require sibling signatures on includes (C-052)
+        /// Verify the root document and its includes against a
+        /// trusted-keys file (E032; C-052 signed includes, LANG-C-007
+        /// root). Before LANG-C-007 this covered includes only.
         #[arg(long)]
         trust_keys: Option<PathBuf>,
     },
@@ -488,7 +506,9 @@ enum Commands {
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
-        /// Require sibling signatures on includes (C-052)
+        /// Verify the root document and its includes against a
+        /// trusted-keys file (E032; C-052 signed includes, LANG-C-007
+        /// root). Before LANG-C-007 this covered includes only.
         #[arg(long)]
         trust_keys: Option<PathBuf>,
         /// Select a profile by name, overriding the active_profile key
@@ -506,7 +526,9 @@ enum Commands {
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
-        /// Require sibling signatures on includes (C-052)
+        /// Verify the root document and its includes against a
+        /// trusted-keys file (E032; C-052 signed includes, LANG-C-007
+        /// root). Before LANG-C-007 this covered includes only.
         #[arg(long)]
         trust_keys: Option<PathBuf>,
         /// Declare this host's reader version (`major.minor.patch`).
@@ -529,7 +551,9 @@ enum Commands {
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
-        /// Require sibling signatures on includes (C-052)
+        /// Verify the root document and its includes against a
+        /// trusted-keys file (E032; C-052 signed includes, LANG-C-007
+        /// root). Before LANG-C-007 this covered includes only.
         #[arg(long)]
         trust_keys: Option<PathBuf>,
         /// Declare this host's reader version (`major.minor.patch`).
@@ -615,7 +639,9 @@ enum Commands {
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
-        /// Require sibling signatures on includes (C-052)
+        /// Verify the root document and its includes against a
+        /// trusted-keys file (E032; C-052 signed includes, LANG-C-007
+        /// root). Before LANG-C-007 this covered includes only.
         #[arg(long)]
         trust_keys: Option<PathBuf>,
         /// Select a profile by name, overriding the active_profile key
@@ -647,7 +673,9 @@ enum Commands {
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
-        /// Require sibling signatures on includes (C-052)
+        /// Verify the root document and its includes against a
+        /// trusted-keys file (E032; C-052 signed includes, LANG-C-007
+        /// root). Before LANG-C-007 this covered includes only.
         #[arg(long)]
         trust_keys: Option<PathBuf>,
         /// Declare this host's reader version (`major.minor.patch`).
@@ -672,7 +700,9 @@ enum Commands {
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
-        /// Require sibling signatures on includes (C-052)
+        /// Verify the root document and its includes against a
+        /// trusted-keys file (E032; C-052 signed includes, LANG-C-007
+        /// root). Before LANG-C-007 this covered includes only.
         #[arg(long)]
         trust_keys: Option<PathBuf>,
         /// Select a profile by name, overriding the active_profile key
@@ -784,7 +814,9 @@ enum SchemaAction {
         /// Output format: json (default) or text (path mode)
         #[arg(long, default_value = "json")]
         format: String,
-        /// Require sibling signatures on includes (C-052)
+        /// Verify the root document and its includes against a
+        /// trusted-keys file (E032; C-052 signed includes, LANG-C-007
+        /// root). Before LANG-C-007 this covered includes only.
         #[arg(long)]
         trust_keys: Option<PathBuf>,
         /// Select a profile by name, overriding the active_profile key

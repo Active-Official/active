@@ -1174,6 +1174,19 @@ fn trust_keys_gate_include_loading() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
+    // LANG-C-007: the receiver verifies the ROOT as well, so sign it too.
+    let out = active()
+        .args(["sign", "--key"])
+        .arg(dir.join("gate.secret"))
+        .args(["--kid", "k"])
+        .arg(&main)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let out = active()
         .args(["check", "--trust-keys"])
         .arg(&trust)
@@ -1182,9 +1195,21 @@ fn trust_keys_gate_include_loading() {
         .expect("run active");
     assert!(
         out.status.success(),
-        "signed must pass: {}",
+        "signed root and include must pass: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+    // Tampered root: the root signature covers the bytes read, so a change
+    // after signing fails closed even though the include is still signed.
+    std::fs::write(&main, "include \"gate_lib.active\"\nport = 2\n").expect("tamper root");
+    let out = active()
+        .args(["check", "--trust-keys"])
+        .arg(&trust)
+        .arg(&main)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success(), "tampered root must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E032"), "{stderr}");
 }
 
 #[test]

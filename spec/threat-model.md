@@ -94,6 +94,12 @@ value size) fail closed (X001–X006) in both modes. Fuzzing
 
 ### 3.5 Signature scope limits (explicit non-goals)
 
+`--trust-keys` verifies the root document and its includes against the
+trust set (see LANG-C-007). Revocation and timestamping remain non-goals
+for v1: a signed document verifies forever once its key is trusted;
+freshness must come from version control and lockfiles, which are not
+consulted on the eval path.
+
 - Signatures authenticate AUTHORSHIP/INTEGRITY of overlay bytes,
   not safety of content: a signed include is still data, still
   validated, still budgeted. Trust ≠ sandbox escape.

@@ -108,7 +108,9 @@ fn nested_includes_enforce_recursively() {
     let leaf = temp_fixture("nestleaf.active", "deep = 1\n");
     let mid = temp_fixture("nestmid.active", "include \"nestleaf.active\"\nmid = 1\n");
     let main = temp_fixture("nestmain.active", "include \"nestmid.active\"\nport = 1\n");
-    for path in [&leaf, &mid] {
+    // LANG-C-007: the ROOT is verified too, so it is signed like the
+    // includes it pulls in.
+    for path in [&leaf, &mid, &main] {
         sign(path);
     }
     let module =
@@ -166,6 +168,14 @@ fn toml_parse_probe() -> String {
     load_trusted_keys("[[keys]]\n").expect_err("must fail")
 }
 
+/// Sign a file in place: write its sibling `.sig` sidecar.
+fn sign_file(secret: &ed25519_dalek::SigningKey, kid: &str, path: &std::path::Path) {
+    let bytes = std::fs::read(path).expect("read for signing");
+    let mut sidecar = path.as_os_str().to_owned();
+    sidecar.push(".sig");
+    std::fs::write(&sidecar, sign_bytes(secret, kid, &bytes).expect("sign")).expect("write sig");
+}
+
 fn temp_fixture(name: &str, contents: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join("active-sign-tests");
     std::fs::create_dir_all(&dir).expect("temp dir");
@@ -181,18 +191,14 @@ fn include_enforcement_accepts_signed_and_rejects_the_rest() {
     let trusted = trusted_of(&kid, &secret);
     // Signed library: verifies and merges.
     let lib = temp_fixture("signedlib.active", "host = \"db\"\n");
-    let lib_bytes = std::fs::read(&lib).expect("read lib");
-    let mut sidecar = lib.as_os_str().to_owned();
-    sidecar.push(".sig");
-    std::fs::write(
-        &sidecar,
-        sign_bytes(&secret, &kid, &lib_bytes).expect("sign"),
-    )
-    .expect("write sig");
+    sign_file(&secret, &kid, &lib);
     let main = temp_fixture(
         "signedmain.active",
         "include \"signedlib.active\"\nport = 1\n",
     );
+    // The receiver verifies the document it was handed (LANG-C-007), so the
+    // root carries a signature here as well.
+    sign_file(&secret, &kid, &main);
     let module =
         parse_file_with_trust(&main, ParseOptions::default(), &trusted).expect("signed parses");
     assert!(module.resolve_value_path("host").is_some());
@@ -202,6 +208,7 @@ fn include_enforcement_accepts_signed_and_rejects_the_rest() {
         "unsignedmain.active",
         "include \"unsignedlib.active\"\nport = 1\n",
     );
+    sign_file(&secret, &kid, &main2);
     let diags = parse_file_with_trust(&main2, ParseOptions::default(), &trusted)
         .expect_err("unsigned must fail");
     assert!(diags.iter().any(|d| d.code == "E032"), "{diags:?}");
@@ -217,4 +224,56 @@ fn include_enforcement_accepts_signed_and_rejects_the_rest() {
     let diags = parse_file_with_trust(&main, ParseOptions::default(), &trusted)
         .expect_err("tampered must fail");
     assert!(diags.iter().any(|d| d.code == "E032"), "{diags:?}");
+}
+
+#[test]
+fn the_root_document_is_verified_against_the_trust_set() {
+    // LANG-C-007: before this, --trust-keys authenticated includes only and
+    // a receiver acted on an unsigned root. Same key material, same wording.
+    use active_core::{parse_file_with_trust, ParseOptions};
+    let (secret, _, kid) = keypair();
+    let trusted = trusted_of(&kid, &secret);
+
+    // Signed root: parses.
+    let root = temp_fixture("rootverifysigned.active", "port = 1\n");
+    sign_file(&secret, &kid, &root);
+    let module = parse_file_with_trust(&root, ParseOptions::default(), &trusted)
+        .expect("signed root parses");
+    assert!(module.resolve_value_path("port").is_some());
+
+    // Unsigned root: E032 naming the missing sidecar.
+    let unsigned = temp_fixture("rootverifyunsigned.active", "port = 1\n");
+    let diags = parse_file_with_trust(&unsigned, ParseOptions::default(), &trusted)
+        .expect_err("unsigned root must fail");
+    assert!(diags.iter().any(|d| d.code == "E032"), "{diags:?}");
+    assert!(
+        diags[0].message.contains("unsigned"),
+        "the failure names the unsigned root: {}",
+        diags[0].message
+    );
+    assert_eq!(
+        diags[0].file.as_deref(),
+        Some(unsigned.to_string_lossy().as_ref())
+    );
+
+    // Tampered root: the sidecar no longer matches the bytes read.
+    std::fs::write(&root, "port = 2\n").expect("tamper root");
+    let diags = parse_file_with_trust(&root, ParseOptions::default(), &trusted)
+        .expect_err("tampered root must fail");
+    assert!(diags[0].message.contains("signature mismatch"), "{diags:?}");
+
+    // Root signed by a key outside the trust set: unknown key id.
+    let foreign = generate_secret_key().expect("keygen");
+    let foreign_root = temp_fixture("rootverifyforeign.active", "port = 1\n");
+    sign_file(&foreign, "stranger", &foreign_root);
+    let diags = parse_file_with_trust(&foreign_root, ParseOptions::default(), &trusted)
+        .expect_err("untrusted key must fail");
+    assert!(
+        diags[0].message.contains("unknown signing key"),
+        "{diags:?}"
+    );
+
+    // Negative control: without a trust set the legacy entry point accepts
+    // the mismatched file (verification is opt-in, exactly as documented).
+    assert!(active_core::parse_file(&root, ParseOptions::default()).is_ok());
 }

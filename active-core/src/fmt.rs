@@ -303,8 +303,14 @@ impl<'a> Formatter<'a> {
         // it. Hoist them down now: this is the fixed point the second
         // pass reaches.
         if let Some((last_key, last_id)) = ordered.last() {
+            // Resolve aliases first: the last entry can be a `Ref` to a
+            // table definition, and the hoist must see the table it names.
+            // Reading the raw node skipped the hoist for aliased tables,
+            // so the comment stayed after the closing brace and the next
+            // parse attached it inside the block (fuzz seed
+            // crash-8e989b62).
             if matches!(
-                self.module.get(*last_id),
+                self.module.get(self.resolve_ref(*last_id)),
                 Some(Node::Table { fields }) if !fields.is_empty()
             ) && self.trailing_block.contains_key(path)
             {

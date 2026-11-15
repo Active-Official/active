@@ -71,3 +71,30 @@ fn an_aliased_empty_table_renders_inline_and_stays_idempotent() {
         assert_eq!(once, fmt::format(&reparsed, style), "{style:?}:\n{once}");
     }
 }
+
+#[test]
+fn a_parent_trailing_comment_hoists_into_an_aliased_last_table() {
+    // Fuzz seed crash-8e989b62: a block's trailing comment must land inside
+    // the nested block the parser will re-attach it to. The last entry was
+    // an ALIAS to a table, so the hoist (which looked at the raw node) did
+    // not fire, the comment stayed after the closing brace, and the next
+    // parse moved it inside - a non-idempotent rewrite.
+    let src = "ye=o[o]yye=o[o]ye=o\n\n\n\n#[o}=e\n\n=\n";
+    let module = parse(src, "fmt-hoist").expect("parse");
+    for style in [Style::Brace, Style::Indent] {
+        let once = fmt::format(&module, style);
+        let reparsed = parse(&once, "fmt-hoist").expect("re-parse");
+        let twice = fmt::format(&reparsed, style);
+        assert_eq!(once, twice, "{style:?} not idempotent:\n{once}");
+    }
+
+    // The minimal hand-written shape: a block whose last entry aliases a
+    // table, with the block's trailing comment after it.
+    let src = "[a]\nx = 1\n[b]\nc = { d = 1 }\ne = c\n# trailing\n";
+    let module = parse(src, "fmt-hoist-2").expect("parse");
+    for style in [Style::Brace, Style::Indent] {
+        let once = fmt::format(&module, style);
+        let reparsed = parse(&once, "fmt-hoist-2").expect("re-parse");
+        assert_eq!(once, fmt::format(&reparsed, style), "{style:?}:\n{once}");
+    }
+}

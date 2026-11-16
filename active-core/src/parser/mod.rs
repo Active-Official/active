@@ -4825,7 +4825,12 @@ impl Parser {
                 if let TokenKind::Unit(_) = self.peek_kind() {
                     let unit_tok = self.bump();
                     if let Some(unit) = Unit::from_suffix(&unit_tok.text) {
-                        node = self.add_spanned(Node::Quantity { value: node, unit }, &tok);
+                        // The literal is digits + suffix: the node span
+                        // covers the whole token pair (LANG-G-019).
+                        let mut covered = tok.clone();
+                        covered.end_line = unit_tok.end_line;
+                        covered.end_col = unit_tok.end_col;
+                        node = self.add_spanned(Node::Quantity { value: node, unit }, &covered);
                     }
                 }
                 node
@@ -4858,7 +4863,11 @@ impl Parser {
                 if let TokenKind::Unit(_) = self.peek_kind() {
                     let unit_tok = self.bump();
                     if let Some(unit) = Unit::from_suffix(&unit_tok.text) {
-                        node = self.add_spanned(Node::Quantity { value: node, unit }, &tok);
+                        // Digits + suffix form one literal (LANG-G-019).
+                        let mut covered = tok.clone();
+                        covered.end_line = unit_tok.end_line;
+                        covered.end_col = unit_tok.end_col;
+                        node = self.add_spanned(Node::Quantity { value: node, unit }, &covered);
                     }
                 }
                 node

@@ -76,6 +76,30 @@ fn document_symbols_cover_paths_and_bindings() {
 }
 
 #[test]
+fn a_let_binding_is_one_symbol_and_duration_spans_cover_the_unit() {
+    // LANG-G-019: the binding's value node also appears in value_paths, so
+    // `api_base` used to be emitted twice (FIELD and VARIABLE, identical
+    // ranges); and a duration symbol spanned only the digits.
+    let doc = open("let api_base = \"x\"\ntimeout = 5s\n");
+    let symbols = analysis::document_symbols(&doc);
+    let bindings: Vec<_> = symbols.iter().filter(|s| s.name == "api_base").collect();
+    assert_eq!(bindings.len(), 1, "one binding entry: {symbols:?}");
+    assert_eq!(bindings[0].kind, lsp_types::SymbolKind::VARIABLE);
+    let timeout = symbols
+        .iter()
+        .find(|s| s.name == "timeout")
+        .expect("timeout symbol");
+    assert_eq!(
+        (
+            timeout.location.range.start.character,
+            timeout.location.range.end.character
+        ),
+        (10, 12),
+        "the span covers `5s`, not just `5`: {timeout:?}"
+    );
+}
+
+#[test]
 fn workspace_symbols_filter_by_query() {
     let a = open("[server]\nhost = \"x\"\n");
     let b = open("[cache]\nttl = 5\n");

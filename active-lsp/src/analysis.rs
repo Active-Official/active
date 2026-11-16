@@ -2356,8 +2356,13 @@ pub fn range_formatting_edits(doc: &Doc, range: Range) -> Vec<TextEdit> {
 #[allow(deprecated)]
 pub fn document_symbols(doc: &Doc) -> Vec<SymbolInformation> {
     let mut out: Vec<SymbolInformation> = Vec::new();
+    // A let binding's value node also appears in `value_paths` under the
+    // binding name; emitting it there AND as a VARIABLE below produced two
+    // identical entries (LANG-G-019). The binding loop owns that symbol.
+    let binding_nodes: std::collections::HashSet<_> =
+        doc.module.bindings.values().copied().collect();
     for (id, path) in doc.module.value_paths() {
-        if path.is_empty() || !node_in_doc(doc, id) {
+        if path.is_empty() || !node_in_doc(doc, id) || binding_nodes.contains(&id) {
             continue;
         }
         let range = doc

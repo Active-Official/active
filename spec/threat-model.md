@@ -154,8 +154,10 @@ consulted on the eval path.
 1. Generate per-purpose keys (release, team, automation);
    never reuse a personal signing key for releases.
 2. Store secret keys in a vault or `0600` files outside the repo
-   (`ACTIVE keygen` sets `0600` on Unix; on Windows use an
-   ACL-restricted directory);
+   (`ACTIVE keygen` creates the secret half `0600` atomically, with no
+   write-then-chmod window, and pins the public half `0644`; on Windows
+   both inherit the directory ACL, so generate them in an ACL-restricted
+   directory);
    public halves live in-repo beside the documents they guard.
 3. Rotate by adding the new public key, re-signing, then
    removing the old — the window where both verify is the

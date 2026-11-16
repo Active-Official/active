@@ -739,7 +739,10 @@ enum Commands {
     },
     /// Generate an Ed25519 key pair for overlay signing
     Keygen {
-        /// Output prefix: writes <prefix>.secret (0600) and <prefix>.public
+        /// Output prefix: writes <prefix>.secret (0600 on Unix) and
+        /// <prefix>.public (0644 on Unix). Windows has no POSIX modes:
+        /// both files inherit the directory ACL, so generate keys in a
+        /// directory only the key owner can write.
         #[arg(short, long)]
         out: PathBuf,
     },
@@ -1472,6 +1475,40 @@ fn material_profile(
     material_profile_with(module, None)
 }
 
+/// Write a key file with pinned permissions (LANG-H-002/H-901).
+///
+/// Unix: the file is CREATED with `mode` (0600 secrets, 0644 public), so
+/// there is no write-then-chmod window; the mode is pinned again after
+/// opening so a pre-existing file cannot keep a wider mode. Windows has no
+/// POSIX modes: the file inherits the directory ACL, which `keygen`'s help
+/// states.
+fn write_key_file(path: &std::path::Path, contents: &str, mode: u32) -> anyhow::Result<()> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(mode);
+    }
+    #[cfg(not(unix))]
+    let _ = mode;
+    let mut file = options
+        .open(path)
+        .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", path.display()))?;
+    file.write_all(contents.as_bytes())
+        .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", path.display()))?;
+    file.sync_all()
+        .map_err(|e| anyhow::anyhow!("cannot flush {}: {e}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+            .map_err(|e| anyhow::anyhow!("cannot chmod {}: {e}", path.display()))?;
+    }
+    Ok(())
+}
+
 /// LANG-K-001: a profile that hit an analysis bound treats every unknown
 /// path as material, so presenting its tree would replace benign values
 /// with `***SECRET***`. Value exports refuse loudly instead of lying; the
@@ -1502,7 +1539,10 @@ fn material_profile_with(
     for node in &module.arena {
         if let active_core::ir::Node::Env { name, .. } = node {
             if profile.env_is_material(name) {
-                if let Ok(value) = std::env::var(name) {
+                // LANG-H-003: the engine folds env names to uppercase at
+                // snapshot time; the tool profile reads the same spelling
+                // so a mixed-case reference absorbs the right value.
+                if let Ok(value) = std::env::var(active_core::eval::canonical_env_name(name)) {
                     env.insert(name.clone(), value);
                 }
             }
@@ -3132,23 +3172,25 @@ fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Keygen { out } => {
-            // Fresh Ed25519 seed from OS randomness; the secret file
-            // is created owner-only (0600 on Unix).
+            // Fresh Ed25519 seed from OS randomness. Both files are
+            // created with their final mode in one open (LANG-H-002/H-901):
+            // no write-then-chmod window, and the public half is not
+            // umask-dependent.
             let key =
                 active_core::sign::generate_secret_key().map_err(|e| anyhow::anyhow!("{e}"))?;
             let secret_path = out.with_extension("secret");
             let public_path = out.with_extension("public");
-            std::fs::write(&secret_path, active_core::sign::secret_hex(&key))
-                .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", secret_path.display()))?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&secret_path, std::fs::Permissions::from_mode(0o600))
-                    .map_err(|e| anyhow::anyhow!("cannot chmod {}: {e}", secret_path.display()))?;
-            }
+            write_key_file(
+                &secret_path,
+                &active_core::sign::secret_hex(&key),
+                0o600,
+            )?;
             let verifying = key.verifying_key();
-            std::fs::write(&public_path, active_core::sign::public_hex(&verifying))
-                .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", public_path.display()))?;
+            write_key_file(
+                &public_path,
+                &active_core::sign::public_hex(&verifying),
+                0o644,
+            )?;
             println!(
                 "wrote {} and {}",
                 secret_path.display(),

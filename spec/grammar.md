@@ -477,7 +477,9 @@ secret-ref    = "secret" [ "." "env" ] "(" expression ")"
 ```
 
 - `env.NAME` reads the environment variable NAME; missing → `null` (or the
-  `?:` default when present). The default is optional.
+  `?:` default when present). The default is optional. NAME is
+  case-insensitive on every platform: names fold to uppercase at snapshot
+  time, so `env.Path` and `env.PATH` are the same variable (LANG-H-003).
 - `secret(expr)` takes any expression as locator (usually a string literal).
   `secret.env(NAME)` requires a **string literal** argument naming the env var
   whose value becomes the secret (E003 otherwise). **[impl note]** implemented

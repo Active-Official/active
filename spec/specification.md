@@ -115,7 +115,7 @@ It is created last and becomes `module.root`.
 |---|---|
 | literal | `Literal(Value)` |
 | `name` | `Ident(name)` — rewritten to `Ref` during resolution |
-| `env.N` / `env.N ?: d` | `Env { name: N, default }` |
+| `env.N` / `env.N ?: d` | `Env { name: N, default }` (names fold to uppercase; `env.Path` and `env.PATH` are one variable) |
 | `secret(x)` | `Secret { locator: x }` |
 | `secret.env("N")` | `Secret { locator: Env{name: N} }` |
 | `"a${n}b"` | `Interpolate { parts: [Literal("a"), Expr(Ident(n)), Literal("b")] }` |
@@ -219,6 +219,9 @@ detection and evaluation like ordinary values.
    through `env.NAME` nodes and files pulled in through `include`
    statements (C-025): literal paths only, confined to the including
    file's directory tree, no network. No shell or process access, ever.
+   Environment names are case-insensitive: the snapshot folds every name
+   to uppercase, so evaluation, fingerprints, and lockfile provenance
+   agree on every platform (LANG-H-003).
 3. **Bounded** — the parser enforces the 64-level expression nesting limit;
    evaluator-side budgets (node count, depth, array length, total keys,
    wall-clock) arrive with C-037.

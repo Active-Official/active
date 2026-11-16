@@ -1205,6 +1205,27 @@ fn fp_value(hasher: &mut FpHasher, value: &Value) {
     }
 }
 
+/// Canonical spelling of an environment variable name (LANG-H-003):
+/// `env.NAME` is case-insensitive on every platform, so names fold to
+/// uppercase at snapshot, lookup, fingerprint, and provenance time.
+pub fn canonical_env_name(name: &str) -> String {
+    name.to_uppercase()
+}
+
+/// Fold a name/value stream into the canonical environment map
+/// (LANG-H-003). Names uppercase; if two spellings collide (possible on
+/// Unix, e.g. `PATH` and `Path`), the lexicographically last value wins,
+/// so every run and platform resolves the same variable the same way.
+fn canonical_env_map<I: Iterator<Item = (String, String)>>(
+    entries: I,
+) -> std::collections::HashMap<String, String> {
+    let mut pairs: Vec<(String, String)> = entries
+        .map(|(name, value)| (canonical_env_name(&name), value))
+        .collect();
+    pairs.sort();
+    pairs.into_iter().collect()
+}
+
 /// Structural fingerprint of one node for incremental memoization:
 /// expression shape, literal data, environment values read, and the
 /// already-computed fingerprints of structural children. `cache` is
@@ -1234,15 +1255,17 @@ fn fingerprint_one(
             fp_value(&mut hasher, v);
         }
         Node::Env { name, default } => {
+            // LANG-H-003: one spelling on every platform.
+            let key = canonical_env_name(name);
             // A lazy host fallback can answer for an absent key with a
             // value this engine cannot hash. Never memoize that node
             // (or anything depending on it) across engines.
-            if engine.env_fallback.is_some() && !engine.env.contains_key(name) {
+            if engine.env_fallback.is_some() && !engine.env.contains_key(&key) {
                 return None;
             }
             1u8.hash(&mut hasher);
-            name.hash(&mut hasher);
-            engine.env.get(name).hash(&mut hasher);
+            key.hash(&mut hasher);
+            engine.env.get(&key).hash(&mut hasher);
             match default {
                 Some(d) => child(d)?.hash(&mut hasher),
                 None => 0u8.hash(&mut hasher),
@@ -1522,10 +1545,13 @@ impl Engine {
         // Undecodable entries cannot enter the snapshot (keys
         // and values must be Unicode to be referenceable);
         // skipping them is deterministic per machine, unlike a
-        // `vars()` panic on exotic ambients.
-        engine.env = std::env::vars_os()
-            .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
-            .collect();
+        // `vars()` panic on exotic ambients. Names fold to uppercase
+        // so `env.Path` and `env.PATH` are one variable everywhere
+        // (LANG-H-003).
+        engine.env =
+            canonical_env_map(std::env::vars_os().filter_map(|(key, value)| {
+                Some((key.into_string().ok()?, value.into_string().ok()?))
+            }));
         engine
     }
 
@@ -1564,9 +1590,10 @@ impl Engine {
         }
     }
 
-    /// Fixed environment snapshot instead of the process ambient.
+    /// Fixed environment snapshot instead of the process ambient. Names
+    /// fold to uppercase, exactly like the process snapshot (LANG-H-003).
     pub fn with_env(mut self, env: std::collections::HashMap<String, String>) -> Self {
-        self.env = env;
+        self.env = canonical_env_map(env.into_iter());
         self
     }
 
@@ -1952,37 +1979,43 @@ impl Engine {
             let value = match node {
                 Node::Literal(v) => v.clone(),
 
-                Node::Env { name, default } => match self.env.get(name) {
-                    Some(s) => {
-                        // Operator-controlled dynamic content (like
-                        // secrets below): charge the bytes as delta and
-                        // record the actual for reference deltas.
-                        actuals.insert(node_id, 1u64.saturating_add(s.len() as u64));
-                        account.charge(module, Some(node_id), s.len() as u64)?;
-                        Value::String(s.clone())
-                    }
-                    None => {
-                        // Lazy host lookup (F-016): same charging as a
-                        // snapshot hit, so lazy values cost eager values.
-                        // A consulted miss falls through to defaults, so a
-                        // callback that knows nothing changes nothing.
-                        if let Some(lookup) = self.env_fallback.clone() {
-                            if let Some(s) = lookup(name) {
-                                actuals.insert(node_id, 1u64.saturating_add(s.len() as u64));
-                                account.charge(module, Some(node_id), s.len() as u64)?;
-                                Value::String(s)
+                Node::Env { name, default } => {
+                    // LANG-H-003: names fold to uppercase everywhere, so
+                    // `env.Path` and `env.PATH` are the same variable on
+                    // every platform.
+                    let key = canonical_env_name(name);
+                    match self.env.get(&key) {
+                        Some(s) => {
+                            // Operator-controlled dynamic content (like
+                            // secrets below): charge the bytes as delta and
+                            // record the actual for reference deltas.
+                            actuals.insert(node_id, 1u64.saturating_add(s.len() as u64));
+                            account.charge(module, Some(node_id), s.len() as u64)?;
+                            Value::String(s.clone())
+                        }
+                        None => {
+                            // Lazy host lookup (F-016): same charging as a
+                            // snapshot hit, so lazy values cost eager values.
+                            // A consulted miss falls through to defaults, so a
+                            // callback that knows nothing changes nothing.
+                            if let Some(lookup) = self.env_fallback.clone() {
+                                if let Some(s) = lookup(&key) {
+                                    actuals.insert(node_id, 1u64.saturating_add(s.len() as u64));
+                                    account.charge(module, Some(node_id), s.len() as u64)?;
+                                    Value::String(s)
+                                } else if let Some(def) = default {
+                                    values.get(def).cloned().unwrap_or(Value::Null)
+                                } else {
+                                    Value::Null
+                                }
                             } else if let Some(def) = default {
                                 values.get(def).cloned().unwrap_or(Value::Null)
                             } else {
                                 Value::Null
                             }
-                        } else if let Some(def) = default {
-                            values.get(def).cloned().unwrap_or(Value::Null)
-                        } else {
-                            Value::Null
                         }
                     }
-                },
+                }
 
                 Node::Secret { locator } => {
                     let loc = values.get(locator).cloned().unwrap_or(Value::Null);

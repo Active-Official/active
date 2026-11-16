@@ -4550,3 +4550,62 @@ fn eval_past_100k_paths_keeps_benign_values_at_the_cli() {
         "the lock identity is deterministic"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn keygen_pins_modes_even_under_umask_zero() {
+    // LANG-H-002/H-901: the secret is created 0600 in one open (no
+    // write-then-chmod window) and the public half is pinned 0644, so a
+    // permissive umask cannot widen either. The umask is process-global;
+    // a child shell sets it before exec'ing the shipped binary.
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("keygen-umask");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let prefix = dir.join("k");
+    let exe = env!("CARGO_BIN_EXE_active");
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg("umask 000; exec \"$0\" keygen --out \"$1\"")
+        .arg(exe)
+        .arg(&prefix)
+        .status()
+        .expect("run sh");
+    assert!(status.success(), "keygen under umask 000");
+    let secret = std::fs::metadata(dir.join("k.secret"))
+        .expect("secret meta")
+        .permissions()
+        .mode();
+    let public = std::fs::metadata(dir.join("k.public"))
+        .expect("public meta")
+        .permissions()
+        .mode();
+    assert_eq!(secret & 0o777, 0o600, "secret must be owner-only");
+    assert_eq!(public & 0o777, 0o644, "public must not be world-writable");
+}
+#[test]
+fn env_references_are_case_insensitive_over_the_process_snapshot() {
+    // LANG-H-003: the engine folds the process environment to uppercase,
+    // so a Windows-authored `env.Path` resolves against `PATH` on Linux
+    // and vice versa. A child process proves the real snapshot path.
+    let f = fixture(
+        "env_case.active",
+        "a = env.hk_fold_probe\nb = env.HK_FOLD_PROBE\nc = env.Hk_Fold_Probe\n",
+    );
+    let out = active()
+        .env("HK_FOLD_PROBE", "hello")
+        .args(["eval"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).expect("eval emits json");
+    assert_eq!(json["a"], "hello");
+    assert_eq!(json["b"], "hello");
+    assert_eq!(json["c"], "hello");
+}

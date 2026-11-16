@@ -676,19 +676,24 @@ fn profile_container_replacement_redacts_descendants() {
 
 #[test]
 fn truncated_base_walk_stays_fail_closed_under_profile() {
-    // F6 (round 22): once the base walk hits MAX_PATHS, profile paths
-    // must not register as known-benign. The material override below
-    // sits past the cap and must still read as material.
-    let mut src = String::from("big = [");
-    for i in 0..100_005 {
-        if i > 0 {
-            src.push(',');
-        }
-        src.push('0');
-    }
-    src.push_str("]\nlet p = env.ACTIVE_TRUNCATED\nt = secret(p)\nx = \"benign\"\nactive_profile = \"a\"\nprofile \"a\" { y = \"MATERIAL-LEAK\" }\n");
-    let module = parse(&src, "truncated").expect("parse");
-    let profile = active_core::secret::SecretProfile::analyze_with_profile(&module, Some("a"));
+    // F6 (round 22), LANG-K-001: once the base walk hits its path bound,
+    // profile paths must not register as known-benign; the material
+    // override past the bound must still read as material. The shipped
+    // bounds exceed the trusted budget, so the border is driven through
+    // the explicit-limits entry point.
+    let src = "big = [0, 0, 0]\nlet p = env.ACTIVE_TRUNCATED\nt = secret(p)\n\
+               x = \"benign\"\nactive_profile = \"a\"\n\
+               profile \"a\" { y = \"MATERIAL-LEAK\" }\n";
+    let module = parse(src, "truncated").expect("parse");
+    let profile = active_core::secret::SecretProfile::analyze_with_limits(
+        &module,
+        Some("a"),
+        active_core::secret::WalkLimits {
+            max_paths: 1,
+            max_depth: 8,
+        },
+    );
+    assert!(profile.truncated(), "the small cap trips the border");
     assert!(
         profile.path_is_secret("y"),
         "profile path past a truncated walk must fail closed"
@@ -776,19 +781,22 @@ fn computed_selector_marks_nodes_for_provenance_and_traces() {
 
 #[test]
 fn truncated_profile_override_of_an_existing_path_stays_material() {
-    // N3 (round 23): the base path already exists and is benign, so
-    // only the fallback set can keep the override material after a
-    // truncated walk.
-    let mut src = String::from("big = [");
-    for i in 0..100_005 {
-        if i > 0 {
-            src.push(',');
-        }
-        src.push('0');
-    }
-    src.push_str("]\nlet p = env.ACTIVE_N3\nt = secret(p)\nx = \"benign\"\nactive_profile = \"a\"\nprofile \"a\" { x = \"MATERIAL-LEAK\" }\n");
-    let module = parse(&src, "truncated-existing").expect("parse");
-    let profile = active_core::secret::SecretProfile::analyze_with_profile(&module, Some("a"));
+    // N3 (round 23), LANG-K-001: the base path already exists and is
+    // benign, so only the fallback set can keep the override material
+    // after a truncated walk. The border is driven with explicit limits.
+    let src = "big = [0, 0, 0]\nlet p = env.ACTIVE_N3\nt = secret(p)\n\
+               x = \"benign\"\nactive_profile = \"a\"\n\
+               profile \"a\" { x = \"MATERIAL-LEAK\" }\n";
+    let module = parse(src, "truncated-existing").expect("parse");
+    let profile = active_core::secret::SecretProfile::analyze_with_limits(
+        &module,
+        Some("a"),
+        active_core::secret::WalkLimits {
+            max_paths: 1,
+            max_depth: 8,
+        },
+    );
+    assert!(profile.truncated(), "the small cap trips the border");
     assert!(
         profile.path_is_secret("x"),
         "existing path overridden past a truncated walk must stay material"
@@ -1737,36 +1745,37 @@ fn redaction_reuses_a_distant_batch_match() {
 
 #[test]
 fn profile_only_material_env_seeds_without_a_secret_node() {
-    // Review 48: a fail-closed profile border (the path bound trips)
-    // marks env reads material without any `secret(...)` node; seeds
-    // must still be collected and cover an out-of-tree copy.
+    // Review 48 / LANG-K-001: a fail-closed profile border marks env reads
+    // material without any `secret(...)` node, and the absorbed value must
+    // cover an out-of-tree copy. The shipped bounds exceed the trusted
+    // budget, so the border is reachable only with explicit limits; this
+    // drives the same profile + absorb path the export surfaces use.
     let raw = "r48-profile-env";
-    let mut src = String::from("arr = [");
-    for index in 0..100_050 {
-        if index > 0 {
-            src.push(',');
-        }
-        src.push('0');
-    }
-    src.push_str("]\nactive_profile = \"p\"\nprofile \"p\" { token = env.ACTIVE_R48_TOKEN }\nlet copy = env.ACTIVE_R48_TOKEN\nout = copy\n");
-    let module = parse(&src, "profile-only-env").expect("parse");
+    let src = "active_profile = \"p\"\nprofile \"p\" { token = env.ACTIVE_R48_TOKEN }\n\
+               let copy = env.ACTIVE_R48_TOKEN\nout = copy\n";
+    let module = parse(src, "profile-only-env").expect("parse");
     let mut env = std::collections::HashMap::new();
     env.insert("ACTIVE_R48_TOKEN".to_string(), raw.to_string());
-    let mut engine = Engine::hermetic().with_env(env.clone());
-    engine.budget = active_core::Budget::trusted();
-    let (value, _, seeds) = engine.evaluate_with_seeds(&module).expect("evaluate");
-    assert!(!seeds.is_empty(), "fail-closed env read must seed");
-    let inspected = active_core::convert::inspect_path_with_profile_env(
+    let mut profile = active_core::secret::SecretProfile::analyze_with_limits(
         &module,
-        &value,
-        "out",
         None,
-        Some(&env),
-        Some(&seeds),
-    )
-    .expect("inspect");
-    assert!(!inspected.to_string().contains(raw), "{inspected}");
-    assert_eq!(inspected["tainted"], true, "{inspected}");
+        active_core::secret::WalkLimits {
+            max_paths: 1,
+            max_depth: 8,
+        },
+    );
+    assert!(profile.truncated(), "the small cap trips the border");
+    assert!(
+        profile.env_is_material("ACTIVE_R48_TOKEN"),
+        "fail-closed env read must be material"
+    );
+    profile.absorb_environment(&env);
+    let text = format!("value={raw}");
+    let redacted = profile
+        .literals()
+        .redact_text(&text)
+        .expect("the absorbed value seeds a literal");
+    assert!(!redacted.contains(raw), "{redacted}");
 }
 
 #[test]

@@ -70,7 +70,7 @@ fn secret_bound_names(module: &Module) -> HashSet<String> {
     }
     while let Some(id) = stack.pop() {
         if let Some(Node::Env { name, .. }) = module.get(id) {
-            names.insert(name.clone());
+            names.insert(crate::eval::canonical_env_name(name));
         }
         let Some(&index) = module.node_to_graph.get(&id) else {
             continue;
@@ -153,14 +153,14 @@ pub fn collect_provenance_with_seeds(
             if profile_analysis.node_is_secret(NodeId(index as u32))
                 || profile_analysis.env_is_material(name)
             {
-                secret.insert(name.clone());
+                secret.insert(crate::eval::canonical_env_name(name));
             }
         }
     }
     let mut names = BTreeMap::new();
     for node in &module.arena {
         if let Node::Env { name, .. } = node {
-            names.insert(name.clone(), ());
+            names.insert(crate::eval::canonical_env_name(name), ());
         }
     }
     let mut env_inputs = Vec::new();

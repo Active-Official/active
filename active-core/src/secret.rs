@@ -862,6 +862,25 @@ const MAX_PATHS: usize = 10_000_000;
 /// not turn analysis quadratic.
 const MAX_TRANSFORM_WORK: usize = 2_000_000;
 
+/// Bounds on one path walk. The shipped values exceed the trusted budget;
+/// the fail-closed tail they leave is exercised by tests through a small
+/// cap (`analyze_with_limits`), never by a real document (LANG-K-001).
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct WalkLimits {
+    pub max_paths: usize,
+    pub max_depth: usize,
+}
+
+impl Default for WalkLimits {
+    fn default() -> Self {
+        Self {
+            max_paths: MAX_PATHS,
+            max_depth: MAX_PATH_DEPTH,
+        }
+    }
+}
+
 /// Walk a value subtree from `root` under `base`, registering every
 /// table field, array element, and reference target. Returns true when
 /// a bound stopped the walk (the map is incomplete).
@@ -878,6 +897,7 @@ fn walk_paths(
     paths: &mut HashMap<String, NodeId>,
     overwrite: bool,
     replace_subtree: bool,
+    limits: WalkLimits,
 ) -> bool {
     if replace_subtree {
         remove_subtree(paths, base);
@@ -896,7 +916,7 @@ fn walk_paths(
     let mut seen: HashSet<(NodeId, String, bool)> = HashSet::new();
     let mut truncated = false;
     while let Some((id, path, depth, insert)) = stack.pop() {
-        if depth > MAX_PATH_DEPTH || paths.len() >= MAX_PATHS {
+        if depth > limits.max_depth || paths.len() >= limits.max_paths {
             truncated = true;
             continue;
         }
@@ -1300,7 +1320,8 @@ fn mark_all_material(module: &Module, nodes: &mut HashSet<NodeId>, envs: &mut Ha
     for (index, node) in module.arena.iter().enumerate() {
         nodes.insert(NodeId(index as u32));
         if let Node::Env { name, .. } = node {
-            envs.insert(name.clone());
+            // One casing for env names everywhere (LANG-H-003).
+            envs.insert(crate::eval::canonical_env_name(name));
         }
     }
 }
@@ -1572,6 +1593,7 @@ fn collect_default_paths(
     id: NodeId,
     prefix: &str,
     paths: &mut HashMap<String, NodeId>,
+    limits: WalkLimits,
 ) -> bool {
     let mut truncated = false;
     match module.get(id) {
@@ -1582,12 +1604,12 @@ fn collect_default_paths(
                 } else {
                     format!("{prefix}.{key}")
                 };
-                truncated |= collect_default_paths(module, *child, &child_path, paths);
+                truncated |= collect_default_paths(module, *child, &child_path, paths, limits);
             }
         }
         Some(Node::SchemaField { field }) => {
             if let Some(default) = field.default {
-                truncated |= walk_paths(module, default, prefix, paths, false, false);
+                truncated |= walk_paths(module, default, prefix, paths, false, false, limits);
             }
         }
         Some(Node::SchemaArray { element }) => {
@@ -1600,7 +1622,7 @@ fn collect_default_paths(
             } else {
                 format!("{prefix}[]")
             };
-            truncated |= collect_default_paths(module, *element, &element_prefix, paths);
+            truncated |= collect_default_paths(module, *element, &element_prefix, paths, limits);
         }
         _ => {}
     }
@@ -1659,6 +1681,18 @@ impl SecretProfile {
     /// Analyze a module, optionally with an engine/CLI profile override.
     /// Costs one pass over the arena plus one walk of the value tree.
     pub fn analyze_with_profile(module: &Module, override_profile: Option<&str>) -> Self {
+        Self::analyze_with_limits(module, override_profile, WalkLimits::default())
+    }
+
+    /// The analysis with explicit walk bounds. The shipped bounds exceed
+    /// the trusted budget, so an accepted document never truncates; tests
+    /// use a small cap to exercise the fail-closed tail (LANG-K-001).
+    #[doc(hidden)]
+    pub fn analyze_with_limits(
+        module: &Module,
+        override_profile: Option<&str>,
+        limits: WalkLimits,
+    ) -> Self {
         // Seeds: every node reachable from a `secret(...)` locator.
         let mut nodes: HashSet<NodeId> = HashSet::new();
         let mut material_envs: HashSet<String> = HashSet::new();
@@ -1742,7 +1776,7 @@ impl SecretProfile {
         // make that key look material.
         let mut data_paths: HashSet<String> = HashSet::new();
         if let Some(root) = module.root {
-            truncated |= walk_paths(module, root, "", &mut paths, true, false);
+            truncated |= walk_paths(module, root, "", &mut paths, true, false, limits);
             data_paths.extend(paths.keys().cloned());
         }
         // Paths the evaluated document actually provides: the root
@@ -1751,7 +1785,7 @@ impl SecretProfile {
         // schema fill in the exported tree.
         let mut export_paths = data_paths.clone();
         for (name, id) in &module.bindings {
-            truncated |= walk_paths(module, *id, name, &mut paths, false, false);
+            truncated |= walk_paths(module, *id, name, &mut paths, false, false, limits);
         }
         // A schema default may itself be material (an env locator) and
         // a profile may override that path before the fill runs.
@@ -1760,7 +1794,7 @@ impl SecretProfile {
         // patches still win.
         let mut default_paths: HashMap<String, NodeId> = HashMap::new();
         let defaults_truncated = match module.schema {
-            Some(schema) => collect_default_paths(module, schema, "", &mut default_paths),
+            Some(schema) => collect_default_paths(module, schema, "", &mut default_paths, limits),
             None => false,
         };
         if defaults_truncated {
@@ -1846,8 +1880,15 @@ impl SecretProfile {
                             let merge = is_table_like(module, *child)
                                 && base_node.is_some_and(|b| is_table_like(module, b));
                             let mut profile_paths = HashMap::new();
-                            let profile_truncated =
-                                walk_paths(module, *child, key, &mut profile_paths, true, !merge);
+                            let profile_truncated = walk_paths(
+                                module,
+                                *child,
+                                key,
+                                &mut profile_paths,
+                                true,
+                                !merge,
+                                limits,
+                            );
                             truncated |= profile_truncated;
                             profile_work = profile_work
                                 .saturating_add(profile_paths.len())
@@ -1961,8 +2002,15 @@ impl SecretProfile {
                             let merge = is_table_like(module, *child)
                                 && base_node.is_some_and(|b| is_table_like(module, b));
                             let mut profile_paths = HashMap::new();
-                            let profile_truncated =
-                                walk_paths(module, *child, key, &mut profile_paths, true, !merge);
+                            let profile_truncated = walk_paths(
+                                module,
+                                *child,
+                                key,
+                                &mut profile_paths,
+                                true,
+                                !merge,
+                                limits,
+                            );
                             truncated |= profile_truncated;
                             profile_work = profile_work
                                 .saturating_add(profile_paths.len())
@@ -2046,7 +2094,7 @@ impl SecretProfile {
         let mut propagated_envs: HashSet<NodeId> = HashSet::new();
         for (index, node) in module.arena.iter().enumerate() {
             if let Node::Env { name, .. } = node {
-                if material_envs.contains(name) {
+                if material_envs.contains(&crate::eval::canonical_env_name(name)) {
                     let id = NodeId(index as u32);
                     if nodes.insert(id) {
                         propagated_envs.insert(id);
@@ -2117,13 +2165,14 @@ impl SecretProfile {
                     // successful one is a real rename/default
                     // candidate.
                     let applies = patch_destination_applies(module, &paths, &path);
-                    truncated |= walk_paths(module, *value, &path, &mut paths, true, true);
+                    truncated |= walk_paths(module, *value, &path, &mut paths, true, true, limits);
                     // A patch replaces the evaluated value; old
                     // fallback paths at/under it are stale, and the
                     // patch expression's material paths take over.
                     fallback_secret_paths.retain(|known| !path_under(known, &path));
                     let mut patched = HashMap::new();
-                    truncated |= walk_paths(module, *value, &path, &mut patched, true, true);
+                    truncated |=
+                        walk_paths(module, *value, &path, &mut patched, true, true, limits);
                     if applies {
                         // A Set replaces the subtree: the old
                         // descendants are no longer part of the tree.
@@ -2272,7 +2321,7 @@ impl SecretProfile {
         for (index, node) in module.arena.iter().enumerate() {
             if let Node::Env { name, .. } = node {
                 if nodes.contains(&NodeId(index as u32)) {
-                    material_envs.insert(name.clone());
+                    material_envs.insert(crate::eval::canonical_env_name(name));
                 }
             }
         }
@@ -2463,7 +2512,8 @@ impl SecretProfile {
     /// path, including a profile-selected value that is only
     /// path-tainted.
     pub fn env_is_material(&self, name: &str) -> bool {
-        self.material_envs.contains(name)
+        self.material_envs
+            .contains(&crate::eval::canonical_env_name(name))
     }
 
     /// Insert runtime secret seeds collected by the evaluator. Seeds

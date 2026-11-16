@@ -4689,3 +4689,59 @@ fn fmt_check_reports_crlf_until_the_file_is_formatted() {
         .expect("run active");
     assert!(clean.status.success(), "LF output is canonical");
 }
+
+#[test]
+fn lock_salts_secret_env_hashes_and_reuses_them_on_relock() {
+    // LANG-I-001: the lockfile must not carry a bare SHA-256 of a
+    // secret-bound value, and re-locking the same output file must reuse
+    // the stored salt (identical bytes).
+    let f = fixture("lock_salt.active", "token = secret(env.LOCKPROBE_TOKEN)\n");
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("lock-salt");
+    std::fs::create_dir_all(&dir).expect("dir");
+    let first = dir.join("first.lock");
+    let second = dir.join("second.lock");
+    let lock_into = |out: &std::path::Path| {
+        let run = active()
+            .env("LOCKPROBE_TOKEN", "leakprobe-alpha-9X7Q")
+            .args(["lock"])
+            .arg(&f)
+            .arg("--output")
+            .arg(out)
+            .output()
+            .expect("run active");
+        assert!(
+            run.status.success(),
+            "{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        std::fs::read_to_string(out).expect("read lockfile")
+    };
+    let hash_line = |text: &str| {
+        text.lines()
+            .find(|line| line.starts_with("value_hash"))
+            .expect("value_hash line")
+            .to_string()
+    };
+    let a = lock_into(&first);
+    let b = lock_into(&second);
+    assert_ne!(
+        hash_line(&a),
+        hash_line(&b),
+        "each fresh lockfile gets a fresh salt"
+    );
+    // sha256("leakprobe-alpha-9X7Q"), the exact oracle P2 demonstrated.
+    assert!(
+        !a.contains("bcbbbbcf6eb970d5f1b54a13dc13d6210cc732bb8ab850350c3de5635f780162"),
+        "unsalted digest leaked: {a}"
+    );
+    let before = std::fs::read(&first).expect("read first");
+    let relocked = lock_into(&first);
+    assert_eq!(
+        std::fs::read(&first).expect("read first again"),
+        before,
+        "re-lock with the stored salt is byte-identical"
+    );
+    assert_eq!(hash_line(&relocked), hash_line(&a));
+}

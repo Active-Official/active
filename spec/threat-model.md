@@ -57,6 +57,11 @@ Mitigations:
 - Manifests, lockfiles, diagnostics, hover, hints, docs, graphs,
   and import errors carry markers/hashes, never values (each
   audited by test: search the artifact for the planted value).
+- `value_hash` on a secret-bound env read is salted per lockfile, with
+  the salt stored beside it (LANG-I-001). The salt defeats precomputed
+  tables and cross-lockfile correlation; it cannot stop an offline
+  dictionary guess at a low-entropy value, so a lockfile that carries a
+  `value_hash` is itself sensitive material.
 - Residual risk (accepted, documented): an author who puts a
   secret in a PLAIN `env` read or string literal has routed
   around the protection — the toolchain cannot distinguish

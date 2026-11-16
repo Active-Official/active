@@ -3132,12 +3132,20 @@ fn main() -> anyhow::Result<()> {
                 active_core::secret::active_profile_name(&module)
                     .filter(|name| module.profiles.contains_key(name))
             });
-            let provenance = active_core::provenance::collect_provenance_with_seeds(
+            // LANG-I-001: a re-lock reuses the salts stored in the
+            // existing lockfile, so an unchanged document renders the same
+            // bytes. stdout output has no prior file and gets a fresh salt.
+            let previous_salts = output
+                .as_ref()
+                .and_then(|path| std::fs::read_to_string(path).ok())
+                .map(|text| active_core::provenance::env_salts_from_lock(&text));
+            let provenance = active_core::provenance::collect_provenance_with_salts(
                 &module,
                 &engine.env,
                 Some(file.as_path()),
                 effective.as_deref(),
                 Some(&seeds),
+                previous_salts.as_ref(),
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?;
             let secret_profile = complete_profile(

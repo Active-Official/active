@@ -278,3 +278,58 @@ fn profile_selected_env_value_is_withheld_from_provenance() {
     assert_eq!(live.value, None, "value must be withheld");
     assert!(live.value_hash.is_some(), "drift hash replaces the value");
 }
+
+#[test]
+fn secret_env_hashes_are_salted_and_reproducible() {
+    // LANG-I-001: a lockfile must not carry a bare SHA-256 of a
+    // secret-bound value. Each lockfile gets a salt (stored beside the
+    // hash); a re-lock reuses it and reproduces the hash byte-for-byte.
+    use active_core::provenance::{collect_provenance_with_salts, EnvInput};
+    use sha2::{Digest, Sha256};
+    let module = parse("token = secret(env.LOCKPROBE_TOKEN)\n", "lock-salt").expect("parse");
+    let env = env_map(&[("LOCKPROBE_TOKEN", "leakprobe-alpha-9X7Q")]);
+    let entry = |inputs: &[EnvInput]| {
+        inputs
+            .iter()
+            .find(|e| e.name == "LOCKPROBE_TOKEN")
+            .expect("entry")
+            .clone()
+    };
+    let first =
+        collect_provenance_with_salts(&module, &env, None, None, None, None).expect("first lock");
+    let second =
+        collect_provenance_with_salts(&module, &env, None, None, None, None).expect("second lock");
+    let (h1, h2) = (
+        entry(&first.env).value_hash.expect("hash"),
+        entry(&second.env).value_hash.expect("hash"),
+    );
+    assert_ne!(h1, h2, "each fresh lockfile gets a fresh salt");
+    let salt = entry(&first.env).value_salt.expect("stored salt");
+    let parts: Vec<&str> = h1.split(':').collect();
+    assert_eq!(parts.len(), 3, "{h1}");
+    assert_eq!(parts[0], "sha256");
+    assert_eq!(parts[1], salt, "the stored salt is the one used");
+
+    // Re-lock with the stored salt: identical hash.
+    let salts: HashMap<String, String> = first
+        .env
+        .iter()
+        .filter_map(|e| Some((e.name.clone(), e.value_salt.clone()?)))
+        .collect();
+    let third = collect_provenance_with_salts(&module, &env, None, None, None, Some(&salts))
+        .expect("relock");
+    assert_eq!(entry(&third.env).value_hash.expect("hash"), h1);
+
+    // The unsalted digest of the value never appears in the lockfile.
+    let unsalted: String = Sha256::digest(b"leakprobe-alpha-9X7Q")
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let manifest = LockManifest::new("test".to_string(), &active_core::Value::Null, first);
+    let rendered = manifest.render();
+    assert!(
+        !rendered.contains(&unsalted),
+        "unsalted digest leaked into the lockfile: {rendered}"
+    );
+    assert!(rendered.contains(&salt), "the salt is stored: {rendered}");
+}

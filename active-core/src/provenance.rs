@@ -26,8 +26,15 @@ pub struct EnvInput {
     /// secret seed (`secret(env.X)` and `secret.env("X")` share the
     /// locator shape; the value match covers plain copies).
     pub secret: bool,
-    /// Drift signal for secret-bound reads (preimage-resistant).
+    /// Drift signal for secret-bound reads. Salted per lockfile
+    /// (LANG-I-001): `sha256:<salt-hex>:<digest-hex>`, where the digest is
+    /// over the salt bytes followed by the value. The salt is stored beside
+    /// it, so a re-lock reproduces the bytes; salting defeats precomputed
+    /// tables, never a targeted guess at a low-entropy value.
     pub value_hash: Option<String>,
+    /// The per-lockfile salt used by `value_hash` (hex). Present exactly
+    /// when the hash is.
+    pub value_salt: Option<String>,
 }
 
 /// One file input: stamped path plus content hash.
@@ -144,6 +151,62 @@ pub fn collect_provenance_with_seeds(
     profile: Option<&str>,
     seeds: Option<&crate::secret::SecretRedactor>,
 ) -> Result<Provenance, String> {
+    collect_provenance_with_salts(module, env, main_file, profile, seeds, None)
+}
+
+/// A fresh per-lockfile salt (16 bytes, hex). A lockfile's salt is public
+/// by design (it sits beside the hash); it defeats precomputed tables and
+/// cross-lockfile correlation, never a targeted guess at a low-entropy
+/// value (LANG-I-001). Without host entropy the salt is a fixed constant:
+/// locking stays available, with only precomputation resistance lost.
+fn fresh_salt_hex() -> String {
+    let mut buf = [0u8; 16];
+    if getrandom::getrandom(&mut buf).is_err() {
+        return "00000000000000000000000000000000".to_string();
+    }
+    buf.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Extract `name -> value_salt` from a previously rendered lockfile so a
+/// re-lock reproduces the salted hashes byte-for-byte (LANG-I-001).
+/// Unparseable or saltless files yield an empty map.
+pub fn env_salts_from_lock(text: &str) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    let Ok(doc) = text.parse::<toml::Value>() else {
+        return out;
+    };
+    let Some(env) = doc
+        .get("provenance")
+        .and_then(|p| p.get("env"))
+        .and_then(|e| e.as_array())
+    else {
+        return out;
+    };
+    for entry in env {
+        if let (Some(name), Some(salt)) = (
+            entry.get("name").and_then(|v| v.as_str()),
+            entry.get("value_salt").and_then(|v| v.as_str()),
+        ) {
+            out.insert(name.to_string(), salt.to_string());
+        }
+    }
+    out
+}
+
+/// [`collect_provenance_with_seeds`] with per-name salts reused from a
+/// previous lockfile (LANG-I-001): a re-lock of an unchanged document is
+/// byte-identical, while a fresh lockfile gets fresh salts.
+pub fn collect_provenance_with_salts(
+    module: &Module,
+    env: &std::collections::HashMap<String, String>,
+    main_file: Option<&Path>,
+    profile: Option<&str>,
+    seeds: Option<&crate::secret::SecretRedactor>,
+    salts: Option<&std::collections::HashMap<String, String>>,
+) -> Result<Provenance, String> {
+    // One salt per lockfile, generated lazily: a document with no
+    // secret-bound read consumes no entropy and writes no salt.
+    let mut file_salt: Option<String> = None;
     let mut secret = secret_bound_names(module);
     // Profile selection is part of the secret analysis: a profile may
     // place `env.T` at a path the document marks material, and the
@@ -178,21 +241,39 @@ pub fn collect_provenance_with_seeds(
                     value: Some(value.clone()),
                     secret: false,
                     value_hash: None,
+                    value_salt: None,
                 })
             }
-            Some(value) => env_inputs.push(EnvInput {
-                name: name.clone(),
-                set: true,
-                value: None,
-                secret: true,
-                value_hash: Some(format!("sha256:{}", sha256_hex(value.as_bytes()))),
-            }),
+            Some(value) => {
+                // Salted drift hash (LANG-I-001): reuse the lockfile's
+                // salt when re-locking, otherwise one fresh salt per file.
+                let salt = salts
+                    .and_then(|known| known.get(&name).cloned())
+                    .or_else(|| file_salt.clone())
+                    .unwrap_or_else(|| {
+                        let fresh = fresh_salt_hex();
+                        file_salt = Some(fresh.clone());
+                        fresh
+                    });
+                let mut payload = Vec::with_capacity(salt.len() + value.len());
+                payload.extend_from_slice(salt.as_bytes());
+                payload.extend_from_slice(value.as_bytes());
+                env_inputs.push(EnvInput {
+                    name: name.clone(),
+                    set: true,
+                    value: None,
+                    secret: true,
+                    value_hash: Some(format!("sha256:{salt}:{}", sha256_hex(&payload))),
+                    value_salt: Some(salt),
+                })
+            }
             None => env_inputs.push(EnvInput {
                 name: name.clone(),
                 set: false,
                 value: None,
                 secret: is_secret,
                 value_hash: None,
+                value_salt: None,
             }),
         }
     }
@@ -405,6 +486,9 @@ impl LockManifest {
                 }
                 if let Some(hash) = &input.value_hash {
                     entry.insert("value_hash".to_string(), toml::Value::String(hash.clone()));
+                }
+                if let Some(salt) = &input.value_salt {
+                    entry.insert("value_salt".to_string(), toml::Value::String(salt.clone()));
                 }
                 array.push(toml::Value::Table(entry));
             }

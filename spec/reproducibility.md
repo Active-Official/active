@@ -49,7 +49,14 @@ filesystem (for hashes only):
     profile places at a material path and a read whose *value*
     matches an evaluator secret seed (a copy of a `let`-bound or
     computed secret). No value is recorded, only `secret = true`
-    plus `value_hash = sha256:<hex>` for drift detection. A
+    plus `value_hash = sha256:<salt-hex>:<hex>` for drift detection
+    and `value_salt = <salt-hex>` beside it (LANG-I-001: the digest is
+    over the salt bytes followed by the value). A salt is public by
+    design and defeats precomputed tables and cross-lockfile
+    correlation, never a targeted guess at a low-entropy value:
+    treat a lockfile carrying `value_hash` as sensitive. Re-locking to
+    the same output file reuses the stored salt (identical bytes); a
+    fresh lockfile gets a fresh salt. A
     variable that feeds a secret anywhere is secret everywhere
     (even its plain uses withhold the value). The secret invariant
     (C-036) overrides the record-the-values rule here: a manifest
@@ -102,7 +109,8 @@ value = "localhost"
 name = "DB_PASSWORD"
 set = true
 secret = true
-value_hash = "sha256:…"
+value_hash = "sha256:<salt-hex>:<digest-hex>"
+value_salt = "<salt-hex>"
 
 [[provenance.includes]]
 path = "/deploy/base.active"
@@ -146,7 +154,10 @@ redacted on the same rule as every other export path (spec/blob.md §7).
   no new exposure class.
 - Hashes (`content_hash`, `value_hash`) are integrity/drift
   signals, not encryption; SHA-256 preimage resistance is the
-  operative property.
+  operative property. `value_hash` is salted per lockfile (LANG-I-001),
+  which stops precomputed tables and cross-file correlation, not an
+  offline dictionary attack on a guessable secret value: a lockfile
+  that carries one is as sensitive as the environment it describes.
 - Lockfiles assert provenance, not trust: they record WHERE
   inputs came from, not THAT they are safe. Signature policy is
   C-052.

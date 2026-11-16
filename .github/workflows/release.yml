@@ -57,14 +57,22 @@ jobs:
       - name: Build release binaries
         shell: bash
         run: cargo build --release --locked -p active-cli -p active-fmt -p active-lsp --target ${{ matrix.target }}
-      - name: Verify examples evaluate (except cross-compiled macOS leg)
-        if: ${{ matrix.target != 'x86_64-apple-darwin' }}
+      - name: Verify examples evaluate
+        # The x86_64 macOS leg is cross-compiled on an arm64 runner; run
+        # it under Rosetta so the shipped binary is executed, never assumed
+        # (LANG-H-001).
         shell: bash
         run: |
+          if [[ "${{ matrix.target }}" == "x86_64-apple-darwin" ]]; then
+            sudo softwareupdate --install-rosetta --agree-to-license
+            RUN=(arch -x86_64)
+          else
+            RUN=()
+          fi
           BIN="target/${{ matrix.target }}/release/active"
           if [[ "${{ matrix.target }}" == *"windows"* ]]; then BIN="$BIN.exe"; fi
-          "$BIN" check examples/demo.active
-          "$BIN" check examples/complete.active
+          "${RUN[@]}" "$BIN" check examples/demo.active
+          "${RUN[@]}" "$BIN" check examples/complete.active
       - name: Stage archive
         shell: bash
         run: |

@@ -45,12 +45,12 @@ jobs:
       - name: Build the benchmark target(s)
         run: cargo codspeed build
       - name: Run benchmarks
-        # Upload stays non-blocking until the repo is connected on
-        # codspeed.io (one-time owner step: install the CodSpeed app
-        # for RatioArtificiosa/solid-lang). The benches still execute
-        # every push — a compile break or bench crash fails the build
-        # step above — and results upload automatically afterwards.
-        continue-on-error: true
+        # Hard gate (LANG-K-002): a benchmark that panics, or a regression
+        # the CodSpeed runner detects, fails this step — the old
+        # `continue-on-error: true` let a wall-clock panic (exit 101) land
+        # as a green run. OIDC authenticates Active-Official/active; the
+        # app connection is the one-time owner step recorded in
+        # spec/performance.md.
         uses: CodSpeedHQ/action@v5
         with:
           mode: simulation

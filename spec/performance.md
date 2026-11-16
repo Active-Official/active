@@ -41,13 +41,15 @@ Run with `cargo bench`; tracked continuously by the CodSpeed
 GitHub workflow (`.github/workflows/codspeed.yml`: `cargo codspeed
 build`, then the action with `mode: simulation` and
 `run: cargo codspeed run`), which fails on significant regression
-vs the base branch once the repo is connected on codspeed.io
-(one-time owner step; until then the upload step is
-`continue-on-error` so the branch stays green while benches still
-execute every push). Plain `cargo bench` under the action does not
-work — the compat crate requires the runner environment and panics
-without it — so the workflow shape follows the CodSpeed Rust docs
-exactly; local runs fall back to stock criterion.
+vs the base branch and on a benchmark that panics (LANG-K-002 removed
+the old `continue-on-error` that turned a wall-clock panic into a green
+run). OIDC authenticates the public repo; connecting the repo on
+codspeed.io is the one-time owner step. Plain `cargo bench` under the
+action does not work — the compat crate requires the runner environment
+and panics without it — so the workflow shape follows the CodSpeed Rust
+docs exactly; local runs fall back to stock criterion. `ci.yml` also
+compiles every bench target (`cargo bench --no-run`) so a broken bench
+cannot reach the tracking run.
 
 ## 2. Incremental evaluation (`Engine::evaluate_incremental`)
 

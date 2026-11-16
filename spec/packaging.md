@@ -68,7 +68,11 @@ authoritative; documented here when a leg needs a fallback):
 - `x86_64-pc-windows-msvc` (windows-11)
 - `aarch64-pc-windows-msvc` (windows-11-arm, else documented gap)
 - `aarch64-apple-darwin` (macos-15)
-- `x86_64-apple-darwin` (cross from macos-15)
+- `x86_64-apple-darwin` (cross from the arm64 macos-15 runner; the smoke
+  check runs the binary under Rosetta, so the shipped artifact is executed)
+
+The macOS legs also run the full test suite in `ci.yml` (fmt, clippy, and
+`cargo test --workspace`), not only the release build.
 
 ## 4. crates.io publication
 

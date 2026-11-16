@@ -277,17 +277,23 @@ fn eval_inner(source: &str) -> String {
 /// # Safety
 ///
 /// When `src_ptr` is non-null, `src_len` bytes starting at `src_ptr` must
-/// be readable for this call; `out_len` must be null or point to a writable
-/// `usize`. All pointers obey the registry discipline (allocate here, free
-/// here, same thread).
+/// be readable for this call; `out_len` is REQUIRED and must point to a
+/// writable `usize` (the envelope length has no other channel, so a null
+/// `out_len` returns null instead of an unmeasurable pointer). All pointers
+/// obey the registry discipline (allocate here, free here, same thread).
 #[no_mangle]
 pub unsafe extern "C" fn active_eval_json(
     src_ptr: *const u8,
     src_len: usize,
     out_len: *mut usize,
 ) -> *mut u8 {
+    if out_len.is_null() {
+        // LANG-G-021: a pointer the host cannot measure is useless; fail
+        // closed with null rather than handing back an envelope.
+        return std::ptr::null_mut();
+    }
     let envelope = match catch_unwind(AssertUnwindSafe(|| {
-        if src_ptr.is_null() || out_len.is_null() {
+        if src_ptr.is_null() {
             return envelope_err("ABI", "null pointer argument", "null");
         }
         // SAFETY: host guarantees readable bytes per WIRING.md.
@@ -303,11 +309,9 @@ pub unsafe extern "C" fn active_eval_json(
     let bytes = envelope.into_bytes();
     let len = bytes.len();
     let (ptr, _) = retain(bytes);
-    if !out_len.is_null() {
-        // SAFETY: host passed a writable slot per WIRING.md.
-        unsafe {
-            *out_len = len;
-        }
+    // SAFETY: out_len was checked non-null at entry.
+    unsafe {
+        *out_len = len;
     }
     ptr
 }
@@ -445,6 +449,24 @@ mod tests {
         assert!(!active_alloc(64).is_null());
         assert!(active_alloc(MAX_ALLOC_BYTES + 1).is_null());
         assert!(active_alloc(usize::MAX).is_null());
+    }
+
+    #[test]
+    fn a_null_out_len_returns_null_instead_of_an_unmeasurable_envelope() {
+        // LANG-G-021: without the length slot the host cannot read the
+        // envelope, so the call fails closed. With a real slot the same
+        // source returns a readable envelope.
+        let src = b"port = 8080\n";
+        let ptr = unsafe { active_eval_json(src.as_ptr(), src.len(), std::ptr::null_mut()) };
+        assert!(ptr.is_null(), "null out_len must not produce an envelope");
+        let mut len = 0usize;
+        let ptr = unsafe { active_eval_json(src.as_ptr(), src.len(), &mut len) };
+        assert!(!ptr.is_null());
+        assert!(len > 0);
+        let envelope = unsafe { slice::from_raw_parts(ptr, len) };
+        let parsed: serde_json::Value = serde_json::from_slice(envelope).expect("json");
+        assert_eq!(parsed["ok"], serde_json::json!(true));
+        active_free(ptr, len);
     }
 
     #[test]

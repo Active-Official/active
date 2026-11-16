@@ -90,7 +90,9 @@ covers it), the evaluated value (redacted; unit-normalized —
 `5s` shows `5000 ms`), origin (`file:line`, include-aware),
 `@intent` text, `@constraint` sources, `@ai_immutable` /
 deprecated flags, and active lint diagnostics on the key. Missing
-data renders as explicitly-absent lines, never blanks. Hover on a
+data renders as explicitly-absent lines, never blanks: a key whose type
+or value is unknown shows `**name**: -` and `= -` (for example when a
+hard evaluation failure leaves no tree). Hover on a
 literal or string content resolves to the owning key; comments
 resolve to nothing, and so does an identifier that fails to resolve
 (the owning key is not offered as a stand-in for a name). Definition

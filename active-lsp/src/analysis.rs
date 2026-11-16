@@ -1154,10 +1154,15 @@ pub fn hover_at(doc: &Doc, line: u32, character: u32) -> Option<Hover> {
             .and_then(|root| value_at_path(root, &path))
         {
             Some(value) => lines.push(format!("**{name}**: `{}`", value_kind(value))),
-            None => lines.push(format!("**{name}**")),
+            // Evaluation produced nothing (a hard failure): render the
+            // explicitly-absent marker instead of a bare name (spec §2,
+            // LANG-G-018).
+            None => lines.push(format!("**{name}**: -")),
         }
     }
-    // Value at the path (redacted; lets have no tree value).
+    // Value at the path (redacted; lets have no tree value). A failed
+    // evaluation renders the explicitly-absent value too, so a broken
+    // document never shows a blank where data belongs.
     if let Some(root) = doc.value.as_ref() {
         if let Some(value) = value_at_path(root, &path) {
             // Seed path-material plain values from the evaluated tree:
@@ -1169,6 +1174,8 @@ pub fn hover_at(doc: &Doc, line: u32, character: u32) -> Option<Hover> {
                 render_hover_value(&profile, &redactor, node, &path, value)
             ));
         }
+    } else {
+        lines.push("= -".to_string());
     }
     // Origin, include-aware.
     if let Some(span) = doc.module.node_spans.get(&node) {

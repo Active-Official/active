@@ -501,6 +501,36 @@ fn definition_from_a_comment_is_null_even_on_a_value_line() {
 }
 
 #[test]
+fn hover_on_an_unevaluatable_key_shows_explicitly_absent_lines() {
+    // LANG-G-018: a hard evaluation failure left hover at a bare name and
+    // "defined at" with no type/value line. Missing data is rendered as
+    // the explicitly-absent marker, never as a blank (spec §2).
+    let doc = open_untitled("unevaluatable", "timeout = 5s + 512MiB\n");
+    let hover = analysis::hover_at(&doc, 0, 1).expect("hover");
+    let lsp_types::HoverContents::Markup(content) = hover.contents else {
+        panic!("markup expected");
+    };
+    assert!(
+        content.value.contains("**timeout**: -"),
+        "absent type marker: {}",
+        content.value
+    );
+    assert!(
+        content.value.contains("= -"),
+        "absent value marker: {}",
+        content.value
+    );
+    // Clean control: the same shape with a valid value still renders the
+    // real kind and value.
+    let doc = open_untitled("evaluatable", "timeout = 5s\n");
+    let hover = analysis::hover_at(&doc, 0, 1).expect("hover");
+    let lsp_types::HoverContents::Markup(content) = hover.contents else {
+        panic!("markup expected");
+    };
+    assert!(content.value.contains("= 5000 ms"), "{}", content.value);
+}
+
+#[test]
 fn hover_falls_back_to_value_kind_without_schema() {
     let doc = open_untitled("kind", "port = 8080\nname = \"svc\"\n");
     let hover = analysis::hover_at(&doc, 0, 1).expect("hover");

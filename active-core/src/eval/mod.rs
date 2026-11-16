@@ -1441,6 +1441,12 @@ fn value_has_secret(value: &Value) -> bool {
 }
 
 impl Engine {
+    /// Engine with the process environment snapshotted.
+    ///
+    /// Resilient by default: `evaluate` returns `Ok` with the value AND the
+    /// diagnostics; hosts MUST inspect the diagnostics vector (or set
+    /// `resilient = false`, or use `Engine::strict()`) for fail-closed
+    /// validation. `Ok` alone does not mean the document is valid.
     pub fn new() -> Self {
         let mut engine = Self::hermetic();
         // Undecodable entries cannot enter the snapshot (keys
@@ -1453,9 +1459,22 @@ impl Engine {
         engine
     }
 
+    /// Strict engine with the process environment snapshotted: `evaluate`
+    /// returns `Err(ValidationFailed)` when any Error-severity diagnostic is
+    /// recorded (schema violations, blob bounds, closed tables), which is
+    /// the fail-closed behaviour a service host wants. `Engine::new()` is
+    /// resilient by design; this constructor makes the strict choice
+    /// discoverable without changing the library default.
+    pub fn strict() -> Self {
+        let mut engine = Self::new();
+        engine.resilient = false;
+        engine
+    }
+
     /// Hermetic engine: identical to `new()` except the environment starts
     /// empty instead of snapshotting the process ambient. Embeddings (FFI,
-    /// WASM) use this so host ambient can never leak across the boundary;
+    /// WASM) use this so host ambient can never leak across the boundary
+    /// (this constructor is resilient too: see `new()`);
     /// host values arrive only through explicit maps or lookup callbacks.
     /// Required on platforms without a process environment
     /// (wasm32-unknown-unknown aborts on ambient access): construct here,

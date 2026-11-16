@@ -19,7 +19,11 @@ authors = ["Active Language Team"]
 repository = "https://github.com/Active-Official/active"
 homepage = "https://github.com/Active-Official/active"
 documentation = "https://github.com/Active-Official/active"
-description = "Active - Symmetric, Overlay-ready, Loop-proof, Intent-driven, Deterministic configuration language"
+
+# Every crate names itself on crates.io and the packaging gate requires the
+# field, so the homepage deliberately repeats the repository URL.
+[workspace.lints.cargo]
+redundant_homepage = "allow"
 
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }

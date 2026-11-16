@@ -26,3 +26,5 @@ cbindgen = "0.29"
 [dev-dependencies]
 cbindgen = "0.29"
 libloading = "0.8"
+[lints]
+workspace = true

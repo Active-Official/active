@@ -68,7 +68,6 @@ name = "active-lsp"
 version = "1.4.0"
 dependencies = [
  "active-core",
- "anyhow",
  "codspeed-criterion-compat",
  "criterion",
  "crossbeam-channel",

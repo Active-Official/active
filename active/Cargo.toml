@@ -19,3 +19,6 @@ path = "src/lib.rs"
 
 [dependencies]
 active-core = { workspace = true }
+
+[lints]
+workspace = true

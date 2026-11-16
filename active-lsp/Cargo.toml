@@ -22,7 +22,6 @@ name = "active_ls"
 path = "src/lib.rs"
 
 [dependencies]
-anyhow = { workspace = true }
 # Same channel types lsp-server uses: the bounded inbound queue is the
 # backpressure point (LANG-C-005).
 crossbeam-channel = "0.5"
@@ -38,3 +37,6 @@ codspeed-criterion-compat = "2"
 [[bench]]
 name = "analysis"
 harness = false
+
+[lints]
+workspace = true

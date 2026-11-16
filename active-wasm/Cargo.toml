@@ -26,3 +26,5 @@ serde_json = { workspace = true }
 # on CLI/hosts, never in the browser module. Zero JS imports as a result.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["custom"] }
+[lints]
+workspace = true

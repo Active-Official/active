@@ -91,6 +91,36 @@ fn generate(seed: &mut u64) -> String {
     out
 }
 
+/// Replay one input the way libFuzzer does (lossy UTF-8, both styles).
+#[test]
+#[ignore = "manual: FMT_SEARCH_INPUT=<text>"]
+fn formatter_replays_one_input() {
+    let src = std::env::var("FMT_SEARCH_INPUT").expect("FMT_SEARCH_INPUT");
+    if let Ok(module) = parse(&src, "probe") {
+        for c in &module.trivia {
+            println!(
+                "input trivia {:?} @{} -> {:?}",
+                c.text, c.span.line, c.attachment
+            );
+        }
+        for style in [Style::Brace, Style::Indent] {
+            let once = fmt::format(&module, style);
+            println!("{style:?} once: {once:?}");
+            if let Ok(p2) = parse(&once, "probe") {
+                for c in &p2.trivia {
+                    println!(
+                        "  {style:?} pass2 trivia {:?} @{} -> {:?}",
+                        c.text, c.span.line, c.attachment
+                    );
+                }
+            }
+        }
+    }
+    if let Err(problem) = check(&src) {
+        panic!("{problem}");
+    }
+}
+
 #[test]
 #[ignore = "manual random search; run with --release --ignored"]
 fn formatter_random_search_is_idempotent() {

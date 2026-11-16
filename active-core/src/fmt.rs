@@ -29,6 +29,41 @@ pub fn format(module: &Module, style: Style) -> String {
         Style::Preserve => module.source_style,
         other => other,
     };
+    // Stabilize the output (spec/formatter.md section 2). Comment
+    // attachment is scored by source position, so a comment whose canonical
+    // position differs from where it was written can attach elsewhere after
+    // one rewrite. The contract agents rely on is `format(parse(out)) ==
+    // out`, so re-format the result until it stops changing (at most
+    // `STABILIZE_PASSES`), and return that fixed point. Formatting is cheap
+    // next to the parse it already did; the loop runs once for documents
+    // that are already canonical, which is most of them.
+    let mut current = format_once(module, style);
+    for _ in 0..STABILIZE_PASSES {
+        let Ok(reparsed) = crate::parser::parse(&current, "fmt-stabilize") else {
+            // The output must always re-parse; if it somehow does not, the
+            // caller's input is still better served by a deterministic
+            // answer than by a rewrite loop.
+            return current;
+        };
+        let next = format_once(&reparsed, style);
+        if next == current {
+            return current;
+        }
+        current = next;
+    }
+    current
+}
+
+/// Passes allowed while searching for the formatter's fixed point. Two is
+/// enough for the attachment cases measured (an already-canonical document
+/// needs one); the cap keeps a hypothetical oscillation bounded.
+const STABILIZE_PASSES: usize = 3;
+
+fn format_once(module: &Module, style: Style) -> String {
+    let style = match style {
+        Style::Preserve => module.source_style,
+        other => other,
+    };
     let mut f = Formatter {
         module,
         style,
@@ -340,6 +375,63 @@ impl<'a> Formatter<'a> {
                     format!("{path}.{last_key}")
                 };
                 if let Some(comments) = self.trailing_block.remove(path) {
+                    self.trailing_block
+                        .entry(child_path)
+                        .or_default()
+                        .extend(comments);
+                }
+            }
+        }
+
+        // An empty table that is rendered INLINE (`key = {}`) has no block
+        // on the next read, so a comment written after it would attach to
+        // the enclosing block instead of the table. Hoist such comments to
+        // the enclosing block now - that is the fixed point the second pass
+        // reaches (fuzz seed crash-962a37a9: indentation style, an empty
+        // table followed by a comment). Root tables in brace style keep
+        // their `[header]`, which does own a block, so they are excluded.
+        let root_header_style = is_root && depth == 0 && self.style == Style::Brace;
+        if !root_header_style {
+            for (key, node) in &ordered {
+                let empty = matches!(
+                    self.module.get(self.resolve_ref(*node)),
+                    Some(Node::Table { fields }) if fields.is_empty()
+                );
+                if !empty {
+                    continue;
+                }
+                let child_path = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{path}.{key}")
+                };
+                if let Some(comments) = self.trailing_block.remove(&child_path) {
+                    self.trailing_block
+                        .entry(path.to_string())
+                        .or_default()
+                        .extend(comments);
+                }
+            }
+        }
+
+        // Document-level trailing comments: a comment at the very end of
+        // the document still attaches to the LAST block (Rule 3 fires
+        // before Rule 4), so emit it inside that block. Hoisting to the
+        // last block-rendered entry is the fixed point the next pass
+        // reaches (fuzz seed crash-962a37a9).
+        if path.is_empty() && self.trailing_block.contains_key("") {
+            let last_block: Option<&(String, NodeId)> = ordered.iter().rev().find(|(_, node)| {
+                let id = self.resolve_ref(*node);
+                match self.module.get(id) {
+                    Some(Node::Table { fields }) => {
+                        self.style == Style::Brace || !fields.is_empty()
+                    }
+                    _ => false,
+                }
+            });
+            if let Some((last_key, _)) = last_block {
+                let child_path = last_key.clone();
+                if let Some(comments) = self.trailing_block.remove("") {
                     self.trailing_block
                         .entry(child_path)
                         .or_default()

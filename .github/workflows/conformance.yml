@@ -265,6 +265,11 @@ jobs:
         run: python conformance/evidence/codegen_check.py
       - name: Build CLI for output-schema checks
         run: cargo build -p active-cli --locked
+      - name: Score the repair fixtures
+        # Drives target/debug/active on every OS (platform-aware binary
+        # name); a missing binary fails the step instead of printing a
+        # silent 0/N. The score is telemetry, printed for the record.
+        run: python tools/score-repair.py
       - name: Validate tooling JSON outputs against committed schemas
         # Every machine-readable emitter (graph, taint, budget, inspect,
         # mode, lint, repair plan, debug steps) is validated against

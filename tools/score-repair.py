@@ -1,8 +1,9 @@
 """Score repair benchmarks (G-009): run `active check` on each broken
 fixture in conformance/repair/ and award a point per fixture whose
 required manifest codes reproduce. Usage: python tools/score-repair.py
-Exit 0 always (benchmarks inform, never gate); the printed score tracks
-repair-loop quality over time.
+Exit 0 when a score is produced; exit 2 when the CLI binary is absent
+(an infrastructure failure, never a silent 0/N). The printed score
+tracks repair-loop quality over time.
 """
 
 import os
@@ -16,12 +17,21 @@ except ImportError:
     tomllib = None
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ACTIVE = os.path.join(ROOT, "target", "debug", "active.exe")
-if not os.path.isfile(ACTIVE):
-    ACTIVE = os.path.join(ROOT, "target", "release", "active.exe")
+# Platform-aware binary name: Windows ships `active.exe`, POSIX does not.
+ACTIVE_NAME = "active.exe" if sys.platform == "win32" else "active"
 REPAIR = os.path.join(ROOT, "conformance", "repair")
 
 CODE_RE = re.compile(r"\b([A-Z][0-9]{3})\b")
+
+
+def find_binary():
+    """Debug first (cheap, always present after `cargo build`), then a
+    release build. None means the caller must fail loudly."""
+    for profile in ("debug", "release"):
+        candidate = os.path.join(ROOT, "target", profile, ACTIVE_NAME)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
 
 
 def load_manifest():
@@ -32,13 +42,21 @@ def load_manifest():
 
 
 def main():
+    active = find_binary()
+    if active is None:
+        print(
+            "active CLI not found under target/debug or target/release; "
+            "build it first (`cargo build -p active-cli`)",
+            file=sys.stderr,
+        )
+        return 2
     manifest = load_manifest()
     score = 0
     total = 0
     for item in manifest.get("repairs", []):
         total += 1
         path = os.path.join(REPAIR, item["file"])
-        p = subprocess.run([ACTIVE, "check", path], capture_output=True, timeout=120)
+        p = subprocess.run([active, "check", path], capture_output=True, timeout=120)
         blob = p.stderr.decode("utf-8", "replace") + p.stdout.decode("utf-8", "replace")
         codes = []
         for c in CODE_RE.findall(blob):

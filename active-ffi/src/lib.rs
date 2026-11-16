@@ -391,18 +391,28 @@ fn apply_budget(engine: &mut Engine, budget: *const ActiveBudget) -> Result<(), 
         return Err(ACTIVE_ERR_BAD_BUDGET);
     }
     // One meaning across surfaces (LANG-C-015): a zero field is the
-    // shipped default, `UNLIMITED` (u64::MAX) disables the limit. The core
-    // resolves zeros identically, so the FFI and the library agree.
+    // shipped default, exactly like the library. The C ABI deliberately
+    // has NO way to disable a limit: `UNLIMITED` (u64::MAX) is clamped to
+    // the shipped default too, so a host cannot lift a ceiling through
+    // this boundary (docs/FFI.md says so; a host that truly needs that
+    // uses the library and Budget::unlimited()).
+    let shipped = active_core::eval::Budget::default();
+    let ceil = |v: u64, d: u64| {
+        if v == 0 || v == active_core::eval::UNLIMITED {
+            d
+        } else {
+            v
+        }
+    };
     engine.budget = active_core::eval::Budget {
-        max_nodes: b.max_nodes,
-        max_depth: b.max_depth,
-        max_array_len: b.max_array_len,
-        max_keys: b.max_keys,
-        max_wall_ms: b.max_wall_ms,
-        max_value_size: b.max_value_size,
-        max_total_value_size: b.max_total_value_size,
-    }
-    .resolve();
+        max_nodes: ceil(b.max_nodes, shipped.max_nodes),
+        max_depth: ceil(b.max_depth, shipped.max_depth),
+        max_array_len: ceil(b.max_array_len, shipped.max_array_len),
+        max_keys: ceil(b.max_keys, shipped.max_keys),
+        max_wall_ms: ceil(b.max_wall_ms, shipped.max_wall_ms),
+        max_value_size: ceil(b.max_value_size, shipped.max_value_size),
+        max_total_value_size: ceil(b.max_total_value_size, shipped.max_total_value_size),
+    };
     Ok(())
 }
 

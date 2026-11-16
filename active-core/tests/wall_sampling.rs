@@ -232,12 +232,13 @@ fn the_unlimited_sentinel_is_the_only_value_without_a_deadline() {
     use active_core::eval::{Budget, UNLIMITED};
     assert!(Budget::default().wall_deadline().is_some());
     assert!(Budget::unlimited().wall_deadline().is_none());
-    // A raw zero (never produced by Budget::resolve at an evaluation
-    // boundary) also means "no deadline" rather than a zero-length one.
+    // A raw zero fails CLOSED: wall_deadline resolves it to the shipped
+    // default, so a caller that skipped Budget::resolve cannot walk
+    // unbounded (review finding on LANG-C-015).
     let raw = Budget {
         max_wall_ms: 0,
         ..Budget::default()
     };
-    assert!(raw.wall_deadline().is_none());
+    assert!(raw.wall_deadline().is_some());
     assert!(UNLIMITED > Budget::default().max_wall_ms);
 }

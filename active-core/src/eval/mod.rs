@@ -272,14 +272,18 @@ impl Budget {
     /// needed for termination on that target; hosts enforce their own
     /// timeouts (Worker terminate pattern). See `wall_supported`.
     pub fn wall_deadline(&self) -> Option<Instant> {
-        // `UNLIMITED` is the explicit "no clock" value. A zero field never
-        // reaches an evaluation (Budget::resolve turns it into the shipped
-        // default), but a caller reading this method on a raw struct still
-        // gets no deadline there rather than a zero-length one.
-        if self.max_wall_ms == UNLIMITED || self.max_wall_ms == 0 || !Self::wall_supported() {
+        // `UNLIMITED` is the explicit "no clock" value. A raw zero is
+        // resolved to the shipped default here too (fail closed: a caller
+        // that skipped Budget::resolve must not get an unbounded walk).
+        let limit = if self.max_wall_ms == 0 {
+            Budget::default().max_wall_ms
+        } else {
+            self.max_wall_ms
+        };
+        if limit == UNLIMITED || !Self::wall_supported() {
             None
         } else {
-            Instant::now().checked_add(std::time::Duration::from_millis(self.max_wall_ms))
+            Instant::now().checked_add(std::time::Duration::from_millis(limit))
         }
     }
 
@@ -1699,8 +1703,12 @@ impl Engine {
         // error, so re-derive the progressive warnings the walk had already
         // collected and carry them on the error. Only the abort path pays
         // for this (one extra static scan).
-        self.evaluate_walk(module, memo, steps, seeds)
-            .map_err(|e| attach_progressive_warnings(module, &self.budget, e))
+        self.evaluate_walk(module, memo, steps, seeds).map_err(|e| {
+            // Resolve before deriving W013: an unresolved zero field would
+            // read as "limit 0" and skip the warning the success path
+            // emits (review finding on LANG-C-009).
+            attach_progressive_warnings(module, &self.budget.resolve(), e)
+        })
     }
 
     fn evaluate_walk(

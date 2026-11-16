@@ -85,11 +85,15 @@ Design rules:
 
 Tuning:
 
-- Library: set the three `ParseOptions` fields; `0` disables a bound
-  (the embedder accepts the risk explicitly). `ParseOptions::default()`,
-  `::strict()`, and `::resilient_mode()` share the shipped values.
+- Library: set the three `ParseOptions` fields. As with `Budget`
+  (LANG-C-015), a zero field means the shipped default; disabling a bound
+  takes the explicit sentinel (`UNLIMITED_PARSE_BYTES`,
+  `UNLIMITED_PARSE_WALL_MS`, `UNLIMITED_PARSE_NODES`, or
+  `ParseOptions::unlimited()`). `ParseOptions::default()`, `::strict()`,
+  and `::resilient_mode()` share the shipped values.
 - CLI: `--max-input-bytes <BYTES>` and `--parse-wall-ms <MS>` (the base)
-  are global flags on every subcommand (defaults above; `0` disables).
+  are global flags on every subcommand (defaults above; an explicit `0`
+  opts out, an absent flag uses the default).
   Raise `--max-input-bytes` for generated input larger than 4 MiB; the
   wall allowance follows the size.
 - FFI (C ABI v1): `active_parse_limits_set(max_input_bytes, max_wall_ms)`

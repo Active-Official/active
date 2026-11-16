@@ -156,8 +156,10 @@ pub struct ParseOptions {
     /// When true, include paths may be absolute or escape the including
     /// directory via `..`. False by default (E015 otherwise).
     pub allow_parent_escapes: bool,
-    /// Maximum source bytes accepted (LANG-C-003). Parsing is linear in
-    /// input size, so this is the primary total-work bound: it rejects an
+    /// Maximum source bytes accepted (LANG-C-003). A zero field means the
+    /// shipped default (see [`ParseOptions::resolve`]); disabling it takes
+    /// the `UNLIMITED_PARSE_BYTES` sentinel. Parsing is linear in input
+    /// size, so this is the primary total-work bound: it rejects an
     /// oversized body by metadata before a byte is allocated. 4 MiB is
     /// more than an order of magnitude above the largest real
     /// configuration in this repository (the biggest shipped fixture is
@@ -201,6 +203,42 @@ pub const DEFAULT_MAX_INPUT_BYTES: usize = 4 * 1024 * 1024;
 pub const DEFAULT_MAX_PARSE_WALL_MS: u64 = 100;
 /// Default parse arena cap in nodes (LANG-C-003).
 pub const DEFAULT_MAX_PARSE_NODES: usize = 1_000_000;
+
+/// Explicit "no input cap" sentinel for [`ParseOptions::max_input_bytes`].
+/// A zero means the shipped default under [`ParseOptions::resolve`].
+pub const UNLIMITED_PARSE_BYTES: usize = usize::MAX;
+/// Explicit "no parse clock" sentinel for [`ParseOptions::max_wall_ms`].
+pub const UNLIMITED_PARSE_WALL_MS: u64 = u64::MAX;
+/// Explicit "no arena cap" sentinel for [`ParseOptions::max_nodes`].
+pub const UNLIMITED_PARSE_NODES: usize = usize::MAX;
+
+impl ParseOptions {
+    /// Every parse bound disabled, explicitly (the sentinel values, not
+    /// zeros: a zero field means the shipped default under
+    /// [`ParseOptions::resolve`]).
+    pub fn unlimited() -> Self {
+        Self {
+            max_input_bytes: UNLIMITED_PARSE_BYTES,
+            max_wall_ms: UNLIMITED_PARSE_WALL_MS,
+            max_nodes: UNLIMITED_PARSE_NODES,
+            ..ParseOptions::default()
+        }
+    }
+
+    /// Resolve zero fields to their shipped default, so one meaning holds on
+    /// every surface (LANG-C-015): a zero field is "use the default", never
+    /// "disable". The sentinels stay unlimited.
+    pub fn resolve(self) -> Self {
+        let pick_b = |v: usize, d: usize| if v == 0 { d } else { v };
+        let pick_m = |v: u64, d: u64| if v == 0 { d } else { v };
+        Self {
+            max_input_bytes: pick_b(self.max_input_bytes, DEFAULT_MAX_INPUT_BYTES),
+            max_wall_ms: pick_m(self.max_wall_ms, DEFAULT_MAX_PARSE_WALL_MS),
+            max_nodes: pick_b(self.max_nodes, DEFAULT_MAX_PARSE_NODES),
+            ..self
+        }
+    }
+}
 
 impl Default for ParseOptions {
     fn default() -> Self {
@@ -497,6 +535,9 @@ fn parse_recovering_impl(
     root_file: Option<&std::path::Path>,
     trust: Option<crate::sign::TrustedKeys>,
 ) -> (Module, Vec<Diagnostic>) {
+    // One meaning for a zero field on every surface (LANG-C-015): zero is
+    // the shipped default; the UNLIMITED_PARSE_* sentinels disable a bound.
+    let options = options.resolve();
     // Input-size cap first (LANG-C-003): parsing is linear in size, so
     // this bounds total work before a byte is lexed. Without it a peer
     // can hand the embedder an arbitrarily large body and pin the

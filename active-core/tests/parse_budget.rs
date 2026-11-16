@@ -37,8 +37,9 @@ fn codes(diags: &[active_core::diag::Diagnostic]) -> Vec<&str> {
 /// Options with the input cap lifted: the other bounds keep their
 /// shipped values unless a test overrides them.
 fn caps_off() -> ParseOptions {
+    // Zero means the shipped default (LANG-C-015); disabling is explicit.
     ParseOptions {
-        max_input_bytes: 0,
+        max_input_bytes: active_core::parser::UNLIMITED_PARSE_BYTES,
         ..ParseOptions::default()
     }
 }
@@ -128,9 +129,10 @@ fn node_cap_fails_closed_and_is_load_independent() {
     let again = parse_with(&src, "node-cap", capped).expect_err("node cap must trip again");
     assert_eq!(err[0].message, again[0].message);
 
-    // Negative control: 0 disables the cap and the document parses.
+    // Negative control: the explicit sentinel disables the cap and the
+    // document parses.
     let unbounded = ParseOptions {
-        max_nodes: 0,
+        max_nodes: active_core::parser::UNLIMITED_PARSE_NODES,
         ..ParseOptions::default()
     };
     let module = parse_with(&src, "node-cap-off", unbounded).expect("cap disabled: parses");
@@ -231,4 +233,38 @@ fn parse_file_rejects_an_oversized_file_from_metadata_before_reading() {
 
     // Negative control: same file, no cap.
     assert!(parse_file(&path, caps_off()).is_ok());
+}
+
+#[test]
+fn parse_options_zero_means_default_and_sentinels_disable() {
+    // LANG-C-015's one-meaning rule extends to the parse bounds (review
+    // finding): a zero field is the shipped default; disabling takes the
+    // explicit sentinel or ParseOptions::unlimited().
+    use active_core::parser::{
+        ParseOptions, UNLIMITED_PARSE_BYTES, UNLIMITED_PARSE_NODES, UNLIMITED_PARSE_WALL_MS,
+    };
+    let zeroed = ParseOptions {
+        max_input_bytes: 0,
+        max_wall_ms: 0,
+        max_nodes: 0,
+        ..ParseOptions::default()
+    };
+    let resolved = zeroed.clone().resolve();
+    assert_eq!(resolved.max_input_bytes, DEFAULT_MAX_INPUT_BYTES);
+    assert_eq!(resolved.max_wall_ms, DEFAULT_MAX_PARSE_WALL_MS);
+    assert_eq!(resolved.max_nodes, DEFAULT_MAX_PARSE_NODES);
+
+    let lifted = ParseOptions::unlimited();
+    assert_eq!(lifted.max_input_bytes, UNLIMITED_PARSE_BYTES);
+    assert_eq!(lifted.max_wall_ms, UNLIMITED_PARSE_WALL_MS);
+    assert_eq!(lifted.max_nodes, UNLIMITED_PARSE_NODES);
+
+    // End to end: a zeroed ParseOptions still enforces the shipped caps, so
+    // an oversized document is refused rather than silently accepted.
+    // A valid document one byte over the default cap: the padding is a
+    // comment, so the lifted parse is cheap (no tokens, no nodes).
+    let big = format!("x = 1\n#{}", "a".repeat(DEFAULT_MAX_INPUT_BYTES));
+    let err = parse_with(&big, "zeroed", zeroed).expect_err("zero keeps the cap");
+    assert_eq!(codes(&err), ["E029"]);
+    assert!(parse_with(&big, "lifted", lifted).is_ok());
 }

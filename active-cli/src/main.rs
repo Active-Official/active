@@ -1494,12 +1494,20 @@ fn main() -> anyhow::Result<()> {
         .expect("argument parser thread");
     // Resolve the global parse limits once, before any command runs
     // (LANG-C-003): every parse path then reads the same values.
-    let _ = PARSE_LIMITS.set((
-        cli.max_input_bytes
-            .unwrap_or(active_core::parser::DEFAULT_MAX_INPUT_BYTES),
-        cli.parse_wall_ms
-            .unwrap_or(active_core::parser::DEFAULT_MAX_PARSE_WALL_MS),
-    ));
+    // Same one-meaning rule as the evaluation budgets (LANG-C-015): an
+    // absent flag uses the default, an explicit 0 is the documented opt-out
+    // (the parse sentinel), never a zero travelling as "default".
+    let parse_bytes = match cli.max_input_bytes {
+        None => active_core::parser::DEFAULT_MAX_INPUT_BYTES,
+        Some(0) => active_core::parser::UNLIMITED_PARSE_BYTES,
+        Some(n) => n,
+    };
+    let parse_ms = match cli.parse_wall_ms {
+        None => active_core::parser::DEFAULT_MAX_PARSE_WALL_MS,
+        Some(0) => active_core::parser::UNLIMITED_PARSE_WALL_MS,
+        Some(n) => n,
+    };
+    let _ = PARSE_LIMITS.set((parse_bytes, parse_ms));
 
     // Parsing and evaluation are recursive; run the command on a worker
     // with a generous stack so the documented 64-level expression limit

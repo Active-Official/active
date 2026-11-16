@@ -30,7 +30,10 @@ reproducible across runs and across embeddings - the determinism contract
 and the cross-embedding differential gate both depend on that. What this
 buys: the v2 domain binds each identity to one document, so identities from
 different documents are unlinkable and an identity seen in isolation cannot
-be matched against a precomputed table of low-entropy guesses. What it does
+be matched against a precomputed table of low-entropy guesses from a
+different document. Documents generated from the SAME template share a salt
+(the shape is the same), so their identities are linkable to each other;
+use `Engine::blob_salt` when that matters. What it does
 NOT buy: confidentiality against someone who already holds the document -
 they can recompute the derived salt and test payloads offline. A deployment
 that needs that property sets `Engine::blob_salt` to a per-process random

@@ -118,8 +118,19 @@ fn diag_items(diags: &[Diagnostic]) -> String {
     format!("[{}]", parts.join(","))
 }
 
+/// Whether this build enforces a wall-clock deadline (LANG-C-012).
+///
+/// On wasm32 there is no monotonic clock, so evaluation runs without a time
+/// backstop. The envelope reports it on every response so a host can detect
+/// the degradation instead of discovering it under load.
+fn wall_supported() -> bool {
+    active_core::Budget::wall_supported()
+}
+
 fn envelope_ok(json: &str, diagnostics: &str, items: &str) -> String {
-    let mut out = String::from("{\"ok\":true,\"json\":");
+    let mut out = String::from("{\"ok\":true,\"wall_supported\":");
+    out.push_str(if wall_supported() { "true" } else { "false" });
+    out.push_str(",\"json\":");
     out.push_str(json);
     out.push_str(",\"diagnostics\":");
     out.push_str(diagnostics);
@@ -133,7 +144,8 @@ fn envelope_err_diagnostics(diagnostics: &str, items: &str) -> String {
     // Real diagnostic lines already carry their codes; no synthetic prefix
     // (a wrapper code here would pollute code-set comparisons downstream).
     format!(
-        "{{\"ok\":false,\"json\":\"\",\"diagnostics\":{},\"items\":{}}}",
+        "{{\"ok\":false,\"wall_supported\":{},\"json\":\"\",\"diagnostics\":{},\"items\":{}}}",
+        wall_supported(),
         serde_json::json!(diagnostics),
         items
     )
@@ -143,7 +155,8 @@ fn envelope_err(code: &str, message: &str, span: &str) -> String {
     // Bare codes are always [A-Z0-9]+ by construction; the message is
     // escaped, and span arrives pre-rendered (object or null).
     format!(
-        "{{\"ok\":false,\"json\":\"\",\"diagnostics\":\"[{code}] {message}\",\"items\":[{{\"code\":\"{code}\",\"message\":{},\"severity\":\"error\",\"span\":{span}}}]}}",
+        "{{\"ok\":false,\"wall_supported\":{},\"json\":\"\",\"diagnostics\":\"[{code}] {message}\",\"items\":[{{\"code\":\"{code}\",\"message\":{},\"severity\":\"error\",\"span\":{span}}}]}}",
+        wall_supported(),
         serde_json::json!(message),
         code = code,
         message = escape_json(message),
@@ -394,5 +407,46 @@ mod tests {
         let env = envelope_of("[unclosed\n");
         assert_eq!(env["ok"], false);
         assert!(!env["diagnostics"].as_str().unwrap().is_empty());
+    }
+
+    /// LANG-C-012: the envelope reports whether this build enforces a wall
+    /// clock, on success and failure alike, so a host can detect the
+    /// degradation instead of discovering it under load.
+    #[test]
+    fn envelopes_report_the_wall_clock_capability() {
+        let expected = active_core::Budget::wall_supported();
+        let ok: serde_json::Value =
+            serde_json::from_str(&envelope_ok("{}", "[]", "[]")).expect("ok envelope is json");
+        assert_eq!(ok["wall_supported"], serde_json::json!(expected));
+        assert_eq!(ok["ok"], serde_json::json!(true));
+
+        let err: serde_json::Value =
+            serde_json::from_str(&envelope_err("E001", "synthetic", "null"))
+                .expect("error envelope is json");
+        assert_eq!(err["wall_supported"], serde_json::json!(expected));
+        assert_eq!(err["ok"], serde_json::json!(false));
+    }
+
+    /// The evaluator still returns a coded envelope for a budget trip.
+    #[test]
+    fn a_pathological_document_still_returns_a_coded_envelope() {
+        // A 4 KiB literal doubled twelve times (each alias interpolates
+        // the PREVIOUS alias) is 16 MiB of materialised string: the size
+        // accountant must trip X006 (hermetic engine, no host environment).
+        let mut source = String::from("s = \"");
+        source.push_str(&"x".repeat(4096));
+        source.push_str("\"\n");
+        let mut prev = "s".to_string();
+        for i in 0..12 {
+            source.push_str(&format!("a{i} = \"${{{prev}}}${{{prev}}}\"\n"));
+            prev = format!("a{i}");
+        }
+        let envelope = eval_inner(&source);
+        let parsed: serde_json::Value = serde_json::from_str(&envelope).expect("json");
+        assert_eq!(parsed["ok"], serde_json::json!(false), "{envelope}");
+        assert!(
+            parsed["diagnostics"].as_str().unwrap_or("").contains("X0"),
+            "a budget trip is coded: {envelope}"
+        );
     }
 }

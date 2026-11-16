@@ -6,10 +6,13 @@
 
 [advisories]
 ignore = [
-    # RUSTSEC-2024-0421 (idna Punycode confusion via url 2.5.2):
-    # needs attacker-controlled DNS host parsing. Our url use is
-    # lsp-types file:// workspace URIs (no DNS, no Punycode
-    # surface). url ≥ 2.5.3 pulls icu/zerovec past rustc 1.85, so
-    # the fix waits on the MSRV bump (spec/packaging.md §1).
-    "RUSTSEC-2024-0421",
+    # RUSTSEC-2024-0449 (unsafe-libyaml unmaintained, 2024-03-25,
+    # patched=[]): accepted risk - the YAML frontend migration is in
+    # progress (LANG-I-004). Owner: Active Language Team. Re-evaluate on a
+    # new unsafe-libyaml CVE or the next MSRV bump, whichever is first.
+    # Mitigation: the `convert` fuzz target exercises all four importers
+    # (YAML included) for 300 s per CI run, and
+    # `active-core/tests/yaml_frontend.rs` pins the current frontend's
+    # output so a replacement can be differential-tested before shipping.
+    "RUSTSEC-2024-0449",
 ]

@@ -1,0 +1,1 @@
+{"server": {"host": "db", "ports": [1, 2]}, "token": "x"}

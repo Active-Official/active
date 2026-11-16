@@ -45,3 +45,31 @@ path = "fuzz_targets/formatter.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "convert"
+path = "fuzz_targets/convert.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "secrets"
+path = "fuzz_targets/secrets.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sign"
+path = "fuzz_targets/sign.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "formatter_eval"
+path = "fuzz_targets/formatter_eval.rs"
+test = false
+doc = false
+bench = false

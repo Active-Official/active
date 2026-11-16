@@ -1494,13 +1494,32 @@ fn material_profile_with(
 /// Strict-evaluation diagnostics for the explain/patch surfaces: parse
 /// errors abort in parse_input; validation diagnostics are the working
 /// set; any other engine failure is fatal and reported.
-fn collect_diags(module: &active_core::Module, filename: &str, budget: Budget) -> Vec<Diagnostic> {
+fn collect_diags(
+    module: &active_core::Module,
+    filename: &str,
+    budget: Budget,
+) -> (Vec<Diagnostic>, bool) {
     match engine(false, &None, budget, None).evaluate(module) {
-        Ok((_, diags)) => diags,
-        Err(EvalError::ValidationFailed { diagnostics }) => diagnostics,
+        Ok((_, diags)) => (diags, false),
+        Err(EvalError::ValidationFailed { diagnostics }) => (diagnostics, false),
         Err(e) => {
-            report_eval_error(&e, filename);
-            std::process::exit(2);
+            // LANG-G-005: a hard evaluation error is still explainable. The
+            // error's code and message become one explanation item (the
+            // same shape soft diagnostics use), so `--format json` carries
+            // it in the stable array and text prints the canned guidance.
+            // The command keeps exit 2: the document still fails.
+            let diagnostic = Diagnostic {
+                severity: active_core::Severity::Error,
+                code: e.code().to_string(),
+                message: format!("{e}"),
+                path: None,
+                span: e.span().cloned(),
+                repair: None,
+                confidence: 1.0,
+                file: Some(filename.to_string()),
+            };
+            let _ = filename;
+            (vec![diagnostic], true)
         }
     }
 }
@@ -2561,7 +2580,7 @@ fn main() -> anyhow::Result<()> {
             let filename = from.to_string_lossy().to_string();
             let trust = load_trust(&trust_keys)?;
             let module = parse_input(&from, false, allow_parent_escapes, &trust)?;
-            let diags = collect_diags(&module, &filename, budget.resolve()?);
+            let (diags, hard_error) = collect_diags(&module, &filename, budget.resolve()?);
             match format {
                 OutFormat::Text => {
                     for line in explain_lines(&diags) {
@@ -2578,6 +2597,9 @@ fn main() -> anyhow::Result<()> {
                     );
                 }
             }
+            if hard_error {
+                std::process::exit(2);
+            }
         }
         Commands::Patch {
             from,
@@ -2590,7 +2612,16 @@ fn main() -> anyhow::Result<()> {
             let filename = from.to_string_lossy().to_string();
             let trust = load_trust(&trust_keys)?;
             let module = parse_input(&from, false, allow_parent_escapes, &trust)?;
-            let diags = collect_diags(&module, &filename, budget.resolve()?);
+            let (diags, hard_error) = collect_diags(&module, &filename, budget.resolve()?);
+            if hard_error {
+                // LANG-G-005: `active patch` still fails closed on a hard
+                // error (nothing to plan); the code and message are on
+                // stderr via the same diagnostic shape.
+                for d in &diags {
+                    report(d, &filename);
+                }
+                std::process::exit(2);
+            }
             // Planning with the material profile: a default that copies
             // an authored or environment secret yields no directive.
             let profile = material_profile(&module);

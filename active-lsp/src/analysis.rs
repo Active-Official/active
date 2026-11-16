@@ -3026,28 +3026,50 @@ fn core_offset(text: &str, line_1: u32, col_1: u32) -> usize {
 /// and patch nodes. Anything else is withheld rather than emitted
 /// as an invalid let.
 fn is_value_expression(doc: &Doc, start: usize, end: usize) -> bool {
-    let mut matched = false;
-    for (id, node) in doc.module.arena.iter().enumerate() {
-        match node {
-            Node::Table { .. }
-            | Node::SchemaTable { .. }
-            | Node::SchemaField { .. }
-            | Node::SchemaArray { .. }
-            | Node::PatchDirective { .. } => continue,
-            _ => {}
-        }
-        let id = NodeId(id as u32);
-        if !node_in_doc(doc, id) {
-            continue;
-        }
-        if let Some(span) = doc.module.node_spans.get(&id) {
-            if span_byte_range(&doc.text, span) == Some((start, end)) {
-                matched = true;
-                break;
-            }
-        }
+    // LANG-G-004: the selection must be a COMPLETE value expression, not an
+    // operator or a partial token that happens to share a span with a node
+    // (selecting the `+` in `8080 + 80` used to offer `let extracted = +`).
+    // Two independent checks, both cheap:
+    //   1. it sits in a value position (preceded by `=`, an opener, or a
+    //      separator; followed by a closer, a separator, or a line end), so
+    //      a key name is never extracted by itself; and
+    //   2. it parses on its own as a value (`x = <selection>`), which rejects
+    //      operators, partial tokens, and multi-statement text.
+    let Some(selected) = doc.text.get(start..end) else {
+        return false;
+    };
+    if selected.trim().is_empty() {
+        return false;
     }
-    if !matched {
+    let before = doc.text[..start].trim_end().chars().next_back();
+    let after = doc.text[end..].trim_start().chars().next();
+    // Operands of a larger expression are values too: an operator on
+    // either side means "inside an expression", not "this is a key".
+    let operator = |c: char| {
+        matches!(
+            c,
+            '+' | '-' | '*' | '/' | '%' | '?' | '<' | '>' | '!' | '&' | '|'
+        )
+    };
+    // `=` is only an operator when doubled (`==`): a single `=` AFTER the
+    // selection means the selection is a key (`port = 1`), which must never
+    // be extracted as a value.
+    let comparison_after = after == Some('=')
+        && doc.text[end..]
+            .trim_start()
+            .strip_prefix('=')
+            .is_some_and(|rest| rest.trim_start().starts_with('='));
+    let value_position_before = matches!(before, None | Some('=' | '(' | '[' | '{' | ',' | ':'))
+        || before.is_some_and(operator);
+    let value_position_after = matches!(
+        after,
+        None | Some('\n' | '\r' | ',' | ')' | ']' | '}' | '#')
+    ) || after.is_some_and(operator)
+        || comparison_after;
+    if !value_position_before || !value_position_after {
+        return false;
+    }
+    if active_core::parse(&format!("x = {selected}\n"), "extract-probe").is_err() {
         return false;
     }
     // Scope safety for references inside the selection.

@@ -4352,3 +4352,66 @@ fn every_failed_attempt_leaves_an_audit_with_its_class_and_peer() {
         String::from_utf8_lossy(&check.stderr)
     );
 }
+
+#[test]
+fn explain_and_patch_surface_hard_error_guidance() {
+    // LANG-G-005: a hard evaluation error used to print nothing (explain)
+    // or nothing at all (patch). The canned guidance now comes out in the
+    // same shape soft diagnostics use, and the command still fails.
+    let dir = std::env::temp_dir().join("active-cli-tests");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let f = dir.join("hard-error.active");
+    std::fs::write(&f, "x = 5s + 1MiB\n").expect("write");
+
+    let explain = active()
+        .args(["explain", "--from"])
+        .arg(&f)
+        .output()
+        .expect("run");
+    assert_eq!(explain.status.code(), Some(2), "hard error keeps exit 2");
+    let stdout = String::from_utf8_lossy(&explain.stdout);
+    assert!(stdout.contains("T001"), "{stdout}");
+    assert!(
+        stdout.contains("Unit or quantity violation"),
+        "the canned guidance is printed: {stdout}"
+    );
+
+    let json = active()
+        .args(["explain", "--from"])
+        .arg(&f)
+        .args(["--format", "json"])
+        .output()
+        .expect("run");
+    assert_eq!(json.status.code(), Some(2));
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&json.stdout).expect("stable JSON array");
+    let items = parsed.as_array().expect("array");
+    assert_eq!(items.len(), 1, "{parsed}");
+    assert_eq!(items[0]["code"], "T001");
+    assert!(items[0]["guidance"].as_str().unwrap_or("").contains("Unit"));
+
+    // Patch: the same document plans nothing, prints nothing on stdout,
+    // and fails (pinned behaviour), now with the diagnostic on stderr.
+    let patch = active()
+        .args(["patch", "--from"])
+        .arg(&f)
+        .output()
+        .expect("run");
+    assert_eq!(patch.status.code(), Some(2));
+    assert!(patch.stdout.is_empty(), "no plan for a hard error");
+    assert!(
+        String::from_utf8_lossy(&patch.stderr).contains("T001"),
+        "{}",
+        String::from_utf8_lossy(&patch.stderr)
+    );
+
+    // Soft control: duplicate keys are explained and the command exits 0.
+    let soft = dir.join("soft-error.active");
+    std::fs::write(&soft, "x = 1\nx = 2\n").expect("write");
+    let explain = active()
+        .args(["explain", "--from"])
+        .arg(&soft)
+        .output()
+        .expect("run");
+    assert!(explain.status.success(), "soft diagnostics still exit 0");
+}

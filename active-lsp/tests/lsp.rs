@@ -2452,3 +2452,133 @@ fn a_slow_analysis_is_reported_on_the_visible_channel() {
     );
     server.shutdown();
 }
+
+#[test]
+fn rename_covers_table_scope_uses_of_root_keys() {
+    // LANG-G-003: a table-scope use of a root key must resolve the same way
+    // for references, rename, definition, and hover. The A-002 parent-
+    // fallback fix made the use a real reference; this pins the bridge
+    // agreement so a rename can never leave `port = base_port` behind.
+    let doc = open_untitled(
+        "rename-table-scope",
+        "base_port = 9000\n[server]\nport = base_port\n",
+    );
+    let refs = analysis::references_at(&doc, &no_lookup(), 0, 0, true);
+    assert_eq!(refs.len(), 2, "definition + table-scope use: {refs:?}");
+    let lines: Vec<u32> = refs.iter().map(|l| l.range.start.line).collect();
+    assert_eq!(lines, vec![0, 2]);
+
+    let edit = analysis::rename_at(&doc, &no_lookup(), 0, 0, "base_port2")
+        .expect("table-scope rename must succeed");
+    let changes = edit.changes.expect("changes");
+    let edits = &changes[&untitled("rename-table-scope")];
+    assert_eq!(edits.len(), 2, "declaration + use: {edits:?}");
+    assert!(edits.iter().all(|e| e.new_text == "base_port2"));
+
+    // The definition is found from the use as well (definition/rename must
+    // agree on whether a name resolves).
+    let defs = analysis::definition_at(&doc, &no_lookup(), 2, 7);
+    assert_eq!(
+        defs.len(),
+        1,
+        "table-scope use resolves to its definition: {defs:?}"
+    );
+    assert_eq!(defs[0].range.start.line, 0, "{defs:?}");
+
+    // Top-level control: the same shape without a table keeps 2 references.
+    let doc = open_untitled("rename-top", "base_port = 9000\nport = base_port\n");
+    let refs = analysis::references_at(&doc, &no_lookup(), 0, 0, true);
+    assert_eq!(refs.len(), 2, "{refs:?}");
+}
+
+#[test]
+fn extract_let_requires_a_complete_value_expression() {
+    // LANG-G-004: selecting exactly the `+` in `8080 + 80` offered
+    // `let extracted = +` (invalid Active); selecting the whole binary
+    // expression offered nothing.
+    let doc = open_untitled("extract-operator", "port = 8080 + 80\n");
+    let actions = analysis::code_actions(
+        &doc,
+        lsp_types::Range {
+            start: lsp_types::Position {
+                line: 0,
+                character: 11,
+            },
+            end: lsp_types::Position {
+                line: 0,
+                character: 12,
+            },
+        },
+    );
+    assert!(
+        !actions.iter().any(|a| a.title.contains("Extract")),
+        "an operator-only selection offers no Extract: {actions:?}"
+    );
+
+    // The full binary expression is a value: extraction is offered and the
+    // edit is valid Active.
+    let actions = analysis::code_actions(
+        &doc,
+        lsp_types::Range {
+            start: lsp_types::Position {
+                line: 0,
+                character: 7,
+            },
+            end: lsp_types::Position {
+                line: 0,
+                character: 16,
+            },
+        },
+    );
+    let extract = actions
+        .iter()
+        .find(|a| a.title.contains("Extract"))
+        .unwrap_or_else(|| panic!("full expression must offer Extract: {actions:?}"));
+    let edit = extract.edit.as_ref().expect("edit");
+    let changes = edit.changes.as_ref().expect("changes");
+    let edits = changes.values().flatten().collect::<Vec<_>>();
+    assert!(
+        edits
+            .iter()
+            .any(|e| e.new_text.contains("let extracted = 8080 + 80")),
+        "the extraction carries the whole expression: {edits:?}"
+    );
+
+    // A leaf still extracts (control for the withhold boundary).
+    let actions = analysis::code_actions(
+        &doc,
+        lsp_types::Range {
+            start: lsp_types::Position {
+                line: 0,
+                character: 7,
+            },
+            end: lsp_types::Position {
+                line: 0,
+                character: 11,
+            },
+        },
+    );
+    assert!(
+        actions.iter().any(|a| a.title.contains("Extract")),
+        "a leaf value extracts: {actions:?}"
+    );
+
+    // A key name is never extracted on its own.
+    let actions = analysis::code_actions(
+        &doc,
+        lsp_types::Range {
+            start: lsp_types::Position {
+                line: 0,
+                character: 0,
+            },
+            end: lsp_types::Position {
+                line: 0,
+                character: 4,
+            },
+        },
+    );
+    assert!(
+        !actions.iter().any(|a| a.title.contains("Extract")),
+        "a key name is not a value: {actions:?}"
+    );
+}

@@ -460,6 +460,47 @@ fn definition_on_literal_falls_back_to_owning_key() {
 }
 
 #[test]
+fn definition_on_an_unresolved_identifier_is_null() {
+    // LANG-G-009: `nosuch_name` resolves to nothing, so definition and
+    // hover return nothing. The owning-key fallback exists for literals,
+    // not for a name that failed to resolve.
+    let doc = open_untitled("unresolved", "x = nosuch_name\n");
+    assert!(
+        analysis::definition_at(&doc, &no_lookup(), 0, 8).is_empty(),
+        "an unresolved identifier has no definition"
+    );
+    assert!(
+        analysis::hover_at(&doc, 0, 8).is_none(),
+        "hover must not present the owning key as the unresolved name"
+    );
+    // Literal control: the same line shape with a literal still falls back
+    // to the owning key, so the guard is about identifiers only.
+    let doc = open_untitled("litcontrol", "x = 8080\n");
+    let locations = analysis::definition_at(&doc, &no_lookup(), 0, 5);
+    assert_eq!(locations.len(), 1, "{locations:?}");
+    assert_eq!(locations[0].range.start.character, 0, "{locations:?}");
+}
+
+#[test]
+fn definition_from_a_comment_is_null_even_on_a_value_line() {
+    // Comments initiate nothing (spec §3). A trailing comment shares the
+    // line with a value span, so the owning-key fallback must refuse it
+    // explicitly rather than relying on the value being on another line.
+    let doc = open_untitled("trailing", "port = 8080 # port lives here\n");
+    let line = doc.text.lines().next().expect("line");
+    let at = line.find("lives").expect("comment word");
+    let character = line[..at].encode_utf16().count() as u32;
+    assert!(
+        analysis::definition_at(&doc, &no_lookup(), 0, character).is_empty(),
+        "a word inside a comment has no definition"
+    );
+    assert!(
+        analysis::hover_at(&doc, 0, character).is_none(),
+        "a word inside a comment has no hover"
+    );
+}
+
+#[test]
 fn hover_falls_back_to_value_kind_without_schema() {
     let doc = open_untitled("kind", "port = 8080\nname = \"svc\"\n");
     let hover = analysis::hover_at(&doc, 0, 1).expect("hover");

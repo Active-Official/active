@@ -89,9 +89,11 @@ covers it), the evaluated value (redacted; unit-normalized —
 deprecated flags, and active lint diagnostics on the key. Missing
 data renders as explicitly-absent lines, never blanks. Hover on a
 literal or string content resolves to the owning key; comments
-resolve to nothing. Definition, references, and rename initiate
-only from identifier tokens and interpolation references — never
-from comments or string contents.
+resolve to nothing, and so does an identifier that fails to resolve
+(the owning key is not offered as a stand-in for a name). Definition
+follows the same rule for those positions. References and rename
+initiate only from identifier tokens and interpolation references —
+never from comments or string contents.
 
 ## 3. Definition, references, rename (C-043)
 

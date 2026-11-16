@@ -1090,12 +1090,47 @@ fn owner_target(doc: &Doc, line: u32, character: u32) -> Option<(String, Target)
     Some((name, target))
 }
 
+/// Cursor on an identifier token (resolved or not).
+fn on_identifier_token(doc: &Doc, line: u32, character: u32) -> bool {
+    match word_at(&doc.text, line, character) {
+        Some((word, start, _)) => on_ident_token(doc, line, start, &word),
+        None => false,
+    }
+}
+
+/// Cursor inside a comment token. Comments initiate nothing (spec §3):
+/// a name mentioned in prose is not the name.
+fn in_comment(doc: &Doc, line: u32, character: u32) -> bool {
+    let Some(line_text) = doc.text.split('\n').nth(line as usize) else {
+        return false;
+    };
+    let cursor = (line + 1, utf16_to_char(line_text, character) as u32 + 1);
+    let mut lexer = active_core::parser::Lexer::new(&doc.text);
+    let lexed = lexer.tokenize();
+    lexed.comments.iter().any(|(_, span)| {
+        (span.line, span.column) <= cursor && cursor <= (span.end_line, span.end_column)
+    })
+}
+
+/// Owning-key fallback for positions that are not identifiers (spec §3).
+///
+/// A literal or string content resolves to the key that owns it. An
+/// unresolved identifier has no definition, and a comment never initiates
+/// one; both return `None` instead of pretending the owning key is the
+/// answer (LANG-G-009).
+fn owner_fallback(doc: &Doc, line: u32, character: u32) -> Option<(String, Target)> {
+    if on_identifier_token(doc, line, character) || in_comment(doc, line, character) {
+        return None;
+    }
+    owner_target(doc, line, character)
+}
+
 pub fn hover_at(doc: &Doc, line: u32, character: u32) -> Option<Hover> {
     // Identifiers resolve by scope; anything else (literals,
     // punctuation-adjacent values) falls back to the owning key.
     let (name, target) = match symbol_at(doc, line, character) {
         Some(found) => found,
-        None => owner_target(doc, line, character)?,
+        None => owner_fallback(doc, line, character)?,
     };
     let (path, node) = match &target {
         Target::Let { name, node } => (name.clone(), *node),
@@ -1231,10 +1266,11 @@ pub fn definition_at(
     line: u32,
     character: u32,
 ) -> Vec<Location> {
-    // Identifiers resolve by scope; value positions fall back to the
-    // owning key (spec §3 promises definition for values).
+    // Identifiers resolve by scope; a literal or string content falls back
+    // to the owning key, while an unresolved identifier and a comment have
+    // nothing to point at (spec §3, LANG-G-009).
     let Some((_, target)) =
-        symbol_at(doc, line, character).or_else(|| owner_target(doc, line, character))
+        symbol_at(doc, line, character).or_else(|| owner_fallback(doc, line, character))
     else {
         return Vec::new();
     };

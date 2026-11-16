@@ -546,3 +546,40 @@ fn memo_does_not_serve_a_lazy_env_fallback_across_engines() {
         .0;
     assert!(matches!(x_of(&none), Value::Null));
 }
+
+#[test]
+fn memo_eviction_keeps_a_working_set_instead_of_clearing() {
+    // LANG-K-006: past the cap the store used to clear entirely, so a
+    // long-lived memo alternated between full hits and zero. Eviction now
+    // drops about half; a few hundred distinct small documents must leave
+    // a substantial working set behind, not a handful of fresh entries.
+    let engine = Engine::new();
+    let mut memo = active_core::IncrementalMemo::default();
+    let mut previous = 0usize;
+    let mut evictions = 0;
+    for i in 0..400 {
+        let src = format!("a = {i}\nb = a + 1\nc = b + 1\n");
+        let module = parse(&src, "memo-evict").expect("parse");
+        engine
+            .evaluate_incremental(&module, &mut memo)
+            .expect("evaluate");
+        let len = memo.len();
+        if len < previous {
+            // An eviction just happened. Partial eviction leaves roughly
+            // half the store; clear-all would leave only this call's
+            // fresh entries.
+            evictions += 1;
+            assert!(
+                len > 100,
+                "eviction dropped to {len} entries (a clear-all cliff)"
+            );
+        }
+        previous = len;
+    }
+    assert!(evictions >= 1, "the cap was never reached");
+    assert!(
+        memo.len() <= 1024 + 8,
+        "{} entries past the cap",
+        memo.len()
+    );
+}

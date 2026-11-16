@@ -8,6 +8,7 @@
 use crate::ir::{Module, Node, NodeId};
 use petgraph::Direction;
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 
 /// Resolve a user key like the evaluator does: table fields win
 /// ties, single segments also see `let` bindings.
@@ -406,25 +407,36 @@ fn sorted_edges(module: &Module) -> Vec<(String, String)> {
 pub fn to_mermaid(module: &Module) -> String {
     let mut out = String::from("flowchart TD\n");
     for (id, label) in sorted_nodes(module) {
-        out.push_str(&format!("    {id}[\"{label}\"]\n"));
+        // Write into the buffer: no throwaway String per node (LANG-K-007).
+        let _ = writeln!(out, "    {id}[\"{label}\"]");
     }
     for (from, to) in sorted_edges(module) {
-        out.push_str(&format!("    {from} --> {to}\n"));
+        let _ = writeln!(out, "    {from} --> {to}");
     }
     out
 }
 
 /// DOT digraph of the full graph (deterministic; labels escaped).
 pub fn to_dot(module: &Module) -> String {
-    fn escape(s: &str) -> String {
-        s.replace('\\', "\\\\").replace('"', "\\\"")
+    /// Escaping matches `str::replace('\\',"\\\\").replace('"',"\\\"")`
+    /// exactly, without the intermediate allocation per label.
+    fn write_escaped(out: &mut String, label: &str) {
+        for ch in label.chars() {
+            match ch {
+                '\\' => out.push_str("\\\\"),
+                '"' => out.push_str("\\\""),
+                _ => out.push(ch),
+            }
+        }
     }
     let mut out = String::from("digraph active {\n");
     for (id, label) in sorted_nodes(module) {
-        out.push_str(&format!("    \"{id}\" [label=\"{}\"];\n", escape(&label)));
+        let _ = write!(out, "    \"{id}\" [label=\"");
+        write_escaped(&mut out, &label);
+        out.push_str("\"];\n");
     }
     for (from, to) in sorted_edges(module) {
-        out.push_str(&format!("    \"{from}\" -> \"{to}\";\n"));
+        let _ = writeln!(out, "    \"{from}\" -> \"{to}\";");
     }
     out.push_str("}\n");
     out

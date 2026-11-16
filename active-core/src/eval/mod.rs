@@ -1059,6 +1059,19 @@ pub struct IncrementalMemo {
     pub last_memo_hits: u64,
 }
 
+impl IncrementalMemo {
+    /// Number of memoized fingerprints. Telemetry only: the store is a
+    /// performance cache, never an input to results.
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    /// True when the store holds no fingerprints.
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+}
+
 impl std::fmt::Debug for IncrementalMemo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("IncrementalMemo")
@@ -1718,7 +1731,18 @@ impl Engine {
         // clears, same outputs.
         let cap = module.arena.len().saturating_mul(4).max(1024);
         if memo.map.len() > cap {
-            memo.map.clear();
+            // LANG-K-006: drop roughly half instead of the whole store. A
+            // long-lived memo (the language server carries one per
+            // document across edits) kept oscillating between full hits
+            // and zero hits at the boundary. Fingerprints are opaque
+            // keys, so which half survives is arbitrary; correctness does
+            // not depend on the choice (each entry stores the value its
+            // own fingerprint produced).
+            let drop = memo.map.len() / 2;
+            let doomed: Vec<u64> = memo.map.keys().take(drop).copied().collect();
+            for fingerprint in doomed {
+                memo.map.remove(&fingerprint);
+            }
         }
         outcome.map(|(value, diagnostics)| (value, diagnostics, seeds))
     }

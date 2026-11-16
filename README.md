@@ -223,7 +223,7 @@ You might wonder whether adopting a new language is worth the switching cost. Mi
 
 You might wonder about stability. The 1.x line avoids breaking changes by policy: diagnostic codes are never reused, changes are additive, the C ABI is versioned, and the changelog is honest about every release. MSRV is Rust 1.89, pinned and tested in CI.
 
-You might wonder about performance. Evaluation is a single topological walk over an explicit graph, budgets bound every dimension of growth, and the benchmark suite tracks 10k node documents plus incremental re evaluation with CodSpeed regression tracking. If it ever gets slow, the numbers will show it before you feel it.
+You might wonder about performance. Evaluation is a single topological walk over an explicit graph, budgets bound every dimension of growth, and the benchmark suite tracks 10k-node documents, the wide-flat and 100k-path shapes, large literals, heap peak, and CodSpeed regression tracking. Incremental re-evaluation recomputes only the affected sub-DAG (1.3% of nodes on the benchmark leaf edit), though the walk still visits every node, so its wall time is comparable to a full evaluation: it saves recomputation, not elapsed time. If it ever gets slow, the numbers will show it before you feel it.
 
 You might wonder whether to trust it in production. Beyond the test counts above, the repository runs the full suite, formatter check, and clippy with warnings denied on every commit, plus a docs build with zero orphans and a packaging gate that keeps every manifest in sync. Releases ship signed archives for Linux, macOS, and Windows across x86_64 and ARM64 with checksums and build attestations. Nothing about the process is casual.
 

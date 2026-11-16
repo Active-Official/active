@@ -5,7 +5,12 @@ reference hardware; small edits re-evaluate only the affected
 sub-DAG; memory stays linear in the IR. Continuous tracking via
 criterion benches and the CodSpeed CI plugin.
 
-## 1. Benchmarks (`benches/eval.rs`, criterion)
+## 1. Benchmarks (`active-core/benches/`, criterion)
+
+The evaluator suite lives in `active-core/benches/eval.rs`, the tooling
+hot paths in `active-core/benches/tooling.rs`, and the language-server
+analysis paths in `active-lsp/benches/analysis.rs`. There is no separate
+top-level `benchmarks/` directory.
 
 - `parse_10k`: lex + parse a generated 10 000-node document
   (50 tables × 200 chained keys).
@@ -96,10 +101,12 @@ test does exactly that):
   `last_memo_hits`. Tests assert a leaf edit recomputes O(depth)
   nodes, not N.
 - Memory: the store is capped at `max(1024, 4 × arena nodes)`
-  entries per memo and cleared past the cap — linear in the
-  document, never growing with edit history. Clearing only
-  loses hits; the bound is a pure function of counts, so
-  behavior stays deterministic. Engines are cheap to drop;
+  entries per memo. Past the cap, roughly half the entries are evicted
+  (LANG-K-006), so a long-lived server keeps a working set instead of
+  collapsing to zero hits; which fingerprints survive is arbitrary (an
+  opaque cache key, never an input to results), and the store stays
+  linear in the document, never growing with edit history. Engines are
+  cheap to drop;
   long-lived servers (the language server) reuse one memo per
   document to compound the wins: `Doc.memo` is carried across
   `didOpen`/`didChange` and passed to every analysis re-run, so
@@ -149,7 +156,7 @@ stale spans served from the memo after a re-parse — fixed by
 re-anchoring served diagnostics to the current module, proven
 by `moved_ident_serves_the_current_span` failing without the
 fix), one High (unbounded memo growth across document versions
-— fixed by the deterministic cap-and-clear), plus salt,
+— fixed by the deterministic cap-and-evict), plus salt,
 `Table::len` in the hash, value-compared config token, and six
 new tests. Full triage record in
 docs/Memories-and-Observations.md.

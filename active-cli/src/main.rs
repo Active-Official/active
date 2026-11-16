@@ -766,6 +766,10 @@ enum Commands {
         trust_keys: PathBuf,
     },
     /// Format files in a canonical style (spec/formatter.md)
+    ///
+    /// Output is LF-only on every platform. CRLF input is accepted and
+    /// normalized to LF, so `--check` reports a CRLF file as needing
+    /// reformatting until it is formatted once.
     Fmt {
         /// Input .active files (at least one)
         #[arg(required = true)]

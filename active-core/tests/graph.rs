@@ -102,3 +102,54 @@ fn node_labels_prefer_paths_then_bindings() {
     let x = graph::resolve_key(&module, "a.x").expect("a.x");
     assert_eq!(graph::node_label(&module, x), "a.x");
 }
+
+#[test]
+fn renderings_are_byte_identical_to_the_reference_format() {
+    // LANG-K-007: the exporters now write into the buffer instead of
+    // allocating a String per line. The bytes must not change, so this
+    // rebuilds the documented format from the same sorted node/edge lists
+    // and compares.
+    let module = module();
+    let json = graph::to_graph_json(&module);
+    let nodes: Vec<(String, String)> = json["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .map(|n| {
+            (
+                n["id"].as_str().expect("id").to_string(),
+                n["label"].as_str().expect("label").to_string(),
+            )
+        })
+        .collect();
+    let edges: Vec<(String, String)> = json["edges"]
+        .as_array()
+        .expect("edges")
+        .iter()
+        .map(|e| {
+            (
+                e["from"].as_str().expect("from").to_string(),
+                e["to"].as_str().expect("to").to_string(),
+            )
+        })
+        .collect();
+    let mut mermaid = String::from("flowchart TD\n");
+    for (id, label) in &nodes {
+        mermaid.push_str(&format!("    {id}[\"{label}\"]\n"));
+    }
+    for (from, to) in &edges {
+        mermaid.push_str(&format!("    {from} --> {to}\n"));
+    }
+    assert_eq!(graph::to_mermaid(&module), mermaid);
+
+    let escape = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    let mut dot = String::from("digraph active {\n");
+    for (id, label) in &nodes {
+        dot.push_str(&format!("    \"{id}\" [label=\"{}\"];\n", escape(label)));
+    }
+    for (from, to) in &edges {
+        dot.push_str(&format!("    \"{from}\" -> \"{to}\";\n"));
+    }
+    dot.push_str("}\n");
+    assert_eq!(graph::to_dot(&module), dot);
+}

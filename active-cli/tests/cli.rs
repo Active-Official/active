@@ -4650,3 +4650,42 @@ fn a_closed_stdout_reader_does_not_panic() {
         assert_eq!(signal, 13, "expected SIGPIPE death, got signal {signal}");
     }
 }
+
+#[test]
+fn fmt_check_reports_crlf_until_the_file_is_formatted() {
+    // LANG-H-008: output is LF-only, CRLF input is accepted and
+    // normalized, so --check flags a CRLF file exactly once.
+    let f = fixture("crlf.active", "port = 8080\r\n");
+    let check = active()
+        .args(["fmt", "--check"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(!check.status.success(), "CRLF is not canonical");
+    assert!(
+        String::from_utf8_lossy(&check.stdout).contains("would reformat"),
+        "{}",
+        String::from_utf8_lossy(&check.stdout)
+    );
+    let write = active()
+        .args(["fmt", "--write"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        write.status.success(),
+        "{}",
+        String::from_utf8_lossy(&write.stderr)
+    );
+    let bytes = std::fs::read(&f).expect("read back");
+    assert!(
+        !bytes.contains(&b'\r'),
+        "formatted output is LF-only: {bytes:?}"
+    );
+    let clean = active()
+        .args(["fmt", "--check"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(clean.status.success(), "LF output is canonical");
+}

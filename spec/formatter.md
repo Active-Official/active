@@ -7,6 +7,15 @@ the value tree — formatting cannot change what a document means.
 
 ## 1. Styles
 
+**Line endings (LANG-H-008).** Formatter output is LF-only on every
+platform. CRLF input is accepted and normalized: the parser folds CRLF to
+LF, and the formatter never re-emits a carriage return outside string
+content (where it is escaped). A CRLF file is therefore not canonical, so
+`--check` reports it as needing reformatting (`would reformat:`, exit 1)
+until it is formatted once. This is deterministic and intentional: one
+document has one canonical byte sequence, and a Windows checkout does not
+produce a different one.
+
 - **Indent** (default per P-040's human-indented default): `key:`
   headers with two-space indentation, `key = value` leaves. Empty
   tables emit as `key = {}` (a bodyless block is inexpressible

@@ -41,7 +41,7 @@ document whose only problem is size.
 
 | Field | Default | Checked | Trip message |
 |---|---|---|---|
-| `max_input_bytes` | 4,194,304 (4 MiB) | String entry: `source.len()` before lexing. File entry (`parse_file`, `parse_file_with_trust`): file length from metadata **before** the read. Includes: metadata before the read, per file. | `parse budget exceeded: input is <n> bytes; the limit is <n>` |
+| `max_input_bytes` | 4,194,304 (4 MiB) | String entry: `source.len()` before lexing. File entry (`parse_file`, `parse_file_with_trust`): file length from metadata **before** the read. Includes: metadata before the read, per file. Every embedding inherits it (CLI `--max-input-bytes`, FFI `active_parse_limits_set`, WASM and the converters call the same parse entry; the LSP adds its own 4 MiB document cap with a visible message). | `parse budget exceeded: input is <n> bytes; the limit is <n>` |
 | `max_nodes` | 1,000,000 | Arena length, once per statement and per array element | `parse budget exceeded: node limit <n> reached` |
 | `max_wall_ms` (base) | 100, plus 30 ms per KiB of charged input | Lexer loop every 2,048 iterations; statement loop every 16 statements; once per include | `parse budget exceeded: the <n> ms parse wall budget was reached` |
 

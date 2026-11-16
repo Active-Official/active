@@ -4212,3 +4212,43 @@ fn reader_version_flag_enforces_the_floor() {
         .expect("run");
     assert!(ok.status.success(), "equal reader evaluates");
 }
+
+#[test]
+fn parse_input_cap_is_enforced_at_the_cli_boundary() {
+    // LANG-C-011: the cap is checked before a byte is read, on every
+    // command, and the stable code names it.
+    let dir = std::env::temp_dir().join("active-cli-tests");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let big = dir.join("oversize.active");
+    let mut body = String::new();
+    for i in 0..300 {
+        body.push_str(&format!("k{i} = {i}\n"));
+    }
+    std::fs::write(&big, &body).expect("write");
+    assert!(body.len() > 1024 && body.len() < 8192);
+
+    let out = active()
+        .args(["check", "--max-input-bytes", "1024"])
+        .arg(&big)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success(), "oversize input must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E029"), "{stderr}");
+    assert!(
+        stderr.contains("the limit is 1024"),
+        "the code names the bound: {stderr}"
+    );
+
+    // Control: the same file parses when the cap is lifted.
+    let out = active()
+        .args(["check", "--max-input-bytes", "0"])
+        .arg(&big)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

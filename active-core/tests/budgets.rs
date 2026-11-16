@@ -17,15 +17,9 @@ fn engine_with(budget: active_core::Budget, resilient: bool) -> Engine {
 }
 
 fn unlimited() -> active_core::Budget {
-    active_core::Budget {
-        max_nodes: 0,
-        max_depth: 0,
-        max_array_len: 0,
-        max_keys: 0,
-        max_wall_ms: 0,
-        max_value_size: 0,
-        max_total_value_size: 0,
-    }
+    // Zero fields mean the shipped default (LANG-C-015); disabling every
+    // limit is explicit.
+    active_core::Budget::unlimited()
 }
 
 /// Evaluate under a budget in both modes: budgets are always fatal,

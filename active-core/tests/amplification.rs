@@ -15,7 +15,9 @@ fn engine_with_total(limit: u64) -> Engine {
         max_total_value_size: limit,
         ..Budget::default()
     };
-    engine.budget.max_wall_ms = 0; // deterministic: no wall component
+    // Deterministic: no wall component. Zero means the shipped
+    // default under Budget::resolve, so the explicit sentinel lifts it.
+    engine.budget.max_wall_ms = active_core::eval::UNLIMITED;
     engine
 }
 

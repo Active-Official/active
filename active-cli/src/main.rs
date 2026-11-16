@@ -47,7 +47,9 @@ fn with_parse_limits(mut options: ParseOptions) -> ParseOptions {
 }
 
 /// Evaluator resource limits (spec/budgets.md, C-037). Omitted flags
-/// use the shipped profile; `0` disables that limit. Options (rather
+/// use the shipped profile; an explicit `0` disables that limit (the
+/// `eval::UNLIMITED` sentinel - a library `Budget` zero means "shipped
+/// default" instead, LANG-C-015). Options (rather
 /// than clap defaults) let the audit path reject limits it cannot
 /// store and let reduction report what the user asked for.
 #[derive(Args, Clone)]
@@ -128,17 +130,25 @@ impl BudgetArgs {
     }
 
     fn budget(&self) -> Budget {
+        // One meaning across surfaces (LANG-C-015): an ABSENT flag uses the
+        // shipped default, and an explicit `0` is the documented opt-out
+        // (the UNLIMITED sentinel). The core resolves a zero field to the
+        // shipped default, so an explicit 0 must become the sentinel here
+        // rather than travelling as a zero.
         let default = Budget::default();
+        let pick = |v: Option<u64>, d: u64| match v {
+            None => d,
+            Some(0) => active_core::eval::UNLIMITED,
+            Some(n) => n,
+        };
         Budget {
-            max_nodes: self.max_nodes.unwrap_or(default.max_nodes),
-            max_depth: self.max_depth.unwrap_or(default.max_depth),
-            max_array_len: self.max_array_len.unwrap_or(default.max_array_len),
-            max_keys: self.max_keys.unwrap_or(default.max_keys),
-            max_wall_ms: self.max_wall_ms.unwrap_or(default.max_wall_ms),
-            max_value_size: self.max_value_size.unwrap_or(default.max_value_size),
-            max_total_value_size: self
-                .max_total_value_size
-                .unwrap_or(default.max_total_value_size),
+            max_nodes: pick(self.max_nodes, default.max_nodes),
+            max_depth: pick(self.max_depth, default.max_depth),
+            max_array_len: pick(self.max_array_len, default.max_array_len),
+            max_keys: pick(self.max_keys, default.max_keys),
+            max_wall_ms: pick(self.max_wall_ms, default.max_wall_ms),
+            max_value_size: pick(self.max_value_size, default.max_value_size),
+            max_total_value_size: pick(self.max_total_value_size, default.max_total_value_size),
         }
     }
 

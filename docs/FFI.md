@@ -51,6 +51,12 @@ thread, must not re-enter eval on the same module, and return owned buffers
 under Model A below. Callback failures surface as diagnostics; they never
 hang the call.
 
+Budget zeros: `ActiveBudget` uses `0` for "the shipped default" per field,
+exactly like `Budget::resolve()`; there is no way to disable an evaluation
+limit through the C ABI (a host that needs that must use the library
+directly and `Budget::unlimited()`). Parse bounds use the same rule: `0`
+keeps the shipped parse default rather than lifting it.
+
 Parse bounds: `active_parse_limits_set(max_input_bytes, max_wall_ms)` sets
 process-wide parse ceilings used by every later parse (LANG-C-003); `0`
 keeps the shipped default for that field (4 MiB input, a wall budget

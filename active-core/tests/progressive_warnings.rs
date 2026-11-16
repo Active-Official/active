@@ -54,7 +54,7 @@ fn a_tripped_walk_still_carries_its_progressive_warnings() {
     // proves the warnings existed rather than inventing them.
     let mut quiet = Engine::hermetic();
     quiet.budget = Budget {
-        max_wall_ms: 0,
+        max_wall_ms: active_core::eval::UNLIMITED,
         ..budget
     };
     let (_, diags) = quiet

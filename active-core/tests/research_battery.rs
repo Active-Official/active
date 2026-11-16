@@ -12,7 +12,7 @@ fn semantic_engine() -> Engine {
     let mut engine = Engine::new();
     // Semantic tests must not depend on machine load. Node, depth, array,
     // key, and size budgets still bind; only the wall clock is disabled.
-    engine.budget.max_wall_ms = 0;
+    engine.budget.max_wall_ms = active_core::eval::UNLIMITED;
     engine
 }
 

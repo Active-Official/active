@@ -380,17 +380,19 @@ fn apply_budget(engine: &mut Engine, budget: *const ActiveBudget) -> Result<(), 
         set_last(ACTIVE_ERR_BAD_BUDGET);
         return Err(ACTIVE_ERR_BAD_BUDGET);
     }
-    let shipped = active_core::eval::Budget::default();
-    let get = |v: u64, d: u64| if v == 0 { d } else { v };
+    // One meaning across surfaces (LANG-C-015): a zero field is the
+    // shipped default, `UNLIMITED` (u64::MAX) disables the limit. The core
+    // resolves zeros identically, so the FFI and the library agree.
     engine.budget = active_core::eval::Budget {
-        max_nodes: get(b.max_nodes, shipped.max_nodes),
-        max_depth: get(b.max_depth, shipped.max_depth),
-        max_array_len: get(b.max_array_len, shipped.max_array_len),
-        max_keys: get(b.max_keys, shipped.max_keys),
-        max_wall_ms: get(b.max_wall_ms, shipped.max_wall_ms),
-        max_value_size: get(b.max_value_size, shipped.max_value_size),
-        max_total_value_size: get(b.max_total_value_size, shipped.max_total_value_size),
-    };
+        max_nodes: b.max_nodes,
+        max_depth: b.max_depth,
+        max_array_len: b.max_array_len,
+        max_keys: b.max_keys,
+        max_wall_ms: b.max_wall_ms,
+        max_value_size: b.max_value_size,
+        max_total_value_size: b.max_total_value_size,
+    }
+    .resolve();
     Ok(())
 }
 

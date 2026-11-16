@@ -134,8 +134,8 @@ impl std::fmt::Display for BudgetKind {
 }
 
 /// Runtime resource limits enforced by the evaluator accountant
-/// (spec/budgets.md §2, C-037). Every field `0` means unlimited —
-/// the embedder accepts the risk explicitly.
+/// A zero field means the shipped default, not unlimited. To disable a
+/// limit, use `Budget::unlimited()` explicitly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Budget {
     /// Maximum IR nodes visited (arena-length pre-check).
@@ -174,6 +174,51 @@ impl Default for Budget {
             max_value_size: 10_000_000,
             max_total_value_size: 100_000_000,
         }
+    }
+}
+
+/// Sentry value for `Budget`: a field set to this is explicitly unlimited.
+///
+/// A zero field resolves to the SHIPPED DEFAULT (see `Budget::resolve`), so
+/// disabling a limit requires this value or `Budget::unlimited()`; no one
+/// disables a ceiling with a zeroed struct by accident.
+pub const UNLIMITED: u64 = u64::MAX;
+
+impl Budget {
+    /// Every limit disabled, explicitly. Prefer this to a zeroed struct:
+    /// zeros mean "shipped default" under [`Budget::resolve`].
+    pub fn unlimited() -> Self {
+        Self {
+            max_nodes: UNLIMITED,
+            max_depth: UNLIMITED,
+            max_array_len: UNLIMITED,
+            max_keys: UNLIMITED,
+            max_wall_ms: UNLIMITED,
+            max_value_size: UNLIMITED,
+            max_total_value_size: UNLIMITED,
+        }
+    }
+
+    /// Resolve zero fields to the shipped default (`Budget::default()`), so
+    /// one meaning holds on every surface: a zero field is "use the
+    /// default", never "disable". `UNLIMITED` fields stay unlimited.
+    pub fn resolve(self) -> Self {
+        let shipped = Budget::default();
+        let pick = |v: u64, d: u64| if v == 0 { d } else { v };
+        Self {
+            max_nodes: pick(self.max_nodes, shipped.max_nodes),
+            max_depth: pick(self.max_depth, shipped.max_depth),
+            max_array_len: pick(self.max_array_len, shipped.max_array_len),
+            max_keys: pick(self.max_keys, shipped.max_keys),
+            max_wall_ms: pick(self.max_wall_ms, shipped.max_wall_ms),
+            max_value_size: pick(self.max_value_size, shipped.max_value_size),
+            max_total_value_size: pick(self.max_total_value_size, shipped.max_total_value_size),
+        }
+    }
+
+    /// True when this limit is the explicit unlimited sentinel.
+    pub fn is_unlimited(limit: u64) -> bool {
+        limit == UNLIMITED
     }
 }
 
@@ -1648,10 +1693,14 @@ impl Engine {
         steps: Option<&mut Vec<StepEvent>>,
         mut seeds: Option<&mut SecretRedactor>,
     ) -> Result<(Value, Vec<Diagnostic>), EvalError> {
+        // One meaning for a zero field on every surface (LANG-C-015): zero
+        // resolves to the shipped default; disabling a limit needs
+        // `Budget::unlimited()` (the UNLIMITED sentinel).
+        let budget = self.budget.resolve();
         // The deadline covers everything from here on (spec/budgets.md
         // §2): static scans, cycle check, sort, walk, transforms, and
         // validation share one clock.
-        let deadline = self.budget.wall_deadline();
+        let deadline = budget.wall_deadline();
         crate::trace::record("eval_start", module.arena.len() as u64, &module.diagnostics);
         // Version floors (LANG-B-021): refuse before any work when the
         // host declared its reader version and the document needs a
@@ -1667,7 +1716,7 @@ impl Engine {
             gate.check(module)?;
         }
         // Budgets first: fail fast on monsters before any real work.
-        check_static_budgets(module, &self.budget)?;
+        check_static_budgets(module, &budget)?;
         // `petgraph::is_cyclic_directed` walks the graph recursively and
         // overflows the stack on a long chain (a crafted document with
         // ~950 aliases killed the process). `toposort` is iterative and
@@ -1682,12 +1731,12 @@ impl Engine {
         // The walk needs the cumulative bound and per-node bounds; the
         // depth bound and max node size only feed the progressive warnings
         // (recomputed by `progressive_warnings` on the abort path).
-        let (dp_total, dp_bounds, _dp_max_depth) = check_dp_bounds(module, &order, &self.budget)?;
+        let (dp_total, dp_bounds, _dp_max_depth) = check_dp_bounds(module, &order, &budget)?;
         let mut account = Accountant {
             spent: dp_total,
-            limit: self.budget.max_total_value_size,
+            limit: budget.max_total_value_size,
             deadline,
-            wall_limit: self.budget.max_wall_ms,
+            wall_limit: budget.max_wall_ms,
             bytes_since_sample: 0,
         };
         // Actual materialized sizes for dynamic values (env- and
@@ -1713,7 +1762,7 @@ impl Engine {
             .unwrap_or_else(|| crate::blob::document_salt(module));
         let mut diagnostics = module.diagnostics.clone();
         diagnostics.extend(module.healing.iter().cloned());
-        diagnostics.extend(progressive_warnings(module, &self.budget));
+        diagnostics.extend(progressive_warnings(module, &budget));
         // Wall-clock backstop (spec/budgets.md §2): sampled every 1024
         // nodes so the overhead is unmeasurable. Counts already passed
         // their static and DP checks; only time needs watching mid-walk.
@@ -1785,7 +1834,7 @@ impl Engine {
                         let node_id = module.graph[node_idx];
                         return Err(EvalError::budget_exceeded(
                             BudgetKind::WallClock,
-                            self.budget.max_wall_ms,
+                            budget.max_wall_ms,
                             module,
                             Some(node_id),
                         ));
@@ -2338,8 +2387,8 @@ impl Engine {
         // replace key-wise and cannot deepen). Re-check result depth
         // iteratively when patches ran; the tree is alias-free (every
         // Ref clone materializes), so a plain walk stays linear.
-        if !module.patches.is_empty() && self.budget.max_depth != 0 {
-            check_result_depth(&result, self.budget.max_depth)?;
+        if !module.patches.is_empty() && budget.max_depth != 0 {
+            check_result_depth(&result, budget.max_depth)?;
         }
         // Schema validation runs last: post-evaluation, post-profile,
         // post-patch, pre-export (spec/validation.md §1). Resilient
@@ -2355,7 +2404,7 @@ impl Engine {
             &mut diagnostics,
             BudgetCx {
                 deadline,
-                wall_limit: self.budget.max_wall_ms,
+                wall_limit: budget.max_wall_ms,
                 account: &mut account,
             },
         )?;
@@ -2365,7 +2414,7 @@ impl Engine {
             &result,
             &mut diagnostics,
             deadline,
-            self.budget.max_wall_ms,
+            budget.max_wall_ms,
         )?;
         // Closing wall-clock sample: small documents take zero walk
         // samples, so the deadline is checked once more at the end.
@@ -2373,7 +2422,7 @@ impl Engine {
             if Instant::now() >= end {
                 return Err(EvalError::budget_exceeded(
                     BudgetKind::WallClock,
-                    self.budget.max_wall_ms,
+                    budget.max_wall_ms,
                     module,
                     None,
                 ));

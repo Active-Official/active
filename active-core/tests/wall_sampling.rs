@@ -45,9 +45,9 @@ fn a_few_node_document_trips_x002_mid_walk_on_bytes_not_nodes() {
     let budget = Budget {
         max_wall_ms: 1,
         // Isolate the clock: sizes are unlimited, so only X002 can fire.
-        max_total_value_size: 0,
-        max_value_size: 0,
-        max_nodes: 0,
+        max_total_value_size: active_core::eval::UNLIMITED,
+        max_value_size: active_core::eval::UNLIMITED,
+        max_nodes: active_core::eval::UNLIMITED,
         ..Budget::default()
     };
     let engine = engine_with_budget(budget, env.clone());
@@ -76,11 +76,11 @@ fn a_few_node_document_trips_x002_mid_walk_on_bytes_not_nodes() {
     // disabled evaluates (the document is legal; only time was the issue).
     let quiet = engine_with_budget(
         Budget {
-            max_wall_ms: 0,
+            max_wall_ms: active_core::eval::UNLIMITED,
             // Same lifting as the timed run: this control proves the
             // DOCUMENT is legal, with time as the only bound in play.
-            max_total_value_size: 0,
-            max_value_size: 0,
+            max_total_value_size: active_core::eval::UNLIMITED,
+            max_value_size: active_core::eval::UNLIMITED,
             ..Budget::default()
         },
         env,

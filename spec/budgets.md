@@ -100,8 +100,15 @@ Tuning:
 
 ## 2. The seven runtime limits
 
-`Engine` carries a public `Budget` (all fields `0` means unlimited —
-the embedder accepts the risk explicitly):
+`Engine` carries a public `Budget`. A zero field means the shipped default,
+not unlimited: `Budget::resolve()` replaces zeros with `Budget::default()`'s
+value at every evaluation boundary, so no one disables a ceiling with a
+zeroed struct by accident. Disabling a limit is explicit -
+`Budget::unlimited()` (the `eval::UNLIMITED` sentinel, `u64::MAX`) - and the
+same meaning holds on every surface: the library resolves zeros identically,
+the FFI's `ActiveBudget` treats `0` as the shipped default (a test pins it),
+and the CLI's `--max-*` flags use the default when absent and the sentinel
+when the user passes an explicit `0`:
 
 | Field | Code | Default | Rationale |
 |---|---|---|---|

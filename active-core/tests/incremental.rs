@@ -93,7 +93,7 @@ fn engine_10k() -> Engine {
     // values), so the 10k tests lift it. Node/depth/size budgets
     // stay at their shipped defaults.
     let mut engine = Engine::new();
-    engine.budget.max_wall_ms = 0;
+    engine.budget.max_wall_ms = active_core::eval::UNLIMITED;
     engine
 }
 

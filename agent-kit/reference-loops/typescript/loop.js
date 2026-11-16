@@ -59,15 +59,17 @@ async function run(source, maxIters) {
 				break;
 			}
 			seen.add(key);
-			let value;
-			try {
-				value = mod.evaluate(current);
-			} catch (e) {
+			// The envelope's verdict is still a refusal (ok:false), but a
+			// repair loop needs the engine's best-effort tree to re-emit
+			// and re-check: evaluateResilient returns it without claiming
+			// success. No tree means nothing can be repaired.
+			const repaired = mod.evaluateResilient(current);
+			if (repaired.value === null) {
 				entry.unrepairable = true;
 				break;
 			}
 			entry.repaired_by_resilient = true;
-			current = reemit(value);
+			current = reemit(repaired.value);
 		}
 		throw new Error(
 			`unrepaired after ${log.length} iterations: ${JSON.stringify(log[log.length - 1])}`,

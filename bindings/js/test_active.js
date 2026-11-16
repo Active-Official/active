@@ -46,6 +46,26 @@ const { load } = require("./active.js");
 		);
 	}
 	assert.throws(() => m.evaluate("timeout = 5s + 512MiB\n"), /refused/);
+	// Repair entry point: the verdict stays a refusal (ok:false) while the
+	// engine's best-effort tree and diagnostics remain available, and a
+	// parse failure carries no tree at all.
+	const t003 =
+		"schema = {\n" +
+		'  contact = String(format = "email"),\n' +
+		"}\n" +
+		'contact = "not-an-email"\n';
+	const repaired = m.evaluateResilient(t003);
+	assert.strictEqual(repaired.ok, false);
+	assert.ok(repaired.diagnostics.some((d) => d.code === "T003"));
+	assert.ok(repaired.value !== null && typeof repaired.value === "object");
+	const clean = m.evaluateResilient("port = 8080\n");
+	assert.strictEqual(clean.ok, true);
+	assert.deepStrictEqual(clean.value, { port: 8080 });
+	assert.deepStrictEqual(clean.diagnostics, []);
+	const broken = m.evaluateResilient("[unclosed\n");
+	assert.strictEqual(broken.ok, false);
+	assert.strictEqual(broken.value, null);
+	assert.ok(broken.diagnostics.length > 0);
 	const v = m.evaluate('token = secret("hunter2")\n[out]\npass = token\n');
 	// Parent-scope resolution (spec §2.4) resolves `pass` to the root
 	// secret, so it redacts instead of reading null.

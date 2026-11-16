@@ -87,9 +87,12 @@ def run(source: str, max_iters: int = 5) -> tuple[dict, list[dict]]:
                 entry["stuck"] = True
                 break
             seen.add(tuple(codes))
-            try:
-                value = mod.eval(current)
-            except ActiveError:
+            # The envelope's verdict is still a refusal (ok:false), but a
+            # repair loop needs the engine's best-effort tree to re-emit
+            # and re-check: eval_resilient returns it without claiming
+            # success. No tree means nothing can be repaired.
+            value, _ = mod.eval_resilient(current)
+            if value is None:
                 entry["unrepairable"] = True
                 break
             entry["repaired_by_resilient"] = True

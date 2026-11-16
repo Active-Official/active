@@ -38,6 +38,28 @@ class BindingTest(unittest.TestCase):
         with self.assertRaises(ActiveError):
             self.mod.eval("timeout = 5s + 512MiB\n")
 
+    def test_eval_resilient_carries_the_tree_without_claiming_success(self) -> None:
+        # The repair entry point keeps the verdict honest (eval still
+        # refuses) while handing a repair loop the engine's best-effort
+        # tree plus diagnostics. A parse failure has no tree at all.
+        t003 = (
+            "schema = {\n"
+            '  contact = String(format = "email"),\n'
+            "}\n"
+            'contact = "not-an-email"\n'
+        )
+        value, diags = self.mod.eval_resilient(t003)
+        self.assertIsInstance(value, dict)
+        self.assertTrue(any(d.code == "T003" for d in diags))
+        with self.assertRaises(ActiveError):
+            self.mod.eval(t003)
+        clean_value, clean_diags = self.mod.eval_resilient("port = 8080\n")
+        self.assertEqual(clean_value, {"port": 8080})
+        self.assertEqual(clean_diags, [])
+        broken_value, broken_diags = self.mod.eval_resilient("[unclosed\n")
+        self.assertIsNone(broken_value)
+        self.assertTrue(broken_diags)
+
     def test_check_carries_structured_spans(self) -> None:
         diags = self.mod.check("timeout = 5s + 512MiB\n")
         self.assertEqual(len(diags), 1)

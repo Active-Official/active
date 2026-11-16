@@ -17,15 +17,22 @@ const { load } = require("./bindings/js/active.js");
 const m = await load();                 // or load(pathToWasm)
 m.check(source);                        // [{code, message}], [] when clean
 m.evaluate(source);                     // redacted object, throws on refusal
+m.evaluateResilient(source);            // {ok, value, diagnostics}: repair path
 m.close();
 ```
+
+`evaluateResilient` is the repair-loop entry point: `ok` stays the verdict
+(a refusal is still a refusal), while `value` carries the engine's
+best-effort tree for re-emit and re-check, and is `null` when the engine
+produced no tree (a parse failure).
 
 ## Tests
 
 `test_active.js` drives the shipped module: eval value, clean check,
 units refusal with T001, structured spans plus severity on diagnostics,
 `validate`/`check` agreement (codes, spans, severity, message), secret
-redaction with no raw leak, determinism.
+redaction with no raw leak, determinism, and the repair entry point
+(verdict plus tree, `null` on a parse failure).
 Run from the repo root: `node bindings/js/test_active.js` (prints `js-ok`).
 
 Type shape is gated by `tsc --noEmit` against the committed config

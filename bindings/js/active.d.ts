@@ -36,6 +36,16 @@ export declare class Module {
 	validate(source: string): Diagnostic[];
 	/** Evaluate and return the redacted JSON value. Throws on refusal. */
 	evaluate(source: string): unknown;
+	/**
+	 * Repair-path evaluation: the engine's best-effort tree plus diagnostics.
+	 * `ok` stays the verdict (an error-severity diagnostic is still a
+	 * refusal); `value` is null when the engine produced no object tree.
+	 */
+	evaluateResilient(source: string): {
+		ok: boolean;
+		value: unknown | null;
+		diagnostics: Diagnostic[];
+	};
 	/** Release the module. Using it afterwards throws. */
 	close(): void;
 }

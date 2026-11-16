@@ -21,11 +21,18 @@ from active import Module
 with Module() as m:                      # or Module(path_to_wasm)
     diags = m.check(source)              # [Diagnostic(code, message)]
     value = m.eval(source)               # redacted dict, raises on refusal
+    value, diags = m.eval_resilient(src) # repair path: tree + diagnostics
 ```
 
 `Module` instances are confined to the creating thread. `check` returns
 `[]` when clean. `eval` raises `ActiveError` on refusal with the
 diagnostics text. Secrets always render `***SECRET***`.
+
+`eval_resilient` is the repair-loop entry point: the verdict stays a
+refusal (and `eval` still raises), but it returns the engine's
+best-effort tree alongside the diagnostics so a loop can re-emit and
+re-check. A `None` tree means the engine produced none (a parse
+failure), which is unrepairable.
 
 ## Tests
 
@@ -33,7 +40,8 @@ diagnostics text. Secrets always render `***SECRET***`.
 refusal with stable code T001, secret redaction with no raw leak (including
 refusal paths), closed-module fail-closed behavior on every entry point,
 double-eval determinism, structured spans on diagnostics, `validate`/`check`
-agreement, and `.pyi` stub fidelity to the runtime API (9 tests green).
+agreement, the repair entry point (tree plus diagnostics, `None` on a parse
+failure), and `.pyi` stub fidelity to the runtime API (11 tests green).
 Run from the repo root:
 
 ```bash

@@ -226,7 +226,11 @@ class Module:
         an envelope without items is a version-skewed module, never a
         clean bill — returning [] here would be a false clean.
         """
-        env = self._call_eval(source)
+        return self._diagnostics(self._call_eval(source))
+
+    def _diagnostics(self, env: dict) -> list[Diagnostic]:
+        """Structured diagnostics from one envelope (shared by check and
+        the repair entry point)."""
         if not isinstance(env.get("items"), list):
             raise ActiveError("envelope without items: rebuild active_wasm.wasm")
         text = env.get("diagnostics", "") or ""
@@ -288,3 +292,20 @@ class Module:
         if not isinstance(value, dict):
             raise ActiveError("envelope ok without a JSON object value")
         return value
+
+    def eval_resilient(self, source: str) -> tuple[dict | None, list[Diagnostic]]:
+        """Repair-path evaluation: the best-effort tree plus diagnostics.
+
+        The envelope's ``ok`` flag stays the verdict: an error-severity
+        diagnostic still means refusal, and this entry never reports
+        success. Repair loops need the engine's tree anyway to re-emit and
+        re-check it, so this returns ``(value, diagnostics)`` even when the
+        verdict is a refusal. ``value`` is ``None`` when the engine produced
+        no object tree at all (a parse failure), which callers treat as
+        unrepairable.
+        """
+        env = self._call_eval(source)
+        value = env.get("json")
+        if not isinstance(value, dict):
+            value = None
+        return value, self._diagnostics(env)

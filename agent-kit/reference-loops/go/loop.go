@@ -162,6 +162,25 @@ func codesOf(diag string) []string {
 	return out
 }
 
+// treeOf reports whether the envelope's json field carries a document tree.
+// The module encodes "no tree" as an empty string (parse failures) and a
+// real tree as an object, so decoding is required: comparing raw bytes
+// would treat the quoted empty string as a payload and "repair" a parse
+// failure into a clean-but-empty document.
+func treeOf(raw json.RawMessage) (json.RawMessage, bool) {
+	if len(raw) == 0 {
+		return nil, false
+	}
+	var probe any
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return nil, false
+	}
+	if _, ok := probe.(map[string]any); !ok {
+		return nil, false
+	}
+	return raw, true
+}
+
 func repoRoot() string {
 	// loop.go lives at agent-kit/reference-loops/go/ in the repo.
 	abs, _ := filepath.Abs(".")
@@ -249,29 +268,26 @@ func main() {
 		if err != nil {
 			fail(err)
 		}
-		// Canonical policy, same as the Python/TypeScript loops:
-		// the envelope's ok flag is the refusal signal (the bindings
-		// raise exactly when ok is false). Diagnostics decide the
-		// repair path: a present value with codes re-emits and
-		// converges; only ok==false is unrepairable. Judging by JSON
-		// presence instead over-repairs parse failures, whose error
-		// envelopes may carry a partial payload.
+		// Canonical policy, same as the Python/TypeScript loops: the
+		// envelope's ok flag is the verdict (an error-severity diagnostic
+		// is a refusal), while the repair path consumes the engine's
+		// best-effort JSON tree without claiming success. A refusal with
+		// no tree is unrepairable; one with codes and a tree re-emits and
+		// re-checks. Judging repair by ok alone would strand every
+		// diagnosable document; judging the final verdict by JSON alone
+		// would accept a refused parse payload.
 		codes := codesOf(env.Diagnostics)
 		e := entry{Iter: i, Codes: codes}
 		key := strings.Join(codes, ",")
-		if !env.OK {
-			e.Unrepairable = true
-			log = append(log, e)
-			fail(fmt.Errorf("unrepairable: %v", codes))
-		}
+		tree, hasValue := treeOf(env.JSON)
 		if len(codes) == 0 {
-			if len(env.JSON) == 0 || string(env.JSON) == "null" {
+			if !env.OK || !hasValue {
 				e.Unrepairable = true
 				log = append(log, e)
-				fail(fmt.Errorf("clean codes but no value"))
+				fail(fmt.Errorf("clean codes but no accepted value (ok=%v)", env.OK))
 			}
 			log = append(log, e)
-			out, _ := json.Marshal(map[string]any{"value": json.RawMessage(env.JSON), "log": log})
+			out, _ := json.Marshal(map[string]any{"value": json.RawMessage(tree), "log": log})
 			fmt.Println(string(out))
 			return
 		}
@@ -281,9 +297,14 @@ func main() {
 			fail(fmt.Errorf("stuck on codes %v", codes))
 		}
 		seen[key] = true
+		if !hasValue {
+			e.Unrepairable = true
+			log = append(log, e)
+			fail(fmt.Errorf("unrepairable: no value (ok=%v, codes %v)", env.OK, codes))
+		}
 		e.Repaired = true
 		log = append(log, e)
-		next, err := reemit(env.JSON)
+		next, err := reemit(tree)
 		if err != nil {
 			fail(err)
 		}

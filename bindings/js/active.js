@@ -84,7 +84,10 @@ class Module {
 
 	check(source) {
 		this._guard();
-		const env = this._api.evaluate(source);
+		return this._diagnostics(this._api.evaluate(source));
+	}
+
+	_diagnostics(env) {
 		if (!env || typeof env !== "object") {
 			throw new Error("envelope is not an object: rebuild active_wasm.wasm");
 		}
@@ -157,6 +160,42 @@ class Module {
 			throw new Error("refused: envelope without a JSON object value");
 		}
 		return JSON.parse(JSON.stringify(value));
+	}
+
+	evaluateResilient(source) {
+		// Repair-path entry point: `ok` stays the verdict (an error-severity
+		// diagnostic is still a refusal and this never reports success), but
+		// repair loops need the engine's best-effort tree to re-emit and
+		// re-check. Returns { ok, value, diagnostics }; value is null when
+		// the engine produced no object tree (a parse failure).
+		this._guard();
+		const env = this._api.evaluate(source);
+		const diagnostics = this._diagnostics(env);
+		let value = env.json;
+		if (typeof value === "string") {
+			try {
+				value = JSON.parse(value);
+			} catch (e) {
+				value = null;
+			}
+		}
+		// The engine's root is always a table or absent. An absent tree
+		// arrives as null/undefined or an empty serialized string; any
+		// other non-object shape is not a document, so it means "no tree"
+		// rather than a value to re-emit.
+		if (
+			value === undefined ||
+			value === null ||
+			typeof value !== "object" ||
+			Array.isArray(value)
+		) {
+			value = null;
+		}
+		return {
+			ok: env.ok === true,
+			value: value === null ? null : JSON.parse(JSON.stringify(value)),
+			diagnostics,
+		};
 	}
 }
 

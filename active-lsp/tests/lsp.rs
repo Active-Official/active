@@ -930,7 +930,7 @@ fn include_diagnostics_publish_under_their_own_file() {
 }
 
 #[test]
-fn buffer_matching_tolerates_uri_case_differences() {
+fn buffer_matching_follows_filesystem_identity() {
     use std::collections::HashMap;
     let (uri, path) = temp_fixture("lspcase.active", "port = 1\n");
     let doc = analysis::open_doc(uri.clone(), "port = 1\n".to_string(), 7, None);
@@ -940,17 +940,24 @@ fn buffer_matching_tolerates_uri_case_differences() {
         analysis::lookup_text(&open, &path),
         Some("port = 1\n".to_string())
     );
-    // Canonical stamps (Windows case/short-names) may differ
-    // textually from the client's URI: the live buffer still wins
-    // over disk, for both text and version.
+    // A case-shifted spelling identifies the same buffer only where the
+    // filesystem says it is the same file (LANG-H-005). On Linux the
+    // shifted path does not exist, so it must not borrow the buffer; on a
+    // case-insensitive filesystem canonicalization resolves both to one
+    // path and the live buffer wins over disk.
     let shifted = path.to_uppercase();
     if shifted != path {
+        let same_file = std::fs::canonicalize(&path).ok() == std::fs::canonicalize(&shifted).ok();
         assert_eq!(
-            analysis::lookup_text(&open, &shifted),
-            Some("port = 1\n".to_string())
+            analysis::lookup_text(&open, &shifted).is_some(),
+            same_file,
+            "case-shifted lookup must follow filesystem identity"
         );
         let uri_shifted = lsp_types::Url::from_file_path(&shifted).expect("uri");
-        assert_eq!(analysis::open_version(&open, &uri_shifted), Some(7));
+        assert_eq!(
+            analysis::open_version(&open, &uri_shifted).is_some(),
+            same_file
+        );
     }
     // Unknown files have no version (never another file's).
     let unknown = lsp_types::Url::parse("untitled:nowhere").expect("uri");

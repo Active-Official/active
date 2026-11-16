@@ -1158,7 +1158,25 @@ fn rb_063_no_unsafe_blocks_in_workspace() {
                                 || tail.starts_with("extern")
                                 || tail.starts_with("mod")
                             {
-                                hits.push(format!("{}:{}: {}", path.display(), i + 1, line.trim()));
+                                // LANG-H-007 exception: this one reviewed
+                                // block restores the default SIGPIPE
+                                // disposition at CLI startup. Rust has no
+                                // safe wrapper for `signal` without a new
+                                // dependency, and the block only calls it.
+                                let sigpipe_exception = path
+                                    .ends_with(std::path::Path::new("active-cli/src/main.rs"))
+                                    && (line.contains("libc::signal(libc::SIGPIPE")
+                                        || text.lines().nth(i + 1).is_some_and(|next| {
+                                            next.contains("libc::signal(libc::SIGPIPE")
+                                        }));
+                                if !sigpipe_exception {
+                                    hits.push(format!(
+                                        "{}:{}: {}",
+                                        path.display(),
+                                        i + 1,
+                                        line.trim()
+                                    ));
+                                }
                                 break;
                             }
                             rest = &rest[pos + 6..];

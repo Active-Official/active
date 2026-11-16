@@ -459,16 +459,12 @@ fn memo_debug_reports_shape_not_content() {
 }
 
 #[test]
-fn store_clear_fires_and_recovers_under_version_churn() {
-    // The memo is capped at `max(1024, 4 × arena nodes)` entries
-    // and cleared past the cap, so a long edit history cannot grow
-    // it without bound. Clearing is behaviorally observable: a
-    // version evaluated twice in a row normally hits everything
-    // the second time — unless the first call tripped the cap and
-    // wiped the store, in which case the repeat recomputes it all.
-    // Churn guarantees the trip (30 fully-novel versions dwarf any
-    // cap a 600-key document yields); values stay exact throughout
-    // and the store works normally afterwards.
+fn store_eviction_keeps_a_working_set_under_version_churn() {
+    // LANG-K-006: the memo is capped at `max(1024, 4 x arena nodes)`
+    // entries. Past the cap it drops about half instead of clearing, so a
+    // long edit history cannot grow it without bound while a repeat call
+    // still finds most of its fingerprints. Churn guarantees the trip;
+    // values stay exact throughout.
     fn version(v: i64) -> String {
         (0..600)
             .map(|k| format!("k{k} = {}\n", v * 1000 + k as i64))
@@ -476,7 +472,8 @@ fn store_clear_fires_and_recovers_under_version_churn() {
     }
     let engine = Engine::new();
     let mut memo = IncrementalMemo::default();
-    let mut tripped = None;
+    let mut evicted = None;
+    let mut previous_len = 0usize;
     for v in 0..30 {
         let src = version(v);
         let module = parse(&src, "incremental").expect("must parse");
@@ -493,24 +490,51 @@ fn store_clear_fires_and_recovers_under_version_churn() {
             ),
             other => panic!("table expected: {other:?}"),
         }
+        // The cap is applied at the end of the call, so a shrink between
+        // versions is the eviction.
+        let len_after_first = memo.len();
+        let dropped = len_after_first < previous_len;
+        previous_len = len_after_first;
         let (second, _) = engine
             .evaluate_incremental(&module, &mut memo)
             .expect("must evaluate");
         assert_eq!(json(&second), json(&first), "repeat diverged at v{v}");
-        if memo.last_eval_count * 2 > full_count {
-            tripped = Some(v);
+        if dropped {
+            // Partial eviction: the repeat recomputes the evicted half,
+            // never everything and never nothing.
+            assert!(
+                memo.last_eval_count > 0,
+                "partial eviction must miss some fingerprints at v{v}"
+            );
+            assert!(
+                memo.last_eval_count < full_count,
+                "partial eviction must keep some fingerprints at v{v}"
+            );
+            evicted = Some(v);
             break;
         }
-        assert_eq!(memo.last_eval_count, 0, "no clear yet at v{v}");
+        assert_eq!(memo.last_eval_count, 0, "no eviction yet at v{v}");
     }
-    let v = tripped.expect("cap must trip within 30 novel versions");
-    // Recovery: the repeat above repopulated the store, so one more
-    // identical call serves everything from the memo again.
+    let v = evicted.expect("the cap must trip within 30 novel versions");
+    // The store still answers correctly and stays within the cap.
     let module = parse(&version(v), "incremental").expect("must parse");
-    engine
+    let (value, _) = engine
         .evaluate_incremental(&module, &mut memo)
         .expect("must evaluate");
-    assert_eq!(memo.last_eval_count, 0, "store broken after clear");
+    match &value {
+        Value::Table(map) => assert_eq!(
+            int(map.get("k0").expect("k0 present")),
+            v * 1000,
+            "values stay exact after eviction"
+        ),
+        other => panic!("table expected: {other:?}"),
+    }
+    let cap = module.arena.len().saturating_mul(4).max(1024);
+    assert!(
+        memo.len() <= cap,
+        "{} entries past the cap {cap}",
+        memo.len()
+    );
 }
 
 #[test]

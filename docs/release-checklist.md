@@ -14,7 +14,9 @@ Every `v*` tag run must produce, in order:
    dependency order with index-lag pauses (active-core first: active-core ->
    active -> active-fmt -> active-lsp -> active-cli -> active-ffi ->
    active-wasm). There is no active-infinity publish from this repo - that
-   name belongs to the standalone Infinity codec.
+   name belongs to the standalone Infinity codec. The verified triple is
+   recorded in docs/interop-pairing.md and re-verified on every active-core
+   minor bump.
 6. Changelog entry that says what changed and why it matters for users,
    not only what changed.
 

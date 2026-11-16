@@ -67,6 +67,16 @@ framing is where a hostile peer does damage before any analysis runs:
   still exceeds 1 s publishes a warning `window/showMessage` naming the
   method and elapsed time, so a pathological document is visible instead of
   presenting as a frozen editor.
+- **Large-document notice.** Opening a buffer over 256 KiB publishes an
+  info `window/showMessage` ("analysing '<uri>' (<n> KiB)") BEFORE the
+  analysis blocks the loop, so the editor shows activity during the first
+  publish on a generated document (LANG-G-006). Analysis stays on the
+  request path and is bounded by the parse budget (E029) and the evaluator
+  X-rules; the notice removes the silence, not the work. Measured on the
+  reference machine: a 1.8 MB flat document first-published in 3.75 s on an
+  unoptimized build after the parse bound landed, against 25.71 s before it;
+  timing is build-, machine-, and load-dependent, so quote it with those
+  caveats.
 
 ## 2. Hover (C-043)
 

@@ -2443,6 +2443,10 @@ fn a_slow_analysis_is_reported_on_the_visible_channel() {
             }
         }),
     );
+    // LANG-G-006 adds an info notice before the analysis starts; the
+    // latency report follows it.
+    let info = server.recv_notification("window/showMessage");
+    assert_eq!(info["params"]["type"], 3, "info notice first: {info}");
     let notice = server.recv_notification("window/showMessage");
     assert_eq!(notice["params"]["type"], 2, "warning severity: {notice}");
     let message = notice["params"]["message"].as_str().expect("message");
@@ -2581,4 +2585,63 @@ fn extract_let_requires_a_complete_value_expression() {
         !actions.iter().any(|a| a.title.contains("Extract")),
         "a key name is not a value: {actions:?}"
     );
+}
+
+#[test]
+fn a_large_document_announces_analysis_and_stays_bounded() {
+    // LANG-G-006: a 1.8 MB / 120k-key document first-published after
+    // seconds with no feedback. Analysis is bounded by the parse budget
+    // (LANG-C-003) and the evaluator's X-rules; the server now says it is
+    // working before it blocks, and this test pins both halves.
+    //
+    // Timing caveat: this runs on a DEBUG build on a shared CI machine.
+    // The bound below is deliberately loose (it proves the work is bounded,
+    // not that it is fast); the measured first-publish on the reference
+    // machine was 3.75 s for 1.8 MB in debug, versus 25.71 s before the
+    // parse bound landed. Never quote a single number without these.
+    let mut text = String::new();
+    let mut i = 0usize;
+    while text.len() < 1_800_000 {
+        text.push_str(&format!("k{i} = {i}\n"));
+        i += 1;
+    }
+    let mut server = Framed::spawn();
+    server.request(
+        "initialize",
+        serde_json::json!({"processId": null, "capabilities": {}}),
+    );
+    server.notify("initialized", serde_json::json!({}));
+
+    let uri = lsp_types::Url::parse("file:///lsp-large.active").expect("uri");
+    let started = std::time::Instant::now();
+    server.notify(
+        "textDocument/didOpen",
+        serde_json::json!({
+            "textDocument": {
+                "uri": uri,
+                "languageId": "active",
+                "version": 1,
+                "text": text,
+            }
+        }),
+    );
+    // The notice arrives BEFORE the analysis blocks the loop.
+    let notice = server.recv_notification("window/showMessage");
+    assert_eq!(notice["params"]["type"], 3, "info severity: {notice}");
+    let message = notice["params"]["message"].as_str().expect("message");
+    assert!(message.contains("analysing"), "{message}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "the notice must not wait for the analysis"
+    );
+    // Diagnostics follow for the same document (or a budget notice), so the
+    // editor ends in a published state.
+    let diagnostics = server.recv_notification("textDocument/publishDiagnostics");
+    assert_eq!(diagnostics["params"]["uri"], serde_json::json!(uri));
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(30),
+        "a bounded analysis completes; took {:?}",
+        started.elapsed()
+    );
+    server.shutdown();
 }

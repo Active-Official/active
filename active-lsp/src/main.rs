@@ -581,6 +581,14 @@ fn withdraw(
 /// (1 = Error, 2 = Warning, 3 = Info).
 const MESSAGE_TYPE_ERROR: u8 = 1;
 const MESSAGE_TYPE_WARNING: u8 = 2;
+const MESSAGE_TYPE_INFO: u8 = 3;
+
+/// Above this size a first analysis is slow enough to be visible, so the
+/// server says it is working before it blocks on the parse (LANG-G-006:
+/// a 1.8 MB flat document first-published after seconds with no feedback).
+/// Analysis stays on the request path and is bounded by the parse budget
+/// (E029) and the evaluator's X-rules; this only removes the silence.
+const LARGE_DOCUMENT_BYTES: usize = 256 * 1024;
 
 /// A client-visible notice (`window/showMessage`): the transport must not
 /// fail silently when it refuses a document.
@@ -644,13 +652,26 @@ fn handle_notification(
                         ),
                     )];
                 }
+                let mut notice = Vec::new();
+                if params.text_document.text.len() > LARGE_DOCUMENT_BYTES {
+                    notice.push(show_message(
+                        MESSAGE_TYPE_INFO,
+                        format!(
+                            "active: analysing '{}' ({} KiB); large documents take a moment and \
+                             are bounded by the parse budget",
+                            key,
+                            params.text_document.text.len() / 1024
+                        ),
+                    ));
+                }
                 let doc = analysis::open_doc(
                     params.text_document.uri.clone(),
                     params.text_document.text,
                     params.text_document.version,
                     None,
                 );
-                let mut outgoing = publish_all(open, published, &key, &doc, Some(version));
+                let mut outgoing = notice;
+                outgoing.extend(publish_all(open, published, &key, &doc, Some(version)));
                 outgoing.extend(remember(open, published, lru, key, doc));
                 return outgoing;
             }

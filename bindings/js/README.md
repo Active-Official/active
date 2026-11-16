@@ -34,6 +34,12 @@ units refusal with T001, structured spans plus severity on diagnostics,
 redaction with no raw leak, determinism, and the repair entry point
 (verdict plus tree, `null` on a parse failure).
 Run from the repo root: `node bindings/js/test_active.js` (prints `js-ok`).
+The release-path phase exercises a locally built
+`target/wasm32-unknown-unknown/release/active_wasm.wasm`; build it with
+`cargo build --release --target wasm32-unknown-unknown -p active-wasm` to
+run that phase. Without the artifact the test prints
+`js-note: release wasm not built, skipping release-path phase` and still
+prints `js-ok` - the note records that the phase did not run.
 
 Type shape is gated by `tsc --noEmit` against the committed config
 (`bindings/js/tsconfig.json`, which typechecks `active.d.ts` plus the

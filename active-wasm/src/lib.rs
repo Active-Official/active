@@ -61,10 +61,23 @@ fn release(ptr: *mut u8) -> bool {
     LIVE.with(|live| live.borrow_mut().remove(&(ptr as usize)).is_some())
 }
 
+/// Largest single allocation the transport accepts (LANG-C-018): 64 MiB,
+/// four times the default parse input cap and far above any legitimate
+/// source buffer. `active_alloc(size)` is capped at 67108864 bytes; larger
+/// requests return null instead of allocating.
+pub const MAX_ALLOC_BYTES: usize = 64 * 1024 * 1024;
+
 /// Allocate `size` bytes of linear memory for the host to fill. Free with
 /// `active_free` using the same pointer (size rechecked, registry rules).
+///
+/// `active_alloc(size)` is capped at 67108864 bytes (64 MiB); larger
+/// requests return null instead of allocating, so a bad length cannot abort
+/// the instance.
 #[no_mangle]
 pub extern "C" fn active_alloc(size: usize) -> *mut u8 {
+    if size > MAX_ALLOC_BYTES {
+        return std::ptr::null_mut();
+    }
     let (ptr, _) = retain(vec![0u8; size]);
     ptr
 }
@@ -412,6 +425,15 @@ mod tests {
     /// LANG-C-012: the envelope reports whether this build enforces a wall
     /// clock, on success and failure alike, so a host can detect the
     /// degradation instead of discovering it under load.
+    /// LANG-C-018: a request over the cap returns null instead of trying
+    /// the allocation (which would abort the instance).
+    #[test]
+    fn an_absurd_allocation_returns_null_instead_of_aborting() {
+        assert!(!active_alloc(64).is_null());
+        assert!(active_alloc(MAX_ALLOC_BYTES + 1).is_null());
+        assert!(active_alloc(usize::MAX).is_null());
+    }
+
     #[test]
     fn envelopes_report_the_wall_clock_capability() {
         let expected = active_core::Budget::wall_supported();

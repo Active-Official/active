@@ -38,3 +38,6 @@ depth, array, key, and value-size budgets still bound execution, and regex
 matching is linear-time). Hosts must not promise in-module wall-clock
 enforcement: run evaluation in a Worker and terminate on timeout. Never
 `await` an unbounded eval on the UI thread.
+
+`active_alloc(size)` is capped at 67108864 bytes (64 MiB); larger requests return null instead of allocating.
+

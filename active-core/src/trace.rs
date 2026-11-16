@@ -18,6 +18,12 @@ pub struct TraceEvent {
     pub codes: Vec<String>,
 }
 
+/// Bound on buffered events per thread (LANG-C-017). A host that enables
+/// tracing and never drains it must not grow memory without limit, so the
+/// buffer drops OLDEST events once full; draining is a performance hint,
+/// not a memory-correctness requirement.
+pub const MAX_TRACE_EVENTS: usize = 4096;
+
 thread_local! {
     static ENABLED: Cell<bool> = const { Cell::new(false) };
     static EVENTS: RefCell<Vec<TraceEvent>> = const { RefCell::new(Vec::new()) };
@@ -45,12 +51,20 @@ pub(crate) fn record(phase: &'static str, nodes: u64, diags: &[Diagnostic]) {
     codes.sort();
     codes.dedup();
     EVENTS.with(|v| {
-        v.borrow_mut().push(TraceEvent {
+        let mut buffer = v.borrow_mut();
+        if buffer.len() >= MAX_TRACE_EVENTS {
+            // Drop-oldest in one move: a quarter of the buffer goes at
+            // once, so an undrained host pays O(1) amortized per event
+            // instead of a memmove per push.
+            let drop = buffer.len() / 4 + 1;
+            buffer.drain(0..drop);
+        }
+        buffer.push(TraceEvent {
             phase,
             nodes,
             diags: diags.len() as u64,
             codes,
-        })
+        });
     });
 }
 

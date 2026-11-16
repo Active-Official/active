@@ -75,10 +75,18 @@ struct ActiveCallback {
 }
 
 /// Host callback type for include and env lookup (F-016).
-pub type ActiveLookupFn = unsafe extern "C" fn(
-    *const std::os::raw::c_char,
-    *mut std::ffi::c_void,
-) -> *mut std::os::raw::c_char;
+///
+/// `Option<extern fn>` is a nullable function pointer in the C ABI, and it
+/// is the alias itself rather than a wrapper so cbindgen emits a callable
+/// `typedef` - a bare `extern fn` alias made the generator write an opaque
+/// struct, which left both setters uncallable from C (LANG-G-001). `NULL`
+/// now expresses "unregister".
+pub type ActiveLookupFn = Option<
+    unsafe extern "C" fn(
+        *const std::os::raw::c_char,
+        *mut std::ffi::c_void,
+    ) -> *mut std::os::raw::c_char,
+>;
 
 /// Process-wide parse input cap override (LANG-C-003). `0` keeps the
 /// library default (4 MiB). Atomics because the C ABI is callable from
@@ -180,7 +188,7 @@ fn parse_record_mode(text: &str) -> Result<(), Vec<active_core::Diagnostic>> {
 /// be malloc-allocated (the core copies then frees with `free`).
 pub unsafe extern "C" fn active_set_include_loader(
     module: *mut ActiveModule,
-    cb: Option<ActiveLookupFn>,
+    cb: ActiveLookupFn,
     userdata: *mut std::ffi::c_void,
 ) {
     guard((), || {
@@ -207,7 +215,7 @@ pub unsafe extern "C" fn active_set_include_loader(
 /// malloc-allocated return buffers.
 pub unsafe extern "C" fn active_set_env_lookup(
     module: *mut ActiveModule,
-    cb: Option<ActiveLookupFn>,
+    cb: ActiveLookupFn,
     userdata: *mut std::ffi::c_void,
 ) {
     guard((), || {

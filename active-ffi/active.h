@@ -67,7 +67,16 @@ typedef struct ActiveModule ActiveModule;
  */
 typedef struct ActiveValue ActiveValue;
 
-typedef struct Option_ActiveLookupFn Option_ActiveLookupFn;
+/**
+ * Host callback type for include and env lookup (F-016).
+ *
+ * `Option<extern fn>` is a nullable function pointer in the C ABI, and it
+ * is the alias itself rather than a wrapper so cbindgen emits a callable
+ * `typedef` - a bare `extern fn` alias made the generator write an opaque
+ * struct, which left both setters uncallable from C (LANG-G-001). `NULL`
+ * now expresses "unregister".
+ */
+typedef char *(*ActiveLookupFn)(const char*, void*);
 
 /**
  * C layout of the budget struct (docs/FFI.md section 4). Field zero is
@@ -131,9 +140,7 @@ int32_t active_last_error(void);
  * evaluation on the same module. Buffers the callback returns must
  * be malloc-allocated (the core copies then frees with `free`).
  */
-void active_set_include_loader(struct ActiveModule *module,
-                               struct Option_ActiveLookupFn cb,
-                               void *userdata);
+void active_set_include_loader(struct ActiveModule *module, ActiveLookupFn cb, void *userdata);
 
 /**
  * Register the host env lookup on a live handle (F-016). Semantics mirror
@@ -145,9 +152,7 @@ void active_set_include_loader(struct ActiveModule *module,
  * calling thread, outliving callback and userdata, no re-entrancy,
  * malloc-allocated return buffers.
  */
-void active_set_env_lookup(struct ActiveModule *module,
-                           struct Option_ActiveLookupFn cb,
-                           void *userdata);
+void active_set_env_lookup(struct ActiveModule *module, ActiveLookupFn cb, void *userdata);
 
 /**
  * Parse UTF-8 source bytes into an owned module handle (null on error;

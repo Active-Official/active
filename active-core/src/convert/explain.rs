@@ -34,6 +34,7 @@ pub fn explain_code(code: &str) -> &'static str {
         "E023" => "Integer out of range: positive literals saturate at i64::MAX, and negating the minimum yields MIN+1. Use a smaller magnitude or a different unit.",
         "E024" => "Bad mode marker: active_mode must be the string \"data\" or \"config\". Fix the spelling; Data Mode is explicit opt-in, Config is the default when the marker is absent.",
         "E025" => "Bad capabilities declaration: active_capabilities must be an array of strings naming tools the host offers. Fix the shapes; unknown names are refused at handshake time, not here.",
+        "E035" => "Taint claim mismatch: `envelope.tainted` disagrees with the evaluated payload. A sender may not mislabel taint in either direction; make the claim match the payload (or remove it).",
         "E033" => "Envelope version refused: the Data Mode envelope's version is missing, is not a major.minor.patch string, or names a major this receiver does not implement. Send a version this receiver supports; never rewrite the receiver's gate to accept a foreign major.",
         "E034" => "Capability refused: the document declares a capability this receiver does not offer. Request only capabilities the receiver advertises, or widen the receiver's offered set deliberately (EnvelopeGate::with_tools).",
         "E032" => "Signature or trust failure: the sidecar is missing, mismatched, or untrusted. Verify against the trust file for the recorded key id; never bypass verification to make it pass.",
@@ -47,6 +48,7 @@ pub fn explain_code(code: &str) -> &'static str {
         "T004" => "Missing required key: add the named key. When the message names a trigger (`required by present`), the key is conditional on that trigger — set it or unset the trigger, but do not remove the requires rule.",
         "T005" => "Unexpected key in a closed table: remove the key, move it to the table it belongs to, or follow the did-you-mean suggestion (`@rename`). Opening the table trades a typo guard for silence.",
 
+        "T008" => "Removed field still present: the schema scheduled it for removal at or before the document's schema version. Delete the field, or bump the schema version past the schedule only after removing it.",
         "T007" => "Reader version floor: the document declares a min_reader above the version this host declared. Upgrade the reader, or evaluate without declaring a version (the floors are advisory then).",
         "W004" => "Patch target warning: a @remove/@rename names a path that does not exist. Nothing was changed; check the path spelling.",
         "W005" => "Resilient default fill (informational): the engine inserted a schema default for a missing key. Harmless in resilient mode; strict mode requires the key written out.",

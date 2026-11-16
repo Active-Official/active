@@ -1,0 +1,4 @@
+active_mode = "data"
+envelope = { version = "1.0.0", tainted = false }
+token = secret("taint-mismatch-probe")
+payload = token

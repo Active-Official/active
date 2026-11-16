@@ -4179,13 +4179,24 @@ fn deep_expression_nesting_fails_with_e004_instead_of_overflowing() {
 
 #[test]
 fn reader_version_flag_enforces_the_floor() {
-    // LANG-B-021: declaring the host's reader version turns the schema's
-    // min_reader floor into a hard T007 refusal; omitting the flag keeps
-    // the documented advisory behaviour.
+    // LANG-F-006 (extends LANG-B-021): `min_reader` is enforced at read time.
+    // The running library is the default reader, so a floor above it is a
+    // hard T007 refusal even without a flag; `--reader-version` lets a host
+    // declare its own reader version instead.
     let src = "schema = { min_reader = \"9.9.9\", host = String }\nhost = \"x\"\n";
     let f = fixture("reader_floor.active", src);
-    let advisory = active().arg("eval").arg(&f).output().expect("run");
-    assert!(advisory.status.success(), "advisory evaluates");
+    let default_reader = active().arg("eval").arg(&f).output().expect("run");
+    let body = format!(
+        "{}{}",
+        String::from_utf8_lossy(&default_reader.stdout),
+        String::from_utf8_lossy(&default_reader.stderr)
+    );
+    assert!(
+        !default_reader.status.success(),
+        "the running reader (1.4.0) is below 9.9.9: {body}"
+    );
+    assert!(body.contains("T007"), "{body}");
+    assert!(body.contains("requires reader 9.9.9"), "{body}");
 
     let refused = active()
         .arg("eval")
@@ -4211,6 +4222,17 @@ fn reader_version_flag_enforces_the_floor() {
         .output()
         .expect("run");
     assert!(ok.status.success(), "equal reader evaluates");
+
+    // A floor at or below the default reader passes with no flag at all.
+    let low = "schema = { min_reader = \"1.0.0\", host = String }\nhost = \"x\"\n";
+    let f = fixture("reader_floor_low.active", low);
+    let ok = active().arg("eval").arg(&f).output().expect("run");
+    let body = format!(
+        "{}{}",
+        String::from_utf8_lossy(&ok.stdout),
+        String::from_utf8_lossy(&ok.stderr)
+    );
+    assert!(ok.status.success(), "a satisfied floor evaluates: {body}");
 }
 
 #[test]

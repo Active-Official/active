@@ -472,6 +472,33 @@ impl<'a> Validator<'a> {
             match map.get(name) {
                 None => self.check_missing(*field_id, segments, map),
                 Some(v) => {
+                    // LANG-F-008: a field whose `removed_in` version is at
+                    // or below the document schema's own version must not
+                    // still be on the wire. Strict fails with T008; the
+                    // resilient tree keeps the diagnostic alongside.
+                    if let Some(Node::SchemaField { field }) = self.module.get(*field_id) {
+                        if let Some(removed) = field.removed_in.as_deref() {
+                            let document_version = Self::document_schema_version(self.module);
+                            let expired = document_version
+                                .as_deref()
+                                .is_some_and(|v| crate::eval::version_at_least(v, removed));
+                            if expired {
+                                segments.push(PathSeg::Key(name.clone()));
+                                let path = render_path(segments);
+                                segments.pop();
+                                let span = self.module.node_spans.get(field_id).cloned();
+                                self.push(
+                                    "T008",
+                                    format!(
+                                        "field '{path}' was removed in schema {removed} and is \
+                                         still present"
+                                    ),
+                                    &path,
+                                    (span, None),
+                                );
+                            }
+                        }
+                    }
                     let child_id = arena_children
                         .as_ref()
                         .and_then(|children| children.get(name).copied());
@@ -747,6 +774,17 @@ impl<'a> Validator<'a> {
         }
         self.check_constraints(schema_id, field, value, &path, value_id);
     }
+    /// The `version` metadata of the document's root schema, when declared
+    /// (LANG-F-008). Used to decide whether a field's removal schedule has
+    /// expired; a schema without a version never expires a field.
+    fn document_schema_version(module: &crate::ir::Module) -> Option<String> {
+        let schema = module.schema?;
+        match module.get(schema) {
+            Some(crate::ir::Node::SchemaTable { meta, .. }) => meta.version.clone(),
+            _ => None,
+        }
+    }
+
     /// A schema field with no value (spec/validation.md section 5 and 9,
     /// spec/schema-extensions.md section 4).
     /// A declared default fills under resilient mode (recorded for

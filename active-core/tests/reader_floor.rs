@@ -18,9 +18,21 @@ fn eval_with(reader: Option<&str>) -> Result<serde_json::Value, active_core::Eva
 }
 
 #[test]
-fn an_undeclared_reader_keeps_the_floors_advisory() {
-    let v = eval_with(None).expect("advisory: evaluates");
-    assert_eq!(v["host"], "x");
+fn an_undeclared_reader_uses_the_running_library_version() {
+    // LANG-F-006: the floors are enforced at read time. With no host
+    // declaration the running library (CARGO_PKG_VERSION) is the reader, so
+    // a 9.9.9 floor refuses exactly as a declared 1.x reader does.
+    let err = eval_with(None).expect_err("the running reader is below 9.9.9");
+    assert_eq!(err.code(), "T007", "{err}");
+
+    // A floor the running reader satisfies still evaluates with no flag.
+    let low = "schema = { min_reader = \"1.0.0\", host = String }\nhost = \"x\"\n";
+    let module = parse(low, "floor").expect("parse");
+    let (v, _) = Engine::hermetic()
+        .evaluate(&module)
+        .expect("a satisfied floor evaluates");
+    let json = active_core::convert::value_to_pretty_json(&v);
+    assert!(json.contains("\"host\": \"x\""), "{json}");
 }
 
 #[test]

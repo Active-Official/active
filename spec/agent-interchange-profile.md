@@ -67,6 +67,8 @@ missing/unparseable `version` are rejected. It is part of evaluation
 (`Engine::envelope_gate`, default-on with the shipped policy: major 1
 and every tool this library ships), refuses with `E033` (version) and
 `E034` (capabilities), and is fatal in strict and resilient modes alike.
+`tainted` is cross-checked against the evaluated payload's structural taint:
+a mismatch is a diagnostic (E035, fail-closed under strict).
 `--sandbox` and `capability --check-doc` remain the explicit forms; a
 host narrows the offered set with `EnvelopeGate::with_tools` and disables
 the gate only for documents it already trusts.
@@ -74,8 +76,13 @@ the gate only for documents it already trusts.
 1. Reject unknown envelope majors and unknown capabilities.
 2. Honor taint: never render a payload containing secrets without
    redaction, and never copy secret material into logs.
-3. Honor budgets: evaluate under the declared or profile budget; never
-   raise a ceiling silently.
+3. Budgets are LOCAL. The envelope's `budget` field is a REPORT only
+   (usage and headroom for audit/replay diagnostics); a receiver's ceilings
+   always come from its own sandbox profile and are never read from the
+   envelope. A sender cannot raise or lower a receiver's ceiling. If a
+   ceiling-carrying field is ever wanted, it must be a separate, explicitly
+   named field (`budget_limits`) with the rule that the effective ceiling is
+   the MINIMUM of the local profile and the declared limits (LANG-F-005).
 4. Preserve content-addressed identity: a hash names the same bytes on
    every host; do not re-encode a blob under a different media type.
 5. Reject a document that claims Data Mode constructs without the

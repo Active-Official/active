@@ -1,0 +1,2 @@
+schema = { min_reader = "9.9.9", host = String }
+host = "x"

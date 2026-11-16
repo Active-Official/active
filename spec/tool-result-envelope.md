@@ -25,8 +25,12 @@ plain JSON cannot carry taint, budgets, or content-addressed identity.
 2. **Honor taint.** A receiver that displays or logs a `tainted: true`
    payload must preserve redaction; copying secret material into a log
    is a protocol violation.
-3. **Honor budgets.** Evaluation under the envelope uses the declared
-   or profile budget; ceilings are never silently raised.
+3. **Budgets are local.** The `budget` field is a REPORT of usage and
+   headroom, never a ceiling: evaluation under the envelope uses the
+   RECEIVER's own sandbox profile, and a ceiling is never read from the
+   sender's envelope, raised, or lowered by it (LANG-F-005). A future
+   ceiling-carrying field must be separately named and the effective ceiling
+   is the minimum of the local profile and the declared limits.
 4. **Version gate.** A missing or non-parseable `version` is rejected;
    an unknown major is rejected. The gate runs before evaluation on the
    default path (spec/agent-interchange-profile.md §4): `E033` for the

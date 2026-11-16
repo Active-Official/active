@@ -514,7 +514,7 @@ fn check_reader_floor(module: &Module, reader: &str) -> Result<(), EvalError> {
 /// Whether `have` satisfies the `need` floor, comparing numeric triplets
 /// component-wise. Unparseable input fails closed (the caller has
 /// already validated metadata syntax, so this is defense in depth).
-fn version_at_least(have: &str, need: &str) -> bool {
+pub(crate) fn version_at_least(have: &str, need: &str) -> bool {
     fn parts(v: &str) -> Option<(u64, u64, u64)> {
         let mut it = v.split('.');
         let a = it.next()?.parse().ok()?;
@@ -1496,7 +1496,7 @@ impl<'a> StepRenderer<'a> {
     }
 }
 
-fn value_has_secret(value: &Value) -> bool {
+pub(crate) fn value_has_secret(value: &Value) -> bool {
     match value {
         Value::Secret(_) => true,
         Value::Blob { tainted, .. } => *tainted,
@@ -1731,9 +1731,15 @@ impl Engine {
         // host declared its reader version and the document needs a
         // newer one. Without a declared version the floors stay
         // advisory, as documented.
-        if let Some(reader) = self.reader_version.as_deref() {
-            check_reader_floor(module, reader)?;
-        }
+        // LANG-F-006: `min_reader` is enforced at read time. A host that
+        // declares its reader version gets that version; otherwise the
+        // running library is the reader, so a document demanding a newer
+        // reader is refused instead of silently mis-parsed.
+        let reader = self
+            .reader_version
+            .clone()
+            .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+        check_reader_floor(module, &reader)?;
         // Receiver gate (LANG-C-004): a peer document must not negotiate
         // this host into evaluating semantics it does not implement.
         // Refusals are fatal in strict and resilient modes alike.
@@ -2441,6 +2447,33 @@ impl Engine {
             deadline,
             budget.max_wall_ms,
         )?;
+        // LANG-F-004: the envelope's `tainted` is a sender assertion; the
+        // receiver verifies it against the evaluated payload's structural
+        // taint. A mismatch in either direction is E035 (Error): strict
+        // refuses the document, resilient mode reports it alongside the
+        // tree. Run here rather than in schema validation because an
+        // envelope can exist without a schema block.
+        if let Some(claimed) = crate::envelope::sender_taint(module) {
+            let actual = value_has_secret(&result);
+            if claimed != actual {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Error,
+                    code: "E035".into(),
+                    message: format!(
+                        "envelope.tainted is {claimed} but the evaluated payload is {actual} \
+                         (a tainted claim must match the payload's structural taint)"
+                    ),
+                    path: Some("envelope.tainted".into()),
+                    span: None,
+                    repair: None,
+                    confidence: 1.0,
+                    file: None,
+                });
+                if !self.resilient {
+                    return Err(EvalError::ValidationFailed { diagnostics });
+                }
+            }
+        }
         // Closing wall-clock sample: small documents take zero walk
         // samples, so the deadline is checked once more at the end.
         if let Some(end) = deadline {

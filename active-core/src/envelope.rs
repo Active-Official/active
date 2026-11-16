@@ -164,6 +164,28 @@ impl EnvelopeGate {
     }
 }
 
+/// The sender's `envelope.tainted` claim, when the document carries one
+/// (LANG-F-004). This is an UNVERIFIED sender assertion: the receiver
+/// cross-checks it against the evaluated payload's structural taint in
+/// `validate_schema`, and a mismatch is E035.
+pub(crate) fn sender_taint(module: &Module) -> Option<bool> {
+    let refs = envelope_fields(module)?;
+    let table = deref_table(module, refs.envelope)?;
+    let fields = match module.get(table) {
+        Some(Node::Table { fields }) => fields,
+        _ => return None,
+    };
+    let mut id = *fields.get("tainted")?;
+    for _ in 0..64 {
+        match module.get(id) {
+            Some(Node::Literal(Value::Bool(claimed))) => return Some(*claimed),
+            Some(Node::Ref(next)) => id = *next,
+            _ => return None,
+        }
+    }
+    None
+}
+
 /// The root envelope table and its `version` node, when the document has
 /// one. A Data Mode document without an envelope table is a data document,
 /// not an interchange envelope: it makes no version claim to police.

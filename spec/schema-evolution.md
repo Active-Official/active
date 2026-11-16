@@ -22,6 +22,10 @@ schema = {
 
 - `version`: this document's schema version (`major.minor.patch`).
 - `min_reader`: oldest reader that can still process it.
+- `min_reader` is enforced at read time: a reader refuses a document whose
+  `min_reader` exceeds the reader's version (T007; a host may declare its
+  reader version with `Engine::reader_version` / `--reader-version`,
+  otherwise the running library is the reader).
 - `min_writer`: oldest writer whose output it still accepts.
 - All three are optional; string literals must be `major.minor.patch`
   with all-numeric parts — anything else is E020. A type expression
@@ -50,6 +54,11 @@ schema = {
 ```
 
 - `removed_in` takes a version string; non-strings and malformed versions are E020. It renders back through `active fmt` and the inspector.
+- A field whose `removed_in` version is less than or equal to the document
+  schema's own `version` and which is still present in the document is
+  REJECTED on the evaluation path (T008), not only in the offline
+  `active compatibility` diff (LANG-F-008): a removal schedule that exists
+  only in a planning tool cannot retire fields from the wire.
 
 ## 2. Compatibility semantics (SC.006)
 

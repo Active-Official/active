@@ -158,8 +158,12 @@ impl<'a> Formatter<'a> {
                     .or_default()
                     .push(text.clone()),
                 Attachment::Trailing(key) => {
-                    // Duplicate keys share one surviving statement; keep
-                    // every comment so none is lost.
+                    // Duplicate keys share one surviving statement (the
+                    // LAST one), so every duplicate's trailing comment
+                    // lands in the same bucket. Keep every comment; the
+                    // split between trailing and leading happens after the
+                    // pass, once it is known which comment belongs to the
+                    // survivor (LANG-D-002).
                     self.trailing
                         .entry(key.clone())
                         .or_default()
@@ -172,6 +176,27 @@ impl<'a> Formatter<'a> {
                     .push(text.clone()),
                 Attachment::TrailingDocument => self.trailing_document.push(text),
             }
+        }
+
+        // Duplicate keys: the surviving statement is the LAST duplicate, so
+        // only its own trailing comment stays on the line; earlier
+        // duplicates' comments become leading lines above it, in source
+        // order. Concatenating them (`x = 2 # first # second`) would lose
+        // the boundary between two independent edits (LANG-D-002).
+        let mut splits: Vec<(String, Vec<String>)> = Vec::new();
+        for (key, bucket) in self.trailing.iter_mut() {
+            if bucket.len() > 1 {
+                let survivor = bucket.pop().expect("len > 1");
+                let dropped = std::mem::take(bucket);
+                bucket.push(survivor);
+                splits.push((key.clone(), dropped));
+            }
+        }
+        for (key, dropped) in splits {
+            let lead = self.leading.entry(key).or_default();
+            let mut merged = dropped;
+            merged.append(lead);
+            *lead = merged;
         }
     }
 

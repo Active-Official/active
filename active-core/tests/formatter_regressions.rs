@@ -159,3 +159,51 @@ fn a_reference_to_a_schema_node_renders_by_name() {
         assert_eq!(once, fmt::format(&reparsed, style), "{style:?}:\n{once}");
     }
 }
+
+#[test]
+fn duplicate_key_comments_keep_their_boundary() {
+    // LANG-D-002: the surviving statement is the LAST duplicate, so its own
+    // trailing comment stays on the line and earlier duplicates' comments
+    // become leading lines above it. Concatenating (`x = 2 # first #
+    // second`) would make two independent comments indistinguishable.
+    //
+    // The CLI refuses duplicate-key documents outright (LANG-D-001: W011 is
+    // a repair), so this form is pinned at the library level - the path the
+    // language server and programmatic callers use.
+    let src = "[app]\nx = 1 # first\nx = 2 # second\n";
+    let module = parse(src, "fmt-dup-comments").expect("parse");
+    assert_eq!(
+        fmt::format(&module, Style::Brace),
+        "[app]\n# first\nx = 2 # second\n"
+    );
+    assert_eq!(
+        fmt::format(&module, Style::Indent),
+        "app:\n  # first\n  x = 2 # second\n"
+    );
+    for style in [Style::Brace, Style::Indent] {
+        let once = fmt::format(&module, style);
+        let reparsed = parse(&once, "fmt-dup-comments").expect("re-parse");
+        assert_eq!(once, fmt::format(&reparsed, style), "{style:?}");
+    }
+}
+
+#[test]
+fn root_scalars_hoist_above_tables_in_both_styles() {
+    // LANG-D-003: hoisting is required for brace style (a `key = value`
+    // line after a header would be absorbed) and applied to indent style for
+    // uniformity. spec/formatter.md section 1 states it, and the corpus
+    // files tests/fmt/{brace,indent}/root-scalar-after-table.active pin the
+    // canonical bytes.
+    let src = "t:\n  a = 1\ntop = 2\n";
+    let module = parse(src, "fmt-hoist").expect("parse");
+    assert_eq!(
+        fmt::format(&module, Style::Indent),
+        "top = 2\n\nt:\n  a = 1\n"
+    );
+    let brace_src = "t { a = 1 }\ntop = 2\n";
+    let module = parse(brace_src, "fmt-hoist-brace").expect("parse");
+    assert_eq!(
+        fmt::format(&module, Style::Brace),
+        "top = 2\n\n[t]\na = 1\n"
+    );
+}

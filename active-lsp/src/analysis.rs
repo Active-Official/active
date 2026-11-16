@@ -2218,6 +2218,12 @@ pub fn formatting_edits(doc: &Doc) -> Vec<TextEdit> {
     let Some(module) = formatting_module(doc) else {
         return Vec::new();
     };
+    // A document the parser had to repair is not formatted
+    // (spec/formatter.md section 2, LANG-D-001): the edits would bake the
+    // repair into the buffer. The published diagnostics explain the fix.
+    if !module.healing.is_empty() {
+        return Vec::new();
+    }
     let formatted = active_core::fmt::format(&module, active_core::Style::Preserve);
     if formatted == doc.text {
         return Vec::new();

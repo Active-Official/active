@@ -17,6 +17,11 @@ the value tree — formatting cannot change what a document means.
   predominant style, canonical layout within. Mixed-style documents
   normalize to whichever style holds the majority of table blocks.
 
+Canonical layout hoists root scalars above tables in both styles (required
+for brace style by the block rules, applied to indent style for uniformity);
+inside a block the original order is preserved. `active eval` JSON key order
+follows the formatted order (LANG-D-003).
+
 Guarantees (tested, spec/dual-syntax.md §8): idempotence
 (`fmt(fmt(d)) == fmt(d)`), byte-for-byte round-trip of canonical
 documents, comment/annotation/semantic-block survival in every mode,
@@ -35,6 +40,11 @@ rules. An already-canonical document costs one extra parse and format pass.
 ```
 ACTIVE fmt [--style brace|indent|preserve] [--write] [--check] <file>...
 ```
+
+The `active fmt` subcommand and the standalone `active-fmt` binary expose the
+same flags (`--style brace|indent|preserve`, `--write`, `--check`);
+`--bracketed` / `--indented` are accepted as aliases for `--style brace` /
+`--style indent`.
 
 At least one file is required; an empty file list is an error
 (never a silent clean bill). The default style is `indent`.

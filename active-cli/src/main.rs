@@ -2977,18 +2977,28 @@ fn main() -> anyhow::Result<()> {
                     }
                     anyhow::anyhow!("cannot format a file with parse errors: {name}")
                 })?;
+                // Strict by contract (LANG-D-001, spec/formatter.md 2): the
+                // parser records auto-applied healing instead of failing, so
+                // refuse here when it had to repair anything. Formatting a
+                // repaired tree would bake the repair into the source.
+                if !module.healing.is_empty() {
+                    for d in &module.healing {
+                        report(d, &name);
+                    }
+                    anyhow::bail!("cannot format a file that needs repair: {name}");
+                }
                 let out = active_core::fmt::format(&module, style);
+                let current = std::fs::read(file)?;
+                let unchanged = current == out.as_bytes();
                 if check {
-                    let current = std::fs::read_to_string(file)?;
-                    if current != out {
+                    if !unchanged {
                         println!("would reformat: {name}");
                         dirty = true;
                     }
                     continue;
                 }
                 if write {
-                    let current = std::fs::read_to_string(file)?;
-                    if current != out {
+                    if !unchanged {
                         std::fs::write(file, &out)?;
                         println!("formatted {name}");
                     }

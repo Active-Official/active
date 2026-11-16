@@ -63,6 +63,10 @@ pub struct ActiveModule {
     source: String,
     include_cb: Option<ActiveCallback>,
     env_cb: Option<ActiveCallback>,
+    /// Trusted mode from `ActiveOptions` (LANG-G-008): the only way a host
+    /// may raise the wall-clock ceiling above the shipped default. Count
+    /// and size limits stay tighten-only in both modes.
+    trusted: bool,
 }
 
 /// A registered host callback: C function plus userdata (F-016).
@@ -274,17 +278,41 @@ pub unsafe extern "C" fn active_set_env_lookup(
 /// # Safety
 ///
 /// When `source` is non-null, `len` bytes starting at `source` must be
-/// readable for this call. `options` is reserved and must be null.
+/// readable for this call. `options` is null (tighten-only, the default)
+/// or points to a valid `ActiveOptions` whose size word is truthful;
+/// a non-null pointer with the wrong size or an unknown `trusted` value
+/// fails closed with `BAD_ARGUMENT` instead of being ignored.
 pub unsafe extern "C" fn active_module_parse(
     source: *const u8,
     len: usize,
-    _options: *const std::ffi::c_void,
+    options: *const ActiveOptions,
 ) -> *mut ActiveModule {
     guard(std::ptr::null_mut(), || {
         if source.is_null() {
             set_last(ACTIVE_ERR_NULL_HANDLE);
             return std::ptr::null_mut();
         }
+        // The options pointer is real in v1 (LANG-G-008): never silently
+        // ignored. A null pointer means tighten-only, the safe default.
+        let trusted = if options.is_null() {
+            false
+        } else {
+            // SAFETY: caller passes a valid ActiveOptions or null; the
+            // size word is validated before any other field is read (G-016).
+            let o = unsafe { &*options };
+            if o.struct_size as usize != std::mem::size_of::<ActiveOptions>() {
+                set_last(ACTIVE_ERR_BAD_ARGUMENT);
+                return std::ptr::null_mut();
+            }
+            match o.trusted {
+                0 => false,
+                1 => true,
+                _ => {
+                    set_last(ACTIVE_ERR_BAD_ARGUMENT);
+                    return std::ptr::null_mut();
+                }
+            }
+        };
         // SAFETY: caller guarantees `len` readable bytes at `source`
         // for this call (documented in docs/FFI.md section 1).
         let bytes = unsafe { slice::from_raw_parts(source, len) };
@@ -302,6 +330,7 @@ pub unsafe extern "C" fn active_module_parse(
                     source: text.to_owned(),
                     include_cb: None,
                     env_cb: None,
+                    trusted,
                 }))
             }
             Err(code) => {
@@ -404,7 +433,11 @@ pub struct ActiveValue {
 }
 
 /// C layout of the budget struct (docs/FFI.md section 4). Field zero is
-/// the size word (G-016); every other zero selects its shipped default.
+/// the size word (G-016). Every other zero keeps the current limit, and a
+/// non-zero value may only TIGHTEN it (LANG-G-008): a host cannot lift a
+/// count or size ceiling through this boundary, and `u64::MAX` is rejected
+/// rather than accepted as "unlimited". Trusted mode may raise the
+/// wall-clock field only.
 #[repr(C)]
 pub struct ActiveBudget {
     pub struct_size: u32,
@@ -417,6 +450,15 @@ pub struct ActiveBudget {
     pub max_total_value_size: u64,
 }
 
+/// C layout of the parse options struct (docs/FFI.md section 2, LANG-G-008).
+/// Field zero is the size word; `trusted` is 0 (tighten-only, default) or 1
+/// (trusted mode). Any other value fails closed with `BAD_ARGUMENT`.
+#[repr(C)]
+pub struct ActiveOptions {
+    pub struct_size: u32,
+    pub trusted: u32,
+}
+
 fn hermetic_engine() -> Engine {
     // Hermetic construction (never snapshot-then-discard): on platforms
     // without a process environment the ambient snapshot aborts, and the
@@ -425,7 +467,11 @@ fn hermetic_engine() -> Engine {
     Engine::hermetic()
 }
 
-fn apply_budget(engine: &mut Engine, budget: *const ActiveBudget) -> Result<(), i32> {
+fn apply_budget(
+    engine: &mut Engine,
+    budget: *const ActiveBudget,
+    trusted: bool,
+) -> Result<(), i32> {
     if budget.is_null() {
         return Ok(());
     }
@@ -436,28 +482,39 @@ fn apply_budget(engine: &mut Engine, budget: *const ActiveBudget) -> Result<(), 
         set_last(ACTIVE_ERR_BAD_BUDGET);
         return Err(ACTIVE_ERR_BAD_BUDGET);
     }
-    // One meaning across surfaces (LANG-C-015): a zero field is the
-    // shipped default, exactly like the library. The C ABI deliberately
-    // has NO way to disable a limit: `UNLIMITED` (u64::MAX) is clamped to
-    // the shipped default too, so a host cannot lift a ceiling through
-    // this boundary (docs/FFI.md says so; a host that truly needs that
-    // uses the library and Budget::unlimited()).
-    let shipped = active_core::eval::Budget::default();
-    let ceil = |v: u64, d: u64| {
-        if v == 0 || v == active_core::eval::UNLIMITED {
-            d
+    // Tighten-only (LANG-G-008, docs/FFI.md section 4): a zero field keeps
+    // the current limit and a non-zero field may only lower it. `u64::MAX`
+    // is larger than every shipped limit, so it is rejected like any other
+    // loosening instead of being read as "unlimited".
+    let cur = engine.budget;
+    let tighten = |value: u64, current: u64| -> Result<u64, i32> {
+        if value == 0 {
+            Ok(current)
+        } else if value <= current {
+            Ok(value)
         } else {
-            v
+            set_last(ACTIVE_ERR_BAD_BUDGET);
+            Err(ACTIVE_ERR_BAD_BUDGET)
         }
     };
+    // Trusted mode is the documented way to extend the wall clock, and the
+    // only field it may raise; counts and sizes stay tighten-only.
+    let wall = if b.max_wall_ms == 0 {
+        cur.max_wall_ms
+    } else if trusted || b.max_wall_ms <= cur.max_wall_ms {
+        b.max_wall_ms
+    } else {
+        set_last(ACTIVE_ERR_BAD_BUDGET);
+        return Err(ACTIVE_ERR_BAD_BUDGET);
+    };
     engine.budget = active_core::eval::Budget {
-        max_nodes: ceil(b.max_nodes, shipped.max_nodes),
-        max_depth: ceil(b.max_depth, shipped.max_depth),
-        max_array_len: ceil(b.max_array_len, shipped.max_array_len),
-        max_keys: ceil(b.max_keys, shipped.max_keys),
-        max_wall_ms: ceil(b.max_wall_ms, shipped.max_wall_ms),
-        max_value_size: ceil(b.max_value_size, shipped.max_value_size),
-        max_total_value_size: ceil(b.max_total_value_size, shipped.max_total_value_size),
+        max_nodes: tighten(b.max_nodes, cur.max_nodes)?,
+        max_depth: tighten(b.max_depth, cur.max_depth)?,
+        max_array_len: tighten(b.max_array_len, cur.max_array_len)?,
+        max_keys: tighten(b.max_keys, cur.max_keys)?,
+        max_wall_ms: wall,
+        max_value_size: tighten(b.max_value_size, cur.max_value_size)?,
+        max_total_value_size: tighten(b.max_total_value_size, cur.max_total_value_size)?,
     };
     Ok(())
 }
@@ -551,7 +608,7 @@ fn parse_handle(handle: &ActiveModule) -> Result<active_core::Module, Vec<DiagSn
 /// env callback, validated budget struct.
 fn build_engine(handle: &ActiveModule, budget: *const ActiveBudget) -> Result<Engine, i32> {
     let mut engine = handle_engine(handle);
-    apply_budget(&mut engine, budget)?;
+    apply_budget(&mut engine, budget, handle.trusted)?;
     Ok(engine)
 }
 

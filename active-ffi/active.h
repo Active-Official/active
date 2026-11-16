@@ -85,8 +85,22 @@ typedef struct ActiveValue ActiveValue;
 typedef char *(*ActiveLookupFn)(const char*, void*);
 
 /**
+ * C layout of the parse options struct (docs/FFI.md section 2, LANG-G-008).
+ * Field zero is the size word; `trusted` is 0 (tighten-only, default) or 1
+ * (trusted mode). Any other value fails closed with `BAD_ARGUMENT`.
+ */
+typedef struct ActiveOptions {
+  uint32_t struct_size;
+  uint32_t trusted;
+} ActiveOptions;
+
+/**
  * C layout of the budget struct (docs/FFI.md section 4). Field zero is
- * the size word (G-016); every other zero selects its shipped default.
+ * the size word (G-016). Every other zero keeps the current limit, and a
+ * non-zero value may only TIGHTEN it (LANG-G-008): a host cannot lift a
+ * count or size ceiling through this boundary, and `u64::MAX` is rejected
+ * rather than accepted as "unlimited". Trusted mode may raise the
+ * wall-clock field only.
  */
 typedef struct ActiveBudget {
   uint32_t struct_size;
@@ -166,11 +180,14 @@ void active_set_env_lookup(struct ActiveModule *module, ActiveLookupFn cb, void 
  * # Safety
  *
  * When `source` is non-null, `len` bytes starting at `source` must be
- * readable for this call. `options` is reserved and must be null.
+ * readable for this call. `options` is null (tighten-only, the default)
+ * or points to a valid `ActiveOptions` whose size word is truthful;
+ * a non-null pointer with the wrong size or an unknown `trusted` value
+ * fails closed with `BAD_ARGUMENT` instead of being ignored.
  */
 struct ActiveModule *active_module_parse(const uint8_t *source,
                                          uintptr_t len,
-                                         const void *_options);
+                                         const struct ActiveOptions *options);
 
 /**
  * Free a module handle. Null-safe; double-free is a host bug, not UB

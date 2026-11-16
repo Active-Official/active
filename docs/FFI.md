@@ -25,8 +25,11 @@ set means clean; presence of any diagnostic means reject, warnings included
 
 Evaluate: `active_eval(module, budget: *const ActiveBudget) ->
 *mut ActiveValue` (null on error). A null budget pointer selects shipped
-defaults; a non-null budget tightens them (hosts can only tighten critical
-limits; disabling requires the documented trusted-mode flag).
+defaults; a non-null budget may only TIGHTEN them (LANG-G-008): a zero
+field keeps the current limit, a non-zero field must be no larger than it,
+and `u64::MAX` is rejected like any other loosening. The one exception is
+the wall clock under trusted mode (the parse options flag below); count and
+size limits stay tighten-only in both modes.
 
 Validate against the in-file schema without returning values (G-015):
 `active_validate(module, budget) -> *mut ActiveDiagnosticSet`. Runs the single shipped validator and keeps
@@ -51,11 +54,17 @@ thread, must not re-enter eval on the same module, and return owned buffers
 under Model A below. Callback failures surface as diagnostics; they never
 hang the call.
 
-Budget zeros: `ActiveBudget` uses `0` for "the shipped default" per field,
-exactly like `Budget::resolve()`; there is no way to disable an evaluation
-limit through the C ABI (a host that needs that must use the library
-directly and `Budget::unlimited()`). Parse bounds use the same rule: `0`
-keeps the shipped parse default rather than lifting it.
+Budget zeros: `ActiveBudget` uses `0` for "keep the current limit" per
+field, exactly like `Budget::resolve()` uses zero for the shipped default.
+A non-zero field is accepted only when it is at or below the current limit
+(tighten-only); anything larger fails closed with `BAD_BUDGET` (12) and no
+evaluation runs. Parse bounds use the same zero-means-default rule.
+
+Options: `active_module_parse` takes `options: *const ActiveOptions`, or
+`NULL` for tighten-only mode. The struct is `{ uint32_t struct_size;
+uint32_t trusted; }`; the size word must equal `sizeof(ActiveOptions)` and
+`trusted` must be 0 or 1, otherwise the parse fails closed with
+`BAD_ARGUMENT` (14). A non-null options pointer is never silently ignored.
 
 Parse bounds: `active_parse_limits_set(max_input_bytes, max_wall_ms)` sets
 process-wide parse ceilings used by every later parse (LANG-C-003); `0`
@@ -99,19 +108,23 @@ how a host tells a negotiation refusal from a schema failure.
 typedef struct {
   uint32_t struct_size;   /* field zero: set to sizeof(ActiveBudget);
                              callee validates; mismatch fails closed */
-  uint64_t max_nodes;     /* 0 selects shipped default (100000) */
-  uint64_t max_depth;     /* 0 selects default (256) */
-  uint64_t max_array_len; /* 0 selects default (100000) */
-  uint64_t max_keys;      /* 0 selects default (100000) */
-  uint64_t max_wall_ms;   /* 0 selects default (100); trusted mode may raise */
-  uint64_t max_value_size;      /* 0 selects default (10000000) */
-  uint64_t max_total_value_size;/* 0 selects default (100000000) */
+  uint64_t max_nodes;     /* 0 keeps current; else must be <= current */
+  uint64_t max_depth;     /* 0 keeps current; else must be <= current */
+  uint64_t max_array_len; /* 0 keeps current; else must be <= current */
+  uint64_t max_keys;      /* 0 keeps current; else must be <= current */
+  uint64_t max_wall_ms;   /* 0 keeps current; trusted mode may raise it */
+  uint64_t max_value_size;      /* 0 keeps current; else <= current */
+  uint64_t max_total_value_size;/* 0 keeps current; else <= current */
 } ActiveBudget;
 ```
 
-Shipped defaults equal the CLI profile. Trusted mode (explicit flag on the
-options struct, documented per call site) may raise wall-clock only; the
-count and size limits cannot be disabled through this struct.
+Shipped defaults equal the CLI profile (nodes 100000, depth 256, array
+100000, keys 100000, wall 100 ms, value 10 MB, total 100 MB). The current
+limit for a check/eval is the engine's shipped profile, so a host can lower
+a limit but never lift one. Trusted mode (the `trusted` flag on the parse
+options struct) may raise the wall clock, and only the wall clock; setting
+it to `u64::MAX` is the explicit way to disable that one limit. Count and
+size limits cannot be disabled through this struct in either mode.
 
 ## 5. Allocator model A (F-003, chosen for all of 1.x)
 

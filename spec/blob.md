@@ -27,10 +27,15 @@ Reference default for the salt: it is derived from the document's shape
 (node kinds, table keys, array lengths, identifiers, and scalar literals,
 with secret and blob payloads hashed by presence only), so identities stay
 reproducible across runs and across embeddings - the determinism contract
-and the cross-embedding differential gate both depend on that. A host that
-wants a per-process random salt sets `Engine::blob_salt`; the identity is
-then non-reproducible by design (like the wall clock) and must not be
-pinned in an audit or lock artifact.
+and the cross-embedding differential gate both depend on that. What this
+buys: the v2 domain binds each identity to one document, so identities from
+different documents are unlinkable and an identity seen in isolation cannot
+be matched against a precomputed table of low-entropy guesses. What it does
+NOT buy: confidentiality against someone who already holds the document -
+they can recompute the derived salt and test payloads offline. A deployment
+that needs that property sets `Engine::blob_salt` to a per-process random
+value; the identity is then non-reproducible by design (like the wall clock)
+and must not be pinned in an audit or lock artifact.
 
 Reference pseudo-code:
 

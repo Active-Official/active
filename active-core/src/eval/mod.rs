@@ -272,7 +272,11 @@ impl Budget {
     /// needed for termination on that target; hosts enforce their own
     /// timeouts (Worker terminate pattern). See `wall_supported`.
     pub fn wall_deadline(&self) -> Option<Instant> {
-        if self.max_wall_ms == 0 || !Self::wall_supported() {
+        // `UNLIMITED` is the explicit "no clock" value. A zero field never
+        // reaches an evaluation (Budget::resolve turns it into the shipped
+        // default), but a caller reading this method on a raw struct still
+        // gets no deadline there rather than a zero-length one.
+        if self.max_wall_ms == UNLIMITED || self.max_wall_ms == 0 || !Self::wall_supported() {
             None
         } else {
             Instant::now().checked_add(std::time::Duration::from_millis(self.max_wall_ms))
@@ -591,9 +595,22 @@ pub const CANONICAL_WALL_MS: u64 = 30_000;
 /// wall clock, which becomes [`CANONICAL_WALL_MS`]. A caller's `0`
 /// (unlimited) is replaced too, so no surface runs unbounded.
 pub fn canonical_budget(base: &Budget) -> Budget {
-    let mut out = *base;
-    out.max_wall_ms = CANONICAL_WALL_MS;
-    out
+    // A canonical pass needs a bound in every dimension, not only time: a
+    // caller's `UNLIMITED` counts/sizes would let a huge arena exhaust
+    // memory before the wall clock fires (review finding on LANG-C-008).
+    // Tighter caller limits are kept; only "unlimited" becomes the shipped
+    // default.
+    let shipped = Budget::default();
+    let bound = |v: u64, d: u64| if v == UNLIMITED { d } else { v };
+    Budget {
+        max_nodes: bound(base.max_nodes, shipped.max_nodes),
+        max_depth: bound(base.max_depth, shipped.max_depth),
+        max_array_len: bound(base.max_array_len, shipped.max_array_len),
+        max_keys: bound(base.max_keys, shipped.max_keys),
+        max_wall_ms: CANONICAL_WALL_MS,
+        max_value_size: bound(base.max_value_size, shipped.max_value_size),
+        max_total_value_size: bound(base.max_total_value_size, shipped.max_total_value_size),
+    }
 }
 
 /// Charged bytes between wall-clock samples: 1 MiB. One clock read per MiB

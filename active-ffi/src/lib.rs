@@ -105,8 +105,10 @@ fn with_parse_limits(mut options: active_core::ParseOptions) -> active_core::Par
 
 /// Set the process-wide parse bounds used by every later parse on this
 /// library (LANG-C-003). `0` keeps the library default for that field
-/// (4 MiB input, a wall budget that scales with input). Returns
-/// `ACTIVE_ERR_OK`.
+/// (4 MiB input, a 100 ms parse budget base that scales with input).
+/// Values above the documented ceiling are clamped to it (input 1 GiB,
+/// parse wall 1 hour), so a bad length cannot disable the ceiling by
+/// accident. Returns `ACTIVE_ERR_OK`.
 ///
 /// There is deliberately no way to disable the bounds through the C ABI:
 /// the boundary always keeps hard parse ceilings, and a host that needs
@@ -119,8 +121,16 @@ fn with_parse_limits(mut options: active_core::ParseOptions) -> active_core::Par
 #[no_mangle]
 pub unsafe extern "C" fn active_parse_limits_set(max_input_bytes: usize, max_wall_ms: u64) -> i32 {
     guard(ACTIVE_ERR_PANIC_CAUGHT, || {
-        PARSE_MAX_INPUT_BYTES.store(max_input_bytes, Ordering::Relaxed);
-        PARSE_MAX_WALL_MS.store(max_wall_ms, Ordering::Relaxed);
+        // Clamp to the documented ceilings: a host may raise the bounds,
+        // never hand the library an accidental "unlimited" (LANG-C-003's
+        // C boundary keeps hard ceilings; LANG-C-015 keeps zeros
+        // meaningful).
+        const MAX_INPUT_CEILING: usize = 1024 * 1024 * 1024;
+        const MAX_WALL_CEILING_MS: u64 = 60 * 60 * 1000;
+        let bytes = max_input_bytes.min(MAX_INPUT_CEILING);
+        let ms = max_wall_ms.min(MAX_WALL_CEILING_MS);
+        PARSE_MAX_INPUT_BYTES.store(bytes, Ordering::Relaxed);
+        PARSE_MAX_WALL_MS.store(ms, Ordering::Relaxed);
         set_last(ACTIVE_ERR_OK);
         ACTIVE_ERR_OK
     })

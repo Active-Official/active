@@ -124,7 +124,10 @@ pub fn replay_with_budget(
     // asked for an unlimited wall clock still gets the preflight under the
     // finite canonical budget, so the pass keeps a second line of defence.
     let mut preflight = engine.clone();
-    if budget.max_wall_ms == 0 {
+    if budget.max_wall_ms == crate::eval::UNLIMITED || budget.max_wall_ms == 0 {
+        // LANG-C-008 + C-015: an unlimited caller (the explicit sentinel;
+        // 0 would resolve to the default anyway) still gets the preflight
+        // under the finite canonical budget.
         preflight.budget = crate::eval::canonical_budget(budget);
     }
     let _preflight = preflight

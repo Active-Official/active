@@ -20,7 +20,7 @@
 
 use std::io::{self, BufRead, Write};
 
-use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
+use crossbeam_channel::{bounded, Receiver, Sender};
 use lsp_server::{Connection, Message};
 
 /// Maximum accepted JSON-RPC frame body, in bytes (16 MiB). A frame is the
@@ -36,6 +36,16 @@ pub const MAX_HEADER_BYTES: usize = 8 * 1024;
 /// Inbound queue capacity (messages). Bounded so a client that outruns the
 /// server blocks on its own pipe (backpressure) instead of growing memory.
 pub const INBOUND_CAPACITY: usize = 64;
+
+/// Outbound queue capacity (messages). The writer drains it continuously;
+/// a bounded queue keeps a server that produces faster than the client
+/// reads from growing without limit (the send blocks instead).
+pub const OUTBOUND_CAPACITY: usize = 64;
+
+/// Largest batch the server drains in one loop iteration (messages). A
+/// backlog of 64 frames of up to 16 MiB each would be ~1 GiB held at once;
+/// the cap keeps a burst bounded while still coalescing superseded edits.
+pub const MAX_BATCH: usize = 16;
 
 /// A framing or payload violation. The stream cannot be resynchronised after
 /// one of these (the reader has no way to know where the next frame starts),
@@ -243,7 +253,7 @@ pub fn spawn_stdio(
     std::thread::JoinHandle<Result<(), TransportError>>,
 ) {
     let (in_tx, in_rx) = bounded::<Message>(INBOUND_CAPACITY);
-    let (out_tx, out_rx) = unbounded::<Message>();
+    let (out_tx, out_rx) = bounded::<Message>(OUTBOUND_CAPACITY);
     let reader = std::thread::spawn(move || -> Result<(), TransportError> {
         let stdin = io::stdin();
         let locked = stdin.lock();
@@ -325,8 +335,11 @@ pub fn next_batch(receiver: &Receiver<Message>) -> Batch {
         Ok(message) => batch.push(message),
         Err(_) => return Batch::Closed,
     }
-    while let Ok(message) = receiver.try_recv() {
-        batch.push(message);
+    while batch.len() < MAX_BATCH {
+        match receiver.try_recv() {
+            Ok(message) => batch.push(message),
+            Err(_) => break,
+        }
     }
     coalesce_batch(&mut batch);
     Batch::Messages(batch)
@@ -453,6 +466,26 @@ mod tests {
         note.params["textDocument"]["version"]
             .as_i64()
             .expect("version")
+    }
+
+    #[test]
+    fn a_burst_is_drained_in_bounded_batches() {
+        // Review finding on LANG-C-005: an unbounded batch could hold 64
+        // frames of up to 16 MiB each at once. The drain stops at
+        // MAX_BATCH; the rest waits in the bounded queue.
+        let (tx, rx) = bounded::<Message>(128);
+        for i in 0..(MAX_BATCH * 2) {
+            tx.send(open(&format!("file:///burst-{i}.active")))
+                .expect("queue has room");
+        }
+        match next_batch(&rx) {
+            Batch::Messages(batch) => assert!(
+                batch.len() <= MAX_BATCH,
+                "batch must be bounded, got {}",
+                batch.len()
+            ),
+            Batch::Closed => panic!("open receiver cannot be closed"),
+        }
     }
 
     #[test]

@@ -212,3 +212,16 @@ fn shipped_gate_offers_exactly_the_descriptor_tools() {
     shipped.sort();
     assert_eq!(shipped, descriptor);
 }
+
+#[test]
+fn a_cyclic_version_alias_is_refused_without_recursing() {
+    // Review finding on LANG-C-004: the gate runs BEFORE evaluation, so the
+    // S001 cycle check has not run. A `version` that aliases its way around
+    // a loop must be refused, not walked recursively into a stack overflow.
+    let src = "active_mode = \"data\"\nenvelope = { version = v }\nv = v\n";
+    let module = parse(src, "gate").expect("parse");
+    let err = Engine::hermetic()
+        .evaluate(&module)
+        .expect_err("a cyclic version cannot be negotiated");
+    assert_eq!(codes(&err), ["E033"], "{err:?}");
+}

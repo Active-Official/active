@@ -190,19 +190,32 @@ fn envelope_fields(module: &Module) -> Option<EnvelopeRefs> {
 /// Major version of the envelope's `version` value. An alias resolves; a
 /// version that is not a literal string cannot be negotiated and is
 /// refused rather than guessed.
+///
+/// The walk is ITERATIVE and bounded: the gate runs before evaluation, so
+/// the cycle check has not run yet, and a crafted `envelope.version` that
+/// aliases its way around a loop would otherwise overflow the stack here
+/// (review finding on LANG-C-004; `deref_table` was already bounded).
 fn version_major(module: &Module, version_node: Option<crate::ir::NodeId>) -> VersionCheck {
-    let Some(node) = version_node else {
+    let Some(mut node) = version_node else {
         return VersionCheck::Missing;
     };
-    match module.get(node) {
-        Some(Node::Literal(Value::String(text))) => match parse_major(text) {
-            Some(major) => VersionCheck::Major(major),
-            None => VersionCheck::Unparseable(text.clone()),
-        },
-        Some(Node::Literal(value)) => VersionCheck::Unparseable(format!("{value:?}")),
-        Some(Node::Ref(target)) => version_major(module, Some(*target)),
-        _ => VersionCheck::Missing,
+    for _ in 0..64 {
+        match module.get(node) {
+            Some(Node::Literal(Value::String(text))) => {
+                return match parse_major(text) {
+                    Some(major) => VersionCheck::Major(major),
+                    None => VersionCheck::Unparseable(text.clone()),
+                }
+            }
+            Some(Node::Literal(value)) => return VersionCheck::Unparseable(format!("{value:?}")),
+            Some(Node::Ref(target)) => node = *target,
+            _ => return VersionCheck::Missing,
+        }
     }
+    // A ref chain longer than the bound is malformed (the parser's graph is
+    // acyclic by construction; a loop means recovery built one). Refuse
+    // rather than guess.
+    VersionCheck::Missing
 }
 
 enum VersionCheck {

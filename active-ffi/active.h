@@ -87,8 +87,10 @@ typedef struct ActiveBudget {
 /**
  * Set the process-wide parse bounds used by every later parse on this
  * library (LANG-C-003). `0` keeps the library default for that field
- * (4 MiB input, a wall budget that scales with input). Returns
- * `ACTIVE_ERR_OK`.
+ * (4 MiB input, a 100 ms parse budget base that scales with input).
+ * Values above the documented ceiling are clamped to it (input 1 GiB,
+ * parse wall 1 hour), so a bad length cannot disable the ceiling by
+ * accident. Returns `ACTIVE_ERR_OK`.
  *
  * There is deliberately no way to disable the bounds through the C ABI:
  * the boundary always keeps hard parse ceilings, and a host that needs

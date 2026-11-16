@@ -197,3 +197,47 @@ fn no_shipped_surface_clears_the_wall_budget() {
         "surfaces must use eval::canonical_budget instead of clearing the clock: {offenders:?}"
     );
 }
+
+#[test]
+fn canonical_budget_bounds_an_unlimited_base_in_every_dimension() {
+    // Review finding on LANG-C-008: setting only the wall clock left the
+    // counts/sizes at UNLIMITED, so a huge arena could exhaust memory
+    // before the clock fired. The canonical pass now bounds every
+    // dimension: unlimited fields become the shipped default, tighter
+    // caller limits are kept.
+    use active_core::eval::{canonical_budget, Budget, CANONICAL_WALL_MS};
+    let shipped = Budget::default();
+    let from_unlimited = canonical_budget(&Budget::unlimited());
+    assert_eq!(from_unlimited.max_wall_ms, CANONICAL_WALL_MS);
+    assert_eq!(from_unlimited.max_nodes, shipped.max_nodes);
+    assert_eq!(from_unlimited.max_depth, shipped.max_depth);
+    assert_eq!(from_unlimited.max_value_size, shipped.max_value_size);
+    assert_eq!(
+        from_unlimited.max_total_value_size,
+        shipped.max_total_value_size
+    );
+
+    let tighter = Budget {
+        max_nodes: 10,
+        max_wall_ms: 5,
+        ..Budget::unlimited()
+    };
+    let canonical = canonical_budget(&tighter);
+    assert_eq!(canonical.max_nodes, 10, "a tighter limit is kept");
+    assert_eq!(canonical.max_wall_ms, CANONICAL_WALL_MS);
+}
+
+#[test]
+fn the_unlimited_sentinel_is_the_only_value_without_a_deadline() {
+    use active_core::eval::{Budget, UNLIMITED};
+    assert!(Budget::default().wall_deadline().is_some());
+    assert!(Budget::unlimited().wall_deadline().is_none());
+    // A raw zero (never produced by Budget::resolve at an evaluation
+    // boundary) also means "no deadline" rather than a zero-length one.
+    let raw = Budget {
+        max_wall_ms: 0,
+        ..Budget::default()
+    };
+    assert!(raw.wall_deadline().is_none());
+    assert!(UNLIMITED > Budget::default().max_wall_ms);
+}

@@ -277,16 +277,45 @@ jobs:
             Active ${{ github.ref_name }} — see spec/packaging.md §6 for install
             and verification (SHA256SUMS, build attestations, `.sig` sidecars
             when the release key is set).
-      - name: Publish crates (needs CARGO_REGISTRY_TOKEN or trusted publishing)
+      - name: Provenance gate (LANG-J-001)
+        # A published version must have a committed source: a clean tree at
+        # the tag's commit whose workspace version equals the tag. 0.1.0
+        # was published from an uncommitted tree; this gate makes that
+        # impossible next time.
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::working tree is dirty; a release must come from committed source"
+            exit 1
+          fi
+          head_sha="$(git rev-parse HEAD)"
+          tag_sha="$(git rev-list -n1 "${GITHUB_REF_NAME}")"
+          if [ "$head_sha" != "$tag_sha" ]; then
+            echo "::error::HEAD $head_sha is not the commit of tag ${GITHUB_REF_NAME} ($tag_sha)"
+            exit 1
+          fi
+          version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print([p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "active-core"][0])')"
+          want="${GITHUB_REF_NAME#v}"
+          if [ "$version" != "$want" ]; then
+            echo "::error::workspace version $version does not match tag $want"
+            exit 1
+          fi
+          echo "provenance: $version at $head_sha"
+      - name: Publish crates (fails loudly if unavailable)
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         shell: bash
         run: |
-          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
-            echo "no registry token and no trusted-publishing link; skipping crates.io publish"
-            exit 0
+          # Publish gate (LANG-J-012): a release run must NEVER silently
+          # skip crates.io. Trusted publishing needs no token; the token
+          # path is the fallback. If neither is available the job FAILS
+          # loudly so the tag is visibly incomplete (never exit 0 here).
+          # Publishing itself still requires explicit owner approval
+          # (AGENTS.md) — this gate only refuses to half-ship a release.
+          if [ -n "$CARGO_REGISTRY_TOKEN" ]; then
+            cargo login "$CARGO_REGISTRY_TOKEN"
           fi
-          cargo login "$CARGO_REGISTRY_TOKEN"
           # Registry index lag breaks dependents published back to
           # back: lock files, publish in dependency order, pause
           # between crates. active-ffi and active-wasm ride the unified

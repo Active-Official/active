@@ -31,11 +31,14 @@ MSRV gate on 1.89.0), so a host building the stack uses 1.89 (LANG-F-013).
 | Rust (external crate) | `active` on crates.io | 1.4.0 (workspace) | `cargo add active` |
 | Python | `active-lang` on PyPI (name verified free; unscoped `active` taken) | 1.4.0 | `pip install active-lang` |
 | JS/TS | `active-lang` on npm (unscoped `active` taken; `@active-lang/active` reserved as fallback) | 1.4.0 | `npm install active-lang` |
-| Go | `github.com/Active-Official/active-go` (external repo, library) | tracks ABI v1 + release wasm (harness pin `f5bd6e2`) | `go get github.com/Active-Official/active-go@latest` |
+| Go | `github.com/Active-Official/active-go` (external repo, library) | tracks ABI v1 + release wasm (harness pin `f5bd6e2`; NOT verified in the 2026-11 audit) | `go get github.com/Active-Official/active-go@latest` |
 
 Language packages publish from this tree and are live at the 1.4.0
 line (verified 2026-10-22): npm `active-lang`, PyPI `active-lang`, and
-crates.io `active-core` all serve 1.4.0. The PyPI path publishes through
+crates.io `active-core` all serve 1.4.0. npm also carries a stray
+staging placeholder, `active-lang@0.0.0-stage`; it is recorded in
+VERSIONING.md §3 and its deprecation is an owner registry act (never
+publish a staging placeholder to a public registry again). The PyPI path publishes through
 OIDC trusted publishing (`pypi.yml`, no stored token); npm and crates.io
 use their registry tokens in the release flow. Registry publication is
 still an explicit, human-approved release act: a normal commit never
@@ -58,7 +61,7 @@ gate at initialization; a major mismatch is a hard error:
 ## 4. Compatibility guarantees
 
 - Diagnostic codes are stable API: existing codes never change
-  meaning; new codes are additive within the 1.x line.
+  meaning; new codes are additive within a major.
 - Evaluation semantics of shipped constructs never change
   incompatibly; new schema features are additive.
 - WASM modules, cdylibs, and bindings interoperate across patch and
@@ -66,4 +69,6 @@ gate at initialization; a major mismatch is a hard error:
   closed otherwise.
 - A patch release ships correctness fixes only; a minor release
   bundles additive surface with conformance-plus-release notes;
-  majors only for breaking changes, which the 1.x line avoids.
+  majors only for breaking changes: the 1.x line ended at 1.4.0 and
+  2.0.0 is the one breaking release. C ABI v1 is unchanged across the
+  1.4.0 → 2.0.0 move.

@@ -3,7 +3,10 @@
 All notable changes to the Active language, toolchain, and
 specification. (Entries below the rename keep their original
 SOLID-era names: that history is accurate as written.) Versions
-follow SemVer with a unified workspace version (spec/packaging.md §1).
+follow SemVer with a unified workspace version (spec/packaging.md §1);
+the `active-infinity` name is not part of this workspace (VERSIONING.md
+§4 - the placeholder member was retired, and the name belongs to the
+standalone Infinity codec).
 
 ## [Unreleased]
 
@@ -457,6 +460,12 @@ checklist (C-010 through C-090 plus C-070) is complete; the
 conformance suite is green and this repository is the declared
 reference implementation.
 
+**Never published.** The `v1.0.0` tag exists and this entry declared it the
+first stable release, but no registry ever carried 1.0.0 (crates.io jumps
+0.1.0 -> 1.1.0, GitHub releases start at v1.1.0, PyPI/npm have no 1.0.0).
+The first installable stable 1.x was 1.1.0. Do not retro-publish 1.0.0:
+the code has moved on and a stale artifact would confuse the record.
+
 Since 0.1.0-alpha.1: JSON keys serialize in source binding order
 (`preserve_order`; conformance sidecars re-emitted), comment
 attachment is file-aware across includes, schema entries take
@@ -491,3 +500,15 @@ First public alpha of the complete roadmap state.
   (`schemas/`); mdBook documentation site.
 - Conformance: `tests/spec/` (13 pairs) is the official suite; this
   repository is the reference implementation for 1.0.
+
+## [0.1.0] - 2026-10-16
+
+**Published without a source commit.** crates.io carries 0.1.0 for the five
+main crates, but no commit ever set the workspace version to plain 0.1.0:
+the publish came from an uncommitted tree between `e680645` and `d5de9b3`
+(both `0.1.0-alpha.1`). The version stays published (crates.io versions are
+permanent, and it has users); it is not reproducible and is not the
+reference for any behavior. `release.yml` now runs a provenance gate
+(LANG-J-001) that fails a release whose tree is dirty, whose commit is not
+the tag, or whose workspace version differs from the tag, so this cannot
+recur.

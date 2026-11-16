@@ -3,6 +3,9 @@ authors = ["ACTIVE Language Team"]
 language = "en"
 src = "src"
 title = "ACTIVE — Configuration for Humans and AI Agents"
+# Which release these pages document (LANG-J-014); bump with every release
+# (VERSIONING.md section 5).
+description = "Documents Active 1.4.0 (2.0.0 in preparation - see VERSIONING.md)"
 
 [build]
 build-dir = "book"

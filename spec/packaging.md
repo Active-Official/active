@@ -7,9 +7,12 @@ signing, crates.io publication, and editor distribution.
 
 - One workspace version (`[workspace.package] version`): currently
   `1.4.0`. All crates release together; no independent crate versioning.
-  The version/ABI contract for the language packages lives in
-  `docs/version-and-abi-policy.md`; this section records the Rust
-  workspace mechanics.
+  The unified track holds from 1.4.0: `active-ffi`, `active-wasm`, and
+  the PyPI/npm packages first published at 1.4.0 (no earlier versions
+  exist), so a pin below 1.4.0 for those resolves nowhere (LANG-J-005;
+  VERSIONING.md §3 records per-crate maxima). The version/ABI contract
+  for the language packages lives in `docs/version-and-abi-policy.md`;
+  this section records the Rust workspace mechanics.
 - SemVer: `0.x` alphas may break the surface (documented in
   CHANGELOG entries); `1.0.0` ships with C-090 and freezes the
   surface (grammar + IR + diagnostics codes + CLI flags).
@@ -22,7 +25,8 @@ signing, crates.io publication, and editor distribution.
 crates.io namespaces are first-come: the `active` family
 (`active`, `active-core`, `active-cli`, `active-fmt`, `active-lsp`)
 is owned by RatioArtificiosa, with `active-ls` and `active-fuzz`
-reserved defensively (see RENAME-STATUS in the Active workspace).
+reserved defensively (reservation record: VERSIONING.md §4 - both return
+HTTP 200 on crates.io; ownership to be confirmed by the owner).
 The Rust library names track the packages — only manifests move.
 
 | Package (crates.io) | Library / binary | Installs |
@@ -76,14 +80,16 @@ The macOS legs also run the full test suite in `ci.yml` (fmt, clippy, and
 
 ## 4. crates.io publication
 
-Order matters (path deps rewrite to version deps): `active-core`
-first, then `active-fmt`, `active-lsp`, `active-cli`. Continuous gate
-(`package` job in ci.yml): full `cargo package` for
-`active-core` (proves publish-readiness end to end) plus
-`cargo package --list` for the dependents (file inclusion +
-manifest parse). Full packaging of the dependents becomes possible
-— and the CI job extends to it — the moment `active-core` is
-published, since cargo verifies path deps against the registry.
+Order matters (path deps rewrite to version deps): `active-core`,
+`active`, `active-fmt`, `active-lsp`, `active-cli`, `active-ffi`,
+`active-wasm` (the retired `active-infinity` is not published from this
+repository; see VERSIONING.md §4). Continuous gate (`package` job in
+ci.yml): full `cargo package --locked` for active-core, and the
+dependents' tarballs are built with `--no-verify` because their
+verification build compiles against the PUBLISHED active-core, which lags
+the tree until the matching core lands (the release order publishes core
+first; full verification happens at publish time). The job also asserts
+the retired placeholder directory does not exist.
 
 Two supported paths for the real publish (both need a one-time
 human step — publication is authenticated, automation cannot mint
@@ -93,8 +99,12 @@ it):
    crates.io (`active-core`, `active-cli`, `active-fmt`,
    `active-lsp` → GitHub OIDC for `Active-Official/active`);
    release.yml then publishes passwordlessly on tags.
-2. **Token:** `cargo login` with `CARGO_REGISTRY_TOKEN`; release.yml
-   publishes when the secret exists, else skips with a notice.
+2. **Token:** `cargo login` with `CARGO_REGISTRY_TOKEN`; release.yml uses
+   it when the secret exists.
+
+Either way the publish step fails loudly when neither is available
+(LANG-J-012): a release run never exits 0 without publishing, so a tag
+cannot be half-shipped.
 
 Verify locally any time (no network writes):
 
@@ -131,8 +141,10 @@ cargo publish --dry-run -p active-core
 Patch releases ship on demand for correctness fixes (no behavior change
 beyond the fix, full gates, changelog entry). Minor
 releases bundle additive surface (new crates, bindings, schema domains)
-with conformance-plus-release notes. Majors only for breaking changes,
-which the 1.x line avoids by policy (codes additive, ABI versioned).
+with conformance-plus-release notes. Majors only for breaking changes:
+the 1.x line ended at 1.4.0, and 2.0.0 is the one breaking release (codes
+additive within a major, C ABI v1 unchanged). See VERSIONING.md §6 for
+the 2.0.0 breaking-change list.
 Every release runs the release checklist (G-011a): conformance artifact,
 native matrix, wasm blob, checksums, changelog honesty. The cadence is
 demand-driven, never calendar-driven; a quiet month with green CI is a

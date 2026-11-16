@@ -102,10 +102,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build on declared MSRV
         run: cargo build --workspace --locked
-      - name: Compile the test suite on declared MSRV
-        # The dev-dependencies require the same floor; this is the gate
-        # that proves the AGENTS.md `cargo test --workspace` path builds.
-        run: cargo test --workspace --no-run --locked
+      - name: Run the test suite on declared MSRV
+        # LANG-J-004: build-only left the advertised floor unproven for the
+        # test workflow; the suite must run on the declared toolchain.
+        run: cargo test --workspace --locked
 
   package:
     name: Packaging gate (C-056)
@@ -115,18 +115,21 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # Full `cargo package` proves active-core is publish-ready.
-      # Dependents need active-core on crates.io first (cargo
-      # rewrites path deps to registry deps), so they get --list
-      # (file inclusion + manifest parse) until the first publish;
-      # spec/packaging.md §4 tracks the progression.
-      - name: Package active-core
-        run: cargo package --locked -p active-core
-      - name: List dependent packages
+      # LANG-J-008: every crate is published now, so the gate runs the
+      # full `cargo package` for all of them (path deps rewrite against
+      # the registry). The retired placeholder is asserted absent below.
+      - name: Package every crate
         run: |
-          cargo package --list --locked -p active-fmt
-          cargo package --list --locked -p active-lsp
-          cargo package --list --locked -p active-cli
+          cargo package --locked -p active-core
+          for p in active active-fmt active-lsp active-cli active-ffi active-wasm; do
+            # Dependents' tarballs are built and validated here. Their
+            # verification build compiles against the PUBLISHED
+            # active-core, which lags this tree until the matching core
+            # lands (the release order publishes core first), so
+            # --no-verify keeps the gate meaningful without pinning it to
+            # an older API. Full verification runs at publish time.
+            cargo package --locked --no-verify -p "$p"
+          done
       # LANG-E-001 / E-004: the retired active-infinity placeholder must
       # never be packaged from this repository again. The name belongs to
       # the standalone Infinity codec (VERSIONING.md section 4).

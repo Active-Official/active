@@ -25,7 +25,7 @@ active_mode = "data"
 active_capabilities = ["check", "eval", "graph"]
 
 model = {
-  version = "1.0.0",
+  version = "1.4.0",  # current published line (2.0.0 when it ships)
   payload = blob("application/json", "{\"nodes\":3}")
 }
 ```

@@ -67,6 +67,11 @@ fn workspace_version_is_single_sourced() {
         "active-cli",
         "active-fmt",
         "active-lsp",
+        // LANG-J-013: the two crates that joined the track latest must
+        // inherit the version too; the metadata test below covers their
+        // other fields but not this invariant.
+        "active-ffi",
+        "active-wasm",
     ] {
         let manifest = read_toml(name);
         let table = package_table(&manifest, name);

@@ -92,3 +92,29 @@ detection is the whole API the language server needs for format-on-
 save and range-formatting-later: parse (recovering, so broken files
 still produce a tree), format, apply as a full-document edit. No
 formatter changes are expected for LSP work.
+
+## 5. Schema re-emission (LANG-G-024)
+
+A schema block is metadata, not data: the parser detaches it from the value
+tree (spec/grammar.md §2.10), so the formatter re-emits it from the schema
+tree rather than from the value fields. The placement is canonical:
+
+- the root schema leads the document, before profiles and the root body;
+- a nested schema leads its table's body, before `depends_on` and the keys
+  it constrains (the tree is found by dotted path);
+- a `Table { ... }` inside a type expression stays inline in that
+  expression (`server = Table { host = String }`), recursively.
+
+Indent style writes `schema:` with an indented body; brace style writes
+`schema { ... }`. A closed schema leads its body with `closed = true`, and
+the evolution metadata (`version`, `min_reader`, `min_writer`) follows;
+entries keep source order because the schema tree preserves it. An empty
+schema emits inline as `schema = {}` in every style, since indentation
+style cannot express a bodyless block.
+
+A data field literally named `schema` is never re-emitted as a block: every
+table-valued form of that key is schema syntax (spec/grammar.md §2.10), so
+emitting a block would turn data into metadata on the next parse. Only an
+alias is possible there, and the alias name re-parses as data. This rule
+keeps the formatter's fixed point honest: formatting a schema-bearing
+document twice is a no-op and evaluation before and after is byte-identical.

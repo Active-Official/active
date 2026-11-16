@@ -106,9 +106,11 @@ fn conformance_manifest_is_green() {
             Ok((value, diags)) => {
                 let got_codes = codes_of(&diags);
                 if case.kind == "refused" {
-                    // Strict-collected violations (T003/T005/E004/E023) arrive
-                    // as Ok-plus-diagnostics; the CLI turns them into exit
-                    // codes, embeddings compare the code set.
+                    // DEC-004 (LANG-G-002): the core suite still evaluates
+                    // resiliently - it is the reference diagnostic source - but
+                    // the embeddings refuse an error-severity diagnostic, so a
+                    // refused case has no value in any embedding and carries
+                    // only its codes.
                     assert_eq!(
                         got_codes,
                         expected_codes(&case.id),

@@ -599,7 +599,20 @@ pub unsafe extern "C" fn active_eval(
             Err(_) => return std::ptr::null_mut(),
         };
         match engine.evaluate_with_seeds(&parsed) {
-            Ok((value, _, seeds)) => {
+            Ok((value, diagnostics, seeds)) => {
+                // DEC-004 / LANG-G-002: the C boundary reports failure for
+                // an error-severity diagnostic even though the resilient
+                // engine returned a tree, exactly as `active eval` exits 1.
+                // The numeric code comes from the first error diagnostic
+                // (schema/unit/cycle/unresolved/budget), which also wires
+                // the previously dead codes (LANG-G-007).
+                if let Some(diagnostic) = diagnostics
+                    .iter()
+                    .find(|d| d.severity == active_core::Severity::Error)
+                {
+                    set_last(error_code_for(&diagnostic.code));
+                    return std::ptr::null_mut();
+                }
                 set_last(ACTIVE_ERR_OK);
                 // Structural material (a plain env read used as a secret
                 // locator, and anything built from it) is redacted before
@@ -637,6 +650,22 @@ pub unsafe extern "C" fn active_eval(
             }
         }
     })
+}
+
+/// Numeric ABI code for a refusing diagnostic (LANG-G-002/G-007). Codes are
+/// stable: the mapping reads the language code's first letter and family,
+/// and an unknown error falls back to SCHEMA_FAIL rather than claiming OK.
+fn error_code_for(code: &str) -> i32 {
+    match code {
+        "S001" => ACTIVE_ERR_CYCLE,
+        "W001" | "S002" | "S003" => ACTIVE_ERR_UNRESOLVED_REF,
+        "T001" | "T002" | "T003" => ACTIVE_ERR_UNIT_MISMATCH,
+        "T004" | "T005" | "T006" | "T007" | "T008" => ACTIVE_ERR_SCHEMA_FAIL,
+        "B001" | "B002" | "B003" | "B004" => ACTIVE_ERR_SCHEMA_FAIL,
+        _ if code.starts_with('X') => ACTIVE_ERR_BUDGET_EXCEEDED,
+        _ if code.starts_with('S') => ACTIVE_ERR_UNIT_MISMATCH,
+        _ => ACTIVE_ERR_SCHEMA_FAIL,
+    }
 }
 
 fn with_set<F, R>(set: *const ActiveDiagnosticSet, default: R, f: F) -> R

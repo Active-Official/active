@@ -231,11 +231,24 @@ fn eval_inner(source: &str) -> String {
                 .iter()
                 .map(|d| format!("[{}] {}", d.code, d.message))
                 .collect();
-            envelope_ok(
+            // DEC-004 / LANG-G-002: success is computed from the
+            // diagnostics, not from the Result. An error-severity item
+            // makes the envelope `ok: false` (same verdict as the CLI's
+            // exit code) while the JSON and item list stay byte-identical,
+            // so diagnosed-kind value assertions still compare.
+            let diagnosed_error = diags
+                .iter()
+                .any(|d| d.severity == active_core::Severity::Error);
+            let envelope = envelope_ok(
                 &json,
                 &serde_json::json!(lines.join("\n")).to_string(),
                 &diag_items(&diags),
-            )
+            );
+            if diagnosed_error {
+                envelope.replacen("\"ok\":true", "\"ok\":false", 1)
+            } else {
+                envelope
+            }
         }
         Err(e) => match e {
             // Validation failures keep every diagnostic (codes AND spans),

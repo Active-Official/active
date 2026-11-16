@@ -141,7 +141,10 @@ A receiver replies:
 
 **Rules.**
 
-1. Identity is the `blake3:` digest alone. Size and media type are
+1. Identity is the `blake3:` digest alone, matched case-insensitively on
+   input and emitted in canonical lowercase (LANG-C-016: uppercase hex is a
+   common sender habit, and treating it as malformed made the receiver
+   silently re-transfer every blob). Size and media type are
    transfer hints; they never change which bytes a hash names.
 2. Taint never affects identity. A tainted blob whose bytes the
    receiver already holds still short-circuits; redaction applies to

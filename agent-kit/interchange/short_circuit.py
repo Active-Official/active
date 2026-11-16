@@ -32,14 +32,24 @@ def normalize_identity(value: object) -> str | None:
     if not isinstance(record, dict):
         record = value
     digest = record.get("hash")
-    if not isinstance(digest, str) or not digest.startswith(DIGEST_PREFIX):
+    if not isinstance(digest, str):
         return None
-    hex_part = digest[len(DIGEST_PREFIX) :]
+    if not digest.lower().startswith(DIGEST_PREFIX):
+        return None
+    # Case-insensitive input, canonical lowercase output (LANG-C-016):
+    # uppercase hex is a common sender habit, and treating it as malformed
+    # made the receiver silently re-transfer every blob. The RETURNED
+    # identity is always the canonical lowercase form, so a set built from
+    # exported identities still matches.
+    lowercase = digest.lower()
+    if not lowercase.startswith(DIGEST_PREFIX):
+        return None
+    hex_part = lowercase[len(DIGEST_PREFIX) :]
     if len(hex_part) != DIGEST_HEX or any(
         c not in "0123456789abcdef" for c in hex_part
     ):
         return None
-    return digest
+    return DIGEST_PREFIX + hex_part
 
 
 def short_circuits(value: object, known: set[str]) -> bool:

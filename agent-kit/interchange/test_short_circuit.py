@@ -46,6 +46,22 @@ class ShortCircuitTest(unittest.TestCase):
         ):
             self.assertIsNone(normalize_identity(value), value)
 
+    def test_uppercase_hex_short_circuits_and_normalizes(self) -> None:
+        # LANG-C-016: senders emit uppercase hex; treating it as malformed
+        # made the receiver re-transfer every blob. Input is
+        # case-insensitive, the canonical form is lowercase, and the pinned
+        # vector records both.
+        vector = json.loads(VECTOR.read_text(encoding="utf-8"))
+        case = vector["uppercase"]
+        normalized = normalize_identity({"hash": case["hash"]})
+        self.assertEqual(normalized, case["normalized"])
+        self.assertEqual(normalized, HELD)
+        self.assertEqual(
+            case["short_circuits"], short_circuits({"hash": case["hash"]}, {HELD})
+        )
+        # The prefix is normalised too.
+        self.assertEqual(normalize_identity({"hash": case["hash"].upper()}), HELD)
+
     def test_nested_payloads_are_walked_once(self) -> None:
         record = {"$active.blob": {"hash": MISSING, "size": 1}}
         payload = {"a": [record, {"b": record}], "c": {"d": record}}

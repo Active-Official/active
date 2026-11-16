@@ -239,7 +239,10 @@ enum Commands {
         materialise_blobs: bool,
         /// Emit only the demanded cone of the evaluated value
         /// (PROPOSAL §2.2): the budget accountant still guards the
-        /// whole graph; the path selects what gets printed.
+        /// whole graph; the path selects what gets printed. The cost is a
+        /// FULL evaluation (parse + walk + validate), so a cone fetch is a
+        /// whole-document fetch (LANG-C-013, spec/agent-interchange-profile.md
+        /// section 4b).
         /// Dotted/index path (`server.host`, `ports[0]`).
         #[arg(long)]
         path: Option<String>,

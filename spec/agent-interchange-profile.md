@@ -82,6 +82,22 @@ the gate only for documents it already trusts.
    marker (lint L010 is the sender-side check; capability refusal is
    the receiver-side gate).
 
+## 4b. Cone fetches cost a full evaluation (LANG-C-013)
+
+`eval --path a.b` prints the demanded cone, and the cost is a FULL document
+evaluation: parse, schedule, walk, validate, redact, then the projection.
+That is deliberate - a cone must never become a way to hide a budget trip -
+so an agent loop that fetches cones one at a time pays the whole document per
+fetch. Budget for it: a 100k-node document costs its full walk on every cone
+request, and an undemanded pathological subtree can deny service to a
+demanded cone (the static budgets still run first and fail closed).
+
+Demand-driven evaluation (walk only what the cone needs, with per-cone
+budgets) is the long-term fix; it lives on the `active-infinity` surface and
+is tracked as a follow-up, not a 1.x promise. Until then, fetch the cones you
+need from one evaluation (`--path` per call, or project the exported document
+locally) rather than in a hot loop.
+
 ## 5. Non-goals
 
 - No multi-agent orchestration protocol, transport, or scheduling.

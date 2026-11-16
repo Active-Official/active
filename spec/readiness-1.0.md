@@ -97,8 +97,8 @@ spec/performance.md §3). **PASS.**
 ## 10. Security review
 
 No open critical or high findings across all independent review
-rounds (Copilot CLI + Meta-proxy BYOK, every round triaged in
-`docs/Memories-and-Observations.md`, ending clean each time):
+rounds (Copilot CLI + Meta-proxy BYOK, every round triaged in the
+local working notes, which stay outside the repository, ending clean each time):
 healing/rename soundness, span anchoring, parser UTF-16/scoping,
 export redaction, TOCTOU/single-read, overlay trust sets, walltime
 budgets under instrumentation. `cargo audit` clean (one documented

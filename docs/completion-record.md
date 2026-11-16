@@ -7,8 +7,9 @@
 program (`PROPOSAL.md` / `CHECKLIST.md`) and the Tooling program
 (`tooling/TOOLING-PROPOSAL.md` / `TOOLING-CHECKLIST.md`). The checked
 working copies are `master-program/CHECKLIST.md` and
-`master-program/TOOLING-CHECKLIST.md`, and the language design proposal is
-`docs/proposal.md`.
+`master-program/TOOLING-CHECKLIST.md` (working material, never committed),
+and the language design proposal lives in the local working folder as
+`proposal.md` (not committed).
 **Close-out register:** `master-program/GAPS-AND-DRIFT.md` (every row
 marked FIXED / STILL PRESENT / ACCEPTED with evidence).
 

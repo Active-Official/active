@@ -275,6 +275,11 @@ jobs:
         # mode, lint, repair plan, debug steps) is validated against
         # docs/schemas/*.json, so an output shape change fails here.
         run: python conformance/evidence/output_schema_check.py
+      - name: Check documentation references
+        # Backticked docs/spec paths and relative links in TRACKED Markdown
+        # must resolve to tracked files; local working notes cannot satisfy
+        # a committed reference (LANG-G-020).
+        run: python conformance/evidence/doc_links.py
       - name: Editor smoke (VS Code extension + Neovim layer)
         # Activates the real extension against a stubbed VS Code API and
         # probes redaction through the same CLI it calls; the Neovim

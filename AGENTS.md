@@ -8,8 +8,9 @@ apply to every AI agent working here.
 
 - `spec/` is normative: grammar, validation, secrets, budgets, blobs,
   converters, tooling surfaces, and the agent interchange profile.
-- `docs/tooling.md` and `docs/Agent-Handbook.md` cover the shipped tool
-  surfaces and the local working agreement.
+- `docs/tooling.md` covers the shipped tool surfaces; `CONTRIBUTING.md`
+  covers the local working agreement (spec-first, the full gate, review,
+  and the non-goals).
 - `master-program/` holds the execution program (proposal, checklists,
   gap register). It is working material; never commit it or push it to a
   remote. `master-program/CHECKLIST.md` and

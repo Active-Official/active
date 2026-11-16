@@ -215,7 +215,7 @@ flowchart LR
 | `25Cel`, `300K` | temperature, kelvin canonical | affine rules hold |
 | `tokens`, `FLOPS`, `tok/s` | AI age quantities | first class citizens |
 
-Temperature and decibels follow affine and logarithmic rules instead of pretending to be plain numbers. Length in long form (`meter`, `km`) never collides with minutes (`m`). The registry is documented in `spec/units.md` and every entry is exercised by tests.
+Temperature and decibels follow affine and logarithmic rules instead of pretending to be plain numbers. Length in long form (`meter`, `km`) never collides with minutes (`m`). The registry is documented in `docs/units.md` and every entry is exercised by tests.
 
 ## Doubts, answered in passing
 

@@ -2,7 +2,7 @@
 
 > Status: normative mapping owned by this repository (DEC-001 envelope
 > cleanup). The RPC repository (`Active-Official/active-rpc`) mirrors this
-> table in its `docs/spec/interop.md`; where the two disagree, this table
+> table in that repository's own interop spec; where the two disagree, this table
 > governs the language-level fields and the RPC table governs transport
 > framing.
 

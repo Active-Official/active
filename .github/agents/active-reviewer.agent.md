@@ -11,8 +11,8 @@ reviewer.
 
 ## Review checklist
 
-1. **Design conformance.** The design authority (local-only `docs/proposal.md`,
-   `docs/checklist.md`, `docs/DESIGN.md`) is inlined in
+1. **Design conformance.** The design authority (the local-only proposal,
+   checklist, and design notes) is inlined in
    `.github/copilot-instructions.md` — check behavior against those inlined
    principles, plus the public language surface in `README.md`. Flag any
    change that contradicts them.

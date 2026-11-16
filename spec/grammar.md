@@ -567,7 +567,8 @@ An identifier reference resolves in this order:
 
 Edges recorded for the dependency graph: reference → referent. `env`, string
 literals, and numeric literals are sources (no incoming edges). See
-`spec/evaluation-model.md` (C-014) for the full lowering and evaluation rules.
+`spec/specification.md` Chapter 3 (C-014) for the full lowering and
+evaluation rules.
 
 ---
 

@@ -4628,10 +4628,14 @@ fn env_references_are_case_insensitive_over_the_process_snapshot() {
 #[cfg(unix)]
 #[test]
 fn a_closed_stdout_reader_does_not_panic() {
-    // LANG-H-007: `active eval big | head -1` must die to SIGPIPE like a
-    // standard Unix filter, not panic with exit 101. The document is large
-    // enough to fill the pipe buffer so the child blocks while we close
-    // the read end.
+    // LANG-H-007: `active eval big | head -1` must end like a standard Unix
+    // filter, not panic with exit 101. Accepted outcomes are death by
+    // SIGPIPE (the usual case on Linux once the disposition is restored)
+    // and the shipped fallback, a quiet exit 141 when a platform returns
+    // EPIPE instead of delivering the signal (Rust panics on EPIPE from a
+    // worker thread; the CLI routes every stdout write through an
+    // EPIPE-tolerant writer). The document is large enough to fill the
+    // pipe buffer so the child blocks while we close the read end.
     use std::io::{BufRead, BufReader};
     use std::os::unix::process::ExitStatusExt;
     use std::process::Stdio;
@@ -4660,10 +4664,67 @@ fn a_closed_stdout_reader_does_not_panic() {
         !stderr.contains("panicked"),
         "a closed reader must not panic: {stderr}"
     );
-    assert_ne!(out.status.code(), Some(101), "{stderr}");
-    if let Some(signal) = out.status.signal() {
-        assert_eq!(signal, 13, "expected SIGPIPE death, got signal {signal}");
+    let quiet_exit = out.status.code() == Some(141);
+    let killed_by_sigpipe = out.status.signal() == Some(13);
+    assert!(
+        quiet_exit || killed_by_sigpipe,
+        "expected exit 141 or SIGPIPE death, got {:?} (stderr: {stderr})",
+        out.status
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_blocked_sigpipe_write_still_leaves_quietly() {
+    // The other half of LANG-H-007: when a platform keeps SIGPIPE blocked
+    // (the write returns EPIPE instead of killing the process, as seen on
+    // macOS CI), the CLI must still end like a filter. Blocking the signal
+    // in the child is the deterministic reproduction: the disposition
+    // reset cannot help a blocked mask, so the EPIPE-tolerant writer is
+    // the code under test.
+    use std::io::{BufRead, BufReader};
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+    let mut src = String::new();
+    for i in 0..30_000 {
+        src.push_str(&format!("k{i} = {i}\n"));
     }
+    let f = fixture("sigpipe-blocked.active", &src);
+    let mut cmd = active();
+    cmd.args(["eval", "--budget-profile", "trusted"])
+        .arg(&f)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    // SAFETY: the closure only calls async-signal-safe libc functions
+    // between fork and exec.
+    unsafe {
+        cmd.pre_exec(|| {
+            let mut set: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut set);
+            libc::sigaddset(&mut set, libc::SIGPIPE);
+            libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+            Ok(())
+        });
+    }
+    let mut child = cmd.spawn().expect("spawn active");
+    {
+        let stdout = child.stdout.take().expect("stdout pipe");
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("read one line");
+    }
+    let out = child.wait_with_output().expect("wait");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("panicked"),
+        "a closed reader must not panic with SIGPIPE blocked: {stderr}"
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(141),
+        "expected the quiet filter status, got {:?} (stderr: {stderr})",
+        out.status
+    );
 }
 
 #[test]

@@ -8,6 +8,46 @@ use active_core::{parse_file, Budget, Engine, EvalError, ParseOptions, Style};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::{Path, PathBuf};
 
+/// Write to stdout without panicking on a closed reader.
+///
+/// The print macros panic on `EPIPE` from any thread except the main one
+/// (rust-lang/rust#46016), so `active eval ... | head -1` turned a normal
+/// end of pipeline into exit 101 plus a traceback. Every stdout write
+/// goes through here instead: a broken pipe leaves with the conventional
+/// filter status (128 + SIGPIPE = 141), and any other write failure is
+/// reported on stderr and fails the run, so a full disk cannot pass for
+/// success.
+fn write_stdout(args: std::fmt::Arguments<'_>, newline: bool) {
+    use std::io::Write as _;
+    let mut stdout = std::io::stdout().lock();
+    let result = if newline {
+        writeln!(stdout, "{args}")
+    } else {
+        write!(stdout, "{args}")
+    };
+    if let Err(err) = result {
+        if err.kind() == std::io::ErrorKind::BrokenPipe {
+            std::process::exit(141);
+        }
+        let _ = writeln!(std::io::stderr(), "active: cannot write to stdout: {err}");
+        std::process::exit(1);
+    }
+}
+
+/// `println!` with a broken pipe treated as end of output.
+macro_rules! outln {
+    ($($arg:tt)*) => {
+        crate::write_stdout(format_args!($($arg)*), true)
+    };
+}
+
+/// `print!` with a broken pipe treated as end of output.
+macro_rules! out {
+    ($($arg:tt)*) => {
+        crate::write_stdout(format_args!($($arg)*), false)
+    };
+}
+
 #[derive(Parser)]
 #[command(
     name = "active",
@@ -931,7 +971,7 @@ fn run_inspect(
             // authored + process-env material set.
             let schema_profile = material_profile_with(&module, profile.as_deref())?;
             schema_profile.redact_json(&mut inspected);
-            println!(
+            outln!(
                 "{}",
                 serde_json::to_string_pretty(&inspected).map_err(|e| anyhow::anyhow!("{e}"))?
             );
@@ -965,11 +1005,11 @@ fn run_inspect(
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?;
             match format {
-                "json" => println!(
+                "json" => outln!(
                     "{}",
                     serde_json::to_string_pretty(&report).map_err(|e| anyhow::anyhow!("{e}"))?
                 ),
-                "text" => print!("{}", active_core::convert::render_inspection_text(&report)),
+                "text" => out!("{}", active_core::convert::render_inspection_text(&report)),
                 other => anyhow::bail!("unknown inspect format `{other}` (want json|text)"),
             }
         }
@@ -1080,9 +1120,9 @@ fn check_declared_against(
     let refused = active_core::convert::refused_capabilities(&module.capabilities, &host_tools);
     if refused.is_empty() {
         if module.capabilities.is_empty() {
-            println!("capabilities ok (none declared)");
+            outln!("capabilities ok (none declared)");
         } else {
-            println!(
+            outln!(
                 "capabilities ok: {}",
                 capped_list(
                     &module
@@ -1370,12 +1410,12 @@ fn run_graph_query(
         match format {
             "text" => {
                 for p in paths {
-                    println!("{p}");
+                    outln!("{p}");
                 }
                 Ok(())
             }
             "json" => {
-                println!("{}", serde_json::json!({"query": title, "paths": paths}));
+                outln!("{}", serde_json::json!({"query": title, "paths": paths}));
                 Ok(())
             }
             other => anyhow::bail!("unsupported format: {other}"),
@@ -1439,12 +1479,12 @@ fn run_graph_query(
                 match format {
                     "text" => {
                         for (path, size, hash) in &blobs {
-                            println!("{path} size={size} blake3:{hash}");
+                            outln!("{path} size={size} blake3:{hash}");
                         }
                         Ok(())
                     }
                     "json" => {
-                        println!(
+                        outln!(
                             "{}",
                             serde_json::json!({"query": query, "blobs": blobs.iter().map(|(path, size, hash)| serde_json::json!({"path": path, "size": size, "hash": format!("blake3:{hash}")})).collect::<Vec<_>>()})
                         );
@@ -1972,9 +2012,9 @@ fn main() -> anyhow::Result<()> {
             }
 
             match format.as_str() {
-                "json" => println!("{}", value_to_pretty_json(&value)),
+                "json" => outln!("{}", value_to_pretty_json(&value)),
                 "yaml" => match value_to_yaml_string(&value) {
-                    Ok(yaml) => println!("{yaml}"),
+                    Ok(yaml) => outln!("{yaml}"),
                     Err(e) => anyhow::bail!("yaml export failed: {e}"),
                 },
                 "toml" => match value_to_toml_string(&value) {
@@ -1982,7 +2022,7 @@ fn main() -> anyhow::Result<()> {
                         for d in &export_diags {
                             report(d, &name);
                         }
-                        println!("{toml}");
+                        outln!("{toml}");
                     }
                     Err(e) => anyhow::bail!("toml export failed: {e}"),
                 },
@@ -2058,7 +2098,7 @@ fn main() -> anyhow::Result<()> {
                         Ok((_, diags)) => {
                             dump_trail(trace);
                             if diags.is_empty() {
-                                println!("OK");
+                                outln!("OK");
                             } else {
                                 for d in &diags {
                                     report(d, &name);
@@ -2135,27 +2175,27 @@ fn main() -> anyhow::Result<()> {
 
             match format.as_str() {
                 "text" => {
-                    println!("Bindings:");
+                    outln!("Bindings:");
                     let mut bindings: Vec<(&String, &active_core::NodeId)> =
                         module.bindings.iter().collect();
                     bindings.sort_by(|a, b| a.0.cmp(b.0));
                     for (name, id) in bindings {
-                        println!("  let {} = NodeId({})", name, id.0);
+                        outln!("  let {} = NodeId({})", name, id.0);
                     }
-                    println!("\nGraph edges (dependency → dependent):");
+                    outln!("\nGraph edges (dependency → dependent):");
                     for edge in module.graph.raw_edges() {
                         let from = module.graph[edge.source()];
                         let to = module.graph[edge.target()];
-                        println!(
+                        outln!(
                             "  {} → {}",
                             active_core::graph::node_label(&module, from),
                             active_core::graph::node_label(&module, to)
                         );
                     }
                 }
-                "mermaid" => println!("{}", active_core::graph::to_mermaid(&module)),
-                "dot" => println!("{}", active_core::graph::to_dot(&module)),
-                "json" => println!(
+                "mermaid" => outln!("{}", active_core::graph::to_mermaid(&module)),
+                "dot" => outln!("{}", active_core::graph::to_dot(&module)),
+                "json" => outln!(
                     "{}",
                     serde_json::to_string_pretty(&active_core::graph::to_graph_json(&module))
                         .map_err(|e| anyhow::anyhow!("graph serialize failed: {e}"))?
@@ -2187,10 +2227,10 @@ fn main() -> anyhow::Result<()> {
             match format.as_str() {
                 "text" => {
                     for path in &impact.paths {
-                        println!("{path}");
+                        outln!("{path}");
                     }
                     if let Some(note) = note {
-                        println!("note: {note}");
+                        outln!("note: {note}");
                     }
                 }
                 "json" => {
@@ -2198,7 +2238,7 @@ fn main() -> anyhow::Result<()> {
                     if let Some(note) = note {
                         out["note"] = serde_json::json!(note);
                     }
-                    println!("{out}");
+                    outln!("{out}");
                 }
                 other => anyhow::bail!("unsupported format: {}", other),
             }
@@ -2220,10 +2260,10 @@ fn main() -> anyhow::Result<()> {
             match format.as_str() {
                 "text" => {
                     for path in paths {
-                        println!("{path}");
+                        outln!("{path}");
                     }
                 }
-                "json" => println!("{}", serde_json::json!({"key": key, "paths": paths})),
+                "json" => outln!("{}", serde_json::json!({"key": key, "paths": paths})),
                 other => anyhow::bail!("unsupported format: {}", other),
             }
         }
@@ -2251,12 +2291,12 @@ fn main() -> anyhow::Result<()> {
                 &module, &engine, &seeds,
             ))?;
             match to.as_str() {
-                "json" => println!(
+                "json" => outln!(
                     "{}",
                     active_core::convert::value_to_pretty_json_with(&profile, &value)
                 ),
                 "yaml" => match active_core::convert::value_to_yaml_string_with(&profile, &value) {
-                    Ok(yaml) => println!("{yaml}"),
+                    Ok(yaml) => outln!("{yaml}"),
                     Err(e) => anyhow::bail!("yaml export failed: {e}"),
                 },
                 "toml" => match active_core::convert::value_to_toml_string_with(&profile, &value) {
@@ -2264,7 +2304,7 @@ fn main() -> anyhow::Result<()> {
                         for d in &export_diags {
                             report(d, &name);
                         }
-                        println!("{toml}");
+                        outln!("{toml}");
                     }
                     Err(e) => anyhow::bail!("toml export failed: {e}"),
                 },
@@ -2290,7 +2330,7 @@ fn main() -> anyhow::Result<()> {
             for d in &notes {
                 report(d, &name);
             }
-            print!("{source}");
+            out!("{source}");
         }
         Commands::Generate {
             from,
@@ -2337,9 +2377,9 @@ fn main() -> anyhow::Result<()> {
             }
             .map_err(|e| anyhow::anyhow!("{e}"))?;
             // Emit exactly one trailing newline: generator outputs
-            // already end with `\n`, and `println!` would append a
+            // already end with `\n`, and `outln!` would append a
             // second one (a blank line that `gofmt` rejects).
-            println!("{}", output.trim_end_matches('\n'));
+            outln!("{}", output.trim_end_matches('\n'));
         }
         Commands::Inspect {
             from,
@@ -2368,15 +2408,15 @@ fn main() -> anyhow::Result<()> {
                 active_core::Mode::Config => "config",
             };
             if format == "text" {
-                println!("mode: {mode}");
-                println!("marker: {}", if marker { "present" } else { "absent" });
+                outln!("mode: {mode}");
+                outln!("marker: {}", if marker { "present" } else { "absent" });
                 if module.capabilities.is_empty() {
-                    println!("capabilities: (none)");
+                    outln!("capabilities: (none)");
                 } else {
-                    println!("capabilities: {}", module.capabilities.join(", "));
+                    outln!("capabilities: {}", module.capabilities.join(", "));
                 }
             } else if format == "json" {
-                println!(
+                outln!(
                     "{}",
                     serde_json::to_string_pretty(&serde_json::json!({
                         "mode": mode,
@@ -2422,17 +2462,17 @@ fn main() -> anyhow::Result<()> {
                     ("value size", "value_size"),
                     ("total size", "total_size"),
                 ] {
-                    println!(
+                    outln!(
                         "{label}: used {} of {} (headroom {})",
                         usage[key], limits[key], headroom[key]
                     );
                 }
-                println!(
+                outln!(
                     "wall clock: {} ms (host-time limit; not sampled here)",
                     limits["wall_ms"]
                 );
             } else if format == "json" {
-                println!(
+                outln!(
                     "{}",
                     serde_json::to_string_pretty(&data).map_err(|e| anyhow::anyhow!("{e}"))?
                 );
@@ -2484,13 +2524,13 @@ fn main() -> anyhow::Result<()> {
                     },
                 );
                 if format == "text" {
-                    println!(
+                    outln!(
                         "reduced {} -> {} bytes ({} attempts) keeping {}",
                         report["original_bytes"], report["reduced_bytes"], report["attempts"], code
                     );
-                    print!("{}", report["reduced"].as_str().unwrap_or(""));
+                    out!("{}", report["reduced"].as_str().unwrap_or(""));
                 } else {
-                    println!(
+                    outln!(
                         "{}",
                         serde_json::to_string_pretty(&report)
                             .map_err(|e| anyhow::anyhow!("{e}"))?
@@ -2498,7 +2538,7 @@ fn main() -> anyhow::Result<()> {
                 }
                 if !report["target_present"].as_bool().unwrap_or(false) {
                     if format == "text" {
-                        println!("target {code} not found in the document");
+                        outln!("target {code} not found in the document");
                     }
                     std::process::exit(1);
                 }
@@ -2515,7 +2555,7 @@ fn main() -> anyhow::Result<()> {
                 )
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
                 if format == "text" {
-                    println!(
+                    outln!(
                         "replay: {} hash={} steps={} steps_match={}",
                         if report["ok"].as_bool().unwrap_or(false) {
                             "OK"
@@ -2527,7 +2567,7 @@ fn main() -> anyhow::Result<()> {
                         report["steps_match"].as_bool().unwrap_or(false)
                     );
                 } else {
-                    println!(
+                    outln!(
                         "{}",
                         serde_json::to_string_pretty(&report)
                             .map_err(|e| anyhow::anyhow!("{e}"))?
@@ -2557,11 +2597,11 @@ fn main() -> anyhow::Result<()> {
                 None => (steps.clone(), None),
             };
             if format == "text" {
-                print!("{}", active_core::debug::render_steps(&shown));
+                out!("{}", active_core::debug::render_steps(&shown));
                 if let Some(selector) = &break_at {
                     match matched {
-                        Some(index) => println!("break at #{index} ({selector})"),
-                        None => println!("breakpoint not reached ({selector})"),
+                        Some(index) => outln!("break at #{index} ({selector})"),
+                        None => outln!("breakpoint not reached ({selector})"),
                     }
                 }
             } else {
@@ -2571,7 +2611,7 @@ fn main() -> anyhow::Result<()> {
                     "total_steps": steps.len(),
                     "steps": shown,
                 });
-                println!(
+                outln!(
                     "{}",
                     serde_json::to_string_pretty(&report).map_err(|e| anyhow::anyhow!("{e}"))?
                 );
@@ -2652,7 +2692,7 @@ fn main() -> anyhow::Result<()> {
                 if let Some(object) = data.as_object_mut() {
                     object.remove("repaired_source");
                 }
-                println!(
+                outln!(
                     "{}",
                     serde_json::to_string_pretty(&data).map_err(|e| anyhow::anyhow!("{e}"))?
                 );
@@ -2661,13 +2701,13 @@ fn main() -> anyhow::Result<()> {
             let module = parse_input(&from, false, allow_parent_escapes, &trust)?;
             match kind.as_str() {
                 "graph" => match format.as_str() {
-                    "json" => println!(
+                    "json" => outln!(
                         "{}",
                         serde_json::to_string_pretty(&active_core::graph::to_graph_json(&module))
                             .map_err(|e| anyhow::anyhow!("{e}"))?
                     ),
-                    "mermaid" => print!("{}", active_core::graph::to_mermaid(&module)),
-                    "dot" => print!("{}", active_core::graph::to_dot(&module)),
+                    "mermaid" => out!("{}", active_core::graph::to_mermaid(&module)),
+                    "dot" => out!("{}", active_core::graph::to_dot(&module)),
                     other => {
                         anyhow::bail!("unknown graph format `{other}` (want json|mermaid|dot)")
                     }
@@ -2682,7 +2722,7 @@ fn main() -> anyhow::Result<()> {
                     let (value, _, seeds) = evaluation_engine
                         .evaluate_with_seeds(&module)
                         .map_err(|e| anyhow::anyhow!("cannot evaluate: {e}"))?;
-                    println!(
+                    outln!(
                         "{}",
                         serde_json::to_string_pretty(&active_core::viz::taint_data_with_seeds(
                             &module,
@@ -2700,7 +2740,7 @@ fn main() -> anyhow::Result<()> {
                     let (value, diagnostics, seeds) = evaluation_engine
                         .evaluate_with_seeds(&module)
                         .map_err(|e| anyhow::anyhow!("cannot evaluate: {e}"))?;
-                    println!(
+                    outln!(
                         "{}",
                         serde_json::to_string_pretty(&active_core::viz::budget_data_with_seeds(
                             &module,
@@ -2719,7 +2759,7 @@ fn main() -> anyhow::Result<()> {
                         .map_err(|e| anyhow::anyhow!("{e}"))?;
                     // Schema prose can equal a host value.
                     material_profile(&module)?.redact_json(&mut data);
-                    println!(
+                    outln!(
                         "{}",
                         serde_json::to_string_pretty(&data).map_err(|e| anyhow::anyhow!("{e}"))?
                     );
@@ -2745,13 +2785,13 @@ fn main() -> anyhow::Result<()> {
             match format {
                 OutFormat::Text => {
                     for line in explain_lines(&diags) {
-                        println!("{line}");
+                        outln!("{line}");
                     }
                 }
                 OutFormat::Json => {
                     let items = explain_items(&diags);
                     let structured = active_core::convert::explain_structured(&items);
-                    println!(
+                    outln!(
                         "{}",
                         serde_json::to_string_pretty(&structured)
                             .map_err(|e| anyhow::anyhow!("{e}"))?
@@ -2792,11 +2832,11 @@ fn main() -> anyhow::Result<()> {
             match format {
                 OutFormat::Text => {
                     for suggestion in &structured {
-                        println!("{}", suggestion.directive);
+                        outln!("{}", suggestion.directive);
                     }
                 }
                 OutFormat::Json => {
-                    println!(
+                    outln!(
                         "{}",
                         serde_json::to_string_pretty(&structured)
                             .map_err(|e| anyhow::anyhow!("{e}"))?
@@ -2834,7 +2874,7 @@ fn main() -> anyhow::Result<()> {
             let want_profile = profile.is_some();
             if let Some(name) = profile {
                 match active_core::convert::sandbox_profile(&name) {
-                    Some(p) => println!(
+                    Some(p) => outln!(
                         "{}",
                         serde_json::json!({
                             "profile": p.name,
@@ -2853,7 +2893,7 @@ fn main() -> anyhow::Result<()> {
             if want_profile {
                 return Ok(());
             }
-            println!(
+            outln!(
                 "{}",
                 serde_json::to_string_pretty(&descriptor)
                     .map_err(|e| anyhow::anyhow!("capability serialize failed: {e}"))?
@@ -2880,17 +2920,17 @@ fn main() -> anyhow::Result<()> {
                 }
             }
             match format.as_str() {
-                "json" => println!(
+                "json" => outln!(
                     "{}",
                     serde_json::to_string_pretty(&findings)
                         .map_err(|e| anyhow::anyhow!("compatibility serialize failed: {e}"))?
                 ),
                 "text" => {
                     if findings.is_empty() {
-                        println!("compatible: no schema changes");
+                        outln!("compatible: no schema changes");
                     }
                     for finding in &findings {
-                        println!(
+                        outln!(
                             "[{}] {} {}: {}",
                             finding.severity, finding.code, finding.path, finding.message
                         );
@@ -2996,7 +3036,7 @@ fn main() -> anyhow::Result<()> {
                         });
                     }
                 }
-                println!(
+                outln!(
                     "{}",
                     serde_json::to_string_pretty(&model)
                         .map_err(|e| anyhow::anyhow!("browser serialize failed: {e}"))?
@@ -3065,22 +3105,22 @@ fn main() -> anyhow::Result<()> {
                 display.final_codes = codes;
             }
             match format.as_str() {
-                "json" => println!(
+                "json" => outln!(
                     "{}",
                     serde_json::to_string_pretty(&display)
                         .map_err(|e| anyhow::anyhow!("repair serialize failed: {e}"))?
                 ),
                 "text" => {
                     if display.clean {
-                        println!("repair: clean");
+                        outln!("repair: clean");
                     }
                     for step in &display.steps {
                         match &step.status {
                             active_core::convert::repair::StepStatus::Applied => {
-                                println!("applied {} {}", step.kind, step.directive)
+                                outln!("applied {} {}", step.kind, step.directive)
                             }
                             active_core::convert::repair::StepStatus::Skipped { reason } => {
-                                println!("skipped {} {} ({reason})", step.kind, step.directive)
+                                outln!("skipped {} {} ({reason})", step.kind, step.directive)
                             }
                         }
                     }
@@ -3088,12 +3128,12 @@ fn main() -> anyhow::Result<()> {
                         report(finding, &from.to_string_lossy());
                     }
                     if !display.clean {
-                        println!("repair: not clean ({})", display.final_codes.join(", "));
+                        outln!("repair: not clean ({})", display.final_codes.join(", "));
                     }
                     if partial {
-                        println!("selected: {} directives", applied_directives.len());
+                        outln!("selected: {} directives", applied_directives.len());
                         for directive in &applied_directives {
-                            println!("apply {directive}");
+                            outln!("apply {directive}");
                         }
                     }
                 }
@@ -3161,9 +3201,9 @@ fn main() -> anyhow::Result<()> {
                 &profile,
             );
             match to.as_str() {
-                "markdown" | "md" => println!("{}", doc_to_markdown(&title, &items)),
-                "html" => println!("{}", doc_to_html(&title, &items)),
-                "man" => println!("{}", doc_to_man(&title, &items)),
+                "markdown" | "md" => outln!("{}", doc_to_markdown(&title, &items)),
+                "html" => outln!("{}", doc_to_html(&title, &items)),
+                "man" => outln!("{}", doc_to_man(&title, &items)),
                 other => anyhow::bail!("unsupported target: {}", other),
             }
         }
@@ -3251,7 +3291,7 @@ fn main() -> anyhow::Result<()> {
             match output {
                 Some(path) => std::fs::write(&path, &rendered)
                     .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", path.display()))?,
-                None => print!("{rendered}"),
+                None => out!("{rendered}"),
             }
             if had_failure(&diags, resilient) {
                 std::process::exit(1);
@@ -3277,7 +3317,7 @@ fn main() -> anyhow::Result<()> {
                 &active_core::sign::public_hex(&verifying),
                 0o644,
             )?;
-            println!(
+            outln!(
                 "wrote {} and {}",
                 secret_path.display(),
                 public_path.display()
@@ -3323,7 +3363,7 @@ fn main() -> anyhow::Result<()> {
                     std::path::PathBuf::from(&sidecar_path).display()
                 )
             })?;
-            println!("signed {label} for key '{kid}'");
+            outln!("signed {label} for key '{kid}'");
         }
         Commands::Verify { file, trust_keys } => {
             let label = file.to_string_lossy().to_string();
@@ -3332,7 +3372,7 @@ fn main() -> anyhow::Result<()> {
             let trust = load_trust(&Some(trust_keys))?
                 .ok_or_else(|| anyhow::anyhow!("verify requires --trust-keys <file>"))?;
             match active_core::sign::verify_file(&file, &trust) {
-                Ok(kid) => println!("{label}: valid signature from key '{kid}'"),
+                Ok(kid) => outln!("{label}: valid signature from key '{kid}'"),
                 Err(e) => {
                     eprintln!("{e}");
                     std::process::exit(1);
@@ -3388,7 +3428,7 @@ fn main() -> anyhow::Result<()> {
                 let unchanged = current == out.as_bytes();
                 if check {
                     if !unchanged {
-                        println!("would reformat: {name}");
+                        outln!("would reformat: {name}");
                         dirty = true;
                     }
                     continue;
@@ -3396,11 +3436,11 @@ fn main() -> anyhow::Result<()> {
                 if write {
                     if !unchanged {
                         std::fs::write(file, &out)?;
-                        println!("formatted {name}");
+                        outln!("formatted {name}");
                     }
                     continue;
                 }
-                print!("{out}");
+                out!("{out}");
             }
             if dirty {
                 std::process::exit(1);
@@ -3483,13 +3523,13 @@ fn main() -> anyhow::Result<()> {
             match format {
                 LintFormat::Text => {}
                 LintFormat::Json => {
-                    println!(
+                    outln!(
                         "{}",
                         serde_json::to_string_pretty(&lint::json_report(&items))?
                     );
                 }
                 LintFormat::Sarif => {
-                    println!(
+                    outln!(
                         "{}",
                         serde_json::to_string_pretty(&lint::sarif_report(
                             &items,

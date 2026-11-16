@@ -282,9 +282,9 @@ jobs:
           # Registry index lag breaks dependents published back to
           # back: lock files, publish in dependency order, pause
           # between crates. active-ffi and active-wasm ride the unified
-          # track. There is no active-infinity publish from this repo: the member is
-  # retired (LANG-E-001, VERSIONING.md section 4) and the name belongs to the
-  # standalone Infinity codec.
+                  # track. There is no active-infinity publish from this repo: the
+          # member is retired (LANG-E-001, VERSIONING.md section 4) and the
+          # name belongs to the standalone Infinity codec.
           for p in active-core active active-fmt active-lsp active-cli active-ffi active-wasm; do
             cargo publish --locked -p "$p"
             sleep 60

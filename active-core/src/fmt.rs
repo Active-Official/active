@@ -313,19 +313,31 @@ impl<'a> Formatter<'a> {
         // scalar expression (`key = { ... }`) made the next pass
         // expand it into a block instead, so formatting was not a
         // fixed point (fuzz crash, formatter target 2026-11-15).
-        let is_table_node = |f: &Formatter, n: &NodeId| match f.module.get(*n) {
-            // A table definition is always a block, whatever its name.
-            Some(Node::Table { .. }) => true,
-            // A reference to a NAMED table stays a reference
-            // (`key = other`): the next parse resolves the same name,
-            // so formatting is a fixed point. Only an unnamed target (a
-            // parser-synthesized node) is expanded as a block.
-            Some(Node::Ref(_)) => {
-                let resolved = f.resolve_ref(*n);
-                !f.names.contains_key(&resolved)
-                    && matches!(f.module.get(resolved), Some(Node::Table { .. }))
+        // A DATA field named `schema` is never a table, whatever it resolves
+        // to: every table-valued form of that key is schema syntax
+        // (spec/grammar.md section 2.10), so emitting a block or `{}` would
+        // turn data into metadata on the next parse. A field named `schema`
+        // can only hold an alias here (a literal table value would already
+        // have parsed as a schema block), and the alias name re-parses as
+        // data. Fuzz seed crash-a0f12d89.
+        let is_table_node = |f: &Formatter, n: &NodeId, key: &str| {
+            if key == "schema" {
+                return false;
             }
-            _ => false,
+            match f.module.get(*n) {
+                // A table definition is always a block, whatever its name.
+                Some(Node::Table { .. }) => true,
+                // A reference to a NAMED table stays a reference
+                // (`key = other`): the next parse resolves the same name,
+                // so formatting is a fixed point. Only an unnamed target (a
+                // parser-synthesized node) is expanded as a block.
+                Some(Node::Ref(_)) => {
+                    let resolved = f.resolve_ref(*n);
+                    !f.names.contains_key(&resolved)
+                        && matches!(f.module.get(resolved), Some(Node::Table { .. }))
+                }
+                _ => false,
+            }
         };
         // At the document root, scalars must be hoisted above tables: a
         // `key = value` line after a table header would otherwise be
@@ -335,7 +347,7 @@ impl<'a> Formatter<'a> {
             let mut scalars: Vec<(String, NodeId)> = Vec::new();
             let mut tables: Vec<(String, NodeId)> = Vec::new();
             for (k, v) in &fields {
-                if is_table_node(self, v) {
+                if is_table_node(self, v, k) {
                     tables.push((k.clone(), *v));
                 } else {
                     scalars.push((k.clone(), *v));
@@ -347,7 +359,7 @@ impl<'a> Formatter<'a> {
         };
         let tables: Vec<(String, NodeId)> = ordered
             .iter()
-            .filter(|(_, v)| is_table_node(self, v))
+            .filter(|(k, v)| is_table_node(self, v, k))
             .cloned()
             .collect();
 

@@ -3152,6 +3152,46 @@ impl Parser {
                     }
                     Some(id)
                 }
+                // `schema` with a table value IS schema syntax
+                // (spec/grammar.md section 2.10), but only a literal block
+                // can declare one: an alias to a table is ambiguous (data
+                // table or schema?), and guessing either way silently
+                // changes the document (fuzz seed crash-a0f12d89, where a
+                // recovered alias rendered as `schema = {...}` and
+                // re-parsed as a schema block). Fail closed with a span.
+                Some(Node::Ref(_)) => {
+                    let resolves_to_table = {
+                        let mut cur = id;
+                        let mut table = false;
+                        for _ in 0..64 {
+                            match self.module.get(cur) {
+                                Some(Node::Ref(next)) => cur = *next,
+                                Some(Node::Table { .. }) => {
+                                    table = true;
+                                    break;
+                                }
+                                _ => break,
+                            }
+                        }
+                        table
+                    };
+                    if resolves_to_table {
+                        let span = self.module.node_spans.get(&id).cloned();
+                        self.push_diag(Diagnostic {
+                            severity: Severity::Error,
+                            code: "E020".into(),
+                            message: "`schema` resolves to a table through an alias; a schema \
+                                      block must be written literally (rename the key if it is data)"
+                                .into(),
+                            path: None,
+                            span,
+                            repair: None,
+                            confidence: 1.0,
+                            file: self.current_file_name(),
+                        });
+                    }
+                    None
+                }
                 _ => None,
             },
             None => None,

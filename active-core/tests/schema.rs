@@ -520,3 +520,32 @@ fn the_header_form_declares_a_schema_block_too() {
             .join(",")
     );
 }
+
+#[test]
+fn a_schema_key_aliasing_a_table_is_e020_not_silent_data() {
+    // `schema` with a table value is schema syntax (spec/grammar.md 2.10),
+    // but only a literal block can declare a schema. An alias was ambiguous:
+    // the parser kept it as data while the formatter rendered its target
+    // inline (`schema = { ... }`), which re-parsed as a schema block - a
+    // meaning change on a perfectly ordinary rewrite (fuzz seed
+    // crash-a0f12d89). Fail closed instead of guessing.
+    let diags = parse_err("t = { a = 1 }\nschema = t\n");
+    assert!(
+        diags.iter().any(|d| d.code == "E020"),
+        "{:?}",
+        diags.iter().map(|d| d.code.clone()).collect::<Vec<_>>()
+    );
+    assert!(
+        diags.iter().any(|d| d.message.contains("alias")),
+        "the diagnostic explains the alias: {diags:?}"
+    );
+
+    // A scalar-valued `schema` key stays ordinary data (the contextual rule
+    // needs a table value).
+    let module = parse_ok("schema = 1\n");
+    assert!(module.schema.is_none());
+    assert!(
+        matches!(module.get(module.root.unwrap()), Some(Node::Table { fields }) if fields.contains_key("schema")),
+        "a scalar schema key stays a value field"
+    );
+}

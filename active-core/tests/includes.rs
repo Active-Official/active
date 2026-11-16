@@ -17,8 +17,18 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
+fn parse_options() -> ParseOptions {
+    // Include semantics are not a parse-timing test: a loaded machine must
+    // not turn a fixture into an E029 flake. The shipped bounds themselves
+    // are pinned by `parse_budget.rs`.
+    ParseOptions {
+        max_wall_ms: 30_000,
+        ..ParseOptions::default()
+    }
+}
+
 fn eval_file(name: &str) -> serde_json::Value {
-    eval_file_with(name, ParseOptions::default())
+    eval_file_with(name, parse_options())
 }
 
 fn eval_file_with(name: &str, options: ParseOptions) -> serde_json::Value {
@@ -34,7 +44,7 @@ fn eval_file_with(name: &str, options: ParseOptions) -> serde_json::Value {
 }
 
 fn parse_err_codes(name: &str) -> Vec<String> {
-    parse_file(&fixture(name), ParseOptions::default())
+    parse_file(&fixture(name), parse_options())
         .expect_err(&format!("{name} must fail"))
         .iter()
         .map(|d| d.code.clone())
@@ -94,7 +104,7 @@ fn include_merge_totals_stay_bounded() {
     }
     let main = dir.join("main_flood.active");
     std::fs::write(&main, mains.concat()).unwrap();
-    let diags = parse_file(&main, ParseOptions::default()).expect_err("must fail");
+    let diags = parse_file(&main, parse_options()).expect_err("must fail");
     assert!(
         diags.iter().any(|d| d.code == "E004"),
         "depth refusal present"
@@ -115,7 +125,7 @@ fn private_binding_leak_attempts_fail() {
     let main =
         std::env::temp_dir().join(format!("active_leak_attempt_{}.active", std::process::id()));
     std::fs::write(&main, "x = db_password\n").unwrap();
-    let module = parse_file(&main, ParseOptions::default()).expect("must parse");
+    let module = parse_file(&main, parse_options()).expect("must parse");
     let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
     assert!(diags.iter().any(|d| d.code == "W001"), "{diags:?}");
     let json = active_core::convert::value_to_pretty_json(&value);
@@ -145,10 +155,7 @@ fn eval_error_carries_the_included_file() {
     // A type error inside an included file attributes that file, not the
     // root, on both the EvalError and the CLI-equivalent path.
     let err = Engine::new()
-        .evaluate(
-            &parse_file(&fixture("main_typerr.active"), ParseOptions::default())
-                .expect("must parse"),
-        )
+        .evaluate(&parse_file(&fixture("main_typerr.active"), parse_options()).expect("must parse"))
         .expect_err("type error must fail");
     assert_eq!(err.code(), "T001");
     let file = err.file().expect("T001 must carry its file");
@@ -174,11 +181,8 @@ fn evaluation_is_deterministic_across_runs() {
 #[test]
 fn secret_through_include_redacts_everywhere() {
     for fmt in ["json", "toml"] {
-        let module = parse_file(
-            &fixture("main_alias_private.active"),
-            ParseOptions::default(),
-        )
-        .expect("must parse");
+        let module =
+            parse_file(&fixture("main_alias_private.active"), parse_options()).expect("must parse");
         let (value, _) = Engine::new().evaluate(&module).expect("must evaluate");
         let out = match fmt {
             "json" => active_core::convert::value_to_pretty_json(&value),
@@ -195,7 +199,7 @@ fn included_mode_and_capabilities_stay_local() {
     // root value, so an include may supply it as a default (covered by
     // `an_included_profile_selector_is_a_root_default`).
     let path = fixture("meta_main.active");
-    let module = parse_file(&path, ParseOptions::default()).expect("parse");
+    let module = parse_file(&path, parse_options()).expect("parse");
     assert_eq!(module.mode, active_core::Mode::Config);
     assert!(module.capabilities.is_empty(), "{:?}", module.capabilities);
     let (value, _) = Engine::new().evaluate(&module).expect("evaluate");
@@ -235,8 +239,8 @@ fn include_fan_out_fails_fast_with_e028() {
         .unwrap();
     }
     std::fs::write(dir.join("d16.active"), "leaf = 1\n").unwrap();
-    let diags = parse_file(&dir.join("d0.active"), ParseOptions::default())
-        .expect_err("fan-out must fail fast");
+    let diags =
+        parse_file(&dir.join("d0.active"), parse_options()).expect_err("fan-out must fail fast");
     assert!(
         diags.iter().any(|d| d.code == "E028"),
         "fan-out must be E028: {:?}",
@@ -259,8 +263,8 @@ fn a_normal_include_chain_stays_within_budget() {
         .unwrap();
     }
     std::fs::write(dir.join("c8.active"), "leaf = 1\n").unwrap();
-    let module = parse_file(&dir.join("c0.active"), ParseOptions::default())
-        .expect("linear chain must parse");
+    let module =
+        parse_file(&dir.join("c0.active"), parse_options()).expect("linear chain must parse");
     assert!(module.root.is_some());
     std::fs::remove_dir_all(&dir).ok();
 }

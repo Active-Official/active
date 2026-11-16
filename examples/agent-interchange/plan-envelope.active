@@ -1,4 +1,5 @@
 # Plan envelope (spec/agent-interchange-profile.md §2-§3), Data Mode.
+# `result` is the content_hash of the redacted PAYLOAD tree (spec/tool-result-envelope.md §1), pinned by agent_interchange.rs.
 active_mode = "data"
 active_capabilities = ["check", "explain", "repair"]
 
@@ -12,5 +13,5 @@ envelope = {
   },
   budget = { nodes = 64, headroom = 0.94 },
   diagnostics = [],
-  result = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  result = "sha256:bdca8fc98d745750f2739df85518bf62cf85f6c0a6d967506cb5c3e5e7c54691"
 }

@@ -156,12 +156,85 @@ impl EnvelopeGate {
             }
         }
 
+        // Self-containment (LANG-F-007): an interchange document that reads
+        // the receiver's environment, resolves includes against the
+        // receiver's filesystem, or depends on a profile the receiver picks
+        // is not the document the sender evaluated. Refuse it instead of
+        // silently rebinding the sender's meaning.
+        for (node, message) in self_containment_violations(module) {
+            let span = node.and_then(|n| module.node_spans.get(&n).cloned());
+            diagnostics.push(Diagnostic {
+                severity: Severity::Error,
+                code: "E036".into(),
+                message,
+                path: None,
+                span,
+                repair: None,
+                confidence: 1.0,
+                file: None,
+            });
+        }
+
         if diagnostics.is_empty() {
             Ok(())
         } else {
             Err(EvalError::ValidationFailed { diagnostics })
         }
     }
+}
+
+/// Why a Data Mode document that carries an `envelope` table is not
+/// self-contained (LANG-F-007), one entry per violation: the offending node
+/// (for a span) and a message. `env.*` reads, `include` statements, and
+/// profiles all resolve against the RECEIVER's ambient state, so the
+/// sender's meaning silently rebinds. Shared by the sender-side lint (L017)
+/// and the receiver gate (E036) so the two can never disagree.
+pub(crate) fn self_containment_violations(
+    module: &Module,
+) -> Vec<(Option<crate::ir::NodeId>, String)> {
+    let mut out = Vec::new();
+    if module.mode != crate::ir::Mode::Data {
+        return out;
+    }
+    let Some(root) = module.root else {
+        return out;
+    };
+    let Some(Node::Table { fields }) = module.get(root) else {
+        return out;
+    };
+    if !fields.contains_key("envelope") {
+        return out;
+    }
+    for (index, node) in module.arena.iter().enumerate() {
+        if let Node::Env { name, .. } = node {
+            out.push((
+                Some(crate::ir::NodeId(index as u32)),
+                format!(
+                    "interchange document reads `env.{name}`; the receiver's environment is \
+                     not the sender's - pin the value before transmission"
+                ),
+            ));
+        }
+    }
+    for include in &module.includes {
+        out.push((
+            None,
+            format!(
+                "interchange document includes '{}'; the receiver resolves includes against \
+                 its own filesystem - inline the content before transmission",
+                include.path
+            ),
+        ));
+    }
+    if !module.profiles.is_empty() {
+        out.push((
+            None,
+            "interchange document declares profiles; the receiver selects a profile from its \
+             own configuration - send the selected value"
+                .into(),
+        ));
+    }
+    out
 }
 
 /// The sender's `envelope.tainted` claim, when the document carries one

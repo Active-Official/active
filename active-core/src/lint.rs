@@ -27,6 +27,8 @@ pub const RULE_AMBIGUOUS_REPAIR: &str = "ambiguous-repair";
 pub const RULE_CANONICAL_ORDER: &str = "canonical-order";
 pub const RULE_MIXED_SYNTAX: &str = "mixed-syntax";
 pub const RULE_INCLUDE_HYGIENE: &str = "include-hygiene";
+/// Interchange documents must be self-contained (LANG-F-007, L017).
+pub const RULE_INTERCHANGE_SELF_CONTAINED: &str = "interchange-self-contained";
 
 /// All rule IDs in stable order (also the CLI's unknown-name error).
 pub const ALL_RULES: &[&str] = &[
@@ -324,6 +326,9 @@ pub fn lint_with(module: &Module, options: &LintOptions) -> Vec<Diagnostic> {
     }
     if options.enabled(RULE_INCLUDE_HYGIENE) {
         out.extend(include_hygiene(module));
+    }
+    if options.enabled(RULE_INTERCHANGE_SELF_CONTAINED) {
+        out.extend(interchange_self_contained(module));
     }
     out.retain_mut(|diagnostic| options.shape(diagnostic));
     out
@@ -815,6 +820,30 @@ fn looks_windows_absolute(path: &str) -> bool {
 /// L016: include hygiene. Absolute paths, parent escapes, non-`.active`
 /// targets, and duplicate declarations make a document depend on the
 /// host layout or include the same file twice by accident.
+/// L017 (LANG-F-007): a Data Mode interchange document (one carrying an
+/// `envelope` table) must be SELF-CONTAINED. `env.*` reads, `include`
+/// statements, and profile-dependent values are evaluated against the
+/// RECEIVER's ambient state, so the sender's meaning silently rebinds:
+/// `port = env.PORT ?: 8080` is 1111 on one host and 2222 on another, and
+/// `secret(env.TOKEN)` acts with the receiver's secret under the sender's
+/// intent. Senders pin those values before transmission; the receiver gate
+/// refuses a non-self-contained envelope (E036).
+fn interchange_self_contained(module: &Module) -> Vec<Diagnostic> {
+    crate::envelope::self_containment_violations(module)
+        .into_iter()
+        .map(|(node, message)| Diagnostic {
+            severity: Severity::Warning,
+            code: "L017".into(),
+            message,
+            path: None,
+            span: node.and_then(|n| module.node_spans.get(&n).cloned()),
+            repair: None,
+            confidence: 1.0,
+            file: None,
+        })
+        .collect()
+}
+
 fn include_hygiene(module: &Module) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     let mut seen: HashSet<(String, Option<String>)> = HashSet::new();

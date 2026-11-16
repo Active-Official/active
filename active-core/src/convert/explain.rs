@@ -34,6 +34,7 @@ pub fn explain_code(code: &str) -> &'static str {
         "E023" => "Integer out of range: positive literals saturate at i64::MAX, and negating the minimum yields MIN+1. Use a smaller magnitude or a different unit.",
         "E024" => "Bad mode marker: active_mode must be the string \"data\" or \"config\". Fix the spelling; Data Mode is explicit opt-in, Config is the default when the marker is absent.",
         "E025" => "Bad capabilities declaration: active_capabilities must be an array of strings naming tools the host offers. Fix the shapes; unknown names are refused at handshake time, not here.",
+        "E036" => "Interchange document is not self-contained: it reads `env.*`, includes a file, or declares profiles, all of which resolve against the RECEIVER's ambient state. Pin env values as literals, inline includes, and send the selected profile's values (LANG-F-007).",
         "E035" => "Taint claim mismatch: `envelope.tainted` disagrees with the evaluated payload. A sender may not mislabel taint in either direction; make the claim match the payload (or remove it).",
         "E033" => "Envelope version refused: the Data Mode envelope's version is missing, is not a major.minor.patch string, or names a major this receiver does not implement. Send a version this receiver supports; never rewrite the receiver's gate to accept a foreign major.",
         "E034" => "Capability refused: the document declares a capability this receiver does not offer. Request only capabilities the receiver advertises, or widen the receiver's offered set deliberately (EnvelopeGate::with_tools).",
@@ -55,6 +56,7 @@ pub fn explain_code(code: &str) -> &'static str {
         "W013" => "Data Mode progressive warning: a budget is at 80% of its hard ceiling. Finish or shrink the document, or raise the limit explicitly and deliberately — hard ceilings bind Data Mode exactly as Config.",
 
         "W014" => "Diagnostic output truncated: the per-parse 1024-record budget (errors plus healing) was reached. The parse verdict is unchanged; fix the first errors to see the rest.",
+        "L017" => "Sender-side self-containment: an interchange document (one with an `envelope` table) must not read `env.*`, include files, or depend on profiles - the receiver would resolve those against its own state. Pin the values before transmission (LANG-F-007).",
         "H005" => "Unknown key with a near-identical known key: apply the did-you-mean suggestion (`@rename`) when it matches intent.",
 
         "W016" => "Ambiguous duration shape: a bare `{\"ms\": N}` object was imported as a table. Durations travel as `{\"$active.duration\": {\"ms\": N}}` (LANG-F-001/F-002); a sender that emits the bare shape is indistinguishable from one sending a table.",

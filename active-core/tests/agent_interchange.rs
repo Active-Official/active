@@ -142,3 +142,52 @@ fn every_shipped_example_envelope_is_valid_and_handshaken() {
         );
     }
 }
+
+#[test]
+fn every_shipped_envelope_carries_a_real_payload_hash() {
+    // LANG-F-015: `result` is the content_hash of the redacted PAYLOAD tree
+    // (spec/tool-result-envelope.md section 1). The shipped examples are
+    // what implementers copy, so a placeholder hash teaches a placeholder
+    // contract. Each example states which hash it carries in its header;
+    // this test computes it and refuses a stale one.
+    use active_core::provenance::content_hash;
+    use active_core::{parse, Engine, Value};
+    for name in [
+        "plan-envelope.active",
+        "tool-result.active",
+        "world-model-envelope.active",
+    ] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("examples")
+            .join("agent-interchange")
+            .join(name);
+        let src = std::fs::read_to_string(&path).expect("read example");
+        assert!(
+            src.contains("content_hash of the redacted PAYLOAD tree"),
+            "{name}: the header states which hash `result` carries"
+        );
+        let module = parse(&src, name).expect("parse example");
+        let (value, diags) = Engine::hermetic()
+            .evaluate(&module)
+            .expect("example evaluates");
+        assert!(diags.is_empty(), "{name}: {diags:?}");
+        let Value::Table(map) = value else {
+            panic!("{name}: root is a table")
+        };
+        let Some(Value::Table(envelope)) = map.get("envelope") else {
+            panic!("{name}: envelope table")
+        };
+        let Some(payload) = envelope.get("payload") else {
+            panic!("{name}: payload")
+        };
+        let expected = content_hash(payload);
+        let Some(Value::String(claimed)) = envelope.get("result") else {
+            panic!("{name}: result string")
+        };
+        assert_eq!(
+            claimed, &expected,
+            "{name}: `result` must equal content_hash(payload); update the fixture"
+        );
+    }
+}

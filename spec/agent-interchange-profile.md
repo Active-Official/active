@@ -55,9 +55,29 @@ envelope = {
 - `tainted` — whether the payload structurally contains secrets.
 - `payload` — value tree or content-addressed references.
 - `budget` — optional report (usage and headroom by limit).
+- `result` — content hash of the redacted payload. `result` binds the
+  payload value tree only: it does not bind the schema version, the profile,
+  the budget, or the mode semantics. Receipt comparison must compare the
+  audit-trail fields (schema version, profile, budget, mode) alongside
+  `result`; comparing `result` alone over-trusts the receipt (LANG-F-009).
 - `diagnostics` — stable codes and paths; never values.
 - `result` — optional content hash of the redacted payload (the audit
   trail's hash, so replay and audit agree).
+
+## 3b. Interchange-safe documents (LANG-F-007)
+
+An interchange document (a Data Mode document with an `envelope` table) must
+be **self-contained**: no `env.*` reads, no `include` statements, and no
+profile-dependent values. Those three resolve against the RECEIVER's ambient
+state, so a sender's `port = env.PORT ?: 8080` becomes 1111 on one host and
+2222 on another, and `secret(env.TOKEN)` acts with the receiver's secret
+under the sender's intent. Senders pin values (evaluate locally, then send
+literals) before transmission.
+
+Enforcement: the sender-side lint L017 reports each `env.*` read, include,
+and profile in an interchange document, and the receiver gate refuses a
+non-self-contained envelope with E036 before evaluation. A document that
+carries no `envelope` table is not an interchange document and is unaffected.
 
 ## 4. Receiver rules
 

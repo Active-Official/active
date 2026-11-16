@@ -19,6 +19,11 @@ member that previously reserved the name at 1.0.0 was retired in 2.0.0 -
 see VERSIONING.md section 4. Do not re-add an active-infinity member to
 this workspace.
 
+Stack MSRV (language + Infinity + RPC): 1.88 today (RPC is the floor); after
+the 2.0.0 release the language MSRV is 1.89 (DEC-003), which becomes the
+stack floor. The raise has landed in this repository (`rust-version = "1.89"`,
+MSRV gate on 1.89.0), so a host building the stack uses 1.89 (LANG-F-013).
+
 ## 2. Tier-1 package versions (all track the 1.4.0 line)
 
 | Language | Distribution | Version | Install |

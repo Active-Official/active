@@ -1,4 +1,5 @@
 # Tool-result envelope (spec/tool-result-envelope.md), Data Mode.
+# `result` is the content_hash of the redacted PAYLOAD tree (spec/tool-result-envelope.md §1), pinned by agent_interchange.rs.
 active_mode = "data"
 active_capabilities = ["check", "eval"]
 
@@ -9,5 +10,5 @@ envelope = {
   payload = { ok = true, port = 8080, service = "api" },
   budget = { nodes = 120, headroom = 0.88 },
   diagnostics = [],
-  result = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  result = "sha256:a6d09ea747ee24007bc01251835de3152a029a309b01503dbaa2a6c8c3722060"
 }

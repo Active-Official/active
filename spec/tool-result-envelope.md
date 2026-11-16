@@ -15,7 +15,7 @@ plain JSON cannot carry taint, budgets, or content-addressed identity.
 | `budget` | optional object | `{nodes, depth, keys, value_size, total_size, headroom}` as observed |
 | `diagnostics` | optional array | `{code, severity, path, span}` — never values |
 | `repair` | optional plan | Multi-step plan (`RepairOutcome`) when the result needs work |
-| `result` | optional string | Content hash of the redacted payload (`sha256:…`) |
+| `result` | optional string | Content hash of the redacted payload (`sha256:...`). `result` binds the payload value tree only. It does not bind the schema version, the profile, the budget, or the mode semantics. Receipt comparison must compare the audit-trail fields (schema version, profile, budget, mode) alongside `result`; comparing `result` alone over-trusts the receipt (LANG-F-009). |
 
 ## 2. Rules
 

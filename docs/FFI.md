@@ -129,10 +129,11 @@ size limits cannot be disabled through this struct in either mode.
 ## 5. Allocator model A (F-003, chosen for all of 1.x)
 
 The core allocates every buffer that crosses the boundary; the host frees
-with `active_string_free` / `active_buf_free` (and the typed free
-functions). No host-provided arenas, no custom allocator injection. The
-model never changes within 1.x; a different model would be an ABI break
-gated by the version constant.
+with the matching typed free (`active_string_free` for owned strings,
+`active_module_free`, `active_value_free`, `active_diagnostics_free`). No
+host-provided arenas, no custom allocator injection. The model never
+changes within 1.x; a different model would be an ABI break gated by the
+version constant.
 
 ## 6. Threading model (G-018)
 

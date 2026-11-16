@@ -17,6 +17,11 @@ type FreeFn = unsafe extern "C" fn(*mut std::ffi::c_void);
 type LastErrorFn = unsafe extern "C" fn() -> i32;
 
 fn cdylib_path() -> Option<PathBuf> {
+    if cfg!(miri) {
+        // Miri cannot dlopen a host cdylib: libloading calls OS APIs the
+        // interpreter does not model. The library-level tests still run.
+        return None;
+    }
     let profile = if cfg!(debug_assertions) {
         "debug"
     } else {

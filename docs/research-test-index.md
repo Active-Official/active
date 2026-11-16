@@ -289,7 +289,7 @@ Severity `critical` first. Source section cited per row (§1 parser robustness,
 - `20 Derived Solid tests from the 1000 originals.pdf`: scanned summary; content duplicates §A (verified p1/p5). Canonical reference stays §A.
 - `From Syntax to Security…md` hardening backlog (build when ideas strike, even out of scope):
   - H-01 `unsafe`-footprint audit (`cargo geiger`-style inventory + justification per site).
-  - H-02 Miri run over parser/evaluator unit tests in CI (nightly gate).
+  - H-02 Miri run over parser/evaluator unit tests in CI (nightly gate). DONE 2026-11-16: `.github/workflows/miri.yml` runs `cargo miri test -p active-ffi` (nightly, push + weekly); parser/evaluator crates remain a follow-up because their I/O-heavy tests need the same self-skip treatment.
   - H-03 Differential fuzzing: Active parser vs TOML/JSON parsers on shared shapes.
   - H-04 `cargo-deny` policy (licenses, duplicate deps, banned crates).
   - H-05 Structure-aware fuzzing via `arbitrary` on the Active AST.

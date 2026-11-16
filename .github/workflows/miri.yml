@@ -1,0 +1,42 @@
+# Miri nightly gate (LANG-G-011, research index H-02).
+#
+# The README's Miri claim must be reproducible: this job runs the C ABI
+# crate under Miri on every push and weekly, with the exact command the
+# docs quote. Tests that need a host process (dlopen, a C compiler,
+# cbindgen's cargo metadata) skip themselves under Miri with a visible
+# note; the library-level tests still execute.
+name: Miri
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, so a nightly regression surfaces even without a push.
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: miri-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  miri:
+    name: Miri (C ABI crate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - uses: Swatinem/rust-cache@v2
+      - name: Miri over active-ffi
+        # `-Zmiri-disable-isolation` lets the library's thread-local env
+        # handling run; no test under this crate needs a network or clock.
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation
+        run: cargo miri test -p active-ffi --locked

@@ -25,6 +25,10 @@ fn compiler() -> Option<&'static str> {
 
 #[test]
 fn every_export_is_callable_through_the_committed_header() {
+    if cfg!(miri) {
+        eprintln!("SKIP: Miri cannot spawn a C compiler");
+        return;
+    }
     let Some(cc) = compiler() else {
         eprintln!("SKIP: no C compiler (cc/gcc/clang) on PATH");
         return;

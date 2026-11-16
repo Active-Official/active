@@ -20,6 +20,11 @@ type FreeStrFn = unsafe extern "C" fn(*mut std::os::raw::c_char);
 type ToJsonFn = unsafe extern "C" fn(*const std::ffi::c_void) -> *mut std::os::raw::c_char;
 
 fn cdylib_path() -> Option<PathBuf> {
+    if cfg!(miri) {
+        // Miri cannot dlopen a host cdylib: libloading calls OS APIs the
+        // interpreter does not model. The library-level tests still run.
+        return None;
+    }
     let profile = if cfg!(debug_assertions) {
         "debug"
     } else {

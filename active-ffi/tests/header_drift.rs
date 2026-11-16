@@ -11,6 +11,10 @@ fn crate_dir() -> PathBuf {
 
 #[test]
 fn committed_header_matches_generator() {
+    if cfg!(miri) {
+        eprintln!("SKIP: cbindgen runs cargo metadata, which Miri cannot spawn");
+        return;
+    }
     let bindings = cbindgen::Builder::new()
         .with_crate(crate_dir())
         .with_language(cbindgen::Language::C)

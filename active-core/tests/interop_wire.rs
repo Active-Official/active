@@ -139,3 +139,51 @@ fn secrets_and_blobs_keep_their_documented_boundary_behaviour() {
     assert!(!diags.iter().any(|d| d.code == "W016"), "{diags:?}");
     assert!(!source.contains("$active.duration"), "{source}");
 }
+
+#[test]
+fn inspection_reports_the_layer_that_wrote_a_value() {
+    // LANG-F-014: the wire form is layer-flattened by design; the
+    // inspection surface names the winning layer so an operator (or a
+    // receiver auditing a peer document) knows whether a value came from
+    // the base document, a profile, or a patch.
+    use active_core::convert::inspect_path_with_layers;
+    let src = "base = 1\nprofile \"prod\" { base = 2, extra = 3 }\nactive_profile = \"prod\"\n";
+    let module = parse(src, "layers").expect("parse");
+    let engine = Engine::hermetic();
+    let (value, diags, layers) = engine.evaluate_with_layers(&module).expect("evaluate");
+    assert!(diags.is_empty(), "{diags:?}");
+    assert_eq!(layers.get("base").map(String::as_str), Some("profile:prod"));
+    assert_eq!(
+        layers.get("extra").map(String::as_str),
+        Some("profile:prod")
+    );
+    assert!(
+        !layers.contains_key("__never__"),
+        "only merged paths are recorded"
+    );
+
+    let report = inspect_path_with_layers(&module, &value, "base", None, None, None, &layers)
+        .expect("inspect");
+    assert_eq!(report["layer"], serde_json::json!("profile:prod"));
+    assert_eq!(report["value"], serde_json::json!(2));
+
+    // A base-document value has no layer key.
+    let plain = parse("only = 1\n", "layers-plain").expect("parse");
+    let (plain_value, _, plain_layers) =
+        engine.evaluate_with_layers(&plain).expect("evaluate plain");
+    assert!(plain_layers.is_empty(), "{plain_layers:?}");
+    let report = inspect_path_with_layers(
+        &plain,
+        &plain_value,
+        "only",
+        None,
+        None,
+        None,
+        &plain_layers,
+    )
+    .expect("inspect plain");
+    assert!(
+        report.get("layer").is_none(),
+        "base values carry no layer: {report}"
+    );
+}

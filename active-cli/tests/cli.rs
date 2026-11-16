@@ -4274,3 +4274,81 @@ fn parse_input_cap_is_enforced_at_the_cli_boundary() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+#[test]
+fn every_failed_attempt_leaves_an_audit_with_its_class_and_peer() {
+    // LANG-F-010: a rejected document used to leave no evidence at all.
+    let dir = std::env::temp_dir().join("active-cli-tests");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+
+    // 1. Parse failure.
+    let bad = dir.join("audit-parse-fail.active");
+    std::fs::write(&bad, "a = [1").expect("write");
+    let audit = dir.join("audit-parse-fail.out.active");
+    let out = active()
+        .arg("eval")
+        .args(["--audit-trail"])
+        .arg(&audit)
+        .args(["--peer", "peer-17"])
+        .arg(&bad)
+        .output()
+        .expect("run");
+    assert!(!out.status.success(), "parse failure exits non-zero");
+    let doc = std::fs::read_to_string(&audit).expect("parse-failure audit written");
+    assert!(doc.contains("outcome = \"failed\""), "{doc}");
+    assert!(doc.contains("failure_class = \"parse\""), "{doc}");
+    assert!(doc.contains("peer = \"peer-17\""), "{doc}");
+    assert!(doc.contains("result = null"), "{doc}");
+    assert!(doc.contains("E001"), "{doc}");
+
+    // 2. Budget trip.
+    let big = dir.join("audit-budget-fail.active");
+    let mut body = String::new();
+    for i in 0..200 {
+        body.push_str(&format!("k{i} = {i}\n"));
+    }
+    std::fs::write(&big, &body).expect("write");
+    let audit = dir.join("audit-budget-fail.out.active");
+    let out = active()
+        .arg("eval")
+        .args(["--audit-trail"])
+        .arg(&audit)
+        .args(["--max-nodes", "10"])
+        .arg(&big)
+        .output()
+        .expect("run");
+    assert!(!out.status.success(), "budget trip exits non-zero");
+    let doc = std::fs::read_to_string(&audit).expect("budget audit written");
+    assert!(doc.contains("outcome = \"failed\""), "{doc}");
+    assert!(doc.contains("failure_class = \"budget\""), "{doc}");
+    assert!(doc.contains("X001"), "the refusing code is audited: {doc}");
+
+    // 3. Success with a peer: the audit carries the peer and a clean outcome.
+    let ok = dir.join("audit-clean.active");
+    std::fs::write(&ok, "a = 1\n").expect("write");
+    let audit = dir.join("audit-clean.out.active");
+    let out = active()
+        .arg("eval")
+        .args(["--audit-trail"])
+        .arg(&audit)
+        .args(["--peer", "peer-9"])
+        .arg(&ok)
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let doc = std::fs::read_to_string(&audit).expect("clean audit written");
+    assert!(doc.contains("outcome = \"clean\""), "{doc}");
+    assert!(doc.contains("peer = \"peer-9\""), "{doc}");
+    assert!(!doc.contains("failure_class"), "{doc}");
+    // The audit is itself a valid Active document.
+    let check = active().arg("check").arg(&audit).output().expect("run");
+    assert!(
+        check.status.success(),
+        "audit must re-parse: {}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+}

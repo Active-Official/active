@@ -425,6 +425,10 @@ impl EvalError {
     }
 }
 
+/// Value path -> the layer that wrote it last (LANG-F-014):
+/// `profile:<name>` or `patch:<op>`. Empty when no merge or patch ran.
+pub type LayerMap = std::collections::BTreeMap<String, String>;
+
 #[derive(Clone)]
 pub struct Engine {
     pub resilient: bool,
@@ -2528,6 +2532,25 @@ impl Engine {
         Ok((result, diagnostics))
     }
 
+    /// Evaluate with per-value layer provenance (LANG-F-014): the returned
+    /// map records which layer (`profile:<name>`, `patch:<op>`) wrote each
+    /// merged path last. The value tree and diagnostics are exactly those
+    /// of [`Engine::evaluate`]; this is bookkeeping, not a semantic change.
+    /// The map is empty when no profile or patch contributed.
+    pub fn evaluate_with_layers(
+        &self,
+        module: &Module,
+    ) -> Result<(Value, Vec<Diagnostic>, LayerMap), EvalError> {
+        let owned = crate::layers::begin();
+        let outcome = self.evaluate(module);
+        let layers = if owned {
+            crate::layers::finish()
+        } else {
+            LayerMap::new()
+        };
+        outcome.map(|(value, diagnostics)| (value, diagnostics, layers))
+    }
+
     /// Reject a patch whose targets overlap an `@ai_immutable` path
     /// (spec/annotations.md §4, C-034). Every target is checked; the first
     /// overlap fails the whole patch application with E019 at the
@@ -2650,6 +2673,8 @@ impl Engine {
                             "W004",
                             format!("patch target `{path}` is blocked or out of bounds"),
                         );
+                    } else if crate::layers::is_active() {
+                        crate::layers::record(&path, "patch:set");
                     }
                 }
                 PatchOp::Remove { path } => {
@@ -2979,6 +3004,15 @@ fn merge_profile_value(
         };
         match base.get(&k) {
             None => {
+                if crate::layers::is_active() {
+                    crate::layers::record(
+                        &child,
+                        &format!(
+                            "profile:{}",
+                            profile.trim_matches(|c| c == '\'' || c == '"')
+                        ),
+                    );
+                }
                 base.insert(k, v);
             }
             Some(existing) => match (existing, &v) {
@@ -2996,6 +3030,15 @@ fn merge_profile_value(
                     }
                 }
                 _ => {
+                    if crate::layers::is_active() {
+                        crate::layers::record(
+                            &child,
+                            &format!(
+                                "profile:{}",
+                                profile.trim_matches(|c| c == '\'' || c == '"')
+                            ),
+                        );
+                    }
                     if value_kind_name(existing) != value_kind_name(&v) {
                         diagnostics.push(Diagnostic {
                             severity: Severity::Warning,

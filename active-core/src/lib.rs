@@ -13,6 +13,7 @@ pub mod fmt;
 pub mod graph;
 pub mod heal;
 pub mod ir;
+pub mod layers;
 pub mod lint;
 pub mod parser;
 pub mod provenance;

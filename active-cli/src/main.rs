@@ -256,6 +256,11 @@ enum Commands {
         /// Dotted/index path (`server.host`, `ports[0]`).
         #[arg(long)]
         path: Option<String>,
+        /// Sender identity recorded in the audit trail when this process
+        /// received the document from a peer (a transport supplies it;
+        /// omitted for local runs). LANG-F-010.
+        #[arg(long)]
+        peer: Option<String>,
         /// Write a secret-redacted audit document of this evaluation
         /// (PROPOSAL §5.1): counts, diagnostic codes, content hash —
         /// itself a valid Active document, never raw values.
@@ -910,13 +915,22 @@ fn run_inspect(
             let (value, _, seeds) = evaluation_engine
                 .evaluate_with_seeds(&module)
                 .map_err(|e| anyhow::anyhow!("cannot evaluate for inspection: {e}"))?;
-            let report = active_core::convert::inspect_path_with_profile_env(
+            // LANG-F-014: report which layer wrote this value last. The
+            // provenance run is a second evaluation (the first already
+            // produced the tree for the redaction context); it is the same
+            // evaluation plus bookkeeping, so results cannot differ.
+            let layers = evaluation_engine
+                .evaluate_with_layers(&module)
+                .map(|(_, _, layers)| layers)
+                .map_err(|e| anyhow::anyhow!("cannot evaluate for inspection: {e}"))?;
+            let report = active_core::convert::inspect_path_with_layers(
                 &module,
                 &value,
                 path,
                 profile.as_deref(),
                 Some(&evaluation_engine.env),
                 Some(&seeds),
+                &layers,
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?;
             match format {
@@ -975,6 +989,24 @@ fn parse_input(
         }
         anyhow::anyhow!("parse failed")
     })
+}
+
+/// Parse for the eval path, keeping the diagnostics on failure so a
+/// requested audit can record them before the error propagates
+/// (LANG-F-010). Every other command keeps `parse_input`, which reports and
+/// discards them.
+fn parse_input_or_diags(
+    file: &std::path::Path,
+    resilient: bool,
+    allow_parent_escapes: bool,
+    trust: &Option<active_core::sign::TrustedKeys>,
+) -> Result<active_core::Module, Vec<active_core::Diagnostic>> {
+    match trust {
+        Some(keys) => {
+            active_core::parse_file_with_trust(file, options(resilient, allow_parent_escapes), keys)
+        }
+        None => parse_file(file, options(resilient, allow_parent_escapes)),
+    }
 }
 
 /// Join a list for a diagnostic, capping untrusted length. A hostile
@@ -1112,6 +1144,8 @@ fn write_audit_trail(
     budget: &active_core::Budget,
     allow_parent_escapes: bool,
     materialise_blobs: bool,
+    failure_class: Option<&str>,
+    peer: Option<&str>,
 ) -> anyhow::Result<()> {
     fn quote(s: &str) -> String {
         let mut out = String::with_capacity(s.len() + 2);
@@ -1181,8 +1215,18 @@ fn write_audit_trail(
         allow_parent_escapes,
         materialise_blobs,
     );
+    // LANG-F-010: a failed attempt records WHY it failed (parse, budget,
+    // validation, other) and, when a transport supplied one, the peer the
+    // document came from - a rejected peer document leaves auditable
+    // evidence instead of nothing.
+    let class_line = failure_class
+        .map(|class| format!("  failure_class = {},\n", quote(class)))
+        .unwrap_or_default();
+    let peer_line = peer
+        .map(|id| format!("  peer = {},\n", quote(id)))
+        .unwrap_or_default();
     let doc = format!(
-        "audit = {{\n  tool = \"active\",\n  version = {},\n  source = {},\n  mode = \"{}\",\n{}{}  nodes = {},\n  diagnostics = [{}],\n  result = {},\n  outcome = \"{}\"\n}}\n",
+        "audit = {{\n  tool = \"active\",\n  version = {},\n  source = {},\n  mode = \"{}\",\n{}{}{}{}  nodes = {},\n  diagnostics = [{}],\n  result = {},\n  outcome = \"{}\"\n}}\n",
         quote(env!("CARGO_PKG_VERSION")),
         quote(&file.to_string_lossy()),
         match module.mode {
@@ -1191,10 +1235,74 @@ fn write_audit_trail(
         },
         profile_line,
         budget_line,
+        class_line,
+        peer_line,
         module.arena.len(),
         codes_list,
         result,
         if failed { "failed" } else { "clean" },
+    );
+    std::fs::write(path, doc).map_err(|e| anyhow::anyhow!("cannot write {}: {e}", path.display()))
+}
+
+/// LANG-F-010: a parse failure that was asked for an audit writes one. No
+/// module exists, so the record carries the attempt's identity, the parse
+/// diagnostics, the resolved budget, and `result = null`.
+#[allow(clippy::too_many_arguments)]
+fn write_failed_parse_audit(
+    path: &std::path::Path,
+    file: &std::path::Path,
+    diags: &[active_core::Diagnostic],
+    resilient: bool,
+    allow_parent_escapes: bool,
+    materialise_blobs: bool,
+    peer: Option<&str>,
+) -> anyhow::Result<()> {
+    fn quote(s: &str) -> String {
+        let mut out = String::with_capacity(s.len() + 2);
+        out.push('"');
+        for c in s.chars() {
+            match c {
+                '\\' => out.push_str("\\\\"),
+                '"' => out.push_str("\\\""),
+                '$' => out.push_str("\\$"),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                '\0' => out.push_str("\\0"),
+                c => out.push(c),
+            }
+        }
+        out.push('"');
+        out
+    }
+    let mut codes: Vec<String> = diags.iter().map(|d| d.code.clone()).collect();
+    codes.sort();
+    codes.dedup();
+    let codes_list = codes
+        .iter()
+        .map(|c| format!("\"{c}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let peer_line = peer
+        .map(|id| format!("  peer = {},\n", quote(id)))
+        .unwrap_or_default();
+    let doc = format!(
+        "audit = {{\n  tool = \"active\",\n  version = {},\n  source = {},\n  mode = \"unknown\",\n  budget = {{ nodes = {}, depth = {}, array_len = {}, keys = {}, wall_ms = {}, value_size = {}, total_size = {} }},\n  parse = {{ resilient = {}, allow_parent_escapes = {}, materialise_blobs = {} }},\n{}  nodes = 0,\n  diagnostics = [{}],\n  result = null,\n  failure_class = \"parse\",\n  outcome = \"failed\"\n}}\n",
+        quote(env!("CARGO_PKG_VERSION")),
+        quote(&file.to_string_lossy()),
+        active_core::eval::Budget::default().max_nodes,
+        active_core::eval::Budget::default().max_depth,
+        active_core::eval::Budget::default().max_array_len,
+        active_core::eval::Budget::default().max_keys,
+        active_core::eval::Budget::default().max_wall_ms,
+        active_core::eval::Budget::default().max_value_size,
+        active_core::eval::Budget::default().max_total_value_size,
+        resilient,
+        allow_parent_escapes,
+        materialise_blobs,
+        peer_line,
+        codes_list,
     );
     std::fs::write(path, doc).map_err(|e| anyhow::anyhow!("cannot write {}: {e}", path.display()))
 }
@@ -1527,13 +1635,39 @@ fn main() -> anyhow::Result<()> {
             materialise_blobs,
             path,
             audit_trail,
+            peer,
             sandbox,
             budget,
             reader_version,
         } => {
             let name = file.to_string_lossy().to_string();
             let trust = load_trust(&trust_keys)?;
-            let module = parse_input(&file, resilient, allow_parent_escapes, &trust)?;
+            let module = match parse_input_or_diags(
+                &file,
+                resilient,
+                allow_parent_escapes,
+                &trust,
+            ) {
+                Ok(module) => module,
+                Err(diags) => {
+                    for d in &diags {
+                        report(d, &name);
+                    }
+                    // LANG-F-010: a parse failure leaves auditable evidence.
+                    if let Some(audit_path) = audit_trail.as_ref() {
+                        write_failed_parse_audit(
+                            audit_path,
+                            &file,
+                            &diags,
+                            resilient,
+                            allow_parent_escapes,
+                            materialise_blobs,
+                            peer.as_deref(),
+                        )?;
+                    }
+                    return Err(anyhow::anyhow!("parse failed"));
+                }
+            };
 
             // Sandbox gate (PROPOSAL §3.5): the named profile selects
             // its budget preset and refuses documents declaring
@@ -1593,24 +1727,54 @@ fn main() -> anyhow::Result<()> {
                 }
                 Err(e) => {
                     dump_trail(trace);
-                    // A strict validation failure still produces an
-                    // audit with outcome "failed" and the collected
-                    // codes; there is no result tree.
+                    // LANG-F-010: EVERY failed attempt leaves an audit when
+                    // one was requested - budget trips included, not only
+                    // strict validation refusals. The class names which
+                    // stage refused, so a dispute has evidence.
                     if let Some(audit_path) = audit_trail.as_ref() {
-                        if let active_core::EvalError::ValidationFailed { diagnostics } = &e {
-                            write_audit_trail(
-                                audit_path,
-                                &file,
-                                &module,
-                                None,
-                                diagnostics,
-                                resilient,
-                                effective_profile.as_deref(),
-                                &engine.budget,
-                                allow_parent_escapes,
-                                materialise_blobs,
-                            )?;
-                        }
+                        // The audit names the refusing code, not only the
+                        // warnings that preceded it.
+                        let class_of = |e: &active_core::EvalError| match e {
+                            active_core::EvalError::ValidationFailed { .. } => "validation",
+                            active_core::EvalError::BudgetExceeded { .. } => "budget",
+                            _ => "other",
+                        };
+                        let code_diag = active_core::Diagnostic {
+                            severity: active_core::Severity::Error,
+                            code: e.code().to_string(),
+                            message: format!("{e}"),
+                            path: None,
+                            span: None,
+                            repair: None,
+                            confidence: 1.0,
+                            file: None,
+                        };
+                        let audit_diags: Vec<active_core::Diagnostic> = match &e {
+                            active_core::EvalError::ValidationFailed { diagnostics } => {
+                                diagnostics.clone()
+                            }
+                            active_core::EvalError::BudgetExceeded { warnings, .. } => {
+                                let mut v = warnings.clone();
+                                v.push(code_diag);
+                                v
+                            }
+                            _ => vec![code_diag],
+                        };
+                        let class = class_of(&e);
+                        write_audit_trail(
+                            audit_path,
+                            &file,
+                            &module,
+                            None,
+                            &audit_diags,
+                            resilient,
+                            effective_profile.as_deref(),
+                            &engine.budget,
+                            allow_parent_escapes,
+                            materialise_blobs,
+                            Some(class),
+                            peer.as_deref(),
+                        )?;
                     }
                     report_eval_error(&e, &name);
                     return Err(anyhow::anyhow!("evaluation failed"));
@@ -1704,6 +1868,8 @@ fn main() -> anyhow::Result<()> {
                     &engine.budget,
                     allow_parent_escapes,
                     materialise_blobs,
+                    None,
+                    peer.as_deref(),
                 )?;
             }
             if had_failure(&diags, resilient) {

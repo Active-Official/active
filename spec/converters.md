@@ -32,6 +32,15 @@ from the value tree with the same shapes:
   tainted identity redacts `media_type`; `payload_b64` appears only
   for an explicit materialisation demand.
 
+The JSON export is **layer-flattened by design**: profile overlays and
+patches are merged into one tree (last writer wins, W003 on a type change),
+and no export carries a record of which layer wrote a value - a receiver must
+not have to re-implement merges. Provenance is available on the inspection
+surface instead: `active inspect <file> <path>` reports `layer`
+(`profile:<name>` or `patch:<op>`) for a path a merge or patch wrote, and
+omits it for base-document values (LANG-F-014). Merge semantics never change;
+only the bookkeeping is new.
+
 ## 2. YAML export
 
 `value_to_yaml_string`: the canonical JSON value rendered as YAML

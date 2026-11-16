@@ -504,3 +504,26 @@ fn literal_string(module: &Module, node: Option<crate::ir::NodeId>) -> Option<St
         _ => None,
     }
 }
+
+/// Inspect a path AND report which layer wrote it last (LANG-F-014).
+///
+/// The wire form is layer-flattened by design; this surface is where a value's
+/// provenance is available: `layer` is `profile:<name>` or `patch:<op>` when a
+/// merge or patch wrote the path, and absent for base-document values. Merge
+/// semantics are unchanged - only bookkeeping is reported.
+pub fn inspect_path_with_layers(
+    module: &Module,
+    root: &Value,
+    path: &str,
+    override_profile: Option<&str>,
+    env: Option<&std::collections::HashMap<String, String>>,
+    seeds: Option<&crate::secret::SecretRedactor>,
+    layers: &std::collections::BTreeMap<String, String>,
+) -> Result<JsonValue, String> {
+    let mut report =
+        inspect_path_with_profile_env(module, root, path, override_profile, env, seeds)?;
+    if let Some(layer) = layers.get(path) {
+        report["layer"] = JsonValue::String(layer.clone());
+    }
+    Ok(report)
+}

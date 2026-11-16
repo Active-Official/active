@@ -27,6 +27,18 @@ audit = {
 }
 ```
 
+- Every evaluation ATTEMPT writes one when `--audit-trail` is requested,
+  including failures that never produced a tree (LANG-F-010): a parse
+  failure records the parse diagnostics and `failure_class = "parse"`; a
+  budget trip records its carried warnings and `failure_class = "budget"`;
+  a strict validation refusal records the validation diagnostics and
+  `failure_class = "validation"`. `result` is `null` in all of them.
+- `failure_class`: `parse` | `budget` | `validation` | `other`, present only
+  on a failed attempt - it names which stage refused, so a dispute has
+  evidence instead of an empty result.
+- `peer`: optional sender identity supplied by the transport (`--peer`). It
+  is omitted for local runs; a receiver records it so a rejected peer
+  document is attributable.
 - `nodes`: IR arena size (evaluation scale proxy).
 - `mode`: the resolved mode (`config` or `data`), recorded after
   includes and the root marker are resolved.

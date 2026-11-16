@@ -688,6 +688,13 @@ fn handle_notification(
                     if !open.contains_key(&key) {
                         return Vec::new();
                     }
+                    // LANG-G-017: an out-of-order change must not overwrite
+                    // a newer buffer. LSP guarantees versions increase per
+                    // document; a lower one is a client replay, so the
+                    // current analysis and its published version stand.
+                    if open.get(&key).is_some_and(|doc| version < doc.version) {
+                        return Vec::new();
+                    }
                     if change.text.len() > MAX_DOCUMENT_BYTES {
                         // Keep the last analysis and tell the client why it
                         // stopped updating, instead of dropping the state.

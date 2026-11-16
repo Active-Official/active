@@ -28,9 +28,8 @@ use serde_json::Value as JsonValue;
 pub struct Doc {
     pub uri: Url,
     pub text: String,
-    /// Document version from the client; C-044 incremental sync uses
-    /// it for out-of-order change detection.
-    #[allow(dead_code)]
+    /// Document version from the client, used by the didChange handler to
+    /// ignore out-of-order older versions (LANG-G-017).
     pub version: i32,
     pub module: Module,
     /// Parse diagnostics: published by C-044 on open/change.

@@ -2629,6 +2629,60 @@ fn extract_let_requires_a_complete_value_expression() {
 }
 
 #[test]
+fn a_stale_did_change_version_is_ignored() {
+    // LANG-G-017: version 10 (clean) then version 9 (broken) must not
+    // overwrite the newer buffer or publish under the stale version.
+    let (uri, _path) = temp_fixture("lspstaleversion.active", "port = 1\n");
+    let uri = uri.to_string();
+    let mut server = Framed::spawn();
+    server.request(
+        "initialize",
+        serde_json::json!({"processId": null, "capabilities": {}}),
+    );
+    server.notify("initialized", serde_json::json!({}));
+    server.notify(
+        "textDocument/didOpen",
+        serde_json::json!({
+            "textDocument": {
+                "uri": uri,
+                "languageId": "active",
+                "version": 10,
+                "text": "port = 1\n",
+            }
+        }),
+    );
+    let opened = server.recv_notification("textDocument/publishDiagnostics");
+    assert_eq!(opened["params"]["version"], 10, "{opened}");
+
+    // Stale replay: the next notification the server emits must be the
+    // version-11 change below, never a version-9 publish.
+    server.notify(
+        "textDocument/didChange",
+        serde_json::json!({
+            "textDocument": {"uri": uri, "version": 9},
+            "contentChanges": [{"text": "timeout = 5s + 512MiB\n"}],
+        }),
+    );
+    server.notify(
+        "textDocument/didChange",
+        serde_json::json!({
+            "textDocument": {"uri": uri, "version": 11},
+            "contentChanges": [{"text": "name = \"ok\"\n"}],
+        }),
+    );
+    let changed = server.recv_notification("textDocument/publishDiagnostics");
+    assert_eq!(changed["params"]["version"], 11, "{changed}");
+    assert!(
+        changed["params"]["diagnostics"]
+            .as_array()
+            .expect("array")
+            .is_empty(),
+        "the applied version is clean: {changed}"
+    );
+    server.shutdown();
+}
+
+#[test]
 fn a_large_document_announces_analysis_and_stays_bounded() {
     // LANG-G-006: a 1.8 MB / 120k-key document first-published after
     // seconds with no feedback. Analysis is bounded by the parse budget

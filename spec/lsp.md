@@ -28,9 +28,12 @@ ACTIVE-core directly (parse recovering, evaluate, lint, format).
 - `textDocument/didOpen` (full text, `languageId: ACTIVE`),
   `didChange` (full sync), `didSave` (acknowledged; full sync means
   no state change), `didClose` (drop state, clear
-  diagnostics). `file://` URIs map to paths; includes resolve from
-  disk relative to the workspace file (unsaved include buffers are
-  out of scope — documented).
+  diagnostics). A `didChange` whose version is lower than the open
+  document's current version is an out-of-order replay: it is ignored,
+  the newer analysis and its published version stand, and nothing is
+  published for the stale version. `file://` URIs map to paths; includes
+  resolve from disk relative to the workspace file (unsaved include
+  buffers are out of scope — documented).
 - Every request is total: malformed positions return empty success
   (`null` / `[]`), never errors, never panics. Secret values never
   reach any response (C-036): hover values render redacted.

@@ -2,7 +2,7 @@
   "x": "***SECRET***",
   "b": {
     "$active.blob": {
-      "hash": "blake3:2fb8e16f04b4e76225de01800262de56768fa9cd27a46bc5ea5d59900b7f659a",
+      "hash": "blake3:ab0710f2bf86f2984ecca1ca1e14e6d941bd3c614e1574ff5ac8c7ed7451fb73",
       "size": 14,
       "media_type": "***SECRET***",
       "tainted": true

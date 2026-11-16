@@ -406,6 +406,12 @@ pub struct Engine {
     /// payload-resident secret but never emit them, so alias copies
     /// must not fail a document that exported within its budget.
     pub taint_probe: bool,
+    /// Salt for TAINTED blob identities (spec/blob.md section 1, LANG-C-010).
+    /// `None` (the default) derives a per-document salt from the document's
+    /// shape, so identities are reproducible for a given input; a host that
+    /// wants a per-process random salt sets one here. Untainted blobs always
+    /// use the v1 domain and this value does not touch them.
+    pub blob_salt: Option<[u8; 32]>,
     /// Receiver-side interchange gate (spec/agent-interchange-profile.md
     /// §4, LANG-C-004): refuses an unknown envelope major and
     /// capabilities this host does not offer BEFORE any evaluation work.
@@ -1464,6 +1470,7 @@ impl Engine {
             materialise_blobs: false,
             reader_version: None,
             taint_probe: false,
+            blob_salt: None,
             envelope_gate: Some(crate::envelope::EnvelopeGate::shipped()),
         }
     }
@@ -1679,6 +1686,12 @@ impl Engine {
         // O(nodes), never a subtree re-measure per clone.
         let mut actual_sizes: Vec<u64> = vec![0u64; module.arena.len()];
         let mut values: HashMap<NodeId, Value> = HashMap::new();
+        // One salt per evaluation for tainted blob identities (LANG-C-010):
+        // derived from the document so it is reproducible, or the host's
+        // explicit value.
+        let tainted_blob_salt = self
+            .blob_salt
+            .unwrap_or_else(|| crate::blob::document_salt(module));
         let mut diagnostics = module.diagnostics.clone();
         diagnostics.extend(module.healing.iter().cloned());
         diagnostics.extend(progressive_warnings(module, &self.budget));
@@ -1952,7 +1965,14 @@ impl Engine {
                     // Record the actual for reference deltas below:
                     // aliases re-charge through the Ref arm.
                     actuals.insert(node_id, 1u64.saturating_add(size));
-                    let hash = crate::blob::hash(&media, &bytes);
+                    // Tainted payloads hash under the salted v2 domain so
+                    // their identity is not a public function of the secret
+                    // bytes (LANG-C-010); untainted identity stays v1.
+                    let hash = if tainted {
+                        crate::blob::hash_salted(&tainted_blob_salt, &media, &bytes)
+                    } else {
+                        crate::blob::hash(&media, &bytes)
+                    };
                     let payload = if tainted {
                         None
                     } else if self.materialise_blobs {

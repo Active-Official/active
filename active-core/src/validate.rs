@@ -1260,10 +1260,13 @@ impl<'a> Validator<'a> {
             (
                 ActiveType::Blob,
                 Value::Blob {
-                    size, media_type, ..
+                    size,
+                    media_type,
+                    tainted,
+                    ..
                 },
             ) => {
-                self.check_blob_bounds(field, schema_id, *size, media_type, path, spans);
+                self.check_blob_bounds(field, schema_id, *size, *tainted, media_type, path, spans);
             }
             _ => {}
         }
@@ -1273,11 +1276,13 @@ impl<'a> Validator<'a> {
     /// B002, `media_type` mismatch is B004. The payload size is
     /// metadata; a schema bound or media expectation may be an
     /// expression, so each is echoed only when spelled as a literal.
+    #[allow(clippy::too_many_arguments)]
     fn check_blob_bounds(
         &mut self,
         field: &SchemaField,
         schema_id: NodeId,
         size: u64,
+        tainted: bool,
         media_type: &str,
         path: &str,
         spans: (Option<Span>, Option<String>),
@@ -1292,11 +1297,28 @@ impl<'a> Validator<'a> {
                             self.module.get(max_id),
                             Some(Node::Literal(Value::Int(_)))
                         ) {
+                            // A tainted blob's payload size is itself
+                            // material (it narrows the secret's entropy):
+                            // report the breach, never the number
+                            // (LANG-C-010).
+                            if tainted {
+                                format!(
+                                    "schema violation at '{}': blob exceeds max_size {}",
+                                    display_path(path),
+                                    max,
+                                )
+                            } else {
+                                format!(
+                                    "schema violation at '{}': blob size {} exceeds max_size {}",
+                                    display_path(path),
+                                    size,
+                                    max,
+                                )
+                            }
+                        } else if tainted {
                             format!(
-                                "schema violation at '{}': blob size {} exceeds max_size {}",
+                                "schema violation at '{}': blob exceeds the schema max_size",
                                 display_path(path),
-                                size,
-                                max,
                             )
                         } else {
                             format!(

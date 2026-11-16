@@ -18,6 +18,20 @@ The identity of a blob is the BLAKE3-256 hash of exactly these bytes, in order:
 
 No field order ambiguity exists (fixed order), no string normalisation is applied (bytes are bytes), no unit canonicalisation applies (payloads are opaque). The same payload under a different media type is a different blob by construction.
 
+Tainted blobs use the `active-blob/v2` domain:
+`BLAKE3("active-blob/v2" || 0x00 || len(salt) || salt || len(media) || media || len(payload) || payload)`
+where `salt` is a per-document salt. Untainted blobs keep the v1 domain.
+Dual-hash transition vectors cover both domains during the migration.
+
+Reference default for the salt: it is derived from the document's shape
+(node kinds, table keys, array lengths, identifiers, and scalar literals,
+with secret and blob payloads hashed by presence only), so identities stay
+reproducible across runs and across embeddings - the determinism contract
+and the cross-embedding differential gate both depend on that. A host that
+wants a per-process random salt sets `Engine::blob_salt`; the identity is
+then non-reproducible by design (like the wall clock) and must not be
+pinned in an audit or lock artifact.
+
 Reference pseudo-code:
 
 ```
@@ -95,14 +109,23 @@ The dependency-pass treats `ContentAddressed` as a leaf of known size (`size` by
 
 The structural taint bit travels with the blob on every export path (JSON identity, materialised JSON, lockfiles, provenance, graph queries, repair plans, audit trail): a tainted blob's identity object carries `"tainted": true`, and its payload is never emitted. A media type that is itself material (for example an `env` lookup used as a secret locator) taints the identity as well, and a tainted identity renders `"media_type": "***SECRET***"`: the identity's media field is never allowed to carry material. Redaction obligations are identical to secrets: any raw tainted byte in any output is a gate failure.
 
-Known limitation (documented, not hidden): the identity hash of a tainted blob is deterministic over the secret bytes, so a low-entropy secret is theoretically subject to an offline dictionary check by anyone who can already see the identity object. B002 also reports the payload size (needed to explain `max_size`), a length oracle for a secret-derived payload (the reported length lies outside the schema bound, so the bound does not hide it). Mitigations in force: tainted payloads are never emitted anywhere, hashes never appear in source, and high-entropy secret material (tokens, keys) is not dictionary-enumerable. If a deployment needs identity-hiding for tainted blobs, the extension point is a per-document salt in the canonical bytes (domain `active-blob/v2`) — a deliberate future change, never a silent one.
+Tainted-blob identity is salted (LANG-C-010): tainted blobs hash under the
+`active-blob/v2` domain with a per-document salt (section 1), so an identity
+seen in isolation cannot be dictionary-checked without the document that
+produced it. B002 reports a tainted breach without the payload size: the
+message names the breach and the schema bound, never the length. Mitigations
+in force alongside: tainted payloads are never emitted anywhere, hashes never
+appear in source, and high-entropy secret material (tokens, keys) is not
+dictionary-enumerable. A host-supplied random salt (`Engine::blob_salt`) is
+available when identity must also be unpredictable across evaluations; it
+trades reproducibility for that.
 
 ## 8. Diagnostic family B00x (CA.010)
 
 | Code | Meaning | Raised at |
 |------|---------|-----------|
 | B001 | Malformed `blob(...)` call (non-literal media type or data, wrong arity) | parse |
-| B002 | Blob payload exceeds schema `max_size` | validation |
+| B002 | Blob payload exceeds schema `max_size` (a tainted blob's payload size is never echoed: the message names the breach and the bound only, LANG-C-010) | validation |
 | B003 | Materialisation refused: blob is tainted | eval (`--materialise-blobs`) |
 | B004 | Blob media type mismatches schema `media_type` | validation |
 | B005 | Materialisation impossible: payload not retained | eval (`--materialise-blobs` / demanded cone) |

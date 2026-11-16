@@ -40,7 +40,22 @@ fn bench(c: &mut Criterion) {
     });
     c.bench_function("inspect_path_1k", |b| {
         let value = doc.value.as_ref().expect("value");
-        b.iter(|| active_core::convert::inspect_path(&doc.module, value, "port").expect("inspect"));
+        b.iter(|| {
+            // The document already carries the seeds from its evaluation.
+            // Re-deriving them here (`inspect_path`) runs a second
+            // evaluation, which trips the 100 ms wall clock under the
+            // CodSpeed simulation and panicked the whole bench run
+            // (LANG-K-002).
+            active_core::convert::inspect_path_with_profile_env(
+                &doc.module,
+                value,
+                "port",
+                None,
+                None,
+                Some(&doc.value_seeds),
+            )
+            .expect("inspect")
+        });
     });
     c.bench_function("graph_mermaid_1k", |b| {
         b.iter(|| active_core::graph::to_mermaid(&doc.module));

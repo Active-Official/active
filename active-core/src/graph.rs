@@ -68,20 +68,45 @@ fn walk(module: &Module, start: NodeId, direction: Direction) -> Vec<NodeId> {
     out
 }
 
-/// Sorted dotted paths of a node's transitive dependents,
-/// excluding the node itself and table nodes: a changed leaf
-/// trivially rebuilds its parents, which would otherwise put every
-/// table and the root in every answer. Patch and value nodes stay —
-/// those are the consumers that matter.
-pub fn impact_paths(module: &Module, id: NodeId) -> Vec<String> {
-    let mut paths: Vec<String> = transitive_dependents(module, id)
-        .into_iter()
-        .filter(|node| !matches!(module.get(*node), Some(Node::Table { .. })))
-        .map(|node| node_label(module, node))
-        .collect();
+/// Result of an impact walk (LANG-G-016): the consumer paths plus whether
+/// any dependent table was excluded by design.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Impact {
+    pub paths: Vec<String>,
+    /// True when at least one dependent was a table node and therefore
+    /// filtered: an empty `paths` then means "only containers depend on
+    /// it", never "nothing depends on it".
+    pub table_dependents_excluded: bool,
+}
+
+/// Sorted dotted paths of a node's transitive dependents, excluding the
+/// node itself and table nodes: a changed leaf trivially rebuilds its
+/// parents, which would otherwise put every table and the root in every
+/// answer. Patch and value nodes stay — those are the consumers that
+/// matter. The exclusion is recorded so callers can say why an empty
+/// answer is empty.
+pub fn impact_paths_detailed(module: &Module, id: NodeId) -> Impact {
+    let mut paths: Vec<String> = Vec::new();
+    let mut table_dependents_excluded = false;
+    for node in transitive_dependents(module, id) {
+        if matches!(module.get(node), Some(Node::Table { .. })) {
+            table_dependents_excluded = true;
+        } else {
+            paths.push(node_label(module, node));
+        }
+    }
     paths.sort();
     paths.dedup();
-    paths
+    Impact {
+        paths,
+        table_dependents_excluded,
+    }
+}
+
+/// Sorted dotted paths of a node's transitive dependents (see
+/// `impact_paths_detailed` for the exclusion record).
+pub fn impact_paths(module: &Module, id: NodeId) -> Vec<String> {
+    impact_paths_detailed(module, id).paths
 }
 
 /// Sorted dotted paths of a node's transitive dependencies.

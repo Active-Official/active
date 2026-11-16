@@ -19,7 +19,10 @@ language-server methods for agents and dashboards.
   table nodes: a changed leaf trivially rebuilds its parents,
   which would otherwise put every table and the root in every
   answer. Patch and value nodes stay — those are the consumers
-  that matter. Sorted by path.
+  that matter. Sorted by path. When the answer is empty only because
+  of that exclusion, text output prints
+  `note: no non-table dependents (table dependents excluded by design)`
+  and JSON adds the same string as `"note"` (LANG-G-016).
 - **why \<key\>** = transitive dependencies (what this value is
   built from), excluding the key itself, sorted by path.
 - Key resolution mirrors the evaluator: `resolve_value_path`
@@ -40,7 +43,10 @@ language-server methods for agents and dashboards.
   (labels quoted; quotes/backslashes escaped).
 - **json**: `{"nodes": [{"id": "n3", "label": "a.b"}], "edges":
   [{"from": "n1", "to": "n3"}]}` (impact/why:
-  `{"key": "a.b", "paths": [...]}`).
+  `{"key": "a.b", "paths": [...]}`). When an impact answer is empty
+  because the only dependents were tables, the object carries an
+  additive `"note"` string naming that exclusion, so an empty `paths`
+  never reads as "nothing depends on it" (LANG-G-016).
 
 All outputs sort nodes/edges/paths deterministically: same input,
 same bytes.
@@ -74,8 +80,9 @@ same bytes.
 
 `resolve_key`, `transitive_dependents`,
 `transitive_dependencies`, `node_label`, `to_mermaid`, `to_dot`,
-`to_graph_json`, `impact_paths`, `why_paths` — pure functions over
-`&Module`, no I/O.
+`to_graph_json`, `impact_paths`, `impact_paths_detailed` (the same
+answer plus the table-exclusion record), `why_paths` — pure functions
+over `&Module`, no I/O.
 
 ## 5. Language server
 

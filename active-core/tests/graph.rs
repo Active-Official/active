@@ -24,6 +24,23 @@ fn impact_follows_transitive_dependents() {
 }
 
 #[test]
+fn an_empty_impact_records_the_container_exclusion() {
+    // LANG-G-016: `paths` stays the consumer list, but the walk records
+    // that tables were excluded, so an empty answer is distinguishable
+    // from "nothing depends on this".
+    let module = module();
+    let solo = graph::resolve_key(&module, "b.solo").expect("b.solo");
+    let impact = graph::impact_paths_detailed(&module, solo);
+    assert!(impact.paths.is_empty());
+    assert!(impact.table_dependents_excluded);
+    let base = graph::resolve_key(&module, "base").expect("base");
+    let impact = graph::impact_paths_detailed(&module, base);
+    assert_eq!(impact.paths, ["a.w", "a.x", "a.y"]);
+    assert!(impact.table_dependents_excluded);
+    assert_eq!(graph::impact_paths(&module, base), impact.paths);
+}
+
+#[test]
 fn why_follows_transitive_dependencies() {
     let module = module();
     let y = graph::resolve_key(&module, "a.y").expect("a.y");

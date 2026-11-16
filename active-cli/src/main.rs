@@ -2038,14 +2038,27 @@ fn main() -> anyhow::Result<()> {
                 parse_graph_input(&file, resilient, allow_parent_escapes, &trust)?;
             let id = active_core::graph::resolve_key(&module, &key)
                 .ok_or_else(|| anyhow::anyhow!("unknown key '{key}' in {filename}"))?;
-            let paths = active_core::graph::impact_paths(&module, id);
+            let impact = active_core::graph::impact_paths_detailed(&module, id);
+            // LANG-G-016: an empty answer caused by the container
+            // exclusion says so instead of reading as "no dependents".
+            let note = (impact.paths.is_empty() && impact.table_dependents_excluded)
+                .then_some("no non-table dependents (table dependents excluded by design)");
             match format.as_str() {
                 "text" => {
-                    for path in paths {
+                    for path in &impact.paths {
                         println!("{path}");
                     }
+                    if let Some(note) = note {
+                        println!("note: {note}");
+                    }
                 }
-                "json" => println!("{}", serde_json::json!({"key": key, "paths": paths})),
+                "json" => {
+                    let mut out = serde_json::json!({"key": key, "paths": impact.paths});
+                    if let Some(note) = note {
+                        out["note"] = serde_json::json!(note);
+                    }
+                    println!("{out}");
+                }
                 other => anyhow::bail!("unsupported format: {}", other),
             }
         }

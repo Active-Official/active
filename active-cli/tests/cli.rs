@@ -997,6 +997,48 @@ fn impact_and_why_answer_with_paths_and_json() {
     assert!(combined.contains("nowhere"), "{combined}");
 }
 
+#[test]
+fn impact_explains_an_empty_answer_caused_by_container_exclusion() {
+    // LANG-G-016: a leaf whose only dependents are tables answered with
+    // silence. The note names the exclusion; the JSON keeps `key` and
+    // `paths` and adds the note additively. Unknown keys still fail.
+    let f = fixture("graph_impact_note.active", "port = 8080\n");
+    let out = active()
+        .args(["impact", "port"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("note: no non-table dependents (table dependents excluded by design)"),
+        "{text}"
+    );
+    let out = active()
+        .args(["impact", "port", "--format", "json"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).expect("valid json");
+    assert_eq!(json["key"], "port");
+    assert_eq!(json["paths"].as_array().expect("paths").len(), 0);
+    assert_eq!(
+        json["note"],
+        "no non-table dependents (table dependents excluded by design)"
+    );
+    let out = active()
+        .args(["impact", "nowhere"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success(), "unknown keys must still fail");
+}
+
 // ------------------------------------------------------------------
 // `active lock` contract (C-050/C-051, spec/reproducibility.md §4).
 // ------------------------------------------------------------------

@@ -41,6 +41,12 @@ extern "C" {
 
 #define ACTIVE_ERR_PANIC_CAUGHT 10
 
+/**
+ * Reserved for a negotiated-ABI handshake. The v1 surface has no
+ * host-declared ABI parameter (the options pointer is reserved and rejected
+ * when non-null), so no path sets this code in v1; it stays documented and
+ * allocated (LANG-G-007: never renumber a stable code).
+ */
 #define ACTIVE_ERR_ABI_MISMATCH 11
 
 #define ACTIVE_ERR_BAD_BUDGET 12

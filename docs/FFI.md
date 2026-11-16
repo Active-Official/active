@@ -68,6 +68,17 @@ to explicit values.
 
 ## 3. Error codes (F-002; codes are API per G-025)
 
+Every value a host can receive is reachable (LANG-G-007): an unresolved
+reference during evaluation is `UNRESOLVED_REF` (2), an include family
+failure (E015/E016/E017/E028) is `INCLUDE_FAIL` (7), and a schema/unit/
+cycle/budget refusal is its own code. `active_check` and `active_validate`
+also report a class from the set they return: an error-severity diagnostic
+wins, and a set that carries only `W001` (unresolved identifier) reports 2,
+so a host polling `active_last_error` after a check sees the same verdict
+the CLI applies downstream. `ABI_MISMATCH` (11) is reserved: the v1
+surface has no host-declared ABI parameter, so no path sets it; it stays
+documented and allocated so the number is never reused.
+
 Stable `ACTIVE_ERR_*` integers: OK(0), PARSE(1), UNRESOLVED_REF(2),
 CYCLE(3), UNIT_MISMATCH(4), SECRET_REFUSAL(5), BUDGET_EXCEEDED(6),
 INCLUDE_FAIL(7), SCHEMA_FAIL(8), NULL_HANDLE(9), PANIC_CAUGHT(10),

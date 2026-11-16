@@ -26,6 +26,10 @@ pub const ACTIVE_ERR_INCLUDE_FAIL: i32 = 7;
 pub const ACTIVE_ERR_SCHEMA_FAIL: i32 = 8;
 pub const ACTIVE_ERR_NULL_HANDLE: i32 = 9;
 pub const ACTIVE_ERR_PANIC_CAUGHT: i32 = 10;
+/// Reserved for a negotiated-ABI handshake. The v1 surface has no
+/// host-declared ABI parameter (the options pointer is reserved and rejected
+/// when non-null), so no path sets this code in v1; it stays documented and
+/// allocated (LANG-G-007: never renumber a stable code).
 pub const ACTIVE_ERR_ABI_MISMATCH: i32 = 11;
 pub const ACTIVE_ERR_BAD_BUDGET: i32 = 12;
 pub const ACTIVE_ERR_UTF8: i32 = 13;
@@ -166,13 +170,47 @@ pub unsafe extern "C" fn active_last_error() -> i32 {
 /// resolved, so documents with includes still get a handle and the host
 /// can register a loader afterwards. Mirrors active-fmt's preservation
 /// mode; resolution happens per check/eval call.
-fn parse_record_mode(text: &str) -> Result<(), Vec<active_core::Diagnostic>> {
+/// The include family (LANG-G-007): a failure to locate, read, or bound
+/// an include is reported as `ACTIVE_ERR_INCLUDE_FAIL` rather than a
+/// generic parse error, so a host can tell the two apart.
+fn is_include_code(code: &str) -> bool {
+    matches!(code, "E015" | "E016" | "E017" | "E028")
+}
+
+/// ABI class for a parse failure seen through a handle.
+fn parse_failure_code(items: &[DiagSnapshot]) -> i32 {
+    if items
+        .iter()
+        .any(|d| is_include_code(&d.code.to_string_lossy()))
+    {
+        ACTIVE_ERR_INCLUDE_FAIL
+    } else {
+        ACTIVE_ERR_PARSE
+    }
+}
+
+/// Parse for `active_module_parse`, returning the numeric failure class so
+/// the ABI can distinguish an include failure (7) from any other parse
+/// failure (1) - both codes already existed in the header but only 1 was
+/// ever set (LANG-G-007). E016 (include depth), E017 (unreadable include),
+/// and E028 (include budget) are the include family.
+fn parse_record_mode(text: &str) -> Result<(), i32> {
     let options = with_parse_limits(active_core::ParseOptions {
         enable_includes: true,
         resolve_includes: false,
         ..active_core::ParseOptions::default()
     });
-    active_core::parse_with(text, "ffi", options).map(|_| ())
+    match active_core::parse_with(text, "ffi", options) {
+        Ok(_) => Ok(()),
+        Err(diags) => {
+            let include_failure = diags.iter().any(|d| is_include_code(d.code.as_str()));
+            Err(if include_failure {
+                ACTIVE_ERR_INCLUDE_FAIL
+            } else {
+                ACTIVE_ERR_PARSE
+            })
+        }
+    }
 }
 
 /// Register the host include loader on a live handle (F-016). Null `cb`
@@ -266,8 +304,8 @@ pub unsafe extern "C" fn active_module_parse(
                     env_cb: None,
                 }))
             }
-            Err(_) => {
-                set_last(ACTIVE_ERR_PARSE);
+            Err(code) => {
+                set_last(code);
                 std::ptr::null_mut()
             }
         }
@@ -558,7 +596,11 @@ pub unsafe extern "C" fn active_check(
         let module = unsafe { &*module };
         match collect_check(module, budget) {
             Ok(items) => {
-                set_last(ACTIVE_ERR_OK);
+                // LANG-G-007: the set itself is the primary channel, and the
+                // numeric code stays observable through `active_last_error`.
+                // A refusal class wins; an unresolved reference is the one
+                // warning that used to be silently OK (code 2 was dead).
+                set_last(classify_check(&items));
                 Box::into_raw(Box::new(ActiveDiagnosticSet { items }))
             }
             Err(code) => {
@@ -589,8 +631,9 @@ pub unsafe extern "C" fn active_eval(
         let handle = unsafe { &*module };
         let parsed = match parse_handle(handle) {
             Ok(m) => m,
-            Err(_) => {
-                set_last(ACTIVE_ERR_PARSE);
+            Err(diags) => {
+                // LANG-G-007: include failures keep their own ABI class.
+                set_last(parse_failure_code(&diags));
                 return std::ptr::null_mut();
             }
         };
@@ -655,6 +698,20 @@ pub unsafe extern "C" fn active_eval(
 /// Numeric ABI code for a refusing diagnostic (LANG-G-002/G-007). Codes are
 /// stable: the mapping reads the language code's first letter and family,
 /// and an unknown error falls back to SCHEMA_FAIL rather than claiming OK.
+/// Numeric ABI code for a completed check (LANG-G-007). Error-severity
+/// diagnostics carry the refusal class from `error_code_for`; a clean run
+/// with an unresolved reference warns (W001) and reports code 2, which is
+/// what `active eval` treats as a hard failure downstream. Everything else
+/// is OK: warnings the language tolerates stay warnings.
+fn classify_check(items: &[DiagSnapshot]) -> i32 {
+    let has_unresolved = items.iter().any(|d| d.code.as_bytes() == b"W001");
+    match items.iter().find(|d| d.severity == 1) {
+        Some(d) => error_code_for(&d.code.to_string_lossy()),
+        None if has_unresolved => ACTIVE_ERR_UNRESOLVED_REF,
+        None => ACTIVE_ERR_OK,
+    }
+}
+
 fn error_code_for(code: &str) -> i32 {
     match code {
         "S001" => ACTIVE_ERR_CYCLE,
@@ -662,6 +719,7 @@ fn error_code_for(code: &str) -> i32 {
         "T001" | "T002" | "T003" => ACTIVE_ERR_UNIT_MISMATCH,
         "T004" | "T005" | "T006" | "T007" | "T008" => ACTIVE_ERR_SCHEMA_FAIL,
         "B001" | "B002" | "B003" | "B004" => ACTIVE_ERR_SCHEMA_FAIL,
+        "E015" | "E016" | "E017" | "E028" => ACTIVE_ERR_INCLUDE_FAIL,
         _ if code.starts_with('X') => ACTIVE_ERR_BUDGET_EXCEEDED,
         _ if code.starts_with('S') => ACTIVE_ERR_UNIT_MISMATCH,
         _ => ACTIVE_ERR_SCHEMA_FAIL,
@@ -1005,8 +1063,9 @@ pub unsafe extern "C" fn active_validate(
         let handle = unsafe { &*module };
         let parsed = match parse_handle(handle) {
             Ok(m) => m,
-            Err(_) => {
-                set_last(ACTIVE_ERR_PARSE);
+            Err(diags) => {
+                // LANG-G-007: include failures keep their own ABI class.
+                set_last(parse_failure_code(&diags));
                 return std::ptr::null_mut();
             }
         };
@@ -1025,7 +1084,7 @@ pub unsafe extern "C" fn active_validate(
             }
             Err(e) => vec![snapshot_error(&e)],
         };
-        set_last(ACTIVE_ERR_OK);
+        set_last(classify_check(&typed));
         Box::into_raw(Box::new(ActiveDiagnosticSet { items: typed }))
     })
 }

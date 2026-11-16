@@ -110,14 +110,14 @@ fn build_value_with_secret(seed: u64, secret: &str, depth: u32) -> Value {
     fn gen(rng: &mut Rng, secret: &str, depth: u32) -> Value {
         if depth == 0 {
             return match rng.below(4) {
-                0 => Value::Secret(secret.to_string()),
+                0 => Value::Secret(zeroize::Zeroizing::new(secret.to_string())),
                 1 => Value::Int(rng.below(100) as i64),
                 2 => Value::String(format!("plain{}", rng.below(100))),
                 _ => Value::Bool(rng.below(2) == 0),
             };
         }
         match rng.below(5) {
-            0 => Value::Secret(secret.to_string()),
+            0 => Value::Secret(zeroize::Zeroizing::new(secret.to_string())),
             1 => Value::Int(rng.below(100) as i64),
             2 => Value::String(format!("plain{}", rng.below(100))),
             3 => Value::Array(
@@ -137,7 +137,10 @@ fn build_value_with_secret(seed: u64, secret: &str, depth: u32) -> Value {
     let mut rng = Rng(seed | 1);
     let mut root = IndexMap::new();
     root.insert("payload".to_string(), gen(&mut rng, secret, depth));
-    root.insert("credential".to_string(), Value::Secret(secret.to_string()));
+    root.insert(
+        "credential".to_string(),
+        Value::Secret(zeroize::Zeroizing::new(secret.to_string())),
+    );
     Value::Table(root)
 }
 

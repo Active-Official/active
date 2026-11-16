@@ -255,6 +255,29 @@ pub struct SecretRedactor {
     marker_patterns: std::cell::RefCell<Vec<String>>,
 }
 
+impl Drop for SecretRedactor {
+    /// Scrub the stored plaintext (LANG-I-005). The substring matcher
+    /// genuinely needs the bytes, so the honest fix is wipe-on-drop, not
+    /// hashing. The aho-corasick levels hold internal pattern copies the
+    /// crate's API cannot reach; they die with the redactor (documented
+    /// residual in the fix record).
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        for value in self.values.get_mut() {
+            value.zeroize();
+        }
+        for value in self.long.get_mut() {
+            value.zeroize();
+        }
+        for value in self.marker_patterns.get_mut() {
+            value.zeroize();
+        }
+        for mut value in self.seen.drain() {
+            value.zeroize();
+        }
+    }
+}
+
 impl std::fmt::Debug for SecretRedactor {
     /// Counts only: values are secret material and must not reach a
     /// diagnostic or a failed assertion's output.

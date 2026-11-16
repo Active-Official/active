@@ -9,6 +9,7 @@
 
 use petgraph::algo::toposort;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use thiserror::Error;
 
@@ -771,7 +772,10 @@ pub(crate) fn measure_value(value: &Value) -> u64 {
     while let Some(v) = stack.pop() {
         total = total.saturating_add(1);
         match v {
-            Value::String(s) | Value::Secret(s) => {
+            Value::String(s) => {
+                total = total.saturating_add(s.len() as u64);
+            }
+            Value::Secret(s) => {
                 total = total.saturating_add(s.len() as u64);
             }
             // Identity leaf of known size (spec/blob.md §6): the
@@ -1099,11 +1103,17 @@ impl Default for IncrementalMemo {
 /// fixed constant — uniqueness lost, correctness kept (a constant
 /// salt is exactly the old unsalted behavior).
 fn memo_salt() -> u64 {
+    static MEMO_SEQ: AtomicU64 = AtomicU64::new(0);
     let mut buf = [0u8; 8];
     if getrandom::getrandom(&mut buf).is_ok() {
         u64::from_le_bytes(buf)
     } else {
-        0x9E37_79B9_7F4A_7C15
+        // No host entropy (wasm32-unknown-unknown): a per-memo sequence
+        // keeps keys distinct within the process instead of one public
+        // constant shared by every memo (LANG-I-013). Fingerprints are
+        // in-memory keys, never persisted, and output determinism does
+        // not depend on the salt.
+        MEMO_SEQ.fetch_add(1, Ordering::Relaxed) ^ 0x9E37_79B9_7F4A_7C15
     }
 }
 
@@ -1986,9 +1996,14 @@ impl Engine {
                                 let path_material = profile.node_is_path_material(node_id)
                                     && !profile.node_is_export_visible(node_id);
                                 if structural || path_material {
-                                    if let Value::Secret(text) | Value::String(text) = value {
+                                    let text = match value {
+                                        Value::Secret(text) => Some(text.to_string()),
+                                        Value::String(text) => Some(text.clone()),
+                                        _ => None,
+                                    };
+                                    if let Some(text) = text {
                                         if structural || text.len() >= 4 {
-                                            out.insert(text.clone());
+                                            out.insert(text);
                                         }
                                     }
                                 }
@@ -2044,8 +2059,8 @@ impl Engine {
                 Node::Secret { locator } => {
                     let loc = values.get(locator).cloned().unwrap_or(Value::Null);
                     let secret = match loc {
-                        Value::String(s) => Value::Secret(s),
-                        _ => Value::Secret(String::new()),
+                        Value::String(s) => Value::Secret(zeroize::Zeroizing::new(s)),
+                        _ => Value::Secret(zeroize::Zeroizing::new(String::new())),
                     };
                     // Dynamic content: the DP counted 1, so charge the
                     // string bytes as delta and record the actual for
@@ -2089,7 +2104,9 @@ impl Engine {
                     let (bytes, mut tainted) =
                         match values.get(data).cloned().unwrap_or(Value::Null) {
                             Value::String(s) => (s.into_bytes(), false),
-                            Value::Secret(s) => (s.into_bytes(), true),
+                            // Copy out, then the Zeroizing buffer wipes
+                            // itself on drop (LANG-I-005).
+                            Value::Secret(s) => (s.as_bytes().to_vec(), true),
                             _ => {
                                 return Err(EvalError::type_error(
                                     "blob() data must be a string or secret locator",
@@ -2395,7 +2412,7 @@ impl Engine {
                     // A runtime secret is sensitive material wherever
                     // it appears; register its text so a copy (string,
                     // media type, or blob payload) redacts too.
-                    Value::Secret(text) => sensitive_values.insert(text.clone()),
+                    Value::Secret(text) => sensitive_values.insert(text.to_string()),
                     Value::String(text)
                         if node_material || on_material_path || node_path_material =>
                     {
@@ -2429,12 +2446,17 @@ impl Engine {
                     let path_material = profile.node_is_path_material(node_id)
                         && !profile.node_is_export_visible(node_id);
                     if structural || path_material {
-                        if let Value::Secret(text) | Value::String(text) = &value {
-                            // A short path-material value would corrupt
-                            // unrelated strings; structural secrets of
-                            // any length still seed.
+                        let text = match &value {
+                            Value::Secret(text) => Some(text.to_string()),
+                            Value::String(text) => Some(text.clone()),
+                            _ => None,
+                        };
+                        // A short path-material value would corrupt
+                        // unrelated strings; structural secrets of any
+                        // length still seed.
+                        if let Some(text) = text {
                             if structural || text.len() >= 4 {
-                                out.insert(text.clone());
+                                out.insert(text);
                             }
                         }
                     }

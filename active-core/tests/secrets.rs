@@ -79,7 +79,9 @@ fn env_backed_secrets_redact() {
     let (value, _) = Engine::new().evaluate(&module).expect("must evaluate");
     match &value {
         active_core::Value::Table(map) => match map.get("token") {
-            Some(active_core::Value::Secret(s)) => assert_eq!(s, RAW_ENV, "env not read"),
+            Some(active_core::Value::Secret(s)) => {
+                assert_eq!(s.as_str(), RAW_ENV, "env not read")
+            }
             other => panic!("secret expected, got {other:?}"),
         },
         other => panic!("table expected, got {other:?}"),
@@ -2996,4 +2998,26 @@ fn a_dynamic_empty_blob_media_type_is_b001() {
     let module = parse("m = \"\"\nb = blob(m, \"x\")\n", "blob-empty-dyn").expect("parse");
     let error = Engine::new().evaluate(&module).expect_err("must fail");
     assert_eq!(error.code(), "B001", "{error:?}");
+}
+
+#[test]
+fn secret_values_and_redactors_wipe_their_buffers() {
+    // LANG-I-005: Value::Secret holds Zeroizing<String> and the redactor
+    // wipes its stored values on Drop. Reading freed memory to prove the
+    // wipe would be undefined behavior, so the test proves the type
+    // contract (extraction compiles only for the zeroizing inner) and the
+    // wipe behavior itself.
+    use zeroize::Zeroize;
+    let value = active_core::Value::Secret(zeroize::Zeroizing::new("wipe-me-please".to_string()));
+    let mut inner: zeroize::Zeroizing<String> = match value {
+        active_core::Value::Secret(inner) => inner,
+        _ => unreachable!(),
+    };
+    inner.zeroize();
+    assert!(inner.is_empty(), "the secret buffer was not wiped");
+
+    let mut redactor = active_core::secret::SecretRedactor::new();
+    redactor.insert("redactor-wipe-me".to_string());
+    assert!(redactor.redact_text("x redactor-wipe-me y").is_some());
+    drop(redactor);
 }

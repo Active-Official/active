@@ -291,7 +291,7 @@ fn secret_edit_propagates_and_stays_redacted() {
     );
     match &value {
         Value::Table(map) => match map.get("token") {
-            Some(Value::Secret(s)) => assert_eq!(s, "s3cr3t-2"),
+            Some(Value::Secret(s)) => assert_eq!(s.as_str(), "s3cr3t-2"),
             other => panic!("secret expected: {other:?}"),
         },
         other => panic!("table expected: {other:?}"),

@@ -94,7 +94,12 @@ pub fn document_salt(module: &crate::ir::Module) -> [u8; 32] {
                 hasher.update(&f.to_bits().to_le_bytes());
             }
             // Strings may be secret-derived: length only, never bytes.
-            Value::String(s) | Value::Secret(s) => {
+            Value::String(s) => {
+                hasher.update(b"s");
+                hasher.update(&(s.len() as u64).to_le_bytes());
+            }
+            // Secrets hash by length only, never bytes (same rule).
+            Value::Secret(s) => {
                 hasher.update(b"s");
                 hasher.update(&(s.len() as u64).to_le_bytes());
             }

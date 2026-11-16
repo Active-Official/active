@@ -534,7 +534,11 @@ pub enum Value {
     Quantity(f64, Unit), // rate/custom units retain their dimension
     Array(Vec<Value>),
     Table(IndexMap<String, Value>),
-    Secret(String), // in production this is zeroized; here plain for demo
+    /// Secret material: scrubbed on drop by `Zeroizing` (LANG-I-005). The
+    /// bytes exist in plaintext while the value is live - the redaction
+    /// contract governs every output path, and Rust cannot hash a secret
+    /// into unreachability - but they do not survive the value.
+    Secret(zeroize::Zeroizing<String>),
     /// Content-addressed blob identity (PROPOSAL §1.1, spec/blob.md).
     /// The payload is present only after explicit materialisation;
     /// tainted blobs never carry a payload. Hashes never appear in
@@ -608,6 +612,25 @@ impl Serialize for Value {
     /// `convert::value_to_json` (kept in sync by hand; ir cannot depend
     /// on convert). Deserialization stays derived: the input direction
     /// cannot leak.
+    ///
+    /// Blob payloads are the exception to "direct serialization is
+    /// profile-aware" (LANG-I-010): an untainted materialised payload
+    /// emits `payload_b64` here, because this impl cannot see the
+    /// `SecretProfile` that would redact a profile-selected path. Library
+    /// hosts must route exported values through
+    /// [`crate::convert::redact_value`] with the profile that produced the
+    /// tree (the pattern every shipped exporter follows):
+    ///
+    /// ```
+    /// # use active_core::{parse, Engine};
+    /// # let module = parse("port = 8080\n", "doc").expect("parse");
+    /// # let engine = Engine::hermetic();
+    /// # let (value, _, seeds) = engine.evaluate_with_seeds(&module).expect("eval");
+    /// let profile = active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
+    /// let redacted = active_core::convert::redact_value(&profile, &value);
+    /// let json = active_core::convert::value_to_pretty_json(&redacted);
+    /// # assert!(json.contains("8080"));
+    /// ```
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let json = match self {
             Value::Null => serde_json::Value::Null,

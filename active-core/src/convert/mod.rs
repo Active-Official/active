@@ -173,9 +173,9 @@ pub fn redactor_and_exact_with_runtime_secrets(
     ) {
         match value {
             Value::Secret(text) => {
-                exact.insert(text.clone());
+                exact.insert(text.to_string());
                 if text.len() >= 4 {
-                    redactor.insert(text.clone());
+                    redactor.insert(text.to_string());
                 }
             }
             // Seed a plain string only when its node is globally
@@ -188,9 +188,9 @@ pub fn redactor_and_exact_with_runtime_secrets(
                     .value_node_at(path)
                     .is_some_and(|id| profile.node_is_secret(id)) =>
             {
-                exact.insert(text.clone());
+                exact.insert(text.to_string());
                 if text.len() >= 4 {
-                    redactor.insert(text.clone());
+                    redactor.insert(text.to_string());
                 }
             }
             Value::Array(items) => {
@@ -500,14 +500,16 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
                     }
                 }
             }
-            _ if profile.path_is_secret(path) => Value::Secret(String::new()),
+            _ if profile.path_is_secret(path) => {
+                Value::Secret(zeroize::Zeroizing::new(String::new()))
+            }
             // A whole value identical to a material value (at any
             // length) is material too; short values never enter the
             // substring redactor.
             Value::String(text)
                 if profile.is_material_text(text) || runtime_exact.contains(text) =>
             {
-                Value::Secret(String::new())
+                Value::Secret(zeroize::Zeroizing::new(String::new()))
             }
             Value::String(text) => match redactor.redact_text(text) {
                 Some(redacted) => Value::String(redacted),

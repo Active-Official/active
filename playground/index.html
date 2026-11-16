@@ -32,7 +32,17 @@ Everything runs locally in WebAssembly; nothing leaves your browser.</p>
 <script>
 window.addEventListener("DOMContentLoaded", function () {
   if (!window.ActiveShim) return;
-  window.ActiveShim.load("../target/wasm32-unknown-unknown/release/active_wasm.wasm").then(function (api) {
+  // The staged artefact (playground/fetch-wasm.py) comes first; the
+  // in-repo release build is the local-dev fallback.
+  var sources = ["./active_wasm.wasm",
+                 "../target/wasm32-unknown-unknown/release/active_wasm.wasm"];
+  function tryLoad(i) {
+    return window.ActiveShim.load(sources[i]).catch(function (e) {
+      if (i + 1 < sources.length) return tryLoad(i + 1);
+      throw e;
+    });
+  }
+  tryLoad(0).then(function (api) {
     window.ActiveAPI = api;
     document.getElementById("value").textContent = "(engine ready: pick an example, then Evaluate)";
   }).catch(function (e) {

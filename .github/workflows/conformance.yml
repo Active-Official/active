@@ -239,6 +239,11 @@ jobs:
       - name: Build WASM module and FFI libraries
         run: cargo build -p active-wasm --target wasm32-unknown-unknown --release --locked
       - run: cargo build -p active-ffi --locked
+      - name: Stage the playground engine
+        # The playground loads a gitignored local artefact; prove the
+        # staging script produces it (and a byte-identical copy) from the
+        # release build (LANG-G-023).
+        run: python playground/fetch-wasm.py
       - name: Run harness unit tests (gate enforcement)
         # test_run.py pins the parity rules inside run.py: weakening
         # classify()/verify_parity() must turn these red. Runs before the

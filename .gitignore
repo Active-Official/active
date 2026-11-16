@@ -78,6 +78,10 @@ BLOCKS.md
 active-wasm/pkg-nodejs/
 active-wasm/pkg-web/
 
+# Playground engine staged from the release build (playground/fetch-wasm.py);
+# a generated artefact, never committed.
+playground/active_wasm.wasm
+
 # C# build outputs
 bindings/csharp/**/bin/
 bindings/csharp/**/obj/

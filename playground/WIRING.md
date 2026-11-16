@@ -8,7 +8,25 @@ window.ActiveAPI = {
   // Evaluate Active source. Never throws for language errors: they come
   // back as { ok: false, json: "", diagnostics: "<code+span lines>" }.
   // Host-side failures (OOM, engine missing) may throw Error.
-  evaluate(source: string): { ok: boolean; json: string; diagnostics: string };
+  evaluate(source: string): {
+    ok: boolean;
+    json: string;
+    diagnostics: string;
+    // Structured diagnostics, passed through verbatim when the module
+    // carries them and ABSENT otherwise: the bindings fail closed on a
+    // missing array, so the shim never invents an empty one.
+    items?: Array<{
+      code: string;
+      message: string;
+      severity: "error" | "warning" | "info" | "hint";
+      span: {
+        line: number;
+        column: number;
+        end_line: number;
+        end_column: number;
+      } | null;
+    }>;
+  };
 }
 ```
 
@@ -18,7 +36,14 @@ window.ActiveAPI = {
 
 ## Local-dev loop (until B-001 wires the released artifact)
 
-1. Build the workspace WASM module (W-001) for `wasm32-unknown-unknown`.
+1. Build the workspace WASM module (W-001) for `wasm32-unknown-unknown`,
+   then stage it next to the page:
+   `cargo build -p active-wasm --target wasm32-unknown-unknown --release`
+   then `python playground/fetch-wasm.py`. The script writes the gitignored
+   `playground/active_wasm.wasm` and verifies the copy
+   (`--check` re-verifies it). To stage a published build instead, run
+   `python packaging/fetch-wasm.py --version <v> --into playground`, which
+   verifies the release checksum.
 2. Serve this directory statically (`python -m http.server`); `fetch()` needs http, not `file://`.
 3. Load `index.html`; without the engine the page says "Engine not loaded" (honest empty state, never faked output).
 

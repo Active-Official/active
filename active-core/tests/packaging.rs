@@ -80,15 +80,25 @@ fn workspace_version_is_single_sourced() {
             "{name}: version must be workspace-inherited"
         );
     }
-    // Exception: active-infinity reserves its name on an independent 1.0.0
-    // placeholder track and converges to the workspace version when the real
-    // crate lands (owner decision; see active-infinity/Cargo.toml).
-    let manifest = read_toml("active-infinity");
-    let table = package_table(&manifest, "active-infinity");
-    assert_eq!(
-        table.get("version").and_then(|v| v.as_str()),
-        Some("1.0.0"),
-        "active-infinity: placeholder version must stay 1.0.0"
+}
+
+#[test]
+fn the_retired_active_infinity_member_stays_gone() {
+    // LANG-E-001 / LANG-J-010 / VERSIONING.md section 4: the in-repo
+    // placeholder is retired. The name on crates.io belongs to the
+    // standalone Infinity codec (2.4.2, Active-Official/active-infinity);
+    // re-adding a member here recreates the one-name-two-crates collision.
+    let dir = workspace_root().join("active-infinity");
+    assert!(
+        !dir.exists(),
+        "active-infinity: retired placeholder - do not re-add this member; \
+         the name belongs to the standalone Infinity codec \
+         (docs/version-and-abi-policy.md, VERSIONING.md section 4)"
+    );
+    let root = std::fs::read_to_string(workspace_root().join("Cargo.toml")).expect("root manifest");
+    assert!(
+        !root.contains("\"active-infinity\""),
+        "active-infinity: must not be listed as a workspace member"
     );
 }
 
@@ -103,7 +113,6 @@ fn publish_metadata_is_complete() {
         ("active-cli", "active-cli"),
         ("active-fmt", "active-fmt"),
         ("active-lsp", "active-lsp"),
-        ("active-infinity", "active-infinity"),
         ("active-ffi", "active-ffi"),
         ("active-wasm", "active-wasm"),
     ];

@@ -282,7 +282,6 @@ ACTIVE/
 ├── active-lsp/                  # language server
 ├── active-ffi/                  # frozen C ABI + header
 ├── active-wasm/                 # zero import WASM + JS/TS shim + Go smoke
-├── active-infinity/             # reserved crate entry
 └── editors/                     # vscode + neovim integrations
 ```
 

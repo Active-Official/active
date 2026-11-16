@@ -64,10 +64,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "active-infinity"
-version = "1.0.0"
-
-[[package]]
 name = "active-lsp"
 version = "1.4.0"
 dependencies = [

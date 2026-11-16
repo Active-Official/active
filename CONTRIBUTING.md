@@ -66,3 +66,10 @@ conformance manifests stay TOML (consumed by Rust, Node, and Go runners
 that must all parse them without an Active parser); token-corpus fixtures
 stay multi-format by purpose; binding sources stay native to their
 language. Exceptions are reviewed, never silent.
+
+## Versioning and releases
+
+`VERSIONING.md` is the versioning policy of record (freeze, one version per
+line, lockstep maxima, the retired `active-infinity` placeholder, the release
+procedure, and the 2.0.0 plan). No version bump and no registry publish
+happens without it, and publishing always requires explicit owner approval.

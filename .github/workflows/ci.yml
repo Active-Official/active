@@ -122,6 +122,23 @@ jobs:
           cargo package --list --locked -p active-fmt
           cargo package --list --locked -p active-lsp
           cargo package --list --locked -p active-cli
+      # LANG-E-001 / E-004: the retired active-infinity placeholder must
+      # never be packaged from this repository again. The name belongs to
+      # the standalone Infinity codec (VERSIONING.md section 4).
+      - name: Retired placeholder is never packaged
+        run: |
+          if [ -e active-infinity ]; then
+            echo "::error::active-infinity/ exists; the member is retired (VERSIONING.md section 4)"
+            exit 1
+          fi
+          if grep -q '"active-infinity"' Cargo.toml; then
+            echo "::error::active-infinity must not be a workspace member"
+            exit 1
+          fi
+          if cargo metadata --no-deps --format-version 1 | grep -q 'active-infinity'; then
+            echo "::error::active-infinity still appears in cargo metadata"
+            exit 1
+          fi
 
   audit:
     name: Security audit (cargo-audit)

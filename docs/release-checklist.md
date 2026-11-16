@@ -11,8 +11,10 @@ Every `v*` tag run must produce, in order:
 4. Checksums (SHA256SUMS) plus build attestations plus `.sig` sidecars when
    the release key is set.
 5. GitHub release with all of the above attached; crates published in
-   dependency order with index-lag pauses (active-core first; infinity
-   stays manual on its own track).
+   dependency order with index-lag pauses (active-core first: active-core ->
+   active -> active-fmt -> active-lsp -> active-cli -> active-ffi ->
+   active-wasm). There is no active-infinity publish from this repo - that
+   name belongs to the standalone Infinity codec.
 6. Changelog entry that says what changed and why it matters for users,
    not only what changed.
 

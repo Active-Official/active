@@ -12,9 +12,12 @@ version` in the root `Cargo.toml`; every member crate uses
 `v<version>` on main and drive `release.yml`. MSRV 1.89 advances
 only with a minor/major bump and a checklist note.
 
-`active-infinity` is the single exception: an independent `1.0.0`
-name-reservation track that converges to the workspace version when
-its real surface lands (enforced by `packaging.rs`).
+active-infinity is not a member of this workspace. The name active-infinity
+on crates.io is the real Infinity codec (published 2.4.2, 2026-11-03;
+canonical home Active-Official/active-infinity). The in-repo placeholder
+member that previously reserved the name at 1.0.0 was retired in 2.0.0 -
+see VERSIONING.md section 4. Do not re-add an active-infinity member to
+this workspace.
 
 ## 2. Tier-1 package versions (all track the 1.4.0 line)
 

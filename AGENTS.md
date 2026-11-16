@@ -60,6 +60,14 @@ workspace. Additional gates:
 - Commit messages use conventional prefixes (`feat:`, `fix:`, `spec:`,
   `test:`, `docs:`, `chore:`) and say what changed and why.
 
+## Versioning and releases
+
+`VERSIONING.md` is the versioning policy of record: the release freeze, one
+version per line, the lockstep maxima table, the retired `active-infinity`
+placeholder, the release procedure, and the 2.0.0 plan. Read it before any
+version bump or registry publish; publishing always requires explicit owner
+approval.
+
 ## Secrets and external systems
 
 - Registry tokens and API keys live outside the repository and are read

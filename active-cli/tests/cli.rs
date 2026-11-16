@@ -1143,6 +1143,10 @@ fn keygen_sign_verify_round_trip() {
     assert_eq!(public_hex.len(), 64);
     // Sign a document overlay with the fresh key.
     let f = fixture("sign_lib.active", "host = \"db\"\n");
+    // A previous run of this test may have left a sidecar; the signer
+    // refuses to overwrite one without --force (LANG-I-017).
+    let sidecar = dir.join("sign_lib.active.sig");
+    let _ = std::fs::remove_file(&sidecar);
     let out = active()
         .args(["sign", "--key"])
         .arg(&secret_path)
@@ -1155,7 +1159,6 @@ fn keygen_sign_verify_round_trip() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let sidecar = dir.join("sign_lib.active.sig");
     assert!(sidecar.exists());
     // Verify against a trust file carrying the public half.
     let trust = dir.join("trust.toml");
@@ -1224,6 +1227,15 @@ fn trust_keys_gate_include_loading() {
         "gate_main.active",
         "include \"gate_lib.active\"\nport = 1\n",
     );
+    // A previous run may have left sidecars (possibly old-format, which
+    // would read as E039); the unsigned check below must see none.
+    let sidecar_of = |path: &std::path::Path| {
+        let mut named = path.as_os_str().to_owned();
+        named.push(".sig");
+        std::path::PathBuf::from(named)
+    };
+    let _ = std::fs::remove_file(sidecar_of(&_lib));
+    let _ = std::fs::remove_file(sidecar_of(&main));
     let out = active()
         .args(["check"])
         .arg(&main)
@@ -4815,5 +4827,59 @@ fn eval_lockfile_refuses_drift_in_the_main_or_an_include() {
         .output()
         .expect("run active");
     assert!(!bad.status.success(), "unparseable lockfile must fail");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn sign_refuses_to_overwrite_a_sidecar_without_force() {
+    // LANG-I-017: the old sidecar can be the only copy; a mistaken
+    // re-sign must not destroy it silently.
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("sign-force");
+    std::fs::create_dir_all(&dir).expect("dir");
+    let key = dir.join("k");
+    assert!(active()
+        .args(["keygen", "--out"])
+        .arg(&key)
+        .output()
+        .expect("keygen")
+        .status
+        .success());
+    let lib = dir.join("lib.active");
+    std::fs::write(&lib, "host = \"db\"\n").expect("write lib");
+    let sign = |extra: &[&str]| {
+        let mut cmd = active();
+        cmd.args(["sign", "--key"])
+            .arg(dir.join("k.secret"))
+            .args(["--kid", "k"])
+            .args(["--as", "lib.active"])
+            .args(extra)
+            .arg(&lib);
+        cmd.output().expect("run active")
+    };
+    let first = sign(&[]);
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let sig_path = dir.join("lib.active.sig");
+    let before = std::fs::read(&sig_path).expect("sidecar");
+    let second = sign(&[]);
+    assert!(!second.status.success(), "a silent overwrite must fail");
+    let stderr = String::from_utf8_lossy(&second.stderr);
+    assert!(stderr.contains("--force"), "{stderr}");
+    assert_eq!(
+        std::fs::read(&sig_path).expect("sidecar"),
+        before,
+        "the refused sign must leave the sidecar untouched"
+    );
+    let forced = sign(&["--force"]);
+    assert!(
+        forced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&forced.stderr)
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

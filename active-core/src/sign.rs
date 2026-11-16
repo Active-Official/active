@@ -11,7 +11,7 @@
 //! hooks into include loading via `ParseOptions` (E032/E037/E038/E039).
 //! Key files are bearer credentials (0600, never committed, never logged).
 
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
@@ -355,7 +355,9 @@ pub fn verify_bytes(
         version: sidecar.version.as_deref(),
         expires: sidecar.expires.as_deref(),
     };
-    key.verify(&signed_digest(&binding, bytes), &sidecar.signature)
+    // verify_strict rejects weak keys and non-canonical signatures
+    // (LANG-I-008); plain verify would accept a torsion-component key.
+    key.verify_strict(&signed_digest(&binding, bytes), &sidecar.signature)
         .map_err(|_| {
             failure(
                 "E032",

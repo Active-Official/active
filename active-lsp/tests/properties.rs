@@ -159,10 +159,17 @@ fn publishing_many_diagnostics_is_linear_in_the_diagnostics() {
     }
     let uri = Url::parse("file:///many-diagnostics.active").expect("uri");
     let doc = analysis::open_doc(uri, src, 1, None);
-    let started = std::time::Instant::now();
-    let groups = analysis::diagnostics_by_file(&doc, &|_: &str| None);
-    let elapsed = started.elapsed();
-    let published: usize = groups.iter().map(|(_, diags)| diags.len()).sum();
+    // Best of three: a cold page cache or a loaded CI runner can spike one
+    // call; the regression this guards (per-diagnostic text splitting) is
+    // uniform across runs.
+    let mut elapsed = std::time::Duration::MAX;
+    let mut published = 0usize;
+    for _ in 0..3 {
+        let started = std::time::Instant::now();
+        let groups = analysis::diagnostics_by_file(&doc, &|_: &str| None);
+        elapsed = elapsed.min(started.elapsed());
+        published = groups.iter().map(|(_, diags)| diags.len()).sum();
+    }
     // Parse diagnostics are capped (1024 records), so the count is bounded
     // while the TEXT is not: conversion cost was 1024 x text length, which
     // is the quadratic term this test guards.
@@ -172,6 +179,6 @@ fn publishing_many_diagnostics_is_linear_in_the_diagnostics() {
     );
     assert!(
         elapsed < std::time::Duration::from_secs(1),
-        "publishing {published} diagnostics took {elapsed:?}; the line index regressed"
+        "publishing {published} diagnostics took {elapsed:?} at best; the line index regressed"
     );
 }

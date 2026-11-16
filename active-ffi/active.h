@@ -370,6 +370,10 @@ struct ActiveDiagnosticSet *active_validate(const struct ActiveModule *module,
  * 2 preserve; other values fail closed with BAD_ARGUMENT. Powers the
  * playground brace/indent toggle; hosts never reimplement layout.
  * Includes stay unresolved (format preserves statements, like active-fmt).
+ *
+ * The result is SOURCE TEXT: a `secret("...")` literal is returned
+ * verbatim, exactly as in the input file. Do not log the formatted
+ * output (LANG-I-011); JSON export redacts, formatting preserves.
  * # Safety
  *
  * The module must be a live handle. The returned string is Model A

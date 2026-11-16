@@ -2804,3 +2804,35 @@ fn case_differing_paths_are_distinct_documents_on_linux() {
     assert!(analysis::same_uri(&ua, &ua), "exact identity holds");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_uri_with_a_remote_host_is_refused_before_it_reaches_the_map() {
+    // LANG-I-007: the LSP only serves local files; a UR[I] with a
+    // non-empty host is the Punycode surface RUSTSEC-2024-0421 warns
+    // about, and it never enters the document map.
+    let mut server = Framed::spawn();
+    server.request(
+        "initialize",
+        serde_json::json!({"processId": null, "capabilities": {}}),
+    );
+    server.notify("initialized", serde_json::json!({}));
+    server.notify(
+        "textDocument/didOpen",
+        serde_json::json!({
+            "textDocument": {
+                "uri": "file://example.com/x.active",
+                "languageId": "active",
+                "version": 1,
+                "text": "port = 1\n",
+            }
+        }),
+    );
+    let notice = server.recv_notification("window/showMessage");
+    assert!(
+        notice["params"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("remote host")),
+        "{notice}"
+    );
+    server.shutdown();
+}

@@ -1150,6 +1150,10 @@ pub unsafe extern "C" fn active_validate(
 /// 2 preserve; other values fail closed with BAD_ARGUMENT. Powers the
 /// playground brace/indent toggle; hosts never reimplement layout.
 /// Includes stay unresolved (format preserves statements, like active-fmt).
+///
+/// The result is SOURCE TEXT: a `secret("...")` literal is returned
+/// verbatim, exactly as in the input file. Do not log the formatted
+/// output (LANG-I-011); JSON export redacts, formatting preserves.
 #[no_mangle]
 /// # Safety
 ///

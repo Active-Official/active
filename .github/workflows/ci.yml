@@ -154,6 +154,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        # Pinned like cargo-fuzz (LANG-I-016): an unpinned gate changes
+        # its exit-code and advisory behaviour without review.
+        run: cargo install cargo-audit --version 0.22.2 --locked
       - name: Audit lockfile
         run: cargo audit
+      - name: Duplicate dependency report (visibility)
+        # LANG-I-006: duplicates are not fatal (most are dev/build-only or
+        # required by the crypto stack), but a new one must be visible in
+        # the run log at review time instead of discovered by an audit.
+        run: cargo tree --duplicates

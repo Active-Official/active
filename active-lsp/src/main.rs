@@ -642,6 +642,23 @@ fn handle_notification(
             {
                 let version = params.text_document.version;
                 let key = params.text_document.uri.to_string();
+                // LANG-I-007: a local workspace file URI has no host. A
+                // non-empty host is a remote/Punycode surface
+                // (RUSTSEC-2024-0421) and never reaches the document map.
+                if params
+                    .text_document
+                    .uri
+                    .host_str()
+                    .is_some_and(|host| !host.is_empty())
+                {
+                    return vec![show_message(
+                        MESSAGE_TYPE_ERROR,
+                        format!(
+                            "active: '{key}' names a remote host; this server analyses local \
+                             file:// documents (a local file path has no host)"
+                        ),
+                    )];
+                }
                 if params.text_document.text.len() > MAX_DOCUMENT_BYTES {
                     return vec![show_message(
                         MESSAGE_TYPE_ERROR,

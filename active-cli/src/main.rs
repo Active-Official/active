@@ -771,6 +771,10 @@ enum Commands {
         /// Expiry date (YYYY-MM-DD); the sidecar fails closed after it
         #[arg(long)]
         expires: Option<String>,
+        /// Replace an existing `.sig` sidecar (refused by default, so a
+        /// mistaken re-sign cannot destroy the only copy)
+        #[arg(long)]
+        force: bool,
     },
     /// Verify a file against its sidecar and a trusted-keys file
     ///
@@ -1692,6 +1696,21 @@ fn report_eval_error(e: &EvalError, name: &str) {
     }
 }
 
+/// Join a worker thread, turning a panic into a coded, non-panicking
+/// failure (LANG-I-012). The FFI and WASM boundaries already isolate
+/// panics; the CLI must not abort with exit 101 and a bare trace. The
+/// panic payload is deliberately not echoed: it can contain document
+/// text or secret material.
+fn join_worker<T>(handle: std::thread::JoinHandle<T>, what: &str) -> anyhow::Result<T> {
+    match handle.join() {
+        Ok(value) => Ok(value),
+        Err(_) => Err(anyhow::anyhow!(
+            "E030: {what} panicked and the run was aborted; no partial output was released \
+             (report this with the input if it is shareable)"
+        )),
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     // LANG-H-007: Rust ignores SIGPIPE at startup, so a pipeline reader
     // that closes early (`active eval ... | head -1`) turns the next
@@ -1705,12 +1724,13 @@ fn main() -> anyhow::Result<()> {
     // The derived clap command tree is large; parse on a thread with a
     // generous stack so debug builds on Windows cannot overflow while
     // building help or parsing arguments.
-    let cli = std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(Cli::parse)
-        .expect("spawn argument parser")
-        .join()
-        .expect("argument parser thread");
+    let cli = join_worker(
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(Cli::parse)
+            .expect("spawn argument parser"),
+        "the argument parser",
+    )?;
     // Resolve the global parse limits once, before any command runs
     // (LANG-C-003): every parse path then reads the same values.
     // Same one-meaning rule as the evaluation budgets (LANG-C-015): an
@@ -3250,6 +3270,7 @@ fn main() -> anyhow::Result<()> {
             kid,
             identity,
             expires,
+            force,
         } => {
             let label = file.to_string_lossy().to_string();
             let secret_text = std::fs::read_to_string(&key)
@@ -3269,6 +3290,14 @@ fn main() -> anyhow::Result<()> {
             let sidecar = active_core::sign::sign_bytes(&secret, &kid, &binding, &bytes)
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
             let sidecar_path = active_core::sign::sidecar_path_for(&file);
+            // LANG-I-017: a re-sign overwrites the only copy of the old
+            // sidecar; require an explicit --force.
+            if sidecar_path.exists() && !force {
+                anyhow::bail!(
+                    "{} already exists; pass --force to re-sign",
+                    sidecar_path.display()
+                );
+            }
             std::fs::write(&sidecar_path, sidecar).map_err(|e| {
                 anyhow::anyhow!(
                     "cannot write {}: {e}",
@@ -3458,5 +3487,28 @@ fn main() -> anyhow::Result<()> {
     Ok(())
         })
         .expect("spawn command thread");
-    worker.join().expect("command thread")
+    join_worker(worker, "the command")?
+}
+
+#[cfg(test)]
+mod panic_isolation_tests {
+    use super::join_worker;
+
+    #[test]
+    fn a_panicking_worker_becomes_a_coded_error() {
+        // LANG-I-012: the CLI joins its workers through this helper, so a
+        // panic in evaluation reports E030 and exit 1 instead of a bare
+        // exit 101 with a trace.
+        let handle = std::thread::spawn(|| -> anyhow::Result<()> { panic!("boom") });
+        let err = join_worker(handle, "the command").expect_err("panic must not propagate");
+        assert!(err.to_string().starts_with("E030"), "{err}");
+        // The payload is not echoed: it can contain document text.
+        assert!(!err.to_string().contains("boom"), "{err}");
+    }
+
+    #[test]
+    fn a_clean_worker_result_passes_through() {
+        let handle = std::thread::spawn(|| -> anyhow::Result<()> { Ok(()) });
+        assert!(join_worker(handle, "the command").expect("clean").is_ok());
+    }
 }

@@ -142,6 +142,11 @@ trust file may revoke key ids (LANG-I-002).
   The identity the signer records is the exact spelling the document
   will use (`active sign --as <path>`); the root document's identity is
   the path the receiver passes to `parse_file_with_trust`.
+- **No algorithm field** (LANG-I-009): the sidecar format carries `kid`,
+  the identity fields, `expires`, and `sig`; the verifier's algorithm is
+  Ed25519 and an unknown field cannot change it. A sidecar that claims a
+  different algorithm is a no-op claim; a future algorithm needs a
+  format-version marker before it can be negotiated.
 - **Enforcement**: `Parser.trust: Option<TrustedKeys>`
   (`None` = no enforcement, all legacy behavior preserved;
   `parse_file_with_trust` feeds it). When set, every `include`

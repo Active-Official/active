@@ -45,6 +45,7 @@ pub fn explain_code(code: &str) -> &'static str {
         "E032" => "Signature or trust failure: the sidecar is missing, mismatched, or untrusted. Verify against the trust file for the recorded key id; never bypass verification to make it pass.",
 
         "E028" => "Include budget: the include graph resolved more than 256 files or read more than 16 MiB. Flatten the graph (a diamond re-reads the same file) or move shared content into fewer files.",
+        "E030" => "Internal panic isolation: a worker thread panicked and the run was aborted without partial output. This is a bug in Active, not in your document; report it with the input if it is shareable. E030 never describes language content.",
         "E029" => "Parse budget: the document crossed a parse-phase bound before evaluation - input bytes (4 MiB), arena nodes (1,000,000), or the parse wall budget (100 ms base plus 30 ms per KiB of input). Split the document, or raise the bound deliberately for generated input; the parse verdict is fail-closed, so no partial tree was evaluated.",
         "E027" => "Profile metadata rewrite: a profile body tried to set document metadata (active_mode / active_capabilities). The mode and capability handshake read those keys at parse time; declare them at the document root.",
         "T001" => "Unit or quantity violation at the span: an unsupported operator or dimension mismatch. Fix the unit expression; the code names the exact mismatch.",

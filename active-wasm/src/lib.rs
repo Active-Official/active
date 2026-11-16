@@ -83,15 +83,15 @@ pub extern "C" fn active_alloc(size: usize) -> *mut u8 {
 }
 
 /// Free memory previously returned by `active_alloc`/`active_eval_json`.
-/// Unknown pointers are ignored (host bug, documented); null is accepted.
-/// The size argument is rechecked against the registry in debug builds.
+/// Unknown pointers are ignored in every build profile (a host bug, never
+/// a trap: a release build already ignored them, so a debug-only assert
+/// made the two profiles disagree). Null is accepted.
 #[no_mangle]
 pub extern "C" fn active_free(ptr: *mut u8, size: usize) {
     if ptr.is_null() {
         return;
     }
-    let freed = release(ptr);
-    debug_assert!(freed, "active_free of unknown pointer");
+    let _freed = release(ptr);
     let _ = size;
 }
 
@@ -445,6 +445,21 @@ mod tests {
         assert!(!active_alloc(64).is_null());
         assert!(active_alloc(MAX_ALLOC_BYTES + 1).is_null());
         assert!(active_alloc(usize::MAX).is_null());
+    }
+
+    #[test]
+    fn freeing_an_unknown_pointer_is_a_noop_in_every_profile() {
+        // LANG-G-013: a release build ignored unknown pointers while a
+        // debug_assert trapped in debug, so the profiles disagreed. The
+        // documented contract is "ignored"; the registry must stay intact
+        // and a real allocation must still free afterwards.
+        active_free(0xdead_beef as *mut u8, 8);
+        let ptr = active_alloc(16);
+        assert!(!ptr.is_null());
+        active_free(ptr, 16);
+        // Double-free of the same (now unknown) pointer is a host bug and
+        // still a no-op, never a trap.
+        active_free(ptr, 16);
     }
 
     #[test]

@@ -55,6 +55,7 @@ pub fn explain_code(code: &str) -> &'static str {
         "W014" => "Diagnostic output truncated: the per-parse 1024-record budget (errors plus healing) was reached. The parse verdict is unchanged; fix the first errors to see the rest.",
         "H005" => "Unknown key with a near-identical known key: apply the did-you-mean suggestion (`@rename`) when it matches intent.",
 
+        "W016" => "Ambiguous duration shape: a bare `{\"ms\": N}` object was imported as a table. Durations travel as `{\"$active.duration\": {\"ms\": N}}` (LANG-F-001/F-002); a sender that emits the bare shape is indistinguishable from one sending a table.",
         "W015" => "Trailing-token warning: a token follows a complete value on the same line. Active statements are newline-separated; the documented quirks (`x = 5 5`, `d = 1.`) are the only silent shapes. Put the next statement on its own line.",
         "H006" => "Repair stuck: the same diagnostics returned after another repair step, so the loop stopped instead of cycling. Inspect the plan's applied steps; the remaining diagnostics need a repair kind the suggester does not emit.",
         "H008" => "Unrepairable terminal state: remaining diagnostics have no safe repair mapping (or evaluation fails fatally). The agent loop must stop here; report the codes, do not retry blindly.",

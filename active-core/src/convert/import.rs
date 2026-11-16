@@ -137,8 +137,41 @@ impl Emitter {
             } else {
                 format!("{path}.{clean}")
             };
+            if let Some(lit) = duration_literal(val) {
+                out.push_str(&format!("{pad}{clean} = {lit}\n"));
+                continue;
+            }
+            if bare_duration_shape(val) {
+                // LANG-F-002: `{"ms": 5000}` is byte-identical for a
+                // duration and a plain table. The export never produces it
+                // for a duration any more, so importing it as a table is
+                // the only faithful reading - say so loudly.
+                self.note(
+                    "W016",
+                    format!(
+                        "bare `{{\"ms\": N}}` object at '{}' imported as a table; \
+                         durations travel as {{\"$active.duration\": {{\"ms\": N}}}} \
+                         (LANG-F-002)",
+                        display_path(&child)
+                    ),
+                );
+            }
             if let Some(lit) = quantity_literal(val) {
                 out.push_str(&format!("{pad}{clean} = {lit}\n"));
+                continue;
+            }
+            if let Some(tag) = nonfinite_float_literal(val) {
+                // LANG-F-003: the value is tagged on the wire, but Active
+                // source has no non-finite literal (LANG-B-009). Import it
+                // as null and say so loudly instead of guessing a spelling.
+                self.note(
+                    "W010",
+                    format!(
+                        "non-finite float '{tag}' at '{}' imported as null (no Active literal exists)",
+                        display_path(&child)
+                    ),
+                );
+                out.push_str(&format!("{pad}{clean} = null\n"));
                 continue;
             }
             match val {
@@ -228,8 +261,20 @@ impl Emitter {
                 format!("[{}]", parts.join(", "))
             }
             JsonValue::Object(map) => {
+                if let Some(lit) = duration_literal(val) {
+                    return lit;
+                }
                 if let Some(lit) = quantity_literal(val) {
                     return lit;
+                }
+                if nonfinite_float_literal(val).is_some() {
+                    // Inline contexts cannot carry the note text; the
+                    // statement path above reports the shape change.
+                    self.note(
+                        "W010",
+                        "non-finite float imported as null (no Active literal exists)".to_string(),
+                    );
+                    return "null".to_string();
                 }
                 let mut parts = Vec::with_capacity(map.len());
                 let mut seen = HashSet::new();
@@ -485,6 +530,50 @@ fn disambiguate(clean: String, taken: &mut std::collections::HashSet<String>) ->
             return candidate;
         }
         n += 1;
+    }
+}
+
+/// Recognise the reserved duration wrapper (`{"$active.duration":
+/// {"ms": 5000}}`) and render the canonical Active literal (`5000ms`).
+/// LANG-F-001/F-002: the wrapper is what makes the mapping a fixed point -
+/// the bare `{"ms": 5000}` form is indistinguishable from a table, and the
+/// statement path below emits W016 when it sees one.
+fn duration_literal(val: &JsonValue) -> Option<String> {
+    let obj = val.as_object()?;
+    if obj.len() != 1 {
+        return None;
+    }
+    let inner = obj.get("$active.duration")?.as_object()?;
+    if inner.len() != 1 {
+        return None;
+    }
+    let ms = inner.get("ms")?.as_u64()?;
+    Some(format!("{ms}ms"))
+}
+
+/// True for the ambiguous bare duration object (`{"ms": <int>}` and nothing
+/// else), which LANG-F-002 requires the importer to flag.
+fn bare_duration_shape(val: &JsonValue) -> bool {
+    match val.as_object() {
+        Some(obj) if obj.len() == 1 => obj.get("ms").and_then(|v| v.as_u64()).is_some(),
+        _ => false,
+    }
+}
+
+/// Recognise the reserved non-finite float wrapper
+/// (`{"$active.float": "inf"|"-inf"|"nan"}`, LANG-F-003). Active source has
+/// no literal for a non-finite float (LANG-B-009 rejects them at parse), so
+/// the importer cannot round-trip the value: it records a loud W010 note and
+/// imports `null` rather than guessing a numeric spelling.
+fn nonfinite_float_literal(val: &JsonValue) -> Option<&str> {
+    let obj = val.as_object()?;
+    if obj.len() != 1 {
+        return None;
+    }
+    let tag = obj.get("$active.float")?.as_str()?;
+    match tag {
+        "inf" | "-inf" | "nan" => Some(tag),
+        _ => None,
     }
 }
 

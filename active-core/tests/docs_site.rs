@@ -143,7 +143,7 @@ fn kubernetes_sample() {
     assert_eq!(v["replicas"], 3);
     assert_eq!(v["resources"]["cpu_millicores"], 500);
     assert_eq!(v["resources"]["memory"], 1073741824);
-    assert_eq!(v["health"]["readiness"]["ms"], 30000);
+    assert_eq!(v["health"]["readiness"]["$active.duration"]["ms"], 30000);
 }
 
 #[test]

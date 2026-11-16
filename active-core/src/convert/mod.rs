@@ -61,20 +61,28 @@ pub fn value_to_json(v: &Value) -> JsonValue {
         Value::Bool(b) => json!(b),
         Value::Int(i) => json!(i),
         // Non-finite floats are rejected at parse, at arithmetic, and at
-        // coercion (LANG-B-009/B-901), so this arm is defense in depth:
-        // serde would map inf/NaN to JSON null, silently turning a number
-        // into a different value. Render an explicit marker instead so an
-        // unreachable value can never masquerade as data.
+        // coercion (LANG-B-009/B-901), so this arm is defense in depth.
+        // The tagged OBJECT form is the fix for LANG-F-003: a bare string
+        // (`"inf"`) collides with a genuine string value, and a bare `null`
+        // (what serde would produce) collides with null - either way the
+        // export would stop being injective. `content_hash` hashes this
+        // tagged form, so an inf and a null can never share an identity.
         Value::Float(f) if f.is_finite() => json!(f),
-        Value::Float(f) => json!(if f.is_nan() {
-            "NaN"
-        } else if f.is_sign_negative() {
-            "-inf"
-        } else {
-            "inf"
+        Value::Float(f) => json!({
+            "$active.float": if f.is_nan() {
+                "nan"
+            } else if f.is_sign_negative() {
+                "-inf"
+            } else {
+                "inf"
+            }
         }),
         Value::String(s) => json!(s),
-        Value::DurationMs(ms) => json!({ "ms": ms }),
+        // Duration wrapper (LANG-F-001/F-002): the bare `{"ms": N}` form is
+        // byte-identical to a plain table, so the export was not injective
+        // and the importer could not tell a duration from data. The wrapper
+        // is the same convention `$active.quantity` and `$active.blob` use.
+        Value::DurationMs(ms) => json!({ "$active.duration": { "ms": ms } }),
         // Quantities export under a reserved wrapper so the mapping is
         // a fixed point: the bare `{ "%": n }` / `{ "MiB": n }` forms
         // were table-shaped, and `%` is not even an identifier, so

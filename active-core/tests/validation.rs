@@ -526,7 +526,7 @@ fn strict_notes_coercible_mismatch() {
 #[test]
 fn resilient_coerces_string_to_target() {
     let (v, diags) = resilient_eval("schema = { timeout = Duration }\ntimeout = \"5s\"\n");
-    assert_eq!(v["timeout"]["ms"], 5000, "{v}");
+    assert_eq!(v["timeout"]["$active.duration"]["ms"], 5000, "{v}");
     assert_eq!(diags.len(), 1, "{diags:?}");
     assert_eq!(diags[0].code, "H007");
     assert_eq!(diags[0].severity, Severity::Warning);
@@ -605,7 +605,7 @@ fn fill_then_coerce_chains_through_fixpoint() {
     // applies it (a single fill pass would leave the string).
     let src = "schema = { timeout = Duration(default = \"5s\") }\n";
     let (v, diags) = resilient_eval(src);
-    assert_eq!(v["timeout"]["ms"], 5000, "{v}");
+    assert_eq!(v["timeout"]["$active.duration"]["ms"], 5000, "{v}");
     assert!(diags.iter().any(|d| d.code == "W005"), "{diags:?}");
     assert!(diags.iter().any(|d| d.code == "H007"), "{diags:?}");
 }

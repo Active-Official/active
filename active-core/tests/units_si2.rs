@@ -81,7 +81,10 @@ fn length_longform_meters() {
         serde_json::json!({"$active.quantity": {"unit": "meter", "value": 1500.0}})
     );
     // `m` stays minutes: 1m is a duration, never a length.
-    assert_eq!(eval_json("t = 1m\n")["t"], serde_json::json!({"ms": 60000}));
+    assert_eq!(
+        eval_json("t = 1m\n")["t"],
+        serde_json::json!({"$active.duration": {"ms": 60000}})
+    );
 }
 
 #[test]

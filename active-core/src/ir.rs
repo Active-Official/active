@@ -615,7 +615,7 @@ impl Serialize for Value {
             Value::Int(i) => serde_json::Value::from(*i),
             Value::Float(x) => serde_json::Value::from(*x),
             Value::String(s) => serde_json::Value::from(s.clone()),
-            Value::DurationMs(ms) => serde_json::json!({ "ms": ms }),
+            Value::DurationMs(ms) => serde_json::json!({ "$active.duration": { "ms": ms } }),
             Value::Quantity(n, unit) => serde_json::json!({ unit.suffix(): n }),
             Value::Array(items) => serde_json::Value::Array(
                 items

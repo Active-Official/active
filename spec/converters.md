@@ -12,8 +12,12 @@ one-way by design (no import reconstructs a secret).
 from the value tree with the same shapes:
 
 - Null/Bool/Int/Float/String → the JSON same-kind value.
-- DurationMs(ms) → `{"ms": ms}` (pinned by
-  `tests/spec/02_unit_normalization.expected.json`).
+- DurationMs(ms) → `{"$active.duration": {"ms": ms}}` (pinned by
+  `tests/spec/08_duration_arithmetic.expected.json`). The bare `{"ms": ms}`
+  form was byte-identical to a plain table, so the export was not injective
+  (LANG-F-002); import recognises the wrapper and re-emits `5000ms`, and a
+  bare `{"ms": N}`-shaped object imported as a table raises W016 naming the
+  ambiguity (LANG-F-001).
 - Quantity(n, unit) → `{"$active.quantity": {"unit": <suffix>, "value": n}}`.
   The wrapper is reserved and identifier-safe: the old bare `{suffix: n}` form
   was table-shaped, and suffixes such as `%`, `/s`, and `req/s` are not
@@ -75,7 +79,9 @@ loss; only Active source preserves the declared unit.
 ## 4. Reverse direction (JSON / YAML / TOML → ACTIVE)
 
 
-**Non-finite floats never cross a converter.** `inf`, `-inf`, and `NaN` are rejected at parse (E023 for an overflowing literal), at arithmetic (T001), and at resilient coercion (the T002 stands). No exporter maps a number to `null`; the JSON model's inf→null behaviour is never used (LANG-B-009).
+**Non-finite floats never cross a converter.** `inf`, `-inf`, and `NaN` are rejected at parse (E023 for an overflowing literal), at arithmetic (T001), and at resilient coercion (the T002 stands). No exporter maps a number to `null`; the JSON model's inf→null behaviour is never used (LANG-B-009). Should a host ever hold one (the exporter arm is defense in depth), the JSON export tags it as `{"$active.float": "inf"|"-inf"|"nan"}` - an object, so it cannot collide with `null` or with the string `"inf"` - and `content_hash` hashes that tagged form (LANG-F-003). Import recognises the tag and records W010 (no Active literal exists).
+
+Typed values (durations, quantities, blobs) are exported with `$active.*` wrappers and recognised on import; a bare `{"ms": N}`-shaped object imported as a table emits a loud diagnostic (W016) naming the ambiguity (LANG-F-001/F-002).
 
 **Duplicate keys on import.** YAML rejects duplicate mapping keys (the YAML specification makes them an error); the failure names the rule. JSON keeps the last value, because the JSON document model has no duplicate concept to report (LANG-B-012). Neither format silently drops data in the other's way.
 

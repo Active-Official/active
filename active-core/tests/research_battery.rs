@@ -212,13 +212,19 @@ fn rb_011_unit_dimension_mismatch_rejected() {
         "T001 expected, got {codes:?}"
     );
     // Positive controls: same-dimension arithmetic normalizes.
-    assert_eq!(eval_json("t = 5s + 100ms\n")["t"]["ms"], 5100);
+    assert_eq!(
+        eval_json("t = 5s + 100ms\n")["t"]["$active.duration"]["ms"],
+        5100
+    );
     assert_eq!(
         eval_json("size = 512MiB + 64KiB\n")["size"],
         536870912 + 65536
     );
     // Scalar multiplication of a unit is allowed.
-    assert_eq!(eval_json("t = 5s * 3\n")["t"]["ms"], 15000);
+    assert_eq!(
+        eval_json("t = 5s * 3\n")["t"]["$active.duration"]["ms"],
+        15000
+    );
 }
 
 /// RB-012 — Schema range boundary inclusive (DERIVED-0015 §A).
@@ -480,7 +486,7 @@ fn rb_028_secret_payload_never_unit_parsed() {
     let codes = codes_of("delay = secret(\"5s\")\nbad = delay + 1\n");
     assert!(!codes.is_empty(), "secret arithmetic must fail");
     // Positive control: plain units still normalize.
-    assert_eq!(eval_json("t = 5s\n")["t"]["ms"], 5000);
+    assert_eq!(eval_json("t = 5s\n")["t"]["$active.duration"]["ms"], 5000);
 }
 
 /// RB-029 — Patches preserve taint (DERIVED-0014 §A).
@@ -640,7 +646,7 @@ fn rb_037_unknown_unit_rejects() {
         "unknown unit must reject, got {codes:?}"
     );
     // Positive control: known suffixes still work.
-    assert_eq!(eval_json("x = 10s\n")["x"]["ms"], 10000);
+    assert_eq!(eval_json("x = 10s\n")["x"]["$active.duration"]["ms"], 10000);
 }
 
 /// RB-038 — Units on non-numbers reject (P1-SE-010 §E).
@@ -1595,7 +1601,7 @@ fn rb_088_realistic_config_passes() {
     let src = "let timeout = 5s\nlet retries = 3\ndb_password = secret(env.ACTIVE_TEST_RB088_PW ?: \"\")\n\n[server]\nhost = \"0.0.0.0\"\nport = 8080\nread_timeout = timeout\nretries = retries\n";
     let v = eval_json(src);
     assert_eq!(v["server"]["port"], 8080);
-    assert_eq!(v["server"]["read_timeout"]["ms"], 5000);
+    assert_eq!(v["server"]["read_timeout"]["$active.duration"]["ms"], 5000);
     assert_eq!(v["db_password"], "***SECRET***");
 }
 
@@ -1914,7 +1920,7 @@ fn rb_110_positive_control_matrix() {
     assert_eq!(v["s_no"], "NO");
     assert_eq!(v["s_true"], "true");
     assert_eq!(v["s_null"], "null");
-    assert_eq!(v["timeout"]["ms"], 5000);
+    assert_eq!(v["timeout"]["$active.duration"]["ms"], 5000);
     assert_eq!(v["pw"], "***SECRET***");
 }
 
@@ -2286,10 +2292,10 @@ fn rb_128_missing_vs_empty_env_suite() {
 #[test]
 fn rb_129_time_units_normalize() {
     let v = eval_json("a = 1h\nb = 1m\nc = 500ms\nd = 5s\n");
-    assert_eq!(v["a"]["ms"], 3600000);
-    assert_eq!(v["b"]["ms"], 60000);
-    assert_eq!(v["c"]["ms"], 500);
-    assert_eq!(v["d"]["ms"], 5000);
+    assert_eq!(v["a"]["$active.duration"]["ms"], 3600000);
+    assert_eq!(v["b"]["$active.duration"]["ms"], 60000);
+    assert_eq!(v["c"]["$active.duration"]["ms"], 500);
+    assert_eq!(v["d"]["$active.duration"]["ms"], 5000);
     // Positive control: a plain number stays a number.
     assert_eq!(eval_json("n = 5\n")["n"], 5);
 }
@@ -2314,13 +2320,16 @@ fn rb_131_dimension_mismatch_suite() {
     let err = Engine::new().evaluate(&module).expect_err("must fail T001");
     assert_eq!(err.code(), "T001");
     // Positive control: the duration operand alone evaluates.
-    assert_eq!(eval_json("x = 5s\n")["x"]["ms"], 5000);
+    assert_eq!(eval_json("x = 5s\n")["x"]["$active.duration"]["ms"], 5000);
 }
 
 /// RB-132 — Scalar unit multiply normalizes (P1-SE-012 §E).
 #[test]
 fn rb_132_scalar_unit_multiply() {
-    assert_eq!(eval_json("x = 5s * 3\n")["x"]["ms"], 15000);
+    assert_eq!(
+        eval_json("x = 5s * 3\n")["x"]["$active.duration"]["ms"],
+        15000
+    );
     // Positive control: plain scalar arithmetic is unaffected.
     assert_eq!(eval_json("y = 3 * 4\n")["y"], 12);
 }
@@ -2365,7 +2374,7 @@ fn rb_134_realistic_service_config() {
     let v = eval_json(src);
     assert_eq!(v["port"], 8080);
     assert_eq!(v["host"], "svc");
-    assert_eq!(v["timeout"]["ms"], 30000);
+    assert_eq!(v["timeout"]["$active.duration"]["ms"], 30000);
     assert_eq!(v["limit"], 536870912);
     assert_eq!(v["pw"], "***SECRET***");
     let module = parse(src, "research").expect("must parse");
@@ -2514,7 +2523,7 @@ fn rb_142_units_survive_dual_syntax_round_trip() {
             serde_json::from_str(&active_core::convert::value_to_pretty_json(&second))
                 .expect("json");
         assert_eq!(a, b, "style {style:?}");
-        assert_eq!(a["timeout"]["ms"], 5000);
+        assert_eq!(a["timeout"]["$active.duration"]["ms"], 5000);
         assert_eq!(a["limit"], 536870912);
     }
 }
@@ -33295,7 +33304,7 @@ fn rb_1495_syn131_unit_suffix_consumed() {
     let src = "case_0131_09 = 1\nprobe_3131 = 5s\n";
     let v = eval_json(src);
     assert_eq!(v["case_0131_09"], 1, "{v}");
-    assert_eq!(v["probe_3131"]["ms"], 5000, "{v}");
+    assert_eq!(v["probe_3131"]["$active.duration"]["ms"], 5000, "{v}");
     assert!(codes_of(src).is_empty());
     // Positive control: the bare scalar beside it stays a plain int.
     let v = eval_json("probe_3131 = 5\n");
@@ -33871,7 +33880,7 @@ fn rb_1522_syn134_unit_suffix_consumed() {
     let src = "case_0134_09 = 1\nprobe_3134 = 5s\n";
     let v = eval_json(src);
     assert_eq!(v["case_0134_09"], 1, "{v}");
-    assert_eq!(v["probe_3134"]["ms"], 5000, "{v}");
+    assert_eq!(v["probe_3134"]["$active.duration"]["ms"], 5000, "{v}");
     assert!(codes_of(src).is_empty());
     // Positive control: the bare scalar beside it stays a plain int.
     let v = eval_json("probe_3134 = 5\n");
@@ -35213,7 +35222,7 @@ fn rb_1585_syn141_unit_suffix_consumed() {
     let src = "case_0141_09 = 1\nprobe_3141 = 5s\n";
     let v = eval_json(src);
     assert_eq!(v["case_0141_09"], 1, "{v}");
-    assert_eq!(v["probe_3141"]["ms"], 5000, "{v}");
+    assert_eq!(v["probe_3141"]["$active.duration"]["ms"], 5000, "{v}");
     assert!(codes_of(src).is_empty());
     // Positive control: the bare scalar beside it stays a plain int.
     let v = eval_json("probe_3141 = 5\n");
@@ -35764,7 +35773,7 @@ fn rb_1612_syn144_unit_suffix_consumed() {
     let src = "case_0144_09 = 1\nprobe_3144 = 5s\n";
     let v = eval_json(src);
     assert_eq!(v["case_0144_09"], 1, "{v}");
-    assert_eq!(v["probe_3144"]["ms"], 5000, "{v}");
+    assert_eq!(v["probe_3144"]["$active.duration"]["ms"], 5000, "{v}");
     assert!(codes_of(src).is_empty());
     // Positive control: the bare scalar beside it stays a plain int.
     let v = eval_json("probe_3144 = 5\n");
@@ -38076,12 +38085,16 @@ fn rb_1718_syn156_duration_suffix_converges() {
     let src = "case_0156_09 = 1\nprobe_3156 = 5s\n";
     let v = eval_json(src);
     assert_eq!(v["case_0156_09"], 1, "{v}");
-    assert_eq!(v["probe_3156"], serde_json::json!({"ms": 5000}), "{v}");
+    assert_eq!(
+        v["probe_3156"],
+        serde_json::json!({"$active.duration": {"ms": 5000}}),
+        "{v}"
+    );
     assert!(codes_of(src).is_empty());
     // Positive control: the 1-second neighbour scales exactly.
     assert_eq!(
         eval_json("probe_3156 = 1s\n")["probe_3156"],
-        serde_json::json!({"ms": 1000})
+        serde_json::json!({"$active.duration": {"ms": 1000}})
     );
 }
 
@@ -39710,12 +39723,16 @@ fn rb_1790_syn164_duration_scales() {
     let src = "case_0164_09 = 1\nprobe_3164 = 5s\n";
     let v = eval_json(src);
     assert_eq!(v["case_0164_09"], 1, "{v}");
-    assert_eq!(v["probe_3164"], serde_json::json!({"ms": 5000}), "{v}");
+    assert_eq!(
+        v["probe_3164"],
+        serde_json::json!({"$active.duration": {"ms": 5000}}),
+        "{v}"
+    );
     assert!(codes_of(src).is_empty());
     // Positive control: ten seconds is exactly twice five.
     assert_eq!(
         eval_json("probe_3164 = 10s\n")["probe_3164"],
-        serde_json::json!({"ms": 10000})
+        serde_json::json!({"$active.duration": {"ms": 10000}})
     );
 }
 
@@ -40689,16 +40706,20 @@ fn rb_1827_syn169_duration_canonical() {
     let src = "case_0169_01 = 1\ntimeout = 5s\n";
     let v = eval_json(src);
     assert_eq!(v["case_0169_01"], 1, "{v}");
-    assert_eq!(v["timeout"], serde_json::json!({"ms": 5000}), "{v}");
+    assert_eq!(
+        v["timeout"],
+        serde_json::json!({"$active.duration": {"ms": 5000}}),
+        "{v}"
+    );
     assert!(codes_of(src).is_empty());
     // Positive control: seconds and minutes agree canonically.
     assert_eq!(
         eval_json("timeout = 60s\n")["timeout"],
-        serde_json::json!({"ms": 60_000})
+        serde_json::json!({"$active.duration": {"ms": 60_000}})
     );
     assert_eq!(
         eval_json("timeout = 1min\n")["timeout"],
-        serde_json::json!({"ms": 60_000})
+        serde_json::json!({"$active.duration": {"ms": 60_000}})
     );
 }
 
@@ -40733,13 +40754,21 @@ fn rb_1828_syn169_binary_decimal_distinct() {
 fn rb_1829_syn169_subunits_exact() {
     let src = "case_0169_03 = 5s\nretry = 10ms\n";
     let v = eval_json(src);
-    assert_eq!(v["case_0169_03"], serde_json::json!({"ms": 5000}), "{v}");
-    assert_eq!(v["retry"], serde_json::json!({"ms": 10}), "{v}");
+    assert_eq!(
+        v["case_0169_03"],
+        serde_json::json!({"$active.duration": {"ms": 5000}}),
+        "{v}"
+    );
+    assert_eq!(
+        v["retry"],
+        serde_json::json!({"$active.duration": {"ms": 10}}),
+        "{v}"
+    );
     assert!(codes_of(src).is_empty());
     // Positive control: a plain millisecond count agrees.
     assert_eq!(
         eval_json("retry = 10ms\n")["retry"],
-        serde_json::json!({"ms": 10})
+        serde_json::json!({"$active.duration": {"ms": 10}})
     );
 }
 
@@ -40826,7 +40855,7 @@ fn rb_1833_syn169_giant_unit_rejects() {
     // Positive control: a big-but-plain duration evaluates exactly.
     assert_eq!(
         eval_json("timeout = 100000s\n")["timeout"],
-        serde_json::json!({"ms": 100_000_000})
+        serde_json::json!({"$active.duration": {"ms": 100_000_000}})
     );
 }
 
@@ -40851,7 +40880,11 @@ fn rb_1834_syn169_unknown_suffix_rejects() {
     assert_eq!((span.line, span.column), (2, 12), "{span:?}");
     // Positive control: the whitelisted suffix accepts silently.
     let v = eval_json("timeout = 5s\n");
-    assert_eq!(v["timeout"], serde_json::json!({"ms": 5000}), "{v}");
+    assert_eq!(
+        v["timeout"],
+        serde_json::json!({"$active.duration": {"ms": 5000}}),
+        "{v}"
+    );
 }
 
 /// RB-1835 — Units twin: quotes suppress unit parsing (SYN-0169-09 §H, MEDIUM).
@@ -41065,7 +41098,11 @@ fn rb_1841_syn170_presence_types_branch() {
     let prior = std::env::var("ACTIVE_RB1841_ENV").ok();
     std::env::remove_var("ACTIVE_RB1841_ENV");
     let v = eval_json("case_0170_06 = 1\nx = env.ACTIVE_RB1841_ENV ?: 5s\n");
-    assert_eq!(v["x"], serde_json::json!({"ms": 5000}), "{v}");
+    assert_eq!(
+        v["x"],
+        serde_json::json!({"$active.duration": {"ms": 5000}}),
+        "{v}"
+    );
     std::env::set_var("ACTIVE_RB1841_ENV", "9");
     let v = eval_json("case_0170_06 = 1\nx = env.ACTIVE_RB1841_ENV ?: 5s\n");
     assert_eq!(v["x"], "9", "{v}");
@@ -41355,7 +41392,11 @@ fn rb_1850_syn171_presence_types_branch() {
     std::env::remove_var("ACTIVE_RB1850_ENV");
     let src = "case_0171_06 = 1\nx = env.ACTIVE_RB1850_ENV ?: 5s\n";
     let v = eval_json(src);
-    assert_eq!(v["x"], serde_json::json!({"ms": 5000}), "{v}");
+    assert_eq!(
+        v["x"],
+        serde_json::json!({"$active.duration": {"ms": 5000}}),
+        "{v}"
+    );
     assert!(codes_of(src).is_empty());
     std::env::set_var("ACTIVE_RB1850_ENV", "9");
     let v = eval_json("case_0171_06 = 1\nx = env.ACTIVE_RB1850_ENV ?: 5s\n");
@@ -41369,7 +41410,7 @@ fn rb_1850_syn171_presence_types_branch() {
     // Positive control: the duration default round-trips identically.
     assert_eq!(
         eval_json("x = env.ACTIVE_RB1850_ENV ?: 5s\n")["x"],
-        serde_json::json!({"ms": 5000})
+        serde_json::json!({"$active.duration": {"ms": 5000}})
     );
 }
 
@@ -43171,7 +43212,11 @@ fn rb_1919_syn179_duration_validates() {
     // Positive control: the real Duration schema accepts 5s silently.
     let src2 = "schema = { case_0179_03 = Duration }\ncase_0179_03 = 5s\n";
     let v = eval_json(src2);
-    assert_eq!(v["case_0179_03"], serde_json::json!({"ms": 5000}), "{v}");
+    assert_eq!(
+        v["case_0179_03"],
+        serde_json::json!({"$active.duration": {"ms": 5000}}),
+        "{v}"
+    );
     assert!(codes_of(src2).is_empty());
 }
 
@@ -43206,7 +43251,7 @@ fn rb_1920_syn179_quoted_unit_coerces_announced() {
         serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
     assert_eq!(
         json["case_0179_04"],
-        serde_json::json!({"ms": 5000}),
+        serde_json::json!({"$active.duration": {"ms": 5000}}),
         "{json}"
     );
 }
@@ -43435,7 +43480,11 @@ fn rb_1928_syn180_duration_validates() {
     // Positive control: the real Duration schema accepts the object.
     let src2 = "schema = { case_0180_03 = Duration }\ncase_0180_03 = 5s\n";
     let v = eval_json(src2);
-    assert_eq!(v["case_0180_03"], serde_json::json!({"ms": 5000}), "{v}");
+    assert_eq!(
+        v["case_0180_03"],
+        serde_json::json!({"$active.duration": {"ms": 5000}}),
+        "{v}"
+    );
     assert!(v["case_0180_03"].is_object());
     assert!(codes_of(src2).is_empty());
 }
@@ -43471,7 +43520,7 @@ fn rb_1929_syn180_coercion_full_span() {
         serde_json::from_str(&active_core::convert::value_to_pretty_json(&value)).expect("json");
     assert_eq!(
         json["case_0180_04"],
-        serde_json::json!({"ms": 5000}),
+        serde_json::json!({"$active.duration": {"ms": 5000}}),
         "{json}"
     );
 }
@@ -45075,7 +45124,11 @@ fn rb_1998_north_star_capstone() {
     let json = active_core::convert::value_to_pretty_json(&value);
     assert!(!json.contains(raw), "leak in JSON export: {json}");
     let v: serde_json::Value = serde_json::from_str(&json).expect("json");
-    assert_eq!(v["timeout"], serde_json::json!({"ms": 5000}), "{v}");
+    assert_eq!(
+        v["timeout"],
+        serde_json::json!({"$active.duration": {"ms": 5000}}),
+        "{v}"
+    );
     assert_eq!(v["password"], "***SECRET***", "{v}");
     assert_eq!(v["password2"], "***SECRET***", "{v}");
     assert_eq!(v["retries"], 4, "{v}");

@@ -427,7 +427,10 @@ fn json_schema_field(
             }
         }
         // Matches the §1 export shape: durations serialize as
-        // `{"ms": n}` objects.
+        // `{"$active.duration": {"ms": n}}` (LANG-F-001/F-002). The schema
+        // describes that wrapper, so a validator accepts exactly the wire
+        // form the exporter produces - the bare `{"ms": n}` shape is also a
+        // plain table and is no longer the duration contract.
         ActiveType::Duration => {
             // Bounds live on the exported `ms` integer, in canonical
             // milliseconds (LANG-B-005): a bare object accepted
@@ -440,12 +443,18 @@ fn json_schema_field(
             if let Some(max) = literal_number(module, field.max) {
                 ms.insert("maximum".to_string(), max);
             }
+            let inner = json!({
+                "type": "object",
+                "properties": { "ms": JsonValue::Object(ms) },
+                "required": ["ms"],
+                "additionalProperties": false,
+            });
             obj.insert("type".to_string(), JsonValue::String("object".to_string()));
             obj.insert(
                 "properties".to_string(),
-                json!({ "ms": JsonValue::Object(ms) }),
+                json!({ "$active.duration": inner }),
             );
-            obj.insert("required".to_string(), json!(["ms"]));
+            obj.insert("required".to_string(), json!(["$active.duration"]));
             obj.insert("additionalProperties".to_string(), JsonValue::Bool(false));
         }
         // Bytes normalize to integers on export.

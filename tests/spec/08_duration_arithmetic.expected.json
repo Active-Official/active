@@ -1,13 +1,19 @@
 {
   "t": {
     "base": {
-      "ms": 5000
+      "$active.duration": {
+        "ms": 5000
+      }
     },
     "doubled": {
-      "ms": 10000
+      "$active.duration": {
+        "ms": 10000
+      }
     },
     "sum": {
-      "ms": 40000
+      "$active.duration": {
+        "ms": 40000
+      }
     },
     "ratio": 2
   }

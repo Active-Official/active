@@ -1,16 +1,24 @@
 {
   "units": {
     "t1": {
-      "ms": 5000
+      "$active.duration": {
+        "ms": 5000
+      }
     },
     "t2": {
-      "ms": 500
+      "$active.duration": {
+        "ms": 500
+      }
     },
     "t3": {
-      "ms": 60000
+      "$active.duration": {
+        "ms": 60000
+      }
     },
     "t4": {
-      "ms": 7200000
+      "$active.duration": {
+        "ms": 7200000
+      }
     },
     "b1": 536870912,
     "b2": 2048,

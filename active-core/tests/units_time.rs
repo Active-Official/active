@@ -27,11 +27,11 @@ fn codes_of(src: &str) -> Vec<String> {
 fn week_is_exact_ms() {
     assert_eq!(
         eval_json("t = 1week\n")["t"],
-        serde_json::json!({"ms": 604800000})
+        serde_json::json!({"$active.duration": {"ms": 604800000}})
     );
     assert_eq!(
         eval_json("t = 2week\n")["t"],
-        serde_json::json!({"ms": 1209600000})
+        serde_json::json!({"$active.duration": {"ms": 1209600000}})
     );
     assert!(codes_of("t = 1week\n").is_empty());
 }
@@ -40,7 +40,7 @@ fn week_is_exact_ms() {
 fn week_arithmetic_inherited() {
     assert_eq!(
         eval_json("t = 1week + 1d\n")["t"],
-        serde_json::json!({"ms": 691200000})
+        serde_json::json!({"$active.duration": {"ms": 691200000}})
     );
     assert_eq!(eval_json("t = 1week == 7d\n")["t"], true);
     assert_eq!(eval_json("t = 1week > 6d\n")["t"], true);
@@ -50,11 +50,11 @@ fn week_arithmetic_inherited() {
 fn long_aliases_canonicalize() {
     assert_eq!(
         eval_json("t = 90sec\n")["t"],
-        serde_json::json!({"ms": 90000})
+        serde_json::json!({"$active.duration": {"ms": 90000}})
     );
     assert_eq!(
         eval_json("t = 5min\n")["t"],
-        serde_json::json!({"ms": 300000})
+        serde_json::json!({"$active.duration": {"ms": 300000}})
     );
     assert!(codes_of("t = 90sec\n").is_empty());
     assert!(codes_of("t = 5min\n").is_empty());

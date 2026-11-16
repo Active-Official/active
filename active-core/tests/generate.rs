@@ -50,7 +50,10 @@ fn json_schema_covers_types_constraints_and_flags() {
     assert_eq!(schema["additionalProperties"], false);
     assert!(props["server"].get("additionalProperties").is_none());
     assert_eq!(props["old"]["deprecated"], true);
-    assert_eq!(props["timeout"]["properties"]["ms"]["type"], "integer");
+    assert_eq!(
+        props["timeout"]["properties"]["$active.duration"]["properties"]["ms"]["type"],
+        "integer"
+    );
     // Required: everything without a static default, minus Nulls.
     let required = schema["required"].as_array().expect("required");
     let names: Vec<&str> = required.iter().map(|v| v.as_str().expect("name")).collect();
@@ -522,8 +525,14 @@ fn static_bounds_reach_the_generated_contract() {
     let props = &json["properties"];
     assert_eq!(props["i"]["minimum"], 1, "{json}");
     assert_eq!(props["i"]["maximum"], 10, "{json}");
-    assert_eq!(props["d"]["properties"]["ms"]["minimum"], 1000, "{json}");
-    assert_eq!(props["d"]["properties"]["ms"]["maximum"], 120000, "{json}");
+    assert_eq!(
+        props["d"]["properties"]["$active.duration"]["properties"]["ms"]["minimum"], 1000,
+        "{json}"
+    );
+    assert_eq!(
+        props["d"]["properties"]["$active.duration"]["properties"]["ms"]["maximum"], 120000,
+        "{json}"
+    );
     assert_eq!(props["b"]["minimum"], 2, "{json}");
     assert_eq!(props["b"]["maximum"], 8, "{json}");
     // A float-spelled Int bound is still a bound.

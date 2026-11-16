@@ -53,10 +53,10 @@ fn negative_durations_are_rejected_not_clamped() {
     assert!(!codes.iter().any(|c| c == "H007"), "{codes:?}");
     // Control: zero and positive durations still coerce.
     let (v, codes) = resilient("schema = { t = Duration }\nt = \"0s\"\n");
-    assert_eq!(v["t"]["ms"], 0, "{v}");
+    assert_eq!(v["t"]["$active.duration"]["ms"], 0, "{v}");
     assert!(codes.iter().any(|c| c == "H007"), "{codes:?}");
     let (v, _c) = resilient("schema = { t = Duration }\nt = \"1.5s\"\n");
-    assert_eq!(v["t"]["ms"], 1500, "{v}");
+    assert_eq!(v["t"]["$active.duration"]["ms"], 1500, "{v}");
 }
 
 #[test]

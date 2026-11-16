@@ -269,6 +269,9 @@ evaluate(module):
   `Int`/`Float` scalar, `÷` duration-by-duration ⇒ `Int` ratio; ordering
   comparisons on two durations. Adding a duration to a non-duration is a
   `TypeError` — dimensional safety is preserved.
+- Non-finite floats (`inf`, `-inf`, `nan`) are legitimate values; the JSON
+  export tags them (`{"$active.float": "inf"}`) and never maps them to
+  `null`; `content_hash` distinguishes them from `null` (LANG-F-003).
 - `Quantity(f64, Unit)`: equality requires equal value **and** equal unit.
 - Ordering (`<` `<=` `>` `>=`) compares numerically: `Float`/`Float`,
   `Int`/`Int`, and mixed `Int`/`Float` (promoted exactly, including

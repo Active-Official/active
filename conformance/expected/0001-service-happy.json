@@ -1,7 +1,9 @@
 {
   "pool": 5,
   "timeout": {
-    "ms": 30000
+    "$active.duration": {
+      "ms": 30000
+    }
   },
   "db_password": "***SECRET***",
   "server": {

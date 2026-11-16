@@ -22,6 +22,14 @@ Guarantees (tested, spec/dual-syntax.md §8): idempotence
 documents, comment/annotation/semantic-block survival in every mode,
 and cross-style tree equality (both styles parse to the same IR).
 
+Idempotence is implemented as a fixed-point guarantee: comment attachment is
+scored by source position (spec/dual-syntax.md section 7.2), so a comment whose
+canonical position differs from where it was written can attach elsewhere after
+one rewrite. `format` therefore re-parses and re-formats its own output until it
+stops changing (at most three passes) and returns that result, which makes
+`format(parse(out)) == out` hold by construction without changing the attachment
+rules. An already-canonical document costs one extra parse and format pass.
+
 ## 2. `ACTIVE fmt` contract
 
 ```

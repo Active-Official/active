@@ -268,3 +268,35 @@ fn a_normal_include_chain_stays_within_budget() {
     assert!(module.root.is_some());
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn nonportable_include_paths_are_refused_on_every_host() {
+    // LANG-H-004: a backslash separator or a Windows drive-letter
+    // absolute cannot mean the same file on every platform, so both are
+    // E026 here. LANG-H-902: an empty path is E015 (no path declared),
+    // not a host-dependent E017 from reading the including directory.
+    let dir = std::env::temp_dir().join(format!("active-inc-port-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    for (name, body, code) in [
+        (
+            "back.active",
+            "include \"sub\\inner.active\"\nport = 1\n",
+            "E026",
+        ),
+        (
+            "drive.active",
+            "include \"C:/temp/x.active\"\nport = 1\n",
+            "E026",
+        ),
+        ("empty.active", "include \"\"\nport = 1\n", "E015"),
+    ] {
+        let path = dir.join(name);
+        std::fs::write(&path, body).expect("write");
+        let diags = parse_file(&path, parse_options()).expect_err("must fail");
+        assert!(
+            diags.iter().any(|d| d.code == code),
+            "{name}: expected {code}, got {diags:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

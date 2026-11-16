@@ -1,0 +1,3 @@
+include "sub\inner.active"
+include "C:/temp/x.active"
+port = 8080

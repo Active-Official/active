@@ -151,6 +151,11 @@ id = "0027-interchange-env-rebind"
 file = "cases/0027-interchange-env-rebind.active"
 kind = "refused"
 
+[[cases]]
+id = "0028-include-portability"
+file = "cases/0028-include-portability.active"
+kind = "refused"
+
 # Host-feature pins (G-017 spirit): cases needing capabilities a v1 host
 # shim does not expose. Runners record these as pins with reason, never as
 # failures and never silently. Removing a pin means the host grew the

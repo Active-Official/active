@@ -283,6 +283,11 @@ string-literal = String | SingleString | MlString | MlSingleString
   `allow_parent_escapes`, e.g. the CLI `--allow-parent-escapes` flag).
 - A missing or unreadable file is E017. Including a file already on the
   include stack (a cycle), or nesting deeper than 32 files, is E016.
+- Path portability is enforced on every host (LANG-H-004): include paths
+  use `/` separators and are relative to the including file. A backslash
+  separator or a Windows drive-letter absolute (`C:\x`, `C:/x`) is
+  **E026** on all platforms — the form cannot mean the same file
+  everywhere, so it is refused instead of resolving differently per host.
 - Merge semantics (normative): **included files provide defaults**.
   Explicit local keys always win, regardless of position; when several
   included files define the same key, the LAST include wins (cascade).

@@ -808,13 +808,10 @@ fn mixed_syntax(module: &Module) -> Vec<Diagnostic> {
     )]
 }
 
-/// True for `C:\...` and `C:/...` on every host platform.
+/// True for `C:\...` and `C:/...` on every host platform. Shared with the
+/// include loader, which refuses such paths as non-portable (E026).
 fn looks_windows_absolute(path: &str) -> bool {
-    let bytes = path.as_bytes();
-    bytes.len() >= 3
-        && bytes[0].is_ascii_alphabetic()
-        && bytes[1] == b':'
-        && (bytes[2] == b'\\' || bytes[2] == b'/')
+    crate::parser::looks_windows_absolute(path)
 }
 
 /// L016: include hygiene. Absolute paths, parent escapes, non-`.active`

@@ -34,6 +34,7 @@ pub fn explain_code(code: &str) -> &'static str {
         "E023" => "Integer out of range: positive literals saturate at i64::MAX, and negating the minimum yields MIN+1. Use a smaller magnitude or a different unit.",
         "E024" => "Bad mode marker: active_mode must be the string \"data\" or \"config\". Fix the spelling; Data Mode is explicit opt-in, Config is the default when the marker is absent.",
         "E025" => "Bad capabilities declaration: active_capabilities must be an array of strings naming tools the host offers. Fix the shapes; unknown names are refused at handshake time, not here.",
+        "E026" => "Include path is not portable: it uses a backslash separator or a Windows drive-letter absolute path. Use '/' separators and a path relative to the including file.",
         "E036" => "Interchange document is not self-contained: it reads `env.*`, includes a file, or declares profiles, all of which resolve against the RECEIVER's ambient state. Pin env values as literals, inline includes, and send the selected profile's values (LANG-F-007).",
         "E035" => "Taint claim mismatch: `envelope.tainted` disagrees with the evaluated payload. A sender may not mislabel taint in either direction; make the claim match the payload (or remove it).",
         "E033" => "Envelope version refused: the Data Mode envelope's version is missing, is not a major.minor.patch string, or names a major this receiver does not implement. Send a version this receiver supports; never rewrite the receiver's gate to accept a foreign major.",

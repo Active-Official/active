@@ -1087,6 +1087,17 @@ fn indent_level(tok: &Token) -> usize {
     tok.text.parse().unwrap_or(0)
 }
 
+/// True for `C:\x` and `C:/x` on every host platform. Shared by the
+/// linter (L016) and the include loader, which refuses the form as
+/// non-portable (E026, LANG-H-004).
+pub(crate) fn looks_windows_absolute(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
+}
+
 impl Parser {
     // ------------------------------------------------------------------
     // Low-level token helpers
@@ -1999,6 +2010,20 @@ impl Parser {
             );
             return;
         }
+        // Portability (LANG-H-004): refuse the form at parse time in every
+        // mode, so a string-only embedding (FFI/WASM) reports the same
+        // E026 a file parse does instead of the generic "includes need a
+        // file" E015.
+        if path.contains('\\') || looks_windows_absolute(&path) {
+            self.error_at(
+                "E026",
+                format!(
+                    "include path is not portable (got `{path}`): use '/' separators and a path relative to the including file"
+                ),
+                &path_tok,
+            );
+            return;
+        }
         // Optional `as alias` and `private`, in either order.
         let mut alias: Option<String> = None;
         let mut private = false;
@@ -2053,6 +2078,27 @@ impl Parser {
             me.error_at(code, msg, &inc.tok);
             None
         };
+        // An empty path is E015 (no path declared), not a host-dependent
+        // E017 from asking the filesystem to read the including directory
+        // (LANG-H-902).
+        if inc.path.trim().is_empty() {
+            return fail(self, "E015", "include needs a path".to_string());
+        }
+        // Portability (LANG-H-004): include paths are '/'-separated and
+        // relative to the including file. A backslash separator or a
+        // Windows drive-letter absolute resolves differently on every host
+        // (or not at all), so it is refused on all of them instead of
+        // surfacing as a host-dependent E017.
+        if inc.path.contains('\\') || looks_windows_absolute(&inc.path) {
+            return fail(
+                self,
+                "E026",
+                format!(
+                    "include path is not portable (got `{}`): use '/' separators and a path relative to the including file",
+                    inc.path
+                ),
+            );
+        }
         // Policy: literal relative paths stay inside the tree by default.
         let raw = std::path::Path::new(&inc.path);
         if !self.options.allow_parent_escapes {

@@ -14,13 +14,28 @@ criterion benches and the CodSpeed CI plugin.
   re-parse, `evaluate_incremental` on the reused engine.
 - `eval_small`: a 2-key document (`a = 1`, `b = a`; baseline
   noise floor).
+- `eval_wide_10k` (LANG-K-004): 10 000 independent root keys, the
+  wide-flat shape with no chains.
+- `scale/eval_100k_paths` (LANG-K-004): a 100 098-path document with zero
+  secrets. Every sample asserts the LANG-K-001 fix: the profile is not
+  truncated and the exported tree contains no `***SECRET***`.
+- `incremental_large_literals` (LANG-K-004): a ~10 000-key document whose
+  every tenth value is a 1 KiB string, measuring re-hash cost.
+- `eval_10k_heap_peak` (LANG-K-004): heap high-water mark of one 10k
+  evaluation, measured by a counting global allocator (portable; asserts
+  the peak stays under 64 MiB).
 
-Benches run with the production wall-clock backstop off
-(`bench_engine` sets `max_wall_ms = 0`): benches measure time
-themselves, and instrumentation slowdown (valgrind simulation
-runs an order of magnitude slower) must never abort a
-measurement. Count/depth/size budgets keep shipped defaults —
+Benches run with the production wall-clock backstop off - the explicit
+`UNLIMITED` sentinel, since a zero field resolves to the shipped default
+(LANG-C-015). Benches measure time themselves, and instrumentation
+slowdown (valgrind simulation runs an order of magnitude slower) must
+never abort a measurement. Count/depth/size budgets keep shipped defaults -
 deterministic counts, unaffected by slowdown.
+
+Measured 2026-11-16 on the reference machine (`cargo bench`, release
+profile; medians): `eval_wide_10k` 15.1 ms, `scale/eval_100k_paths`
+718.6 ms, `incremental_large_literals` 31.2 ms, `eval_10k_heap_peak`
+35.6 ms with the heap peak under the 64 MiB bound.
 
 Run with `cargo bench`; tracked continuously by the CodSpeed
 GitHub workflow (`.github/workflows/codspeed.yml`: `cargo codspeed

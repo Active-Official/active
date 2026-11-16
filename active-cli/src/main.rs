@@ -900,7 +900,7 @@ fn run_inspect(
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
             // Schema prose can equal a host value; redact it with the
             // authored + process-env material set.
-            let schema_profile = material_profile_with(&module, profile.as_deref());
+            let schema_profile = material_profile_with(&module, profile.as_deref())?;
             schema_profile.redact_json(&mut inspected);
             println!(
                 "{}",
@@ -1466,8 +1466,27 @@ const CAPABILITY_JSON: &str = include_str!("../../agent-kit/capability.schema.js
 /// Material profile for planning output: module prose plus the process
 /// environment values its material env reads would resolve to. Hermetic
 /// tools do not evaluate, so this is the widest context they can see.
-fn material_profile(module: &active_core::Module) -> active_core::secret::SecretProfile {
+fn material_profile(
+    module: &active_core::Module,
+) -> anyhow::Result<active_core::secret::SecretProfile> {
     material_profile_with(module, None)
+}
+
+/// LANG-K-001: a profile that hit an analysis bound treats every unknown
+/// path as material, so presenting its tree would replace benign values
+/// with `***SECRET***`. Value exports refuse loudly instead of lying; the
+/// profile caps exceed the trusted budget, so this is the honest signal
+/// for a host that raised the parse caps past the evaluator's scale.
+fn complete_profile(
+    profile: active_core::secret::SecretProfile,
+) -> anyhow::Result<active_core::secret::SecretProfile> {
+    if profile.truncated() {
+        anyhow::bail!(
+            "secret analysis hit its analysis bounds (path or work caps); refusing to \
+             export a document whose benign values may be redacted"
+        );
+    }
+    Ok(profile)
 }
 
 /// Material profile under an optional `--profile` override. The
@@ -1476,7 +1495,7 @@ fn material_profile(module: &active_core::Module) -> active_core::secret::Secret
 fn material_profile_with(
     module: &active_core::Module,
     override_profile: Option<&str>,
-) -> active_core::secret::SecretProfile {
+) -> anyhow::Result<active_core::secret::SecretProfile> {
     let mut profile =
         active_core::secret::SecretProfile::analyze_with_profile(module, override_profile);
     let mut env = std::collections::HashMap::new();
@@ -1490,7 +1509,7 @@ fn material_profile_with(
         }
     }
     profile.absorb_environment(&env);
-    profile
+    complete_profile(profile)
 }
 
 /// Strict-evaluation diagnostics for the explain/patch surfaces: parse
@@ -1813,7 +1832,9 @@ fn main() -> anyhow::Result<()> {
             // Structural material is redacted on the FULL tree, then
             // projected: the cone is already redacted at document
             // paths, so it must NOT be re-rooted and redacted again.
-            let profile = active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
+            let profile = complete_profile(active_core::secret::SecretProfile::for_engine(
+                &module, &engine, &seeds,
+            ))?;
             let full_value = active_core::convert::redact_value(&profile, &value);
             let value = match path.as_deref() {
                 Some(p) => active_core::convert::project_path(&full_value, p)
@@ -1870,11 +1891,13 @@ fn main() -> anyhow::Result<()> {
                     let (canonical_value, _, canonical_seeds) = canonical_engine
                         .evaluate_with_seeds(&module)
                         .map_err(|e| anyhow::anyhow!("audit evaluation failed: {e}"))?;
-                    let canonical_profile = active_core::secret::SecretProfile::for_engine(
-                        &module,
-                        &canonical_engine,
-                        &canonical_seeds,
-                    );
+                    let canonical_profile = complete_profile(
+                        active_core::secret::SecretProfile::for_engine(
+                            &module,
+                            &canonical_engine,
+                            &canonical_seeds,
+                        ),
+                    )?;
                     active_core::convert::redact_value(&canonical_profile, &canonical_value)
                 };
                 let audited = strip_blob_payloads(&canonical);
@@ -2106,7 +2129,9 @@ fn main() -> anyhow::Result<()> {
             for d in &diags {
                 report(d, &name);
             }
-            let profile = active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
+            let profile = complete_profile(active_core::secret::SecretProfile::for_engine(
+                &module, &engine, &seeds,
+            ))?;
             match to.as_str() {
                 "json" => println!(
                     "{}",
@@ -2160,7 +2185,7 @@ fn main() -> anyhow::Result<()> {
             // Generators see the same authored + process-env material
             // set as planning, so a schema literal equal to a host
             // value is withheld instead of emitted.
-            let profile = material_profile(&module);
+            let profile = material_profile(&module)?;
             // Documents without a schema block exit non-zero (spec §5).
             let output = match to.as_str() {
                 "jsonschema" | "json-schema" => {
@@ -2575,7 +2600,7 @@ fn main() -> anyhow::Result<()> {
                     let mut data = active_core::viz::schema_data(&module)
                         .map_err(|e| anyhow::anyhow!("{e}"))?;
                     // Schema prose can equal a host value.
-                    material_profile(&module).redact_json(&mut data);
+                    material_profile(&module)?.redact_json(&mut data);
                     println!(
                         "{}",
                         serde_json::to_string_pretty(&data).map_err(|e| anyhow::anyhow!("{e}"))?
@@ -2642,7 +2667,7 @@ fn main() -> anyhow::Result<()> {
             }
             // Planning with the material profile: a default that copies
             // an authored or environment secret yields no directive.
-            let profile = material_profile(&module);
+            let profile = material_profile(&module)?;
             let structured = active_core::convert::suggest_patches_structured_with_profile(
                 &module, &diags, &profile,
             );
@@ -2726,8 +2751,8 @@ fn main() -> anyhow::Result<()> {
             // copied into an enum member or media type is material only
             // when the process environment is consulted, so sweep the
             // messages again with both documents' material profiles.
-            let old_profile = material_profile(&old_module);
-            let new_profile = material_profile(&new_module);
+            let old_profile = material_profile(&old_module)?;
+            let new_profile = material_profile(&new_module)?;
             for finding in &mut findings {
                 if let Some(text) = old_profile.redact_text(&finding.message) {
                     finding.message = text;
@@ -3009,7 +3034,9 @@ fn main() -> anyhow::Result<()> {
             for d in &diags {
                 report(d, &filename);
             }
-            let profile = active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
+            let profile = complete_profile(active_core::secret::SecretProfile::for_engine(
+                &module, &engine, &seeds,
+            ))?;
             let items = collect_items_with_profile(
                 &module,
                 &active_core::convert::redact_value(&profile, &value),
@@ -3060,8 +3087,9 @@ fn main() -> anyhow::Result<()> {
                 Some(&seeds),
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-            let secret_profile =
-                active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
+            let secret_profile = complete_profile(
+                active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds),
+            )?;
             // Canonical lock identity: same materialise → redact → strip
             // policy as the audit, so both hash the same document.
             let canonical = if module_has_blobs(&module) && !engine.materialise_blobs {
@@ -3073,11 +3101,13 @@ fn main() -> anyhow::Result<()> {
                 let (canonical_value, _, canonical_seeds) = canonical_engine
                     .evaluate_with_seeds(&module)
                     .map_err(|e| anyhow::anyhow!("lock evaluation failed: {e}"))?;
-                let canonical_profile = active_core::secret::SecretProfile::for_engine(
-                    &module,
-                    &canonical_engine,
-                    &canonical_seeds,
-                );
+                let canonical_profile = complete_profile(
+                        active_core::secret::SecretProfile::for_engine(
+                            &module,
+                            &canonical_engine,
+                            &canonical_seeds,
+                        ),
+                    )?;
                 active_core::convert::redact_value(&canonical_profile, &canonical_value)
             } else {
                 active_core::convert::redact_value(&secret_profile, &value)
@@ -3286,7 +3316,7 @@ fn main() -> anyhow::Result<()> {
                 // other prose surface. The linter itself stays hermetic
                 // (no environment snapshot), so the CLI applies the
                 // analyzed material set here.
-                let material = material_profile(&module);
+                let material = material_profile(&module)?;
                 for mut d in lint::lint_with(&module, &options) {
                     if let Some(text) = material.redact_text(&d.message) {
                         d.message = text;

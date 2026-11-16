@@ -4497,3 +4497,56 @@ fn explain_and_patch_surface_hard_error_guidance() {
         .expect("run");
     assert!(explain.status.success(), "soft diagnostics still exit 0");
 }
+
+#[test]
+fn eval_past_100k_paths_keeps_benign_values_at_the_cli() {
+    // LANG-K-001 end to end: a 100,098-path document with zero secrets
+    // must export intact through the shipped binary. Before the fix the
+    // path map truncated at 100,000 and every unregistered path read as
+    // secret, so eval and the lock identity carried `***SECRET***`.
+    let mut src = String::new();
+    for t in 0..498 {
+        src.push_str(&format!("[t{t}]\n"));
+        src.push_str(&format!("k0 = {t}\n"));
+        for k in 1..200 {
+            src.push_str(&format!("k{k} = k{} + 1\n", k - 1));
+        }
+    }
+    let f = fixture("k001_scale.active", &src);
+    let out = active()
+        .args(["eval", "--budget-profile", "trusted"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let json = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !json.contains("***SECRET***"),
+        "benign values redacted past 100k paths"
+    );
+    assert!(json.contains("\"t0\""), "the tree is present");
+    let first = active()
+        .args(["lock", "--budget-profile", "trusted"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert!(!String::from_utf8_lossy(&first.stdout).contains("***SECRET***"));
+    let again = active()
+        .args(["lock", "--budget-profile", "trusted"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert_eq!(
+        first.stdout, again.stdout,
+        "the lock identity is deterministic"
+    );
+}

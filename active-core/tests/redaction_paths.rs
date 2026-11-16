@@ -154,3 +154,49 @@ fn formatter_keeps_source_locator_but_value_redacts() {
     assert!(!json.contains(RAW), "{json}");
     assert!(json.contains("***SECRET***"), "{json}");
 }
+
+#[test]
+fn eval_past_100k_paths_keeps_benign_values() {
+    // LANG-K-001: past MAX_PATHS (100,000) the SecretProfile path map
+    // truncated and path_is_secret failed closed, replacing benign
+    // values with `***SECRET***`. A 100,098-path document with zero
+    // secrets must evaluate with every value intact.
+    let mut src = String::new();
+    for t in 0..498 {
+        src.push_str(&format!("[t{t}]\n"));
+        src.push_str(&format!("k0 = {t}\n"));
+        for k in 1..200 {
+            src.push_str(&format!("k{k} = k{} + 1\n", k - 1));
+        }
+    }
+    let module = parse(&src, "k001").expect("must parse");
+    let mut engine = Engine::new();
+    engine.budget = Budget::trusted();
+    // A zero field resolves to the shipped default (LANG-C-015); the
+    // sentinel is the explicit "no deadline" this values-only test wants.
+    engine.budget.max_wall_ms = active_core::eval::UNLIMITED;
+    let (value, _) = engine.evaluate(&module).expect("must evaluate");
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    let redacted = active_core::convert::redact_value(&profile, &value);
+    let json = active_core::convert::value_to_pretty_json(&redacted);
+    assert!(
+        !json.contains("***SECRET***"),
+        "benign values redacted past 100k paths"
+    );
+    assert!(
+        !profile.truncated(),
+        "the path map must cover an accepted document"
+    );
+    // Spot-check the earliest values (the ones the old code redacted).
+    match &value {
+        active_core::Value::Table(map) => {
+            let t0 = match map.get("t0").expect("t0 present") {
+                active_core::Value::Table(t) => t,
+                other => panic!("table expected: {other:?}"),
+            };
+            assert!(matches!(t0.get("k0"), Some(active_core::Value::Int(0))));
+            assert!(matches!(t0.get("k199"), Some(active_core::Value::Int(199))));
+        }
+        other => panic!("table expected: {other:?}"),
+    }
+}

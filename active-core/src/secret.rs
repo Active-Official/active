@@ -847,8 +847,17 @@ fn rename_set(set: &mut HashSet<String>, from: &str, to: &str) {
         set.insert(format!("{dest}{suffix}"));
     }
 }
-const MAX_PATH_DEPTH: usize = 256;
-const MAX_PATHS: usize = 100_000;
+/// Deepest path the walk registers. The trusted budget allows depth 2048,
+/// so a shallower bound would truncate a document the evaluator accepted
+/// and fail-closed every unregistered path as secret (LANG-K-001).
+const MAX_PATH_DEPTH: usize = 2048;
+/// Path-map cap. Every path maps to an arena node, and the trusted budget
+/// allows 10,000,000 nodes, so an accepted document cannot exhaust this
+/// map: the old 100,000 cap silently truncated a 100,099-path document,
+/// after which every unregistered path read as secret and benign values
+/// exported as `***SECRET***` (LANG-K-001). The map is linear in the
+/// document, so it grows with the arena rather than bounding it.
+const MAX_PATHS: usize = 10_000_000;
 /// Bound transform maintenance: orphan patches on a huge document must
 /// not turn analysis quadratic.
 const MAX_TRANSFORM_WORK: usize = 2_000_000;
@@ -2559,6 +2568,16 @@ impl SecretProfile {
             .get(path)
             .copied()
             .or_else(|| self.paths.get(path).copied())
+    }
+
+    /// True when a bound stopped the analysis: every path the walk never
+    /// registered is treated as material, so a surface must not present
+    /// this profile's output as a benign export (LANG-K-001). The caps now
+    /// exceed the trusted budget (10,000,000 paths, depth 2048), so an
+    /// accepted document cannot set this; it stays as the honest signal for
+    /// a host that raised the parse caps past the evaluator's scale.
+    pub fn truncated(&self) -> bool {
+        self.truncated
     }
 
     /// True when the path's value is secret material or derives from it.

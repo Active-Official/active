@@ -16,6 +16,7 @@ dependencies = [
  "active-core",
  "anyhow",
  "clap",
+ "libc",
  "serde_json",
  "toml 0.8.23",
 ]

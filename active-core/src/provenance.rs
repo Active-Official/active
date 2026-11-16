@@ -86,11 +86,13 @@ fn secret_bound_names(module: &Module) -> HashSet<String> {
 }
 
 /// Canonical identity for path comparison: exact, then
-/// case-insensitive, then filesystem-canonicalized (8.3
-/// short-names on Windows). Unresolvable paths fall back to string
-/// equality.
+/// filesystem-canonicalized (which resolves 8.3 short-names on Windows and
+/// the on-disk casing on case-insensitive filesystems). No case-folding
+/// shortcut: on a case-sensitive filesystem `Main.active` and
+/// `main.active` are two different files (LANG-H-005). Unresolvable paths
+/// fall back to string equality.
 fn same_file(a: &str, b: &str) -> bool {
-    if a == b || a.eq_ignore_ascii_case(b) {
+    if a == b {
         return true;
     }
     match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
@@ -432,5 +434,26 @@ impl LockManifest {
             "{header}{}",
             toml::to_string(&toml::Value::Table(doc)).unwrap_or_default()
         )
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod path_identity_tests {
+    use super::same_file;
+
+    #[test]
+    fn case_differing_paths_are_distinct_files() {
+        // LANG-H-005: on a case-sensitive filesystem these are two files.
+        // The old eq_ignore_ascii_case shortcut conflated them.
+        let dir = std::env::temp_dir().join(format!("active-same-file-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let upper = dir.join("Main.active");
+        let lower = dir.join("main.active");
+        std::fs::write(&upper, "a = 1\n").expect("write upper");
+        std::fs::write(&lower, "b = 2\n").expect("write lower");
+        let (a, b) = (upper.to_str().expect("utf8"), lower.to_str().expect("utf8"));
+        assert!(!same_file(a, b), "distinct files must not compare equal");
+        assert!(same_file(a, a));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

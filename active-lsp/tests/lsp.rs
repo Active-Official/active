@@ -2770,3 +2770,30 @@ fn a_large_document_announces_analysis_and_stays_bounded() {
     );
     server.shutdown();
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn case_differing_paths_are_distinct_documents_on_linux() {
+    // LANG-H-005: on a case-sensitive filesystem `Main.active` and
+    // `main.active` are two buffers. The old case-folding shortcut made
+    // the server serve one buffer's text, version, and diagnostics for the
+    // other; identity now comes from the filesystem itself.
+    let dir = std::env::temp_dir().join(format!("active-lsp-case-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let upper = dir.join("Main.active");
+    let lower = dir.join("main.active");
+    std::fs::write(&upper, "a = 1\n").expect("write upper");
+    std::fs::write(&lower, "b = 2\n").expect("write lower");
+    let ua = lsp_types::Url::from_file_path(&upper)
+        .expect("upper url")
+        .to_string();
+    let ub = lsp_types::Url::from_file_path(&lower)
+        .expect("lower url")
+        .to_string();
+    assert!(
+        !analysis::same_uri(&ua, &ub),
+        "case-differing paths are two documents on Linux"
+    );
+    assert!(analysis::same_uri(&ua, &ua), "exact identity holds");
+    let _ = std::fs::remove_dir_all(&dir);
+}

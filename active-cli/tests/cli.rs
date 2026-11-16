@@ -4609,3 +4609,44 @@ fn env_references_are_case_insensitive_over_the_process_snapshot() {
     assert_eq!(json["b"], "hello");
     assert_eq!(json["c"], "hello");
 }
+
+#[cfg(unix)]
+#[test]
+fn a_closed_stdout_reader_does_not_panic() {
+    // LANG-H-007: `active eval big | head -1` must die to SIGPIPE like a
+    // standard Unix filter, not panic with exit 101. The document is large
+    // enough to fill the pipe buffer so the child blocks while we close
+    // the read end.
+    use std::io::{BufRead, BufReader};
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::Stdio;
+    let mut src = String::new();
+    for i in 0..30_000 {
+        src.push_str(&format!("k{i} = {i}\n"));
+    }
+    let f = fixture("sigpipe.active", &src);
+    let mut child = active()
+        .args(["eval", "--budget-profile", "trusted"])
+        .arg(&f)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn active");
+    {
+        let stdout = child.stdout.take().expect("stdout pipe");
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("read one line");
+        // Dropping the reader closes the pipe; the next write is EPIPE.
+    }
+    let out = child.wait_with_output().expect("wait");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("panicked"),
+        "a closed reader must not panic: {stderr}"
+    );
+    assert_ne!(out.status.code(), Some(101), "{stderr}");
+    if let Some(signal) = out.status.signal() {
+        assert_eq!(signal, 13, "expected SIGPIPE death, got signal {signal}");
+    }
+}

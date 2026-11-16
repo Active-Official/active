@@ -855,12 +855,15 @@ fn def_range(doc: &Doc, target: &Target) -> Option<Range> {
 // Cross-file text.
 // ------------------------------------------------------------------
 
-/// File-identity comparison for paths: exact, case-insensitive
-/// (Windows client URIs vs canonical stamps), then filesystem
-/// canonicalization (8.3 short-names vs long names — the CI Temp
-/// lesson). Unresolvable paths fall back to string equality.
+/// File-identity comparison for paths: exact, then filesystem
+/// canonicalization (which resolves 8.3 short-names vs long names and the
+/// on-disk casing on case-insensitive filesystems). No case-folding
+/// shortcut: on a case-sensitive filesystem `Main.active` and
+/// `main.active` are two different files, and conflating them attaches
+/// the wrong buffer, version, and diagnostics (LANG-H-005). Unresolvable
+/// paths fall back to string equality.
 fn paths_equal(a: &str, b: &str) -> bool {
-    if a == b || a.eq_ignore_ascii_case(b) {
+    if a == b {
         return true;
     }
     match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {

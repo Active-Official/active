@@ -1671,6 +1671,15 @@ fn report_eval_error(e: &EvalError, name: &str) {
 }
 
 fn main() -> anyhow::Result<()> {
+    // LANG-H-007: Rust ignores SIGPIPE at startup, so a pipeline reader
+    // that closes early (`active eval ... | head -1`) turns the next
+    // stdout write into an EPIPE panic (exit 101) with a backtrace
+    // instead of the conventional silent death (141) every Unix shell
+    // expects. Restore the default disposition once, before any output.
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
     // The derived clap command tree is large; parse on a thread with a
     // generous stack so debug builds on Windows cannot overflow while
     // building help or parsing arguments.

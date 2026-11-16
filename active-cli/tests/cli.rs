@@ -731,6 +731,46 @@ fn generate_serves_all_five_targets() {
 }
 
 #[test]
+fn generate_accepts_the_hyphenated_schema_alias_and_lists_targets_in_help() {
+    // LANG-G-015: the target everyone types (`json-schema`) must work, and
+    // `generate --help` must name the targets so it is discoverable.
+    let f = fixture("gen_alias.active", "schema = { port = Int }\nport = 8080\n");
+    let out = active()
+        .args(["generate", "--from"])
+        .arg(&f)
+        .args(["--to", "json-schema"])
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "json-schema alias must work: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("\"type\": \"object\""),
+        "alias emits JSON Schema"
+    );
+    let help = active()
+        .args(["generate", "--help"])
+        .output()
+        .expect("run active");
+    let help_text = String::from_utf8_lossy(&help.stdout);
+    for target in [
+        "jsonschema",
+        "openapi",
+        "typescript",
+        "go",
+        "rust",
+        "python",
+    ] {
+        assert!(
+            help_text.contains(target),
+            "generate --help must name `{target}`: {help_text}"
+        );
+    }
+}
+
+#[test]
 fn generate_refuses_schemaless_documents_and_bad_targets() {
     let f = fixture("gen_noschema.active", "port = 1\n");
     let out = active()

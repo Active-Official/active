@@ -417,7 +417,9 @@ enum Commands {
         /// Input .active file (must contain a schema block)
         #[arg(short, long)]
         from: PathBuf,
-        /// Output target
+        /// Output target: `jsonschema` (alias `json-schema`), `openapi`,
+        /// `typescript` (alias `ts`), `go`, `rust` (alias `serde`), or
+        /// `python` (alias `py`)
         #[arg(short, long)]
         to: String,
         /// Root type name
@@ -2148,7 +2150,7 @@ fn main() -> anyhow::Result<()> {
             let profile = material_profile(&module);
             // Documents without a schema block exit non-zero (spec §5).
             let output = match to.as_str() {
-                "jsonschema" => {
+                "jsonschema" | "json-schema" => {
                     active_core::convert::schema_to_json_schema_with_profile(&module, &profile)
                         .and_then(|schema| {
                             serde_json::to_string_pretty(&schema)
@@ -2172,7 +2174,10 @@ fn main() -> anyhow::Result<()> {
                 "python" | "py" => {
                     active_core::convert::schema_to_python_with_profile(&module, &name, &profile)
                 }
-                other => anyhow::bail!("unsupported target: {}", other),
+                other => anyhow::bail!(
+                    "unsupported target: {other} (want jsonschema|json-schema, \
+                     openapi, typescript|ts, go, rust|serde, python|py)"
+                ),
             }
             .map_err(|e| anyhow::anyhow!("{e}"))?;
             // Emit exactly one trailing newline: generator outputs

@@ -1248,6 +1248,9 @@ fn trust_keys_gate_include_loading() {
         .args(["sign", "--key"])
         .arg(dir.join("gate.secret"))
         .args(["--kid", "k"])
+        // LANG-I-002: the include binds the literal spelling the document
+        // uses, not the absolute path the test happens to hold.
+        .args(["--as", "gate_lib.active"])
         .arg(dir.join("gate_lib.active"))
         .output()
         .expect("run active");
@@ -4744,4 +4747,73 @@ fn lock_salts_secret_env_hashes_and_reuses_them_on_relock() {
         "re-lock with the stored salt is byte-identical"
     );
     assert_eq!(hash_line(&relocked), hash_line(&a));
+}
+
+#[test]
+fn eval_lockfile_refuses_drift_in_the_main_or_an_include() {
+    // LANG-I-002c: the spec's freshness story must run on an eval path.
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("lockfile-drift");
+    std::fs::create_dir_all(&dir).expect("dir");
+    let lib = dir.join("inc.active");
+    std::fs::write(&lib, "host = \"db\"\n").expect("write lib");
+    let main = dir.join("main.active");
+    std::fs::write(&main, "include \"inc.active\"\nport = 1\n").expect("write main");
+    let lock = dir.join("active.lock");
+    let locked = active()
+        .args(["lock"])
+        .arg(&main)
+        .arg("--output")
+        .arg(&lock)
+        .output()
+        .expect("run active");
+    assert!(
+        locked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&locked.stderr)
+    );
+    let clean = active()
+        .args(["eval", "--lockfile"])
+        .arg(&lock)
+        .arg(&main)
+        .output()
+        .expect("run active");
+    assert!(
+        clean.status.success(),
+        "a matching lockfile must pass: {}",
+        String::from_utf8_lossy(&clean.stderr)
+    );
+    // Changed include: fail closed, naming the file.
+    std::fs::write(&lib, "host = \"evil\"\n").expect("tamper lib");
+    let drifted = active()
+        .args(["eval", "--lockfile"])
+        .arg(&lock)
+        .arg(&main)
+        .output()
+        .expect("run active");
+    assert!(!drifted.status.success(), "include drift must fail");
+    let stderr = String::from_utf8_lossy(&drifted.stderr);
+    assert!(stderr.contains("lockfile drift"), "{stderr}");
+    assert!(stderr.contains("inc.active"), "{stderr}");
+    // Restore the include; a changed main also fails.
+    std::fs::write(&lib, "host = \"db\"\n").expect("restore lib");
+    std::fs::write(&main, "include \"inc.active\"\nport = 2\n").expect("tamper main");
+    let drifted = active()
+        .args(["eval", "--lockfile"])
+        .arg(&lock)
+        .arg(&main)
+        .output()
+        .expect("run active");
+    assert!(!drifted.status.success(), "root drift must fail");
+    // An unparseable lockfile is a hard error, never a pass.
+    std::fs::write(&lock, "not toml [[[").expect("write garbage");
+    let bad = active()
+        .args(["eval", "--lockfile"])
+        .arg(&lock)
+        .arg(&main)
+        .output()
+        .expect("run active");
+    assert!(!bad.status.success(), "unparseable lockfile must fail");
+    let _ = std::fs::remove_dir_all(&dir);
 }

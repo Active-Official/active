@@ -97,40 +97,51 @@ value size) fail closed (X001–X006) in both modes. Fuzzing
   inject values (defaults render; dynamic bounds skipped).
 - Crates.io provenance and signed release binaries are C-056.
 
-### 3.5 Signature scope limits (explicit non-goals)
+### 3.5 Signature scope
 
 `--trust-keys` verifies the root document and its includes against the
-trust set (see LANG-C-007). Revocation and timestamping remain non-goals
-for v1: a signed document verifies forever once its key is trusted;
-freshness must come from version control and lockfiles, which are not
-consulted on the eval path.
+trust set (see LANG-C-007). Signatures bind the signed identity
+(relative path, optional role and version) and may carry an expiry; the
+trust file may revoke key ids (LANG-I-002).
 
-- Signatures authenticate AUTHORSHIP/INTEGRITY of overlay bytes,
-  not safety of content: a signed include is still data, still
-  validated, still budgeted. Trust ≠ sandbox escape.
-- No revocation protocol in v1: rotate by shipping a new
-  trusted-keys file (old signatures fail closed against the new
-  set). Documented in key management (§5).
-- No timestamping: replay of a once-valid signed file is
-  possible; freshness comes from version control + lockfile
-  hashes, not from signatures.
+- Signatures authenticate AUTHORSHIP/INTEGRITY of the bound bytes for the
+  bound identity, not safety of content: a signed include is still data,
+  still validated, still budgeted. Trust != sandbox escape.
+- Identity binding: a sidecar records the identity `path`, and
+  verification refuses any other path (E039). Copying a signed overlay
+  elsewhere fails closed.
+- Expiry: a sidecar may carry `expires = "YYYY-MM-DD"`; past it the
+  sidecar fails closed (E037). Beyond that there is no timestamping: a
+  still-valid, still-bound sidecar that is replayed verifies, and
+  freshness comes from version control and lockfiles.
+- Revocation: `revoked = ["kid", ...]` at the top of the trusted-keys
+  file; a sidecar naming a revoked kid fails closed (E038). Rotation adds
+  the new public key, re-signs, then removes the old.
 - Key files are bearer credentials: `0600`, never committed,
   never logged. The CLI reads secret keys only from files (never
   argv, which leaks via process lists).
 
 ## 4. Signed overlays: format and enforcement
 
-- **Algorithm**: Ed25519 over raw file bytes (SHA-512 internal;
-  deterministic, no randomness at verify time).
+- **Algorithm**: Ed25519 over `sha256(identity || 0x00 || bytes)`, where
+  the identity is the normalized `path`, optional `role` and `version`,
+  and the optional `expires` (SHA-512 internal; deterministic, no
+  randomness at verify time). A signature verifies only for its bound
+  identity (LANG-I-002).
 - **Keys**: TOML trusted-keys file —
-  `[[keys]] id = "release-2026" public = "<64-hex>"`.
+  `[[keys]] id = "release-2026" public = "<64-hex>"`, plus an optional
+  top-level `revoked = ["kid", ...]` list of revoked ids.
   Secret keys live in `<name>.secret` files (64 hex chars =
   32-byte seed); `ACTIVE keygen --out <prefix>` creates
   `<prefix>.secret` + `<prefix>.public` (the latter paste-ready
   for the TOML).
-- **Sidecar**: `<file>.sig` with `kid = "<id>"` and
-  `sig = "<128-hex>"` (TOML). Detached: the signed file is never
-  modified, so signatures survive formatters.
+- **Sidecar**: `<file>.sig` with `kid = "<id>"`, the bound `path`
+  (required), optional `role`/`version`, optional
+  `expires = "YYYY-MM-DD"`, and `sig = "<128-hex>"` (TOML). Detached:
+  the signed file is never modified, so signatures survive formatters.
+  The identity the signer records is the exact spelling the document
+  will use (`active sign --as <path>`); the root document's identity is
+  the path the receiver passes to `parse_file_with_trust`.
 - **Enforcement**: `Parser.trust: Option<TrustedKeys>`
   (`None` = no enforcement, all legacy behavior preserved;
   `parse_file_with_trust` feeds it). When set, every `include`
@@ -166,9 +177,9 @@ consulted on the eval path.
    public halves live in-repo beside the documents they guard.
 3. Rotate by adding the new public key, re-signing, then
    removing the old — the window where both verify is the
-   migration window (no revocation list in v1).
-4. Lockfiles and version control provide freshness; signatures
-   provide authorship. Use both.
+   migration window (revocation list in the trusted-keys file; see §3.5).
+4. Signatures provide authorship for the bound path/role/version until
+   expiry; lockfiles and version control provide freshness. Use both.
 5. Compromise response: rotate keys, re-sign known-good bytes
    (verified against lockfile hashes from before the incident),
    redeploy. The lockfile hash tells you whether bytes changed.

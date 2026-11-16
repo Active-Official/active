@@ -1367,19 +1367,26 @@ fn rb_071_last_wins_both_syntaxes() {
 /// signature must fail. Deterministic canonicalization underneath.
 #[test]
 fn rb_072_sign_verify_dup_key_document() {
-    use active_core::sign::{generate_secret_key, sign_bytes, verify_bytes};
-    use std::collections::HashMap;
+    use active_core::sign::{generate_secret_key, sign_bytes, verify_bytes, SignBinding};
     let doc = b"[server]\nhost = \"a\"\nhost = \"b\"\n";
     let key = generate_secret_key().expect("keygen");
-    let sidecar = sign_bytes(&key, "test-2026", doc).expect("sign");
-    let mut trusted = HashMap::new();
-    trusted.insert("test-2026".to_string(), key.verifying_key());
-    let kid = verify_bytes("dup.active", doc, &sidecar, &trusted).expect("verify");
+    let sidecar = sign_bytes(
+        &key,
+        "test-2026",
+        &SignBinding::path_only("dup.active"),
+        doc,
+    )
+    .expect("sign");
+    let mut trusted = active_core::sign::TrustedKeys::default();
+    trusted
+        .keys
+        .insert("test-2026".to_string(), key.verifying_key());
+    let kid = verify_bytes("dup.active", "dup.active", doc, &sidecar, &trusted).expect("verify");
     assert_eq!(kid, "test-2026");
     let mut tampered = doc.to_vec();
     tampered[20] = b'c';
     assert!(
-        verify_bytes("dup.active", &tampered, &sidecar, &trusted).is_err(),
+        verify_bytes("dup.active", "dup.active", &tampered, &sidecar, &trusted).is_err(),
         "tampered bytes must fail verification"
     );
 }

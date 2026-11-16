@@ -167,6 +167,60 @@ fn fresh_salt_hex() -> String {
     buf.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// Verify a lockfile's recorded file hashes against disk (LANG-I-002c):
+/// the main document and every recorded include must still hash to the
+/// value the lockfile pins. Fails closed on a missing or changed file;
+/// paths are the ones recorded at lock time.
+pub fn verify_lockfile_files(lock_text: &str) -> Result<(), String> {
+    let doc: toml::Value =
+        toml::from_str(lock_text).map_err(|e| format!("unparseable lockfile: {e}"))?;
+    let mut entries: Vec<(String, String)> = Vec::new();
+    if let Some(main) = doc.get("main") {
+        if let (Some(path), Some(hash)) = (
+            main.get("path").and_then(|v| v.as_str()),
+            main.get("sha256").and_then(|v| v.as_str()),
+        ) {
+            entries.push((path.to_string(), hash.to_string()));
+        }
+    }
+    if let Some(includes) = doc
+        .get("provenance")
+        .and_then(|p| p.get("includes"))
+        .and_then(|i| i.as_array())
+    {
+        for entry in includes {
+            if let (Some(path), Some(hash)) = (
+                entry.get("path").and_then(|v| v.as_str()),
+                entry.get("sha256").and_then(|v| v.as_str()),
+            ) {
+                entries.push((path.to_string(), hash.to_string()));
+            }
+        }
+    }
+    if entries.is_empty() {
+        return Err("lockfile records no file hashes to verify".to_string());
+    }
+    let mut drift = Vec::new();
+    for (path, want) in entries {
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                let got = sha256_hex(&bytes);
+                if got != want {
+                    drift.push(format!(
+                        "{path}: content changed (lockfile {want}, disk {got})"
+                    ));
+                }
+            }
+            Err(e) => drift.push(format!("{path}: cannot read ({e})")),
+        }
+    }
+    if drift.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("lockfile drift: {}", drift.join("; ")))
+    }
+}
+
 /// Extract `name -> value_salt` from a previously rendered lockfile so a
 /// re-lock reproduces the salted hashes byte-for-byte (LANG-I-001).
 /// Unparseable or saltless files yield an empty map.

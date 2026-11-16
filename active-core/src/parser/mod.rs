@@ -423,10 +423,10 @@ pub fn parse_file_with_trust(
     // bytes read above are the bytes verified, so there is no check/use
     // window; includes verify their own reads the same way.
     let label = path.to_string_lossy().into_owned();
-    let root_failure = |reason: String| {
+    let root_failure = |code: &str, reason: String| {
         vec![Diagnostic {
             severity: Severity::Error,
-            code: "E032".into(),
+            code: code.to_string(),
             message: reason,
             path: None,
             span: None,
@@ -435,9 +435,12 @@ pub fn parse_file_with_trust(
             file: Some(label.clone()),
         }]
     };
-    let sidecar = crate::sign::read_sidecar(path, &label).map_err(root_failure)?;
-    if let Err(reason) = crate::sign::verify_bytes(&label, src.as_bytes(), &sidecar, trusted) {
-        return Err(root_failure(reason));
+    let sidecar = crate::sign::read_sidecar(path, &label)
+        .map_err(|failure| root_failure(failure.code, failure.message))?;
+    if let Err(failure) =
+        crate::sign::verify_bytes(&label, &label, src.as_bytes(), &sidecar, trusted)
+    {
+        return Err(root_failure(failure.code, failure.message));
     }
     let mut options = options;
     options.enable_includes = true;
@@ -2302,12 +2305,17 @@ impl Parser {
         if let Some(keys) = &trust {
             let label = canonical.to_string_lossy().into_owned();
             match crate::sign::read_sidecar(&canonical, &label) {
-                Err(reason) => return fail(self, "E032", reason),
+                Err(failure) => {
+                    return fail(self, failure.code, failure.message);
+                }
                 Ok(sidecar) => {
-                    if let Err(reason) =
-                        crate::sign::verify_bytes(&label, src.as_bytes(), &sidecar, keys)
+                    // The identity is the include path as the document
+                    // spells it (LANG-I-002): a signed file copied to
+                    // another path fails E039.
+                    if let Err(failure) =
+                        crate::sign::verify_bytes(&label, &inc.path, src.as_bytes(), &sidecar, keys)
                     {
-                        return fail(self, "E032", reason);
+                        return fail(self, failure.code, failure.message);
                     }
                 }
             }

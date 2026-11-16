@@ -234,6 +234,11 @@ enum Commands {
         /// root). Before LANG-C-007 this covered includes only.
         #[arg(long)]
         trust_keys: Option<PathBuf>,
+        /// Verify a lockfile's recorded file hashes before evaluating;
+        /// fails closed when the main document or an include changed
+        /// (LANG-I-002c)
+        #[arg(long)]
+        lockfile: Option<PathBuf>,
         /// Select a profile by name, overriding the active_profile key
         #[arg(long)]
         profile: Option<String>,
@@ -747,6 +752,10 @@ enum Commands {
         out: PathBuf,
     },
     /// Sign a file into a detached `<file>.sig` sidecar
+    ///
+    /// The signature binds the identity path (and optional expiry), so it
+    /// verifies only for that path: use `--as` with the exact include
+    /// spelling the document will use.
     Sign {
         /// File to sign
         file: PathBuf,
@@ -756,8 +765,17 @@ enum Commands {
         /// Key id recorded in the sidecar
         #[arg(long)]
         kid: String,
+        /// Identity path recorded and signed (defaults to the file path)
+        #[arg(long = "as")]
+        identity: Option<String>,
+        /// Expiry date (YYYY-MM-DD); the sidecar fails closed after it
+        #[arg(long)]
+        expires: Option<String>,
     },
     /// Verify a file against its sidecar and a trusted-keys file
+    ///
+    /// Verification checks the signature, the path binding, expiry, and
+    /// revocation; the file path must be spelled as it was signed.
     Verify {
         /// File to verify
         file: PathBuf,
@@ -1723,6 +1741,7 @@ fn main() -> anyhow::Result<()> {
             resilient,
             allow_parent_escapes,
             trust_keys,
+            lockfile,
             profile,
             trace,
             materialise_blobs,
@@ -1734,6 +1753,13 @@ fn main() -> anyhow::Result<()> {
             reader_version,
         } => {
             let name = file.to_string_lossy().to_string();
+            // LANG-I-002c: lockfile drift fails closed before evaluation.
+            if let Some(lock) = lockfile.as_deref() {
+                let text = std::fs::read_to_string(lock)
+                    .map_err(|e| anyhow::anyhow!("cannot read lockfile {}: {e}", lock.display()))?;
+                active_core::provenance::verify_lockfile_files(&text)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+            }
             let trust = load_trust(&trust_keys)?;
             let module = match parse_input_or_diags(
                 &file,
@@ -3218,7 +3244,13 @@ fn main() -> anyhow::Result<()> {
                 public_path.display()
             );
         }
-        Commands::Sign { file, key, kid } => {
+        Commands::Sign {
+            file,
+            key,
+            kid,
+            identity,
+            expires,
+        } => {
             let label = file.to_string_lossy().to_string();
             let secret_text = std::fs::read_to_string(&key)
                 .map_err(|e| anyhow::anyhow!("cannot read key {}: {e}", key.display()))?;
@@ -3226,7 +3258,15 @@ fn main() -> anyhow::Result<()> {
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
             let bytes =
                 std::fs::read(&file).map_err(|e| anyhow::anyhow!("cannot read {label}: {e}"))?;
-            let sidecar = active_core::sign::sign_bytes(&secret, &kid, &bytes)
+            // LANG-I-002: the signature binds the identity path, so a
+            // signed overlay copied elsewhere fails verification.
+            let binding = active_core::sign::SignBinding {
+                path: identity.as_deref().unwrap_or(&label),
+                role: None,
+                version: None,
+                expires: expires.as_deref(),
+            };
+            let sidecar = active_core::sign::sign_bytes(&secret, &kid, &binding, &bytes)
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
             let sidecar_path = active_core::sign::sidecar_path_for(&file);
             std::fs::write(&sidecar_path, sidecar).map_err(|e| {

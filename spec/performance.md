@@ -42,19 +42,25 @@ profile; medians): `eval_wide_10k` 15.1 ms, `scale/eval_100k_paths`
 718.6 ms, `incremental_large_literals` 31.2 ms, `eval_10k_heap_peak`
 35.6 ms with the heap peak under the 64 MiB bound.
 
-Run with `cargo bench`; tracked continuously by the CodSpeed
-GitHub workflow (`.github/workflows/codspeed.yml`: `cargo codspeed
-build`, then the action with `mode: simulation` and
-`run: cargo codspeed run`), which fails on significant regression
-vs the base branch and on a benchmark that panics (LANG-K-002 removed
-the old `continue-on-error` that turned a wall-clock panic into a green
-run). OIDC authenticates the public repo; connecting the repo on
-codspeed.io is the one-time owner step. Plain `cargo bench` under the
-action does not work — the compat crate requires the runner environment
-and panics without it — so the workflow shape follows the CodSpeed Rust
-docs exactly; local runs fall back to stock criterion. `ci.yml` also
-compiles every bench target (`cargo bench --no-run`) so a broken bench
-cannot reach the tracking run.
+Run with `cargo bench`. Two gates apply (LANG-K-002/K-004):
+
+- **Hard panic gate, in `ci.yml` on Linux:** every bench target is
+  compiled (`cargo bench --workspace --no-run`) and then executed once in
+  test mode (`cargo bench -p <crate> --bench <target> -- --test` for
+  `active-core` eval/tooling and `active-lsp` analysis). Criterion exits
+  non-zero when a benchmark panics, and the gate does not depend on any
+  external service.
+- **Regression tracking, in `.github/workflows/codspeed.yml`:**
+  `cargo codspeed build`, then the action with `mode: simulation` and
+  `run: cargo codspeed run`. Once the repository is connected at
+  codspeed.io, the run fails on a significant regression against the base
+  branch. The connection is a one-time owner step; while it is missing
+  the action's upload returns `401 Unauthorized` and the step is marked
+  `continue-on-error` (see `BLOCKS.md`). OIDC (`id-token: write`)
+  authenticates the public repository. Plain `cargo bench` under the
+  action does not work — the compat crate requires the runner environment
+  and panics without it — so the workflow shape follows the CodSpeed Rust
+  docs exactly; local runs fall back to stock criterion.
 
 ## 2. Incremental evaluation (`Engine::evaluate_incremental`)
 

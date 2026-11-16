@@ -1711,16 +1711,35 @@ fn join_worker<T>(handle: std::thread::JoinHandle<T>, what: &str) -> anyhow::Res
     }
 }
 
-fn main() -> anyhow::Result<()> {
-    // LANG-H-007: Rust ignores SIGPIPE at startup, so a pipeline reader
-    // that closes early (`active eval ... | head -1`) turns the next
-    // stdout write into an EPIPE panic (exit 101) with a backtrace
-    // instead of the conventional silent death (141) every Unix shell
-    // expects. Restore the default disposition once, before any output.
-    #[cfg(unix)]
+/// LANG-H-007: Rust ignores `SIGPIPE` at startup, so a pipeline reader
+/// that closes early (`active eval ... | head -1`) turns the next stdout
+/// write into an EPIPE panic (exit 101) with a backtrace instead of the
+/// conventional silent death (141) every Unix shell expects.
+///
+/// The disposition is restored with `sigaction`, not `signal`: on macOS
+/// `signal()` reports success while writes still return `EPIPE` (Apple's
+/// libc keeps extra action state, so only a fully zeroed action with
+/// `SA_SIGINFO` clear restores the default). See the `sigpipe` crate,
+/// which exists for this exact platform difference.
+#[cfg(unix)]
+fn restore_default_sigpipe() {
+    // SAFETY: `action` is fully initialised before use (`zeroed` is the
+    // documented starting point for `sigaction`, `sigemptyset` writes the
+    // mask) and a disposition change is process-global by definition.
     unsafe {
-        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = libc::SIG_DFL;
+        libc::sigemptyset(&mut action.sa_mask);
+        action.sa_flags = 0;
+        libc::sigaction(libc::SIGPIPE, &action, std::ptr::null_mut());
     }
+}
+
+fn main() -> anyhow::Result<()> {
+    // Before any output: the first write after an early reader close must
+    // kill the filter, not panic.
+    #[cfg(unix)]
+    restore_default_sigpipe();
     // The derived clap command tree is large; parse on a thread with a
     // generous stack so debug builds on Windows cannot overflow while
     // building help or parsing arguments.

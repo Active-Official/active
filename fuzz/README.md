@@ -16,9 +16,9 @@ schedule repeats the same campaign.
 | `interpolation` | expression/sub-parser paths |
 | `formatter` | `parse` → `format` → re-parse, idempotence both styles |
 | `convert` | all four importers (JSON/YAML/TOML/JSON Schema) → parse → evaluate |
-| `secrets` | `secret()`, `secret.env()`, profiles, patches → redacted export; asserts no raw seed survives |
+| `secrets` | `secret()`, `secret.env()`, profiles, patches → redacted export; asserts structurally that no exported string value is or embeds a runtime seed (≥ 4 bytes by substring, exact match below that) and that no `Value::Secret` keeps payload bytes |
 | `sign` | sidecar TOML + bytes → `verify_bytes` (identity, expiry, revocation parsing) |
-| `formatter_eval` | format → re-parse → evaluate; asserts the value is unchanged |
+| `formatter_eval` | format → re-parse → evaluate; asserts the evaluated JSON *value* is unchanged (a format pass may reorder keys; text equality would reject a meaning-preserving format) |
 
 ## Seed corpora (`fuzz/corpus/<target>/`)
 
@@ -27,9 +27,11 @@ schedule repeats the same campaign.
 - `formatter/` 9 seeds: the canonical corpus
   (`tests/fmt/brace|indent/*.active`), the two examples, and all five
   committed formatter crash reproducers (`crash-*`).
-- `formatter_eval/` 4 seeds, `convert/` 4 seeds (one per importer),
-  `secrets/` 3 seeds (literal, env-bound, overlay), `sign/` 2 sidecar
-  shapes (unbound and expiring).
+- `formatter_eval/` 5 seeds (including the reduced key-order crash input
+  from the first CI campaign), `convert/` 4 seeds (one per importer),
+  `secrets/` 4 seeds (literal, env-bound, overlay, and the reduced
+  one-byte-seed crash input), `sign/` 2 sidecar shapes (unbound and
+  expiring).
 
 Seed files are text so a reviewer can read what the fuzzer starts from.
 
@@ -65,6 +67,12 @@ Measured smoke (2026-11-16, Docker `active-fuzz:1.88`, 20 s each, zero
 crashes): `convert` 8,186 runs, `secrets` 1,318, `sign` 39,558,
 `formatter_eval` 2,116 (peak RSS 137–434 MB). The CI campaign runs each
 target for 300 s.
+
+After the first CI campaign exposed two over-strict target assertions (a
+pretty-text JSON comparison and a raw-text seed scan), both targets were
+rewritten as described above and the reduced crash inputs joined their
+corpora; a 60 s re-run recorded `formatter_eval` 9,421 runs (peak RSS
+456 MB) and `secrets` 26,277 runs (peak RSS 442 MB), zero crashes.
 
 The Docker image `active-fuzz:1.88` carries the same toolchain used for
 the recorded campaigns (`docker run --rm -v "$PWD:/w" -w /w

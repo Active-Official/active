@@ -1138,7 +1138,8 @@ fn rb_063_no_unsafe_blocks_in_workspace() {
                 } else if path.extension().is_some_and(|x| x == "rs") {
                     files += 1;
                     let text = std::fs::read_to_string(&path).expect("readable");
-                    for (i, line) in text.lines().enumerate() {
+                    let lines: Vec<&str> = text.lines().collect();
+                    for (i, line) in lines.iter().enumerate() {
                         let code = line.split("//").next().unwrap_or("");
                         // Skip lines inside block comments crudely: only
                         // match `unsafe` at a token boundary followed by
@@ -1158,17 +1159,20 @@ fn rb_063_no_unsafe_blocks_in_workspace() {
                                 || tail.starts_with("extern")
                                 || tail.starts_with("mod")
                             {
-                                // LANG-H-007 exception: this one reviewed
-                                // block restores the default SIGPIPE
-                                // disposition at CLI startup. Rust has no
-                                // safe wrapper for `signal` without a new
-                                // dependency, and the block only calls it.
+                                // LANG-H-007 exception: `restore_default_sigpipe`
+                                // is the one reviewed unsafe block. It installs
+                                // the default SIGPIPE disposition with
+                                // `sigaction` (macOS keeps extra action state,
+                                // so a plain `signal` call can succeed while
+                                // writes still return EPIPE); Rust has no safe
+                                // wrapper and the block only calls libc.
+                                let enclosing_fn =
+                                    lines[..=i].iter().rev().find(|line| line.contains("fn "));
                                 let sigpipe_exception = path
                                     .ends_with(std::path::Path::new("active-cli/src/main.rs"))
-                                    && (line.contains("libc::signal(libc::SIGPIPE")
-                                        || text.lines().nth(i + 1).is_some_and(|next| {
-                                            next.contains("libc::signal(libc::SIGPIPE")
-                                        }));
+                                    && enclosing_fn.is_some_and(|line| {
+                                        line.contains("fn restore_default_sigpipe")
+                                    });
                                 if !sigpipe_exception {
                                     hits.push(format!(
                                         "{}:{}: {}",

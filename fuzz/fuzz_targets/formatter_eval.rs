@@ -1,6 +1,12 @@
 //! libFuzzer target: formatting is meaning-preserving (LANG-I-003).
 //! Formatting a parsed document, re-parsing it, and evaluating both must
-//! yield identical JSON; neither pass may panic.
+//! yield the same JSON value; neither pass may panic.
+//!
+//! The comparison is on the JSON *value*, not its pretty text: a format
+//! pass legitimately reorders table keys (formatting is allowed to
+//! choose key order), so text equality would reject a meaning-preserving
+//! transformation. `serde_json::Value` equality compares maps by
+//! content.
 
 #![no_main]
 
@@ -26,8 +32,8 @@ fuzz_target!(|data: &[u8]| {
     let after = engine.evaluate(&reparsed);
     if let (Ok((before, _)), Ok((after, _))) = (before, after) {
         assert_eq!(
-            active_core::convert::value_to_pretty_json(&before),
-            active_core::convert::value_to_pretty_json(&after),
+            active_core::convert::value_to_json(&before),
+            active_core::convert::value_to_json(&after),
             "formatting changed the evaluated value"
         );
     }

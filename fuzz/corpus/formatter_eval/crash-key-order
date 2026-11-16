@@ -1,0 +1,12 @@
+# Canonical indent-style corpus for the `ACTIVE fmt --check` CI gate.
+# Regenerate with: act)ve fmndent --write tests/fmt/indent/*.active
+app:
+  name = "svc"
+  port = 4040
+  limits:
+    cpu = "1"
+
+dpu = "1"
+
+database:
+  host = "db"

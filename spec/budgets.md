@@ -67,17 +67,19 @@ Design rules:
   The deadline therefore scales with the document: 122,980 ms for a
   maximum-size 4 MiB root, 4,900 ms for a 160 KB one. The rate is
   calibrated against the slowest shipped shape rather than the average:
-  table-dense documents (one enclosing-field-map snapshot per child
-  table) measure 18.6 ms/KiB unoptimized at 5,000 tables on the reference
-  machine, while flat keys, strings, arrays, and interpolation-heavy input
-  measure 0.7-2.0 ms/KiB. 30 ms/KiB is ~1.6x the slowest measured cost and
-  an order of magnitude above the rest, so a *linear* parse of a legal
-  document never trips the clock on any build, while a superlinear shape
-  fails within a small multiple of its legitimate cost. Raise the base
-  when you raise `max_input_bytes` for faster hardware expectations; the
-  per-KiB allowance follows the size automatically. Generated documents with tens
-  of thousands of tables exceed the shipped rate today; raise
-  `--parse-wall-ms` (or `ParseOptions::max_wall_ms`) for them.
+  table-dense documents measured 18.6 ms/KiB unoptimized at 5,000 tables
+  before P-001; with the shared enclosing field map (2026-11-16) the
+  slowest measured shape is about 1.7 ms/KiB unoptimized, the same band as
+  flat keys, strings, arrays, and interpolation-heavy input (0.7-2.0
+  ms/KiB). 30 ms/KiB is therefore about 17x the slowest measured cost, so a
+  *linear* parse of a legal document never trips the clock on any build,
+  while a superlinear shape fails within a small multiple of its legitimate
+  cost. Raise the base when you raise `max_input_bytes` for faster hardware
+  expectations; the per-KiB allowance follows the size automatically. A
+  document that still reads slowly for its size is a performance bug to
+  report, not a reason to raise the rate: the clock is the guard, and
+  `--parse-wall-ms` (or `ParseOptions::max_wall_ms`) is the escape hatch for
+  a machine measured slower than the reference.
 - **Clock-less targets have no parse clock.** `wasm32-unknown-unknown`
   and miri return no deadline (`Budget::wall_supported()` is false), and
   the size and node caps still bound the parse there. Termination never

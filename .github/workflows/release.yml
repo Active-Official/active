@@ -251,7 +251,7 @@ jobs:
         run: |
           cd dist
           shopt -s nullglob
-          files=(active-*.tar.gz active-*.zip active-lang-*.vsix active_wasm.wasm active-conformance.tar.gz active-sbom-*.cdx.json *.sig)
+          files=(active-*.tar.gz active-*.zip active-lang-*.vsix active_wasm.wasm active-shim.js active-shim.d.ts active-conformance.tar.gz active-docs.tar.gz active-sbom-*.cdx.json *.sig)
           sha256sum "${files[@]}" > SHA256SUMS
           cat SHA256SUMS
       - name: Attest build provenance
@@ -267,16 +267,11 @@ jobs:
             dist/active-*.zip
             dist/active-lang-*.vsix
             dist/active_wasm.wasm
+            dist/active-shim.js
+            dist/active-shim.d.ts
             dist/active-conformance.tar.gz
+            dist/active-docs.tar.gz
             dist/active-sbom-*.cdx.json
-      - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*
-          body: |
-            Active ${{ github.ref_name }} — see spec/packaging.md §6 for install
-            and verification (SHA256SUMS, build attestations, `.sig` sidecars
-            when the release key is set).
       - name: Provenance gate (LANG-J-001)
         # A published version must have a committed source: a clean tree at
         # the tag's commit whose workspace version equals the tag. 0.1.0
@@ -302,6 +297,14 @@ jobs:
             exit 1
           fi
           echo "provenance: $version at $head_sha"
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          body: |
+            Active ${{ github.ref_name }} — see spec/packaging.md §6 for install
+            and verification (SHA256SUMS, build attestations, `.sig` sidecars
+            when the release key is set).
       - name: Publish crates (fails loudly if unavailable)
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

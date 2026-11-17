@@ -45,7 +45,7 @@ impl Rng {
 }
 
 fn scalar(rng: &mut Rng) -> String {
-    match rng.below(12) {
+    match rng.below(13) {
         0 => format!("{}", rng.below(10_000)),
         1 => format!("-{}", rng.below(10_000)),
         2 => format!("{}.{}", rng.below(1000), rng.below(1000)),
@@ -57,7 +57,16 @@ fn scalar(rng: &mut Rng) -> String {
         8 => "2GiB".into(),
         9 => "\"plain text\"".into(),
         10 => "\"a\\\"b\\\\c\"".into(),
-        _ => format!("\"v{}\"", rng.below(100)),
+        11 => format!("\"v{}\"", rng.below(100)),
+        // Scaled and affine units: rendering the canonical dimension on the
+        // source amount changes the value (`2Cel` is 275.15 K), so these
+        // pin the source-spelling rule in the sweep as well (the fuzzer
+        // found it first).
+        _ => rng
+            .pick(&[
+                "2Cel", "-40Fahr", "0K", "2km", "2MHz", "5MB/s", "1kWh", "45deg", "2KiB", "250g",
+            ])
+            .to_string(),
     }
 }
 

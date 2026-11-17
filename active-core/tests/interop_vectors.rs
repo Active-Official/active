@@ -204,7 +204,7 @@ fn run_tier(case_dir: &str, expected_dir: &str, has_codec_expectation: bool, flo
 fn paired_vectors_match_the_shipped_export() {
     // Documents the published core (and therefore the pinned codec)
     // accepts today: scalars, containers, units, secrets, multiline text.
-    run_tier("cases", "expected", true, 5);
+    run_tier("cases", "expected", true, 6);
 }
 
 #[test]

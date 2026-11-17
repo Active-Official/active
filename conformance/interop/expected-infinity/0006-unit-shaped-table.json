@@ -1,0 +1,13 @@
+{
+  "active_mode": "data",
+  "looks_like_a_unit": {
+    "unit": "seconds",
+    "value": 5
+  },
+  "nested": {
+    "outer": {
+      "unit": "kibibytes",
+      "value": 1
+    }
+  }
+}

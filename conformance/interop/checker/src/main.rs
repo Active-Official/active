@@ -25,7 +25,6 @@
 //! cargo run --locked --manifest-path conformance/interop/checker/Cargo.toml
 //! ```
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value as Json;
@@ -37,7 +36,7 @@ const PINNED_CODEC: &str = "2.4.2";
 /// A silently empty vector set would let this checker exit green without
 /// running a single round-trip, so both tiers have a floor. Adding a vector
 /// is free; deleting the corpus is not.
-const MIN_PAIRED_CASES: usize = 5;
+const MIN_PAIRED_CASES: usize = 6;
 const MIN_STRUCTURAL_CASES: usize = 1;
 
 fn main() {
@@ -183,9 +182,7 @@ fn run_case(interop: &Path, case: &Path, expected_dir: &str, semantic: bool) -> 
 
     if semantic {
         let ours = read_json(&interop.join(expected_dir).join(format!("{name}.json")))?;
-        let left = normalize_ours(&ours).map_err(|e| format!("our export: {e}"))?;
-        let right = normalize_codec(&projected).map_err(|e| format!("codec projection: {e}"))?;
-        compare(&left, &right, "$").map_err(|e| format!("semantic mismatch: {e}"))?;
+        compare_ours(&ours, &projected, "$").map_err(|e| format!("semantic mismatch: {e}"))?;
     }
     Ok(())
 }
@@ -206,17 +203,6 @@ fn read_json(path: &Path) -> Result<Json, String> {
 // authored unit). Normalizing both to (base value, dimension) makes the
 // comparison exact where the layers agree and keeps the documented
 // difference visible instead of hiding it.
-
-#[derive(Debug, PartialEq)]
-enum Norm {
-    Null,
-    Bool(bool),
-    Number(Number),
-    Text(String),
-    Unit { base: f64, dim: &'static str },
-    Arr(Vec<Norm>),
-    Obj(BTreeMap<String, Norm>),
-}
 
 #[derive(Debug, PartialEq)]
 enum Number {
@@ -243,126 +229,57 @@ impl Number {
     }
 }
 
-fn normalize_ours(value: &Json) -> Result<Norm, String> {
-    if let Some(obj) = value.as_object() {
-        if obj.len() == 1 {
-            let (key, inner) = obj.iter().next().expect("one key");
-            match key.as_str() {
-                "$active.duration" => {
-                    let ms = inner
-                        .get("ms")
-                        .and_then(Number::from_json)
-                        .ok_or("duration without an integer `ms`")?;
-                    return Ok(Norm::Unit {
-                        base: ms.as_f64(),
-                        dim: "time",
-                    });
-                }
-                "$active.quantity" => {
-                    let unit = inner
-                        .get("unit")
-                        .and_then(Json::as_str)
-                        .ok_or("quantity without a unit")?;
-                    let amount = inner
-                        .get("value")
-                        .and_then(Number::from_json)
-                        .ok_or("quantity without a value")?;
-                    let factor = ours_unit(unit)?;
-                    return Ok(Norm::Unit {
-                        base: amount.as_f64() * factor,
-                        dim: dimension(unit),
-                    });
-                }
-                "$active.float" => {
-                    let text = inner.as_str().ok_or("float marker without text")?;
-                    let parsed: f64 = match text {
-                        "nan" => f64::NAN,
-                        "inf" => f64::INFINITY,
-                        "-inf" => f64::NEG_INFINITY,
-                        other => other.parse().map_err(|_| format!("bad float {other:?}"))?,
-                    };
-                    return Ok(Norm::Number(Number::Float(parsed)));
-                }
-                _ => {}
-            }
+/// Our evaluated unit wrapper as `(base value, dimension)`, when the value
+/// is one. Only the exporter's own wrappers qualify; a data table that
+/// happens to use the marker spelling is escaped at export (`\$active...`).
+fn our_unit_value(value: &Json) -> Result<Option<(f64, &'static str)>, String> {
+    let Some(obj) = value.as_object() else {
+        return Ok(None);
+    };
+    if obj.len() != 1 {
+        return Ok(None);
+    }
+    let (key, inner) = obj.iter().next().expect("one key");
+    match key.as_str() {
+        "$active.duration" => {
+            let ms = inner
+                .get("ms")
+                .and_then(Number::from_json)
+                .ok_or("duration without a numeric `ms`")?;
+            Ok(Some((ms.as_f64(), "time")))
         }
-        let mut map = BTreeMap::new();
-        for (key, item) in obj {
-            map.insert(key.clone(), normalize_ours(item)?);
+        "$active.quantity" => {
+            let unit = inner
+                .get("unit")
+                .and_then(Json::as_str)
+                .ok_or("quantity without a unit")?;
+            let amount = inner
+                .get("value")
+                .and_then(Number::from_json)
+                .ok_or("quantity without a value")?;
+            Ok(Some((amount.as_f64() * ours_unit(unit)?, dimension(unit))))
         }
-        return Ok(Norm::Obj(map));
+        "$active.float" => Err(
+            "non-finite float marker in a paired case: the codec projection has no \
+             equivalent, so prove that value structurally instead"
+                .into(),
+        ),
+        _ => Ok(None),
     }
-    if let Some(items) = value.as_array() {
-        return Ok(Norm::Arr(
-            items
-                .iter()
-                .map(normalize_ours)
-                .collect::<Result<Vec<_>, _>>()?,
-        ));
-    }
-    if let Some(text) = value.as_str() {
-        return Ok(Norm::Text(text.to_string()));
-    }
-    if let Some(flag) = value.as_bool() {
-        return Ok(Norm::Bool(flag));
-    }
-    if value.is_null() {
-        return Ok(Norm::Null);
-    }
-    let number = Number::from_json(value).ok_or_else(|| format!("unsupported JSON {value}"))?;
-    Ok(Norm::Number(number))
 }
 
-fn normalize_codec(value: &Json) -> Result<Norm, String> {
-    if let Some(obj) = value.as_object() {
-        if let Some(tag) = obj.get("$expr") {
-            return Err(format!(
-                "expression node ({} ) in a paired case is not a data value",
-                tag
-            ));
-        }
-        if obj.len() == 2 {
-            if let (Some(amount), Some(unit)) =
-                (obj.get("value"), obj.get("unit").and_then(Json::as_str))
-            {
-                // A unit projection is exactly `{value, unit}` with a
-                // recognized spelling. An authored table that happens to
-                // use those keys stays a table; only a recognized unit
-                // changes shape.
-                if let Ok(factor) = codec_unit(unit) {
-                    let amount = Number::from_json(amount).ok_or("unit value is not a number")?;
-                    return Ok(Norm::Unit {
-                        base: amount.as_f64() * factor,
-                        dim: dimension(unit),
-                    });
-                }
-            }
-        }
-        let mut map = BTreeMap::new();
-        for (key, item) in obj {
-            map.insert(key.clone(), normalize_codec(item)?);
-        }
-        return Ok(Norm::Obj(map));
+/// The codec's unit projection as `(base value, dimension)`, only for the
+/// exact `{value, unit}` shape with a recognized spelling. Anything else
+/// stays a plain JSON value, so an authored table cannot change shape.
+fn codec_unit_value(value: &Json) -> Option<(f64, &'static str)> {
+    let obj = value.as_object()?;
+    if obj.len() != 2 {
+        return None;
     }
-    if let Some(items) = value.as_array() {
-        return Ok(Norm::Arr(
-            items
-                .iter()
-                .map(normalize_codec)
-                .collect::<Result<Vec<_>, _>>()?,
-        ));
-    }
-    if let Some(text) = value.as_str() {
-        return Ok(Norm::Text(text.to_string()));
-    }
-    if let Some(flag) = value.as_bool() {
-        return Ok(Norm::Bool(flag));
-    }
-    if value.is_null() {
-        return Ok(Norm::Null);
-    }
-    let number = Number::from_json(value).ok_or_else(|| format!("unsupported JSON {value}"))?;
-    Ok(Norm::Number(number))
+    let unit = obj.get("unit")?.as_str()?;
+    let factor = codec_unit(unit).ok()?;
+    let amount = Number::from_json(obj.get("value")?)?;
+    Some((amount.as_f64() * factor, dimension(unit)))
 }
 
 /// Base-unit factor of this workspace's quantity suffix. Unknown suffixes
@@ -421,54 +338,99 @@ fn dimension(unit: &str) -> &'static str {
 // Comparison
 // ---------------------------------------------------------------------------
 
-fn compare(left: &Norm, right: &Norm, path: &str) -> Result<(), String> {
-    match (left, right) {
-        (Norm::Null, Norm::Null) => Ok(()),
-        (Norm::Bool(a), Norm::Bool(b)) if a == b => Ok(()),
-        (Norm::Text(a), Norm::Text(b)) if a == b => Ok(()),
-        (Norm::Number(a), Norm::Number(b)) if numbers_match(a, b) => Ok(()),
-        (Norm::Unit { base: a, dim: da }, Norm::Unit { base: b, dim: db }) => {
-            if da != db {
-                return Err(format!("{path}: dimension {da} vs {db}"));
+fn compare_ours(ours: &Json, codec: &Json, path: &str) -> Result<(), String> {
+    // A unit wrapper on our side must be a unit on the codec side.
+    if let Some((base, dim)) = our_unit_value(ours).map_err(|e| format!("{path}: {e}"))? {
+        let (codec_base, codec_dim) = codec_unit_value(codec).ok_or_else(|| {
+            format!("{path}: our {dim} value has no codec unit projection: {codec}")
+        })?;
+        if dim != codec_dim {
+            return Err(format!("{path}: dimension {dim} vs {codec_dim}"));
+        }
+        return same_float(base, codec_base, path);
+    }
+    // An evaluated number normally stays a number. The one documented
+    // exception is byte-ness, erased at evaluation (spec/secrets.md §2),
+    // so a byte literal is an integer here and a byte unit there.
+    if let Some(number) = Number::from_json(ours) {
+        if let Some((base, dim)) = codec_unit_value(codec) {
+            if dim != "bytes" {
+                return Err(format!("{path}: number vs {dim} unit"));
             }
-            if !floats_match(*a, *b) {
-                return Err(format!("{path}: {a} vs {b}"));
-            }
+            return same_float(number.as_f64(), base, path);
+        }
+        let other = Number::from_json(codec).ok_or_else(|| format!("{path}: number vs {codec}"))?;
+        return if numbers_match(&number, &other) {
             Ok(())
-        }
-        // Byte-ness is erased at evaluation (spec/secrets.md §2: bytes are
-        // orthogonal to taint and carry no value-kind), so this workspace
-        // exports a byte literal as an integer while the codec keeps the
-        // authored unit. The magnitudes must still agree.
-        (Norm::Number(a), Norm::Unit { base, dim: "bytes" }) => {
-            if floats_match(a.as_f64(), *base) {
-                Ok(())
-            } else {
-                Err(format!("{path}: {a:?} vs {base} bytes"))
-            }
-        }
-        (Norm::Arr(a), Norm::Arr(b)) => {
-            if a.len() != b.len() {
-                return Err(format!("{path}: array length {} vs {}", a.len(), b.len()));
-            }
-            for (index, (x, y)) in a.iter().zip(b).enumerate() {
-                compare(x, y, &format!("{path}[{index}]"))?;
-            }
+        } else {
+            Err(format!("{path}: {number:?} vs {other:?}"))
+        };
+    }
+    if ours.is_null() {
+        return if codec.is_null() {
             Ok(())
-        }
-        (Norm::Obj(a), Norm::Obj(b)) => {
-            if a.len() != b.len() {
-                return Err(format!("{path}: {} keys vs {}", a.len(), b.len()));
-            }
-            for (key, x) in a {
-                let y = b
-                    .get(key)
-                    .ok_or_else(|| format!("{path}.{key}: missing on the codec side"))?;
-                compare(x, y, &format!("{path}.{key}"))?;
-            }
+        } else {
+            Err(format!("{path}: null vs {codec}"))
+        };
+    }
+    if let Some(flag) = ours.as_bool() {
+        return if codec.as_bool() == Some(flag) {
             Ok(())
+        } else {
+            Err(format!("{path}: {flag} vs {codec}"))
+        };
+    }
+    if let Some(text) = ours.as_str() {
+        return if codec.as_str() == Some(text) {
+            Ok(())
+        } else {
+            Err(format!("{path}: {text:?} vs {codec}"))
+        };
+    }
+    if let Some(items) = ours.as_array() {
+        let codec_items = codec
+            .as_array()
+            .ok_or_else(|| format!("{path}: array vs {codec}"))?;
+        if items.len() != codec_items.len() {
+            return Err(format!(
+                "{path}: array length {} vs {}",
+                items.len(),
+                codec_items.len()
+            ));
         }
-        (a, b) => Err(format!("{path}: {a:?} vs {b:?}")),
+        for (index, (left, right)) in items.iter().zip(codec_items).enumerate() {
+            compare_ours(left, right, &format!("{path}[{index}]"))?;
+        }
+        return Ok(());
+    }
+    if let Some(map) = ours.as_object() {
+        if codec.get("$expr").is_some() {
+            return Err(format!(
+                "{path}: the codec rendered an expression node where our export has a data value"
+            ));
+        }
+        let codec_map = codec
+            .as_object()
+            .ok_or_else(|| format!("{path}: object vs {codec}"))?;
+        if map.len() != codec_map.len() {
+            return Err(format!("{path}: {} keys vs {}", map.len(), codec_map.len()));
+        }
+        for (key, item) in map {
+            let other = codec_map
+                .get(key)
+                .ok_or_else(|| format!("{path}.{key}: missing on the codec side"))?;
+            compare_ours(item, other, &format!("{path}.{key}"))?;
+        }
+        return Ok(());
+    }
+    Err(format!("{path}: unsupported JSON {ours}"))
+}
+
+fn same_float(a: f64, b: f64, path: &str) -> Result<(), String> {
+    if floats_match(a, b) {
+        Ok(())
+    } else {
+        Err(format!("{path}: {a} vs {b}"))
     }
 }
 

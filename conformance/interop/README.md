@@ -62,4 +62,6 @@ The layers are different by design:
 The checker normalizes both to `(base value, dimension)` before comparing, so
 a rescale or reorder on either side fails instead of passing because the
 spelling changed. Unknown units fail loudly; a new unit family must be added
-to the checker's table deliberately.
+to the checker's table deliberately. The comparison is driven by this
+workspace's side: a data table that happens to use `value` and `unit` keys is
+compared as a table on both sides (`0006-unit-shaped-table` pins that).

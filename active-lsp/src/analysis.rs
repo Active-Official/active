@@ -294,23 +294,32 @@ mod linearity_tests {
 
     #[test]
     fn publishing_many_diagnostics_builds_one_line_index() {
-        // 20k duplicate keys heal to W011 warnings, capped at 1024 records.
-        // The text is what made the old conversion quadratic: it re-split
-        // the whole buffer per diagnostic (~2.8 s before the index). The
-        // index build count is the invariant; no clock is involved.
+        // 20k duplicate keys heal to W011 warnings, capped at 1024 records
+        // plus the single W014 truncation notice (parser contract: the
+        // notice takes the slot just trimmed, so the published list is at
+        // most cap + 1). The text is what made the old conversion
+        // quadratic: it re-split the whole buffer per diagnostic (~2.8 s
+        // before the index). The index build count is the invariant; no
+        // clock is involved.
         let mut src = String::new();
         for _ in 0..20_000 {
             src.push_str("k = 1\n");
         }
-        let uri = Url::parse("file:///many-diagnostics.active").expect("uri");
+        // A real file path: on Windows the literal `file:///many-...` URI
+        // has no drive letter, so `to_file_path()` fails and the memory
+        // parse path runs with a different cap accounting. Building the
+        // URI from a temp path exercises the same path on every platform.
+        let uri = Url::from_file_path(std::env::temp_dir().join("many-diagnostics.active"))
+            .expect("file uri");
         let doc = open_doc(uri, src, 1, None);
         LINE_INDEX_BUILDS.store(0, Ordering::SeqCst);
         let groups = diagnostics_by_file(&doc, &|_: &str| None);
         let builds = LINE_INDEX_BUILDS.load(Ordering::SeqCst);
         let published: usize = groups.iter().map(|(_, diags)| diags.len()).sum();
         assert!(
-            (1_000..=1_024).contains(&published),
-            "duplicates must publish up to the diagnostic cap, got {published}"
+            (1_000..=1_025).contains(&published),
+            "duplicates must publish up to the diagnostic cap plus one truncation \
+             notice, got {published}"
         );
         assert_eq!(
             builds, 1,

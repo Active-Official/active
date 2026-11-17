@@ -83,7 +83,10 @@ Every message constructor was audited for evaluated-value echo:
   the structural redactor: a material actual (any kind) becomes the
   marker, and a string containing a known secret is redacted in
   place. W005 (default fills) carries the key path only — filled
-  values are never quoted.
+  values are never quoted. T004 names the missing field and a
+  resolvable target, but the message and the structured path are still
+  redacted segment by segment: a structural name whose text is material
+  renders the marker (the author still has the source and schema).
 - S001/S002/S003: structural messages, no values. S004 carries no
   positions by design (positions could point at secret data).
 - E019: patch and annotation paths only.

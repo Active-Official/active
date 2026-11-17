@@ -197,6 +197,21 @@ fn the_blob_query_redacts_a_short_material_key_segment() {
 }
 
 #[test]
+fn inspect_errors_redact_a_material_path_segment() {
+    let module = parse(
+        "x = secret(\"x\")\nv = { outer = { x = 1 } }\n",
+        "inspect-err",
+    )
+    .expect("parse");
+    let engine = Engine::hermetic();
+    let (value, _, _) = engine.evaluate_with_seeds(&module).expect("evaluates");
+    let error = active_core::convert::inspect_path(&module, &value, "v.outer.x.missing")
+        .expect_err("missing path");
+    assert!(!error.contains("outer.x"), "inspect leaked a path: {error}");
+    assert!(error.contains("***SECRET***"), "{error}");
+}
+
+#[test]
 fn structural_material_never_reaches_exports_or_the_content_hash() {
     use std::collections::HashMap;
     // A plain env read used as a secret locator, its aliases, a

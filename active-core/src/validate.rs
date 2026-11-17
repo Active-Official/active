@@ -129,10 +129,8 @@ impl Engine {
             );
             let runtime = runtime_secret_redactor(values, &profile);
             for diagnostic in &mut diagnostics {
-                // T004 names structural schema paths; keep them
-                // readable so the diagnostic can be acted on.
-                if diagnostic.code == "T004" {
-                    continue;
+                if let Some(path) = &diagnostic.path {
+                    diagnostic.path = Some(profile.redact_path(path));
                 }
                 if let Some(message) = profile.redact_authored_text(&diagnostic.message) {
                     diagnostic.message = message;

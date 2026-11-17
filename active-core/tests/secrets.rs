@@ -2833,7 +2833,8 @@ fn inspect_does_not_echo_a_non_numeric_bound() {
 #[test]
 fn t004_names_a_resolvable_requires_target() {
     // Review 69: the spec requires naming the target when it resolves.
-    let src = "s = secret(\"tls\")\nschema = { tls = Bool, cert = String(requires = \"tls\") }\ntls = true\n";
+    // The secret here is unrelated to the target, so redaction leaves it.
+    let src = "s = secret(\"unrelated-s3cr3t\")\nschema = { tls = Bool, cert = String(requires = \"tls\") }\ntls = true\n";
     let module = parse(src, "requires-t004").expect("parse");
     let diags = match Engine::hermetic().evaluate(&module) {
         Ok((_, diags)) => diags,
@@ -2842,6 +2843,29 @@ fn t004_names_a_resolvable_requires_target() {
     };
     let t004 = diags.iter().find(|d| d.code == "T004").expect("T004");
     assert!(t004.message.contains("'tls'"), "{}", t004.message);
+}
+
+#[test]
+fn t004_redacts_a_material_target_name() {
+    // Review EF/G-r17: a structural name is still material when its text
+    // equals a secret; the message and the structured path must not
+    // publish it.
+    let src = "s = secret(\"tls\")\nschema = { tls = Bool, cert = String(requires = \"tls\") }\ntls = true\n";
+    let module = parse(src, "requires-t004-material").expect("parse");
+    let diags = match Engine::hermetic().evaluate(&module) {
+        Ok((_, diags)) => diags,
+        Err(EvalError::ValidationFailed { diagnostics }) => diagnostics,
+        Err(error) => panic!("{error:?}"),
+    };
+    let t004 = diags.iter().find(|d| d.code == "T004").expect("T004");
+    assert!(
+        !t004.message.contains("'tls'"),
+        "the message leaked a material name: {}",
+        t004.message
+    );
+    if let Some(path) = &t004.path {
+        assert!(!path.contains("tls"), "the path leaked a segment: {path}");
+    }
 }
 
 #[test]

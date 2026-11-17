@@ -73,10 +73,15 @@ pub fn inspect_path_with_profile_env(
     env: Option<&std::collections::HashMap<String, String>>,
     seeds: Option<&crate::secret::SecretRedactor>,
 ) -> Result<JsonValue, String> {
-    let cone = crate::convert::project_path(root, path)
-        .map_err(|why| format!("cannot inspect `{path}`: {why}"))?;
+    // Build the profile first: the request path itself is display text
+    // and may contain a material key, including in an error message.
     let profile = SecretProfile::with_context(module, override_profile, env, seeds);
     profile.begin_redaction_pass();
+    let shown_path = profile.redact_path(path);
+    let cone = crate::convert::project_path(root, path).map_err(|why| {
+        let why = profile.redact_authored_text(&why).unwrap_or(why);
+        format!("cannot inspect `{shown_path}`: {why}")
+    })?;
     // Runtime secrets live in the evaluated tree, not in the profile's
     // authored literals; seed both so a copy in any inspected value is
     // redacted.

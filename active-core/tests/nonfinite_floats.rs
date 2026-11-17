@@ -128,3 +128,82 @@ fn importing_a_non_finite_wrapper_is_loud_and_never_silent_null() {
     assert!(!source.contains("W010"), "{source}");
     assert!(!diags.iter().any(|d| d.code == "W010"), "{diags:?}");
 }
+
+/// A finite but near-maximal float literal.
+fn huge() -> String {
+    format!("{}.0", "9".repeat(307))
+}
+
+/// A tiny positive float literal (~1e-321): subnormal, still representable.
+fn tiny() -> String {
+    format!("0.{}1", "0".repeat(320))
+}
+
+#[test]
+fn float_division_overflow_is_a_typed_error() {
+    // Finite / finite can still overflow: the result must be T001, not an
+    // `inf` that the exporter would turn into null (LANG-B-901; the
+    // division arms used to return the raw f64).
+    let src = format!("a = {}\nt = {}\nx = a / t\n", huge(), tiny());
+    let module = parse(&src, "floats").expect("parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail");
+    assert_eq!(err.code(), "T001");
+    assert!(format!("{err}").contains("overflow"), "{err}");
+}
+
+#[test]
+fn mixed_division_overflow_is_a_typed_error() {
+    // Int / Float promotes to a float and carries the same guard.
+    let src = format!("t = {}\nx = 1 / t\n", tiny());
+    let module = parse(&src, "floats").expect("parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail");
+    assert_eq!(err.code(), "T001");
+    assert!(format!("{err}").contains("overflow"), "{err}");
+}
+
+#[test]
+fn quantity_normalization_overflow_is_a_typed_error() {
+    // A finite literal magnitude scaled by a unit prefix can overflow at
+    // normalization (GHz multiplies by 1e9). That must be T001 too, not a
+    // quantity whose exported value is null (LANG-B-901).
+    let near_max = format!("{}.0", "9".repeat(308));
+    let src = format!("q = {near_max}GHz\n");
+    let module = parse(&src, "floats").expect("parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail");
+    assert_eq!(err.code(), "T001");
+    assert!(format!("{err}").contains("overflow"), "{err}");
+}
+
+#[test]
+fn quantity_arithmetic_overflow_is_a_typed_error() {
+    // Quantities carry f64 magnitudes; scalar multiplication and same-unit
+    // addition must refuse an overflowing result too (LANG-B-901). `Hz` has
+    // no scale factor, so the literal itself stays finite and the overflow
+    // happens in the arithmetic arm under test.
+    let near_max = format!("{}.0", "9".repeat(308));
+    let src = format!("q = {near_max}Hz\nx = q * 10\n");
+    let module = parse(&src, "floats").expect("parse");
+    let err = Engine::new()
+        .evaluate(&module)
+        .expect_err("scalar mul must fail");
+    assert_eq!(err.code(), "T001");
+    assert!(format!("{err}").contains("overflow"), "{err}");
+
+    let src = format!("q = {near_max}Hz\nx = q + q\n");
+    let module = parse(&src, "floats").expect("parse");
+    let err = Engine::new()
+        .evaluate(&module)
+        .expect_err("addition must fail");
+    assert_eq!(err.code(), "T001");
+    assert!(format!("{err}").contains("overflow"), "{err}");
+}
+
+#[test]
+fn quantity_division_overflow_is_a_typed_error() {
+    let near_max = format!("{}.0", "9".repeat(308));
+    let src = format!("q = {near_max}Hz\nt = {}\nx = q / t\n", tiny());
+    let module = parse(&src, "floats").expect("parse");
+    let err = Engine::new().evaluate(&module).expect_err("must fail");
+    assert_eq!(err.code(), "T001");
+    assert!(format!("{err}").contains("overflow"), "{err}");
+}

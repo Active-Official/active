@@ -112,16 +112,50 @@ fn node_signature(module: &Module, id: crate::ir::NodeId) -> String {
     }
 }
 
+/// An exact constraint literal. Integers stay integers: casting them to
+/// f64 collapses adjacent bounds above 2^53, so `9007199254740992` and
+/// `9007199254740993` compared equal and a tightening went unreported
+/// (LANG-B-004).
+#[derive(Clone, Copy, PartialEq)]
+enum Bound {
+    Int(i64),
+    Float(f64),
+}
+
+impl Bound {
+    /// Total order between exact bounds; `None` only for NaN.
+    fn order(self, other: Bound) -> Option<std::cmp::Ordering> {
+        use std::cmp::Ordering;
+        match (self, other) {
+            (Bound::Int(a), Bound::Int(b)) => Some(a.cmp(&b)),
+            (Bound::Float(a), Bound::Float(b)) => a.partial_cmp(&b),
+            (Bound::Int(a), Bound::Float(b)) => crate::eval::cmp_int_float(a, b),
+            (Bound::Float(a), Bound::Int(b)) => {
+                crate::eval::cmp_int_float(b, a).map(Ordering::reverse)
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for Bound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Bound::Int(i) => write!(f, "{i}"),
+            Bound::Float(x) => write!(f, "{x}"),
+        }
+    }
+}
+
 /// Static constraint set for one schema field. Direction matters: raising
 /// a minimum (or lowering a maximum) can only invalidate documents that
 /// validated before, while the reverse only widens the accepted set
 /// (LANG-B-004).
 #[derive(Clone, Default, PartialEq)]
 struct Constraints {
-    min: Option<f64>,
-    max: Option<f64>,
-    min_len: Option<f64>,
-    max_len: Option<f64>,
+    min: Option<Bound>,
+    max: Option<Bound>,
+    min_len: Option<Bound>,
+    max_len: Option<Bound>,
     pattern: Option<String>,
     format: Option<String>,
     members: Option<Vec<String>>,
@@ -130,10 +164,10 @@ struct Constraints {
 }
 
 fn constraints_of(module: &Module, field: &SchemaField) -> Constraints {
-    fn number(module: &Module, id: Option<crate::ir::NodeId>) -> (Option<f64>, bool) {
+    fn number(module: &Module, id: Option<crate::ir::NodeId>) -> (Option<Bound>, bool) {
         match id.and_then(|n| module.get(n)) {
-            Some(Node::Literal(crate::ir::Value::Int(n))) => (Some(*n as f64), false),
-            Some(Node::Literal(crate::ir::Value::Float(f))) => (Some(*f), false),
+            Some(Node::Literal(crate::ir::Value::Int(n))) => (Some(Bound::Int(*n)), false),
+            Some(Node::Literal(crate::ir::Value::Float(f))) => (Some(Bound::Float(*f)), false),
             Some(_) => (None, true),
             None => (None, false),
         }
@@ -176,14 +210,14 @@ fn tightened(old: &Constraints, new: &Constraints) -> bool {
     if old.has_computed != new.has_computed {
         return true;
     }
-    let raises = |o: Option<f64>, n: Option<f64>| match (o, n) {
+    let raises = |o: Option<Bound>, n: Option<Bound>| match (o, n) {
         (None, Some(_)) => true,
-        (Some(o), Some(n)) => n > o,
+        (Some(o), Some(n)) => n.order(o) == Some(std::cmp::Ordering::Greater),
         _ => false,
     };
-    let lowers = |o: Option<f64>, n: Option<f64>| match (o, n) {
+    let lowers = |o: Option<Bound>, n: Option<Bound>| match (o, n) {
         (None, Some(_)) => true,
-        (Some(o), Some(n)) => n < o,
+        (Some(o), Some(n)) => n.order(o) == Some(std::cmp::Ordering::Less),
         _ => false,
     };
     if raises(old.min, new.min)
@@ -198,7 +232,10 @@ fn tightened(old: &Constraints, new: &Constraints) -> bool {
         return old.pattern != new.pattern || old.format != new.format;
     }
     match (&old.members, &new.members) {
-        (Some(o), Some(n)) => n.iter().any(|m| !o.contains(m)),
+        // Removing a member narrows the accepted set: an old document using
+        // it is rejected by the new schema. Adding one only widens
+        // (LANG-B-004: the comparison used to run the other way).
+        (Some(o), Some(n)) => o.iter().any(|m| !n.contains(m)),
         (None, Some(_)) => true,
         _ => false,
     }
@@ -462,14 +499,28 @@ pub fn compare(old: &Module, new: &Module) -> Result<Vec<CompatFinding>, String>
             Some(old_field) => {
                 let path = &new_field.path;
                 if old_field.signature != new_field.signature {
-                    findings.push(CompatFinding::error(
-                        code::TYPE_CHANGED,
-                        path,
-                        format!(
-                            "field '{path}' type changed from {} to {}",
-                            old_field.signature, new_field.signature
-                        ),
-                    ));
+                    // An enum member-set change is breaking only when it
+                    // removes a member; adding one keeps every old value
+                    // valid (LANG-B-004). Other type changes stay breaking.
+                    let enum_only_widened = match (
+                        &old_field.constraints.members,
+                        &new_field.constraints.members,
+                    ) {
+                        (Some(old_members), Some(new_members)) => old_members
+                            .iter()
+                            .all(|member| new_members.contains(member)),
+                        _ => false,
+                    };
+                    if !enum_only_widened {
+                        findings.push(CompatFinding::error(
+                            code::TYPE_CHANGED,
+                            path,
+                            format!(
+                                "field '{path}' type changed from {} to {}",
+                                old_field.signature, new_field.signature
+                            ),
+                        ));
+                    }
                 }
                 // These checks are INDEPENDENT (LANG-B-029): the old
                 // else-if chain reported only the first change and hid

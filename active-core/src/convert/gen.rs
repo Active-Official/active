@@ -331,19 +331,23 @@ fn literal_number(module: &Module, id: Option<NodeId>) -> Option<JsonValue> {
         }
         Some(Node::Literal(crate::ir::Value::DurationMs(ms))) => Some(JsonValue::from(*ms)),
         // A bound written with a unit (1s, 500ms) parses as a Quantity
-        // node; render its canonical milliseconds.
+        // node; render its canonical milliseconds, or canonical bytes for
+        // a byte unit (1KiB) - both are what validation compares against.
         Some(Node::Quantity { value, unit }) => match module.get(*value) {
-            Some(Node::Literal(crate::ir::Value::Int(n))) => {
-                unit.normalize_time_to_ms(*n as f64).map(JsonValue::from)
-            }
-            Some(Node::Literal(crate::ir::Value::Float(f))) => {
-                unit.normalize_time_to_ms(*f).map(JsonValue::from)
-            }
+            Some(Node::Literal(crate::ir::Value::Int(n))) => unit
+                .normalize_time_to_ms(*n as f64)
+                .map(JsonValue::from)
+                .or_else(|| unit.normalize_to_bytes(*n as f64).map(JsonValue::from)),
+            Some(Node::Literal(crate::ir::Value::Float(f))) => unit
+                .normalize_time_to_ms(*f)
+                .map(JsonValue::from)
+                .or_else(|| unit.normalize_to_bytes(*f).map(JsonValue::from)),
             _ => None,
         },
-        Some(Node::Literal(crate::ir::Value::Quantity(n, unit))) => {
-            unit.normalize_time_to_ms(*n).map(JsonValue::from)
-        }
+        Some(Node::Literal(crate::ir::Value::Quantity(n, unit))) => unit
+            .normalize_time_to_ms(*n)
+            .map(JsonValue::from)
+            .or_else(|| unit.normalize_to_bytes(*n).map(JsonValue::from)),
         _ => None,
     }
 }
@@ -930,6 +934,18 @@ impl TsGen<'_> {
                     out.push_str(&format!(".min({min})"));
                 }
                 if let Some(max) = literal_float(self.module, field.max) {
+                    out.push_str(&format!(".max({max})"));
+                }
+            }
+            // Durations and bytes are exported as integer magnitudes
+            // (canonical ms / bytes), so their bounds belong on the zod
+            // number too - the JSON Schema emitter already carries them
+            // (LANG-B-005; the TS target used to drop them).
+            ActiveType::Duration | ActiveType::Bytes => {
+                if let Some(min) = literal_number(self.module, field.min) {
+                    out.push_str(&format!(".min({min})"));
+                }
+                if let Some(max) = literal_number(self.module, field.max) {
                     out.push_str(&format!(".max({max})"));
                 }
             }

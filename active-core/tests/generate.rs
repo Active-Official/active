@@ -421,6 +421,26 @@ fn zod_schemas_mirror_constraints() {
 }
 
 #[test]
+fn zod_carries_integer_duration_and_byte_bounds() {
+    // LANG-B-005: the JSON Schema emitter carried the bounds but the zod
+    // target dropped them entirely for Duration and Bytes (and the unit
+    // spellings 1s / 1KiB must normalize to the exported magnitudes).
+    let module = parse(
+        "schema = { n = Int(min = 1, max = 9), d = Duration(min = 1s, max = 2s), b = Bytes(min = 1KiB, max = 2KiB) }\n",
+        "generate",
+    )
+    .expect("schema must parse");
+    let ts = schema_to_typescript(&module, "Config").expect("ts");
+    for probe in [
+        "n: z.number().int().min(1).max(9)",
+        "d: z.number().int().min(1000).max(2000)",
+        "b: z.number().int().min(1024).max(2048)",
+    ] {
+        assert!(ts.contains(probe), "missing {probe}:\n{ts}");
+    }
+}
+
+#[test]
 fn go_tags_skip_bool_required_and_ambiguous_oneof() {
     // validator `required` means non-zero, so Bool fields must not carry
     // it; members with spaces would make oneof ambiguous.

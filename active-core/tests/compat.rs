@@ -418,3 +418,41 @@ fn computed_blob_bounds_are_reported_as_incomparable() {
         "{findings:?}"
     );
 }
+
+#[test]
+fn enum_narrowing_is_breaking_and_widening_is_compatible() {
+    // LANG-B-004: the member check ran the wrong way, flagging widening as
+    // breaking and missing a removed member (a false all-clear).
+    let old = "schema = { e = Enum(\"a\", \"b\") }\ne = \"a\"\n";
+    let narrowed = "schema = { e = Enum(\"a\") }\ne = \"a\"\n";
+    let findings = compare_docs(old, narrowed);
+    assert!(
+        findings.iter().any(|f| f.path == "e" && f.is_breaking()),
+        "removing an enum member must be breaking: {findings:?}"
+    );
+
+    let widened = "schema = { e = Enum(\"a\", \"b\", \"c\") }\ne = \"a\"\n";
+    let findings = compare_docs(old, widened);
+    assert!(
+        !findings.iter().any(|f| f.path == "e" && f.is_breaking()),
+        "adding an enum member only widens the set: {findings:?}"
+    );
+}
+
+#[test]
+fn integer_bounds_above_two_to_the_53_compare_exactly() {
+    // LANG-B-004: comparing bounds through f64 collapsed adjacent integers
+    // above 2^53, so raising a minimum by one was reported as no change.
+    let old = "schema = { n = Int(min = 9007199254740992) }\nn = 0\n";
+    let tightened = "schema = { n = Int(min = 9007199254740993) }\nn = 0\n";
+    let findings = compare_docs(old, tightened);
+    assert!(
+        findings.iter().any(|f| f.path == "n" && f.is_breaking()),
+        "a raised integer minimum must be breaking: {findings:?}"
+    );
+    let widened = compare_docs(tightened, old);
+    assert!(
+        !widened.iter().any(|f| f.path == "n" && f.is_breaking()),
+        "lowering it again is widening: {widened:?}"
+    );
+}

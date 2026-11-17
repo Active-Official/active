@@ -4178,8 +4178,12 @@ fn compatibility_redacts_an_environment_equal_enum_member() {
     );
     let out = active()
         .arg("compatibility")
-        .arg(&old)
+        // Compare in the NARROWING direction (new -> old drops "admin"):
+        // adding a member is compatible after LANG-B-004's direction fix,
+        // so only a narrowing produces the finding this test inspects for
+        // redaction.
         .arg(&new)
+        .arg(&old)
         .env("ACTIVE_COMPAT", value)
         .output()
         .expect("run active");

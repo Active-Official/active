@@ -3299,7 +3299,7 @@ fn normalize_quantity(v: &Value, unit: &Unit) -> Result<Value, String> {
     // values are NOT clamped: negative and over-100 percents are meaningful
     // (spec Ch. 4 §4.1).
     if *unit == Unit::Percent {
-        return Ok(Value::Quantity(num / 100.0, Unit::Percent));
+        return quantity_result(num / 100.0, Unit::Percent);
     }
     // Frequency canonicalizes to f64 hertz (fractional Hz are real).
     // Negative frequencies clamp at zero, mirroring time canonicalization
@@ -3313,7 +3313,7 @@ fn normalize_quantity(v: &Value, unit: &Unit) -> Result<Value, String> {
         _ => None,
     };
     if let Some(factor) = hz_factor {
-        return Ok(Value::Quantity((num * factor).max(0.0), Unit::Hertz));
+        return quantity_result((num * factor).max(0.0), Unit::Hertz);
     }
     // Bits canonicalize to f64 bits; data rates to f64 bits/sec with MB/s
     // converting through megabytes (1 MB/s = 8,000,000 bps), so cross-spelled
@@ -3336,7 +3336,7 @@ fn normalize_quantity(v: &Value, unit: &Unit) -> Result<Value, String> {
         } else {
             Unit::Bits
         };
-        return Ok(Value::Quantity((num * factor).max(0.0), canonical));
+        return quantity_result((num * factor).max(0.0), canonical);
     }
     // AI-age units: token counts, inference throughput, compute. Longest-match
     // prefix composition is inherent (the lexer consumes the maximal run and
@@ -3352,7 +3352,7 @@ fn normalize_quantity(v: &Value, unit: &Unit) -> Result<Value, String> {
         _ => None,
     };
     if let Some((factor, canonical)) = ai_factor {
-        return Ok(Value::Quantity((num * factor).max(0.0), canonical));
+        return quantity_result((num * factor).max(0.0), canonical);
     }
     // Domain SI units: pressure (Pa; bar = 1e5, psi = 6894.757293168),
     // electrical (V/A/W), energy (J; kWh = 3.6e6), force (N). Each
@@ -3370,7 +3370,7 @@ fn normalize_quantity(v: &Value, unit: &Unit) -> Result<Value, String> {
         _ => None,
     };
     if let Some((factor, canonical)) = si_factor {
-        return Ok(Value::Quantity((num * factor).max(0.0), canonical));
+        return quantity_result((num * factor).max(0.0), canonical);
     }
     // Angles (deg→rad), rotation (retained rpm), length (m), mass (kg).
     let mech_factor = match unit {
@@ -3384,24 +3384,21 @@ fn normalize_quantity(v: &Value, unit: &Unit) -> Result<Value, String> {
         _ => None,
     };
     if let Some((factor, canonical)) = mech_factor {
-        return Ok(Value::Quantity((num * factor).max(0.0), canonical));
+        return quantity_result((num * factor).max(0.0), canonical);
     }
     // Temperature canonicalizes to kelvin through affine transforms;
     // below-absolute-zero literals clamp at 0 K. Decibels are retained
     // (log scale, no conversion). Both are ordering-only (spec Ch. 4 §4.1).
     match unit {
-        Unit::Kelvin => return Ok(Value::Quantity(num.max(0.0), Unit::Kelvin)),
-        Unit::Celsius => return Ok(Value::Quantity((num + 273.15).max(0.0), Unit::Kelvin)),
+        Unit::Kelvin => return quantity_result(num.max(0.0), Unit::Kelvin),
+        Unit::Celsius => return quantity_result((num + 273.15).max(0.0), Unit::Kelvin),
         Unit::Fahrenheit => {
-            return Ok(Value::Quantity(
-                ((num - 32.0) * 5.0 / 9.0 + 273.15).max(0.0),
-                Unit::Kelvin,
-            ))
+            return quantity_result(((num - 32.0) * 5.0 / 9.0 + 273.15).max(0.0), Unit::Kelvin)
         }
-        Unit::Decibel => return Ok(Value::Quantity(num, Unit::Decibel)),
+        Unit::Decibel => return quantity_result(num, Unit::Decibel),
         _ => {}
     }
-    Ok(Value::Quantity(num, unit.clone()))
+    quantity_result(num, unit.clone())
 }
 
 pub(crate) fn eval_binary(op: BinOp, lhs: &Value, rhs: &Value) -> Result<Value, String> {
@@ -3423,7 +3420,7 @@ pub(crate) fn eval_binary(op: BinOp, lhs: &Value, rhs: &Value) -> Result<Value, 
         (Add, Value::Float(a), Value::Float(b)) => float_result(a + b),
         (Sub, Value::Float(a), Value::Float(b)) => float_result(a - b),
         (Mul, Value::Float(a), Value::Float(b)) => float_result(a * b),
-        (Div, Value::Float(a), Value::Float(b)) if *b != 0.0 => Ok(Value::Float(a / b)),
+        (Div, Value::Float(a), Value::Float(b)) if *b != 0.0 => float_result(a / b),
 
         // Division by zero names itself (LANG-A-007): the generic
         // "unsupported binary op" text sent readers hunting for a type
@@ -3442,8 +3439,8 @@ pub(crate) fn eval_binary(op: BinOp, lhs: &Value, rhs: &Value) -> Result<Value, 
         (Sub, Value::Float(a), Value::Int(b)) => float_result(a - *b as f64),
         (Mul, Value::Int(a), Value::Float(b)) => float_result(*a as f64 * b),
         (Mul, Value::Float(a), Value::Int(b)) => float_result(a * *b as f64),
-        (Div, Value::Int(a), Value::Float(b)) if *b != 0.0 => Ok(Value::Float(*a as f64 / b)),
-        (Div, Value::Float(a), Value::Int(b)) if *b != 0 => Ok(Value::Float(a / *b as f64)),
+        (Div, Value::Int(a), Value::Float(b)) if *b != 0.0 => float_result(*a as f64 / b),
+        (Div, Value::Float(a), Value::Int(b)) if *b != 0 => float_result(a / *b as f64),
 
         (Eq, a, b) => Ok(Value::Bool(value_eq(a, b))),
         (Ne, a, b) => Ok(Value::Bool(!value_eq(a, b))),
@@ -3533,29 +3530,29 @@ pub(crate) fn eval_binary(op: BinOp, lhs: &Value, rhs: &Value) -> Result<Value, 
         (Add, Value::Quantity(a, ua), Value::Quantity(b, ub))
             if ua == ub && !ua.is_non_arithmetic() =>
         {
-            Ok(Value::Quantity(a + b, ua.clone()))
+            quantity_result(a + b, ua.clone())
         }
         (Sub, Value::Quantity(a, ua), Value::Quantity(b, ub))
             if ua == ub && !ua.is_non_arithmetic() =>
         {
-            Ok(Value::Quantity(a - b, ua.clone()))
+            quantity_result(a - b, ua.clone())
         }
         (Mul, Value::Quantity(a, u), Value::Int(n)) if !u.is_non_arithmetic() => {
-            Ok(Value::Quantity(a * *n as f64, u.clone()))
+            quantity_result(a * *n as f64, u.clone())
         }
         (Mul, Value::Quantity(a, u), Value::Float(f)) if !u.is_non_arithmetic() => {
-            Ok(Value::Quantity(a * f, u.clone()))
+            quantity_result(a * f, u.clone())
         }
         (Div, Value::Quantity(a, u), Value::Int(n)) if *n != 0 && !u.is_non_arithmetic() => {
-            Ok(Value::Quantity(a / *n as f64, u.clone()))
+            quantity_result(a / *n as f64, u.clone())
         }
         (Div, Value::Quantity(a, u), Value::Float(f)) if *f != 0.0 && !u.is_non_arithmetic() => {
-            Ok(Value::Quantity(a / f, u.clone()))
+            quantity_result(a / f, u.clone())
         }
         (Div, Value::Quantity(a, ua), Value::Quantity(b, ub))
             if ua == ub && *b != 0.0 && !ua.is_non_arithmetic() =>
         {
-            Ok(Value::Float(a / b))
+            float_result(a / b)
         }
         (Lt, Value::Quantity(a, ua), Value::Quantity(b, ub)) if ua == ub => Ok(Value::Bool(a < b)),
         (Le, Value::Quantity(a, ua), Value::Quantity(b, ub)) if ua == ub => Ok(Value::Bool(a <= b)),
@@ -3634,6 +3631,20 @@ fn float_result(v: f64) -> Result<Value, String> {
     } else {
         Err("float overflow: the result is not representable".to_string())
     }
+}
+
+/// The same finiteness guard for quantity arithmetic: a magnitude that
+/// overflows to infinity is a T001, never a quantity the exporter would
+/// turn into `null` (LANG-B-901).
+fn quantity_result(v: f64, unit: Unit) -> Result<Value, String> {
+    if !v.is_finite() {
+        return Err(if v.is_nan() {
+            "float operation produced NaN".to_string()
+        } else {
+            "float overflow: the result is not representable".to_string()
+        });
+    }
+    Ok(Value::Quantity(v, unit))
 }
 fn value_eq(a: &Value, b: &Value) -> bool {
     match (a, b) {

@@ -35,23 +35,22 @@ pub const MAX_HEADER_BYTES: usize = 8 * 1024;
 
 /// Inbound queue capacity (messages). Bounded so a client that outruns the
 /// server blocks on its own pipe (backpressure) instead of growing memory.
-/// The aggregate bound is capacity × the frame cap: 4 × 16 MiB = 64 MiB,
-/// the ceiling a slow analysis can retain. (A 64-message queue licensed
-/// ~1 GiB of frame data; the message count alone did not cap bytes.)
-pub const INBOUND_CAPACITY: usize = 4;
+/// The aggregate bound is (queue + one drain batch) × the frame cap:
+/// (2 + 2) × 16 MiB = 64 MiB, the ceiling a slow analysis can retain.
+pub const INBOUND_CAPACITY: usize = 2;
 
 /// Outbound queue capacity (messages). The writer drains it continuously;
 /// a bounded queue keeps a server that produces faster than the client
-/// reads from growing without limit (the send blocks instead). Same
-/// aggregate bound as inbound: 4 × 16 MiB = 64 MiB.
+/// reads from growing without limit (the send blocks instead). The
+/// aggregate bound is capacity × the frame cap: 4 × 16 MiB = 64 MiB.
 pub const OUTBOUND_CAPACITY: usize = 4;
 
 /// Largest batch the server drains in one loop iteration (messages).
 ///
 /// Equal to the queue capacity: the reader refills the channel as the
-/// server drains it, so a larger batch would multiply the byte bound
-/// (16 frames of 16 MiB each is ~256 MiB in one batch while the queue
-/// claim says 64 MiB). Four messages still coalesce a superseded edit.
+/// server drains it, so the live set is at most queue + batch. Two
+/// messages still coalesce a superseded edit, and (2 + 2) × 16 MiB keeps
+/// the documented 64 MiB ceiling.
 pub const MAX_BATCH: usize = INBOUND_CAPACITY;
 
 /// A framing or payload violation. The stream cannot be resynchronised after
@@ -275,20 +274,35 @@ pub fn writer_loop<W: Write>(mut out: W, receiver: Receiver<Message>) -> io::Res
                     "[active-lsp] response of {} bytes exceeds the frame cap; sending an error",
                     body.len()
                 );
-                let fallback = Message::Response(lsp_server::Response {
-                    id: response.id,
-                    result: None,
-                    error: Some(lsp_server::ResponseError {
-                        // JSON-RPC internal error.
-                        code: -32603,
-                        message: format!(
-                            "result exceeds the {DEFAULT_MAX_FRAME_BYTES}-byte frame cap; \
-                             narrow the request"
-                        ),
-                        data: None,
-                    }),
-                });
-                write_message(&mut out, &fallback)?;
+                // The id itself can be near the frame limit; encoding an
+                // error that echoes it would overflow again. Fall back to
+                // a neutral numeric id when that happens.
+                let error_for = |id: lsp_server::RequestId| {
+                    Message::Response(lsp_server::Response {
+                        id,
+                        result: None,
+                        error: Some(lsp_server::ResponseError {
+                            // JSON-RPC internal error.
+                            code: -32603,
+                            message: format!(
+                                "result exceeds the {DEFAULT_MAX_FRAME_BYTES}-byte frame cap; \
+                                 narrow the request"
+                            ),
+                            data: None,
+                        }),
+                    })
+                };
+                let fallback = error_for(response.id.clone());
+                let encoded = serde_json::to_vec(&fallback).map_err(io::Error::other)?;
+                if encoded.len() > DEFAULT_MAX_FRAME_BYTES {
+                    eprintln!(
+                        "[active-lsp] the request id is too large to echo in an error; \
+                         using a neutral id"
+                    );
+                    write_message(&mut out, &error_for(lsp_server::RequestId::from(0)))?;
+                } else {
+                    write_body(&mut out, &encoded)?;
+                }
             }
             Message::Notification(note) => {
                 eprintln!(
@@ -432,8 +446,8 @@ mod tests {
         // cap: a slow analysis must not retain a gigabyte of queued frames.
         const {
             assert!(
-                INBOUND_CAPACITY * DEFAULT_MAX_FRAME_BYTES <= 64 * 1024 * 1024,
-                "inbound queue licenses more than 64 MiB"
+                (INBOUND_CAPACITY + MAX_BATCH) * DEFAULT_MAX_FRAME_BYTES <= 64 * 1024 * 1024,
+                "inbound queue + batch licenses more than 64 MiB"
             )
         };
         const {
@@ -450,6 +464,36 @@ mod tests {
                 "one batch licenses more than 64 MiB"
             )
         };
+    }
+
+    #[test]
+    fn a_too_large_request_id_gets_a_neutral_error_id() {
+        let (tx, rx) = bounded::<Message>(2);
+        let id = "i".repeat(DEFAULT_MAX_FRAME_BYTES);
+        let big = "x".repeat(DEFAULT_MAX_FRAME_BYTES + 1024);
+        tx.send(Message::Response(lsp_server::Response {
+            id: RequestId::from(id),
+            result: Some(serde_json::json!({ "value": big })),
+            error: None,
+        }))
+        .expect("send");
+        drop(tx);
+        let mut out = Vec::new();
+        writer_loop(&mut out, rx).expect("writer");
+        let mut cursor = std::io::Cursor::new(out);
+        let first = read_message(&mut cursor, DEFAULT_MAX_FRAME_BYTES)
+            .expect("read")
+            .expect("a frame");
+        match first {
+            Message::Response(response) => {
+                assert!(
+                    response.id == RequestId::from(0),
+                    "the oversized id must be replaced with a neutral id"
+                );
+                assert!(response.error.is_some());
+            }
+            other => panic!("expected a response, got {other:?}"),
+        }
     }
 
     #[test]

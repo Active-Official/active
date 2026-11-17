@@ -59,19 +59,20 @@ framing is where a hostile peer does damage before any analysis runs:
   more evicts the least recently used (touching a document on didChange
   refreshes it), withdraws its published diagnostics, and tells the client
   which document was closed with a warning `window/showMessage`.
-- **Backpressure and coalescing.** The inbound queue is bounded (4
+- **Backpressure and coalescing.** The inbound queue is bounded (2
   messages), so a client that outruns the server blocks on its own pipe
-  instead of growing server memory. Together with the 16 MiB frame cap
-  this bounds retained inbound bytes at 64 MiB; the drain batch is also 4
-  messages, so a batch cannot multiply that bound. The server keeps only
-  the newest `textDocument/didChange` per document in a batch: full-sync
-  changes are snapshots, so superseded edits are dropped while requests,
-  responses, and every other notification keep their order.
+  instead of growing server memory. With the 16 MiB frame cap and a
+  2-message drain batch, the live inbound set is at most 4 frames =
+  64 MiB. The server keeps only the newest `textDocument/didChange` per
+  document in a batch: full-sync changes are snapshots, so superseded
+  edits are dropped while requests, responses, and every other
+  notification keep their order.
 - **Outbound cap.** Every outbound frame is capped at 16 MiB. A response
   that would exceed it is replaced with a JSON-RPC internal error carrying
   the same request id (the client sees an explicit failure instead of an
-  oversized frame); an oversized notification is logged and dropped. The
-  outbound queue is 4 messages, bounding retained outbound bytes at
+  oversized frame; if the id itself is too large to echo, a neutral
+  numeric id is used); an oversized notification is logged and dropped.
+  The outbound queue is 4 messages, bounding retained outbound bytes at
   64 MiB. Outline and workspace-symbol results are additionally capped at
   20,000 entries so a huge document cannot build an unbounded value.
 - **Latency report, not silent stall.** Parse and evaluation are hard

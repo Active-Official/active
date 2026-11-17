@@ -446,8 +446,18 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
                     } else {
                         format!("{path}.{key}")
                     };
+                    // A key is data too: a key that spells (or embeds) a
+                    // material value is a copy and is rendered as the
+                    // marker. The child path stays the authored path so
+                    // profile lookups keep working.
+                    let export_key =
+                        if profile.redact_text(key).is_some() || runtime_exact.contains(key) {
+                            crate::secret::MARKER.to_string()
+                        } else {
+                            key.clone()
+                        };
                     out.insert(
-                        key.clone(),
+                        export_key,
                         walk(
                             profile,
                             redactor,

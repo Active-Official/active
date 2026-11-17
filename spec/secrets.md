@@ -40,7 +40,11 @@ error message, or an export** — only redaction markers do.
 - JSON and TOML converters replace every secret, at any depth, with
   `"***SECRET***"` — the marker, never the data. "Refuse to emit
   tainted data" (P-032) is satisfied by redaction: secret bytes never
-  leave the process through an export path.
+  leave the process through an export path. A table KEY whose text is
+  material is a copy like any value: every export and inspection path
+  renders the marker in the key slot (a collision between two material
+  keys merges deterministically), so a secret cannot ride out as a name.
+  Envelope taint verification counts a material key as payload material.
 - `ACTIVE graph` prints node ids and edges only — no values at all.
 - `Value`'s `Debug` and `serde::Serialize` impls redact by
   construction (`Secret(***)` / `"***SECRET***"` at every depth), so

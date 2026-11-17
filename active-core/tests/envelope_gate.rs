@@ -162,6 +162,36 @@ fn a_material_blob_media_type_taints_the_identity_and_the_claim() {
 }
 
 #[test]
+fn a_material_payload_key_fails_a_false_claim() {
+    // A table key is data too. Here the payload key spells the secret
+    // literal, so the payload carries material even though every VALUE in
+    // it is benign; the export must render the marker in the key slot.
+    let base = "active_mode = \"data\"\nother = secret(\"token\")\n\
+                envelope = { version = \"1.0.0\", tainted = CLAIM, \
+                payload = { token = true, ok = 1 } }\n";
+    let err = refusal(&base.replace("CLAIM", "false"));
+    assert_eq!(codes(&err), ["E035"], "{err:?}");
+
+    let module = parse(&base.replace("CLAIM", "true"), "gate").expect("parse");
+    let engine = Engine::hermetic();
+    let (value, diags, seeds) = engine
+        .evaluate_with_seeds(&module)
+        .expect("the accurate claim evaluates");
+    assert!(diags.is_empty(), "{diags:?}");
+    let profile = active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
+    let json = active_core::convert::value_to_json_with(&profile, &value);
+    let payload = json["envelope"]["payload"]
+        .as_object()
+        .expect("payload is a table");
+    assert!(
+        payload.contains_key("***SECRET***"),
+        "the material key must render as the marker: {json}"
+    );
+    assert!(!payload.contains_key("token"), "{json}");
+    assert_eq!(payload["ok"], 1, "a benign sibling stays visible: {json}");
+}
+
+#[test]
 fn a_missing_taint_claim_is_refused() {
     // The field table marks tainted required: an envelope that makes no
     // verifiable claim must fail closed, not pass because it is silent.

@@ -267,6 +267,26 @@ fn the_wire_escape_is_injective_for_backslash_keys() {
 }
 
 #[test]
+fn a_material_table_key_is_redacted_on_every_export_path() {
+    // A key whose text is material is a copy: the JSON export and the
+    // direct serializer's profile-aware forms must not publish it.
+    use active_core::secret::SecretProfile;
+    use indexmap::IndexMap;
+    let mut inner = IndexMap::new();
+    inner.insert("token".to_string(), Value::Bool(true));
+    let table = Value::Table(inner);
+    let module = parse("other = secret(\"token\")\n", "key").expect("parse");
+    let profile = SecretProfile::analyze(&module);
+    let json = active_core::convert::value_to_json_with(&profile, &table);
+    assert!(json.get("token").is_none(), "{json}");
+    assert_eq!(json["***SECRET***"], true, "{json}");
+    let toml = active_core::convert::value_to_toml_string_with(&profile, &table)
+        .expect("toml")
+        .0;
+    assert!(!toml.contains("token"), "{toml}");
+}
+
+#[test]
 fn direct_serialization_matches_the_canonical_export() {
     // The hand-kept `Serialize` impl promised to mirror value_to_json; it
     // had drifted (quantities used the old bare form, non-finite floats

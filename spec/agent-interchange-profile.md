@@ -90,7 +90,8 @@ and every tool this library ships), refuses with `E033` (version) and
 `tainted` is cross-checked against the evaluated payload's structural taint:
 a mismatch is a diagnostic (E035, fail-closed under strict). Structural
 taint covers Secret-kind values, tainted blobs, any string the receiver's
-redaction pass would redact, and any payload path the export renders as
+redaction pass would redact, any table KEY whose text is material (a key
+is data too), and any payload path the export renders as
 material — so a plain value used as a `secret(...)` locator (a `let`, a
 table field, an interpolation result, an env lookup) counts when the
 payload carries a copy of it, and a selected profile override that

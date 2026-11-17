@@ -251,7 +251,15 @@ fn render_cone(
                 };
                 let (rendered, hit) = render_cone(profile, redactor, blob_material, &child, item);
                 marked |= hit;
-                out.insert(key.clone(), rendered);
+                // A key that is material text is a copy: render the marker
+                // in its place (the child path stays authored).
+                let export_key = if profile.redact_text(key).is_some() {
+                    marked = true;
+                    MARKER.to_string()
+                } else {
+                    key.clone()
+                };
+                out.insert(export_key, rendered);
             }
             (JsonValue::Object(out), marked)
         }

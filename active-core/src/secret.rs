@@ -2735,8 +2735,22 @@ impl SecretProfile {
                 }
                 JsonValue::Object(map) => {
                     let mut hit = false;
-                    for item in map.values_mut() {
-                        hit |= walk(item, exact, literals);
+                    // A key that is material text is a copy, exactly like
+                    // a value: render the marker in its place. The key
+                    // text never survives, and a collision with another
+                    // material key merges deterministically.
+                    let entries: Vec<(String, JsonValue)> =
+                        std::mem::take(map).into_iter().collect();
+                    for (key, mut item) in entries {
+                        let export_key =
+                            if exact.contains_exact(&key) || literals.redact_text(&key).is_some() {
+                                hit = true;
+                                MARKER.to_string()
+                            } else {
+                                key
+                            };
+                        hit |= walk(&mut item, exact, literals);
+                        map.insert(export_key, item);
                     }
                     hit
                 }

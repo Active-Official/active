@@ -1592,9 +1592,11 @@ fn payload_has_material_content(value: &Value, profile: &SecretProfile) -> bool 
         Value::Array(items) => items
             .iter()
             .any(|item| payload_has_material_content(item, profile)),
-        Value::Table(map) => map
-            .values()
-            .any(|item| payload_has_material_content(item, profile)),
+        Value::Table(map) => map.iter().any(|(key, item)| {
+            // A key is data too: material key text is a copy even when
+            // the value beside it is benign.
+            profile.redact_text(key).is_some() || payload_has_material_content(item, profile)
+        }),
         _ => false,
     }
 }

@@ -186,12 +186,14 @@ pub fn inspect_path_with_profile_env(
                 profile.path_node(path).and_then(|id| module.get(id)),
                 Some(Node::ContentAddressed { media_type, .. }) if profile.node_is_secret(*media_type)
             );
-        // An untainted value promoted here was built by a host with an
-        // inconsistent taint bit; its hash is not vouched for.
-        let identity = if *blob_tainted {
-            *hash
-        } else {
+        // Substitute the synthetic identity ONLY when this report promotes
+        // an untainted value because its content or path is material. A
+        // clean blob keeps its real identity, and an evaluated tainted
+        // blob keeps its real salted identity.
+        let identity = if !*blob_tainted && media_secret {
             crate::blob::redacted_identity()
+        } else {
+            *hash
         };
         report["content_addressed"] = json!({
             "hash": format!("blake3:{}", crate::blob::hash_hex(&identity)),

@@ -190,6 +190,69 @@ fn a_forged_hash_cannot_hide_a_payload_secret_from_graph_or_viz() {
 }
 
 #[test]
+fn inspection_keeps_a_clean_blob_identity() {
+    use active_core::convert::inspect_path;
+    use indexmap::IndexMap;
+    let clean_hash = blob::hash("text/plain", b"hello");
+    let host = active_core::Value::Blob {
+        hash: clean_hash,
+        size: 5,
+        tainted: false,
+        media_type: "text/plain".into(),
+        payload: None,
+    };
+    let mut map = IndexMap::new();
+    map.insert("b".to_string(), host);
+    let root = active_core::Value::Table(map);
+    let module = parse("m = secret(\"unrelated-secret\")\n", "clean-inspect").expect("parse");
+    let report = inspect_path(&module, &root, "b").expect("inspect");
+    let identity = &report["content_addressed"];
+    assert_eq!(identity["tainted"], false, "{report}");
+    assert_eq!(
+        identity["hash"],
+        format!("blake3:{}", blob::hash_hex(&clean_hash)),
+        "a clean blob keeps its real identity: {report}"
+    );
+}
+
+#[test]
+fn the_blob_size_query_redacts_a_path_material_identity() {
+    // A selected profile replaces a material value with a clean blob: the
+    // export hides that identity, so the size query must too.
+    let src = "active_profile = \"p\"\na = secret(\"base\")\n\
+               profile \"p\" { a = blob(\"text/plain\", \"hello\") }\n\
+               b = blob(\"text/plain\", \"world\")\n";
+    let module = parse(src, "graph-blobs").expect("parse");
+    let engine = Engine::hermetic();
+    let (value, diags, seeds) = engine.evaluate_with_seeds(&module).expect("evaluate");
+    assert!(
+        diags
+            .iter()
+            .all(|d| d.severity == active_core::Severity::Warning),
+        "{diags:?}"
+    );
+    let profile = active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
+    let blobs = active_core::graph::blobs_above_size_with(&value, 1, &profile);
+    let hash_of = |path: &str| {
+        blobs
+            .iter()
+            .find(|(p, _, _)| p == path)
+            .map(|(_, _, hash)| hash.clone())
+            .unwrap_or_else(|| panic!("{path} missing from {blobs:?}"))
+    };
+    assert_eq!(
+        hash_of("a"),
+        blob::hash_hex(&blob::redacted_identity()),
+        "the material path must not publish its hash: {blobs:?}"
+    );
+    assert_eq!(
+        hash_of("b"),
+        blob::hash_hex(&blob::hash("text/plain", b"world")),
+        "a clean sibling keeps its identity: {blobs:?}"
+    );
+}
+
+#[test]
 fn a_media_type_embedding_a_short_secret_is_material_by_design() {
     // spec/blob.md §3: identity matching is broader than text redaction.
     // The export replaces the whole media string and withholds the

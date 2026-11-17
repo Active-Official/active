@@ -1874,7 +1874,20 @@ fn run_graph_query(
                     ),
                 )
             } else {
-                let blobs = active_core::graph::blobs_above_size(&value, min_size);
+                // Profile-aware: an identity the export would redact
+                // (path materiality, a material media type, or a
+                // payload-resident secret) is reported with the synthetic
+                // redacted digest, never the hidden hash.
+                let material_profile = active_core::secret::SecretProfile::for_engine(
+                    &module,
+                    &evaluation_engine,
+                    &seeds,
+                );
+                let blobs = active_core::graph::blobs_above_size_with(
+                    &value,
+                    min_size,
+                    &material_profile,
+                );
                 match format {
                     "text" => {
                         for (path, size, hash) in &blobs {

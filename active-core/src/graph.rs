@@ -337,7 +337,10 @@ fn secret_tainted_paths_from_profile(
 
 /// Blobs at or above a size floor in an evaluated value: `(path,
 /// size, blake3-hex)` triples. Identity metadata only — payloads
-/// never enter the output.
+/// never enter the output. Raw: callers that hold a `SecretProfile`
+/// must use [`blobs_above_size_with`] so an identity the export hides
+/// (path materiality, a material media type, a payload-resident
+/// secret) is reported as the synthetic redacted digest.
 pub fn blobs_above_size(value: &crate::ir::Value, min_size: u64) -> Vec<(String, u64, String)> {
     fn walk(
         value: &crate::ir::Value,
@@ -375,6 +378,80 @@ pub fn blobs_above_size(value: &crate::ir::Value, min_size: u64) -> Vec<(String,
     }
     let mut out = Vec::new();
     walk(value, String::new(), min_size, &mut out);
+    out.sort();
+    out
+}
+
+/// Profile-aware `blobs_above_size`: an identity the export would redact
+/// (a material media type, a payload-resident secret, or a material
+/// serving path such as a profile override) is reported with
+/// [`crate::blob::redacted_identity`] instead of its real digest, so this
+/// query cannot publish a hash the export hides. A clean blob and an
+/// evaluated tainted blob keep their real identity (the latter is already
+/// a salted v2 digest).
+pub fn blobs_above_size_with(
+    value: &crate::ir::Value,
+    min_size: u64,
+    profile: &crate::secret::SecretProfile,
+) -> Vec<(String, u64, String)> {
+    fn walk(
+        value: &crate::ir::Value,
+        path: String,
+        min_size: u64,
+        profile: &crate::secret::SecretProfile,
+        out: &mut Vec<(String, u64, String)>,
+    ) {
+        use crate::ir::Value;
+        match value {
+            Value::Blob {
+                hash,
+                size,
+                tainted,
+                media_type,
+                payload,
+            } if *size >= min_size => {
+                let material = *tainted
+                    || profile.path_is_secret(&path)
+                    || profile.blob_identity_is_material(media_type)
+                    || payload.as_ref().is_some_and(|bytes| {
+                        crate::convert::blob_payload_is_material(
+                            profile.literals(),
+                            profile,
+                            Some(bytes),
+                        )
+                    });
+                let identity = if !*tainted && material {
+                    crate::blob::redacted_identity()
+                } else {
+                    *hash
+                };
+                out.push((path, *size, crate::blob::hash_hex(&identity)));
+            }
+            Value::Array(items) => {
+                for (i, item) in items.iter().enumerate() {
+                    let child = if path.is_empty() {
+                        format!("[{i}]")
+                    } else {
+                        format!("{path}[{i}]")
+                    };
+                    walk(item, child, min_size, profile, out);
+                }
+            }
+            Value::Table(map) => {
+                for (key, val) in map {
+                    let child = if path.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{path}.{key}")
+                    };
+                    walk(val, child, min_size, profile, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(value, String::new(), min_size, profile, &mut out);
     out.sort();
     out
 }

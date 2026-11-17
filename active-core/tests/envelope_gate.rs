@@ -130,6 +130,38 @@ fn a_profile_replacement_inherits_payload_taint_for_non_string_values() {
 }
 
 #[test]
+fn a_material_blob_media_type_taints_the_identity_and_the_claim() {
+    // The media type equals a secret literal: the identity is material
+    // even though the bytes are public. Construction must taint it (the
+    // v1 hash would commit to the plaintext media string), so the claim
+    // check sees a tainted payload and the export redacts the identity.
+    let base = "active_mode = \"data\"\nkey = secret(\"x-private-type\")\n\
+                envelope = { version = \"1.0.0\", tainted = CLAIM, \
+                payload = blob(\"x-private-type\", \"public\") }\n";
+    let err = refusal(&base.replace("CLAIM", "false"));
+    assert_eq!(codes(&err), ["E035"], "{err:?}");
+
+    let module = parse(&base.replace("CLAIM", "true"), "gate").expect("parse");
+    let engine = Engine::hermetic();
+    let (value, diags, seeds) = engine
+        .evaluate_with_seeds(&module)
+        .expect("the accurate claim evaluates");
+    assert!(diags.is_empty(), "{diags:?}");
+    let profile = active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
+    let json = active_core::convert::value_to_json_with(&profile, &value);
+    let identity = &json["envelope"]["payload"]["$active.blob"];
+    assert_eq!(identity["tainted"], true, "{json}");
+    assert_eq!(identity["media_type"], "***SECRET***", "{json}");
+    // A salted v2 identity, not the public v1 hash of the plaintext pair.
+    let plain = active_core::blob::hash_hex(&active_core::blob::hash("x-private-type", b"public"));
+    assert_ne!(
+        identity["hash"].as_str().unwrap_or_default(),
+        format!("blake3:{plain}"),
+        "a material media type must not hash under the public v1 domain: {json}"
+    );
+}
+
+#[test]
 fn a_missing_taint_claim_is_refused() {
     // The field table marks tainted required: an envelope that makes no
     // verifiable claim must fail closed, not pass because it is silent.

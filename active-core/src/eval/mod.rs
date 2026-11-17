@@ -1558,17 +1558,32 @@ pub(crate) fn value_has_secret(value: &Value) -> bool {
 
 /// True when a rendered value carries structural material that is not
 /// Secret-kinded: a copy of a plain `secret(...)` locator, an environment
-/// value, or a runtime seed. The predicate is exactly "the export would
-/// redact this string", so the claim check and the emitted tree agree.
-fn payload_has_material_text(value: &Value, profile: &SecretProfile) -> bool {
+/// value, a runtime seed, or a blob whose media type or retained payload
+/// is material. The predicate is exactly "the export would redact this",
+/// so the claim check and the emitted tree agree.
+fn payload_has_material_content(value: &Value, profile: &SecretProfile) -> bool {
     match value {
         Value::String(text) => profile.redact_text(text).is_some(),
+        Value::Blob {
+            tainted,
+            media_type,
+            payload,
+            ..
+        } => {
+            *tainted
+                || profile.blob_identity_is_material(media_type)
+                || crate::convert::blob_payload_is_material(
+                    profile.literals(),
+                    profile,
+                    payload.as_ref(),
+                )
+        }
         Value::Array(items) => items
             .iter()
-            .any(|item| payload_has_material_text(item, profile)),
+            .any(|item| payload_has_material_content(item, profile)),
         Value::Table(map) => map
             .values()
-            .any(|item| payload_has_material_text(item, profile)),
+            .any(|item| payload_has_material_content(item, profile)),
         _ => false,
     }
 }
@@ -2190,6 +2205,19 @@ impl Engine {
                     // even without a `Value::Secret` marker: the blob is
                     // structurally tainted and can never materialise.
                     tainted |= structurally_material;
+                    // A material MEDIA TYPE taints the identity too
+                    // (spec/blob.md §3): otherwise the v1 hash commits to
+                    // the plaintext media string, and an observer can
+                    // confirm a low-entropy guess offline. The export
+                    // redacts the media type and flips the flag in its
+                    // copy; deciding it here keeps the evaluated value,
+                    // the claim check, and the salted v2 identity in
+                    // agreement.
+                    if !tainted {
+                        if let Some(profile) = secret_profile.as_ref() {
+                            tainted = profile.blob_identity_is_material(&media);
+                        }
+                    }
                     let size = bytes.len() as u64;
                     account.charge(module, Some(node_id), size)?;
                     // Record the actual for reference deltas below:
@@ -2628,12 +2656,13 @@ impl Engine {
                                     seeds.as_deref(),
                                 )
                             });
-                            // Both sources count: a copy of material text
-                            // anywhere in the payload, and a path the
-                            // export redacts whatever kind sits there
+                            // Both sources count: material content
+                            // anywhere in the payload (text, a blob's
+                            // media type or retained bytes), and a path
+                            // the export redacts whatever kind sits there
                             // (a profile override inherits materiality,
                             // so a number can occupy a material path).
-                            payload_has_material_text(payload, profile)
+                            payload_has_material_content(payload, profile)
                                 || payload_has_material_path(payload, profile, "envelope.payload")
                         };
                     if claimed == actual {

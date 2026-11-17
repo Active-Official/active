@@ -96,9 +96,12 @@ human step — publication is authenticated, automation cannot mint
 it):
 
 1. **Trusted Publishing (preferred, no tokens):** link the repo on
-   crates.io (`active-core`, `active-cli`, `active-fmt`,
-   `active-lsp` → GitHub OIDC for `Active-Official/active`);
-   release.yml then publishes passwordlessly on tags.
+   crates.io for EVERY crate the release publishes — `active-core`,
+   `active`, `active-cli`, `active-fmt`, `active-lsp`, `active-ffi`, and
+   `active-wasm` — to GitHub OIDC for `Active-Official/active`. Each crate
+   has its own trusted-publisher entry; a missing one fails the publish at
+   that crate after the earlier crates shipped. release.yml then publishes
+   passwordlessly on tags.
 2. **Token:** `cargo login` with `CARGO_REGISTRY_TOKEN`; release.yml uses
    it when the secret exists.
 

@@ -180,8 +180,9 @@ about every release.
 - **2.0.0 raises the MSRV to 1.89.0**: root `rust-version = "1.89"`, the CI
   MSRV gate runs build **and** `cargo test` on 1.89.0, and README/docs-site
   MSRV lines state 1.89.
-- After 2.0.0 the MSRV gate keeps testing the floor, and the test job's
-  toolchain is pinned so the effective floor is declared and tested.
+- After 2.0.0 the MSRV gate keeps testing the floor on the pinned 1.89.0
+  toolchain; the main test job tracks stable so a newer-stable regression
+  is caught early.
 
 ## 8. Public presence rules
 

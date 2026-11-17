@@ -267,6 +267,8 @@ impl<'a> LineIndex<'a> {
 /// Byte offset of each line's first character. Bulk callers cache this per
 /// file so many diagnostics cost one pass over the text.
 pub(crate) fn line_starts(text: &str) -> Vec<usize> {
+    #[cfg(test)]
+    LINE_INDEX_BUILDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut starts = Vec::with_capacity(text.len() / 24 + 1);
     starts.push(0);
     for (offset, byte) in text.bytes().enumerate() {
@@ -275,6 +277,53 @@ pub(crate) fn line_starts(text: &str) -> Vec<usize> {
         }
     }
     starts
+}
+
+/// Builds of the per-file line index, counted only under `cfg(test)`.
+///
+/// The LANG-C-005 follow-up is "one line index per file, not per
+/// diagnostic"; a count proves that deterministically, where a wall-clock
+/// ratio flakes on a loaded runner (it did, in the 2026-11-17 gate run).
+#[cfg(test)]
+static LINE_INDEX_BUILDS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+mod linearity_tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn publishing_many_diagnostics_builds_one_line_index() {
+        // 20k duplicate keys heal to W011 warnings, capped at 1024 records.
+        // The text is what made the old conversion quadratic: it re-split
+        // the whole buffer per diagnostic (~2.8 s before the index). The
+        // index build count is the invariant; no clock is involved.
+        let mut src = String::new();
+        for _ in 0..20_000 {
+            src.push_str("k = 1\n");
+        }
+        let uri = Url::parse("file:///many-diagnostics.active").expect("uri");
+        let doc = open_doc(uri, src, 1, None);
+        LINE_INDEX_BUILDS.store(0, Ordering::SeqCst);
+        let groups = diagnostics_by_file(&doc, &|_: &str| None);
+        let builds = LINE_INDEX_BUILDS.load(Ordering::SeqCst);
+        let published: usize = groups.iter().map(|(_, diags)| diags.len()).sum();
+        assert!(
+            (1_000..=1_024).contains(&published),
+            "duplicates must publish up to the diagnostic cap, got {published}"
+        );
+        assert_eq!(
+            builds, 1,
+            "one line index per file: a per-diagnostic rebuild is the quadratic regression"
+        );
+        // The published ranges still point at real lines in the buffer.
+        let first = groups
+            .iter()
+            .flat_map(|(_, diags)| diags.iter())
+            .next()
+            .expect("at least one diagnostic");
+        assert!(first.range.start.line < 20_000, "{:?}", first.range);
+    }
 }
 
 /// Core 1-based (line, char column) -> LSP position. Out-of-range

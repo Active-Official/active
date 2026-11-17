@@ -222,7 +222,10 @@ fn docgen_stays_linear_with_many_secrets_and_fields() {
     let elapsed = started.elapsed();
     assert!(items.len() >= 3000, "items: {}", items.len());
     assert!(
-        elapsed < std::time::Duration::from_secs(3),
+        // The pre-fix implementation took ~22 s; the comment above targets
+        // "well under 10 s", and a loaded CI runner must not flake a
+        // regression guard whose signal is a magnitude apart.
+        elapsed < std::time::Duration::from_secs(10),
         "docgen is not linear: {elapsed:?} for 300 secrets / 3000 fields"
     );
 }

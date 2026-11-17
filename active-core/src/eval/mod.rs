@@ -1430,16 +1430,20 @@ impl<'a> StepRenderer<'a> {
 
     /// Payload materiality, memoized by content hash. An identity-only
     /// blob (no payload in the tree) is never material here.
-    fn blob_material(&self, hash: &[u8; 32], payload: Option<&Vec<u8>>) -> bool {
-        if payload.is_none() {
+    /// Retained-payload materiality, cached by the bytes actually scanned.
+    /// The blob's hash is not trusted as a cache key: a host-built value
+    /// can assign the same hash to two different payloads.
+    fn blob_material(&self, payload: Option<&Vec<u8>>) -> bool {
+        let Some(bytes) = payload else {
             return false;
-        }
-        if let Some(known) = self.blob_material.borrow().get(hash) {
+        };
+        let key = crate::convert::payload_scan_key(bytes);
+        if let Some(known) = self.blob_material.borrow().get(&key) {
             return *known;
         }
         let material =
-            crate::convert::blob_payload_is_material(self.redactor, self.profile, payload);
-        self.blob_material.borrow_mut().insert(*hash, material);
+            crate::convert::blob_payload_is_material(self.redactor, self.profile, Some(bytes));
+        self.blob_material.borrow_mut().insert(key, material);
         material
     }
 
@@ -1526,9 +1530,16 @@ impl<'a> StepRenderer<'a> {
                     || sensitive
                     || path.is_some_and(|path| self.profile.path_is_secret(path))
                     || self.profile.blob_identity_is_material(media_type)
-                    || self.blob_material(hash, payload.as_ref());
+                    || self.blob_material(payload.as_ref());
                 if material {
-                    (crate::convert::redacted_blob_json(hash, *size), true)
+                    // A value promoted here was not tainted at
+                    // evaluation; do not publish the unverified hash.
+                    let identity = if *tainted {
+                        *hash
+                    } else {
+                        crate::blob::redacted_identity()
+                    };
+                    (crate::convert::redacted_blob_json(&identity, *size), true)
                 } else {
                     // Steps are identity-only: payload bytes are never
                     // rendered (they can be megabytes per ancestor).

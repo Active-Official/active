@@ -165,16 +165,14 @@ pub fn inspect_path_with_profile_env(
         // embeds a secret literal is material for the same reason.
         let media_literal = redactor.redact_text(media_type).is_some()
             || profile.blob_identity_is_material(media_type);
-        let payload_literal = if payload.is_some() {
-            match blob_material.get(hash) {
+        let payload_literal = if let Some(bytes) = payload.as_ref() {
+            let key = crate::convert::payload_scan_key(bytes);
+            match blob_material.get(&key) {
                 Some(known) => *known,
                 None => {
-                    let material = crate::convert::blob_payload_is_material(
-                        &redactor,
-                        &profile,
-                        payload.as_ref(),
-                    );
-                    blob_material.insert(*hash, material);
+                    let material =
+                        crate::convert::blob_payload_is_material(&redactor, &profile, Some(bytes));
+                    blob_material.insert(key, material);
                     material
                 }
             }
@@ -188,8 +186,15 @@ pub fn inspect_path_with_profile_env(
                 profile.path_node(path).and_then(|id| module.get(id)),
                 Some(Node::ContentAddressed { media_type, .. }) if profile.node_is_secret(*media_type)
             );
+        // An untainted value promoted here was built by a host with an
+        // inconsistent taint bit; its hash is not vouched for.
+        let identity = if *blob_tainted {
+            *hash
+        } else {
+            crate::blob::redacted_identity()
+        };
         report["content_addressed"] = json!({
-            "hash": format!("blake3:{}", crate::blob::hash_hex(hash)),
+            "hash": format!("blake3:{}", crate::blob::hash_hex(&identity)),
             "size": blob_size,
             // A tainted identity redacts its media type (spec/blob.md
             // §5/§7), matching every other export path.
@@ -261,25 +266,26 @@ fn render_cone(
         Value::Blob {
             hash,
             size,
+            tainted,
             media_type,
             payload,
-            ..
         } => {
             // The media type is part of the identity: a material (or a
             // copy of a short material value) makes the blob material
             // even without a payload.
             let media_material = profile.blob_identity_is_material(media_type);
             let material = media_material
-                || if payload.is_some() {
-                    match blob_material.get(hash) {
+                || if let Some(bytes) = payload.as_ref() {
+                    let key = crate::convert::payload_scan_key(bytes);
+                    match blob_material.get(&key) {
                         Some(known) => *known,
                         None => {
                             let material = crate::convert::blob_payload_is_material(
                                 redactor,
                                 profile,
-                                payload.as_ref(),
+                                Some(bytes),
                             );
-                            blob_material.insert(*hash, material);
+                            blob_material.insert(key, material);
                             material
                         }
                     }
@@ -287,7 +293,14 @@ fn render_cone(
                     false
                 };
             if material {
-                (crate::convert::redacted_blob_json(hash, *size), true)
+                // A value promoted here was not tainted at evaluation;
+                // do not publish the unverified hash.
+                let identity = if *tainted {
+                    *hash
+                } else {
+                    crate::blob::redacted_identity()
+                };
+                (crate::convert::redacted_blob_json(&identity, *size), true)
             } else {
                 // Inspect reports are identity-only: a clean payload is
                 // used for the taint check, never emitted.

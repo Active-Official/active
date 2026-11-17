@@ -373,6 +373,13 @@ fn field_parent_path(module: &crate::ir::Module, field_id: crate::ir::NodeId) ->
 /// Identity shape for a blob whose identity must be withheld: the
 /// payload is absent and the media type is the marker, wrapped exactly
 /// like every other export (spec/blob.md §5).
+/// Cache key for scanning a retained blob payload. The caller-supplied
+/// blob hash is never used as a key: host-built values can lie about it,
+/// and two payloads with the same claimed hash must both be scanned.
+pub(crate) fn payload_scan_key(payload: &[u8]) -> [u8; 32] {
+    *blake3::hash(payload).as_bytes()
+}
+
 pub(crate) fn redacted_blob_json(hash: &[u8; 32], size: u64) -> JsonValue {
     json!({ "$active.blob": {
         "hash": format!("blake3:{}", crate::blob::hash_hex(hash)),
@@ -464,17 +471,20 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
                 payload,
             } => {
                 // A secret can appear in identity metadata or inside a
-                // payload: sweep both. Payload materiality is memoized
-                // by content hash, so an aliased blob is scanned once.
+                // payload: sweep both. The cache is keyed by the bytes
+                // actually scanned, never by the caller-supplied hash: a
+                // host-built value can assign two different payloads the
+                // same hash, and trusting it would let the first scan's
+                // verdict hide a secret in the second.
                 let media_redacted = redactor.redact_text(media_type);
                 let media_exact = profile.blob_identity_is_material(media_type);
-                let payload_secret = if payload.is_some() {
-                    match blob_material.get(hash) {
+                let payload_secret = if let Some(bytes) = payload.as_ref() {
+                    let key = payload_scan_key(bytes);
+                    match blob_material.get(&key) {
                         Some(known) => *known,
                         None => {
-                            let material =
-                                blob_payload_is_material(redactor, profile, payload.as_ref());
-                            blob_material.insert(*hash, material);
+                            let material = blob_payload_is_material(redactor, profile, Some(bytes));
+                            blob_material.insert(key, material);
                             material
                         }
                     }

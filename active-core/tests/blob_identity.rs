@@ -80,6 +80,80 @@ fn a_promoted_host_blob_cannot_publish_an_unsalted_identity() {
 }
 
 #[test]
+fn a_forged_shared_hash_cannot_hide_a_secret_payload() {
+    // Host-built values can lie about the hash. The payload scan is keyed
+    // by the bytes actually scanned, so a benign first payload sharing a
+    // forged hash with a secret-bearing second payload cannot poison the
+    // cache and leak the second payload's bytes.
+    use active_core::convert::value_to_json_with;
+    use active_core::secret::SecretProfile;
+    let media = "text/plain";
+    let benign = active_core::Value::Blob {
+        hash: [7u8; 32],
+        size: 5,
+        tainted: false,
+        media_type: media.into(),
+        payload: Some(b"hello".to_vec()),
+    };
+    let hidden = active_core::Value::Blob {
+        hash: [7u8; 32],
+        size: 15,
+        tainted: false,
+        media_type: media.into(),
+        payload: Some(b"hunter2-payload".to_vec()),
+    };
+    let root = active_core::Value::Array(vec![benign, hidden]);
+    let module = parse("m = secret(\"hunter2-payload\")\n", "cache").expect("parse");
+    let profile = SecretProfile::analyze(&module);
+    let json = value_to_json_with(&profile, &root);
+    assert!(
+        !json.to_string().contains("hunter2-payload"),
+        "the secret payload must not be emitted: {json}"
+    );
+    let second = &json[1]["$active.blob"];
+    assert_eq!(second["tainted"], true, "{json}");
+    assert!(second.get("payload_b64").is_none(), "{json}");
+    assert_eq!(
+        second["hash"],
+        format!("blake3:{}", blob::hash_hex(&blob::redacted_identity())),
+        "a promoted untainted value must not publish its claimed hash: {json}"
+    );
+}
+
+#[test]
+fn inspection_promotes_a_material_media_type_to_the_synthetic_identity() {
+    use active_core::convert::inspect_path;
+    use indexmap::IndexMap;
+    let media = "x-private-type";
+    let unsalted = blob::hash(media, b"public");
+    let host = active_core::Value::Blob {
+        hash: unsalted,
+        size: 6,
+        tainted: false,
+        media_type: media.into(),
+        payload: None,
+    };
+    let mut map = IndexMap::new();
+    map.insert("b".to_string(), host);
+    let root = active_core::Value::Table(map);
+    let module = parse("m = secret(\"x-private-type\")\n", "inspect").expect("parse");
+    let report = inspect_path(&module, &root, "b").expect("inspect");
+    let identity = &report["content_addressed"];
+    assert_eq!(identity["tainted"], true, "{report}");
+    assert_eq!(identity["media_type"], "***SECRET***", "{report}");
+    assert_ne!(
+        identity["hash"],
+        format!("blake3:{}", blob::hash_hex(&unsalted)),
+        "inspection must not publish the unverified v1 identity: {report}"
+    );
+    assert_eq!(
+        identity["hash"],
+        format!("blake3:{}", blob::hash_hex(&blob::redacted_identity())),
+        "{report}"
+    );
+}
+
+#[test]
 fn a_media_type_embedding_a_short_secret_is_material_by_design() {
     // spec/blob.md §3: identity matching is broader than text redaction.
     // The export replaces the whole media string and withholds the

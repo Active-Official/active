@@ -34,6 +34,35 @@ fn items() -> Vec<active_core::convert::DocItem> {
 }
 
 #[test]
+fn doc_items_redact_material_keys_and_blob_identities() {
+    use active_core::convert::collect_items_with_profile;
+    use active_core::secret::SecretProfile;
+    let src = "token_key = secret(\"token_key\")\n\
+               payload = { token_key = true }\n\
+               locator = secret(\"x-private-type\")\n\
+               asset = blob(\"x-private-type\", \"public\")\n";
+    let module = parse(src, "doc-keys").expect("parse");
+    let engine = Engine::hermetic();
+    let (value, diags, seeds) = engine.evaluate_with_seeds(&module).expect("evaluate");
+    assert!(diags.is_empty(), "{diags:?}");
+    let profile = SecretProfile::for_engine(&module, &engine, &seeds);
+    let items = collect_items_with_profile(&module, &value, &profile);
+    assert!(
+        items.iter().all(|item| !item.path.contains("token_key")),
+        "a material key survived: {:?}",
+        items.iter().map(|item| &item.path).collect::<Vec<_>>()
+    );
+    let asset = items
+        .iter()
+        .find(|item| item.path == "asset")
+        .expect("asset item");
+    assert_eq!(
+        asset.value_text, "***SECRET***",
+        "a material blob identity must render the marker"
+    );
+}
+
+#[test]
 fn markdown_renders_types_values_and_prose() {
     let md = doc_to_markdown("Service", &items());
     for probe in [

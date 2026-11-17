@@ -1049,7 +1049,13 @@ fn render_hover_value(
     value: &Value,
 ) -> String {
     let composite = matches!(value, Value::Array(_) | Value::Table(_));
-    if !composite && (profile.node_is_secret(node) || profile.path_is_secret(path)) {
+    let blob_identity_material = match value {
+        Value::Blob { media_type, .. } => profile.blob_identity_is_material(media_type),
+        _ => false,
+    };
+    if !composite
+        && (profile.node_is_secret(node) || profile.path_is_secret(path) || blob_identity_material)
+    {
         return active_core::secret::MARKER.to_string();
     }
     match value {
@@ -1207,24 +1213,26 @@ pub fn hover_at(doc: &Doc, line: u32, character: u32) -> Option<Hover> {
     // the deprecation reason: authored text can quote a secret too.
     let profile = SecretProfile::with_context(&doc.module, None, None, Some(&doc.value_seeds));
     profile.begin_redaction_pass();
+    // A key label whose text is material renders the marker.
+    let shown_name = profile.redact_text(&name).unwrap_or_else(|| name.clone());
     // Type: schema first, evaluated value kind as fallback (spec §2
     // requires one or the other — never a bare name when a value
     // exists).
     if let Some(typ) = schema_type_at_with_profile(&doc.module, &path, &profile) {
-        lines.push(format!("**{name}**: `{typ}`"));
+        lines.push(format!("**{shown_name}**: `{typ}`"));
     } else if let Target::Let { .. } = target {
-        lines.push(format!("**{name}** (let binding)"));
+        lines.push(format!("**{shown_name}** (let binding)"));
     } else {
         match doc
             .value
             .as_ref()
             .and_then(|root| value_at_path(root, &path))
         {
-            Some(value) => lines.push(format!("**{name}**: `{}`", value_kind(value))),
+            Some(value) => lines.push(format!("**{shown_name}**: `{}`", value_kind(value))),
             // Evaluation produced nothing (a hard failure): render the
             // explicitly-absent marker instead of a bare name (spec §2,
             // LANG-G-018).
-            None => lines.push(format!("**{name}**: -")),
+            None => lines.push(format!("**{shown_name}**: -")),
         }
     }
     // Value at the path (redacted; lets have no tree value). A failed
@@ -3612,5 +3620,45 @@ mod blob_identity_tests {
         let two = render_hover_value(&profile, &redactor, NodeId(0), "", &make(b"two"));
         assert_ne!(one, two, "hover must verify the retained identity");
         assert!(!one.contains("05050505"), "the claimed hash leaked: {one}");
+    }
+
+    #[test]
+    fn hover_redacts_a_material_blob_identity() {
+        let module =
+            active_core::parse("m = secret(\"x-private-type\")\n", "hover-media").expect("parse");
+        let profile = SecretProfile::analyze(&module);
+        let redactor = profile.literals().clone();
+        let blob = active_core::Value::Blob {
+            hash: [1u8; 32],
+            size: 6,
+            tainted: true,
+            media_type: "x-private-type".to_string(),
+            payload: None,
+        };
+        let rendered = render_hover_value(&profile, &redactor, NodeId(0), "", &blob);
+        assert_eq!(
+            rendered,
+            active_core::secret::MARKER,
+            "a material identity renders the marker"
+        );
+    }
+
+    #[test]
+    fn hover_redacts_a_material_key_label() {
+        let src = "token_key = secret(\"token_key\")\npayload = { token_key = true }\n";
+        let uri = Url::from_file_path(std::env::temp_dir().join("hover-material-key.active"))
+            .expect("uri");
+        let doc = open_doc(uri, src.to_string(), 1, None);
+        // The key on the second line, indented inside the inline table.
+        let hover = hover_at(&doc, 1, 13).expect("hover on the key");
+        let text = match hover.contents {
+            lsp_types::HoverContents::Markup(markup) => markup.value,
+            other => format!("{other:?}"),
+        };
+        assert!(
+            !text.contains("token_key"),
+            "hover leaked a material key: {text}"
+        );
+        assert!(text.contains("***SECRET***"), "{text}");
     }
 }

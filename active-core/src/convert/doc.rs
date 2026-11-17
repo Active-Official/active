@@ -178,8 +178,14 @@ fn walk_value(
         .redact_authored_text(&description)
         .unwrap_or(description);
     // The public API may receive an unredacted value: the item's own
-    // value text is redacted here, not only at the CLI boundary.
-    let value_text = if profile.path_is_secret(path) {
+    // value text is redacted here, not only at the CLI boundary. A blob
+    // whose identity itself is material renders the marker, and the
+    // displayed path is redacted per key segment.
+    let blob_identity_material = match val {
+        Value::Blob { media_type, .. } => profile.blob_identity_is_material(media_type),
+        _ => false,
+    };
+    let value_text = if profile.path_is_secret(path) || blob_identity_material {
         crate::secret::MARKER.to_string()
     } else {
         let rendered = render_value(val);
@@ -190,7 +196,7 @@ fn walk_value(
         profile.redact_text(&rendered).unwrap_or(rendered)
     };
     items.push(DocItem {
-        path: path.to_string(),
+        path: profile.redact_path(path),
         depth,
         section,
         is_table,

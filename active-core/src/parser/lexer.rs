@@ -52,6 +52,10 @@ pub struct Lexed {
     /// truncated token stream would emit a cascade of phantom syntax
     /// errors instead of the one honest budget diagnostic.
     pub budget_exceeded: bool,
+    /// True when the per-tokenization error cap dropped at least one
+    /// record. The parser turns this into the visible W014 notice; without
+    /// it a lexer flood would be silently truncated (LANG-A-001 class).
+    pub errors_truncated: bool,
 }
 
 /// Maximum lexical diagnostics retained per tokenization. Same bound
@@ -64,9 +68,11 @@ pub(crate) const MAX_LEX_DIAGNOSTICS: usize = 1024;
 /// Push a lexical error unless the per-tokenization bound is reached.
 /// Single choke point: every lexer error site uses this so no input
 /// shape can grow the error vector without bound.
-fn push_lex_error(errors: &mut Vec<Diagnostic>, diag: Diagnostic) {
+fn push_lex_error(errors: &mut Vec<Diagnostic>, truncated: &mut bool, diag: Diagnostic) {
     if errors.len() < MAX_LEX_DIAGNOSTICS {
         errors.push(diag);
+    } else {
+        *truncated = true;
     }
 }
 
@@ -214,6 +220,9 @@ pub struct Lexer {
     /// so the clock read stays off the hot path: a 4 MiB document costs
     /// about 2,000 samples, each ~20 ns.
     pub deadline: Option<std::time::Instant>,
+    /// Set when the per-tokenization error cap dropped a record (surfaced
+    /// through `Lexed::errors_truncated`).
+    errors_truncated: bool,
 }
 
 /// Source-loop iterations between deadline samples. Small enough that a
@@ -236,6 +245,7 @@ impl Lexer {
             indent_stack: vec![0],
             at_line_start: true,
             deadline: None,
+            errors_truncated: false,
         }
     }
 
@@ -443,6 +453,7 @@ impl Lexer {
         if let Some((l, col)) = tab_span {
             push_lex_error(
                 errors,
+                &mut self.errors_truncated,
                 Diagnostic {
                     severity: Severity::Error,
                     code: "E006".into(),
@@ -493,6 +504,7 @@ impl Lexer {
                 // nearest level below, and the column is not pushed.
                 push_lex_error(
                     errors,
+                    &mut self.errors_truncated,
                     Diagnostic {
                         severity: Severity::Error,
                         code: "E007".into(),
@@ -524,6 +536,7 @@ impl Lexer {
         let mut comments: Vec<(String, Span)> = Vec::new();
         let mut steps: u32 = 0;
         let mut budget_exceeded = false;
+        let mut errors_truncated = false;
 
         loop {
             // Wall-clock sampling (LANG-C-003): a pathological body must
@@ -1026,6 +1039,7 @@ impl Lexer {
                     self.bump();
                     push_lex_error(
                         &mut errors,
+                        &mut errors_truncated,
                         Diagnostic {
                             severity: Severity::Error,
                             code: "E005".into(),
@@ -1062,6 +1076,7 @@ impl Lexer {
                 errors,
                 comments,
                 budget_exceeded: true,
+                errors_truncated: self.errors_truncated || errors_truncated,
             };
         }
 
@@ -1083,6 +1098,7 @@ impl Lexer {
             tokens,
             repairs,
             errors,
+            errors_truncated: self.errors_truncated || errors_truncated,
             comments,
             budget_exceeded: false,
         }

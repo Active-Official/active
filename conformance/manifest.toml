@@ -186,6 +186,14 @@ id = "0032-diagnostic-truncation"
 file = "cases/0032-diagnostic-truncation.active"
 kind = "diagnosed"
 
+# A lexer error flood (LANG-A-001 class): 1,200 detached invalid characters
+# hit the lexer's own cap. The parser must surface W014 in the returned error
+# list, so every embedding reports a truncated list that says it was cut.
+[[cases]]
+id = "0033-lexer-error-truncation"
+file = "cases/0033-lexer-error-truncation.active"
+kind = "refused"
+
 # Host-feature pins (G-017 spirit): cases needing capabilities a v1 host
 # shim does not expose. Runners record these as pins with reason, never as
 # failures and never silently. Removing a pin means the host grew the

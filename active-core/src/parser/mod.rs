@@ -587,6 +587,8 @@ fn parse_recovering_impl(
         parent_field_scopes: Vec::new(),
         depth: 0,
         diag_truncated: false,
+        errors_truncated: false,
+        healing_truncated: false,
         options,
         block_depth: 0,
         schema_depth: 0,
@@ -624,6 +626,10 @@ fn parse_recovering_impl(
     }
     parser.extend_heal(lexed.repairs);
     parser.extend_diags(lexed.errors);
+    if lexed.errors_truncated {
+        parser.errors_truncated = true;
+        parser.diag_truncated = true;
+    }
     parser.parse_document();
     // Parse budget (LANG-C-003): a bound that tripped mid-document left a
     // prefix arena that is not a document. Fail closed with the single
@@ -928,6 +934,12 @@ struct Parser {
     /// at least one record; the finalize pass then appends one visible
     /// truncation notice (LANG-A-001/A-901).
     diag_truncated: bool,
+    /// Which channel actually lost records. The W014 notice must land in the
+    /// list the caller receives: errors on a failed parse (the module is
+    /// discarded), healing on a successful one. A fatal error flood or a
+    /// lexer cap is otherwise silently truncated (LANG-A-001 class).
+    errors_truncated: bool,
+    healing_truncated: bool,
     /// Healing mode for this parse.
     options: ParseOptions,
     /// Current block nesting depth, guarded by MAX_BLOCK_DEPTH.
@@ -1172,6 +1184,7 @@ impl Parser {
     /// one budget (LANG-A-001/A-901): both are diagnostic volume.
     fn push_diag(&mut self, diag: Diagnostic) {
         if self.budget_full() {
+            self.errors_truncated = true;
             return;
         }
         self.errors.push(diag);
@@ -1182,6 +1195,7 @@ impl Parser {
     /// a different door: one record per array element or duplicate key.
     fn push_heal(&mut self, diag: Diagnostic) {
         if self.budget_full() {
+            self.healing_truncated = true;
             return;
         }
         self.module.healing.push(diag);
@@ -1196,6 +1210,7 @@ impl Parser {
         let room = MAX_PARSE_DIAGNOSTICS.saturating_sub(self.diag_budget_used());
         if more.len() > room {
             self.diag_truncated = true;
+            self.errors_truncated = true;
         }
         self.errors.extend(more.into_iter().take(room));
     }
@@ -1206,6 +1221,7 @@ impl Parser {
         let room = MAX_PARSE_DIAGNOSTICS.saturating_sub(self.diag_budget_used());
         if more.len() > room {
             self.diag_truncated = true;
+            self.healing_truncated = true;
         }
         self.module.healing.extend(more.into_iter().take(room));
     }
@@ -1240,11 +1256,19 @@ impl Parser {
         while self.diag_budget_used() > keep {
             if self.module.healing.pop().is_none() {
                 self.errors.pop();
+                self.errors_truncated = true;
+            } else {
+                self.healing_truncated = true;
             }
         }
-        // Deliberately outside the budget: the notice takes the slot
-        // just trimmed, so the total stays exactly `keep + 1`.
-        self.module.healing.push(Diagnostic {
+        // Deliberately outside the budget: the notice takes the slot just
+        // trimmed, so the total stays exactly `keep + 1` in the list the
+        // caller sees. A failed parse returns only `errors` (the module is
+        // discarded), so the notice goes there; a successful parse returns
+        // the module, so it goes to `healing`. Only the truncated channel
+        // gets a notice - claiming truncation of a list that was not cut
+        // would be its own lie.
+        let notice = || Diagnostic {
             severity: Severity::Warning,
             code: TRUNCATED_CODE.into(),
             message: TRUNCATED_MESSAGE.into(),
@@ -1253,7 +1277,14 @@ impl Parser {
             repair: None,
             confidence: 1.0,
             file: None,
-        });
+        };
+        if !self.errors.is_empty() {
+            if self.errors_truncated {
+                self.errors.push(notice());
+            }
+        } else if self.healing_truncated {
+            self.module.healing.push(notice());
+        }
     }
 
     /// Warning at an explicit token's span, through the same shared
@@ -2393,6 +2424,7 @@ impl Parser {
         if let Some(alias) = inc.alias.clone() {
             self.current_path.push(alias);
         }
+        let lexer_truncated = lexed.errors_truncated;
         let mut sub_errors = lexed.errors;
         let mut sub_repairs = lexed.repairs;
         for d in sub_errors.iter_mut().chain(sub_repairs.iter_mut()) {
@@ -2402,6 +2434,10 @@ impl Parser {
         }
         self.extend_diags(sub_errors);
         self.extend_heal(sub_repairs);
+        if lexer_truncated {
+            self.errors_truncated = true;
+            self.diag_truncated = true;
+        }
         // The outer token stream is NOT exhausted (table bodies end
         // mid-stream), so save and restore it around the sub-parse.
         let saved_tokens = std::mem::take(&mut self.tokens);
@@ -4390,7 +4426,9 @@ impl Parser {
             ident_scopes: self.ident_scopes.clone(),
             parent_field_scopes: self.parent_field_scopes.clone(),
             depth: self.depth,
-            diag_truncated: self.diag_truncated,
+            diag_truncated: false,
+            errors_truncated: false,
+            healing_truncated: false,
             options: self.options.clone(),
             block_depth: 0,
             schema_depth: self.schema_depth,
@@ -4485,6 +4523,9 @@ impl Parser {
             span.end_column = col;
         }
         let mut sub_errors = std::mem::take(&mut sub.errors);
+        let sub_lex_truncated = lexed.errors_truncated;
+        let sub_errors_truncated = sub.errors_truncated;
+        let sub_healing_truncated = sub.healing_truncated;
         let mut sub_lex_errors = lexed.errors;
         for d in sub_errors.iter_mut().chain(sub_lex_errors.iter_mut()) {
             if let Some(s) = &mut d.span {
@@ -4501,6 +4542,14 @@ impl Parser {
         }
         self.extend_diags(sub_lex_errors);
         self.extend_diags(sub_errors);
+        if sub_lex_truncated || sub_errors_truncated {
+            self.errors_truncated = true;
+            self.diag_truncated = true;
+        }
+        if sub_healing_truncated {
+            self.healing_truncated = true;
+            self.diag_truncated = true;
+        }
         self.module = std::mem::replace(&mut sub.module, Module::new(""));
         // A budget trip inside the embedded expression (shared arena,
         // shared deadline) halts the enclosing document too.
@@ -6448,7 +6497,9 @@ impl Parser {
             ident_scopes: std::mem::take(&mut self.ident_scopes),
             parent_field_scopes: std::mem::take(&mut self.parent_field_scopes),
             depth: self.depth,
-            diag_truncated: self.diag_truncated,
+            diag_truncated: false,
+            errors_truncated: false,
+            healing_truncated: false,
             options: self.options.clone(),
             block_depth: 0,
             schema_depth: self.schema_depth,
@@ -6504,6 +6555,9 @@ impl Parser {
             .unwrap_or_default();
         let mut sub_errors = std::mem::take(&mut sub.errors);
         let mut sub_repairs = std::mem::take(&mut sub.module.healing);
+        let sub_errors_truncated = sub.errors_truncated;
+        let sub_healing_truncated = sub.healing_truncated;
+        let sub_lex_truncated = lexed.errors_truncated;
         let mut sub_lex_errors = lexed.errors;
         let mut sub_lex_repairs = lexed.repairs;
         // Embedded nodes carry sub-parser-relative spans in node_spans;
@@ -6621,6 +6675,14 @@ impl Parser {
         self.extend_diags(sub_errors);
         self.extend_heal(sub_lex_repairs);
         self.extend_heal(sub_repairs);
+        if sub_lex_truncated || sub_errors_truncated {
+            self.errors_truncated = true;
+            self.diag_truncated = true;
+        }
+        if sub_healing_truncated {
+            self.healing_truncated = true;
+            self.diag_truncated = true;
+        }
         id
     }
 

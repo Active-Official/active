@@ -139,3 +139,53 @@ fn engine_evaluation_surfaces_the_bounded_set() {
     assert!(diags.len() <= 1024, "evaluated diagnostics bounded");
     assert!(diags.iter().any(|d| d.code == "W014"));
 }
+
+#[test]
+fn parse_error_flood_is_bounded_and_visible() {
+    // A fatal syntax flood used to drop the tail silently: the W014 notice
+    // was only appended to `module.healing`, which a failed parse discards.
+    // The notice must land in the error list the caller receives.
+    let mut src = String::new();
+    for i in 0..1_200 {
+        src.push_str(&format!("a{i} = )\n"));
+    }
+    let errors =
+        active_core::parse(&src, "err-flood").expect_err("syntax errors must refuse the document");
+    assert_eq!(
+        errors.len(),
+        1024,
+        "the shared budget bounds the error list"
+    );
+    assert_eq!(
+        errors.last().map(|d| d.code.as_str()),
+        Some("W014"),
+        "truncation must be visible in the returned error list"
+    );
+    assert!(errors.iter().any(|d| d.code == "E002"), "real errors kept");
+}
+
+#[test]
+fn lexer_error_flood_is_bounded_and_visible() {
+    // The lexer's own cap dropped records without telling the parser, so a
+    // flood of lexical errors was silently truncated below the parser
+    // budget. The euro sign is a detached invalid character: one E005 per
+    // line and no repairs, so only the lexer's truncation flag can surface
+    // the notice.
+    let mut src = String::new();
+    for _ in 0..1_200 {
+        src.push_str("\u{20ac}\n");
+    }
+    let errors =
+        active_core::parse(&src, "lex-flood").expect_err("lexical errors must refuse the document");
+    assert_eq!(
+        errors.len(),
+        1024,
+        "the shared budget bounds the error list"
+    );
+    assert_eq!(
+        errors.last().map(|d| d.code.as_str()),
+        Some("W014"),
+        "lexer truncation must be visible in the returned error list"
+    );
+    assert!(errors.iter().any(|d| d.code == "E005"), "real errors kept");
+}

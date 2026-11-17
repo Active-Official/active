@@ -100,22 +100,30 @@ fn taint_data_from_profile(
                 || matches!(node_value, Value::Blob { tainted: true, .. })
                 || literal
                 || (structural && !matches!(node_value, Value::Array(_) | Value::Table(_)));
+            // Paths are display text built from authored keys; a material
+            // key inside one is redacted like any other copy.
+            let shown = profile
+                .redact_text(path)
+                .unwrap_or_else(|| path.to_string());
             nodes.push(json!({
-                "id": path,
-                "label": if path.is_empty() { "(root)" } else { path },
+                "id": shown,
+                "label": if path.is_empty() { "(root)".to_string() } else { shown.clone() },
                 "kind": kind_name(node_value),
                 "secret": leaf,
             }));
             emitted.insert(path.to_string());
             if leaf {
-                sources.push(path.to_string());
-                export_points.push(path.to_string());
+                sources.push(shown.clone());
+                export_points.push(shown.clone());
             }
             // Edges run between emitted nodes only: a transform can
             // materialize `out.a` while `out` itself is harmless.
             if let Some(parent) = parent {
                 if emitted.contains(parent) {
-                    edges.push(json!({"from": parent, "to": path}));
+                    let from = profile
+                        .redact_text(parent)
+                        .unwrap_or_else(|| parent.to_string());
+                    edges.push(json!({"from": from, "to": shown}));
                 }
             }
         }

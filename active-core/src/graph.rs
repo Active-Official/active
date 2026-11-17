@@ -323,7 +323,9 @@ fn secret_tainted_paths_from_profile(
             _ => structural,
         };
         if tainted && !path.is_empty() {
-            out.push(path);
+            // Paths are display text built from authored keys; a material
+            // key inside one is redacted like any other copy.
+            out.push(profile.redact_text(&path).unwrap_or_else(|| path.clone()));
         }
         tainted
     }
@@ -410,22 +412,22 @@ pub fn blobs_above_size_with(
                 media_type,
                 payload,
             } if *size >= min_size => {
-                let material = *tainted
-                    || profile.path_is_secret(&path)
-                    || profile.blob_identity_is_material(media_type)
+                let identity_material = profile.blob_identity_is_material(media_type)
                     || payload.as_ref().is_some_and(|bytes| {
                         crate::convert::blob_payload_is_material(
                             profile.literals(),
                             profile,
                             Some(bytes),
                         )
-                    });
-                let identity = if !*tainted && material {
+                    })
+                    || (!*tainted && profile.path_is_secret(&path));
+                let identity = if identity_material {
                     crate::blob::redacted_identity()
                 } else {
                     *hash
                 };
-                out.push((path, *size, crate::blob::hash_hex(&identity)));
+                let shown = profile.redact_text(&path).unwrap_or_else(|| path.clone());
+                out.push((shown, *size, crate::blob::hash_hex(&identity)));
             }
             Value::Array(items) => {
                 for (i, item) in items.iter().enumerate() {

@@ -49,8 +49,12 @@ error message, or an export** — only redaction markers do.
 - `Value`'s `Debug` and `serde::Serialize` impls redact by
   construction (`Secret(***)` / `"***SECRET***"` at every depth), so
   generic logging, assertion output, and direct serialization can
-  never emit secret material. Deserialization stays derived: the
-  input direction cannot leak.
+  never emit secret material. They are profile-less: they cannot
+  classify authored key text or content-identical copies, so any caller
+  that holds a `SecretProfile` must use the profile-aware exporters
+  (`value_to_json_with`, `value_to_pretty_json_with`, `redact_value`,
+  and the `*_with` TOML/YAML forms) to redact material keys and copies.
+  Deserialization stays derived: the input direction cannot leak.
 - `ACTIVE fmt` re-emits `secret(…)` source calls (source-derived
   locators, never evaluated values).
 - Debug/error rendering is value-free for type errors: T001 and quantity

@@ -507,17 +507,24 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
                     || media_exact
                     || payload_secret
                 {
-                    // An evaluated blob is already tainted when any of
-                    // those hold (eval decision). If an untainted value
-                    // still reaches this arm it was built by a host with
-                    // an inconsistent taint bit; its hash may be the v1
-                    // digest over the secret media type, so publish the
-                    // synthetic redacted identity instead of vouching for
-                    // a guessable one.
-                    let hash = if *tainted {
-                        *hash
-                    } else {
+                    // The identity is material when the media type or the
+                    // retained payload is: a caller-supplied hash cannot
+                    // be authenticated as the salted v2 digest, so
+                    // publish the synthetic redacted identity instead of
+                    // vouching for a possibly v1-guessable one. An
+                    // untainted value promoted only by its serving path
+                    // (a profile override) is withheld too; an evaluated
+                    // tainted blob derived from a secret keeps its real
+                    // salted identity, which its path materiality alone
+                    // does not make guessable.
+                    let identity_material = media_redacted.is_some()
+                        || media_exact
+                        || payload_secret
+                        || (!*tainted && profile.path_is_secret(path));
+                    let hash = if identity_material {
                         crate::blob::redacted_identity()
+                    } else {
+                        *hash
                     };
                     Value::Blob {
                         hash,

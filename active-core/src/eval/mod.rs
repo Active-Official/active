@@ -1497,7 +1497,13 @@ impl<'a> StepRenderer<'a> {
                     for (key, item) in map {
                         let (rendered, hit) = self.render(None, item, false);
                         marked |= hit;
-                        out.insert(key.clone(), rendered);
+                        let export_key = if self.profile.redact_text(key).is_some() {
+                            marked = true;
+                            crate::secret::MARKER.to_string()
+                        } else {
+                            key.clone()
+                        };
+                        out.insert(export_key, rendered);
                     }
                     return (serde_json::Value::Object(out), marked);
                 };
@@ -1512,7 +1518,14 @@ impl<'a> StepRenderer<'a> {
                     let (rendered, hit) =
                         self.render(Some(&child), item, self.profile.path_is_secret(&child));
                     marked |= hit;
-                    out.insert(key.clone(), rendered);
+                    // A key is data: material key text renders the marker.
+                    let export_key = if self.profile.redact_text(key).is_some() {
+                        marked = true;
+                        crate::secret::MARKER.to_string()
+                    } else {
+                        key.clone()
+                    };
+                    out.insert(export_key, rendered);
                 }
                 (serde_json::Value::Object(out), marked)
             }
@@ -1525,19 +1538,21 @@ impl<'a> StepRenderer<'a> {
             } => {
                 // A materialised payload can carry a secret literal (or
                 // a runtime secret) whose base64 form no literal sweep
-                // can match.
-                let material = *tainted
-                    || sensitive
-                    || path.is_some_and(|path| self.profile.path_is_secret(path))
-                    || self.profile.blob_identity_is_material(media_type)
-                    || self.blob_material(payload.as_ref());
-                if material {
-                    // A value promoted here was not tainted at
-                    // evaluation; do not publish the unverified hash.
-                    let identity = if *tainted {
-                        *hash
-                    } else {
+                // can match. The identity is withheld when its media type
+                // or retained payload is material, or when an untainted
+                // value is promoted only by structural/path materiality;
+                // an evaluated tainted blob derived from a secret keeps
+                // its real salted identity.
+                let path_material =
+                    sensitive || path.is_some_and(|path| self.profile.path_is_secret(path));
+                let identity_material = self.profile.blob_identity_is_material(media_type)
+                    || self.blob_material(payload.as_ref())
+                    || (!*tainted && path_material);
+                if *tainted || identity_material {
+                    let identity = if identity_material {
                         crate::blob::redacted_identity()
+                    } else {
+                        *hash
                     };
                     (crate::convert::redacted_blob_json(&identity, *size), true)
                 } else {
@@ -2574,9 +2589,17 @@ impl Engine {
                     None => (crate::convert::value_to_json(value), false),
                 };
                 let replaced = sensitive_values.redact(&mut rendered);
+                // The path is display text built from authored keys; a
+                // material key inside it is redacted like any other copy.
+                let path = step.path.map(|path| {
+                    renderer
+                        .as_ref()
+                        .and_then(|renderer| renderer.profile.redact_text(&path))
+                        .unwrap_or(path)
+                });
                 list.push(StepEvent {
                     node: step.node_id.0,
-                    path: step.path,
+                    path,
                     kind: step.kind,
                     tainted: step.sensitive || material || replaced || value_has_secret(value),
                     value: rendered,

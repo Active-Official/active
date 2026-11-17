@@ -95,6 +95,59 @@ fn tooling_surfaces_redact_derived_material() {
 }
 
 #[test]
+fn a_material_table_key_never_reaches_any_surface() {
+    // A key whose text is material is a copy: exports, inspection,
+    // step traces, taint paths, and viz must never publish it.
+    use active_core::secret::SecretProfile;
+    let src = "token_key = secret(\"token_key\")\n\
+               payload = { token_key = true, ok = 1 }\n";
+    let module = parse(src, "keys").expect("parse");
+    let engine = Engine::hermetic();
+    let (value, diags, seeds) = engine.evaluate_with_seeds(&module).expect("evaluates");
+    assert!(diags.is_empty(), "{diags:?}");
+    let profile = SecretProfile::for_engine(&module, &engine, &seeds);
+    for (label, text) in [
+        (
+            "json",
+            active_core::convert::value_to_pretty_json_with(&profile, &value),
+        ),
+        (
+            "yaml",
+            active_core::convert::value_to_yaml_string_with(&profile, &value).expect("yaml"),
+        ),
+        (
+            "toml",
+            active_core::convert::value_to_toml_string_with(&profile, &value)
+                .expect("toml")
+                .0,
+        ),
+    ] {
+        assert!(
+            !text.contains("token_key"),
+            "{label} leaked a material key:\n{text}"
+        );
+        assert!(text.contains("***SECRET***"), "{label}:\n{text}");
+    }
+
+    let (_, _, steps, _) = engine
+        .evaluate_with_steps_and_seeds(&module)
+        .expect("steps");
+    let steps = serde_json::to_string(&steps).expect("steps json");
+    assert!(!steps.contains("token_key"), "steps leaked a key: {steps}");
+
+    let paths = active_core::graph::secret_tainted_paths_with(&module, &value, None);
+    assert!(
+        paths.iter().all(|path| !path.contains("token_key")),
+        "{paths:?}"
+    );
+    let viz = active_core::viz::taint_data_with_profile(&module, &value, None);
+    assert!(
+        !viz.to_string().contains("token_key"),
+        "viz leaked a key: {viz}"
+    );
+}
+
+#[test]
 fn structural_material_never_reaches_exports_or_the_content_hash() {
     use std::collections::HashMap;
     // A plain env read used as a secret locator, its aliases, a

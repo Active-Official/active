@@ -179,18 +179,19 @@ pub fn inspect_path_with_profile_env(
         } else {
             false
         };
-        let media_secret = path_material
-            || media_literal
-            || payload_literal
-            || matches!(
-                profile.path_node(path).and_then(|id| module.get(id)),
-                Some(Node::ContentAddressed { media_type, .. }) if profile.node_is_secret(*media_type)
-            );
-        // Substitute the synthetic identity ONLY when this report promotes
-        // an untainted value because its content or path is material. A
-        // clean blob keeps its real identity, and an evaluated tainted
-        // blob keeps its real salted identity.
-        let identity = if !*blob_tainted && media_secret {
+        let media_node_secret = matches!(
+            profile.path_node(path).and_then(|id| module.get(id)),
+            Some(Node::ContentAddressed { media_type, .. }) if profile.node_is_secret(*media_type)
+        );
+        let media_secret = path_material || media_literal || payload_literal || media_node_secret;
+        // Withhold the hash when the identity itself is material (media
+        // type or retained payload), or when an untainted value is
+        // promoted only by its serving path: a caller-supplied hash is
+        // not proof of a salted v2 provenance. An evaluated tainted blob
+        // derived from a secret keeps its real salted identity.
+        let identity_material = media_literal || payload_literal || media_node_secret;
+        let withhold = identity_material || (!*blob_tainted && path_material);
+        let identity = if withhold {
             crate::blob::redacted_identity()
         } else {
             *hash
@@ -274,11 +275,10 @@ fn render_cone(
         // match a literal sweep, so the identity is redacted as a whole
         // and the payload is never rendered.
         Value::Blob {
-            hash,
             size,
-            tainted,
             media_type,
             payload,
+            ..
         } => {
             // The media type is part of the identity: a material (or a
             // copy of a short material value) makes the blob material
@@ -303,14 +303,13 @@ fn render_cone(
                     false
                 };
             if material {
-                // A value promoted here was not tainted at evaluation;
-                // do not publish the unverified hash.
-                let identity = if *tainted {
-                    *hash
-                } else {
-                    crate::blob::redacted_identity()
-                };
-                (crate::convert::redacted_blob_json(&identity, *size), true)
+                // The identity itself is material (media type or
+                // payload): a caller-supplied hash is not proof of a
+                // salted v2 provenance, so withhold it.
+                (
+                    crate::convert::redacted_blob_json(&crate::blob::redacted_identity(), *size),
+                    true,
+                )
             } else {
                 // Inspect reports are identity-only: a clean payload is
                 // used for the taint check, never emitted.

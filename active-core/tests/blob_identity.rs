@@ -253,6 +253,34 @@ fn the_blob_size_query_redacts_a_path_material_identity() {
 }
 
 #[test]
+fn a_forged_tainted_identity_is_withheld() {
+    // A caller can set `tainted: true` on a v1 hash. The taint bit is not
+    // proof of a salted provenance, so an identity whose media type is
+    // material is always withheld.
+    use active_core::convert::value_to_json_with;
+    use active_core::secret::SecretProfile;
+    let media = "x-private-type";
+    let forged = active_core::Value::Blob {
+        hash: blob::hash(media, b"public"),
+        size: 6,
+        tainted: true,
+        media_type: media.into(),
+        payload: None,
+    };
+    let module = parse("m = secret(\"x-private-type\")\n", "forged").expect("parse");
+    let profile = SecretProfile::analyze(&module);
+    let json = value_to_json_with(&profile, &forged);
+    let identity = &json["$active.blob"];
+    assert_eq!(identity["tainted"], true, "{json}");
+    assert_eq!(identity["media_type"], "***SECRET***", "{json}");
+    assert_eq!(
+        identity["hash"],
+        format!("blake3:{}", blob::hash_hex(&blob::redacted_identity())),
+        "a material identity must be withheld even when flagged tainted: {json}"
+    );
+}
+
+#[test]
 fn a_media_type_embedding_a_short_secret_is_material_by_design() {
     // spec/blob.md §3: identity matching is broader than text redaction.
     // The export replaces the whole media string and withholds the

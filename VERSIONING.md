@@ -60,13 +60,14 @@ blocks only version bumps and registry publishes.
 | `active-ffi` | crates.io | **1.4.0** (2026-10-20) | **1.4.0** | First published at 1.4.0. |
 | `active-wasm` | crates.io | **1.4.0** (2026-10-20) | **1.4.0** | First published at 1.4.0. |
 | `active-lang` | PyPI | **1.4.0** (2026-10-22) | **1.4.0** | Only 1.4.0 exists. |
-| `active-lang` | npm | `0.0.0-stage` then 1.4.0 (2026-10-22) | **1.4.0** | `0.0.0-stage` is a known stray (staging placeholder). Deprecation is an owner registry act: `npm deprecate active-lang@0.0.0-stage "Staging placeholder; use active-lang@1.4.0"` (the token available on 2026-11-16 was rejected with 403, so the act is tracked in BLOCKS.md). Never stage placeholders publicly again (§8). |
+| `active-lang` | npm | `0.0.0-stage` then 1.4.0 (2026-10-22) | **1.4.0** | `0.0.0-stage` is a known stray (staging placeholder), **deprecated 2026-11-17**: `npm deprecate active-lang@0.0.0-stage "Staging placeholder; use active-lang@1.4.0 (or 2.0.0 after the freeze lifts)"`. Verified on the registry (`versions["0.0.0-stage"].deprecated`); `latest` remains 1.4.0. Never stage placeholders publicly again (§8). |
 | VS Code extension (`editors/vscode`) | GitHub release asset (`.vsix`) | 1.1.0 | **1.4.0** | Version tracks the workspace (pinned by the packaging test). |
 
 Known gaps in the record (do not "fix" by rewriting history):
 
 - npm `active-lang@0.0.0-stage` is a stray staging placeholder published
-  ~2 minutes before 1.4.0; deprecate it as recorded in the npm row above.
+  ~2 minutes before 1.4.0; it is deprecated as of 2026-11-17 (message in
+  the npm row above).
   Download counts are not adoption evidence anywhere in this table
   (LANG-J-015).
 

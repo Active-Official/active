@@ -37,7 +37,7 @@ Language packages publish from this tree and are live at the 1.4.0
 line (verified 2026-10-22): npm `active-lang`, PyPI `active-lang`, and
 crates.io `active-core` all serve 1.4.0. npm also carries a stray
 staging placeholder, `active-lang@0.0.0-stage`; it is recorded in
-VERSIONING.md §3 and its deprecation is an owner registry act (never
+VERSIONING.md §3 and was deprecated on 2026-11-17 (never
 publish a staging placeholder to a public registry again). The PyPI path publishes through
 OIDC trusted publishing (`pypi.yml`, no stored token); npm and crates.io
 use their registry tokens in the release flow. Registry publication is

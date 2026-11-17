@@ -103,3 +103,45 @@ fn cdylib_parse_eval_json_roundtrip() {
         free_mod(module);
     }
 }
+
+#[test]
+fn a_resilient_schema_error_refuses_at_the_c_abi() {
+    // DEC-004 / LANG-G-002: the resilient engine returns a tree plus an
+    // error-severity diagnostic for a closed-table violation. The C
+    // boundary must still return null and the mapped numeric code; the old
+    // smoke case (a unit TypeError) already returned null before the fix,
+    // so it could not catch this.
+    let path = match cdylib_path() {
+        Some(p) => p,
+        None => {
+            eprintln!("SKIP: cdylib absent (build the crate first)");
+            return;
+        }
+    };
+    type LastErrorFn = unsafe extern "C" fn() -> i32;
+    // SAFETY: test loads the just-built crate ABI per docs/FFI.md.
+    unsafe {
+        let lib = libloading::Library::new(&path).expect("dlopen cdylib");
+        let parse: libloading::Symbol<ParseFn> = lib.get(b"active_module_parse").expect("parse");
+        let eval: libloading::Symbol<EvalFn> = lib.get(b"active_eval").expect("eval");
+        let last_error: libloading::Symbol<LastErrorFn> =
+            lib.get(b"active_last_error").expect("last error");
+        let free_mod: libloading::Symbol<FreeFn> =
+            lib.get(b"active_module_free").expect("free mod");
+        let free_val: libloading::Symbol<FreeFn> = lib.get(b"active_value_free").expect("free val");
+
+        // conformance/cases/0010-closed-table.active: an extra key in a
+        // closed schema is T005 (Error) under the resilient engine.
+        let src = b"schema = { srv = Table { host = String, closed = true } }\n[srv]\nhost = \"h\"\nextra = 1\n";
+        let module = parse(src.as_ptr(), src.len(), std::ptr::null());
+        assert!(!module.is_null(), "the document parses");
+        let value = eval(module, std::ptr::null());
+        assert!(
+            value.is_null(),
+            "an error-severity diagnostic must refuse at the C ABI"
+        );
+        assert_eq!(last_error(), 8, "T005 maps to ACTIVE_ERR_SCHEMA_FAIL (8)");
+        free_val(value);
+        free_mod(module);
+    }
+}

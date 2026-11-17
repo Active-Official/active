@@ -4944,3 +4944,81 @@ fn sign_refuses_to_overwrite_a_sidecar_without_force() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn doctor_reports_a_healthy_checkout() {
+    // INNOVATIONS L-P48: one command proves the shipped binary behaves
+    // and (in a checkout) that the repository invariants hold.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let out = active()
+        .args(["doctor", "--path"])
+        .arg(&root)
+        .args(["--format", "json"])
+        .output()
+        .expect("run doctor");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).expect("doctor json");
+    assert_eq!(json["ok"], true, "{json}");
+    let checks = json["checks"].as_array().expect("checks");
+    let by_id = |id: &str| {
+        checks
+            .iter()
+            .find(|c| c["id"] == id)
+            .unwrap_or_else(|| panic!("missing check {id}: {json}"))
+    };
+    for id in [
+        "version",
+        "self-eval",
+        "refusal",
+        "budgets",
+        "network-closure",
+        "ffi-header",
+    ] {
+        assert_eq!(by_id(id)["status"], "pass", "check {id}: {json}");
+    }
+}
+
+#[test]
+fn doctor_fails_on_a_network_crate_in_the_evaluator_closure() {
+    let dir = std::env::temp_dir().join(format!("active-doctor-{}", std::process::id()));
+    let core = dir.join("active-core");
+    std::fs::create_dir_all(&core).expect("temp tree");
+    std::fs::write(
+        dir.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"active-core\"]\n\n[workspace.package]\nversion = \"9.9.9\"\n",
+    )
+    .expect("workspace manifest");
+    std::fs::write(
+        core.join("Cargo.toml"),
+        "[package]\nname = \"active-core\"\nversion.workspace = true\n\n[dependencies]\ntokio = \"1\"\n",
+    )
+    .expect("core manifest");
+    std::fs::write(
+        dir.join("Cargo.lock"),
+        "version = 4\n\n[[package]]\nname = \"active-core\"\nversion = \"9.9.9\"\ndependencies = [\n \"tokio\",\n]\n\n[[package]]\nname = \"tokio\"\nversion = \"1.0.0\"\n",
+    )
+    .expect("lockfile");
+    let out = active()
+        .args(["doctor", "--path"])
+        .arg(&dir)
+        .args(["--format", "json"])
+        .output()
+        .expect("run doctor");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!out.status.success(), "doctor must exit non-zero on a fail");
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).expect("doctor json");
+    assert_eq!(json["ok"], false, "{json}");
+    let failed: Vec<&str> = json["checks"]
+        .as_array()
+        .expect("checks")
+        .iter()
+        .filter(|c| c["status"] == "fail")
+        .filter_map(|c| c["id"].as_str())
+        .collect();
+    assert!(failed.contains(&"network-closure"), "{json}");
+    assert!(failed.contains(&"version-source"), "{json}");
+}

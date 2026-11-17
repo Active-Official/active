@@ -887,6 +887,16 @@ enum Commands {
         #[command(subcommand)]
         action: BudgetAction,
     },
+    /// Check the toolchain, this binary, and (in a source checkout) the
+    /// repository state, then print a fix list (INNOVATIONS L-P48)
+    Doctor {
+        /// Source checkout to inspect (defaults to the current directory)
+        #[arg(long)]
+        path: Option<PathBuf>,
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
 }
 
 /// `active schema ...` subcommands (QUERY.002).
@@ -951,6 +961,371 @@ impl LintFormat {
 }
 
 /// Shared implementation of `inspect` and `schema inspect` (QUERY.002).
+/// One `active doctor` check (INNOVATIONS L-P48).
+struct DoctorCheck {
+    id: &'static str,
+    /// `pass`, `warn`, `fail`, or `skip`.
+    status: &'static str,
+    detail: String,
+}
+
+impl DoctorCheck {
+    fn new(id: &'static str, status: &'static str, detail: impl Into<String>) -> Self {
+        Self {
+            id,
+            status,
+            detail: detail.into(),
+        }
+    }
+    fn pass(id: &'static str, detail: impl Into<String>) -> Self {
+        Self::new(id, "pass", detail)
+    }
+    fn warn(id: &'static str, detail: impl Into<String>) -> Self {
+        Self::new(id, "warn", detail)
+    }
+    fn fail(id: &'static str, detail: impl Into<String>) -> Self {
+        Self::new(id, "fail", detail)
+    }
+    fn skip(id: &'static str, detail: impl Into<String>) -> Self {
+        Self::new(id, "skip", detail)
+    }
+}
+
+/// Names that may never appear in `active-core`'s dependency closure
+/// (DEC-002; mirrors `research_battery::rb_066`).
+const NETWORK_BANNED: [&str; 22] = [
+    "reqwest",
+    "hyper",
+    "tokio",
+    "mio",
+    "socket2",
+    "h2",
+    "tungstenite",
+    "ureq",
+    "isahc",
+    "curl",
+    "curl-sys",
+    "openssl",
+    "rustls",
+    "native-tls",
+    "hyper-util",
+    "axum",
+    "actix-web",
+    "actix-rt",
+    "warp",
+    "rouille",
+    "tiny_http",
+    "quinn",
+];
+
+/// Banned crates present in `active-core`'s lockfile closure (DEC-002:
+/// the ban is scoped to the evaluator, dev-dependencies excluded).
+fn banned_in_evaluator_closure(manifest_dir: &Path) -> Result<Vec<String>, String> {
+    let lock = std::fs::read_to_string(manifest_dir.join("..").join("Cargo.lock"))
+        .map_err(|e| format!("cannot read Cargo.lock: {e}"))?;
+    let mut deps_of: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    let mut current: Option<String> = None;
+    let mut in_deps = false;
+    for line in lock.lines() {
+        let line = line.trim();
+        if line == "[[package]]" {
+            current = None;
+            in_deps = false;
+        } else if let Some(rest) = line.strip_prefix("name = \"") {
+            if let Some(name) = rest.strip_suffix('"') {
+                current = Some(name.to_string());
+                deps_of.entry(name.to_string()).or_default();
+            }
+        } else if line == "dependencies = [" {
+            in_deps = true;
+        } else if in_deps {
+            if line == "]" {
+                in_deps = false;
+            } else {
+                let dep = line.trim_matches(|c| c == '"' || c == ',');
+                let dep_name = dep.split_whitespace().next().unwrap_or("").to_string();
+                if !dep_name.is_empty() {
+                    if let Some(pkg) = &current {
+                        deps_of.entry(pkg.clone()).or_default().push(dep_name);
+                    }
+                }
+            }
+        }
+    }
+    let manifest = std::fs::read_to_string(manifest_dir.join("Cargo.toml"))
+        .map_err(|e| format!("cannot read Cargo.toml: {e}"))?;
+    let read_section = |wanted: &str| -> Vec<String> {
+        let mut names = Vec::new();
+        let mut on = false;
+        for line in manifest.lines() {
+            let line = line.trim();
+            if line.starts_with('[') {
+                on = line == wanted;
+            } else if on && !line.starts_with('#') {
+                if let Some((name, _)) = line.split_once('=') {
+                    names.push(name.trim().trim_matches('"').to_string());
+                }
+            }
+        }
+        names
+    };
+    let dev = read_section("[dev-dependencies]");
+    let normal = read_section("[dependencies]");
+    let dev_only: Vec<String> = dev.into_iter().filter(|n| !normal.contains(n)).collect();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut queue: Vec<String> = vec!["active-core".to_string()];
+    seen.insert("active-core".to_string());
+    let mut first_hop = true;
+    while let Some(pkg) = queue.pop() {
+        if let Some(deps) = deps_of.get(&pkg) {
+            for dep in deps {
+                if first_hop && dev_only.contains(dep) {
+                    continue;
+                }
+                if seen.insert(dep.clone()) {
+                    queue.push(dep.clone());
+                }
+            }
+        }
+        first_hop = false;
+    }
+    Ok(seen
+        .into_iter()
+        .filter(|n| NETWORK_BANNED.contains(&n.as_str()))
+        .collect())
+}
+
+/// `active doctor`: check the binary, the language invariants that must
+/// hold on any host, and (in a source checkout) the repository state.
+/// Prints a report; exits non-zero when any check fails.
+fn run_doctor(root: &Path, format: &str) -> anyhow::Result<()> {
+    let mut checks: Vec<DoctorCheck> = Vec::new();
+
+    checks.push(DoctorCheck::pass(
+        "version",
+        format!(
+            "active {} ({} {})",
+            env!("CARGO_PKG_VERSION"),
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        ),
+    ));
+
+    // The binary evaluates a known document to the known value.
+    let self_eval = active_core::parse("a = 1\nb = a + 1\n", "doctor");
+    match self_eval {
+        Ok(module) => {
+            let engine = Engine::new();
+            match engine.evaluate(&module) {
+                Ok((value, _)) => {
+                    let json = active_core::convert::value_to_json(&value);
+                    if json == serde_json::json!({"a": 1, "b": 2}) {
+                        checks.push(DoctorCheck::pass(
+                            "self-eval",
+                            "a = 1, b = a + 1 -> {a:1,b:2}",
+                        ));
+                    } else {
+                        checks.push(DoctorCheck::fail(
+                            "self-eval",
+                            format!("unexpected evaluation result: {json}"),
+                        ));
+                    }
+                }
+                Err(e) => checks.push(DoctorCheck::fail(
+                    "self-eval",
+                    format!("evaluation failed: {e}"),
+                )),
+            }
+        }
+        Err(d) => checks.push(DoctorCheck::fail(
+            "self-eval",
+            format!("the shipped parser rejected a valid document: {d:?}"),
+        )),
+    }
+
+    // The refusal contract: a value that violates its schema must produce
+    // an error-severity diagnostic, never a silent success.
+    match active_core::parse(
+        "schema = {\n  port = Int\n}\nport = \"not an int\"\n",
+        "doctor-refusal",
+    ) {
+        Ok(module) => {
+            let engine = Engine::new();
+            let refused = match engine.evaluate(&module) {
+                Ok((_, diags)) => diags
+                    .iter()
+                    .any(|d| d.severity == active_core::Severity::Error),
+                Err(_) => true,
+            };
+            if refused {
+                checks.push(DoctorCheck::pass(
+                    "refusal",
+                    "a schema violation reports an error-severity diagnostic",
+                ));
+            } else {
+                checks.push(DoctorCheck::fail(
+                    "refusal",
+                    "a schema violation produced no error-severity diagnostic",
+                ));
+            }
+        }
+        Err(d) => checks.push(DoctorCheck::fail("refusal", format!("parse failed: {d:?}"))),
+    }
+
+    // Budgets fail closed: one node under a one-node cap is refused.
+    match active_core::parse("a = 1\nb = 2\nc = 3\n", "doctor-budget") {
+        Ok(module) => {
+            let mut engine = Engine::new();
+            engine.budget.max_nodes = 1;
+            match engine.evaluate(&module) {
+                Err(EvalError::BudgetExceeded { .. }) => checks.push(DoctorCheck::pass(
+                    "budgets",
+                    "a one-node cap refuses a three-node document",
+                )),
+                other => checks.push(DoctorCheck::fail(
+                    "budgets",
+                    format!("a one-node cap did not refuse the document: {other:?}"),
+                )),
+            }
+        }
+        Err(d) => checks.push(DoctorCheck::fail("budgets", format!("parse failed: {d:?}"))),
+    }
+
+    if Budget::wall_supported() {
+        checks.push(DoctorCheck::pass(
+            "clock",
+            "wall-clock budgets are supported on this target",
+        ));
+    } else {
+        checks.push(DoctorCheck::warn(
+            "clock",
+            "wall-clock budgets are unavailable on this target; static caps still apply",
+        ));
+    }
+
+    // Source-checkout checks.
+    let manifest = root.join("Cargo.toml");
+    let lock = root.join("Cargo.lock");
+    if !manifest.is_file() || !lock.is_file() {
+        checks.push(DoctorCheck::skip(
+            "source-tree",
+            "not a source checkout (pass --path to a repository root to inspect one)",
+        ));
+    } else {
+        let text = std::fs::read_to_string(&manifest).unwrap_or_default();
+        let mut on = false;
+        let mut workspace_version = None;
+        for line in text.lines() {
+            let line = line.trim();
+            if line.starts_with('[') {
+                on = line == "[workspace.package]";
+            } else if on {
+                if let Some((key, value)) = line.split_once('=') {
+                    if key.trim() == "version" {
+                        workspace_version = Some(value.trim().trim_matches('"').to_string());
+                    }
+                }
+            }
+        }
+        match workspace_version {
+            Some(version) if version == env!("CARGO_PKG_VERSION") => {
+                checks.push(DoctorCheck::pass(
+                    "version-source",
+                    format!("CLI and workspace agree on {version}"),
+                ))
+            }
+            Some(version) => checks.push(DoctorCheck::fail(
+                "version-source",
+                format!(
+                    "CLI {} but workspace package version {version}",
+                    env!("CARGO_PKG_VERSION")
+                ),
+            )),
+            None => checks.push(DoctorCheck::warn(
+                "version-source",
+                "no [workspace.package] version found",
+            )),
+        }
+
+        match banned_in_evaluator_closure(&root.join("active-core")) {
+            Ok(hits) if hits.is_empty() => checks.push(DoctorCheck::pass(
+                "network-closure",
+                "no network-capable crate in active-core's dependency closure",
+            )),
+            Ok(hits) => checks.push(DoctorCheck::fail(
+                "network-closure",
+                format!("network-capable crates in the evaluator's closure: {hits:?}"),
+            )),
+            Err(e) => checks.push(DoctorCheck::warn("network-closure", e)),
+        }
+
+        let header = root.join("active-ffi").join("active.h");
+        if header.is_file() {
+            checks.push(DoctorCheck::pass(
+                "ffi-header",
+                "active-ffi/active.h is present; drift gate: cargo test -p active-ffi --test header_drift",
+            ));
+        } else {
+            checks.push(DoctorCheck::warn(
+                "ffi-header",
+                "active-ffi/active.h is missing",
+            ));
+        }
+
+        let wasm = ["pkg-web", "pkg-nodejs"].iter().any(|dir| {
+            root.join("active-wasm")
+                .join(dir)
+                .join("active_wasm_bg.wasm")
+                .is_file()
+        });
+        if wasm {
+            checks.push(DoctorCheck::pass(
+                "wasm-artifact",
+                "a built WASM artifact is present under active-wasm/pkg-*",
+            ));
+        } else {
+            checks.push(DoctorCheck::warn(
+                "wasm-artifact",
+                "no built WASM artifact (engine.wasm build required; LANG-G-023)",
+            ));
+        }
+    }
+
+    let fails = checks.iter().filter(|c| c.status == "fail").count();
+    match format {
+        "json" => {
+            let items: Vec<serde_json::Value> = checks
+                .iter()
+                .map(|c| {
+                    serde_json::json!({
+                        "id": c.id,
+                        "status": c.status,
+                        "detail": c.detail,
+                    })
+                })
+                .collect();
+            outln!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "ok": fails == 0,
+                    "checks": items,
+                }))?
+            );
+        }
+        "text" => {
+            for c in &checks {
+                outln!("{:<5}{:<18}{}", c.status, c.id, c.detail);
+            }
+        }
+        other => anyhow::bail!("unknown doctor format `{other}` (want text|json)"),
+    }
+    if fails > 0 {
+        anyhow::bail!("doctor found {fails} failing check(s)");
+    }
+    Ok(())
+}
+
 fn run_inspect(
     from: &Path,
     path: Option<&str>,
@@ -3541,6 +3916,13 @@ fn main() -> anyhow::Result<()> {
             if dirty {
                 std::process::exit(1);
             }
+        }
+        Commands::Doctor { path, format } => {
+            let root = match path {
+                Some(p) => p,
+                None => std::env::current_dir()?,
+            };
+            run_doctor(&root, &format)?;
         }
     }
     Ok(())

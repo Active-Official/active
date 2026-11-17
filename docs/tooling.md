@@ -109,6 +109,24 @@ active mode --from svc.active --format json
 active budget explain --from svc.active
 ```
 
+## Toolchain self-check
+
+```sh
+active doctor                      # text report for the current directory
+active doctor --path ../active-lang --format json
+```
+
+One command checks the things that silently differ between machines and
+checkouts (LANG-H-001/H-002 class): the binary evaluates a known document
+to the known value, a schema violation still reports an error-severity
+diagnostic, a one-node budget still refuses a three-node document, and —
+when `--path` names a source checkout — the CLI and workspace versions
+agree, no network-capable crate is in `active-core`'s dependency closure
+(DEC-002), `active-ffi/active.h` is present, and a built WASM artefact
+exists. Each check reports `pass`, `warn`, `fail`, or `skip`; the JSON
+form is `{"ok": bool, "checks": [{"id", "status", "detail"}]}` and any
+`fail` exits non-zero, so CI can gate on it.
+
 ## Editors
 
 VS Code/Cursor/VSCodium: install the vsix; the status bar shows mode,

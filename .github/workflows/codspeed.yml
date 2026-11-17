@@ -30,7 +30,12 @@ jobs:
   benchmarks:
     name: Benchmarks (CodSpeed)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # A cold runner (no setup-rust cache, or a cache-service outage) can
+    # spend most of the budget compiling the benchmark targets; the
+    # official-remote run on 66e4fcd hit GitHub's 30-minute ceiling exactly
+    # at "cargo codspeed build". 60 minutes leaves room for the build plus
+    # the simulation run without licensing a hung job.
+    timeout-minutes: 60
     permissions:
       contents: read
       id-token: write

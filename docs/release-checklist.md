@@ -11,12 +11,12 @@ Every `v*` tag run must produce, in order:
 4. Checksums (SHA256SUMS) plus build attestations plus `.sig` sidecars when
    the release key is set.
 5. Provenance gate first (clean tree, HEAD is the tag commit, workspace
-   version matches the tag), then the GitHub release with all of the above
-   attached; crates published in dependency order with index-lag pauses
-   (active-core first: active-core -> active -> active-fmt -> active-lsp ->
-   active-cli -> active-ffi -> active-wasm). The publish step fails loudly
-   when neither trusted publishing nor a token is available; it never skips
-   silently. There is no active-infinity publish from this repo - that
+   version matches the tag), then crates published in dependency order with
+   index-lag pauses (active-core first: active-core -> active ->
+   active-fmt -> active-lsp -> active-cli -> active-ffi -> active-wasm),
+   then the GitHub release with all of the above attached. The publish step
+   fails loudly when neither trusted publishing nor a token is available;
+   it never skips silently. There is no active-infinity publish from this repo - that
    name belongs to the standalone Infinity codec. The verified triple is
    recorded in docs/interop-pairing.md and re-verified on every active-core
    minor bump by running

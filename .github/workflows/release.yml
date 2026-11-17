@@ -180,13 +180,22 @@ jobs:
     needs: [build, vsix, wasm, neovim]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Publishing waits 60 s between crates for index lag (6 gaps = 6 min)
+    # on top of two cargo installs, the signer build, and the upload; a
+    # 10-minute cap would cancel the job mid-loop and leave a partial
+    # registry state.
+    timeout-minutes: 60
     permissions:
       contents: write
       id-token: write
       attestations: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          # The provenance gate resolves the tag commit; a depth-1 clone
+          # may not carry the tag ref, which would fail a legitimate tag
+          # closed.
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build signer binary
@@ -297,14 +306,6 @@ jobs:
             exit 1
           fi
           echo "provenance: $version at $head_sha"
-      - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*
-          body: |
-            Active ${{ github.ref_name }} — see spec/packaging.md §6 for install
-            and verification (SHA256SUMS, build attestations, `.sig` sidecars
-            when the release key is set).
       - name: Publish crates (fails loudly if unavailable)
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -325,7 +326,17 @@ jobs:
           # track. There is no active-infinity publish from this repo: the
           # member is retired (LANG-E-001, VERSIONING.md section 4) and the
           # name belongs to the standalone Infinity codec.
-          for p in active-core active active-fmt active-lsp active-cli active-ffi active-wasm; do
+          for p in active-core active active-fmt active-lsp active-cli active-ffi; do
             cargo publish --locked -p "$p"
             sleep 60
           done
+          # The last crate needs no pause after it: the job can finish.
+          cargo publish --locked -p active-wasm
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          body: |
+            Active ${{ github.ref_name }} — see spec/packaging.md §6 for install
+            and verification (SHA256SUMS, build attestations, `.sig` sidecars
+            when the release key is set).

@@ -612,3 +612,82 @@ fn every_shipped_schema_round_trips_through_the_formatter() {
         }
     }
 }
+
+#[test]
+fn a_tree_deeper_than_the_block_budget_formats_as_headers() {
+    // The parser caps lexical block nesting at 64 (E011, spec/budgets.md).
+    // A tree built from dotted headers can be deeper than that, and the
+    // formatter used to re-emit it as nested bodies - output its own
+    // parser rejects (Monte Carlo sweep, family 3). Deep trees are now
+    // rendered as sibling dotted headers, which do not consume the budget.
+    let depth = 70;
+    let mut src = String::new();
+    let mut path = String::new();
+    for d in 0..depth {
+        if path.is_empty() {
+            path = format!("n{d}");
+        } else {
+            path.push_str(&format!(".n{d}"));
+        }
+        src.push_str(&format!("[{path}]\nk = {d}\n"));
+    }
+    let module = parse_ok(&src);
+    let engine = Engine::new();
+    let (source_value, _) = engine.evaluate(&module).expect("source evaluates");
+    for style in [Style::Brace, Style::Indent, Style::Preserve] {
+        let once = format(&module, style);
+        let reparsed = parse(&once, "fmt-deep")
+            .unwrap_or_else(|d| panic!("deep output must re-parse for {style:?} ({d:?}):\n{once}"));
+        let again = format(&reparsed, style);
+        assert_eq!(once, again, "deep formatting is not idempotent: {style:?}");
+        let (formatted_value, _) = engine.evaluate(&reparsed).expect("formatted evaluates");
+        assert_eq!(
+            active_core::convert::value_to_pretty_json(&source_value),
+            active_core::convert::value_to_pretty_json(&formatted_value),
+            "deep formatting changed the value: {style:?}"
+        );
+    }
+
+    // Comments survive the header rendering, and the result is stable.
+    let mut commented = String::from("# top\n");
+    let mut path = String::new();
+    for d in 0..depth {
+        if path.is_empty() {
+            path = format!("n{d}");
+        } else {
+            path.push_str(&format!(".n{d}"));
+        }
+        commented.push_str(&format!("[{path}]\n# before {d}\nk = {d} # after {d}\n"));
+    }
+    let once = fmt(&commented, Style::Indent);
+    assert!(once.contains("# top"), "{once}");
+    assert!(once.contains("# before 69"), "{once}");
+    assert!(once.contains("# after 69"), "{once}");
+    let reparsed = parse(&once, "fmt-deep-comments").unwrap_or_else(|d| panic!("{d:?}:\n{once}"));
+    assert_eq!(
+        once,
+        format(&reparsed, Style::Indent),
+        "comment form not stable"
+    );
+
+    // A profile body deeper than the budget uses the same rendering.
+    let mut profile = String::from("active_profile = \"p\"\nprofile \"p\":\n  base = 1\n");
+    let mut path = String::new();
+    for d in 0..depth {
+        if path.is_empty() {
+            path = format!("n{d}");
+        } else {
+            path.push_str(&format!(".n{d}"));
+        }
+        profile.push_str(&format!("  [{path}]\n  k = {d}\n"));
+    }
+    let module = parse_ok(&profile);
+    let once = format(&module, Style::Indent);
+    let reparsed = parse(&once, "fmt-deep-profile")
+        .unwrap_or_else(|d| panic!("profile output ({d:?}):\n{once}"));
+    assert_eq!(
+        once,
+        format(&reparsed, Style::Indent),
+        "deep profile formatting is not idempotent"
+    );
+}

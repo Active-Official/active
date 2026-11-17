@@ -22,6 +22,17 @@ use std::collections::HashMap;
 
 const INDENT: &str = "  ";
 
+/// The parser rejects block nesting deeper than this (`E011`,
+/// `spec/budgets.md`). The formatter must never emit syntax the parser
+/// rejects, so a deeper tree is rendered with dotted headers instead of
+/// nesting: only lexical bodies consume the block budget, header paths do
+/// not.
+const PARSER_MAX_BLOCK_DEPTH: usize = 64;
+
+/// Start header rendering this far below the parser limit. Leaves room for
+/// the document body itself and for re-parsing/re-formatting the output.
+const FLAT_DEPTH_THRESHOLD: usize = PARSER_MAX_BLOCK_DEPTH - 4;
+
 /// Format a module in the requested style. `Preserve` uses the style the
 /// source predominantly used.
 pub fn format(module: &Module, style: Style) -> String {
@@ -73,8 +84,10 @@ fn format_once(module: &Module, style: Style) -> String {
         trailing_block: HashMap::new(),
         trailing_document: Vec::new(),
         pending_blank: false,
+        flat: false,
         out: String::new(),
     };
+    f.flat = f.needs_flat_rendering();
     f.index_trivia();
     f.emit_module();
     f.out
@@ -92,6 +105,10 @@ struct Formatter<'a> {
     /// A blank separator was already emitted by an empty-table trailing
     /// comment block; the next root entry must not add a second one.
     pending_blank: bool,
+    /// The tree is deeper than [`FLAT_DEPTH_THRESHOLD`]: every data table
+    /// is rendered as a `[dotted.path]` header instead of a nested body
+    /// (see the constants above). Chosen once per pass from the tree.
+    flat: bool,
     out: String,
 }
 
@@ -345,25 +362,7 @@ impl<'a> Formatter<'a> {
         // can only hold an alias here (a literal table value would already
         // have parsed as a schema block), and the alias name re-parses as
         // data. Fuzz seed crash-a0f12d89.
-        let is_table_node = |f: &Formatter, n: &NodeId, key: &str| {
-            if key == "schema" {
-                return false;
-            }
-            match f.module.get(*n) {
-                // A table definition is always a block, whatever its name.
-                Some(Node::Table { .. }) => true,
-                // A reference to a NAMED table stays a reference
-                // (`key = other`): the next parse resolves the same name,
-                // so formatting is a fixed point. Only an unnamed target (a
-                // parser-synthesized node) is expanded as a block.
-                Some(Node::Ref(_)) => {
-                    let resolved = f.resolve_ref(*n);
-                    !f.names.contains_key(&resolved)
-                        && matches!(f.module.get(resolved), Some(Node::Table { .. }))
-                }
-                _ => false,
-            }
-        };
+        let is_table_node = |f: &Formatter, n: &NodeId, key: &str| f.is_block_table(n, key);
         // At the document root, scalars must be hoisted above tables: a
         // `key = value` line after a table header would otherwise be
         // absorbed by that table (spec §5.1). Inside a block, the original
@@ -497,7 +496,14 @@ impl<'a> Formatter<'a> {
             let qkey = child_path.clone();
             self.emit_leading(&qkey, depth);
             if is_table {
-                self.emit_table_block(*node, &child_path, key, depth, is_root, has_next);
+                if self.flat && is_root {
+                    // A tree deeper than the parser's block budget: emit
+                    // dotted headers instead of nesting (see
+                    // FLAT_DEPTH_THRESHOLD).
+                    self.emit_flat_table(*node, &child_path, key, depth);
+                } else {
+                    self.emit_table_block(*node, &child_path, key, depth, is_root, has_next);
+                }
             } else {
                 let value = self.render_expr(*node);
                 let indent = INDENT.repeat(depth);
@@ -757,6 +763,148 @@ impl<'a> Formatter<'a> {
         }
     }
 
+    /// True when this field renders as a table *block*. A reference to a
+    /// named table stays a `key = other` reference (the next parse resolves
+    /// the same name); only an unnamed target is expanded. A DATA field
+    /// named `schema` is never a table, whatever it resolves to.
+    fn is_block_table(&self, node: &NodeId, key: &str) -> bool {
+        if key == "schema" {
+            return false;
+        }
+        match self.module.get(*node) {
+            Some(Node::Table { .. }) => true,
+            Some(Node::Ref(_)) => {
+                let resolved = self.resolve_ref(*node);
+                !self.names.contains_key(&resolved)
+                    && matches!(self.module.get(resolved), Some(Node::Table { .. }))
+            }
+            _ => false,
+        }
+    }
+
+    /// True when the rendered tree would nest deeper than the parser
+    /// accepts, counting table blocks only (inline tables, arrays, and
+    /// schema bodies do not consume the block budget).
+    fn needs_flat_rendering(&self) -> bool {
+        if let Some(root) = self.module.root {
+            if self.exceeds_safe_nesting(root, FLAT_DEPTH_THRESHOLD) {
+                return true;
+            }
+        }
+        self.module
+            .profiles
+            .values()
+            .any(|id| self.exceeds_safe_nesting(*id, FLAT_DEPTH_THRESHOLD))
+    }
+
+    fn exceeds_safe_nesting(&self, id: NodeId, remaining: usize) -> bool {
+        if remaining == 0 {
+            return true;
+        }
+        let Some(Node::Table { fields }) = self.module.get(self.resolve_ref(id)) else {
+            return false;
+        };
+        fields.iter().any(|(key, child)| {
+            self.is_block_table(child, key) && self.exceeds_safe_nesting(*child, remaining - 1)
+        })
+    }
+
+    /// Emit one table of a deep tree as a `[dotted.path]` header: its
+    /// non-table entries at `depth + 1`, then every child table as a
+    /// sibling header at `depth`. Sibling headers close each body before
+    /// the next one starts, so the parser merges the dotted path into the
+    /// already-finished ancestors.
+    fn emit_flat_table(&mut self, id: NodeId, full: &str, rel: &str, depth: usize) {
+        let id = self.resolve_ref(id);
+        let fields = match self.module.get(id) {
+            Some(Node::Table { fields }) => fields.clone(),
+            _ => return,
+        };
+        self.emit_leading(full, depth);
+        self.out
+            .push_str(&format!("{}[{rel}]", INDENT.repeat(depth)));
+        self.emit_trailing(full);
+        self.out.push('\n');
+        // A header body continues at the header's own indentation: an
+        // `Indent` token at statement position is E010, so scalars sit on
+        // the header's column (the long-standing brace-root form is `[a]`
+        // then `k = 0` at column 0). The next sibling header at this level
+        // closes the body.
+        self.emit_flat_body(id, &fields, full, depth);
+        for (key, node) in &fields {
+            if !self.is_block_table(node, key) {
+                continue;
+            }
+            let child_full = if full.is_empty() {
+                key.clone()
+            } else {
+                format!("{full}.{key}")
+            };
+            let child_rel = if rel.is_empty() {
+                key.clone()
+            } else {
+                format!("{rel}.{key}")
+            };
+            self.emit_flat_table(*node, &child_full, &child_rel, depth);
+        }
+    }
+
+    /// The body of a header (or of a profile block in flat mode): includes,
+    /// schema, dependency metadata, every non-table entry, then this
+    /// scope's trailing comments. Child tables are emitted by the caller as
+    /// sibling headers, never inside this body.
+    fn emit_flat_body(
+        &mut self,
+        id: NodeId,
+        fields: &indexmap::IndexMap<String, NodeId>,
+        full: &str,
+        depth: usize,
+    ) {
+        let indent = INDENT.repeat(depth);
+        if !full.is_empty() {
+            let mut includes: Vec<IncludeStmt> = self
+                .module
+                .includes
+                .iter()
+                .filter(|inc| inc.scope_path.join(".") == full)
+                .cloned()
+                .collect();
+            includes.sort_by_key(|inc| inc.line);
+            for inc in &includes {
+                self.emit_include(inc, depth);
+            }
+            if let Some(schema) = self.schema_for_path(full) {
+                self.emit_schema_table(schema, depth);
+            }
+        }
+        self.emit_depends_on(id, depth);
+        for (key, node) in fields {
+            if self.is_block_table(node, key) {
+                continue;
+            }
+            let child_full = if full.is_empty() {
+                key.clone()
+            } else {
+                format!("{full}.{key}")
+            };
+            self.emit_leading(&child_full, depth);
+            let value = self.render_expr(*node);
+            self.out.push_str(&format!("{indent}{key} = {value}"));
+            self.emit_trailing(&child_full);
+            self.out.push('\n');
+        }
+        if let Some(comments) = self.trailing_block.get(full).cloned() {
+            if !self.out.ends_with('\n') {
+                self.out.push('\n');
+            }
+            for text in comments {
+                self.out.push_str(&indent);
+                self.out.push_str(&text);
+                self.out.push('\n');
+            }
+        }
+    }
+
     fn emit_table_block(
         &mut self,
         id: NodeId,
@@ -869,7 +1017,7 @@ impl<'a> Formatter<'a> {
                     .push_str(&format!("{}profile \"{qname}\":", INDENT.repeat(depth)));
                 self.emit_trailing(name);
                 self.out.push('\n');
-                self.emit_table_body(id, depth + 1, name, false);
+                self.emit_profile_body(id, name, depth + 1);
             }
             _ => {
                 if empty {
@@ -882,10 +1030,32 @@ impl<'a> Formatter<'a> {
                         .push_str(&format!("{}profile \"{qname}\" {{", INDENT.repeat(depth)));
                     self.emit_trailing(name);
                     self.out.push('\n');
-                    self.emit_table_body(id, depth + 1, name, false);
+                    self.emit_profile_body(id, name, depth + 1);
                     self.out.push_str(&format!("{}}}\n", INDENT.repeat(depth)));
                 }
             }
+        }
+    }
+
+    /// A profile's body. In flat mode the body's tables become headers at
+    /// the body depth (profiles nest one level, so a deep profile tree
+    /// would otherwise exceed the parser's block budget too).
+    fn emit_profile_body(&mut self, id: NodeId, name: &str, depth: usize) {
+        if !self.flat {
+            self.emit_table_body(id, depth, name, false);
+            return;
+        }
+        let fields = match self.module.get(id) {
+            Some(Node::Table { fields }) => fields.clone(),
+            _ => return,
+        };
+        self.emit_flat_body(id, &fields, name, depth);
+        for (key, node) in &fields {
+            if !self.is_block_table(node, key) {
+                continue;
+            }
+            let child_full = format!("{name}.{key}");
+            self.emit_flat_table(*node, &child_full, key, depth);
         }
     }
 

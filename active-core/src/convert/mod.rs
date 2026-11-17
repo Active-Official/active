@@ -487,8 +487,20 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
                     || media_exact
                     || payload_secret
                 {
+                    // An evaluated blob is already tainted when any of
+                    // those hold (eval decision). If an untainted value
+                    // still reaches this arm it was built by a host with
+                    // an inconsistent taint bit; its hash may be the v1
+                    // digest over the secret media type, so publish the
+                    // synthetic redacted identity instead of vouching for
+                    // a guessable one.
+                    let hash = if *tainted {
+                        *hash
+                    } else {
+                        crate::blob::redacted_identity()
+                    };
                     Value::Blob {
-                        hash: *hash,
+                        hash,
                         size: *size,
                         media_type: crate::secret::MARKER.to_string(),
                         tainted: true,

@@ -205,6 +205,19 @@ pub fn hash_hex(hash: &[u8; 32]) -> String {
     hash.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Synthetic identity for a blob the export must treat as tainted but
+/// whose evaluated v2 identity is unknown: a host-built `Value::Blob`
+/// with `tainted: false` whose content or serving path is material. The
+/// export refuses to publish the unverified hash - a v1 hash over a
+/// secret media type is an offline guess oracle - and this marker digest
+/// carries no information about the withheld bytes. Evaluated blobs
+/// already carry a real salted identity and never use it.
+pub fn redacted_identity() -> [u8; 32] {
+    let mut salt = [0u8; 32];
+    salt[..6].copy_from_slice(b"redact");
+    hash_salted(&salt, "active-blob/redacted-identity", &[])
+}
+
 /// Stable diagnostic codes for the blob family (spec/blob.md §8).
 /// Messages live with their raiser; codes are the contract.
 pub mod code {

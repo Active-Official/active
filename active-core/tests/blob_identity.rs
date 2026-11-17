@@ -46,6 +46,40 @@ fn untainted_identity_keeps_the_pinned_v1_vector() {
 }
 
 #[test]
+fn a_promoted_host_blob_cannot_publish_an_unsalted_identity() {
+    // A host-built blob with a false taint bit and a v1 hash over a
+    // secret media type is inconsistent. The export must redact the
+    // media type AND refuse to vouch for the guessable hash.
+    use active_core::secret::SecretProfile;
+    let media = "x-private-type";
+    let bytes = b"public";
+    let unsalted = blob::hash(media, bytes);
+    let host = active_core::Value::Blob {
+        hash: unsalted,
+        size: bytes.len() as u64,
+        tainted: false,
+        media_type: media.into(),
+        payload: None,
+    };
+    let module = parse("m = secret(\"x-private-type\")\n", "host-blob").expect("parse");
+    let profile = SecretProfile::analyze(&module);
+    let json = active_core::convert::value_to_json_with(&profile, &host);
+    let identity = &json["$active.blob"];
+    assert_eq!(identity["tainted"], true, "{json}");
+    assert_eq!(identity["media_type"], "***SECRET***", "{json}");
+    assert_ne!(
+        identity["hash"],
+        format!("blake3:{}", blob::hash_hex(&unsalted)),
+        "the export must not publish the unverified v1 identity: {json}"
+    );
+    assert_eq!(
+        identity["hash"],
+        format!("blake3:{}", blob::hash_hex(&blob::redacted_identity())),
+        "{json}"
+    );
+}
+
+#[test]
 fn a_media_type_embedding_a_short_secret_is_material_by_design() {
     // spec/blob.md §3: identity matching is broader than text redaction.
     // The export replaces the whole media string and withholds the

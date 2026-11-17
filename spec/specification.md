@@ -222,9 +222,18 @@ detection and evaluation like ordinary values.
    Environment names are case-insensitive: the snapshot folds every name
    to uppercase, so evaluation, fingerprints, and lockfile provenance
    agree on every platform (LANG-H-003).
-3. **Bounded** — the parser enforces the 64-level expression nesting limit;
-   evaluator-side budgets (node count, depth, array length, total keys,
-   wall-clock) arrive with C-037.
+3. **Total and bounded** — every document that passes the input gates
+   terminates. The parser enforces the 64-level expression nesting limit
+   plus the byte, node, include-count/byte, and wall-clock budgets in
+   `spec/budgets.md`; evaluation enforces node, depth, array-length, key,
+   and wall-clock budgets as hard ceilings that fail closed (`X001`–`X006`).
+   Termination does not depend on the clock: the static accountants (input
+   bytes, node count, include count and bytes, nesting depth) bound the
+   work for any accepted input, and each exhausted budget returns one
+   diagnostic over an empty result rather than a truncated tree. The clock
+   is a superlinearity backstop; include resolution is deduplicated and
+   capped, and dynamic value construction is charged against the node
+   accountant (`LANG-C-001`–`LANG-C-003`, `LANG-C-006`).
 4. **Observable** — the dependency graph and the diagnostics are first-class
    outputs, queryable by tools.
 

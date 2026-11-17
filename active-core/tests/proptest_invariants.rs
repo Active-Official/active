@@ -197,7 +197,36 @@ proptest! {
         prop_assert!(json.contains("***SECRET***"), "redaction marker missing from JSON: {json}");
     }
 
-    /// Invariant 4: W007 key sanitization never drops a key silently.
+    /// Invariant 5: budgets are monotonic — a document admitted under a
+    /// tighter node budget is admitted under a looser one, with the same
+    /// value (L-P38: budget monotonicity as a property).
+    #[test]
+    fn a_tighter_budget_never_admits_more(
+        seed in any::<u64>(),
+        tight in 1u64..24,
+        slack in 1u64..24,
+    ) {
+        let (module, _) = build_random_dag(seed);
+        let mut tight_engine = Engine::new();
+        tight_engine.budget.max_nodes = tight;
+        let mut loose_engine = Engine::new();
+        loose_engine.budget.max_nodes = tight + slack;
+        let tight_result = tight_engine.evaluate(&module);
+        let loose_result = loose_engine.evaluate(&module);
+        if let Ok((value, _)) = tight_result {
+            match loose_result {
+                Ok((loose, _)) => prop_assert_eq!(
+                    format!("{value:?}"),
+                    format!("{loose:?}"),
+                    "a looser budget changed the admitted value"
+                ),
+                Err(e) => prop_assert!(
+                    false,
+                    "a tighter budget admitted a document the looser one rejected: {e:?}"
+                ),
+            }
+        }
+    }
     /// Every collision (two input keys → one output key) carries a
     /// `duplicate key` note; the emitted source always parses and
     /// evaluates. Found via toml-test key/escapes ports, where `"Μ"`

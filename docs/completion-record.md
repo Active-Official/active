@@ -234,3 +234,35 @@ same close-out (full detail in `docs/security-hardening.md`):
   are excluded from repository history.
 
 **End of record.**
+
+## 8. Update - 2026-11-17 (post-audit campaign)
+
+The 2026-11-14 ultra audit (161 findings, 7 Critical) has been closed in
+full; the per-finding record lives in the audit working area, not in this
+repository. Surfaces touched since the record above:
+
+- **Fuzzing:** eight libFuzzer targets (lexer, parser, interpolation,
+  formatter, convert, secrets, sign, formatter_eval), each running 300 s in
+  CI with committed seed corpora. The formatter_eval target found a
+  formatter meaning-change for scaled/affine units (`2Cel` became `2K`);
+  `Unit::spelling()` now renders source quantities.
+- **Performance gate:** `ci.yml` compiles every bench and executes each
+  suite once (`--test`) as a hard panic gate, independent of the CodSpeed
+  upload (best-effort until the repository is connected; see the audit
+  working area's BLOCKS record).
+- **Parser:** body maps are shared (`Rc`), so a nested table's
+  parent-scope snapshot is O(1) instead of a full map copy; 5,000 sibling
+  tables parse in 48.7 ms instead of 1,448 ms on the reference machine.
+  A deep tree (more than 60 block levels) formats as sibling
+  `[dotted.path]` headers so the output always re-parses.
+- **Toolchain self-check:** `active doctor` verifies the binary
+  (self-evaluation, schema refusal, budget refusal), version agreement,
+  the evaluator's network-free dependency closure (DEC-002), the committed
+  FFI header, and the WASM artifact; JSON output and a non-zero exit on any
+  failure make it CI-gateable.
+- **CI harness:** a deterministic Monte Carlo grammar sweep
+  (`active-core/tests/mc_grammar.rs`, 300 cases, ten families) runs in the
+  normal test job and checks format idempotence, semantic preservation, and
+  secret non-leakage; property tests add budget monotonicity.
+
+**End of update.**

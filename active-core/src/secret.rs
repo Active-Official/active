@@ -413,6 +413,28 @@ impl SecretRedactor {
         self.redact_text(text)
     }
 
+    /// Redact every text field of a diagnostic repair record. Runtime
+    /// secrets (a lazy host env value, a computed copy) live in this
+    /// redactor, not in the authored profile, so both must sweep the
+    /// repair payload beside the message.
+    pub fn redact_repair(&self, repair: &mut crate::diag::Repair) {
+        let sweep = |text: &mut String| {
+            if let Some(redacted) = self.redact_every_occurrence(text) {
+                *text = redacted;
+            }
+        };
+        sweep(&mut repair.original);
+        sweep(&mut repair.suggested);
+        for path in &mut repair.side_effects {
+            sweep(path);
+        }
+        for step in &mut repair.steps {
+            sweep(&mut step.action);
+            sweep(&mut step.target);
+            sweep(&mut step.effect);
+        }
+    }
+
     /// Replace every occurrence of a known value of at least
     /// `min_bytes`. Used when sweeping display text where short values
     /// would rewrite unrelated fragments. Markers stay opaque.
@@ -2567,8 +2589,7 @@ impl SecretProfile {
         }
     }
 
-    /// True when `text` is exactly a material value, at any length.
-    /// Whole-value boundaries use this; substring redaction stays in
+    /// True when `text` is exactly a material value, at any length.    /// Whole-value boundaries use this; substring redaction stays in
     /// [`Self::literals`] so a short value cannot rewrite unrelated
     /// text.
     pub fn is_material_text(&self, text: &str) -> bool {

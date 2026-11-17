@@ -212,6 +212,59 @@ fn inspect_errors_redact_a_material_path_segment() {
 }
 
 #[test]
+fn runtime_secrets_redact_repair_fields() {
+    // Runtime (host/computed) secrets live in the evaluator redactor,
+    // not in the authored profile; the repair sweep must cover both.
+    let mut redactor = active_core::secret::SecretRedactor::new();
+    redactor.insert("runtime-key-value");
+    let mut repair = active_core::Repair {
+        original: "runtime-key-value".to_string(),
+        suggested: "password".to_string(),
+        kind: active_core::RepairKind::KeyTypo,
+        safe: false,
+        side_effects: vec!["runtime-key-value".to_string()],
+        goal: None,
+        steps: vec![],
+    };
+    redactor.redact_repair(&mut repair);
+    assert!(!repair.original.contains("runtime-key-value"), "{repair:?}");
+    assert!(
+        !repair
+            .side_effects
+            .iter()
+            .any(|path| path.contains("runtime-key-value")),
+        "{repair:?}"
+    );
+    assert_eq!(repair.suggested, "password");
+}
+
+#[test]
+fn a_material_typo_key_yields_no_rename_to_the_marker() {
+    // A redacted repair names the marker; a rename from or to it cannot
+    // be applied and must not be planned.
+    let src = "s = secret(\"passwrod\")\n\
+               schema = { password = String, closed = true }\n\
+               password = \"x\"\npasswrod = \"y\"\n";
+    let engine = Engine::hermetic();
+    let outcome = active_core::convert::repair_with_engine(
+        src,
+        active_core::diag::RepairGoal::Validate,
+        &[],
+        16,
+        &engine,
+        None,
+    );
+    for step in &outcome.steps {
+        assert!(
+            !step.directive.contains("***SECRET***") && !step.path.contains("***SECRET***"),
+            "the plan claims an unappliable step: {} {}",
+            step.directive,
+            step.path
+        );
+    }
+}
+
+#[test]
 fn structural_material_never_reaches_exports_or_the_content_hash() {
     use std::collections::HashMap;
     // A plain env read used as a secret locator, its aliases, a

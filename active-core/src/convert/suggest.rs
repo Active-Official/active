@@ -114,6 +114,15 @@ fn rename_for(
     d: &Diagnostic,
     repair: &crate::diag::Repair,
 ) -> Option<(String, String, String, String)> {
+    // A redacted repair names the marker, not the real key: a rename
+    // from or to `***SECRET***` cannot be applied (the applier rejects
+    // a non-identifier) and would claim to repair a key the plan does
+    // not know. The finding stays unrepairable.
+    if repair.original.contains(crate::secret::MARKER)
+        || repair.suggested.contains(crate::secret::MARKER)
+    {
+        return None;
+    }
     // Returns (path, from, to, directive).
     let built = if repair.original.contains('.') || repair.suggested.contains('.') {
         // Defensive only: every KeyTypo repair in the codebase carries

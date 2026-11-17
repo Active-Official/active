@@ -130,10 +130,16 @@ impl Engine {
             let runtime = runtime_secret_redactor(values, &profile);
             for diagnostic in &mut diagnostics {
                 if let Some(path) = &diagnostic.path {
-                    diagnostic.path = Some(profile.redact_path(path));
+                    let redacted = profile.redact_path(path);
+                    diagnostic.path = Some(
+                        runtime
+                            .redact_every_occurrence(&redacted)
+                            .unwrap_or(redacted),
+                    );
                 }
                 if let Some(repair) = &mut diagnostic.repair {
                     profile.redact_repair(repair);
+                    runtime.redact_repair(repair);
                 }
                 if let Some(message) = profile.redact_authored_text(&diagnostic.message) {
                     diagnostic.message = message;

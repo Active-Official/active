@@ -38,8 +38,15 @@ Consequences, stated so they are not rediscovered:
 - A DocumentEnvelope inside a valid ARP1 frame is still gated by the
   receiver gate (`spec/agent-interchange-profile.md` §4: `E033`, `E034`,
   `E035`) before evaluation.
-- The ResultEnvelope is what an in-process embedding returns (WASM/FFI); a
-  host bridging to RPC converts it to a DocumentEnvelope, it is not sent raw.
+- The ResultEnvelope is what an in-process embedding returns. The WASM
+  adapter emits it as JSON (`envelope_ok`/`envelope_err`); the C ABI adapter
+  returns null plus a numeric code on any error-severity diagnostic
+  (DEC-004) and exposes the same fields through `active_value_to_json` and
+  the `active_diagnostic_*` accessors, so an FFI host assembles the
+  ResultEnvelope from those calls rather than parsing a string. Both
+  spellings carry the same information; neither is sent raw over RPC. A
+  host bridging to RPC converts the ResultEnvelope to a DocumentEnvelope
+  first.
 
 ## 3. Field-by-field mapping (DocumentEnvelope ↔ ARP1)
 

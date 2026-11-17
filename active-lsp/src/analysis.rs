@@ -2173,8 +2173,13 @@ pub fn completion_at(doc: &Doc, line: u32, character: u32) -> Vec<CompletionItem
         SecretProfile::with_context(&doc.module, None, None, Some(&doc.value_seeds));
     for (name, detail) in schema_names_at(&doc.module, &scope_path, &schema_profile) {
         if name.starts_with(&prefix) {
+            // A schema field name whose text is material renders the
+            // marker; the client still gets the completion slot.
+            let label = schema_profile
+                .redact_text(&name)
+                .unwrap_or_else(|| name.clone());
             items.push(CompletionItem {
-                label: name,
+                label,
                 kind: Some(CompletionItemKind::FIELD),
                 detail: Some(detail),
                 ..Default::default()
@@ -2185,8 +2190,11 @@ pub fn completion_at(doc: &Doc, line: u32, character: u32) -> Vec<CompletionItem
     lets.sort();
     for name in lets {
         if name.starts_with(&prefix) {
+            let label = schema_profile
+                .redact_text(name)
+                .unwrap_or_else(|| name.clone());
             items.push(CompletionItem {
-                label: name.clone(),
+                label,
                 kind: Some(CompletionItemKind::VARIABLE),
                 ..Default::default()
             });
@@ -2431,6 +2439,9 @@ pub fn range_formatting_edits(doc: &Doc, range: Range) -> Vec<TextEdit> {
 #[allow(deprecated)]
 pub fn document_symbols(doc: &Doc) -> Vec<SymbolInformation> {
     let mut out: Vec<SymbolInformation> = Vec::new();
+    // Outline labels are key/let names and container paths: material text
+    // renders the marker like any other copy.
+    let profile = SecretProfile::with_context(&doc.module, None, None, Some(&doc.value_seeds));
     // A let binding's value node also appears in `value_paths` under the
     // binding name; emitting it there AND as a VARIABLE below produced two
     // identical entries (LANG-G-019). The binding loop owns that symbol.
@@ -2446,8 +2457,13 @@ pub fn document_symbols(doc: &Doc) -> Vec<SymbolInformation> {
             .get(&id)
             .map(|span| range_of_span(&doc.text, span))
             .unwrap_or_default();
-        let name = path.rsplit('.').next().unwrap_or(&path).to_string();
-        let container_name = path.rsplit_once('.').map(|(parent, _)| parent.to_string());
+        let raw_name = path.rsplit('.').next().unwrap_or(&path).to_string();
+        let name = profile
+            .redact_text(&raw_name)
+            .unwrap_or_else(|| raw_name.clone());
+        let container_name = path
+            .rsplit_once('.')
+            .map(|(parent, _)| profile.redact_path(parent));
         out.push(SymbolInformation {
             name,
             kind: if id_is_table(&doc.module, id) {
@@ -2475,7 +2491,7 @@ pub fn document_symbols(doc: &Doc) -> Vec<SymbolInformation> {
             .map(|span| range_of_span(&doc.text, span))
             .unwrap_or_default();
         out.push(SymbolInformation {
-            name: name.clone(),
+            name: profile.redact_text(name).unwrap_or_else(|| name.clone()),
             kind: SymbolKind::VARIABLE,
             tags: None,
             deprecated: None,
@@ -3660,5 +3676,52 @@ mod blob_identity_tests {
             "hover leaked a material key: {text}"
         );
         assert!(text.contains("***SECRET***"), "{text}");
+    }
+
+    #[test]
+    fn outline_labels_redact_material_names() {
+        let src = "marker = secret(\"token\")\n[token]\nok = true\n";
+        let uri =
+            Url::from_file_path(std::env::temp_dir().join("outline-key.active")).expect("uri");
+        let doc = open_doc(uri, src.to_string(), 1, None);
+        let symbols = document_symbols(&doc);
+        assert!(
+            symbols.iter().all(|symbol| symbol.name != "token"),
+            "outline leaked a name: {:?}",
+            symbols.iter().map(|s| &s.name).collect::<Vec<_>>()
+        );
+        assert!(
+            symbols
+                .iter()
+                .all(|symbol| symbol.container_name.as_deref() != Some("token")),
+            "outline leaked a container: {:?}",
+            symbols
+                .iter()
+                .map(|s| &s.container_name)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn completion_labels_redact_material_names() {
+        let src = "marker = secret(\"token\")\n\
+                   schema = { token = String }\n\
+                   token = \"x\"\n";
+        let uri = Url::from_file_path(std::env::temp_dir().join("completion-material-key.active"))
+            .expect("uri");
+        let doc = open_doc(uri, src.to_string(), 1, None);
+        let items = completion_at(&doc, 3, 0);
+        assert!(
+            items.iter().all(|item| item.label != "token"),
+            "completion leaked a material label: {:?}",
+            items.iter().map(|item| &item.label).collect::<Vec<_>>()
+        );
+        assert!(
+            items
+                .iter()
+                .any(|item| item.label == active_core::secret::MARKER),
+            "the marker label should still complete: {:?}",
+            items.iter().map(|item| &item.label).collect::<Vec<_>>()
+        );
     }
 }

@@ -108,13 +108,11 @@ fn walk_value(
     let section = if depth == 0 && !matches!(val, Value::Table(_) | Value::Array(_)) {
         "General".to_string()
     } else {
-        path.split('.')
-            .next()
-            .unwrap_or(path)
-            .split('[')
-            .next()
-            .unwrap_or(path)
-            .to_string()
+        let raw = path.split('.').next().unwrap_or(path);
+        let raw = raw.split('[').next().unwrap_or(raw);
+        // A section heading is a root key: material text renders the
+        // marker like any other copy.
+        profile.redact_text(raw).unwrap_or_else(|| raw.to_string())
     };
     let node = by_path.get(path).copied();
     let schema = schema_node_at(module, path);

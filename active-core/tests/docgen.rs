@@ -63,6 +63,29 @@ fn doc_items_redact_material_keys_and_blob_identities() {
 }
 
 #[test]
+fn doc_section_headings_redact_material_root_keys() {
+    use active_core::convert::collect_items_with_profile;
+    use active_core::secret::SecretProfile;
+    let src = "marker = secret(\"token\")\n[token]\nok = true\n";
+    let module = parse(src, "doc-section").expect("parse");
+    let engine = Engine::hermetic();
+    let (value, diags, seeds) = engine.evaluate_with_seeds(&module).expect("evaluate");
+    assert!(diags.is_empty(), "{diags:?}");
+    let profile = SecretProfile::for_engine(&module, &engine, &seeds);
+    let items = collect_items_with_profile(&module, &value, &profile);
+    assert!(
+        items.iter().all(|item| item.section != "token"),
+        "{:?}",
+        items.iter().map(|item| &item.section).collect::<Vec<_>>()
+    );
+    let items = collect_items_with_profile(&module, &value, &profile);
+    let md = doc_to_markdown("Doc", &items);
+    assert!(!md.contains("## token"), "{md}");
+    let html = doc_to_html("Doc", &items);
+    assert!(!html.contains("<h2>token</h2>"), "{html}");
+}
+
+#[test]
 fn markdown_renders_types_values_and_prose() {
     let md = doc_to_markdown("Service", &items());
     for probe in [

@@ -118,11 +118,14 @@ pub fn inspect_path_with_profile_env(
         // only named paths answer "where did this come from". A real
         // key such as `node_id` is not an internal label.
         .filter(|label| !is_internal_label(module, label))
+        // A label is a value path: redact its key segments like any
+        // other path copy.
+        .map(|label| profile.redact_path(&label))
         .collect();
     dependencies.dedup();
     let mut report = json!({
         "version": 1,
-        "path": path,
+        "path": profile.redact_path(path),
         "kind": kind,
         "tainted": tainted,
         "value": value,

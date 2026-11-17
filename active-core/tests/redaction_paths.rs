@@ -174,6 +174,12 @@ fn a_short_material_key_segment_is_redacted_in_paths() {
         !viz.to_string().contains("outer.x"),
         "viz leaked a path: {viz}"
     );
+    let report =
+        active_core::convert::inspect_path(&module, &value, "payload.outer.x").expect("inspect");
+    assert_eq!(
+        report["path"], "payload.outer.***SECRET***",
+        "inspect leaked a path segment: {report}"
+    );
 }
 
 #[test]

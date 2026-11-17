@@ -71,13 +71,16 @@ fn taint_data_from_profile(
         let literal = match node_value {
             Value::String(text) => profile.redact_text(text).is_some(),
             Value::Blob {
-                hash,
                 media_type,
                 payload,
                 ..
             } => {
                 let payload_material = payload.as_ref().is_some_and(|bytes| {
-                    if let Some(known) = payload_cache.get(hash) {
+                    // Never trust the claimed hash as a cache key: a
+                    // host-built value can assign two payloads the same
+                    // hash and hide a secret behind a benign scan.
+                    let key = crate::convert::payload_scan_key(bytes);
+                    if let Some(known) = payload_cache.get(&key) {
                         return *known;
                     }
                     let material = crate::convert::blob_payload_is_material(
@@ -85,7 +88,7 @@ fn taint_data_from_profile(
                         profile,
                         Some(bytes),
                     );
-                    payload_cache.insert(*hash, material);
+                    payload_cache.insert(key, material);
                     material
                 });
                 profile.blob_identity_is_material(media_type) || payload_material

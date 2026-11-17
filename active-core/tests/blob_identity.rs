@@ -154,6 +154,42 @@ fn inspection_promotes_a_material_media_type_to_the_synthetic_identity() {
 }
 
 #[test]
+fn a_forged_hash_cannot_hide_a_payload_secret_from_graph_or_viz() {
+    let media = "text/plain";
+    let benign = active_core::Value::Blob {
+        hash: [9u8; 32],
+        size: 5,
+        tainted: false,
+        media_type: media.into(),
+        payload: Some(b"hello".to_vec()),
+    };
+    let hidden = active_core::Value::Blob {
+        hash: [9u8; 32],
+        size: 15,
+        tainted: false,
+        media_type: media.into(),
+        payload: Some(b"hunter2-payload".to_vec()),
+    };
+    let mut map = indexmap::IndexMap::new();
+    map.insert(
+        "arr".to_string(),
+        active_core::Value::Array(vec![benign, hidden]),
+    );
+    let root = active_core::Value::Table(map);
+    let module = parse("m = secret(\"hunter2-payload\")\n", "forged").expect("parse");
+    let paths = active_core::graph::secret_tainted_paths_with(&module, &root, None);
+    assert!(
+        paths.iter().any(|path| path == "arr[1]"),
+        "the second payload is material despite the shared hash: {paths:?}"
+    );
+    let viz = active_core::viz::taint_data_with_profile(&module, &root, None);
+    assert!(
+        viz.to_string().contains("arr[1]"),
+        "viz must report the payload path: {viz}"
+    );
+}
+
+#[test]
 fn a_media_type_embedding_a_short_secret_is_material_by_design() {
     // spec/blob.md §3: identity matching is broader than text redaction.
     // The export replaces the whole media string and withholds the

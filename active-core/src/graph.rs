@@ -272,13 +272,15 @@ fn secret_tainted_paths_from_profile(
             // retained bytes; callers that need it evaluate with
             // materialisation and these seeds.
             Value::Blob {
-                hash,
                 media_type,
                 payload,
                 ..
             } => {
                 let payload_material = payload.as_ref().is_some_and(|bytes| {
-                    if let Some(known) = payload_cache.get(hash) {
+                    // Keyed by the scanned bytes, never the claimed hash:
+                    // two payloads can share a forged hash.
+                    let key = crate::convert::payload_scan_key(bytes);
+                    if let Some(known) = payload_cache.get(&key) {
                         return *known;
                     }
                     let material = crate::convert::blob_payload_is_material(
@@ -286,7 +288,7 @@ fn secret_tainted_paths_from_profile(
                         profile,
                         Some(bytes),
                     );
-                    payload_cache.insert(*hash, material);
+                    payload_cache.insert(key, material);
                     material
                 });
                 structural || profile.blob_identity_is_material(media_type) || payload_material

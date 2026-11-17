@@ -4,10 +4,12 @@
 //! profiles, and patches are exercised through the shipped export path.
 //!
 //! The check is structural, over exported *values*: raw text scanning
-//! would flag unrelated key names and marker text. Material substrings
-//! shorter than [`MIN_SUBSTRING`] are exact-match only by contract
-//! (spec/secrets.md §3), so those are checked by identity, which is
-//! exactly what the shipped redactor does.
+//! would flag unrelated key names and marker text. For ordinary strings,
+//! material substrings shorter than [`MIN_SUBSTRING`] are exact-match only
+//! by contract (spec/secrets.md §3), so those are checked by identity,
+//! exactly as the shipped redactor does. Blob identity metadata and
+//! payloads are the exception: they are swept at every length before
+//! export, so a retained one may not carry a seed of any size.
 
 #![no_main]
 
@@ -41,16 +43,27 @@ fn assert_no_material(value: &Value, seeds: &SecretRedactor) {
         Value::Table(map) => map
             .values()
             .for_each(|item| assert_no_material(item, seeds)),
-        // A retained payload is one the shipped materiality check
-        // cleared; scanning it here asks the same question of the
-        // bytes that reach `payload_b64`.
+        // Blob identity metadata and payloads are swept at *every* length
+        // before export (a base64 payload can never be matched again), so
+        // a retained media type or payload must not carry a seed of any
+        // size. This is the shipped `blob_identity_is_material` /
+        // `blob_payload_is_material` rule asked of the exported bytes.
         Value::Blob {
-            payload: Some(bytes),
+            media_type,
+            payload,
             ..
-        } => assert!(
-            !seeds.contains_substring(&String::from_utf8_lossy(bytes), MIN_SUBSTRING),
-            "an exported blob payload embeds a runtime secret"
-        ),
+        } => {
+            assert!(
+                !seeds.contains_substring(media_type, 1),
+                "an exported blob media type embeds a runtime secret"
+            );
+            if let Some(bytes) = payload {
+                assert!(
+                    !seeds.contains_substring(&String::from_utf8_lossy(bytes), 1),
+                    "an exported blob payload embeds a runtime secret"
+                );
+            }
+        }
         _ => {}
     }
 }

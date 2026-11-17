@@ -32,7 +32,10 @@ from the value tree with the same shapes:
   tainted identity redacts `media_type`; `payload_b64` appears only
   through the explicit materialisation renderers
   (`value_to_json_materialised` and the YAML/TOML `*_materialised`
-  forms), never through the generic serializers.
+  forms), never through the generic serializers. When a payload is
+  retained, every renderer publishes the identity VERIFIED from the
+  media type and bytes (`blob::verified_identity`), not a
+  caller-supplied hash beside bytes it does not describe.
 
 The JSON export is **layer-flattened by design**: profile overlays and
 patches are merged into one tree (last writer wins, W003 on a type change),

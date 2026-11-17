@@ -205,6 +205,26 @@ pub fn hash_hex(hash: &[u8; 32]) -> String {
     hash.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// The identity to publish for a value. A retained payload on an
+/// untainted blob verifies (and replaces) a caller-supplied hash, so two
+/// different retained payloads cannot share a wire form. A tainted blob
+/// carries no payload to verify; its hash is the evaluation's salted
+/// identity.
+pub fn verified_identity(
+    claimed: &[u8; 32],
+    tainted: bool,
+    media_type: &str,
+    payload: Option<&Vec<u8>>,
+) -> [u8; 32] {
+    if tainted {
+        *claimed
+    } else {
+        payload
+            .map(|bytes| hash(media_type, bytes))
+            .unwrap_or(*claimed)
+    }
+}
+
 /// Synthetic identity for a blob the export must treat as tainted but
 /// whose evaluated v2 identity is unknown: a host-built `Value::Blob`
 /// with `tainted: false` whose content or serving path is material. The

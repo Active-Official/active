@@ -412,6 +412,16 @@ fn content_hash_verifies_a_retained_payload_identity() {
     let one = active_core::provenance::content_hash(&make(b"one"));
     let two = active_core::provenance::content_hash(&make(b"two"));
     assert_ne!(one, two, "the retained payload must verify the identity");
+    // The renderers verify it too: distinct retained values cannot share
+    // a wire form even with the same claimed hash.
+    assert_ne!(
+        active_core::convert::value_to_json(&make(b"one")),
+        active_core::convert::value_to_json(&make(b"two"))
+    );
+    assert_ne!(
+        serde_json::to_string(&make(b"one")).expect("serde"),
+        serde_json::to_string(&make(b"two")).expect("serde")
+    );
     // Materialisation does not change the identity: stripping the
     // payload leaves the same verified hash.
     let stripped = active_core::convert::strip_blob_payloads(&make(b"one"));

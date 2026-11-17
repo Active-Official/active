@@ -180,10 +180,12 @@ fn build_toml_value(
             // (spec/blob.md §5), so one identity shape holds across
             // every converter. A tainted identity redacts its media
             // type.
+            let identity =
+                crate::blob::verified_identity(hash, *tainted, media_type, payload.as_ref());
             let mut inner = toml::map::Map::new();
             inner.insert(
                 "hash".to_string(),
-                toml::Value::String(format!("blake3:{}", crate::blob::hash_hex(hash))),
+                toml::Value::String(format!("blake3:{}", crate::blob::hash_hex(&identity))),
             );
             inner.insert(
                 "size".to_string(),

@@ -135,10 +135,14 @@ fn json_of(v: &Value, include_payloads: bool) -> JsonValue {
             media_type,
             payload,
         } => {
+            // A retained payload verifies the identity; never publish a
+            // caller-supplied hash beside bytes it does not describe.
+            let identity =
+                crate::blob::verified_identity(hash, *tainted, media_type, payload.as_ref());
             let mut inner = serde_json::Map::new();
             inner.insert(
                 "hash".to_string(),
-                json!(format!("blake3:{}", crate::blob::hash_hex(hash))),
+                json!(format!("blake3:{}", crate::blob::hash_hex(&identity))),
             );
             inner.insert("size".to_string(), json!(size));
             inner.insert(
@@ -615,14 +619,8 @@ pub fn strip_blob_payloads(value: &Value) -> Value {
             // a caller-supplied hash when the bytes are here. `content_hash`
             // and identity-only exports use this, so two payloads sharing a
             // forged hash cannot share an identity.
-            let verified = if !*tainted {
-                payload
-                    .as_ref()
-                    .map(|bytes| crate::blob::hash(media_type, bytes))
-                    .unwrap_or(*hash)
-            } else {
-                *hash
-            };
+            let verified =
+                crate::blob::verified_identity(hash, *tainted, media_type, payload.as_ref());
             Value::Blob {
                 hash: verified,
                 size: *size,

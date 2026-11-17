@@ -719,12 +719,15 @@ impl Serialize for Value {
                 size,
                 tainted,
                 media_type,
-                payload: _,
+                payload,
             } => {
+                // A retained payload verifies the identity.
+                let identity =
+                    crate::blob::verified_identity(hash, *tainted, media_type, payload.as_ref());
                 let mut inner = serde_json::Map::new();
                 inner.insert(
                     "hash".to_string(),
-                    serde_json::Value::from(format!("blake3:{}", crate::blob::hash_hex(hash))),
+                    serde_json::Value::from(format!("blake3:{}", crate::blob::hash_hex(&identity))),
                 );
                 inner.insert("size".to_string(), serde_json::Value::from(*size));
                 // A tainted identity may carry a material media type

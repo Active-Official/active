@@ -96,6 +96,40 @@ fn an_unrelated_plain_value_in_the_payload_stays_clean() {
 }
 
 #[test]
+fn a_profile_replacement_inherits_payload_taint_for_non_string_values() {
+    // The selected profile replaces the material payload with an integer.
+    // Materiality follows the path, so the export still renders the marker
+    // there even though the value carries no material text; the claim
+    // check must agree with the export in both directions. Config mode:
+    // an interchange document (Data mode) refuses profiles outright with
+    // E036, while a version-bearing envelope-shaped table is still policed.
+    let base = "active_profile = \"prod\"\n\
+                envelope = { version = \"1.0.0\", tainted = CLAIM, payload = secret(\"sensitive\") }\n\
+                profile \"prod\" { envelope { payload = 42 } }\n";
+    let err = refusal(&base.replace("CLAIM", "false"));
+    // W003 records the profile's type change; E035 is the taint refusal.
+    assert_eq!(codes(&err), ["W003", "E035"], "{err:?}");
+
+    let module = parse(&base.replace("CLAIM", "true"), "gate").expect("parse");
+    let engine = Engine::hermetic();
+    let (value, diags, seeds) = engine
+        .evaluate_with_seeds(&module)
+        .expect("the accurate claim evaluates");
+    assert!(
+        diags
+            .iter()
+            .all(|d| d.severity == active_core::Severity::Warning),
+        "{diags:?}"
+    );
+    let profile = active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
+    let json = active_core::convert::value_to_json_with(&profile, &value);
+    assert_eq!(
+        json["envelope"]["payload"], "***SECRET***",
+        "the export redacts the profile-replaced payload: {json}"
+    );
+}
+
+#[test]
 fn a_missing_taint_claim_is_refused() {
     // The field table marks tainted required: an envelope that makes no
     // verifiable claim must fail closed, not pass because it is silent.

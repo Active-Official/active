@@ -1573,6 +1573,30 @@ fn payload_has_material_text(value: &Value, profile: &SecretProfile) -> bool {
     }
 }
 
+/// True when the payload sits at a path the export renders as material.
+/// A profile override inherits the materiality of the value it replaces,
+/// and the export redacts whatever kind now occupies that path - including
+/// a number or boolean, which carries no material text to match.
+fn payload_has_material_path(value: &Value, profile: &SecretProfile, path: &str) -> bool {
+    if profile.path_is_secret(path) {
+        return true;
+    }
+    match value {
+        Value::Array(items) => items.iter().enumerate().any(|(index, item)| {
+            payload_has_material_path(item, profile, &format!("{path}[{index}]"))
+        }),
+        Value::Table(map) => map.iter().any(|(key, item)| {
+            let child = if path.is_empty() {
+                key.clone()
+            } else {
+                format!("{path}.{key}")
+            };
+            payload_has_material_path(item, profile, &child)
+        }),
+        _ => false,
+    }
+}
+
 impl Engine {
     /// Engine with the process environment snapshotted.
     ///
@@ -2595,18 +2619,23 @@ impl Engine {
                 ),
                 Some(payload) => {
                     let actual = value_has_secret(payload)
-                        || (has_secret || !module.profiles.is_empty())
-                            && payload_has_material_text(
-                                payload,
-                                material_profile.get_or_insert_with(|| {
-                                    SecretProfile::with_context(
-                                        module,
-                                        self.profile_override.as_deref(),
-                                        Some(&self.env),
-                                        seeds.as_deref(),
-                                    )
-                                }),
-                            );
+                        || (has_secret || !module.profiles.is_empty()) && {
+                            let profile = material_profile.get_or_insert_with(|| {
+                                SecretProfile::with_context(
+                                    module,
+                                    self.profile_override.as_deref(),
+                                    Some(&self.env),
+                                    seeds.as_deref(),
+                                )
+                            });
+                            // Both sources count: a copy of material text
+                            // anywhere in the payload, and a path the
+                            // export redacts whatever kind sits there
+                            // (a profile override inherits materiality,
+                            // so a number can occupy a material path).
+                            payload_has_material_text(payload, profile)
+                                || payload_has_material_path(payload, profile, "envelope.payload")
+                        };
                     if claimed == actual {
                         None
                     } else {

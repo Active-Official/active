@@ -89,12 +89,15 @@ and every tool this library ships), refuses with `E033` (version) and
 `E034` (capabilities), and is fatal in strict and resilient modes alike.
 `tainted` is cross-checked against the evaluated payload's structural taint:
 a mismatch is a diagnostic (E035, fail-closed under strict). Structural
-taint covers Secret-kind values, tainted blobs, and any string the
-receiver's redaction pass would redact — so a plain value used as a
-`secret(...)` locator (a `let`, a table field, an interpolation result, an
-env lookup) counts as material when the payload carries a copy of it. A
-missing, non-boolean, or unverifiable claim (no payload member) also fails
-closed with E035: an envelope that cannot be checked never passes.
+taint covers Secret-kind values, tainted blobs, any string the receiver's
+redaction pass would redact, and any payload path the export renders as
+material — so a plain value used as a `secret(...)` locator (a `let`, a
+table field, an interpolation result, an env lookup) counts when the
+payload carries a copy of it, and a selected profile override that
+inherits materiality counts even when the replacement value carries no
+material text (an integer at a material path). A missing, non-boolean, or
+unverifiable claim (no payload member) also fails closed with E035: an
+envelope that cannot be checked never passes.
 `--sandbox` and `capability --check-doc` remain the explicit forms; a
 host narrows the offered set with `EnvelopeGate::with_tools` and disables
 the gate only for documents it already trusts.

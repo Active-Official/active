@@ -617,11 +617,15 @@ const RESERVED_WIRE_TAGS: [&str; 4] = [
     "$active.float",
 ];
 
-/// A data-table key, escaped when it spells a reserved wrapper tag.
+/// A data-table key, escaped when it spells a reserved wrapper tag or
+/// already starts with the escape character. The rule is a prefix code:
+/// a reserved key and a key that literally begins with `\` can never
+/// encode to the same string (host-built tables can carry any key, and
+/// two distinct values must not share a wire form or a `content_hash`).
 /// Shared by `convert::value_to_json`, the TOML exporter, and the
 /// `Serialize` impl below, so every wire path agrees.
 pub(crate) fn wire_key(key: &str) -> String {
-    if RESERVED_WIRE_TAGS.contains(&key) {
+    if key.starts_with('\\') || RESERVED_WIRE_TAGS.contains(&key) {
         format!("\\{key}")
     } else {
         key.to_owned()

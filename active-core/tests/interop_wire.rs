@@ -229,6 +229,44 @@ fn a_data_key_spelling_a_reserved_tag_is_escaped() {
 }
 
 #[test]
+fn the_wire_escape_is_injective_for_backslash_keys() {
+    // A host-built table can key a member with a literal backslash. The
+    // escape rule is a prefix code, so `$active.duration` and
+    // `\$active.duration` cannot share a wire form or an identity.
+    use active_core::convert::value_to_json;
+    use active_core::provenance::content_hash;
+    use indexmap::IndexMap;
+    let mut inner = IndexMap::new();
+    inner.insert("ms".to_string(), Value::Int(5000));
+    let reserved = Value::Table(
+        [("$active.duration".to_string(), Value::Table(inner.clone()))]
+            .into_iter()
+            .collect(),
+    );
+    let escaped = Value::Table(
+        [("\\$active.duration".to_string(), Value::Table(inner))]
+            .into_iter()
+            .collect(),
+    );
+    let reserved_json = value_to_json(&reserved);
+    let escaped_json = value_to_json(&escaped);
+    assert_eq!(
+        reserved_json,
+        serde_json::json!({"\\$active.duration": {"ms": 5000}})
+    );
+    assert_eq!(
+        escaped_json,
+        serde_json::json!({"\\\\$active.duration": {"ms": 5000}})
+    );
+    assert_ne!(reserved_json, escaped_json, "the wire mapping is injective");
+    assert_ne!(
+        content_hash(&reserved),
+        content_hash(&escaped),
+        "distinct values must not share an identity"
+    );
+}
+
+#[test]
 fn direct_serialization_matches_the_canonical_export() {
     // The hand-kept `Serialize` impl promised to mirror value_to_json; it
     // had drifted (quantities used the old bare form, non-finite floats

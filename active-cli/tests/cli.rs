@@ -5022,3 +5022,29 @@ fn doctor_fails_on_a_network_crate_in_the_evaluator_closure() {
     assert!(failed.contains(&"network-closure"), "{json}");
     assert!(failed.contains(&"version-source"), "{json}");
 }
+
+#[test]
+fn doctor_fails_when_an_explicit_path_is_not_a_checkout() {
+    // A named --path is a request to inspect a checkout: an empty directory
+    // must fail rather than reporting ok with everything skipped.
+    let dir = std::env::temp_dir().join(format!("active-doctor-empty-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let out = active()
+        .args(["doctor", "--path"])
+        .arg(&dir)
+        .args(["--format", "json"])
+        .output()
+        .expect("run doctor");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!out.status.success(), "an explicit non-checkout must fail");
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).expect("doctor json");
+    assert_eq!(json["ok"], false, "{json}");
+    let failed: Vec<&str> = json["checks"]
+        .as_array()
+        .expect("checks")
+        .iter()
+        .filter(|c| c["status"] == "fail")
+        .filter_map(|c| c["id"].as_str())
+        .collect();
+    assert!(failed.contains(&"source-tree"), "{json}");
+}

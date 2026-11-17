@@ -328,7 +328,20 @@ impl Unit {
             Unit::Celsius => "Cel".into(),
             Unit::Fahrenheit => "Fahr".into(),
             Unit::Decibel => "dB".into(),
-            Unit::Custom(s) => s.clone(),
+            Unit::Custom(s) => {
+                // A custom unit is identified by its suffix string, and the
+                // language only ever creates one for a suffix that is NOT
+                // defined (Unit::from_suffix maps every unknown string to
+                // Custom). A host that constructs Custom("km") by hand makes
+                // a value with no source spelling: "km" re-parses as
+                // Kilometers. Fail loudly in tests rather than silently
+                // changing the unit identity in a format pass.
+                debug_assert!(
+                    matches!(Unit::from_suffix(s), Some(Unit::Custom(ref known)) if known == s),
+                    "custom unit {s:?} reuses a defined unit spelling and cannot round-trip"
+                );
+                s.clone()
+            }
         }
     }
 

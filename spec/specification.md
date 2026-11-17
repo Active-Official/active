@@ -481,8 +481,17 @@ TOML-ish canonical respell, interpolation same; schema kinds
   `{"%": 0.25}` for percent ratio); TOML-ish `N<suffix>` (e.g. `100req/s`),
   except percent which respells in percent-form (`25%`); interpolation
   follows the same rule (`25%`, never `0.25%`).
-- `Unit::suffix()` is the canonical spelling and is always re-parseable
-  (round-trip property-tested in `active-core/tests/unit_roundtrip.rs`).
+- `Unit::suffix()` is the canonical *dimension* spelling used once
+  evaluation has normalized the amount (JSON/TOML export, interpolation,
+  content hashes), and is always re-parseable (round-trip property-tested
+  in `active-core/tests/unit_roundtrip.rs`).
+- `Unit::spelling()` is the exact source token for the unit itself, and is
+  what a formatter or code generator emits when the amount is the SOURCE
+  amount: `Cel`, `Fahr`, `km`, `MHz`, `kWh`, `deg`. The two differ for
+  scaled and affine units, and using the dimension suffix on a source
+  amount changes the value: `2Cel` is 275.15 K, so `2K` is a different
+  quantity. A custom unit's spelling is its own suffix, which must not
+  reuse a defined spelling (no source text could then re-parse to it).
 
 ### 4.3 Dimensional safety
 

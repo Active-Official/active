@@ -328,16 +328,24 @@ fn check_document(family: usize, case: usize, src: &str) {
             "{label} formatting is not idempotent\n{ctx}"
         );
         // Evaluation is order-independent of formatting: compare values,
-        // never their pretty text (a format pass may reorder keys).
+        // never their pretty text (a format pass may reorder keys), and
+        // require the SAME outcome - a format pass that turns a refusal
+        // into a success (or the reverse) is a semantic change too.
         let engine = engine();
-        let before = engine.evaluate(&module);
-        let after = engine.evaluate(&reparsed);
-        if let (Ok((before, _)), Ok((after, _))) = (before, after) {
-            assert_eq!(
+        match (engine.evaluate(&module), engine.evaluate(&reparsed)) {
+            (Ok((before, _)), Ok((after, _))) => assert_eq!(
                 active_core::convert::value_to_json(&before),
                 active_core::convert::value_to_json(&after),
                 "{label} formatting changed the evaluated value\n{ctx}"
-            );
+            ),
+            (Err(before), Err(after)) => assert_eq!(
+                before.code(),
+                after.code(),
+                "{label} formatting changed the evaluation error\n{ctx}"
+            ),
+            (before, after) => panic!(
+                "{label} formatting changed the evaluation outcome: {before:?} vs {after:?}\n{ctx}"
+            ),
         }
     }
     // Secret non-leakage on the shipped redacted-export path.

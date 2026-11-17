@@ -1099,7 +1099,12 @@ fn banned_in_evaluator_closure(manifest_dir: &Path) -> Result<Vec<String>, Strin
 /// `active doctor`: check the binary, the language invariants that must
 /// hold on any host, and (in a source checkout) the repository state.
 /// Prints a report; exits non-zero when any check fails.
-fn run_doctor(root: &Path, format: &str) -> anyhow::Result<()> {
+///
+/// `explicit_path` is true when the caller named `--path`: asking for a
+/// specific checkout makes its required files mandatory, so a missing or
+/// unreadable manifest, lockfile, or committed FFI header is a failure
+/// rather than a skip.
+fn run_doctor(root: &Path, explicit_path: bool, format: &str) -> anyhow::Result<()> {
     let mut checks: Vec<DoctorCheck> = Vec::new();
 
     checks.push(DoctorCheck::pass(
@@ -1204,14 +1209,28 @@ fn run_doctor(root: &Path, format: &str) -> anyhow::Result<()> {
         ));
     }
 
-    // Source-checkout checks.
+    // Source-checkout checks. A named --path makes them mandatory; the
+    // default (cwd) only checks when it looks like a checkout, so an
+    // installed binary run from anywhere still reports a useful.
     let manifest = root.join("Cargo.toml");
     let lock = root.join("Cargo.lock");
-    if !manifest.is_file() || !lock.is_file() {
-        checks.push(DoctorCheck::skip(
-            "source-tree",
-            "not a source checkout (pass --path to a repository root to inspect one)",
-        ));
+    let is_checkout = manifest.is_file() && lock.is_file();
+    let strict = explicit_path || is_checkout;
+    if !is_checkout {
+        if strict {
+            checks.push(DoctorCheck::fail(
+                "source-tree",
+                format!(
+                    "{} is not a source checkout (Cargo.toml and Cargo.lock both required)",
+                    root.display()
+                ),
+            ));
+        } else {
+            checks.push(DoctorCheck::skip(
+                "source-tree",
+                "not a source checkout (pass --path to a repository root to inspect one)",
+            ));
+        }
     } else {
         let text = std::fs::read_to_string(&manifest).unwrap_or_default();
         let mut on = false;
@@ -1242,7 +1261,7 @@ fn run_doctor(root: &Path, format: &str) -> anyhow::Result<()> {
                     env!("CARGO_PKG_VERSION")
                 ),
             )),
-            None => checks.push(DoctorCheck::warn(
+            None => checks.push(DoctorCheck::fail(
                 "version-source",
                 "no [workspace.package] version found",
             )),
@@ -1253,11 +1272,15 @@ fn run_doctor(root: &Path, format: &str) -> anyhow::Result<()> {
                 "network-closure",
                 "no network-capable crate in active-core's dependency closure",
             )),
-            Ok(hits) => checks.push(DoctorCheck::fail(
-                "network-closure",
-                format!("network-capable crates in the evaluator's closure: {hits:?}"),
-            )),
-            Err(e) => checks.push(DoctorCheck::warn("network-closure", e)),
+            Ok(mut hits) => {
+                // Deterministic report: HashSet order varies per run.
+                hits.sort();
+                checks.push(DoctorCheck::fail(
+                    "network-closure",
+                    format!("network-capable crates in the evaluator's closure: {hits:?}"),
+                ))
+            }
+            Err(e) => checks.push(DoctorCheck::fail("network-closure", e)),
         }
 
         let header = root.join("active-ffi").join("active.h");
@@ -1267,7 +1290,8 @@ fn run_doctor(root: &Path, format: &str) -> anyhow::Result<()> {
                 "active-ffi/active.h is present; drift gate: cargo test -p active-ffi --test header_drift",
             ));
         } else {
-            checks.push(DoctorCheck::warn(
+            // The header is committed: a checkout without it is broken.
+            checks.push(DoctorCheck::fail(
                 "ffi-header",
                 "active-ffi/active.h is missing",
             ));
@@ -3918,11 +3942,12 @@ fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Doctor { path, format } => {
+            let explicit = path.is_some();
             let root = match path {
                 Some(p) => p,
                 None => std::env::current_dir()?,
             };
-            run_doctor(&root, &format)?;
+            run_doctor(&root, explicit, &format)?;
         }
     }
     Ok(())

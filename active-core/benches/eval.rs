@@ -62,6 +62,16 @@ fn doc_10k() -> String {
     out
 }
 
+/// 2,000 sibling tables (two literal keys each): the table-dense shape
+/// whose parent-scope snapshot used to be a full map copy (P-001).
+fn doc_wide_tables() -> String {
+    let mut out = String::with_capacity(2_000 * 24);
+    for t in 0..2_000 {
+        out.push_str(&format!("[t{t}]\nk0 = 0\nk1 = 1\n"));
+    }
+    out
+}
+
 /// 10,000 independent root keys: the wide-flat shape (no chains).
 fn doc_wide_10k() -> String {
     let mut out = String::new();
@@ -117,6 +127,14 @@ fn criterion_benchmark(c: &mut Criterion) {
 
     c.bench_function("parse_10k", |b| {
         b.iter(|| parse(&src, "bench").expect("must parse"));
+    });
+
+    // P-001: 2,000 sibling tables under one root. Starting each nested
+    // table used to clone the whole enclosing map for parent fallback
+    // (11.35 ms/KiB at 5,000 tables); the shared snapshot makes it O(1).
+    let wide_tables = doc_wide_tables();
+    c.bench_function("parse_wide_tables", |b| {
+        b.iter(|| parse(&wide_tables, "bench").expect("must parse"));
     });
 
     let module = parse(&src, "bench").expect("must parse");

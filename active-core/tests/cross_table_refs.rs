@@ -44,6 +44,16 @@ fn a_dotted_path_through_a_header_table_resolves() {
 }
 
 #[test]
+fn an_inline_table_does_not_disturb_the_enclosing_scope() {
+    // Regression: an inline table popped a parent-scope snapshot it never
+    // pushed, so every parent-fallback reference after one became
+    // W001/null (`t.w` here read 1 before the inline table existed).
+    let (v, codes) = eval("a = 1\n[t]\nv = { x = 1 }\nw = a\n");
+    assert!(codes.is_empty(), "{codes:?}");
+    assert_eq!(v["t"]["w"], 1);
+}
+
+#[test]
 fn a_missing_dotted_segment_still_warns_and_yields_null() {
     let (v, codes) = eval("server = { port = 1 }\np = server.host\n");
     assert!(codes.iter().any(|c| c == "W001"), "{codes:?}");

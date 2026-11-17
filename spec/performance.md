@@ -14,6 +14,10 @@ top-level `benchmarks/` directory.
 
 - `parse_10k`: lex + parse a generated 10 000-node document
   (50 tables × 200 chained keys).
+- `parse_wide_tables` (P-001): 2 000 sibling tables under one root, the
+  shape whose parent-scope snapshot used to copy the whole enclosing map
+  per table (13.62 ms/KiB measured before the shared snapshot; 0.56 ms/KiB
+  after, 2026-11-16).
 - `eval_10k`: full evaluation of the same document.
 - `incremental_leaf_edit`: full evaluate, change one leaf,
   re-parse, `evaluate_incremental` on the reused engine.

@@ -883,6 +883,29 @@ pub enum PathSeg {
     Key(String),
     Index(usize),
 }
+/// One body's key → node map. See [`SharedFields`].
+type FieldMap = indexmap::IndexMap<String, NodeId>;
+
+/// A body's fields behind shared ownership.
+///
+/// A nested table snapshots its enclosing map for parent fallback
+/// (LANG-A-002) by sharing it, so starting a child is O(1) instead of
+/// copying every key of the parent: a wide document with N sibling tables
+/// under a parent of K keys used to cost O(N·K) string copies (measured
+/// 11.35 ms/KiB at 5,000 tables versus 0.43 ms/KiB for the same keys in
+/// one table, P-001). Mutation goes through [`std::rc::Rc::make_mut`],
+/// which copies only while a snapshot is alive; snapshots are popped
+/// before the enclosing map is extended, so the copy-on-write does not
+/// fire on the hot path.
+type SharedFields = std::rc::Rc<FieldMap>;
+
+/// Take the owned map back from [`SharedFields`], copying only if a
+/// snapshot still holds it (it cannot at body end: snapshots are popped
+/// before the table node is built).
+fn own_fields(fields: SharedFields) -> FieldMap {
+    std::rc::Rc::try_unwrap(fields).unwrap_or_else(|shared| (*shared).clone())
+}
+
 struct Parser {
     tokens: Vec<Token>,
     pos: usize,
@@ -898,7 +921,7 @@ struct Parser {
     /// fallback): `[t] x = a` resolves `a` from the root when `t` has no
     /// sibling `a`. Snapshots are taken when the nested body starts, so
     /// they hold every key declared above it.
-    parent_field_scopes: Vec<indexmap::IndexMap<String, NodeId>>,
+    parent_field_scopes: Vec<SharedFields>,
     /// Current expression nesting depth, guarded by MAX_EXPR_DEPTH.
     depth: usize,
     /// Set when the shared diagnostic budget (errors + healing) dropped
@@ -1068,7 +1091,7 @@ enum SchemaEnd {
 
 /// A profile scope stashed for the final resolution pass: ident nodes
 /// (with owning keys) plus a copy of the profile's fields.
-type ProfileScope = (Vec<(String, NodeId)>, indexmap::IndexMap<String, NodeId>);
+type ProfileScope = (Vec<(String, NodeId)>, SharedFields);
 
 /// What terminates a statement body (spec/dual-syntax.md §5.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1356,7 +1379,7 @@ impl Parser {
     /// splices them when the scope closes (spec §2.7).
     fn parse_body(
         &mut self,
-        fields: &mut indexmap::IndexMap<String, NodeId>,
+        fields: &mut SharedFields,
         end: BodyEnd,
         pending: &mut Vec<PendingInclude>,
     ) {
@@ -1428,7 +1451,7 @@ impl Parser {
 
     fn parse_body_inner(
         &mut self,
-        fields: &mut indexmap::IndexMap<String, NodeId>,
+        fields: &mut SharedFields,
         end: BodyEnd,
         pending: &mut Vec<PendingInclude>,
     ) {
@@ -1568,7 +1591,7 @@ impl Parser {
                             self.last_end_line(),
                             at_tok.col.saturating_sub(1) as usize,
                         );
-                        fields.insert(key, id);
+                        std::rc::Rc::make_mut(fields).insert(key, id);
                     }
                 }
                 TokenKind::Indent => {
@@ -1759,7 +1782,7 @@ impl Parser {
     /// contextual: followed by `=`, `:`, or `{` they stay ordinary keys).
     fn parse_ident_statement(
         &mut self,
-        fields: &mut indexmap::IndexMap<String, NodeId>,
+        fields: &mut SharedFields,
         pending: &mut Vec<PendingInclude>,
     ) {
         let start = self.peek().clone();
@@ -1790,7 +1813,7 @@ impl Parser {
                     self.extract_annotations(&k, id, start.line);
                     if self.check_depends_on_statement(&k, id) {
                         self.note_duplicate_key(&k, Some(span_of(&start)), fields.contains_key(&k));
-                        fields.insert(k, id);
+                        std::rc::Rc::make_mut(fields).insert(k, id);
                     }
                 }
             }
@@ -1803,7 +1826,7 @@ impl Parser {
                     self.extract_annotations(&k, id, start.line);
                     if self.check_depends_on_statement(&k, id) {
                         self.note_duplicate_key(&k, Some(span_of(&start)), fields.contains_key(&k));
-                        fields.insert(k, id);
+                        std::rc::Rc::make_mut(fields).insert(k, id);
                     }
                 }
             }
@@ -1939,8 +1962,9 @@ impl Parser {
         let profile_stmt = self.statements.len() - 1;
         self.current_path.push(name.clone());
         self.ident_scopes.push(Vec::new());
-        self.parent_field_scopes.push(indexmap::IndexMap::new());
-        let mut fields = indexmap::IndexMap::new();
+        self.parent_field_scopes
+            .push(std::rc::Rc::new(FieldMap::new()));
+        let mut fields: SharedFields = std::rc::Rc::new(FieldMap::new());
         let mut pending = Vec::new();
         let saved_in_profile = self.in_profile;
         self.in_profile = true;
@@ -1958,7 +1982,9 @@ impl Parser {
         // the final pass (together with the root fallback) so forward
         // references work uniformly.
         self.pending_profiles.push((idents, fields.clone()));
-        let table_id = self.module.add_node(Node::Table { fields });
+        let table_id = self.module.add_node(Node::Table {
+            fields: own_fields(fields),
+        });
         self.statements[profile_stmt].end_line = self.last_end_line();
         self.current_path.pop();
         self.module.profiles.insert(name, table_id);
@@ -2411,7 +2437,7 @@ impl Parser {
     /// schemas arriving through those includes are E020 (spec §2.10).
     fn splice_includes(
         &mut self,
-        fields: &mut indexmap::IndexMap<String, NodeId>,
+        fields: &mut SharedFields,
         mut pending: Vec<PendingInclude>,
         profile_scope: bool,
     ) {
@@ -2525,12 +2551,12 @@ impl Parser {
     /// reported at its own span (with its file) and detached so profile
     /// values stay clean; the rest of the included data merges normally.
     /// Ancestor data tables are preserved: only the schema keys leave.
-    fn reject_profile_schemas(&mut self, fields: &mut IndexMap<String, NodeId>) {
+    fn reject_profile_schemas(&mut self, fields: &mut SharedFields) {
         let keys: Vec<(String, NodeId)> = fields.iter().map(|(k, v)| (k.clone(), *v)).collect();
         for (key, id) in keys {
             if matches!(self.module.get(id), Some(Node::SchemaTable { .. })) {
                 self.report_profile_schema(id);
-                fields.shift_remove(&key);
+                std::rc::Rc::make_mut(fields).shift_remove(&key);
                 continue;
             }
             let mut hits = Vec::new();
@@ -2592,7 +2618,7 @@ impl Parser {
     /// scalars untouched).
     fn merge_key(
         &mut self,
-        fields: &mut indexmap::IndexMap<String, NodeId>,
+        fields: &mut SharedFields,
         key: String,
         inc_id: NodeId,
         spliced: &mut std::collections::HashSet<String>,
@@ -2610,7 +2636,7 @@ impl Parser {
         }
         match fields.get(&key) {
             None => {
-                fields.insert(key.clone(), inc_id);
+                std::rc::Rc::make_mut(fields).insert(key.clone(), inc_id);
                 self.mark_subtree(&key, inc_id, spliced);
             }
             Some(_) if spliced.contains(&key) => {
@@ -2629,7 +2655,7 @@ impl Parser {
     /// merged-in fields gain dependency edges to their new parent.
     fn merge_tables_at(
         &mut self,
-        fields: &mut indexmap::IndexMap<String, NodeId>,
+        fields: &mut SharedFields,
         key: &str,
         inc_id: NodeId,
         spliced: &mut std::collections::HashSet<String>,
@@ -2658,7 +2684,7 @@ impl Parser {
             if overwrite {
                 if let Some(&local_id) = fields.get(key) {
                     if !self.has_unmarked(local_id, key, spliced) {
-                        fields.insert(key.to_string(), inc_id);
+                        std::rc::Rc::make_mut(fields).insert(key.to_string(), inc_id);
                         self.mark_subtree(key, inc_id, spliced);
                     }
                 }
@@ -2676,7 +2702,7 @@ impl Parser {
             // Table-vs-scalar conflict: a marked (previously included)
             // scalar cascades, a local scalar always wins.
             if overwrite && spliced.contains(key) {
-                fields.insert(key.to_string(), inc_id);
+                std::rc::Rc::make_mut(fields).insert(key.to_string(), inc_id);
                 self.mark_subtree(key, inc_id, spliced);
             }
             return;
@@ -2977,7 +3003,7 @@ impl Parser {
     }
 
     /// `key:` followed by an indented block (indentation style, §2 and §5).
-    fn parse_block_header(&mut self, parent: &mut indexmap::IndexMap<String, NodeId>) {
+    fn parse_block_header(&mut self, parent: &mut SharedFields) {
         let key_tok = self.peek().clone();
         let key = self
             .expect(TokenKind::Ident)
@@ -3013,7 +3039,7 @@ impl Parser {
                 key_tok.col.saturating_sub(1) as usize,
             );
             let node = self.parse_schema_indent(&key_tok, level);
-            parent.insert(key, node);
+            std::rc::Rc::make_mut(parent).insert(key, node);
             return;
         }
         self.indent_tables += 1;
@@ -3034,7 +3060,7 @@ impl Parser {
             file: self.current_file_name(),
         });
         self.ident_scopes.push(Vec::new());
-        let mut fields = indexmap::IndexMap::new();
+        let mut fields: SharedFields = std::rc::Rc::new(FieldMap::new());
         let mut pending = Vec::new();
         self.parent_field_scopes.push(parent.clone());
         self.parse_body(&mut fields, BodyEnd::Block(level), &mut pending);
@@ -3044,7 +3070,12 @@ impl Parser {
         self.parent_field_scopes.pop();
         // Tables carry their name-token span (and file stamp) like
         // every value node: tooling scopes extents off them (C-043).
-        let table_id = self.add_spanned(Node::Table { fields }, &key_tok);
+        let table_id = self.add_spanned(
+            Node::Table {
+                fields: own_fields(fields),
+            },
+            &key_tok,
+        );
         self.statements[stmt_idx].end_line = self.last_end_line();
         self.current_path.pop();
         self.extract_annotations(&key, table_id, key_tok.line);
@@ -3063,11 +3094,11 @@ impl Parser {
                 file: self.current_file_name(),
             });
         }
-        parent.insert(key, table_id);
+        std::rc::Rc::make_mut(parent).insert(key, table_id);
     }
 
     /// `key { … }` brace-style table block (HCL-style, §2).
-    fn parse_table_block(&mut self, parent: &mut indexmap::IndexMap<String, NodeId>) {
+    fn parse_table_block(&mut self, parent: &mut SharedFields) {
         let key_tok = self.peek().clone();
         let key = self
             .expect(TokenKind::Ident)
@@ -3088,7 +3119,7 @@ impl Parser {
                 key_tok.col.saturating_sub(1) as usize,
             );
             let node = self.parse_schema_brace(&key_tok);
-            parent.insert(key, node);
+            std::rc::Rc::make_mut(parent).insert(key, node);
             return;
         }
         self.expect(TokenKind::LBrace);
@@ -3110,7 +3141,7 @@ impl Parser {
             file: self.current_file_name(),
         });
         self.ident_scopes.push(Vec::new());
-        let mut fields = indexmap::IndexMap::new();
+        let mut fields: SharedFields = std::rc::Rc::new(FieldMap::new());
         let mut pending = Vec::new();
         self.parent_field_scopes.push(parent.clone());
         self.parse_body(&mut fields, BodyEnd::Brace, &mut pending);
@@ -3119,7 +3150,12 @@ impl Parser {
         let _ = self.resolve_sibling_refs(idents, &fields);
         self.parent_field_scopes.pop();
         // Name-token span and file stamp, as above (C-043 scopes).
-        let table_id = self.add_spanned(Node::Table { fields }, &key_tok);
+        let table_id = self.add_spanned(
+            Node::Table {
+                fields: own_fields(fields),
+            },
+            &key_tok,
+        );
         self.statements[stmt_idx].end_line = self.last_end_line();
         self.current_path.pop();
         self.extract_annotations(&key, table_id, key_tok.line);
@@ -3138,7 +3174,7 @@ impl Parser {
                 file: self.current_file_name(),
             });
         }
-        parent.insert(key, table_id);
+        std::rc::Rc::make_mut(parent).insert(key, table_id);
     }
 
     /// Diagnostic at an explicit token's span.
@@ -3666,7 +3702,7 @@ impl Parser {
     // ------------------------------------------------------------------
 
     fn parse_document(&mut self) {
-        let mut root_fields = indexmap::IndexMap::new();
+        let mut root_fields: SharedFields = std::rc::Rc::new(FieldMap::new());
         self.ident_scopes.push(Vec::new());
 
         let mut pending = Vec::new();
@@ -3700,7 +3736,7 @@ impl Parser {
         }
 
         let root_id = self.module.add_node(Node::Table {
-            fields: root_fields,
+            fields: own_fields(root_fields),
         });
         self.module.root = Some(root_id);
     }
@@ -3768,7 +3804,7 @@ impl Parser {
         }
     }
 
-    fn parse_table_header(&mut self, parent: &mut indexmap::IndexMap<String, NodeId>) {
+    fn parse_table_header(&mut self, parent: &mut SharedFields) {
         let open = self.peek().clone();
         // Source columns are 1-based; indentation levels are 0-based.
         let header_level = open.col.saturating_sub(1) as usize;
@@ -3828,7 +3864,7 @@ impl Parser {
                     });
                     match scope {
                         None => {
-                            parent.insert(seg.clone(), id);
+                            std::rc::Rc::make_mut(parent).insert(seg.clone(), id);
                         }
                         Some(pid) => match self.module.get_mut(pid) {
                             Some(Node::Table { fields }) => {
@@ -3906,7 +3942,7 @@ impl Parser {
                     if parent.contains_key(&leaf) {
                         self.warn_duplicate_table(&leaf, span_of(&open));
                     }
-                    parent.insert(leaf, schema_id);
+                    std::rc::Rc::make_mut(parent).insert(leaf, schema_id);
                 }
                 Some(pid) => {
                     let existed = matches!(
@@ -3936,7 +3972,7 @@ impl Parser {
         }
 
         self.ident_scopes.push(Vec::new());
-        let mut fields = indexmap::IndexMap::new();
+        let mut fields: SharedFields = std::rc::Rc::new(FieldMap::new());
         let mut pending = Vec::new();
         // Snapshot the enclosing scopes: the live parent map (always
         // available mid-parse) and, for a dotted header, the table the
@@ -3945,7 +3981,7 @@ impl Parser {
         self.parent_field_scopes.push(parent.clone());
         if segments.len() > 1 {
             if let Some(map) = self.dotted_enclosing_fields(&segments) {
-                self.parent_field_scopes.push(map);
+                self.parent_field_scopes.push(std::rc::Rc::new(map));
             }
         }
         self.parse_body(&mut fields, BodyEnd::HeaderBody(header_level), &mut pending);
@@ -3956,7 +3992,9 @@ impl Parser {
         // Name-token span and file stamp, as above (C-043 scopes),
         // widened to the full header so dotted tables point at
         // `[a.b]`, not just `a`.
-        let table_id = self.module.add_node(Node::Table { fields });
+        let table_id = self.module.add_node(Node::Table {
+            fields: own_fields(fields),
+        });
         self.module.record_span(
             table_id,
             Span {
@@ -3979,7 +4017,7 @@ impl Parser {
                 if parent.contains_key(&leaf) {
                     self.warn_duplicate_table(&leaf, span_of(&open));
                 }
-                parent.insert(leaf, table_id);
+                std::rc::Rc::make_mut(parent).insert(leaf, table_id);
             }
             Some(pid) => {
                 let existed = matches!(
@@ -6828,7 +6866,11 @@ impl Parser {
         self.expect_closing_healing(TokenKind::RBrace, "H004");
         let idents = self.ident_scopes.pop().unwrap_or_default();
         let _ = self.resolve_sibling_refs(idents, &fields);
-        self.parent_field_scopes.pop();
+        // No `parent_field_scopes` push happened for an inline table: it
+        // resolves against its own keys and the enclosing scopes exactly
+        // like a scalar. Popping here used to drop the enclosing table's
+        // snapshot, so a parent-fallback reference *after* an inline table
+        // silently became W001/null.
         self.add_spanned(Node::Table { fields }, &open)
     }
 

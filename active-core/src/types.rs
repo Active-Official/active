@@ -252,13 +252,97 @@ impl Unit {
         )
     }
 
-    /// Render a quantity amount in source spelling. Percent is special:    /// the canonical value is the ratio (100% = 1.0) but the spelled form
+    /// The exact source spelling of this unit: `from_suffix(spelling())`
+    /// returns the same variant, so `{amount}{spelling()}` re-parses as this
+    /// unit. Distinct from [`Self::suffix`], which is the canonical
+    /// *dimension* spelling used once the amount has been normalized
+    /// (JSON/TOML export, content hashes). A scaled unit whose amount is
+    /// still the source amount must keep its own spelling: `2km` is
+    /// 2000 metres, so rendering it as `2meter` changes the value.
+    pub fn spelling(&self) -> String {
+        match self {
+            Unit::Nanoseconds => "ns".into(),
+            Unit::Microseconds => "us".into(),
+            Unit::Milliseconds => "ms".into(),
+            Unit::Seconds => "s".into(),
+            Unit::Minutes => "m".into(),
+            Unit::Hours => "h".into(),
+            Unit::Days => "d".into(),
+            Unit::Weeks => "week".into(),
+            Unit::Bytes => "B".into(),
+            Unit::Kibibytes => "KiB".into(),
+            Unit::Mebibytes => "MiB".into(),
+            Unit::Gibibytes => "GiB".into(),
+            Unit::Tebibytes => "TiB".into(),
+            Unit::Pebibytes => "PiB".into(),
+            Unit::Exbibytes => "EiB".into(),
+            Unit::Kilobytes => "KB".into(),
+            Unit::Megabytes => "MB".into(),
+            Unit::Gigabytes => "GB".into(),
+            Unit::Terabytes => "TB".into(),
+            Unit::PerSecond => "/s".into(),
+            Unit::PerMinute => "/m".into(),
+            Unit::PerHour => "/h".into(),
+            Unit::RequestsPerSecond => "req/s".into(),
+            Unit::RequestsPerMinute => "req/m".into(),
+            Unit::RequestsPerHour => "req/h".into(),
+            Unit::Percent => "%".into(),
+            Unit::Hertz => "Hz".into(),
+            Unit::Kilohertz => "kHz".into(),
+            Unit::Megahertz => "MHz".into(),
+            Unit::Gigahertz => "GHz".into(),
+            Unit::Terahertz => "THz".into(),
+            Unit::Bits => "b".into(),
+            Unit::Kilobits => "Kb".into(),
+            Unit::Megabits => "Mb".into(),
+            Unit::Gigabits => "Gb".into(),
+            Unit::BitsPerSecond => "bps".into(),
+            Unit::KilobitsPerSecond => "Kbps".into(),
+            Unit::MegabitsPerSecond => "Mbps".into(),
+            Unit::GigabitsPerSecond => "Gbps".into(),
+            Unit::MegabytesPerSecond => "MB/s".into(),
+            Unit::Tokens => "tokens".into(),
+            Unit::KiloTokens => "ktokens".into(),
+            Unit::MegaTokens => "Mtokens".into(),
+            Unit::TokensPerSecond => "tok/s".into(),
+            Unit::Flops => "FLOPS".into(),
+            Unit::TeraFlops => "TFLOPS".into(),
+            Unit::PetaFlops => "PFLOPS".into(),
+            Unit::Pascal => "Pa".into(),
+            Unit::Bar => "bar".into(),
+            Unit::Psi => "psi".into(),
+            Unit::Volts => "V".into(),
+            Unit::Amperes => "A".into(),
+            Unit::Watts => "W".into(),
+            Unit::Joules => "J".into(),
+            Unit::KilowattHours => "kWh".into(),
+            Unit::Newtons => "N".into(),
+            Unit::Degrees => "deg".into(),
+            Unit::Radians => "rad".into(),
+            Unit::Rpm => "rpm".into(),
+            Unit::Meters => "meter".into(),
+            Unit::Kilometers => "km".into(),
+            Unit::Kilograms => "kg".into(),
+            Unit::Grams => "g".into(),
+            Unit::Kelvin => "K".into(),
+            Unit::Celsius => "Cel".into(),
+            Unit::Fahrenheit => "Fahr".into(),
+            Unit::Decibel => "dB".into(),
+            Unit::Custom(s) => s.clone(),
+        }
+    }
+
+    /// Render a quantity amount in source spelling. Percent is special:
+    /// the canonical value is the ratio (100% = 1.0) but the spelled form
     /// is percent-form (`25%`, never `0.25%`), so this multiplies back.
-    /// Every other unit renders `{amount}{suffix}` (spec Ch. 4 §4.2).
+    /// Every other unit renders `{amount}{spelling}` (spec Ch. 4 §4.2);
+    /// the amount is assumed NOT to be normalized, which holds for source
+    /// literals and for evaluated values (evaluation normalizes the unit
+    /// at the same time as the amount, so the pair stays consistent).
     pub fn format_amount(&self, amount: f64) -> String {
         match self {
             Unit::Percent => format!("{}%", amount * 100.0),
-            _ => format!("{}{}", amount, self.suffix()),
+            _ => format!("{}{}", amount, self.spelling()),
         }
     }
 

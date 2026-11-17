@@ -1231,7 +1231,7 @@ impl<'a> Formatter<'a> {
                 format!("{{ {} }}", parts.join(", "))
             }
             Some(Node::Quantity { value, unit }) => {
-                format!("{}{}", self.render_expr(*value), unit.suffix())
+                format!("{}{}", self.render_expr(*value), unit.spelling())
             }
             Some(Node::Semantic { tag, inner }) => {
                 format!("@{} {}", tag.as_str(), self.render_ml(*inner))

@@ -171,13 +171,16 @@ fn the_lexer_trips_on_an_expired_deadline_and_reports_a_prefix_free_stop() {
 fn include_bytes_extend_the_wall_budget_they_consume() {
     // The budget scales with the bytes charged, and include sources are
     // charged as they are read: an include-heavy document is legitimate
-    // work, not a pathological shape. With a 1 ms base the root alone would
-    // allow ~1 ms; the included 600 KB earn their own allowance and the
-    // document parses. (Before the bytes were charged, an unrelated
-    // include fixture failed intermittently under parallel test load.)
+    // work, not a pathological shape. The root alone earns only the base
+    // plus its own bytes; the includes earn the allowance that lets the
+    // merged document parse. The base is deliberately generous (1 s):
+    // a loaded macOS runner can deschedule the process for tens of
+    // milliseconds between samples, and a 1 ms base made the root phase
+    // flaky (2026-11-17 macOS gate). The include payload is large enough
+    // that the base plus the root bytes cannot cover it without charging.
     let loader: active_core::parser::IncludeLoader = std::sync::Arc::new(|_path: &str| {
         let mut body = String::new();
-        for i in 0..750 {
+        for i in 0..6_500 {
             body.push_str(&format!("i{i} = {i}\n"));
         }
         Ok(body)
@@ -189,12 +192,12 @@ fn include_bytes_extend_the_wall_budget_they_consume() {
     let options = ParseOptions {
         enable_includes: true,
         include_loader: Some(loader),
-        max_wall_ms: 1,
+        max_wall_ms: 1_000,
         ..ParseOptions::default()
     };
     let module = parse_with(&root, "include-budget", options)
         .expect("charged include bytes earn their own wall allowance");
-    assert!(module.arena.len() > 40_000, "includes really merged");
+    assert!(module.arena.len() > 300_000, "includes really merged");
 }
 
 #[test]

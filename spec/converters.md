@@ -30,7 +30,9 @@ from the value tree with the same shapes:
 - Blob → `{"$active.blob": {hash, size, media_type, tainted}}`, the
   same nested wrapper in YAML and TOML (`[f."$active.blob"]`). A
   tainted identity redacts `media_type`; `payload_b64` appears only
-  for an explicit materialisation demand.
+  through the explicit materialisation renderers
+  (`value_to_json_materialised` and the YAML/TOML `*_materialised`
+  forms), never through the generic serializers.
 
 The JSON export is **layer-flattened by design**: profile overlays and
 patches are merged into one tree (last writer wins, W003 on a type change),

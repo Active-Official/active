@@ -64,7 +64,11 @@ fn materialised_flag_embeds_payload() {
     engine.materialise_blobs = true;
     let (value, _) = engine.evaluate(&module).expect("must evaluate");
     require_materialised(&value).expect("demand must succeed");
-    let json = value_to_json(&value);
+    // Generic renderers are identity-only; materialisation is explicit.
+    assert!(value_to_json(&value)["f"]["$active.blob"]
+        .get("payload_b64")
+        .is_none());
+    let json = active_core::convert::value_to_json_materialised(&value);
     assert_eq!(json["f"]["$active.blob"]["payload_b64"], "aGVsbG8=");
 }
 
@@ -366,9 +370,52 @@ fn materialise_flag_flip_clears_incremental_memo() {
     let (v2, _) = engine
         .evaluate_incremental(&module, &mut memo)
         .expect("second eval");
-    assert!(active_core::convert::value_to_json(&v2)
+    assert!(active_core::convert::value_to_json_materialised(&v2)
         .to_string()
         .contains("payload_b64"));
+}
+
+#[test]
+fn generic_renderers_are_identity_only_even_for_host_payloads() {
+    // Review EF/G-r20: a hand-built untainted blob with retained bytes
+    // must not leak through a profile-unaware renderer.
+    let blob = active_core::Value::Blob {
+        hash: [3u8; 32],
+        size: 12,
+        tainted: false,
+        media_type: "application/octet-stream".to_string(),
+        payload: Some(b"secret bytes".to_vec()),
+    };
+    let json = active_core::convert::value_to_json(&blob);
+    assert!(json["$active.blob"].get("payload_b64").is_none(), "{json}");
+    let serde = serde_json::to_string(&blob).expect("serialize");
+    assert!(!serde.contains("payload_b64"), "{serde}");
+    assert!(!serde.contains("c2VjcmV0"), "{serde}");
+    // The explicit materialisation form still emits it.
+    let materialised = active_core::convert::value_to_json_materialised(&blob);
+    assert!(
+        materialised["$active.blob"].get("payload_b64").is_some(),
+        "{materialised}"
+    );
+}
+
+#[test]
+fn content_hash_verifies_a_retained_payload_identity() {
+    // Two payloads with the same forged hash must not share an identity.
+    let make = |bytes: &[u8]| active_core::Value::Blob {
+        hash: [7u8; 32],
+        size: bytes.len() as u64,
+        tainted: false,
+        media_type: "text/plain".to_string(),
+        payload: Some(bytes.to_vec()),
+    };
+    let one = active_core::provenance::content_hash(&make(b"one"));
+    let two = active_core::provenance::content_hash(&make(b"two"));
+    assert_ne!(one, two, "the retained payload must verify the identity");
+    // Materialisation does not change the identity: stripping the
+    // payload leaves the same verified hash.
+    let stripped = active_core::convert::strip_blob_payloads(&make(b"one"));
+    assert_eq!(one, active_core::provenance::content_hash(&stripped));
 }
 
 #[test]

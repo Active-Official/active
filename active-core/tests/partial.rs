@@ -96,7 +96,7 @@ fn memo_separates_materialise_modes() {
     let (v2, _) = engine
         .evaluate_incremental(&module, &mut memo)
         .expect("materialised eval");
-    assert!(active_core::convert::value_to_json(&v2)
+    assert!(active_core::convert::value_to_json_materialised(&v2)
         .to_string()
         .contains("payload_b64"));
 }

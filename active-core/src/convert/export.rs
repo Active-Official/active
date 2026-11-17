@@ -9,10 +9,18 @@ use crate::ir::Value;
 /// Render the evaluated tree as YAML 1.2 (block style) through the
 /// canonical JSON model: one mapping, two syntaxes.
 ///
-/// Profile-unaware: a materialised blob payload is emitted as-is.
-/// Secret-bearing callers use [`super::value_to_yaml_string_with`].
+/// Profile-unaware: identity-only (retained blob payloads are not
+/// emitted). Secret-bearing callers use [`super::value_to_yaml_string_with`];
+/// explicit materialisation uses [`value_to_yaml_string_materialised`].
 pub fn value_to_yaml_string(v: &Value) -> Result<String, String> {
     serde_yaml::to_string(&super::value_to_json(v))
+        .map_err(|e| format!("YAML serialization failed: {e}"))
+}
+
+/// The explicit materialisation form: emits `payload_b64` for a retained
+/// untainted payload. Call only on a profile-redacted tree.
+pub fn value_to_yaml_string_materialised(v: &Value) -> Result<String, String> {
+    serde_yaml::to_string(&super::value_to_json_materialised(v))
         .map_err(|e| format!("YAML serialization failed: {e}"))
 }
 
@@ -22,12 +30,22 @@ pub fn value_to_yaml_string(v: &Value) -> Result<String, String> {
 /// error for shapes TOML cannot hold at all (mixed-type arrays —
 /// announced with a path, never silently dropped).
 ///
-/// Profile-unaware: a materialised blob payload is emitted as-is.
-/// Secret-bearing callers use [`super::value_to_toml_string_with`].
+/// Profile-unaware: identity-only (retained blob payloads are not
+/// emitted). Secret-bearing callers use [`super::value_to_toml_string_with`];
+/// explicit materialisation uses [`value_to_toml_string_materialised`].
 pub fn value_to_toml_string(v: &Value) -> Result<(String, Vec<Diagnostic>), String> {
+    toml_document(v, false)
+}
+
+/// The explicit materialisation form of [`value_to_toml_string`].
+pub fn value_to_toml_string_materialised(v: &Value) -> Result<(String, Vec<Diagnostic>), String> {
+    toml_document(v, true)
+}
+
+fn toml_document(v: &Value, include_payloads: bool) -> Result<(String, Vec<Diagnostic>), String> {
     check_toml_homogeneous(v, "")?;
     let mut diags = Vec::new();
-    let doc = match build_toml_value(v, "", &mut diags) {
+    let doc = match build_toml_value(v, "", include_payloads, &mut diags) {
         // The common case: a table at the root.
         Some(toml::Value::Table(map)) => toml::Value::Table(map),
         // Defensive: a scalar/array root wraps as `value = …`
@@ -100,7 +118,12 @@ fn toml_kind(v: &Value) -> u8 {
 
 /// TOML node for a value, or None for omitted Nulls (with a W006
 /// record each — announced, never silent).
-fn build_toml_value(v: &Value, path: &str, diags: &mut Vec<Diagnostic>) -> Option<toml::Value> {
+fn build_toml_value(
+    v: &Value,
+    path: &str,
+    include_payloads: bool,
+    diags: &mut Vec<Diagnostic>,
+) -> Option<toml::Value> {
     let at = |key: &str| {
         if path.is_empty() {
             key.to_string()
@@ -173,7 +196,7 @@ fn build_toml_value(v: &Value, path: &str, diags: &mut Vec<Diagnostic>) -> Optio
                 ),
             );
             inner.insert("tainted".to_string(), toml::Value::Boolean(*tainted));
-            if !*tainted {
+            if include_payloads && !*tainted {
                 if let Some(bytes) = payload {
                     inner.insert(
                         "payload_b64".to_string(),
@@ -192,7 +215,8 @@ fn build_toml_value(v: &Value, path: &str, diags: &mut Vec<Diagnostic>) -> Optio
             let mut out = Vec::with_capacity(items.len());
             for (i, item) in items.iter().enumerate() {
                 let item_path = format!("{path}[{i}]");
-                if let Some(toml_item) = build_toml_value(item, &item_path, diags) {
+                if let Some(toml_item) = build_toml_value(item, &item_path, include_payloads, diags)
+                {
                     out.push(toml_item);
                 }
             }
@@ -201,7 +225,7 @@ fn build_toml_value(v: &Value, path: &str, diags: &mut Vec<Diagnostic>) -> Optio
         Value::Table(map) => {
             let mut out = toml::map::Map::with_capacity(map.len());
             for (key, val) in map {
-                if let Some(toml_val) = build_toml_value(val, &at(key), diags) {
+                if let Some(toml_val) = build_toml_value(val, &at(key), include_payloads, diags) {
                     // Same reserved-tag escape as JSON (LANG-F-001/F-002).
                     out.insert(crate::ir::wire_key(key), toml_val);
                 }

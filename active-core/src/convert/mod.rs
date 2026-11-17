@@ -30,7 +30,10 @@ pub use repair::{
 };
 
 pub use explain::{explain_all, explain_code, explain_structured, Explanation};
-pub use export::{value_to_toml_string, value_to_yaml_string};
+pub use export::{
+    value_to_toml_string, value_to_toml_string_materialised, value_to_yaml_string,
+    value_to_yaml_string_materialised,
+};
 pub use gen::{
     schema_to_go, schema_to_go_with_profile, schema_to_json_schema,
     schema_to_json_schema_with_profile, schema_to_openapi, schema_to_openapi_with_profile,
@@ -51,15 +54,29 @@ pub use value_inspect::{
     inspect_path_with_profile_env, render_text as render_inspection_text,
 };
 
-/// Profile-unaware JSON mapping. A materialised blob payload is emitted
-/// as-is; callers handling secret material must use [`value_to_json_with`]
-/// (or [`redact_value`] first), which sweeps authored and runtime
-/// secrets.
+/// Profile-unaware JSON mapping. Identity-only: retained blob payload
+/// bytes are NEVER emitted here, so a hand-built untainted blob cannot
+/// leak its bytes through a generic serializer. Explicit materialisation
+/// uses [`value_to_json_materialised`]. Callers handling secret material
+/// must use [`value_to_json_with`] (or [`redact_value`] first), which
+/// sweeps authored and runtime secrets.
 ///
 /// Typed values use reserved wrappers so the mapping is injective
 /// (LANG-F-001/F-002), and a DATA key that spells one is escaped by
 /// [`crate::ir::wire_key`].
 pub fn value_to_json(v: &Value) -> JsonValue {
+    json_of(v, false)
+}
+
+/// The EXPLICIT materialisation renderer: like [`value_to_json`] but it
+/// emits `payload_b64` for a retained untainted payload. Only call this
+/// after the value has been profile-redacted (the CLI materialisation
+/// path does); a generic caller must not hand arbitrary values to it.
+pub fn value_to_json_materialised(v: &Value) -> JsonValue {
+    json_of(v, true)
+}
+
+fn json_of(v: &Value, include_payloads: bool) -> JsonValue {
     match v {
         Value::Null => JsonValue::Null,
         Value::Bool(b) => json!(b),
@@ -94,11 +111,15 @@ pub fn value_to_json(v: &Value) -> JsonValue {
         Value::Quantity(n, unit) => json!({
             "$active.quantity": { "unit": unit.suffix(), "value": n }
         }),
-        Value::Array(arr) => JsonValue::Array(arr.iter().map(value_to_json).collect()),
+        Value::Array(arr) => JsonValue::Array(
+            arr.iter()
+                .map(|item| json_of(item, include_payloads))
+                .collect(),
+        ),
         Value::Table(map) => {
             let mut obj = serde_json::Map::new();
             for (k, val) in map {
-                obj.insert(crate::ir::wire_key(k), value_to_json(val));
+                obj.insert(crate::ir::wire_key(k), json_of(val, include_payloads));
             }
             JsonValue::Object(obj)
         }
@@ -131,7 +152,7 @@ pub fn value_to_json(v: &Value) -> JsonValue {
                 }),
             );
             inner.insert("tainted".to_string(), json!(tainted));
-            if !*tainted {
+            if include_payloads && !*tainted {
                 if let Some(bytes) = payload {
                     inner.insert(
                         "payload_b64".to_string(),
@@ -389,10 +410,17 @@ pub(crate) fn redacted_blob_json(hash: &[u8; 32], size: u64) -> JsonValue {
     }})
 }
 
-/// Profile-unaware pretty JSON. Secret-bearing callers must use
-/// [`value_to_pretty_json_with`].
+/// Profile-unaware pretty JSON. Identity-only. Secret-bearing callers
+/// must use [`value_to_pretty_json_with`]; explicit materialisation uses
+/// [`value_to_pretty_json_materialised`].
 pub fn value_to_pretty_json(v: &Value) -> String {
     serde_json::to_string_pretty(&value_to_json(v)).unwrap_or_else(|_| "{}".into())
+}
+
+/// The explicit materialisation form of [`value_to_pretty_json`]. Call
+/// only on a profile-redacted tree.
+pub fn value_to_pretty_json_materialised(v: &Value) -> String {
+    serde_json::to_string_pretty(&value_to_json_materialised(v)).unwrap_or_else(|_| "{}".into())
 }
 
 /// Deep copy with every structurally material leaf replaced by a
@@ -581,14 +609,28 @@ pub fn strip_blob_payloads(value: &Value) -> Value {
             size,
             media_type,
             tainted,
-            ..
-        } => Value::Blob {
-            hash: *hash,
-            size: *size,
-            media_type: media_type.clone(),
-            tainted: *tainted,
-            payload: None,
-        },
+            payload,
+        } => {
+            // A retained payload lets us verify the identity: never trust
+            // a caller-supplied hash when the bytes are here. `content_hash`
+            // and identity-only exports use this, so two payloads sharing a
+            // forged hash cannot share an identity.
+            let verified = if !*tainted {
+                payload
+                    .as_ref()
+                    .map(|bytes| crate::blob::hash(media_type, bytes))
+                    .unwrap_or(*hash)
+            } else {
+                *hash
+            };
+            Value::Blob {
+                hash: verified,
+                size: *size,
+                media_type: media_type.clone(),
+                tainted: *tainted,
+                payload: None,
+            }
+        }
         Value::Array(items) => Value::Array(items.iter().map(strip_blob_payloads).collect()),
         Value::Table(map) => Value::Table(
             map.iter()

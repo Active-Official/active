@@ -1,7 +1,8 @@
 use active_core::convert::{
     collect_items_with_profile, doc_to_html, doc_to_man, doc_to_markdown, json_text_to_active,
     jsonschema_to_active, schema_inspect_with_profile, toml_text_to_active, value_to_pretty_json,
-    value_to_toml_string, value_to_yaml_string, yaml_text_to_active,
+    value_to_pretty_json_materialised, value_to_toml_string, value_to_toml_string_materialised,
+    value_to_yaml_string, value_to_yaml_string_materialised, yaml_text_to_active,
 };
 use active_core::diag::{Diagnostic, Severity};
 use active_core::{parse_file, Budget, Engine, EvalError, ParseOptions, Style};
@@ -2424,20 +2425,42 @@ fn main() -> anyhow::Result<()> {
             }
 
             match format.as_str() {
-                "json" => outln!("{}", value_to_pretty_json(&value)),
-                "yaml" => match value_to_yaml_string(&value) {
-                    Ok(yaml) => outln!("{yaml}"),
-                    Err(e) => anyhow::bail!("yaml export failed: {e}"),
-                },
-                "toml" => match value_to_toml_string(&value) {
-                    Ok((toml, export_diags)) => {
-                        for d in &export_diags {
-                            report(d, &name);
-                        }
-                        outln!("{toml}");
+                // Payload bytes are an explicit materialisation form;
+                // the generic renderers are identity-only.
+                "json" => {
+                    if materialise_blobs {
+                        outln!("{}", value_to_pretty_json_materialised(&value))
+                    } else {
+                        outln!("{}", value_to_pretty_json(&value))
                     }
-                    Err(e) => anyhow::bail!("toml export failed: {e}"),
-                },
+                }
+                "yaml" => {
+                    let rendered = if materialise_blobs {
+                        value_to_yaml_string_materialised(&value)
+                    } else {
+                        value_to_yaml_string(&value)
+                    };
+                    match rendered {
+                        Ok(yaml) => outln!("{yaml}"),
+                        Err(e) => anyhow::bail!("yaml export failed: {e}"),
+                    }
+                }
+                "toml" => {
+                    let rendered = if materialise_blobs {
+                        value_to_toml_string_materialised(&value)
+                    } else {
+                        value_to_toml_string(&value)
+                    };
+                    match rendered {
+                        Ok((toml, export_diags)) => {
+                            for d in &export_diags {
+                                report(d, &name);
+                            }
+                            outln!("{toml}");
+                        }
+                        Err(e) => anyhow::bail!("toml export failed: {e}"),
+                    }
+                }
                 other => anyhow::bail!("unsupported format: {}", other),
             }
             if let Some(audit_path) = audit_trail {

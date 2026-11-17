@@ -709,22 +709,17 @@ impl Serialize for Value {
             }
             Value::Secret(_) => serde_json::Value::from("***SECRET***"),
             // Identity shape (spec/blob.md §5): hash, size, media type,
-            // taint bit. Payload bytes serialize ONLY when the value
-            // carries them — set exclusively by explicit
-            // materialisation on an untainted blob.
-            //
-            // This impl is profile-unaware: it cannot tell whether the
-            // payload embeds a secret that only the evaluation context
-            // knows. Export surfaces route through
-            // `convert::redact_value` (or the `*_with` exporters),
-            // which sweeps runtime and authored secrets first; call
-            // this impl directly only on an already-redacted tree.
+            // taint bit. Payload bytes are NEVER emitted here: this impl
+            // is profile-unaware and a generic serializer must not be a
+            // payload path. Explicit materialisation uses
+            // `convert::value_to_json_materialised` / the `*_materialised`
+            // exporters, after profile redaction.
             Value::Blob {
                 hash,
                 size,
                 tainted,
                 media_type,
-                payload,
+                payload: _,
             } => {
                 let mut inner = serde_json::Map::new();
                 inner.insert(
@@ -744,17 +739,6 @@ impl Serialize for Value {
                     }),
                 );
                 inner.insert("tainted".to_string(), serde_json::Value::from(*tainted));
-                if !*tainted {
-                    if let Some(bytes) = payload {
-                        inner.insert(
-                            "payload_b64".to_string(),
-                            serde_json::Value::from(base64::Engine::encode(
-                                &base64::engine::general_purpose::STANDARD,
-                                bytes,
-                            )),
-                        );
-                    }
-                }
                 serde_json::Value::Object(
                     [("$active.blob".to_string(), serde_json::Value::Object(inner))]
                         .into_iter()

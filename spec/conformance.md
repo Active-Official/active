@@ -68,7 +68,8 @@ passes by reproducing it exactly:
   never appear).
 - Blobs → `{"$active.blob": {hash, size, media_type, tainted}}`
   (spec/blob.md §5); a tainted identity redacts `media_type`, and
-  `payload_b64` appears only under an explicit materialisation.
+  `payload_b64` appears only through the explicit materialisation
+  renderers, never through the generic serializers.
 - Arrays → JSON arrays in order; null → `null`; booleans as-is.
 
 ### 2.3 Suite versioning

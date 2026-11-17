@@ -219,7 +219,7 @@ jobs:
             mv "$f" "dist/active-sbom-${base}.cdx.json"
           done
           count=$(ls dist/active-sbom-*.cdx.json | wc -l)
-          test "$count" -eq 8 || { echo "FAIL: expected 8 SBOMs, got $count"; exit 1; }
+          test "$count" -eq 7 || { echo "FAIL: expected 7 SBOMs (the seven published crates; the active-infinity placeholder retired), got $count"; exit 1; }
           ls dist/active-sbom-*.cdx.json
       - name: Optional active-sign sidecars
         # RELEASE_SIGNING_KEY holds the `.secret` file text from

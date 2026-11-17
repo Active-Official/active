@@ -21,6 +21,17 @@ fn codes_of(diags: &[active_core::Diagnostic]) -> Vec<String> {
     diags.iter().map(|d| d.code.clone()).collect()
 }
 
+/// Committed-expectation view: sorted, deduplicated. Recovery may repeat a
+/// code legitimately (one W011 per duplicate key, up to the record budget);
+/// the ordered per-item equality across embeddings is the differential
+/// gate's check.
+fn norm_codes(codes: &[String]) -> Vec<String> {
+    let mut out = codes.to_vec();
+    out.sort();
+    out.dedup();
+    out
+}
+
 #[derive(Debug)]
 struct Case {
     id: String,
@@ -87,12 +98,10 @@ fn conformance_manifest_is_green() {
             // Parse-time refusals (E004 depth, E011 blocks): codes compare
             // as a set; recovery may emit the same code twice.
             Err(diags) => {
-                let mut got: Vec<String> = diags.iter().map(|d| d.code.clone()).collect();
-                got.sort();
-                got.dedup();
+                let got: Vec<String> = diags.iter().map(|d| d.code.clone()).collect();
                 assert_eq!(
-                    got,
-                    expected_codes(&case.id),
+                    norm_codes(&got),
+                    norm_codes(&expected_codes(&case.id)),
                     "{}: parse-refused codes",
                     case.id
                 );
@@ -125,8 +134,15 @@ fn conformance_manifest_is_green() {
                 } else {
                     expected_codes(&case.id)
                 };
+                // Committed expectations are the SET view (sorted, deduped),
+                // matching the harness's norm_codes rule: recovery may
+                // legitimately repeat a code (depth on open+close, one W011
+                // per duplicate key up to the record budget). Ordered
+                // per-item equality across embeddings is the differential
+                // gate's job (conformance/harness/diff_vectors.py).
                 assert_eq!(
-                    got_codes, want_codes,
+                    norm_codes(&got_codes),
+                    norm_codes(&want_codes),
                     "{}: code set diverged (spans advisory, codes strict)",
                     case.id
                 );
@@ -136,7 +152,12 @@ fn conformance_manifest_is_green() {
             }
             Err(EvalError::ValidationFailed { diagnostics }) => {
                 let got: Vec<String> = diagnostics.iter().map(|d| d.code.clone()).collect();
-                assert_eq!(got, expected_codes(&case.id), "{}: refused codes", case.id);
+                assert_eq!(
+                    norm_codes(&got),
+                    norm_codes(&expected_codes(&case.id)),
+                    "{}: refused codes",
+                    case.id
+                );
                 assert_eq!(case.kind, "refused", "{}: kind", case.id);
             }
             Err(e) => {

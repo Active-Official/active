@@ -287,5 +287,7 @@
     }
   },
   "ok": true,
-  "partial_eval_cone_agreement": true
+  "partial_eval_cone_agreement": true,
+  "head": "96c85807a331d7e7fbb0459e464441f760f82d3c",
+  "ran_at": "2026-11-17T17:45:04+00:00"
 }

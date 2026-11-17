@@ -28,3 +28,12 @@ these checks also runs in CI Conformance on both remotes at each push
 (`harness.json`, `codegen_check.py`, `output_schema_check.py`, and the
 agent-kit gate), so the results are re-validated independently of the
 local captures.
+
+## Evidence refresh 2026-11-17 (final head)
+The agent-kit evaluation snapshot now records its provenance: `head`
+(`git rev-parse HEAD`) and `ran_at` (UTC). Re-run at `96c8580`:
+`python agent-kit/eval/run.py --out conformance/evidence/agentkit-eval.json`
+-> `head` 96c8580, `ok: true`, 5 tasks improved, mean 1.5 iterations, cone
+agreement true. The deterministic fields are unchanged from the previous
+capture; the timestamp intentionally varies per run, so byte-identity
+checks compare the report body, not `ran_at`.

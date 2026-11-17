@@ -1,12 +1,18 @@
-//! Deterministic random search for formatter failures (manual).
+//! Deterministic random search for formatter failures.
 //!
 //! Mirrors the libFuzzer target exactly - arbitrary bytes, lossy UTF-8,
 //! parse, format in both styles, re-parse, idempotence - but runs from a
-//! fixed seed under `cargo test --release`, so a failure is reproducible
-//! without the sanitizer runtime. The libFuzzer job in CI remains the
-//! authority; this is the local convergence loop.
+//! fixed seed so a failure is reproducible without the sanitizer runtime.
+//! The libFuzzer job in CI remains the authority; this is the local
+//! convergence loop, and a bounded run is part of the normal suite so the
+//! invariant is exercised on every test run.
 //!
-//! Run with: `cargo test --release -p active-core --test fmt_fuzz_search -- --ignored --nocapture`
+//! `FMT_SEARCH_ITERS` raises the bounded run (for example
+//! `FMT_SEARCH_ITERS=10000000 cargo test --release -p active-core --test
+//! fmt_fuzz_search`). `FMT_SEARCH_SEED` selects another seed.
+//!
+//! Replaying one input lives outside the test target:
+//! `FMT_SEARCH_INPUT='...' cargo run -p active-core --example fmt_replay`.
 
 use active_core::{fmt, parse, Style};
 
@@ -91,43 +97,15 @@ fn generate(seed: &mut u64) -> String {
     out
 }
 
-/// Replay one input the way libFuzzer does (lossy UTF-8, both styles).
+/// A bounded random search in the normal suite; the same code path the
+/// manual long run uses. Two thousand cases keep the test fast while
+/// covering every generator family on every run.
 #[test]
-#[ignore = "manual: FMT_SEARCH_INPUT=<text>"]
-fn formatter_replays_one_input() {
-    let src = std::env::var("FMT_SEARCH_INPUT").expect("FMT_SEARCH_INPUT");
-    if let Ok(module) = parse(&src, "probe") {
-        for c in &module.trivia {
-            println!(
-                "input trivia {:?} @{} -> {:?}",
-                c.text, c.span.line, c.attachment
-            );
-        }
-        for style in [Style::Brace, Style::Indent] {
-            let once = fmt::format(&module, style);
-            println!("{style:?} once: {once:?}");
-            if let Ok(p2) = parse(&once, "probe") {
-                for c in &p2.trivia {
-                    println!(
-                        "  {style:?} pass2 trivia {:?} @{} -> {:?}",
-                        c.text, c.span.line, c.attachment
-                    );
-                }
-            }
-        }
-    }
-    if let Err(problem) = check(&src) {
-        panic!("{problem}");
-    }
-}
-
-#[test]
-#[ignore = "manual random search; run with --release --ignored"]
 fn formatter_random_search_is_idempotent() {
     let iterations: u64 = std::env::var("FMT_SEARCH_ITERS")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(200_000);
+        .unwrap_or(2_000);
     let mut seed = std::env::var("FMT_SEARCH_SEED")
         .ok()
         .and_then(|v| v.parse().ok())

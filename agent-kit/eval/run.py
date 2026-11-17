@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Key-like material only (not every "sk-" substring): real leaked keys are
@@ -240,6 +241,15 @@ def main() -> int:
     report["partial_eval_cone_agreement"] = pe_ok
     if not pe_ok:
         report["ok"] = False
+    # Attribution: an evidence snapshot must name the tree it ran on and
+    # when, or it cannot be tied to a release/audit head.
+    try:
+        report["head"] = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        report["head"] = None
+    report["ran_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     text = json.dumps(report, indent=2)
     print(text)
     if out:

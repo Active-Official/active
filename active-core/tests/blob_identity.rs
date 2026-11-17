@@ -46,6 +46,29 @@ fn untainted_identity_keeps_the_pinned_v1_vector() {
 }
 
 #[test]
+fn a_media_type_embedding_a_short_secret_is_material_by_design() {
+    // spec/blob.md §3: identity matching is broader than text redaction.
+    // The export replaces the whole media string and withholds the
+    // payload, so a short embedded secret cannot be published and no
+    // unrelated text is rewritten. The identity is therefore salted.
+    let short = "k = secret(\"ABC\")\nid = blob(\"xxABCxx\", \"hello\")\n";
+    let tainted = identity(short, &[]);
+    let unsalted = blob::hash_hex(&blob::hash("xxABCxx", b"hello"));
+    assert_ne!(
+        tainted, unsalted,
+        "a media type embedding material must not publish the v1 identity"
+    );
+
+    // A media type with no material text keeps the v1 identity.
+    let clean = "k = secret(\"ABC\")\nid = blob(\"text/plain\", \"hello\")\n";
+    assert_eq!(
+        identity(clean, &[]),
+        blob::hash_hex(&blob::hash("text/plain", b"hello")),
+        "an unrelated media type stays clean"
+    );
+}
+
+#[test]
 fn tainted_identity_differs_from_the_unsalted_v1_digest() {
     let tainted = identity(TAINTED, &[]);
     let unsalted = blob::hash_hex(&blob::hash("text/plain", b"hunter2-tainted"));

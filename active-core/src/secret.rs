@@ -2576,9 +2576,14 @@ impl SecretProfile {
     }
 
     /// True when a blob identity string (media type) is material: an
-    /// exact match, or any occurrence of a material value at any
-    /// length. Withholding a blob cannot corrupt text, so this is
-    /// deliberately broader than [`Self::redact_text`].
+    /// exact match at any length, or any occurrence of a material value
+    /// at any length. This is deliberately broader than
+    /// [`Self::redact_text`] (review 65/67): the export replaces the
+    /// WHOLE media type with the marker and withholds the payload, so
+    /// over-matching cannot corrupt unrelated text, while a media type
+    /// that embeds a short secret would otherwise publish it.
+    /// `spec/blob.md` §3 states this exception; `spec/secrets.md` §2's
+    /// four-byte floor governs text that redaction could rewrite.
     pub fn blob_identity_is_material(&self, text: &str) -> bool {
         self.is_material_text(text) || self.exact_literals.redact_text(text).is_some()
     }

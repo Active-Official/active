@@ -2075,8 +2075,19 @@ fn render_constrained(
         Value::Array(_) => "array".to_string(),
         Value::Table(_) => "table".to_string(),
         // Identity only: hashes are metadata, never secret material.
-        Value::Blob { hash, size, .. } => {
-            format!("blob(blake3:{}, size={size})", crate::blob::hash_hex(hash))
+        Value::Blob {
+            hash,
+            size,
+            tainted,
+            media_type,
+            payload,
+        } => {
+            let identity =
+                crate::blob::verified_identity(hash, *tainted, media_type, payload.as_ref());
+            format!(
+                "blob(blake3:{}, size={size})",
+                crate::blob::hash_hex(&identity)
+            )
         }
     };
     truncate_120(&text)

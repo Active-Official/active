@@ -375,8 +375,19 @@ fn render_value(val: &Value) -> String {
         Value::Array(items) => format!("array[{}]", items.len()),
         Value::Table(map) => format!("table{{{}}}", map.len()),
         // Identity only: docs never carry payload bytes.
-        Value::Blob { hash, size, .. } => {
-            format!("blob(blake3:{}, size={size})", crate::blob::hash_hex(hash))
+        Value::Blob {
+            hash,
+            size,
+            tainted,
+            media_type,
+            payload,
+        } => {
+            let identity =
+                crate::blob::verified_identity(hash, *tainted, media_type, payload.as_ref());
+            format!(
+                "blob(blake3:{}, size={size})",
+                crate::blob::hash_hex(&identity)
+            )
         }
     }
 }

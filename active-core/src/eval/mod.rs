@@ -1552,7 +1552,7 @@ impl<'a> StepRenderer<'a> {
                     let identity = if identity_material {
                         crate::blob::redacted_identity()
                     } else {
-                        *hash
+                        crate::blob::verified_identity(hash, *tainted, media_type, payload.as_ref())
                     };
                     (crate::convert::redacted_blob_json(&identity, *size), true)
                 } else {
@@ -2361,10 +2361,24 @@ impl Engine {
                                         // error, never a placeholder. Blobs
                                         // interpolate as their stable identity
                                         // reference (never payload bytes).
-                                        Value::Blob { hash, .. } => out.push_str(&format!(
-                                            "$active.blob(blake3:{})",
-                                            crate::blob::hash_hex(hash)
-                                        )),
+                                        Value::Blob {
+                                            hash,
+                                            tainted,
+                                            media_type,
+                                            payload,
+                                            ..
+                                        } => {
+                                            let identity = crate::blob::verified_identity(
+                                                hash,
+                                                *tainted,
+                                                media_type,
+                                                payload.as_ref(),
+                                            );
+                                            out.push_str(&format!(
+                                                "$active.blob(blake3:{})",
+                                                crate::blob::hash_hex(&identity)
+                                            ));
+                                        }
                                         Value::Array(_) | Value::Table(_) => {
                                             return Err(EvalError::type_error(
                                                 format!(

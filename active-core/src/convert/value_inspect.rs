@@ -202,7 +202,7 @@ pub fn inspect_path_with_profile_env(
         let identity = if withhold {
             crate::blob::redacted_identity()
         } else {
-            *hash
+            crate::blob::verified_identity(hash, *blob_tainted, media_type, payload.as_ref())
         };
         report["content_addressed"] = json!({
             "hash": format!("blake3:{}", crate::blob::hash_hex(&identity)),

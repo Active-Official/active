@@ -742,14 +742,16 @@ fn value_to_toml_literal(v: &Value) -> String {
             size,
             media_type,
             tainted,
-            ..
+            payload,
         } => {
+            let identity =
+                crate::blob::verified_identity(hash, *tainted, media_type, payload.as_ref());
             let media =
                 serde_json::to_string(crate::secret::exposed_media_type(*tainted, media_type))
                     .unwrap_or_else(|_| "\"\"".to_string());
             format!(
                 "{{ \"$active.blob\" = {{ hash = \"blake3:{}\", size = {size}, media_type = {media}, tainted = {tainted} }} }}",
-                crate::blob::hash_hex(hash),
+                crate::blob::hash_hex(&identity),
             )
         }
         Value::Array(arr) => {

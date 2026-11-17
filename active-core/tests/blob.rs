@@ -422,6 +422,11 @@ fn content_hash_verifies_a_retained_payload_identity() {
         serde_json::to_string(&make(b"one")).expect("serde"),
         serde_json::to_string(&make(b"two")).expect("serde")
     );
+    // Alternate identity renderers verify too: the size query and Debug.
+    let one_query = active_core::graph::blobs_above_size(&make(b"one"), 1);
+    let two_query = active_core::graph::blobs_above_size(&make(b"two"), 1);
+    assert_ne!(one_query, two_query, "the size query must verify");
+    assert_ne!(format!("{:?}", make(b"one")), format!("{:?}", make(b"two")));
     // Materialisation does not change the identity: stripping the
     // payload leaves the same verified hash.
     let stripped = active_core::convert::strip_blob_payloads(&make(b"one"));

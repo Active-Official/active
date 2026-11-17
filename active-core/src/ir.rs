@@ -602,13 +602,17 @@ impl std::fmt::Debug for Value {
                 size,
                 media_type,
                 tainted,
-                ..
-            } => write!(
-                f,
-                "Blob(blake3:{}, size={size}, media={:?}, tainted={tainted})",
-                crate::blob::hash_hex(hash),
-                crate::secret::exposed_media_type(*tainted, media_type)
-            ),
+                payload,
+            } => {
+                let identity =
+                    crate::blob::verified_identity(hash, *tainted, media_type, payload.as_ref());
+                write!(
+                    f,
+                    "Blob(blake3:{}, size={size}, media={:?}, tainted={tainted})",
+                    crate::blob::hash_hex(&identity),
+                    crate::secret::exposed_media_type(*tainted, media_type)
+                )
+            }
         }
     }
 }

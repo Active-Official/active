@@ -420,10 +420,18 @@ fn collect_blobs(value: &crate::ir::Value, path: &str, out: &mut Vec<BlobRecord>
             size,
             media_type,
             tainted,
-            ..
+            payload,
         } => out.push(BlobRecord {
             path: path.to_string(),
-            hash: format!("blake3:{}", crate::blob::hash_hex(hash)),
+            hash: format!(
+                "blake3:{}",
+                crate::blob::hash_hex(&crate::blob::verified_identity(
+                    hash,
+                    *tainted,
+                    media_type,
+                    payload.as_ref()
+                ))
+            ),
             size: *size,
             media_type: crate::secret::exposed_media_type(*tainted, media_type).to_string(),
             tainted: *tainted,

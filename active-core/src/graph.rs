@@ -353,8 +353,16 @@ pub fn blobs_above_size(value: &crate::ir::Value, min_size: u64) -> Vec<(String,
     ) {
         use crate::ir::Value;
         match value {
-            Value::Blob { hash, size, .. } if *size >= min_size => {
-                out.push((path, *size, crate::blob::hash_hex(hash)))
+            Value::Blob {
+                hash,
+                size,
+                tainted,
+                media_type,
+                payload,
+            } if *size >= min_size => {
+                let identity =
+                    crate::blob::verified_identity(hash, *tainted, media_type, payload.as_ref());
+                out.push((path, *size, crate::blob::hash_hex(&identity)));
             }
             Value::Array(items) => {
                 for (i, item) in items.iter().enumerate() {
@@ -425,7 +433,7 @@ pub fn blobs_above_size_with(
                 let identity = if identity_material {
                     crate::blob::redacted_identity()
                 } else {
-                    *hash
+                    crate::blob::verified_identity(hash, *tainted, media_type, payload.as_ref())
                 };
                 let shown = profile.redact_path(&path);
                 out.push((shown, *size, crate::blob::hash_hex(&identity)));

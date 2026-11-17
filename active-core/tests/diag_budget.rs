@@ -189,3 +189,29 @@ fn lexer_error_flood_is_bounded_and_visible() {
     );
     assert!(errors.iter().any(|d| d.code == "E005"), "real errors kept");
 }
+
+#[test]
+fn truncation_notice_survives_a_mixed_error_and_healing_flood() {
+    // One fatal error plus 1,200 duplicate keys: the error list is returned
+    // alone (the module is discarded), so a healing-only notice would leave
+    // the caller unable to tell that diagnostics were dropped.
+    let mut src = String::from("a = )\n");
+    for _ in 0..1_200 {
+        src.push_str("k = 1\n");
+    }
+    let errors =
+        active_core::parse(&src, "mixed-flood").expect_err("the syntax error refuses the document");
+    assert_eq!(
+        errors.last().map(|d| d.code.as_str()),
+        Some("W014"),
+        "a dropped healing record must be visible in the returned error list"
+    );
+    assert!(
+        errors.iter().any(|d| d.code == "E002"),
+        "the real error kept"
+    );
+    assert!(
+        errors.len() <= 1024,
+        "the visible list stays within the shared budget"
+    );
+}

@@ -1279,7 +1279,11 @@ impl Parser {
             file: None,
         };
         if !self.errors.is_empty() {
-            if self.errors_truncated {
+            // Any dropped record - in either channel - must be visible in the
+            // list this failed parse returns: the module (and its healing
+            // list) is discarded, so an error-only caller would otherwise
+            // never learn that the document's diagnostics were cut.
+            if self.errors_truncated || self.healing_truncated {
                 self.errors.push(notice());
             }
         } else if self.healing_truncated {

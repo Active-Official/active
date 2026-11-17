@@ -31,9 +31,9 @@ local captures.
 
 ## Evidence refresh 2026-11-17 (final head)
 The agent-kit evaluation snapshot now records its provenance: `head`
-(`git rev-parse HEAD`) and `ran_at` (UTC). Re-run at `96c8580`:
+(`git rev-parse HEAD`) and `ran_at` (UTC). Re-run at `22c4247`:
 `python agent-kit/eval/run.py --out conformance/evidence/agentkit-eval.json`
--> `head` 96c8580, `ok: true`, 5 tasks improved, mean 1.5 iterations, cone
+-> `head` 22c4247, `ok: true`, 5 tasks improved, mean 1.5 iterations, cone
 agreement true. The deterministic fields are unchanged from the previous
 capture; the timestamp intentionally varies per run, so byte-identity
 checks compare the report body, not `ran_at`.

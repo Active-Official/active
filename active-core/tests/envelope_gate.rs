@@ -20,15 +20,70 @@ fn codes(err: &EvalError) -> Vec<String> {
 
 fn refusal(src: &str) -> EvalError {
     let module = parse(src, "gate").expect("parses");
-    Engine::hermetic()
+    // Strict: E035 is an Error that resilient mode reports alongside the
+    // tree, so both gate refusals and malformed-claim refusals surface as
+    // an Err here.
+    Engine::strict()
         .evaluate(&module)
         .expect_err("the gate must refuse")
 }
 
 fn envelope(version: &str) -> String {
     format!(
-        "active_mode = \"data\"\nenvelope = {{ version = \"{version}\", payload = {{ ok = true }} }}\n"
+        "active_mode = \"data\"\nenvelope = {{ version = \"{version}\", tainted = false, payload = {{ ok = true }} }}\n"
     )
+}
+
+#[test]
+fn a_clean_payload_with_an_unrelated_root_secret_is_accepted() {
+    // LANG-F-004: the claim describes the PAYLOAD. A secret elsewhere in
+    // the document must not make the receiver reject a clean payload.
+    let src = "active_mode = \"data\"\nother = secret(\"root-secret\")\nenvelope = { version = \"1.0.0\", tainted = false, payload = { ok = true } }\n";
+    let module = parse(src, "gate").expect("parse");
+    let (_, diags) = Engine::hermetic().evaluate(&module).expect("evaluates");
+    assert!(diags.is_empty(), "{diags:?}");
+}
+
+#[test]
+fn a_tainted_payload_with_a_true_claim_is_accepted() {
+    let src = "active_mode = \"data\"\ntoken = secret(\"payload-secret\")\nenvelope = { version = \"1.0.0\", tainted = true, payload = token }\n";
+    let module = parse(src, "gate").expect("parse");
+    let (_, diags) = Engine::hermetic().evaluate(&module).expect("evaluates");
+    assert!(diags.is_empty(), "{diags:?}");
+}
+
+#[test]
+fn a_missing_taint_claim_is_refused() {
+    // The field table marks tainted required: an envelope that makes no
+    // verifiable claim must fail closed, not pass because it is silent.
+    let src =
+        "active_mode = \"data\"\nenvelope = { version = \"1.0.0\", payload = { ok = true } }\n";
+    let err = refusal(src);
+    assert_eq!(codes(&err), ["E035"], "{err:?}");
+}
+
+#[test]
+fn a_malformed_taint_claim_is_refused() {
+    let src = "active_mode = \"data\"\nenvelope = { version = \"1.0.0\", tainted = \"no\", payload = { ok = true } }\n";
+    let err = refusal(src);
+    assert_eq!(codes(&err), ["E035"], "{err:?}");
+}
+
+#[test]
+fn an_envelope_without_a_payload_cannot_verify_taint() {
+    let src = "active_mode = \"data\"\nenvelope = { version = \"1.0.0\", tainted = false }\n";
+    let err = refusal(src);
+    assert_eq!(codes(&err), ["E035"], "{err:?}");
+}
+
+#[test]
+fn a_config_document_with_a_data_table_named_envelope_is_not_policed() {
+    // Without Data mode or a version member, `envelope` is ordinary data;
+    // the claim rule applies to interchange envelopes only.
+    let src = "envelope = { x = 1 }\n";
+    let module = parse(src, "gate").expect("parse");
+    let (_, diags) = Engine::hermetic().evaluate(&module).expect("evaluates");
+    assert!(diags.is_empty(), "{diags:?}");
 }
 
 #[test]
@@ -128,7 +183,8 @@ fn refused_capabilities_are_reported_once_each_in_document_order() {
 fn config_mode_documents_are_not_gated() {
     // Config Mode documents are not interchange envelopes (§2 rule 1): the
     // same envelope shape without the mode marker evaluates.
-    let src = "envelope = { version = \"9.9.9\" }\nx = 1\n";
+    let src =
+        "envelope = { version = \"9.9.9\", tainted = false, payload = { ok = true } }\nx = 1\n";
     let module = parse(src, "gate").expect("parse");
     assert_eq!(module.mode, Mode::Config);
     assert!(Engine::hermetic().evaluate(&module).is_ok());

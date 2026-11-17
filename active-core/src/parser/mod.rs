@@ -6931,12 +6931,20 @@ impl Parser {
         }
         self.expect_closing_healing(TokenKind::RBrace, "H004");
         let idents = self.ident_scopes.pop().unwrap_or_default();
-        let _ = self.resolve_sibling_refs(idents, &fields);
-        // No `parent_field_scopes` push happened for an inline table: it
-        // resolves against its own keys and the enclosing scopes exactly
-        // like a scalar. Popping here used to drop the enclosing table's
-        // snapshot, so a parent-fallback reference *after* an inline table
-        // silently became W001/null.
+        // Resolve only against this table's OWN keys, then hand the
+        // leftovers to the enclosing scope. The parent chain is hidden for
+        // this pass: the enclosing table's fields are the next scope, and
+        // they are not on that chain (an inline table cannot see them
+        // directly). Without this, `[t] a = 2; v = { x = a }` resolved `a`
+        // through the root snapshot (the root's `a`), skipping `t`'s.
+        let saved_parents = std::mem::take(&mut self.parent_field_scopes);
+        let leftover = self.resolve_sibling_refs(idents, &fields);
+        self.parent_field_scopes = saved_parents;
+        if !leftover.is_empty() {
+            if let Some(scope) = self.ident_scopes.last_mut() {
+                scope.extend(leftover);
+            }
+        }
         self.add_spanned(Node::Table { fields }, &open)
     }
 

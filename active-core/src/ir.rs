@@ -605,6 +605,29 @@ impl std::fmt::Debug for Value {
     }
 }
 
+/// Reserved wire-wrapper keys. A DATA table whose key spells one of these
+/// would serialize exactly like the typed wrapper (a host can build such a
+/// table; source keys are identifiers and cannot contain `$`). Escaping the
+/// data key keeps both serializers injective and keeps `content_hash` from
+/// giving a table and a duration the same identity (LANG-F-001/F-002).
+const RESERVED_WIRE_TAGS: [&str; 4] = [
+    "$active.duration",
+    "$active.quantity",
+    "$active.blob",
+    "$active.float",
+];
+
+/// A data-table key, escaped when it spells a reserved wrapper tag.
+/// Shared by `convert::value_to_json`, the TOML exporter, and the
+/// `Serialize` impl below, so every wire path agrees.
+pub(crate) fn wire_key(key: &str) -> String {
+    if RESERVED_WIRE_TAGS.contains(&key) {
+        format!("\\{key}")
+    } else {
+        key.to_owned()
+    }
+}
+
 impl Serialize for Value {
     /// Redacting serializer (spec/secrets.md §3): serializing a Value
     /// directly (`serde_json::to_string` and friends) can never emit
@@ -636,10 +659,26 @@ impl Serialize for Value {
             Value::Null => serde_json::Value::Null,
             Value::Bool(b) => serde_json::Value::from(*b),
             Value::Int(i) => serde_json::Value::from(*i),
-            Value::Float(x) => serde_json::Value::from(*x),
+            Value::Float(x) if x.is_finite() => serde_json::Value::from(*x),
+            // Never a bare `null` for a non-finite value (LANG-F-003):
+            // the tagged object cannot collide with null or with "inf".
+            Value::Float(x) => serde_json::json!({
+                "$active.float": if x.is_nan() {
+                    "nan"
+                } else if x.is_sign_negative() {
+                    "-inf"
+                } else {
+                    "inf"
+                }
+            }),
             Value::String(s) => serde_json::Value::from(s.clone()),
             Value::DurationMs(ms) => serde_json::json!({ "$active.duration": { "ms": ms } }),
-            Value::Quantity(n, unit) => serde_json::json!({ unit.suffix(): n }),
+            // Same reserved wrapper as `convert::value_to_json`: the bare
+            // `{ "<suffix>": n }` form was table-shaped and not injective
+            // (LANG-B-019).
+            Value::Quantity(n, unit) => serde_json::json!({
+                "$active.quantity": { "unit": unit.suffix(), "value": n }
+            }),
             Value::Array(items) => serde_json::Value::Array(
                 items
                     .iter()
@@ -650,7 +689,7 @@ impl Serialize for Value {
                 let mut obj = serde_json::Map::new();
                 for (k, val) in map {
                     obj.insert(
-                        k.clone(),
+                        wire_key(k),
                         serde_json::to_value(val).unwrap_or(serde_json::Value::Null),
                     );
                 }

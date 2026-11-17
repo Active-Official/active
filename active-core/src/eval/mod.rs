@@ -2531,31 +2531,55 @@ impl Engine {
             deadline,
             budget.max_wall_ms,
         )?;
-        // LANG-F-004: the envelope's `tainted` is a sender assertion; the
-        // receiver verifies it against the evaluated payload's structural
-        // taint. A mismatch in either direction is E035 (Error): strict
-        // refuses the document, resilient mode reports it alongside the
-        // tree. Run here rather than in schema validation because an
-        // envelope can exist without a schema block.
-        if let Some(claimed) = crate::envelope::sender_taint(module) {
-            let actual = value_has_secret(&result);
-            if claimed != actual {
-                diagnostics.push(Diagnostic {
-                    severity: Severity::Error,
-                    code: "E035".into(),
-                    message: format!(
-                        "envelope.tainted is {claimed} but the evaluated payload is {actual} \
-                         (a tainted claim must match the payload's structural taint)"
-                    ),
-                    path: Some("envelope.tainted".into()),
-                    span: None,
-                    repair: None,
-                    confidence: 1.0,
-                    file: None,
-                });
-                if !self.resilient {
-                    return Err(EvalError::ValidationFailed { diagnostics });
+        // LANG-F-004: the envelope's `tainted` is a sender assertion about
+        // its PAYLOAD; the receiver verifies it against that subtree's
+        // structural taint, not the whole document (an unrelated root
+        // secret must not fail a clean payload). A claim that cannot be
+        // verified - missing, malformed, or without a payload - fails
+        // closed with E035. Run here rather than in schema validation
+        // because an envelope can exist without a schema block.
+        use crate::envelope::TaintClaim;
+        let taint_error = match crate::envelope::sender_taint(module) {
+            TaintClaim::NoEnvelope => None,
+            TaintClaim::Missing => Some(
+                "envelope has no `tainted` claim: a receiver cannot verify the payload's taint"
+                    .to_string(),
+            ),
+            TaintClaim::Malformed => Some(
+                "envelope.tainted is not a literal boolean: the payload's taint cannot be verified"
+                    .to_string(),
+            ),
+            TaintClaim::Claim(claimed) => match envelope_payload(&result) {
+                None => Some(
+                    "envelope has no `payload` member: the taint claim cannot be verified"
+                        .to_string(),
+                ),
+                Some(payload) => {
+                    let actual = value_has_secret(payload);
+                    if claimed == actual {
+                        None
+                    } else {
+                        Some(format!(
+                            "envelope.tainted is {claimed} but the evaluated payload is {actual} \
+                             (a tainted claim must match the payload's structural taint)"
+                        ))
+                    }
                 }
+            },
+        };
+        if let Some(message) = taint_error {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Error,
+                code: "E035".into(),
+                message,
+                path: Some("envelope.tainted".into()),
+                span: None,
+                repair: None,
+                confidence: 1.0,
+                file: None,
+            });
+            if !self.resilient {
+                return Err(EvalError::ValidationFailed { diagnostics });
             }
         }
         // Closing wall-clock sample: small documents take zero walk
@@ -3646,6 +3670,19 @@ fn quantity_result(v: f64, unit: Unit) -> Result<Value, String> {
     }
     Ok(Value::Quantity(v, unit))
 }
+/// The evaluated `envelope.payload` subtree, when the document has one.
+/// The taint claim describes this payload, not the whole document
+/// (LANG-F-004).
+fn envelope_payload(value: &Value) -> Option<&Value> {
+    match value {
+        Value::Table(root) => match root.get("envelope") {
+            Some(Value::Table(envelope)) => envelope.get("payload"),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 fn value_eq(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Null, Value::Null) => true,

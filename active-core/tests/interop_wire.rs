@@ -187,3 +187,81 @@ fn inspection_reports_the_layer_that_wrote_a_value() {
         "base values carry no layer: {report}"
     );
 }
+
+#[test]
+fn a_data_key_spelling_a_reserved_tag_is_escaped() {
+    // LANG-F-001/F-002: a host-built table keyed `$active.duration` used to
+    // export byte-identically to a duration (and share its content hash).
+    // Source keys are identifiers and can never spell this, so escaping is
+    // invisible to documents while keeping the mapping injective.
+    use active_core::convert::value_to_json;
+    use active_core::provenance::content_hash;
+    use indexmap::IndexMap;
+    let mut inner = IndexMap::new();
+    inner.insert("ms".to_string(), Value::Int(5000));
+    let mut table = IndexMap::new();
+    table.insert("$active.duration".to_string(), Value::Table(inner));
+    let table = Value::Table(table);
+
+    let exported = value_to_json(&table);
+    assert_eq!(
+        exported,
+        serde_json::json!({"\\$active.duration": {"ms": 5000}}),
+        "the data key must be escaped"
+    );
+    let duration = Value::DurationMs(5000);
+    assert_ne!(
+        value_to_json(&table),
+        value_to_json(&duration),
+        "the two values must not export identically"
+    );
+    assert_ne!(
+        content_hash(&table),
+        content_hash(&duration),
+        "distinct values must not share an identity"
+    );
+    // The escaped key is not treated as a wrapper on import: the re-emitted
+    // document carries a table, never a duration literal.
+    let json = value_to_pretty_json(&table);
+    let (source, _) = json_text_to_active(&json).expect("import");
+    assert!(!source.contains("5000ms"), "{source}");
+    assert!(!source.contains("$active.duration"), "{source}");
+}
+
+#[test]
+fn direct_serialization_matches_the_canonical_export() {
+    // The hand-kept `Serialize` impl promised to mirror value_to_json; it
+    // had drifted (quantities used the old bare form, non-finite floats
+    // would serialize as null). Every kind must agree.
+    use active_core::convert::value_to_json;
+    use serde_json::json;
+    let values = [
+        Value::Null,
+        Value::Bool(true),
+        Value::Int(-7),
+        Value::Float(1.5),
+        Value::String("s".into()),
+        Value::DurationMs(1500),
+        Value::Quantity(2.0, active_core::Unit::from_suffix("Hz").expect("unit")),
+        Value::Secret(zeroize::Zeroizing::new("ignored".to_string())),
+        Value::Array(vec![Value::Int(1), Value::DurationMs(2)]),
+        Value::Table(
+            [(
+                "$active.duration".to_string(),
+                Value::Table([("ms".to_string(), Value::Int(1))].into_iter().collect()),
+            )]
+            .into_iter()
+            .collect(),
+        ),
+    ];
+    for value in values {
+        let via_serde = serde_json::to_value(&value).expect("serialize");
+        assert_eq!(via_serde, value_to_json(&value), "{value:?}");
+    }
+    // The tagged non-finite form is the one exception a live Value cannot
+    // hold through evaluation; construct it directly to pin the serializer.
+    assert_eq!(
+        serde_json::to_value(Value::Float(f64::INFINITY)).expect("serialize"),
+        json!({"$active.float": "inf"})
+    );
+}

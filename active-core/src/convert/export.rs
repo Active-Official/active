@@ -202,7 +202,8 @@ fn build_toml_value(v: &Value, path: &str, diags: &mut Vec<Diagnostic>) -> Optio
             let mut out = toml::map::Map::with_capacity(map.len());
             for (key, val) in map {
                 if let Some(toml_val) = build_toml_value(val, &at(key), diags) {
-                    out.insert(key.clone(), toml_val);
+                    // Same reserved-tag escape as JSON (LANG-F-001/F-002).
+                    out.insert(crate::ir::wire_key(key), toml_val);
                 }
             }
             Some(toml::Value::Table(out))

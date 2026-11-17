@@ -68,6 +68,27 @@ async function main() {
 		const r = api.evaluate(src);
 		const got = JSON.parse(r.json || "null");
 		const codes = codesOf(r.diagnostics);
+		// Deep value comparison: object key order is not semantics, and a
+		// formatter or a different serializer may legitimately reorder keys
+		// (the differential gate compares parsed values for the same
+		// reason). Arrays stay order-sensitive.
+		const deepEqual = (a, b) => {
+			if (a === b) return true;
+			if (typeof a !== typeof b || a === null || b === null) return false;
+			if (Array.isArray(a) || Array.isArray(b)) {
+				if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length)
+					return false;
+				return a.every((item, i) => deepEqual(item, b[i]));
+			}
+			if (typeof a === "object") {
+				const ka = Object.keys(a).sort();
+				const kb = Object.keys(b).sort();
+				if (ka.length !== kb.length || ka.some((k, i) => k !== kb[i]))
+					return false;
+				return ka.every((k) => deepEqual(a[k], b[k]));
+			}
+			return false;
+		};
 		let ok = false;
 		if (c.kind === "clean") {
 			const want = JSON.parse(
@@ -76,10 +97,7 @@ async function main() {
 					"utf8",
 				),
 			);
-			ok =
-				r.ok &&
-				codes.length === 0 &&
-				JSON.stringify(got) === JSON.stringify(want);
+			ok = r.ok && codes.length === 0 && deepEqual(got, want);
 		} else if (c.kind === "diagnosed") {
 			const want = JSON.parse(
 				fs.readFileSync(
@@ -94,7 +112,7 @@ async function main() {
 				),
 			).codes;
 			ok =
-				JSON.stringify(got) === JSON.stringify(want) &&
+				deepEqual(got, want) &&
 				JSON.stringify(codes) === JSON.stringify(wantCodes);
 		} else {
 			const wantCodes = JSON.parse(

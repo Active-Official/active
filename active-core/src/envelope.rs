@@ -237,26 +237,52 @@ pub(crate) fn self_containment_violations(
     out
 }
 
-/// The sender's `envelope.tainted` claim, when the document carries one
-/// (LANG-F-004). This is an UNVERIFIED sender assertion: the receiver
-/// cross-checks it against the evaluated payload's structural taint in
-/// `validate_schema`, and a mismatch is E035.
-pub(crate) fn sender_taint(module: &Module) -> Option<bool> {
-    let refs = envelope_fields(module)?;
-    let table = deref_table(module, refs.envelope)?;
+/// The state of the sender's `envelope.tainted` claim (LANG-F-004). This is
+/// an UNVERIFIED sender assertion: the receiver cross-checks it against the
+/// evaluated *payload's* structural taint, and a missing or non-boolean
+/// claim in an envelope table is malformed rather than silently ignored.
+pub(crate) enum TaintClaim {
+    /// The document has no envelope table: a plain data document makes no
+    /// claim to police.
+    NoEnvelope,
+    /// A literal boolean claim.
+    Claim(bool),
+    /// The envelope exists but has no `tainted` member.
+    Missing,
+    /// The member exists but does not resolve to a literal boolean.
+    Malformed,
+}
+
+pub(crate) fn sender_taint(module: &Module) -> TaintClaim {
+    let Some(refs) = envelope_fields(module) else {
+        return TaintClaim::NoEnvelope;
+    };
+    // An `envelope` key is the interchange envelope in Data mode, or when it
+    // carries a version. In Config mode without a version it is ordinary
+    // data, and policing it would reject unrelated documents (LANG-F-004:
+    // the claim rule applies to envelopes, not to any table named
+    // `envelope`).
+    if module.mode != crate::ir::Mode::Data && refs.version.is_none() {
+        return TaintClaim::NoEnvelope;
+    }
+    let Some(table) = deref_table(module, refs.envelope) else {
+        return TaintClaim::Malformed;
+    };
     let fields = match module.get(table) {
         Some(Node::Table { fields }) => fields,
-        _ => return None,
+        _ => return TaintClaim::Malformed,
     };
-    let mut id = *fields.get("tainted")?;
+    let Some(mut id) = fields.get("tainted").copied() else {
+        return TaintClaim::Missing;
+    };
     for _ in 0..64 {
         match module.get(id) {
-            Some(Node::Literal(Value::Bool(claimed))) => return Some(*claimed),
+            Some(Node::Literal(Value::Bool(claimed))) => return TaintClaim::Claim(*claimed),
             Some(Node::Ref(next)) => id = *next,
-            _ => return None,
+            _ => return TaintClaim::Malformed,
         }
     }
-    None
+    TaintClaim::Malformed
 }
 
 /// The root envelope table and its `version` node, when the document has

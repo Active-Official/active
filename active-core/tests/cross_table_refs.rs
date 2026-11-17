@@ -68,3 +68,19 @@ fn a_cyclic_dotted_reference_terminates() {
     // that evaluation terminates without hanging.
     let _ = Engine::new().evaluate(&module);
 }
+
+#[test]
+fn an_inline_table_reads_its_enclosing_tables_keys() {
+    // Resolution order for an inline table: its own keys, then the
+    // enclosing table's keys, then the parent chain. The root has `a = 1`
+    // and `[t2]` has `a = 2`, so the nested table's `a` must win over the
+    // root's for a reference inside t2.
+    let (v, codes) = eval("a = 1\nt = { x = a }\n[t2]\na = 2\nv = { x = a }\n");
+    assert!(codes.is_empty(), "{codes:?}");
+    assert_eq!(v["t"]["x"], 1);
+    assert_eq!(v["t2"]["v"]["x"], 2);
+    // An unknown name still warns and yields null.
+    let (v, codes) = eval("t = { x = missing }\n");
+    assert!(codes.iter().any(|c| c == "W001"), "{codes:?}");
+    assert_eq!(v["t"]["x"], serde_json::Value::Null);
+}

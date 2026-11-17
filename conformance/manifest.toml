@@ -194,6 +194,26 @@ id = "0033-lexer-error-truncation"
 file = "cases/0033-lexer-error-truncation.active"
 kind = "refused"
 
+# LANG-F-004: the taint claim describes the PAYLOAD. A secret elsewhere in
+# the document must not reject a clean payload.
+[[cases]]
+id = "0034-envelope-unrelated-secret"
+file = "cases/0034-envelope-unrelated-secret.active"
+kind = "clean"
+
+# The envelope field table marks `tainted` required: a missing claim cannot
+# be verified and fails closed (E035).
+[[cases]]
+id = "0035-envelope-missing-taint"
+file = "cases/0035-envelope-missing-taint.active"
+kind = "refused"
+
+# A present but non-boolean claim is malformed, not silently ignored (E035).
+[[cases]]
+id = "0036-envelope-malformed-taint"
+file = "cases/0036-envelope-malformed-taint.active"
+kind = "refused"
+
 # Host-feature pins (G-017 spirit): cases needing capabilities a v1 host
 # shim does not expose. Runners record these as pins with reason, never as
 # failures and never silently. Removing a pin means the host grew the

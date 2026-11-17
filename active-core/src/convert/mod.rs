@@ -55,6 +55,10 @@ pub use value_inspect::{
 /// as-is; callers handling secret material must use [`value_to_json_with`]
 /// (or [`redact_value`] first), which sweeps authored and runtime
 /// secrets.
+///
+/// Typed values use reserved wrappers so the mapping is injective
+/// (LANG-F-001/F-002), and a DATA key that spells one is escaped by
+/// [`crate::ir::wire_key`].
 pub fn value_to_json(v: &Value) -> JsonValue {
     match v {
         Value::Null => JsonValue::Null,
@@ -94,7 +98,7 @@ pub fn value_to_json(v: &Value) -> JsonValue {
         Value::Table(map) => {
             let mut obj = serde_json::Map::new();
             for (k, val) in map {
-                obj.insert(k.clone(), value_to_json(val));
+                obj.insert(crate::ir::wire_key(k), value_to_json(val));
             }
             JsonValue::Object(obj)
         }

@@ -2594,7 +2594,7 @@ impl Engine {
                 let path = step.path.map(|path| {
                     renderer
                         .as_ref()
-                        .and_then(|renderer| renderer.profile.redact_text(&path))
+                        .map(|renderer| renderer.profile.redact_path(&path))
                         .unwrap_or(path)
                 });
                 list.push(StepEvent {

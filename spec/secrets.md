@@ -44,7 +44,9 @@ error message, or an export** — only redaction markers do.
   material is a copy like any value: every export and inspection path
   renders the marker in the key slot (a collision between two material
   keys merges deterministically), so a secret cannot ride out as a name.
-  Envelope taint verification counts a material key as payload material.
+  Value paths are redacted segment by segment, so a short material key is
+  hidden inside a dotted path too. Envelope taint verification counts a
+  material key as payload material.
 - `ACTIVE graph` prints node ids and edges only — no values at all.
 - `Value`'s `Debug` and `serde::Serialize` impls redact by
   construction (`Secret(***)` / `"***SECRET***"` at every depth), so

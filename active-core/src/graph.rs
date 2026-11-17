@@ -323,9 +323,10 @@ fn secret_tainted_paths_from_profile(
             _ => structural,
         };
         if tainted && !path.is_empty() {
-            // Paths are display text built from authored keys; a material
-            // key inside one is redacted like any other copy.
-            out.push(profile.redact_text(&path).unwrap_or_else(|| path.clone()));
+            // Paths are display text built from authored keys; each key
+            // segment is redacted like any other whole-value copy (a
+            // short material key matches exactly at its segment).
+            out.push(profile.redact_path(&path));
         }
         tainted
     }
@@ -426,7 +427,7 @@ pub fn blobs_above_size_with(
                 } else {
                     *hash
                 };
-                let shown = profile.redact_text(&path).unwrap_or_else(|| path.clone());
+                let shown = profile.redact_path(&path);
                 out.push((shown, *size, crate::blob::hash_hex(&identity)));
             }
             Value::Array(items) => {

@@ -148,6 +148,49 @@ fn a_material_table_key_never_reaches_any_surface() {
 }
 
 #[test]
+fn a_short_material_key_segment_is_redacted_in_paths() {
+    // A three-byte secret only matches a whole segment; the dotted path
+    // around it must not make it invisible to redaction.
+    let src = "x = secret(\"x\")\npayload = { outer = { x = secret(\"x\") } }\n";
+    let module = parse(src, "short-key").expect("parse");
+    let engine = Engine::hermetic();
+    let (value, diags, _seeds) = engine.evaluate_with_seeds(&module).expect("evaluates");
+    assert!(diags.is_empty(), "{diags:?}");
+
+    let (_, _, steps, _) = engine
+        .evaluate_with_steps_and_seeds(&module)
+        .expect("steps");
+    let steps = serde_json::to_string(&steps).expect("steps json");
+    assert!(!steps.contains("outer.x"), "steps leaked a path: {steps}");
+    assert!(
+        steps.contains("outer.***SECRET***"),
+        "the segment must render the marker: {steps}"
+    );
+
+    let paths = active_core::graph::secret_tainted_paths_with(&module, &value, None);
+    assert!(paths.iter().all(|path| !path.ends_with(".x")), "{paths:?}");
+    let viz = active_core::viz::taint_data_with_profile(&module, &value, None);
+    assert!(
+        !viz.to_string().contains("outer.x"),
+        "viz leaked a path: {viz}"
+    );
+}
+
+#[test]
+fn the_blob_query_redacts_a_short_material_key_segment() {
+    use active_core::secret::SecretProfile;
+    let src = "x = secret(\"x\")\n\
+               payload = { outer = { x = blob(\"text/plain\", \"hi\") } }\n";
+    let module = parse(src, "short-key-blob").expect("parse");
+    let engine = Engine::hermetic();
+    let (value, diags, seeds) = engine.evaluate_with_seeds(&module).expect("evaluates");
+    assert!(diags.is_empty(), "{diags:?}");
+    let profile = SecretProfile::for_engine(&module, &engine, &seeds);
+    let blobs = active_core::graph::blobs_above_size_with(&value, 1, &profile);
+    assert_eq!(blobs[0].0, "payload.outer.***SECRET***", "{blobs:?}");
+}
+
+#[test]
 fn structural_material_never_reaches_exports_or_the_content_hash() {
     use std::collections::HashMap;
     // A plain env read used as a secret locator, its aliases, a

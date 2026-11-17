@@ -2770,4 +2770,30 @@ impl SecretProfile {
         }
         self.literals.redact_text(text)
     }
+
+    /// Redact a dotted/indexed value path segment by segment. Each key
+    /// segment is a whole authored value, so a short material key is
+    /// matched exactly even though the same text embedded in a longer
+    /// path is not a substring match. Indices are structure and stay.
+    pub fn redact_path(&self, path: &str) -> String {
+        if path.is_empty() {
+            return String::new();
+        }
+        let mut out = String::with_capacity(path.len());
+        for (index, segment) in path.split('.').enumerate() {
+            if index > 0 {
+                out.push('.');
+            }
+            let (key, indices) = match segment.find('[') {
+                Some(bracket) => (&segment[..bracket], &segment[bracket..]),
+                None => (segment, ""),
+            };
+            match self.redact_text(key) {
+                Some(redacted) => out.push_str(&redacted),
+                None => out.push_str(key),
+            }
+            out.push_str(indices);
+        }
+        out
+    }
 }

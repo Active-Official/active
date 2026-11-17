@@ -138,9 +138,16 @@ fn secret_literals(source: &str) -> Vec<String> {
     out
 }
 
-fn run_tier(case_dir: &str, expected_dir: &str, has_codec_expectation: bool) {
+fn run_tier(case_dir: &str, expected_dir: &str, has_codec_expectation: bool, floor: usize) {
     assert_case_set(case_dir, expected_dir);
-    for case in cases(case_dir) {
+    let all = cases(case_dir);
+    assert!(
+        all.len() >= floor,
+        "{case_dir}: {} case(s) present, at least {floor} required (an emptied corpus \
+         must not pass)",
+        all.len()
+    );
+    for case in all {
         let name = stem(&case);
         let (json, source) = export(&case);
         let expected = read_json(&expected_path(expected_dir, &case));
@@ -197,7 +204,7 @@ fn run_tier(case_dir: &str, expected_dir: &str, has_codec_expectation: bool) {
 fn paired_vectors_match_the_shipped_export() {
     // Documents the published core (and therefore the pinned codec)
     // accepts today: scalars, containers, units, secrets, multiline text.
-    run_tier("cases", "expected", true);
+    run_tier("cases", "expected", true, 5);
 }
 
 #[test]
@@ -205,7 +212,7 @@ fn structural_vectors_match_the_shipped_export() {
     // Expression graphs: the codec preserves them structurally, its JSON
     // projection renders expression nodes as markers, so only the
     // round-trip half applies to the paired expectation.
-    run_tier("structural", "expected-structural", true);
+    run_tier("structural", "expected-structural", true, 1);
 }
 
 #[test]
@@ -213,7 +220,7 @@ fn current_core_vectors_match_the_shipped_export() {
     // Blobs, tainted blobs, profiles, and patches need a core newer than
     // the published 1.4.0 the pinned codec depends on. They are owned
     // here now so the next re-pair has an executable contract.
-    run_tier("current", "expected-current", false);
+    run_tier("current", "expected-current", false, 4);
 }
 
 #[test]

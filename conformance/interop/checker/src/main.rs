@@ -34,6 +34,12 @@ use serde_json::Value as Json;
 /// place lets the semantic tables below and the pairing record agree.
 const PINNED_CODEC: &str = "2.4.2";
 
+/// A silently empty vector set would let this checker exit green without
+/// running a single round-trip, so both tiers have a floor. Adding a vector
+/// is free; deleting the corpus is not.
+const MIN_PAIRED_CASES: usize = 5;
+const MIN_STRUCTURAL_CASES: usize = 1;
+
 fn main() {
     let interop = interop_root();
     let mut failures = 0usize;
@@ -48,11 +54,25 @@ fn main() {
     }
     println!("codec = active-infinity {}", active_infinity::VERSION);
 
-    for (dir, expected_dir, semantic) in [
-        ("cases", "expected", true),
-        ("structural", "expected-structural", false),
+    for (dir, expected_dir, semantic, floor) in [
+        ("cases", "expected", true, MIN_PAIRED_CASES),
+        (
+            "structural",
+            "expected-structural",
+            false,
+            MIN_STRUCTURAL_CASES,
+        ),
     ] {
-        for case in cases(&interop.join(dir)) {
+        let found = cases(&interop.join(dir));
+        if found.len() < floor {
+            failures += 1;
+            println!(
+                "{dir}: FAIL {} case(s) present, at least {floor} required (an empty \
+                 corpus must not pass)",
+                found.len()
+            );
+        }
+        for case in found {
             checked += 1;
             let name = stem(&case);
             match run_case(&interop, &case, expected_dir, semantic) {
@@ -301,18 +321,21 @@ fn normalize_codec(value: &Json) -> Result<Norm, String> {
                 tag
             ));
         }
-        if let (Some(amount), Some(unit)) =
-            (obj.get("value"), obj.get("unit").and_then(Json::as_str))
-        {
-            // A unit projection is `{value, unit}` with a recognized
-            // spelling. An authored table that happens to use those two
-            // keys stays a table; only a recognized unit changes shape.
-            if let Ok(factor) = codec_unit(unit) {
-                let amount = Number::from_json(amount).ok_or("unit value is not a number")?;
-                return Ok(Norm::Unit {
-                    base: amount.as_f64() * factor,
-                    dim: dimension(unit),
-                });
+        if obj.len() == 2 {
+            if let (Some(amount), Some(unit)) =
+                (obj.get("value"), obj.get("unit").and_then(Json::as_str))
+            {
+                // A unit projection is exactly `{value, unit}` with a
+                // recognized spelling. An authored table that happens to
+                // use those keys stays a table; only a recognized unit
+                // changes shape.
+                if let Ok(factor) = codec_unit(unit) {
+                    let amount = Number::from_json(amount).ok_or("unit value is not a number")?;
+                    return Ok(Norm::Unit {
+                        base: amount.as_f64() * factor,
+                        dim: dimension(unit),
+                    });
+                }
             }
         }
         let mut map = BTreeMap::new();

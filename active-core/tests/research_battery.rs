@@ -1240,17 +1240,27 @@ fn rb_065_no_profile_inheritance() {
     );
 }
 
-/// RB-066 — No network-capable dependencies (DERIVED-0017 §A, P0-011 §B).
-/// Hermetic evaluation is backed structurally: the lockfile must contain
-/// no crates that perform network I/O. (`url` alone only parses text.)
+/// RB-066 - No network-capable dependencies in the evaluator
+/// (DERIVED-0017 §A, P0-011 §B). Hermetic evaluation is backed
+/// structurally: the transitive dependency closure of `active-core` must
+/// contain no crates that perform network I/O. (`url` alone only parses
+/// text.)
+///
+/// SCOPE (DECIDED 2026-11-14 - Dave's grant of authority / Bud's decision):
+/// this check used to scan the whole workspace lockfile, which would also
+/// ban network crates in transport-adapter crates the evaluator never
+/// touches. It now covers active-core's closure only, so an adapter crate
+/// may use an async runtime (e.g. tokio) while the evaluator stays provably
+/// hermetic. The ban list is unchanged; only the scope changed.
+/// Dev-dependencies are excluded: they are test-only and never shipped (read
+/// from active-core/Cargo.toml `[dev-dependencies]` at the first hop;
+/// `indexmap` is both a normal and a dev-dependency, so it stays in the
+/// closure).
 #[test]
 fn rb_066_no_network_dependencies() {
-    let lock = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("Cargo.lock"),
-    )
-    .expect("lockfile readable");
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lock = std::fs::read_to_string(manifest_dir.join("..").join("Cargo.lock"))
+        .expect("lockfile readable");
     let banned = [
         "reqwest",
         "hyper",
@@ -1275,20 +1285,90 @@ fn rb_066_no_network_dependencies() {
         "tiny_http",
         "quinn",
     ];
-    let mut names = Vec::new();
+    // Parse Cargo.lock `[[package]]` blocks into name -> dependency names.
+    // A dependency entry is "name", "name version", or "name version
+    // (source)"; the name is always the first whitespace-separated token.
+    // If the lockfile ever lists two versions of one crate, their dependency
+    // lists are unioned (a superset - conservative for a ban check).
+    let mut deps_of: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    let mut current: Option<String> = None;
+    let mut in_deps = false;
     for line in lock.lines() {
         let line = line.trim();
-        if let Some(rest) = line.strip_prefix("name = \"") {
+        if line == "[[package]]" {
+            current = None;
+            in_deps = false;
+        } else if let Some(rest) = line.strip_prefix("name = \"") {
             if let Some(name) = rest.strip_suffix('"') {
-                names.push(name.to_string());
+                current = Some(name.to_string());
+                deps_of.entry(name.to_string()).or_default();
+            }
+        } else if line == "dependencies = [" {
+            in_deps = true;
+        } else if in_deps {
+            if line == "]" {
+                in_deps = false;
+            } else {
+                let dep = line.trim_matches(|c| c == '"' || c == ',');
+                let dep_name = dep.split_whitespace().next().unwrap_or("").to_string();
+                if !dep_name.is_empty() {
+                    if let Some(pkg) = &current {
+                        deps_of.entry(pkg.clone()).or_default().push(dep_name);
+                    }
+                }
             }
         }
     }
-    assert!(!names.is_empty(), "lockfile must list packages");
-    let hits: Vec<&String> = names
+    // Read active-core/Cargo.toml: [dev-dependencies] and [dependencies].
+    // A name is dev-only if it is a dev-dependency but NOT a normal
+    // dependency.
+    let manifest = std::fs::read_to_string(manifest_dir.join("Cargo.toml"))
+        .expect("active-core Cargo.toml readable");
+    let read_section = |wanted: &str| -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        let mut on = false;
+        for line in manifest.lines() {
+            let line = line.trim();
+            if line.starts_with('[') {
+                on = line == wanted;
+            } else if on && !line.starts_with('#') {
+                if let Some((name, _)) = line.split_once('=') {
+                    names.push(name.trim().trim_matches('"').to_string());
+                }
+            }
+        }
+        names
+    };
+    let dev = read_section("[dev-dependencies]");
+    let normal = read_section("[dependencies]");
+    let dev_only: Vec<String> = dev.into_iter().filter(|n| !normal.contains(n)).collect();
+    // Breadth-first search from active-core over lockfile edges, skipping
+    // dev-only names at the first hop. (Deeper hops need no exclusion:
+    // registry crates' dev-dependencies are not recorded in the lockfile,
+    // and active-core depends on no other workspace member.)
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut queue: Vec<String> = vec!["active-core".to_string()];
+    seen.insert("active-core".to_string());
+    let mut first_hop = true;
+    while let Some(pkg) = queue.pop() {
+        if let Some(deps) = deps_of.get(&pkg) {
+            for dep in deps {
+                if first_hop && dev_only.contains(dep) {
+                    continue;
+                }
+                if seen.insert(dep.clone()) {
+                    queue.push(dep.clone());
+                }
+            }
+        }
+        first_hop = false;
+    }
+    let hits: Vec<&String> = seen
         .iter()
         .filter(|n| banned.contains(&n.as_str()))
         .collect();
+    assert!(!seen.is_empty(), "lockfile must list packages");
     assert!(hits.is_empty(), "network-capable crates in tree: {hits:?}");
 }
 

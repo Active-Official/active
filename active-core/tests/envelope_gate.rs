@@ -53,6 +53,49 @@ fn a_tainted_payload_with_a_true_claim_is_accepted() {
 }
 
 #[test]
+fn a_plain_locator_copy_in_the_payload_fails_a_false_claim() {
+    // LANG-F-004 (review): the locator source is a plain string, so the
+    // payload carries material without a Secret-kinded value. A false
+    // claim must be refused.
+    let src = "active_mode = \"data\"\nkey = \"hunter2-material\"\ntoken = secret(key)\n\
+               envelope = { version = \"1.0.0\", tainted = false, payload = { copy = key } }\n";
+    let err = refusal(src);
+    assert_eq!(codes(&err), ["E035"], "{err:?}");
+
+    // The matching claim is accepted: the check verifies the assertion
+    // rather than rejecting tainted payloads outright.
+    let src = "active_mode = \"data\"\nkey = \"hunter2-material\"\ntoken = secret(key)\n\
+               envelope = { version = \"1.0.0\", tainted = true, payload = { copy = key } }\n";
+    let module = parse(src, "gate").expect("parse");
+    let (_, diags) = Engine::hermetic().evaluate(&module).expect("evaluates");
+    assert!(diags.is_empty(), "{diags:?}");
+}
+
+#[test]
+fn an_interpolated_locator_copy_in_the_payload_fails_a_false_claim() {
+    // A locator assembled by interpolation is material without being a
+    // static literal, so the runtime seed set is one of the sources that
+    // marks its copy.
+    let src = "active_mode = \"data\"\nn = 7\nlet key = \"hunter2-runtime-${n}\"\n\
+               token = secret(key)\n\
+               envelope = { version = \"1.0.0\", tainted = false, payload = { copy = key } }\n";
+    let err = refusal(src);
+    assert_eq!(codes(&err), ["E035"], "{err:?}");
+}
+
+#[test]
+fn an_unrelated_plain_value_in_the_payload_stays_clean() {
+    // Control for the locator rule: a plain value that is NOT used as a
+    // locator is ordinary data, so a clean payload keeps a false claim.
+    let src = "active_mode = \"data\"\nkey = \"hunter2-material\"\ntoken = secret(key)\n\
+               public = \"documented-default\"\n\
+               envelope = { version = \"1.0.0\", tainted = false, payload = { v = public } }\n";
+    let module = parse(src, "gate").expect("parse");
+    let (_, diags) = Engine::hermetic().evaluate(&module).expect("evaluates");
+    assert!(diags.is_empty(), "{diags:?}");
+}
+
+#[test]
 fn a_missing_taint_claim_is_refused() {
     // The field table marks tainted required: an envelope that makes no
     // verifiable claim must fail closed, not pass because it is silent.

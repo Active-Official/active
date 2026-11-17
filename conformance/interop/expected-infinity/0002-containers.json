@@ -1,0 +1,28 @@
+{
+  "active_mode": "data",
+  "empty_list": [],
+  "empty_table": {},
+  "list": [
+    1,
+    "two",
+    true,
+    null,
+    [
+      3,
+      4
+    ],
+    {
+      "k": "v"
+    }
+  ],
+  "record": {
+    "flags": [
+      true,
+      false
+    ],
+    "name": "widget",
+    "nested": {
+      "depth": 2
+    }
+  }
+}

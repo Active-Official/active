@@ -1,0 +1,11 @@
+{
+  "active_mode": "data",
+  "negative": -42,
+  "negative_float": -0.25,
+  "sum": 13,
+  "difference": 7,
+  "product": 42,
+  "quotient": 4,
+  "base": 5,
+  "derived": 10
+}

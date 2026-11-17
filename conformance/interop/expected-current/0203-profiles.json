@@ -1,0 +1,12 @@
+{
+  "active_mode": "data",
+  "active_profile": "production",
+  "server": {
+    "host": "prod.example.com",
+    "port": 443,
+    "debug": false
+  },
+  "limits": {
+    "max": 1000
+  }
+}

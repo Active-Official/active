@@ -17,7 +17,8 @@ on crates.io is the real Infinity codec (published 2.4.2, 2026-11-03;
 canonical home Active-Official/active-infinity). The in-repo placeholder
 member that previously reserved the name at 1.0.0 was retired in 2.0.0 -
 see VERSIONING.md section 4. Do not re-add an active-infinity member to
-this workspace.
+this workspace. The concrete versions verified against this workspace, and
+the vectors that re-verify them, are recorded in docs/interop-pairing.md.
 
 Stack MSRV (language + Infinity + RPC): 1.88 today (RPC is the floor); after
 the 2.0.0 release the language MSRV is 1.89 (DEC-003), which becomes the

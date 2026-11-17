@@ -1,0 +1,28 @@
+{
+  "active_mode": "data",
+  "freq": {
+    "value": 3.2,
+    "unit": "kilohertz"
+  },
+  "half": 0.5,
+  "large": {
+    "value": 1.5,
+    "unit": "gibibytes"
+  },
+  "rate": {
+    "value": 5,
+    "unit": "megabits-per-second"
+  },
+  "size": {
+    "value": 2,
+    "unit": "kibibytes"
+  },
+  "timeout": {
+    "value": 500,
+    "unit": "milliseconds"
+  },
+  "ttl": {
+    "value": 2,
+    "unit": "hours"
+  }
+}

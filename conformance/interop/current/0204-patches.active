@@ -1,0 +1,16 @@
+active_mode = "data"
+
+let new_port = 9090
+let bump = 1
+
+[server]
+host = "localhost"
+port = 8080
+debug = true
+old_name = "x"
+
+@patch("server.port", new_port)
+@patch("server.tls.enabled", true)
+@remove("server.debug")
+@rename("server.old_name", "new_name")
+@patch("computed", new_port + bump)

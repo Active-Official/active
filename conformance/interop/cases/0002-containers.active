@@ -1,0 +1,6 @@
+active_mode = "data"
+
+list = [1, "two", true, null, [3, 4], { k = "v" }]
+empty_list = []
+empty_table = {}
+record = { name = "widget", nested = { depth = 2 }, flags = [true, false] }

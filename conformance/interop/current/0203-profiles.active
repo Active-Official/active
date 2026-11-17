@@ -1,0 +1,21 @@
+active_mode = "data"
+active_profile = "production"
+
+[server]
+host = "localhost"
+port = 8080
+debug = true
+
+[limits]
+max = 100
+
+profile "production" {
+  server {
+    host = "prod.example.com"
+    port = 443
+    debug = false
+  }
+  limits {
+    max = 1000
+  }
+}

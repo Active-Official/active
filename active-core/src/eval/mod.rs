@@ -1556,6 +1556,23 @@ pub(crate) fn value_has_secret(value: &Value) -> bool {
     }
 }
 
+/// True when a rendered value carries structural material that is not
+/// Secret-kinded: a copy of a plain `secret(...)` locator, an environment
+/// value, or a runtime seed. The predicate is exactly "the export would
+/// redact this string", so the claim check and the emitted tree agree.
+fn payload_has_material_text(value: &Value, profile: &SecretProfile) -> bool {
+    match value {
+        Value::String(text) => profile.redact_text(text).is_some(),
+        Value::Array(items) => items
+            .iter()
+            .any(|item| payload_has_material_text(item, profile)),
+        Value::Table(map) => map
+            .values()
+            .any(|item| payload_has_material_text(item, profile)),
+        _ => false,
+    }
+}
+
 impl Engine {
     /// Engine with the process environment snapshotted.
     ///
@@ -1627,6 +1644,17 @@ impl Engine {
     }
 
     pub fn evaluate(&self, module: &Module) -> Result<(Value, Vec<Diagnostic>), EvalError> {
+        // LANG-F-004: verifying an envelope's taint claim needs the same
+        // material set every export uses, including copies of plain locator
+        // values and computed runtime secrets. Collect seeds only when the
+        // document makes a claim, so ordinary evaluation pays nothing.
+        if matches!(
+            crate::envelope::sender_taint(module),
+            crate::envelope::TaintClaim::Claim(_)
+        ) {
+            let mut seeds = SecretRedactor::new();
+            return self.evaluate_inner(module, None, None, Some(&mut seeds));
+        }
         self.evaluate_inner(module, None, None, None)
     }
 
@@ -2539,6 +2567,17 @@ impl Engine {
         // closed with E035. Run here rather than in schema validation
         // because an envelope can exist without a schema block.
         use crate::envelope::TaintClaim;
+        // LANG-F-004: a payload can carry material that is not
+        // Secret-kinded — a plain value used as a `secret(...)` locator
+        // (a `let`, a table field, an env lookup) or a runtime copy of
+        // one. Verification therefore consults the same structural
+        // material set every export uses, built once and reused for the
+        // diagnostic redaction pass below.
+        let has_secret = module
+            .arena
+            .iter()
+            .any(|node| matches!(node, crate::ir::Node::Secret { .. }));
+        let mut material_profile: Option<SecretProfile> = None;
         let taint_error = match crate::envelope::sender_taint(module) {
             TaintClaim::NoEnvelope => None,
             TaintClaim::Missing => Some(
@@ -2555,7 +2594,19 @@ impl Engine {
                         .to_string(),
                 ),
                 Some(payload) => {
-                    let actual = value_has_secret(payload);
+                    let actual = value_has_secret(payload)
+                        || (has_secret || !module.profiles.is_empty())
+                            && payload_has_material_text(
+                                payload,
+                                material_profile.get_or_insert_with(|| {
+                                    SecretProfile::with_context(
+                                        module,
+                                        self.profile_override.as_deref(),
+                                        Some(&self.env),
+                                        seeds.as_deref(),
+                                    )
+                                }),
+                            );
                     if claimed == actual {
                         None
                     } else {
@@ -2599,17 +2650,17 @@ impl Engine {
         // CLI check/eval, LSP diagnostics, repair findings — sees the
         // same safe message. The analysis is skipped when the document
         // defines no secret at all.
-        let has_secret = module
-            .arena
-            .iter()
-            .any(|node| matches!(node, crate::ir::Node::Secret { .. }));
         if has_secret || !module.profiles.is_empty() {
-            let profile = crate::secret::SecretProfile::with_context(
-                module,
-                self.profile_override.as_deref(),
-                Some(&self.env),
-                None,
-            );
+            let profile = match material_profile {
+                // Built above for the taint claim, with the runtime seeds.
+                Some(profile) => profile,
+                None => SecretProfile::with_context(
+                    module,
+                    self.profile_override.as_deref(),
+                    Some(&self.env),
+                    seeds.as_deref(),
+                ),
+            };
             // Host and computed values are not module literals; seed a
             // runtime redactor from the evaluated nodes as well.
             let runtime = crate::validate::runtime_secret_redactor(&values, &profile);

@@ -1,0 +1,10 @@
+active_mode = "data"
+
+negative = -42
+negative_float = -0.25
+sum = 10 + 3
+difference = 10 - 3
+product = 6 * 7
+quotient = 9 / 2
+base = 5
+derived = base * 2

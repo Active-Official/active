@@ -1,0 +1,5 @@
+active_mode = "data"
+
+payload = secret("payload-bytes")
+tainted = blob("text/plain", payload)
+plain = "visible"

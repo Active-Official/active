@@ -1,0 +1,12 @@
+{
+  "active_mode": "data",
+  "server": {
+    "host": "localhost",
+    "port": 9090,
+    "tls": {
+      "enabled": true
+    },
+    "new_name": "x"
+  },
+  "computed": 9091
+}

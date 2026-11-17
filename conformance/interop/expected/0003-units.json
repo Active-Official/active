@@ -1,0 +1,28 @@
+{
+  "active_mode": "data",
+  "timeout": {
+    "$active.duration": {
+      "ms": 500
+    }
+  },
+  "ttl": {
+    "$active.duration": {
+      "ms": 7200000
+    }
+  },
+  "size": 2048,
+  "large": 1610612736,
+  "rate": {
+    "$active.quantity": {
+      "unit": "bps",
+      "value": 5000000.0
+    }
+  },
+  "freq": {
+    "$active.quantity": {
+      "unit": "Hz",
+      "value": 3200.0
+    }
+  },
+  "half": 0.5
+}

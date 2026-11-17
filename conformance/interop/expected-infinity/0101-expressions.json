@@ -1,0 +1,25 @@
+{
+  "active_mode": "data",
+  "base": 5,
+  "derived": {
+    "$expr": "Binary"
+  },
+  "difference": {
+    "$expr": "Binary"
+  },
+  "negative": {
+    "$expr": "Unary"
+  },
+  "negative_float": {
+    "$expr": "Unary"
+  },
+  "product": {
+    "$expr": "Binary"
+  },
+  "quotient": {
+    "$expr": "Binary"
+  },
+  "sum": {
+    "$expr": "Binary"
+  }
+}

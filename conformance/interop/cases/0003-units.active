@@ -1,0 +1,9 @@
+active_mode = "data"
+
+timeout = 500ms
+ttl = 2h
+size = 2KiB
+large = 1.5GiB
+rate = 5Mbps
+freq = 3.2kHz
+half = 0.5

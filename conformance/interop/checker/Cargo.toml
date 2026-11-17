@@ -1,0 +1,15 @@
+[package]
+name = "active-interop-check"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Runs the owned Active interop vectors through the pinned published codec (LANG-E-002)."
+
+# Standalone workspace: this checker is not a member of the Active
+# workspace and is not built by `cargo test --workspace`. It pins the
+# published codec so the pairing record has a machine-checked basis.
+[workspace]
+
+[dependencies]
+active-infinity = "=2.4.2"
+serde_json = "1"

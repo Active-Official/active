@@ -19,7 +19,9 @@ Every `v*` tag run must produce, in order:
    silently. There is no active-infinity publish from this repo - that
    name belongs to the standalone Infinity codec. The verified triple is
    recorded in docs/interop-pairing.md and re-verified on every active-core
-   minor bump.
+   minor bump by running
+   `cargo run --locked --manifest-path conformance/interop/checker/Cargo.toml`
+   (every paired vector must report `codec ok, semantics ok`).
 6. Changelog entry that says what changed and why it matters for users,
    not only what changed.
 

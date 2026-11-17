@@ -1,0 +1,13 @@
+{
+  "active_mode": "data",
+  "payload": "***SECRET***",
+  "tainted": {
+    "$active.blob": {
+      "hash": "blake3:41e5a21cff7f93221d16db76f6c4989f42238cc1b5c37c35a4bf87771469e501",
+      "size": 13,
+      "media_type": "***SECRET***",
+      "tainted": true
+    }
+  },
+  "plain": "visible"
+}

@@ -1,0 +1,5 @@
+active_mode = "data"
+
+logo = blob("image/svg+xml", "<svg>hi</svg>")
+notes = blob("text/plain", "hello")
+empty = blob("application/octet-stream", "")

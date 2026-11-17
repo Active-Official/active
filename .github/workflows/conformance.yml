@@ -330,6 +330,25 @@ jobs:
           python editors/neovim/smoke.py
           python packaging/test_package_neovim.py
 
+  interop:
+    name: Infinity codec interop (LANG-E-002)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: conformance/interop/checker -> target
+      - name: Run the pinned codec over the owned vectors
+        # The vectors and expectations are owned by this repository; the
+        # checker pins active-infinity =2.4.2 (see docs/interop-pairing.md)
+        # and proves the real encode/decode round-trip, the canonical
+        # fixed point, the projection fixed point, and semantic equality
+        # with this workspace's export. A failure here blocks a pairing
+        # claim, not just this job.
+        run: cargo run --locked --manifest-path conformance/interop/checker/Cargo.toml
+
   fuzz:
     name: Tooling fuzz (bounded cargo-fuzz)
     runs-on: ubuntu-latest

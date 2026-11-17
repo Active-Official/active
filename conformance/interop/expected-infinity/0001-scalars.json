@@ -1,0 +1,10 @@
+{
+  "active_mode": "data",
+  "escaped": "line\nbreak \"quoted\" \\ backslash",
+  "float": 1.5,
+  "integer": 9007199254740993,
+  "no": false,
+  "nothing": null,
+  "text": "héllo ☃",
+  "yes": true
+}

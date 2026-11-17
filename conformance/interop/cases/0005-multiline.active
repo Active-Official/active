@@ -1,0 +1,8 @@
+active_mode = "data"
+
+banner = """
+  first line
+  second line with "quotes"
+"""
+subtitle = "tab\tseparated"
+emoji = "🚀 launch"

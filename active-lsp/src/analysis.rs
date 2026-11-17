@@ -1076,16 +1076,22 @@ fn render_hover_value(
         Value::Quantity(n, unit) => format!("{n} {}", unit.suffix()),
         Value::Array(items) => format!("array[{}]", items.len()),
         Value::Table(map) => format!("table{{{}}}", map.len()),
-        // Identity only: hover never renders payload bytes.
+        // Identity only: hover never renders payload bytes. A retained
+        // payload verifies the hash, like every other renderer.
         Value::Blob {
             hash,
             size,
             tainted,
-            ..
-        } => format!(
-            "blob(blake3:{}, size={size}, tainted={tainted})",
-            active_core::blob::hash_hex(hash)
-        ),
+            media_type,
+            payload,
+        } => {
+            let identity =
+                active_core::blob::verified_identity(hash, *tainted, media_type, payload.as_ref());
+            format!(
+                "blob(blake3:{}, size={size}, tainted={tainted})",
+                active_core::blob::hash_hex(&identity)
+            )
+        }
     }
 }
 
@@ -3582,4 +3588,29 @@ pub fn steps_snapshot(doc: &Doc, selector: Option<&str>) -> JsonValue {
         "total_steps": total,
         "steps": shown,
     })
+}
+
+#[cfg(test)]
+mod blob_identity_tests {
+    use super::*;
+
+    #[test]
+    fn hover_verifies_a_retained_blob_identity() {
+        // A host-built untainted blob with a retained payload: hover must
+        // verify the hash from the bytes, like every other renderer.
+        let make = |bytes: &[u8]| active_core::Value::Blob {
+            hash: [5u8; 32],
+            size: bytes.len() as u64,
+            tainted: false,
+            media_type: "text/plain".to_string(),
+            payload: Some(bytes.to_vec()),
+        };
+        let module = active_core::parse("x = 1\n", "hover").expect("parse");
+        let profile = SecretProfile::analyze(&module);
+        let redactor = profile.literals().clone();
+        let one = render_hover_value(&profile, &redactor, NodeId(0), "", &make(b"one"));
+        let two = render_hover_value(&profile, &redactor, NodeId(0), "", &make(b"two"));
+        assert_ne!(one, two, "hover must verify the retained identity");
+        assert!(!one.contains("05050505"), "the claimed hash leaked: {one}");
+    }
 }

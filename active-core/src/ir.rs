@@ -543,6 +543,14 @@ pub enum Value {
     /// The payload is present only after explicit materialisation;
     /// tainted blobs never carry a payload. Hashes never appear in
     /// ordinary Active source — only here, in evaluated values.
+    ///
+    /// Invariant for hand-built values: the evaluator marks a blob
+    /// `tainted` whenever its media type, payload, or serving path is
+    /// material, so a retained payload is non-material. A host that
+    /// constructs this variant directly must uphold the same rule: the
+    /// profile-unaware serializers (`Serialize`, `value_to_json`) are
+    /// type dumps and cannot classify content, while the profile-aware
+    /// exporters (`convert::redact_value`, `*_with`) do.
     Blob {
         hash: [u8; 32],
         size: u64,

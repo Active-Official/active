@@ -2831,6 +2831,47 @@ fn inspect_does_not_echo_a_non_numeric_bound() {
 }
 
 #[test]
+fn t005_repairs_do_not_echo_material_key_text() {
+    // Review EF/G-r18: the message and path were redacted but the repair
+    // payload (original, suggested, side effects) was not.
+    let src = "s = secret(\"passwrod\")\n\
+               schema = { password = String, closed = true }\n\
+               password = \"x\"\npasswrod = \"y\"\n";
+    let module = parse(src, "t005-repair").expect("parse");
+    let diags = match Engine::hermetic().evaluate(&module) {
+        Ok((_, diags)) => diags,
+        Err(EvalError::ValidationFailed { diagnostics }) => diagnostics,
+        Err(error) => panic!("{error:?}"),
+    };
+    let t005 = diags
+        .iter()
+        .find(|d| d.code == "T005" && d.repair.is_some())
+        .unwrap_or_else(|| panic!("T005 with a repair missing: {diags:?}"));
+    assert!(
+        !t005.message.contains("passwrod"),
+        "the message leaked the key: {}",
+        t005.message
+    );
+    let repair = t005
+        .repair
+        .as_ref()
+        .unwrap_or_else(|| panic!("T005 carries a repair: {diags:?}"));
+    assert!(
+        !repair.original.contains("passwrod"),
+        "repair.original leaked: {}",
+        repair.original
+    );
+    assert!(
+        repair
+            .side_effects
+            .iter()
+            .all(|path| !path.contains("passwrod")),
+        "repair.side_effects leaked: {:?}",
+        repair.side_effects
+    );
+}
+
+#[test]
 fn t004_names_a_resolvable_requires_target() {
     // Review 69: the spec requires naming the target when it resolves.
     // The secret here is unrelated to the target, so redaction leaves it.

@@ -2602,6 +2602,31 @@ impl SecretProfile {
         self.exact_literals.redact_every_occurrence(text)
     }
 
+    /// Redact a diagnostic repair record. Repair text quotes source
+    /// tokens and dotted paths, any of which can be material; the
+    /// message and structured path are redacted elsewhere, and this
+    /// covers the repair payload beside them.
+    pub fn redact_repair(&self, repair: &mut crate::diag::Repair) {
+        if let Some(text) = self.redact_authored_text(&repair.original) {
+            repair.original = text;
+        }
+        if let Some(text) = self.redact_authored_text(&repair.suggested) {
+            repair.suggested = text;
+        }
+        for path in &mut repair.side_effects {
+            *path = self.redact_path(path);
+        }
+        for step in &mut repair.steps {
+            if let Some(text) = self.redact_authored_text(&step.action) {
+                step.action = text;
+            }
+            step.target = self.redact_path(&step.target);
+            if let Some(text) = self.redact_authored_text(&step.effect) {
+                step.effect = text;
+            }
+        }
+    }
+
     /// True when the node is still rendered through a benign export path
     /// after every transform (the value is legitimately visible there).
     pub fn node_is_export_visible(&self, id: NodeId) -> bool {

@@ -2762,6 +2762,9 @@ impl Engine {
                 if let Some(path) = &diagnostic.path {
                     diagnostic.path = Some(profile.redact_path(path));
                 }
+                if let Some(repair) = &mut diagnostic.repair {
+                    profile.redact_repair(repair);
+                }
                 if let Some(message) = profile.redact_authored_text(&diagnostic.message) {
                     diagnostic.message = message;
                 }

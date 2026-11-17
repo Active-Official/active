@@ -56,6 +56,12 @@ error message, or an export** — only redaction markers do.
   that holds a `SecretProfile` must use the profile-aware exporters
   (`value_to_json_with`, `value_to_pretty_json_with`, `redact_value`,
   and the `*_with` TOML/YAML forms) to redact material keys and copies.
+  The same rule covers a retained blob payload: evaluation only retains
+  a payload for an explicitly materialised, untainted blob, and a
+  profile-aware export drops a payload that is material under its
+  profile. A host that hand-builds a `Value::Blob` must set `tainted`
+  and withhold the payload exactly as evaluation would; the raw
+  serializers cannot classify content without a profile.
   Deserialization stays derived: the input direction cannot leak.
 - `ACTIVE fmt` re-emits `secret(…)` source calls (source-derived
   locators, never evaluated values).

@@ -264,5 +264,20 @@ repository. Surfaces touched since the record above:
   (`active-core/tests/mc_grammar.rs`, 300 cases, ten families) runs in the
   normal test job and checks format idempotence, semantic preservation, and
   secret non-leakage; property tests add budget monotonicity.
+- **Independent review closure:** two consecutive clean rounds per audit
+  section (A, B, C/D, EF/G, HK/I, J). The rounds found and fixed real
+  defects beyond the registry: envelope taint claims now verify plain
+  locator copies, material keys, blob media/payload taint, and path
+  materiality; every export/inspection/doc/editor path redacts material
+  keys and path segments; blob identities are verified from retained bytes
+  and withheld (synthetic identity) when material or unverifiable; generic
+  renderers are identity-only with explicit materialised forms;
+  diagnostics redact message, path, and repair payloads against authored
+  and runtime secrets; signature expiry fails closed on an unknown clock;
+  the LSP bounds its inbound/outbound queues at 64 MiB per direction with
+  a neutral-id error fallback; and the release workflow runs the
+  provenance gate first, publishes before the GitHub release, expects
+  seven SBOMs, checksums the wasm shims and docs bundle, fetches tags, and
+  allows the publish loop its full time budget.
 
 **End of update.**

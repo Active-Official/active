@@ -6,7 +6,7 @@
 //! back into Active unchanged. Drives the real shipped path:
 //! parse → evaluate → export → parse → evaluate.
 
-use active_core::convert::{value_to_pretty_json, value_to_simple_toml};
+use active_core::convert::{value_to_pretty_json, value_to_simple_toml, value_to_toml_string};
 use active_core::{parse, Engine};
 
 fn eval_json(src: &str) -> String {
@@ -256,5 +256,43 @@ fn formatting_preserves_scaled_and_affine_quantities() {
                 "formatting changed {src} to {formatted:?} ({style:?})"
             );
         }
+    }
+}
+
+#[test]
+fn toml_wrappers_round_trip_durations_and_quantities() {
+    // LANG-B-018: the TOML exporter used to emit normalized magnitude
+    // strings, so the imported document lost the type (a duration became a
+    // string). The reserved wrappers are the same ones JSON uses, so the
+    // importer recognises them without guessing.
+    let sources = [
+        "x = 5000ms",
+        "x = 2h",
+        "x = 25%",
+        "x = 2MHz",
+        "x = 45deg",
+        "x = 3dB",
+        "x = 100/req/s",
+        "x = 9.8N",
+    ];
+    for src in sources {
+        let module = parse(src, "toml-roundtrip").expect("must parse");
+        let (value, _) = Engine::new().evaluate(&module).expect("must evaluate");
+        let (toml, _) = value_to_toml_string(&value).expect("toml export");
+        assert!(
+            toml.contains("$active.duration") || toml.contains("$active.quantity"),
+            "{src}: expected a typed wrapper, got {toml:?}"
+        );
+        let (source, _) =
+            active_core::convert::toml_text_to_active(&toml).expect("wrapper must import");
+        let imported = parse(&source, "toml-roundtrip-import").expect("emitted source parses");
+        let (back, _) = Engine::new()
+            .evaluate(&imported)
+            .expect("imported document evaluates");
+        assert_eq!(
+            value_to_pretty_json(&value),
+            value_to_pretty_json(&back),
+            "{src} -> {toml} -> {source}"
+        );
     }
 }

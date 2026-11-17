@@ -1794,8 +1794,9 @@ impl Engine {
         crate::trace::record("eval_start", module.arena.len() as u64, &module.diagnostics);
         // Version floors (LANG-B-021): refuse before any work when the
         // host declared its reader version and the document needs a
-        // newer one. Without a declared version the floors stay
-        // advisory, as documented.
+        // newer one. Without a declared version the running library is the
+        // reader, so the same refusal applies (the earlier advisory default
+        // was superseded; spec/schema-evolution.md states the shipped rule).
         // LANG-F-006: `min_reader` is enforced at read time. A host that
         // declares its reader version gets that version; otherwise the
         // running library is the reader, so a document demanding a newer

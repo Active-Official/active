@@ -64,7 +64,9 @@ fn freq_export_is_hz_form() {
     let module = parse("f = 1kHz\n", "test").expect("must parse");
     let (value, _) = Engine::new().evaluate(&module).expect("must evaluate");
     let (toml, _) = active_core::convert::value_to_toml_string(&value).expect("toml");
-    assert!(toml.contains("1000Hz"), "{toml}");
+    assert!(toml.contains("$active.quantity"), "{toml}");
+    assert!(toml.contains("unit = \"Hz\""), "{toml}");
+    assert!(toml.contains("value = 1000.0"), "{toml}");
     let v = eval_json("f = \"clock ${x}\"\nlet x = 2MHz\n");
     assert_eq!(v["f"], "clock 2000000Hz", "{v}");
 }

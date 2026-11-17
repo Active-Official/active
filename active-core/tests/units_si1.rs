@@ -129,7 +129,9 @@ fn si_export_respells_canonical() {
     let module = parse("p = 1bar\n", "test").expect("must parse");
     let (value, _) = Engine::new().evaluate(&module).expect("must evaluate");
     let (toml, _) = active_core::convert::value_to_toml_string(&value).expect("toml");
-    assert!(toml.contains("100000Pa"), "{toml}");
+    assert!(toml.contains("$active.quantity"), "{toml}");
+    assert!(toml.contains("unit = \"Pa\""), "{toml}");
+    assert!(toml.contains("value = 100000.0"), "{toml}");
     let v = eval_json("e = \"batt ${x}\"\nlet x = 1kWh\n");
     assert_eq!(v["e"], "batt 3600000J", "{v}");
 }

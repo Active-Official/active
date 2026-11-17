@@ -143,7 +143,9 @@ fn bits_export_respells_canonical() {
     let module = parse("r = 1Kbps\n", "test").expect("must parse");
     let (value, _) = Engine::new().evaluate(&module).expect("must evaluate");
     let (toml, _) = active_core::convert::value_to_toml_string(&value).expect("toml");
-    assert!(toml.contains("1000bps"), "{toml}");
+    assert!(toml.contains("$active.quantity"), "{toml}");
+    assert!(toml.contains("unit = \"bps\""), "{toml}");
+    assert!(toml.contains("value = 1000.0"), "{toml}");
     let v = eval_json("r = \"link ${x}\"\nlet x = 1MB/s\n");
     assert_eq!(v["r"], "link 8000000bps", "{v}");
 }

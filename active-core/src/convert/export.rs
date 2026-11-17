@@ -46,8 +46,9 @@ pub fn value_to_toml_string(v: &Value) -> Result<(String, Vec<Diagnostic>), Stri
 }
 
 /// TOML arrays hold one type: reject mixed shapes up front with
-/// their path (Nulls omit, so they never count). Durations,
-/// quantities, secrets, and strings all map to TOML strings.
+/// their path (Nulls omit, so they never count). Durations and
+/// quantities export as reserved wrapper tables (LANG-B-018/B-019),
+/// so they rank with tables; secrets and strings are TOML strings.
 fn check_toml_homogeneous(v: &Value, path: &str) -> Result<(), String> {
     let label = if path.is_empty() { "(root)" } else { path };
     match v {
@@ -88,9 +89,10 @@ fn toml_kind(v: &Value) -> u8 {
         Value::Bool(_) => 1,
         Value::Int(_) => 2,
         Value::Float(_) => 3,
-        Value::String(_) | Value::DurationMs(_) | Value::Quantity(_, _) | Value::Secret(_) => 4,
-        // Blobs export as identity tables (kind 6 with the rest).
-        Value::Blob { .. } => 6,
+        Value::String(_) | Value::Secret(_) => 4,
+        // Durations and quantities export as reserved wrapper tables, and
+        // blobs as identity tables: one TOML kind.
+        Value::DurationMs(_) | Value::Quantity(_, _) | Value::Blob { .. } => 6,
         Value::Array(_) => 5,
         Value::Table(_) => 6,
     }
@@ -116,11 +118,30 @@ fn build_toml_value(v: &Value, path: &str, diags: &mut Vec<Diagnostic>) -> Optio
         Value::Int(i) => Some(toml::Value::Integer(*i)),
         Value::Float(f) => Some(toml::Value::Float(*f)),
         Value::String(s) => Some(toml::Value::String(s.clone())),
-        // TOML has no duration/quantity types: explicit normalized
-        // magnitude strings (the original unit is already lost at
-        // evaluation — spec/converters.md §3).
-        Value::DurationMs(ms) => Some(toml::Value::String(format!("{ms}ms"))),
-        Value::Quantity(n, unit) => Some(toml::Value::String(unit.format_amount(*n))),
+        // TOML has no duration/quantity types. Emit the SAME reserved wire
+        // wrapper JSON uses (`{"$active.duration": {"ms": N}}`,
+        // `{"$active.quantity": {"unit": ..., "value": N}}`), so export ->
+        // import -> evaluate is a fixed point instead of the old one-way
+        // magnitude string (LANG-B-018, LANG-B-019). The wrapper is explicit,
+        // so the importer never guesses a type from a bare string.
+        Value::DurationMs(ms) => {
+            let mut inner = toml::map::Map::new();
+            inner.insert(
+                "ms".to_string(),
+                toml::Value::Integer(i64::try_from(*ms).unwrap_or(i64::MAX)),
+            );
+            let mut map = toml::map::Map::new();
+            map.insert("$active.duration".to_string(), toml::Value::Table(inner));
+            Some(toml::Value::Table(map))
+        }
+        Value::Quantity(n, unit) => {
+            let mut inner = toml::map::Map::new();
+            inner.insert("unit".to_string(), toml::Value::String(unit.suffix()));
+            inner.insert("value".to_string(), toml::Value::Float(*n));
+            let mut map = toml::map::Map::new();
+            map.insert("$active.quantity".to_string(), toml::Value::Table(inner));
+            Some(toml::Value::Table(map))
+        }
         Value::Secret(_) => Some(toml::Value::String("***SECRET***".to_string())),
         // Identity table: hash, size, media type, taint. Payload bytes
         // ride along only when the value carries them (explicit

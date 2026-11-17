@@ -146,7 +146,11 @@ fn ai_export_respells_canonical() {
     let module = parse("c = 128ktokens\n", "test").expect("must parse");
     let (value, _) = Engine::new().evaluate(&module).expect("must evaluate");
     let (toml, _) = active_core::convert::value_to_toml_string(&value).expect("toml");
-    assert!(toml.contains("128000tokens"), "{toml}");
+    // LANG-B-018: typed wrapper with the canonical unit suffix, not a
+    // magnitude string, so the TOML can be imported back as a quantity.
+    assert!(toml.contains("$active.quantity"), "{toml}");
+    assert!(toml.contains("unit = \"tokens\""), "{toml}");
+    assert!(toml.contains("value = 128000.0"), "{toml}");
     let v = eval_json("c = \"ctx ${x}\"\nlet x = 4ktokens\n");
     assert_eq!(v["c"], "ctx 4000tokens", "{v}");
 }

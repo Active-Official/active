@@ -34,15 +34,18 @@ schema = {
 - First wins on repetition, like every other schema argument.
 - Includes: metadata follows local-wins — absent local keys inherit the included document's values.
 
-**Reader floors are enforced when the host declares a version (LANG-B-021).**
-A host that declares its reader version (`--reader-version` on the CLI,
-`Engine.reader_version` in the library) gets a hard refusal: a document whose
-`min_reader` is above it fails with **T007** before any evaluation work. A host
-that declares nothing keeps the advisory behaviour: the floors are then a
-publication-time contract checked by `active compatibility` against a peer's
-`version`, and the document still evaluates. The C ABI v1 carries no host
-version, so FFI hosts stay advisory until a future ABI major; declaring one is
-strongly recommended for hosts that persist documents written by newer tooling.
+**Reader floors are enforced (LANG-B-021; the earlier advisory-only default
+was superseded).** A host that declares its reader version
+(`--reader-version` on the CLI, `Engine.reader_version` in the library)
+gets a hard refusal: a document whose `min_reader` is above it fails with
+**T007** before any evaluation work. A host that declares nothing *is* the
+running library, so the library's own version is the reader version and the
+same refusal applies. The floors are also a publication-time contract
+checked by `active compatibility` against a peer's `version`. The C ABI v1
+carries no explicit host version, so an FFI host evaluates with the running
+library as its reader; a host that embeds newer semantics should pin a
+compatible library version until the ABI grows an explicit reader-version
+setter.
 
 
 Per-field removal schedule:

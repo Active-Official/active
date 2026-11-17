@@ -60,7 +60,10 @@ fn export_shapes_cover_every_value_kind() {
     let (toml, diags) = value_to_toml_string(&value).expect("toml");
     assert!(diags.iter().any(|d| d.code == "W006"), "{diags:?}");
     assert!(!toml.contains("nothing"), "{toml}");
-    assert!(toml.contains("\"5000ms\""), "{toml}");
+    // LANG-B-018: durations travel as the reserved typed wrapper, not a
+    // magnitude string, so TOML import can restore the type.
+    assert!(toml.contains("$active.duration"), "{toml}");
+    assert!(toml.contains("ms = 5000"), "{toml}");
     assert!(toml.contains("size = 5242880"), "{toml}");
     // TOML re-parses as a document.
     let reparsed: toml::Value = toml::from_str(&toml).expect("valid toml");
@@ -92,15 +95,22 @@ fn toml_arrays_of_tables_emit_double_brackets() {
 }
 
 #[test]
-fn quantity_values_emit_normalized_magnitude_strings() {
-    // Quantities rarely survive evaluation (bytes normalize to Int),
-    // but the mapping is total: magnitude plus normalized suffix.
+fn quantity_values_emit_typed_wrappers() {
+    // Quantities rarely survive evaluation (bytes normalize to Int), but the
+    // mapping is total and now type-preserving: the JSON-style reserved
+    // wrapper, so export -> import -> evaluate is a fixed point
+    // (LANG-B-018/B-019).
     let qty =
         active_core::Value::Quantity(5.0, active_core::Unit::from_suffix("MiB").expect("unit"));
     let table = active_core::Value::Table([("size".to_string(), qty)].into_iter().collect());
     let (toml, diags) = value_to_toml_string(&table).expect("toml");
     assert!(diags.is_empty(), "{diags:?}");
-    assert!(toml.contains("\"5MiB\""), "{toml}");
+    assert!(toml.contains("$active.quantity"), "{toml}");
+    assert!(toml.contains("unit = \"MiB\""), "{toml}");
+    assert!(toml.contains("value = 5.0"), "{toml}");
+    // And it comes back as a quantity, not a table or a string.
+    let (source, _) = active_core::convert::toml_text_to_active(&toml).expect("import");
+    assert!(source.contains("5MiB"), "{source}");
 }
 
 // ------------------------------------------------------------------

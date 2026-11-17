@@ -510,7 +510,15 @@ fn export_serves_all_three_formats_with_redaction() {
         ("yaml", vec!["port: 8080", "ms: 5000", "***SECRET***"]),
         (
             "toml",
-            vec!["port = 8080", "\"5000ms\"", "[server]", "***SECRET***"],
+            vec![
+                "port = 8080",
+                // LANG-B-018: the typed wrapper, not the old magnitude
+                // string, so the exported document can be imported back.
+                "$active.duration",
+                "ms = 5000",
+                "[server]",
+                "***SECRET***",
+            ],
         ),
     ] {
         let out = active()

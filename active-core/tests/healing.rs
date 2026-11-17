@@ -295,3 +295,34 @@ fn confidence_policy_is_reflected_in_severity() {
     }
     let _ = codes("x = 1\n", STRICT); // smoke: helper compiles and returns
 }
+
+#[test]
+fn a_redefined_table_header_warns_w011_and_replaces_the_body() {
+    // LANG-B-014: a repeated [table] header replaces the whole earlier body
+    // (last wins). The warning must name the discarded body, and evaluation
+    // must show the replacement - the earlier test cited for this finding
+    // covered duplicate schema FIELDS (B-015), not repeated headers.
+    let module =
+        active_core::parse("[t]\na = 1\n[t]\nb = 2\n", "dup-table").expect("recovering parse");
+    let w011: Vec<_> = module.healing.iter().filter(|d| d.code == "W011").collect();
+    assert_eq!(w011.len(), 1, "{:?}", module.healing);
+    assert!(
+        w011[0].message.contains("duplicate table 't'"),
+        "{}",
+        w011[0].message
+    );
+    assert!(
+        w011[0].message.contains("previous body discarded"),
+        "{}",
+        w011[0].message
+    );
+    let (value, _) = active_core::Engine::new()
+        .evaluate(&module)
+        .expect("evaluates");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(json.contains("\"b\": 2"), "{json}");
+    assert!(
+        !json.contains("\"a\": 1"),
+        "the earlier body must be gone: {json}"
+    );
+}

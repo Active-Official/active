@@ -50,8 +50,9 @@ fn pct_export_is_percent_form() {
     let module = parse("p = 25%\n", "test").expect("must parse");
     let (value, _) = Engine::new().evaluate(&module).expect("must evaluate");
     let (toml, _) = active_core::convert::value_to_toml_string(&value).expect("toml");
-    assert!(toml.contains("25%"), "{toml}");
-    assert!(!toml.contains("0.25%"), "{toml}");
+    assert!(toml.contains("$active.quantity"), "{toml}");
+    assert!(toml.contains("unit = \"%\""), "{toml}");
+    assert!(toml.contains("value = 0.25"), "{toml}");
     let v = eval_json("p = \"load ${x}\"\nlet x = 25%\n");
     assert_eq!(v["p"], "load 25%", "{v}");
 }

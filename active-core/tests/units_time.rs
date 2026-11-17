@@ -66,7 +66,8 @@ fn aliases_respell_canonical() {
     let module = parse("t = 90sec\n", "test").expect("must parse");
     let (value, _) = Engine::new().evaluate(&module).expect("must evaluate");
     let (toml, _) = active_core::convert::value_to_toml_string(&value).expect("toml");
-    assert!(toml.contains("90000ms"), "{toml}");
+    assert!(toml.contains("$active.duration"), "{toml}");
+    assert!(toml.contains("ms = 90000"), "{toml}");
     let v = eval_json("t = \"wait ${x}\"\nlet x = 5min\n");
     assert_eq!(v["t"], "wait 300000ms", "{v}");
 }

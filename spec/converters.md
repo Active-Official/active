@@ -55,12 +55,12 @@ so JSON and YAML exports always agree. Secrets redact identically.
   dotted keys never emitted (single-segment headers only, per the
   grammar).
 - Scalars → TOML same-kind literals with exact string escaping.
-- DurationMs(ms) → the string `"5000ms"` (normalized milliseconds;
-  TOML has no duration type, and the original unit is already lost
-  at evaluation — explicit magnitude beats silent Int).
-- Quantity(n, unit) → the string `"5MiB"` (same reasoning; in
-  practice byte quantities already normalize to Int at evaluation,
-  so this arm is defensive).
+- DurationMs(ms) → the reserved wrapper table
+  `{ "$active.duration" = { ms = N } }` (TOML has no duration type). The
+  same shape JSON uses, so TOML import recognises it and restores the typed
+  value instead of a string (LANG-B-018).
+- Quantity(n, unit) → the reserved wrapper table
+  `{ "$active.quantity" = { unit = <suffix>, value = N } }` (LANG-B-019).
 - Secret → `"***SECRET***"`.
 - Null has no TOML form: null-valued keys are OMITTED with one
   W006 warning each (`null has no TOML representation; omitted
@@ -68,22 +68,24 @@ so JSON and YAML exports always agree. Secrets redact identically.
   announced, never silent.
 - NaN/inf floats emit TOML `nan`/`inf`/`-inf`.
 - Mixed-type arrays have no TOML form at all: the export fails
-  hard naming the array path (durations/quantities/secrets count
-  as strings for this check; nulls don't count). A silent empty
-  document would be worse than an error.
+  hard naming the array path (durations, quantities, and blobs count
+  as tables for this check; secrets and strings count as strings;
+  nulls don't count). A silent empty document would be worse than an
+  error.
 
 Failures (unrepresentable shapes beyond Null) are hard errors, not
 silent drops.
 
-**TOML duration/quantity export is one-way (LANG-B-018).** TOML has no duration
-or quantity type, so `t = 5s` exports as the string `"5000ms"` and `q = 5MiB` as
-`"5MiB"`. Importing that TOML back yields a **String**, not a typed value: a
-strict evaluation against `t = Duration` then fails with T002 (resilient mode
-would coerce it back, which is the wrong direction for a migration that should
-preserve types). Migration path: keep durations and quantities in Active source,
-or re-declare the type after import (`active import` output is ordinary Active —
-add `t = 5s` and delete the imported string). The JSON/YAML forms carry the same
-loss; only Active source preserves the declared unit.
+**TOML export is type-preserving (LANG-B-018).** The wrappers above are
+recognised by `toml_text_to_active` (`json_value_to_active`'s wrapper
+rules), so export → import → evaluate is a fixed point: `t = 5s` exports
+as `{ "$active.duration" = { ms = 5000 } }` and imports back as a
+duration, not a string. The *original spelling* is not preserved (a
+duration normalizes to milliseconds, a quantity to its canonical suffix),
+exactly as JSON and YAML behave; only Active source keeps the authored
+unit. The earlier one-way magnitude-string form was removed: an importer
+cannot tell a typed string from data, and a reserved wrapper needs no
+guess.
 
 ## 4. Reverse direction (JSON / YAML / TOML → ACTIVE)
 

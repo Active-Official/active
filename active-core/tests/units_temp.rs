@@ -112,7 +112,9 @@ fn temp_export_respells_kelvin() {
     let module = parse("t = 20Cel\n", "test").expect("must parse");
     let (value, _) = Engine::new().evaluate(&module).expect("must evaluate");
     let (toml, _) = active_core::convert::value_to_toml_string(&value).expect("toml");
-    assert!(toml.contains("293.15K"), "{toml}");
+    assert!(toml.contains("$active.quantity"), "{toml}");
+    assert!(toml.contains("unit = \"K\""), "{toml}");
+    assert!(toml.contains("value = 293.15"), "{toml}");
     let v = eval_json("t = \"room ${x}\"\nlet x = 20Cel\n");
     assert_eq!(v["t"], "room 293.15K", "{v}");
 }

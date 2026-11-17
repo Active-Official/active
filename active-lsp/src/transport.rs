@@ -46,11 +46,13 @@ pub const INBOUND_CAPACITY: usize = 4;
 /// aggregate bound as inbound: 4 × 16 MiB = 64 MiB.
 pub const OUTBOUND_CAPACITY: usize = 4;
 
-/// Largest batch the server drains in one loop iteration (messages). The
-/// queue cannot hold more than `INBOUND_CAPACITY`, so this only bounds a
-/// batch assembled from a channel in tests; the byte ceiling comes from the
-/// queue capacity.
-pub const MAX_BATCH: usize = 16;
+/// Largest batch the server drains in one loop iteration (messages).
+///
+/// Equal to the queue capacity: the reader refills the channel as the
+/// server drains it, so a larger batch would multiply the byte bound
+/// (16 frames of 16 MiB each is ~256 MiB in one batch while the queue
+/// claim says 64 MiB). Four messages still coalesce a superseded edit.
+pub const MAX_BATCH: usize = INBOUND_CAPACITY;
 
 /// A framing or payload violation. The stream cannot be resynchronised after
 /// one of these (the reader has no way to know where the next frame starts),
@@ -204,8 +206,25 @@ fn read_header_line<R: BufRead>(
 }
 
 /// Write one framed message (`lsp-server` owns the canonical encoding).
+/// The outbound frame is capped at [`DEFAULT_MAX_FRAME_BYTES`] so a huge
+/// result cannot leave the process (or sit in the outbound queue) at an
+/// unbounded size. Callers that can produce a very large RESULT should
+/// expect [`writer_loop`] to replace it with a protocol error.
 pub fn write_message<W: Write>(out: &mut W, message: &Message) -> io::Result<()> {
-    message.write(out)?;
+    let body = serde_json::to_vec(message).map_err(io::Error::other)?;
+    if body.len() > DEFAULT_MAX_FRAME_BYTES {
+        return Err(io::Error::other(format!(
+            "outbound frame of {} bytes exceeds the {DEFAULT_MAX_FRAME_BYTES}-byte cap",
+            body.len()
+        )));
+    }
+    write_body(out, &body)
+}
+
+/// Write one pre-serialized frame body (header, bytes, flush).
+fn write_body<W: Write>(out: &mut W, body: &[u8]) -> io::Result<()> {
+    write!(out, "Content-Length: {}\r\n\r\n", body.len())?;
+    out.write_all(body)?;
     out.flush()
 }
 
@@ -240,10 +259,52 @@ pub fn reader_loop<R: BufRead>(
 }
 
 /// Writer thread body: drain outgoing messages until the server drops its
-/// sender.
+/// sender. A response that exceeds the frame cap is replaced with a
+/// protocol error (same request id); an oversized notification is logged
+/// and dropped. Either way the process never emits an unbounded frame.
 pub fn writer_loop<W: Write>(mut out: W, receiver: Receiver<Message>) -> io::Result<()> {
     while let Ok(message) = receiver.recv() {
-        write_message(&mut out, &message)?;
+        let body = serde_json::to_vec(&message).map_err(io::Error::other)?;
+        if body.len() <= DEFAULT_MAX_FRAME_BYTES {
+            write_body(&mut out, &body)?;
+            continue;
+        }
+        match message {
+            Message::Response(response) => {
+                eprintln!(
+                    "[active-lsp] response of {} bytes exceeds the frame cap; sending an error",
+                    body.len()
+                );
+                let fallback = Message::Response(lsp_server::Response {
+                    id: response.id,
+                    result: None,
+                    error: Some(lsp_server::ResponseError {
+                        // JSON-RPC internal error.
+                        code: -32603,
+                        message: format!(
+                            "result exceeds the {DEFAULT_MAX_FRAME_BYTES}-byte frame cap; \
+                             narrow the request"
+                        ),
+                        data: None,
+                    }),
+                });
+                write_message(&mut out, &fallback)?;
+            }
+            Message::Notification(note) => {
+                eprintln!(
+                    "[active-lsp] notification `{}` of {} bytes exceeds the frame cap; dropped",
+                    note.method,
+                    body.len()
+                );
+            }
+            Message::Request(request) => {
+                return Err(io::Error::other(format!(
+                    "outbound request `{}` of {} bytes exceeds the frame cap",
+                    request.method,
+                    body.len()
+                )));
+            }
+        }
     }
     Ok(())
 }
@@ -369,14 +430,53 @@ mod tests {
     fn queue_capacity_bounds_aggregate_frame_bytes() {
         // The message-count cap is only meaningful together with the frame
         // cap: a slow analysis must not retain a gigabyte of queued frames.
-        assert!(
-            INBOUND_CAPACITY * DEFAULT_MAX_FRAME_BYTES <= 64 * 1024 * 1024,
-            "inbound queue licenses more than 64 MiB"
-        );
-        assert!(
-            OUTBOUND_CAPACITY * DEFAULT_MAX_FRAME_BYTES <= 64 * 1024 * 1024,
-            "outbound queue licenses more than 64 MiB"
-        );
+        const {
+            assert!(
+                INBOUND_CAPACITY * DEFAULT_MAX_FRAME_BYTES <= 64 * 1024 * 1024,
+                "inbound queue licenses more than 64 MiB"
+            )
+        };
+        const {
+            assert!(
+                OUTBOUND_CAPACITY * DEFAULT_MAX_FRAME_BYTES <= 64 * 1024 * 1024,
+                "outbound queue licenses more than 64 MiB"
+            )
+        };
+        // A batch drains refilled messages too: it must not multiply the
+        // queue's byte bound.
+        const {
+            assert!(
+                MAX_BATCH * DEFAULT_MAX_FRAME_BYTES <= 64 * 1024 * 1024,
+                "one batch licenses more than 64 MiB"
+            )
+        };
+    }
+
+    #[test]
+    fn an_oversized_response_is_replaced_with_an_error() {
+        let (tx, rx) = bounded::<Message>(2);
+        let big = "x".repeat(DEFAULT_MAX_FRAME_BYTES + 1024);
+        tx.send(Message::Response(lsp_server::Response {
+            id: RequestId::from(7),
+            result: Some(serde_json::json!({ "value": big })),
+            error: None,
+        }))
+        .expect("send");
+        drop(tx);
+        let mut out = Vec::new();
+        writer_loop(&mut out, rx).expect("writer");
+        let mut cursor = std::io::Cursor::new(out);
+        let first = read_message(&mut cursor, DEFAULT_MAX_FRAME_BYTES)
+            .expect("read")
+            .expect("a frame");
+        match first {
+            Message::Response(response) => {
+                assert_eq!(response.id, RequestId::from(7));
+                assert!(response.error.is_some(), "the result must be replaced");
+                assert!(response.result.is_none());
+            }
+            other => panic!("expected a response, got {other:?}"),
+        }
     }
 
     fn request() -> String {

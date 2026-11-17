@@ -67,6 +67,10 @@ const MAX_OPEN_DOCS: usize = 64;
 /// message instead of being parsed (and rejected as E029 anyway) so the
 /// editor learns why analysis stopped updating.
 const MAX_DOCUMENT_BYTES: usize = 4 * 1024 * 1024;
+/// Outline/workspace symbol results are capped so one request cannot
+/// build an unbounded response (the transport also caps the frame, but a
+/// cap here avoids allocating the giant value in the first place).
+const MAX_SYMBOL_RESULTS: usize = 20_000;
 
 /// Per-message analysis budget (LANG-C-005). Parse and evaluation are hard
 /// bounded (E029 / X0xx), so no request can run unbounded; this reports a
@@ -308,7 +312,11 @@ fn handle_request(open: &mut HashMap<String, Doc>, req: Request) -> Option<Respo
                     Ok(params) => params,
                     Err(response) => return Some(*response),
                 };
-            let result = doc_at(open, &params.text_document.uri).map(analysis::document_symbols);
+            let result = doc_at(open, &params.text_document.uri).map(|doc| {
+                let mut symbols = analysis::document_symbols(doc);
+                symbols.truncate(MAX_SYMBOL_RESULTS);
+                symbols
+            });
             Some(Response::new_ok(req.id, result))
         }
         "workspace/symbol" => {
@@ -317,7 +325,8 @@ fn handle_request(open: &mut HashMap<String, Doc>, req: Request) -> Option<Respo
                     Ok(params) => params,
                     Err(response) => return Some(*response),
                 };
-            let result = analysis::workspace_symbols(open.values(), &params.query);
+            let mut result = analysis::workspace_symbols(open.values(), &params.query);
+            result.truncate(MAX_SYMBOL_RESULTS);
             Some(Response::new_ok(req.id, result))
         }
         // Dependency-graph queries for agents and dashboards

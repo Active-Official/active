@@ -1,0 +1,5 @@
+a = 42
+server = { port = 8080 }
+[t]
+x = a
+p = server.port

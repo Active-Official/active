@@ -156,6 +156,36 @@ id = "0028-include-portability"
 file = "cases/0028-include-portability.active"
 kind = "refused"
 
+# Cross-table/dotted references (LANG-A-002): a nested table reads a root
+# key, and a dotted path reads a key from a named table.
+[[cases]]
+id = "0029-dotted-cross-table"
+file = "cases/0029-dotted-cross-table.active"
+kind = "clean"
+
+# Same-line second statement (LANG-A-005, W015): both keys are kept and the
+# warning is published by every embedding.
+[[cases]]
+id = "0030-same-line-statement"
+file = "cases/0030-same-line-statement.active"
+kind = "diagnosed"
+
+# A profile may not rewrite document metadata (LANG-A-009, E027):
+# active_mode/active_capabilities are read before profiles merge.
+[[cases]]
+id = "0031-profile-metadata-rewrite"
+file = "cases/0031-profile-metadata-rewrite.active"
+kind = "refused"
+
+# The shared diagnostic budget (LANG-A-001/A-901): 1,100 duplicate keys
+# retain exactly 1,024 records, closed by the single W014 truncation notice.
+# The committed expectation is the sorted set {W011, W014}; the differential
+# gate still compares the ordered per-item list across embeddings.
+[[cases]]
+id = "0032-diagnostic-truncation"
+file = "cases/0032-diagnostic-truncation.active"
+kind = "diagnosed"
+
 # Host-feature pins (G-017 spirit): cases needing capabilities a v1 host
 # shim does not expose. Runners record these as pins with reason, never as
 # failures and never silently. Removing a pin means the host grew the

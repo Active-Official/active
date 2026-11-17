@@ -1,0 +1,4 @@
+active_profile = "p"
+profile "p" {
+  active_mode = "data"
+}

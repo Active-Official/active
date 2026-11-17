@@ -342,11 +342,20 @@ pub fn verify_bytes(
                 format!("{file_label}: malformed `expires` (want YYYY-MM-DD)"),
             )
         })?;
-        if today_days().is_some_and(|today| expiry < today) {
-            return Err(failure(
-                "E037",
-                format!("{file_label}: signature expired on {expires}"),
-            ));
+        // Fail closed when the clock cannot answer: a sidecar that
+        // declares an expiry is only valid while the current date is
+        // knowable, and "before the epoch" must not waive the check.
+        let today = today_days();
+        if expiry_is_violated(expiry, today) {
+            let message = if today.is_none() {
+                format!(
+                    "{file_label}: cannot determine the current date; \
+                     refusing to verify a signature with an expiry"
+                )
+            } else {
+                format!("{file_label}: signature expired on {expires}")
+            };
+            return Err(failure("E037", message));
         }
     }
     let binding = SignBinding {
@@ -438,6 +447,13 @@ fn today_days() -> Option<i64> {
     Some((secs / 86_400) as i64)
 }
 
+/// True when the declared expiry forbids acceptance. A clock that cannot
+/// answer (`None`) fails closed: an expiring signature is never accepted
+/// on an unknown date.
+fn expiry_is_violated(expiry: i64, today: Option<i64>) -> bool {
+    today.is_none_or(|today| expiry < today)
+}
+
 /// Parse 2×N hex chars into N bytes (N=32 for keys, N=64 for
 /// signatures). Anything else is malformed — never guessed.
 fn hex_bytes<const N: usize>(text: &str) -> Option<[u8; N]> {
@@ -459,6 +475,16 @@ fn hex_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unknown_clock_fails_an_expiring_signature_closed() {
+        // A clock before the epoch returns None; the expiry check must
+        // reject rather than waive.
+        assert!(expiry_is_violated(10, None));
+        assert!(expiry_is_violated(10, Some(11)));
+        assert!(!expiry_is_violated(10, Some(10)));
+        assert!(!expiry_is_violated(10, Some(9)));
+    }
 
     #[test]
     fn expiry_dates_convert_to_days() {

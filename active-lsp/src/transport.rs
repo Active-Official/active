@@ -35,16 +35,21 @@ pub const MAX_HEADER_BYTES: usize = 8 * 1024;
 
 /// Inbound queue capacity (messages). Bounded so a client that outruns the
 /// server blocks on its own pipe (backpressure) instead of growing memory.
-pub const INBOUND_CAPACITY: usize = 64;
+/// The aggregate bound is capacity × the frame cap: 4 × 16 MiB = 64 MiB,
+/// the ceiling a slow analysis can retain. (A 64-message queue licensed
+/// ~1 GiB of frame data; the message count alone did not cap bytes.)
+pub const INBOUND_CAPACITY: usize = 4;
 
 /// Outbound queue capacity (messages). The writer drains it continuously;
 /// a bounded queue keeps a server that produces faster than the client
-/// reads from growing without limit (the send blocks instead).
-pub const OUTBOUND_CAPACITY: usize = 64;
+/// reads from growing without limit (the send blocks instead). Same
+/// aggregate bound as inbound: 4 × 16 MiB = 64 MiB.
+pub const OUTBOUND_CAPACITY: usize = 4;
 
-/// Largest batch the server drains in one loop iteration (messages). A
-/// backlog of 64 frames of up to 16 MiB each would be ~1 GiB held at once;
-/// the cap keeps a burst bounded while still coalescing superseded edits.
+/// Largest batch the server drains in one loop iteration (messages). The
+/// queue cannot hold more than `INBOUND_CAPACITY`, so this only bounds a
+/// batch assembled from a channel in tests; the byte ceiling comes from the
+/// queue capacity.
 pub const MAX_BATCH: usize = 16;
 
 /// A framing or payload violation. The stream cannot be resynchronised after
@@ -358,6 +363,20 @@ mod tests {
 
     fn frame(body: &str) -> Vec<u8> {
         format!("Content-Length: {}\r\n\r\n{}", body.len(), body).into_bytes()
+    }
+
+    #[test]
+    fn queue_capacity_bounds_aggregate_frame_bytes() {
+        // The message-count cap is only meaningful together with the frame
+        // cap: a slow analysis must not retain a gigabyte of queued frames.
+        assert!(
+            INBOUND_CAPACITY * DEFAULT_MAX_FRAME_BYTES <= 64 * 1024 * 1024,
+            "inbound queue licenses more than 64 MiB"
+        );
+        assert!(
+            OUTBOUND_CAPACITY * DEFAULT_MAX_FRAME_BYTES <= 64 * 1024 * 1024,
+            "outbound queue licenses more than 64 MiB"
+        );
     }
 
     fn request() -> String {

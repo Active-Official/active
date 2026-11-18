@@ -49,6 +49,23 @@ check still applies on a cache hit, and the C-002 resolution/byte caps
 still bound a fan-out of distinct files. Values, file stamps,
 annotations, content hashes, and audit fields are unchanged.
 
+### L-P20: one-pass `active test`
+
+`active test [paths...]` runs schema validation, lint, fmt-check, and
+conformance vectors in one pass with one exit code, using only the
+shipped core: `.active` files are walked (or named directly), evaluated
+hermetically against the empty environment (or `--env KEY=VALUE`),
+linted with each file's discovered `.active-lint.toml`, and compared
+against the formatter's indent-style canonical output (includes are not
+merged, matching `active fmt --check`). A file that needs repair fails
+and points at `active repair`. A directory with
+`conformance/manifest.toml` runs it automatically; `--conformance` names
+one explicitly. Lint findings are notes by default and failures under
+`--strict`; schema errors and formatting drift always fail. Empty walks
+and empty/malformed manifests fail rather than passing vacuously. The
+CLI gains a runtime `toml` dependency (already in the workspace
+lockfile); no test framework is added.
+
 ### Master Program (CA, SC, R, PE, M, GQ, CAP, CG, D, T2, AK, AUD/OBS)
 
 Additive surface, no version bump: content-addressed Blob values with

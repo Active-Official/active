@@ -5819,3 +5819,370 @@ fn a_store_failure_is_informational_at_the_cli() {
         String::from_utf8_lossy(&stored.stderr)
     );
 }
+
+// ------------------------------------------------------------------
+// L-P20: `active test` entry point.
+// ------------------------------------------------------------------
+
+fn canonical(path: &std::path::Path, text: &str) {
+    // LF on every host: the formatter compares bytes.
+    std::fs::write(path, text.replace("\r\n", "\n")).expect("write");
+}
+
+#[test]
+fn test_command_passes_a_clean_project_and_walks_directories() {
+    let dir = pin_dir("test-clean");
+    let nested = dir.join("nested");
+    std::fs::create_dir_all(&nested).expect("nested");
+    canonical(&dir.join("one.active"), "port = 8080\n");
+    canonical(&nested.join("two.active"), "name = \"svc\"\n");
+    let out = active().arg("test").arg(&dir).output().expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("2 file(s), 0 failure(s)"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+#[test]
+fn test_command_fails_fmt_and_schema() {
+    let dir = pin_dir("test-fail");
+    let unformatted = dir.join("bad-fmt.active");
+    canonical(&unformatted, "port=8080\n");
+    let out = active()
+        .arg("test")
+        .arg(&unformatted)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("fmt"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let schema = dir.join("schema.active");
+    canonical(&schema, "schema:\n  port = Int(min = 1)\n\nport = 0\n");
+    let out = active()
+        .arg("test")
+        .arg(&schema)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("schema"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn test_command_warnings_fail_only_under_strict() {
+    let dir = pin_dir("test-strict");
+    let file = dir.join("unused.active");
+    canonical(&file, "let unused = 1\n\nport = 8080\n");
+    let out = active()
+        .arg("test")
+        .arg(&file)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "a lint warning is a note by default: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("L001"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let out = active()
+        .args(["test", "--strict"])
+        .arg(&file)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success(), "strict fails on findings");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("lint"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn test_command_runs_a_conformance_manifest() {
+    let dir = pin_dir("test-conformance");
+    let cases = dir.join("cases");
+    let expected = dir.join("expected");
+    std::fs::create_dir_all(&cases).expect("cases");
+    std::fs::create_dir_all(&expected).expect("expected");
+    canonical(&cases.join("good.active"), "port = 8080\n");
+    std::fs::write(expected.join("good.json"), "{\n  \"port\": 8080\n}\n").expect("expected");
+    let manifest = dir.join("manifest.toml");
+    std::fs::write(
+        &manifest,
+        "version = 1\n\n[[cases]]\nid = \"good\"\nfile = \"cases/good.active\"\nkind = \"clean\"\n",
+    )
+    .expect("manifest");
+    let out = active()
+        .args(["test", "--conformance"])
+        .arg(&manifest)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("1 conformance case(s), 0 failure(s)"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    // A diverging expectation must fail the same command.
+    std::fs::write(expected.join("good.json"), "{\n  \"port\": 1\n}\n").expect("break");
+    let out = active()
+        .args(["test", "--conformance"])
+        .arg(&manifest)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success(), "a diverging value fails");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("value diverged"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn test_command_accepts_canonical_include_files() {
+    let dir = pin_dir("test-include");
+    canonical(&dir.join("lib.active"), "let host = \"db\"\n");
+    canonical(
+        &dir.join("main.active"),
+        "include \"lib.active\"\n\nout:\n  seen = host\n",
+    );
+    let out = active()
+        .arg("test")
+        .arg(dir.join("main.active"))
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "a canonical include file must pass: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn test_command_honors_lint_config_and_parse_limits() {
+    let dir = pin_dir("test-lint-config");
+    let file = dir.join("unused.active");
+    canonical(&file, "let unused = 1\n\nport = 8080\n");
+    let config = dir.join(".active-lint.toml");
+    std::fs::write(&config, "[severity]\nunused-lets = \"off\"\n").expect("config");
+    let out = active()
+        .args(["test", "--strict"])
+        .arg(&file)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "the project config disables L001: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // A malformed discovered config fails closed.
+    std::fs::write(&config, "unknown = 1\n").expect("bad config");
+    let out = active()
+        .arg("test")
+        .arg(&file)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success(), "a bad lint config must fail");
+    std::fs::remove_file(&config).expect("remove config");
+    // The global parse budget flag is honored (not overridden by the
+    // runner's defaults).
+    let out = active()
+        .args(["--max-input-bytes", "1", "test"])
+        .arg(&file)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success(), "the input bound is enforced");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("limit is 1"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn test_command_discovers_a_project_conformance_manifest() {
+    let dir = pin_dir("test-auto-conformance");
+    let conf = dir.join("conformance");
+    std::fs::create_dir_all(conf.join("cases")).expect("cases");
+    std::fs::create_dir_all(conf.join("expected")).expect("expected");
+    canonical(&conf.join("cases/good.active"), "port = 8080\n");
+    std::fs::write(conf.join("expected/good.json"), "{\n  \"port\": 8080\n}\n").expect("expected");
+    std::fs::write(
+        conf.join("manifest.toml"),
+        "version = 1\n\n[[cases]]\nid = \"good\"\nfile = \"cases/good.active\"\nkind = \"clean\"\n",
+    )
+    .expect("manifest");
+    // A non-conformance file at the root is still checked; the
+    // conformance subtree is owned by the manifest.
+    canonical(&dir.join("app.active"), "name = \"svc\"\n");
+    let out = active().arg("test").arg(&dir).output().expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("1 file(s), 0 failure(s)"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("1 conformance case(s), 0 failure(s)"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    // An empty manifest is a failure, not a vacuous pass.
+    std::fs::write(conf.join("manifest.toml"), "version = 1\n").expect("empty manifest");
+    let out = active().arg("test").arg(&dir).output().expect("run active");
+    assert!(!out.status.success(), "a manifest without cases fails");
+}
+
+#[test]
+fn test_command_compares_refused_codes_exactly() {
+    let dir = pin_dir("test-refused-exact");
+    let cases = dir.join("cases");
+    let expected = dir.join("expected");
+    let errors = dir.join("errors");
+    std::fs::create_dir_all(&cases).expect("cases");
+    std::fs::create_dir_all(&expected).expect("expected");
+    std::fs::create_dir_all(&errors).expect("errors");
+    canonical(
+        &cases.join("two.active"),
+        "schema:\n  port = Int(min = 1)\n  workers = Int(min = 1)\n\nport = 0\nworkers = 0\n",
+    );
+    std::fs::write(errors.join("two.json"), "{\n  \"codes\": [\"T003\"]\n}\n").expect("codes");
+    let manifest = dir.join("manifest.toml");
+    std::fs::write(
+        &manifest,
+        "version = 1\n\n[[cases]]\nid = \"two\"\nfile = \"cases/two.active\"\nkind = \"refused\"\n",
+    )
+    .expect("manifest");
+    let out = active()
+        .args(["test", "--conformance"])
+        .arg(&manifest)
+        .output()
+        .expect("run active");
+    assert!(
+        !out.status.success(),
+        "one expected T003 must not match two produced T003 diagnostics"
+    );
+    std::fs::write(
+        errors.join("two.json"),
+        "{\n  \"codes\": [\"T003\", \"T003\"]\n}\n",
+    )
+    .expect("exact codes");
+    let out = active()
+        .args(["test", "--conformance"])
+        .arg(&manifest)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "exact ordered refused codes must pass: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn test_command_is_strict_about_schema_repairs() {
+    let dir = pin_dir("test-schema-strict");
+    let ty = dir.join("type.active");
+    canonical(&ty, "schema:\n  port = Int\n\nport = \"8080\"\n");
+    let out = active().arg("test").arg(&ty).output().expect("run active");
+    assert!(!out.status.success(), "a schema type mismatch must fail");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("T002"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let required = dir.join("required.active");
+    canonical(
+        &required,
+        "schema:\n  srv = Table { host = String, port = Int(min = 1, default = 80) }\n\nsrv:\n  host = \"h\"\n",
+    );
+    let out = active()
+        .arg("test")
+        .arg(&required)
+        .output()
+        .expect("run active");
+    assert!(
+        !out.status.success(),
+        "a missing required field must not be filled by a repair"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("T004"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn test_command_skips_only_the_manifest_owned_conformance_tree() {
+    let dir = pin_dir("test-owned-tree");
+    let conf = dir.join("conformance");
+    std::fs::create_dir_all(conf.join("cases")).expect("cases");
+    std::fs::create_dir_all(conf.join("expected")).expect("expected");
+    canonical(&conf.join("cases/good.active"), "port = 8080\n");
+    std::fs::write(conf.join("expected/good.json"), "{\n  \"port\": 8080\n}\n").expect("expected");
+    std::fs::write(
+        conf.join("manifest.toml"),
+        "version = 1\n\n[[cases]]\nid = \"good\"\nfile = \"cases/good.active\"\nkind = \"clean\"\n",
+    )
+    .expect("manifest");
+    // A nested, unowned conformance directory is ordinary source and
+    // must be checked.
+    let nested = dir.join("sub").join("conformance").join("cases");
+    std::fs::create_dir_all(&nested).expect("nested");
+    canonical(
+        &nested.join("bad.active"),
+        "schema:\n  port = Int(min = 1)\n\nport = 0\n",
+    );
+    let out = active().arg("test").arg(&dir).output().expect("run active");
+    assert!(
+        !out.status.success(),
+        "an unowned nested conformance file must be checked"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("T003"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Explicitly naming the owned tree plus its manifest still runs the
+    // manifest, not every vector file twice.
+    let out = active()
+        .args(["test", "--conformance"])
+        .arg(conf.join("manifest.toml"))
+        .arg(&conf)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("0 file(s), 0 failure(s)"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}

@@ -22,6 +22,7 @@ active-core = { workspace = true }
 clap = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
+toml = "0.8"
 
 [target.'cfg(unix)'.dependencies]
 # SIGPIPE disposition (LANG-H-007): Rust ignores it at startup, so a
@@ -29,8 +30,6 @@ anyhow = { workspace = true }
 # standard Unix filter.
 libc = "0.2"
 
-[dev-dependencies]
-toml = "0.8"
 
 [lints]
 workspace = true

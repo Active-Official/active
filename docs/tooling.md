@@ -170,6 +170,29 @@ never reads it as an input, and a write failure is the informational
 W018 while the tree and exit status stay unchanged. It contains raw include bytes (including secrets), so
 point it at a directory with the source's confidentiality.
 
+## One-pass test command
+
+```sh
+active test tests/fmt/indent --strict
+active test --conformance conformance/manifest.toml
+```
+
+`active test` runs schema validation (a hermetic evaluation), lint,
+fmt-check, and the conformance manifest in one pass with one exit code.
+Directories are walked for `.active` files (hidden, `target`,
+`node_modules`, and the `conformance` subtree owned by a discovered
+manifest are skipped); a directory containing
+`conformance/manifest.toml` runs it automatically unless `--conformance`
+names one. The formatter check matches `active fmt --check` (indent
+style, no include merge) and refuses files that need repair, pointing at
+`active repair`. Lint uses the file's discovered `.active-lint.toml`;
+findings are notes by default and failures under `--strict`. Schema
+errors and non-canonical formatting always fail. Evaluation is hermetic
+by default: pass `--env KEY=VALUE` (repeatable) for documents that read
+the environment. An empty walk, an empty manifest, or a malformed one
+fails rather than passing vacuously. No external test framework or new
+tool is required.
+
 ## Playground loop
 
 `playground/loop/` runs the full agent loop against the shipped CLI:

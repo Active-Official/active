@@ -9,6 +9,8 @@ use active_core::{parse_file, Budget, Engine, EvalError, ParseOptions, Style};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::{Path, PathBuf};
 
+mod test_runner;
+
 /// Write to stdout without panicking on a closed reader.
 ///
 /// The print macros panic on `EPIPE` from any thread except the main one
@@ -79,7 +81,7 @@ static PARSE_LIMITS: std::sync::OnceLock<(usize, u64)> = std::sync::OnceLock::ne
 
 /// Apply the process-wide parse limits (LANG-C-003) to a constructed
 /// option set. Absent flags leave the library defaults intact.
-fn with_parse_limits(mut options: ParseOptions) -> ParseOptions {
+pub(crate) fn with_parse_limits(mut options: ParseOptions) -> ParseOptions {
     if let Some((bytes, ms)) = PARSE_LIMITS.get() {
         options.max_input_bytes = *bytes;
         options.max_wall_ms = *ms;
@@ -838,6 +840,24 @@ enum Commands {
     Store {
         #[command(subcommand)]
         action: StoreAction,
+    },
+    /// Run schema validation, lint, fmt-check, and conformance vectors in one pass
+    ///
+    /// Exit 0 only when every check passes. Warnings fail only with
+    /// --strict. No external test framework.
+    Test {
+        /// Files or directories to check (default: the conformance manifest only)
+        paths: Vec<PathBuf>,
+        /// Conformance manifest (default: <dir>/conformance/manifest.toml or ./conformance/manifest.toml)
+        #[arg(long)]
+        conformance: Option<PathBuf>,
+        /// Fail on warnings as well as errors
+        #[arg(long)]
+        strict: bool,
+        /// Environment value for evaluation as KEY=VALUE (repeatable;
+        /// the test runner is hermetic otherwise)
+        #[arg(long = "env", value_name = "KEY=VALUE")]
+        env: Vec<String>,
     },
     /// Generate an Ed25519 key pair for overlay signing
     Keygen {
@@ -3944,6 +3964,38 @@ fn main() -> anyhow::Result<()> {
                 None => out!("{rendered}"),
             }
             if had_failure(&diags, resilient) {
+                std::process::exit(1);
+            }
+        }
+        Commands::Test {
+            paths,
+            conformance,
+            strict,
+            env,
+        } => {
+            let mut values = std::collections::HashMap::new();
+            for item in env {
+                let (key, value) = item.split_once('=').ok_or_else(|| {
+                    anyhow::anyhow!("--env expects KEY=VALUE, got `{item}`")
+                })?;
+                values.insert(key.to_string(), value.to_string());
+            }
+            let report = test_runner::run(&paths, conformance.as_deref(), strict, &values)?;
+            for note in &report.notes {
+                outln!("{note}");
+            }
+            for failure in &report.failures {
+                eprintln!("FAIL: {failure}");
+            }
+            let file_failures = report.failures.len().saturating_sub(report.case_failures);
+            outln!(
+                "test: {} file(s), {} failure(s); {} conformance case(s), {} failure(s)",
+                report.files,
+                file_failures,
+                report.cases,
+                report.case_failures
+            );
+            if !report.failures.is_empty() {
                 std::process::exit(1);
             }
         }

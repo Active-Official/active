@@ -101,6 +101,15 @@ fn node_labels_prefer_paths_then_bindings() {
     assert_eq!(graph::node_label(&module, base), "base");
     let x = graph::resolve_key(&module, "a.x").expect("a.x");
     assert_eq!(graph::node_label(&module, x), "a.x");
+    // Unmapped internals keep the spec'd `node{id}` form (spec/graph.md).
+    let internal = (0..module.arena.len() as u32)
+        .map(active_core::ir::NodeId)
+        .find(|id| graph::node_label(&module, *id).starts_with("node"))
+        .expect("an internal node has a node{id} label");
+    assert_eq!(
+        graph::node_label(&module, internal),
+        format!("node{}", internal.0)
+    );
 }
 
 #[test]

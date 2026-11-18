@@ -109,6 +109,30 @@ active mode --from svc.active --format json
 active budget explain --from svc.active
 ```
 
+## Semantic diff
+
+```sh
+active diff old.active new.active
+active diff old.active new.active --format json
+```
+
+Compares the evaluated documents, not their text: every added, removed,
+or changed value path with both types and a redacted scalar echo, the
+schema compatibility findings (C040-C044), and the dependents of each
+changed path (resolved to the longest dotted prefix, so a nested change
+names its own consumers). `behaviour: identical` means every *compared*
+value is equal; material values are never compared, so a secret or blob
+path always reports changed with a `***SECRET***` echo and a
+guess can never be confirmed. A value that only one document classifies
+as secret (for example `env.X` becoming `secret(env.X)`) is redacted on
+both sides. Value echoes and paths come from the
+redacted trees, so a material key renders as the marker. `--format json`
+emits one machine-readable document under `diff` (schema:
+`docs/schemas/diff.json`). Both documents parse and evaluate strictly:
+an error or warning refuses with its stable codes and a nonzero exit
+(the `check`/`eval` convention). Schema findings do not gate. Use
+`active compatibility` for a fail-closed schema gate.
+
 ## Toolchain self-check
 
 ```sh

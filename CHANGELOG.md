@@ -10,6 +10,41 @@ standalone Infinity codec).
 
 ## [Unreleased]
 
+### L-P52: semantic diff (`active diff`)
+
+`active diff <old> <new>` compares evaluated documents rather than text:
+added, removed, and changed value paths with both type names and redacted
+scalar echoes, schema compatibility findings (C040-C044), the dependents
+of each changed path, and whether every compared value is equal.
+Material is never compared: a secret or blob always reports
+changed with a `***SECRET***` echo, so a diff cannot confirm a guess
+(the two documents' material sets are unioned, so a value secret on one
+side redacts on both), and every path (value, schema, impact) is redacted
+segment by segment. The
+impact section is bounded (64 keys / 4096 paths, `impact_truncated`).
+`--format json` is pinned by `docs/schemas/diff.json`; text is the human
+rendering. Both documents parse and evaluate strictly: an error or
+warning refuses with its stable codes and a nonzero exit; schema findings
+do not gate.
+
+### L-P29: content-keyed evaluation cache
+
+`active eval --cache <dir>` serves a repeat run from a stored entry when
+the source and include hashes, mode, profile, resolved budget, input path,
+environment values, and output variant are unchanged. Entry names are a
+keyed BLAKE3 MAC using a per-user key file outside the cache directory
+(`$ACTIVE_CACHE_KEY_FILE` or the platform config directory), so a
+directory listing cannot confirm a guessed environment value or forge an
+entry. Entries hold the JSON/YAML/TOML renderings, diagnostics, and the
+L-T06 v2 receipt; they are read through a bounded regular-file reader and
+rechecked after open. Writes are atomic; the root is 0700 and entries
+0600 on Unix, with shared roots/entries refused. A material profile or
+schema selector writes no entry, and an output beyond 32 MiB is printed
+but not cached. Run observers and admission flags (`--audit-trail`,
+`--envelope`, `--trace`, `--store`, `--trust-keys`, `--lockfile`,
+`--envelope-trust`) bypass the cache with a warning. Spec
+`reproducibility.md` section 4d.
+
 ### L-T06: envelope v2 with receipts and sender identity
 
 The tool-result envelope gains major 2 (majors 1 and 2 are accepted;

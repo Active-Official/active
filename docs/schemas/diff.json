@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Active semantic diff",
+  "description": "Output of `active diff <old> <new> --format json` (L-P52).",
+  "type": "object",
+  "required": ["diff"],
+  "additionalProperties": false,
+  "properties": {
+    "diff": {
+      "type": "object",
+      "required": [
+        "old",
+        "new",
+        "behaviour",
+        "values",
+        "schema",
+        "impact",
+        "impact_truncated",
+        "notes"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "old": { "type": "string" },
+        "new": { "type": "string" },
+        "behaviour": { "enum": ["identical", "changed"] },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "change"],
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string" },
+              "change": { "enum": ["added", "removed", "changed"] },
+              "old_type": { "type": "string" },
+              "new_type": { "type": "string" },
+              "old": { "type": "string" },
+              "new": { "type": "string" }
+            }
+          }
+        },
+        "schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["code", "severity", "path", "message"],
+            "additionalProperties": false,
+            "properties": {
+              "code": { "type": "string" },
+              "severity": { "type": "string" },
+              "path": { "type": "string" },
+              "message": { "type": "string" }
+            }
+          }
+        },
+        "impact": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["key", "paths", "table_dependents_excluded"],
+            "additionalProperties": false,
+            "properties": {
+              "key": { "type": "string" },
+              "paths": { "type": "array", "items": { "type": "string" } },
+              "table_dependents_excluded": { "type": "boolean" }
+            }
+          }
+        },
+        "impact_truncated": { "type": "boolean" },
+        "notes": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

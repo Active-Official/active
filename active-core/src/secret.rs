@@ -2570,6 +2570,21 @@ impl SecretProfile {
         self.exact_literals.merge(seeds);
     }
 
+    /// Absorb another document's material text and env names.
+    ///
+    /// A semantic diff compares two documents: a value that is secret on
+    /// only one side (for example `token = env.X` becoming
+    /// `token = secret(env.X)`) must redact on BOTH sides, or the diff
+    /// itself becomes the oracle the redaction exists to prevent. The
+    /// union is one-way per call; callers absorb both directions.
+    pub fn absorb_material_profile(&mut self, other: &SecretProfile) {
+        self.literals
+            .merge_min(&other.literals, MIN_SUBSTRING_BYTES);
+        self.exact_literals.merge(&other.exact_literals);
+        self.material_envs
+            .extend(other.material_envs.iter().cloned());
+    }
+
     /// Insert every material environment value into the literal set.
     /// A runtime secret can be copied into an exported value through a
     /// path the export tree does not carry (a `let` binding, a profile

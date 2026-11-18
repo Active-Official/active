@@ -1732,6 +1732,7 @@ fn capability_tools_all_map_to_real_subcommands() {
     mapping.insert("patch", vec!["patch"]);
     mapping.insert("repair", vec!["repair"]);
     mapping.insert("compatibility", vec!["compatibility"]);
+    mapping.insert("diff", vec!["diff"]);
     mapping.insert("capability", vec!["capability"]);
     mapping.insert("debug", vec!["debug"]);
     mapping.insert("viz", vec!["viz"]);
@@ -6672,5 +6673,503 @@ fn eval_cache_steps_aside_for_run_observers() {
             || stderr.contains("a value is required for '--cache"),
         "unexpected: {stderr}"
     );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn semantic_diff_reports_values_schema_and_impact() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("diff-lp52");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+    std::fs::write(&old, "port = 8080\nnext = port + 1\n").expect("old");
+    std::fs::write(&new, "port = 9090\nnext = port + 1\n").expect("new");
+
+    let out = active()
+        .arg("diff")
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("behaviour: changed"), "{text}");
+    assert!(text.contains("~ port: int (8080 -> 9090)"), "{text}");
+    assert!(text.contains("~ next: int (8081 -> 9091)"), "{text}");
+    assert!(text.contains("impact:"), "{text}");
+    assert!(
+        text.lines()
+            .any(|line| line.trim_start().starts_with("port:") && line.contains("next")),
+        "{text}"
+    );
+
+    let out = active()
+        .args(["diff", "--format", "json"])
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active");
+    assert!(out.status.success());
+    let document: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    assert_eq!(document["diff"]["behaviour"], "changed");
+    let values = document["diff"]["values"].as_array().expect("values");
+    let paths: Vec<&str> = values
+        .iter()
+        .filter_map(|value| value["path"].as_str())
+        .collect();
+    assert!(paths.contains(&"port"), "{paths:?}");
+    assert!(paths.contains(&"next"), "{paths:?}");
+    let impact = document["diff"]["impact"]
+        .as_array()
+        .expect("impact")
+        .iter()
+        .find(|entry| entry["key"] == "port")
+        .expect("port impact");
+    assert!(impact["paths"]
+        .as_array()
+        .expect("paths")
+        .iter()
+        .any(|path| path == "next"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn semantic_diff_calls_a_value_preserving_change_identical() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("diff-lp52-refactor");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+    std::fs::write(&old, "a = 1\n").expect("old");
+    // A comment change leaves the evaluated value unchanged.
+    std::fs::write(&new, "a = 1\n# same value\n").expect("new");
+
+    let out = active()
+        .arg("diff")
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active");
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("behaviour: identical"), "{text}");
+    assert!(text.contains("values: none"), "{text}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn semantic_diff_reports_schema_breakage_and_notes_one_sided_schemas() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("diff-lp52-schema");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+    std::fs::write(
+        &old,
+        "schema = { version = \"1.0.0\", port = Int, legacy = String }\nport = 8080\nlegacy = \"x\"\n",
+    )
+    .expect("old");
+    std::fs::write(
+        &new,
+        "schema = { version = \"1.1.0\", port = Int }\nport = 8080\n",
+    )
+    .expect("new");
+    let out = active()
+        .arg("diff")
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active");
+    assert!(out.status.success());
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("C041"), "{text}");
+    assert!(text.contains("schema:"), "{text}");
+
+    // A one-sided schema is a note, not a finding.
+    let unschemed = dir.join("plain.active");
+    std::fs::write(&unschemed, "port = 8080\n").expect("plain");
+    let out = active()
+        .args(["diff", "--format", "json"])
+        .arg(&unschemed)
+        .arg(&new)
+        .output()
+        .expect("run active");
+    let document: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    assert!(document["diff"]["notes"]
+        .as_array()
+        .expect("notes")
+        .iter()
+        .any(|note| note == "only the new document declares a schema"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn semantic_diff_never_prints_secret_material() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("diff-lp52-secret");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+    std::fs::write(&old, "k = secret(\"old-secret-value\")\n").expect("old");
+    std::fs::write(&new, "k = secret(\"new-secret-value\")\n").expect("new");
+    for format in ["text", "json"] {
+        let out = active()
+            .args(["diff", "--format", format])
+            .arg(&old)
+            .arg(&new)
+            .output()
+            .expect("run active");
+        assert!(out.status.success());
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(text.contains("***SECRET***"), "{text}");
+        assert!(!text.contains("old-secret-value"), "{text}");
+        assert!(!text.contains("new-secret-value"), "{text}");
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn semantic_diff_never_confirms_a_secret_guess() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("diff-lp52-oracle");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+
+    // A locator, a plain copy of the same material, and a tainted blob:
+    // all three shapes must be indistinguishable for a right and a
+    // wrong guess.
+    let pairs = [
+        (
+            "k = secret.env(\"LP52_SECRET\")\n",
+            "k = secret(\"correct-horse\")\n",
+        ),
+        (
+            "src = env.LP52_SECRET\nk = secret(src)\n",
+            "k = secret(\"correct-horse\")\n",
+        ),
+        (
+            "b = blob(\"text/plain\", secret(env.LP52_SECRET))\n",
+            "b = blob(\"text/plain\", secret(\"correct-horse\"))\n",
+        ),
+    ];
+    for (old_source, new_source) in pairs {
+        std::fs::write(&old, old_source).expect("old");
+        std::fs::write(&new, new_source).expect("new");
+        let mut documents = Vec::new();
+        let mut errors = Vec::new();
+        for guess in ["correct-horse", "wrong-horse"] {
+            let out = active()
+                .env("LP52_SECRET", guess)
+                .args(["diff", "--format", "json"])
+                .arg(&old)
+                .arg(&new)
+                .output()
+                .expect("run active");
+            assert!(
+                out.status.success(),
+                "stderr: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let text = String::from_utf8_lossy(&out.stdout).to_string();
+            assert!(text.contains("***SECRET***"), "{text}");
+            assert!(!text.contains(guess), "a guess was echoed: {text}");
+            assert!(!text.contains("blake3:"), "a blob identity leaked: {text}");
+            let document: serde_json::Value = serde_json::from_str(&text).expect("json");
+            documents.push(document["diff"].clone());
+            errors.push(String::from_utf8_lossy(&out.stderr).to_string());
+        }
+        assert_eq!(
+            documents[0], documents[1],
+            "a diff must not distinguish a right guess from a wrong one: {old_source}"
+        );
+        assert_eq!(
+            errors[0], errors[1],
+            "stderr must not distinguish a right guess: {old_source}"
+        );
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn semantic_diff_reports_stable_codes_for_a_failed_evaluation() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("diff-lp52-error");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+    std::fs::write(&old, "x = \"a\" + 1\n").expect("old");
+    std::fs::write(&new, "x = 1\n").expect("new");
+    let out = active()
+        .arg("diff")
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("T001"), "{stderr}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn semantic_diff_accepts_the_standard_budget_flags() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("diff-lp52-budget");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+    std::fs::write(&old, "a = 1\n").expect("old");
+    std::fs::write(&new, "a = 2\n").expect("new");
+    let out = active()
+        .args(["diff", "--budget-profile", "trusted"])
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn semantic_diff_refuses_a_schema_invalid_document() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("diff-lp52-invalid");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+    std::fs::write(
+        &old,
+        "schema = { port = Int(min = 1, max = 10) }\nport = 999\n",
+    )
+    .expect("old");
+    std::fs::write(
+        &new,
+        "schema = { port = Int(min = 1, max = 10) }\nport = 1000\n",
+    )
+    .expect("new");
+    let out = active()
+        .arg("diff")
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success(), "a diff of invalid trees must refuse");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("T003"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn semantic_diff_refuses_a_parse_error() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("diff-lp52-parse");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+    std::fs::write(&old, "x = { a = 1 ]\n").expect("old");
+    std::fs::write(&new, "x = { a = 1 }\n").expect("new");
+    let out = active()
+        .arg("diff")
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("E001"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn semantic_diff_reports_nested_dependents() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("diff-lp52-nested");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+    std::fs::write(&old, "t = { k = 1 }\nu = t.k * 0\n").expect("old");
+    std::fs::write(&new, "t = { k = 2 }\nu = t.k * 0\n").expect("new");
+    let out = active()
+        .args(["diff", "--format", "json"])
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let document: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    let drove = document["diff"]["values"]
+        .as_array()
+        .expect("values")
+        .iter()
+        .any(|value| value["path"] == "t.k");
+    assert!(drove, "{document}");
+    let impact = document["diff"]["impact"]
+        .as_array()
+        .expect("impact")
+        .iter()
+        .find(|entry| entry["key"] == "t.k")
+        .expect("nested impact entry");
+    assert!(impact["paths"]
+        .as_array()
+        .expect("paths")
+        .iter()
+        .any(|path| path == "u"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn semantic_diff_redacts_a_material_path_segment() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("diff-lp52-material-key");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+    std::fs::write(&old, "k = secret(\"hunter2key\")\nhunter2key = 1\n").expect("old");
+    std::fs::write(&new, "k = secret(\"hunter2key\")\nhunter2key = 2\n").expect("new");
+    for format in ["text", "json"] {
+        let out = active()
+            .args(["diff", "--format", format])
+            .arg(&old)
+            .arg(&new)
+            .output()
+            .expect("run active");
+        assert!(
+            out.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(text.contains("***SECRET***"), "{text}");
+        assert!(
+            !text.contains("hunter2key"),
+            "a material key leaked: {text}"
+        );
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn semantic_diff_redacts_material_secret_on_only_one_side() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("diff-lp52-asymmetry");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+
+    let pairs = [
+        (
+            "token = env.LP52_TOKEN\n",
+            "token = secret(env.LP52_TOKEN)\n",
+        ),
+        (
+            "token = secret(env.LP52_TOKEN)\n",
+            "token = env.LP52_TOKEN\n",
+        ),
+        (
+            "p = env.LP52_TOKEN\nb = blob(\"text/plain\", p)\n",
+            "p = secret(env.LP52_TOKEN)\nb = blob(\"text/plain\", p)\n",
+        ),
+    ];
+    for (old_source, new_source) in pairs {
+        std::fs::write(&old, old_source).expect("old");
+        std::fs::write(&new, new_source).expect("new");
+        for format in ["text", "json"] {
+            let out = active()
+                .env("LP52_TOKEN", "correct-horse-battery")
+                .args(["diff", "--format", format])
+                .arg(&old)
+                .arg(&new)
+                .output()
+                .expect("run active");
+            assert!(
+                out.status.success(),
+                "stderr: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let text = String::from_utf8_lossy(&out.stdout);
+            assert!(text.contains("***SECRET***"), "{text}");
+            assert!(
+                !text.contains("correct-horse-battery"),
+                "the one-sided secret leaked: {text}"
+            );
+            assert!(!text.contains("blake3:"), "a blob identity leaked: {text}");
+        }
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn semantic_diff_notes_uncompared_profile_bodies() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("diff-lp52-profiles");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+    std::fs::write(
+        &old,
+        "active_profile = \"dev\"\nprofile \"dev\" { x = 1 }\nprofile \"prod\" { x = 2 }\n",
+    )
+    .expect("old");
+    std::fs::write(
+        &new,
+        "active_profile = \"dev\"\nprofile \"dev\" { x = 1 }\nprofile \"prod\" { x = 3 }\n",
+    )
+    .expect("new");
+    let out = active()
+        .args(["diff", "--format", "json"])
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let document: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    assert_eq!(document["diff"]["behaviour"], "identical");
+    assert!(document["diff"]["notes"]
+        .as_array()
+        .expect("notes")
+        .iter()
+        .any(|note| note == "profile bodies other than the selected profile are not compared"));
     std::fs::remove_dir_all(&dir).ok();
 }

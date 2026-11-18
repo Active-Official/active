@@ -84,6 +84,25 @@ schema = {
 
 Findings are deterministic (source order; numeric version compare) and value-free (type names and versions only). Any error-severity finding fails the command closed with E040.
 
+`active diff old.active new.active` (L-P52) assembles the whole review
+picture from the same engine: the semantic value diff (added, removed,
+and changed paths with both type names), these compatibility findings,
+and the dependents of every changed path, resolved to its longest
+resolvable dotted prefix (bounded, with `impact_truncated` when the cap
+is hit). The comparison runs on the
+redacted trees: material values are never compared, so `behaviour:
+identical` means every compared value is equal and a secret or blob
+path always reports changed with a `***SECRET***` echo; a
+diff can never confirm a guess. The two documents' material sets are
+unioned before redaction, so a value that only one side classifies as
+secret is redacted on both. Paths are redacted segment by segment.
+Both documents parse and evaluate strictly: any error or warning
+refuses with its stable codes and a nonzero exit (the `check`/`eval`
+convention). Schema findings do not gate; `active compatibility` remains
+the fail-closed schema check. Its JSON shape is
+pinned by `docs/schemas/diff.json`; as a CLI tooling surface it carries
+CLI and output-schema coverage rather than a cross-embedding vector.
+
 ## 3. Diagnostic family (SC.007)
 
 C040–C044 findings plus the E040 breaking-change summary. Canned guidance lives in `explain_code`; the codes are pinned in `docs/diagnostics.md` and the assist coverage test. Unknown-reader situations (unparseable versions) fail safe: scheduled-removal requires both sides to parse, otherwise the removal is breaking.

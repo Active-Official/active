@@ -1763,7 +1763,7 @@ fn stdio_capability_explain_and_debug_bridges() {
     let tools = descriptor["result"]["tools"]
         .as_array()
         .expect("tools array");
-    assert_eq!(tools.len(), 20, "{descriptor}");
+    assert_eq!(tools.len(), 21, "{descriptor}");
     assert!(tools.iter().any(|t| t["name"] == "debug"), "{descriptor}");
     let refused = server.request("active/capability", serde_json::json!({"requireMajor": 99}));
     assert_eq!(refused["error"]["code"], -32602, "{refused}");

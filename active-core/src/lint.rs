@@ -354,6 +354,7 @@ pub const KNOWN_CAPABILITIES: &[&str] = &[
     "patch",
     "repair",
     "compatibility",
+    "diff",
     "capability",
     "debug",
     "viz",

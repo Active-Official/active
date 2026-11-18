@@ -722,6 +722,33 @@ enum Commands {
         #[arg(short, long, default_value = "text")]
         format: String,
     },
+    /// Semantic diff of two evaluated documents (L-P52): changed values,
+    /// schema compatibility, affected dependents, and whether every
+    /// compared value is equal. Both documents parse and evaluate
+    /// strictly; an error or warning refuses with its stable codes.
+    /// Emits a machine-readable document (json) or a human rendering
+    /// (text).
+    Diff {
+        /// Baseline .active file
+        old: PathBuf,
+        /// Candidate .active file
+        new: PathBuf,
+        /// Output format
+        #[arg(short, long, default_value = "text")]
+        format: String,
+        /// Select a profile by name for both documents
+        #[arg(long)]
+        profile: Option<String>,
+        /// Allow includes to use absolute paths or escape the directory
+        #[arg(long)]
+        allow_parent_escapes: bool,
+        /// Verify both documents and their includes against a
+        /// trusted-keys file
+        #[arg(long)]
+        trust_keys: Option<PathBuf>,
+        #[command(flatten)]
+        budget: BudgetArgs,
+    },
     /// Repair a document toward a goal (PROPOSAL §2.1): multi-step
     /// plan of safe @patch/@rename directives applied through the
     /// shipped patch engine, re-evaluated each step. Stops on clean,
@@ -2352,6 +2379,95 @@ fn had_failure(diags: &[Diagnostic], resilient: bool) -> bool {
     diags
         .iter()
         .any(|d| d.severity == Severity::Error || (!resilient && d.severity == Severity::Warning))
+}
+
+/// Longest scalar echo kept in one diff line: enough to recognise a
+/// value, short enough that a large string cannot dominate the report.
+const MAX_DIFF_ECHO_CHARS: usize = 256;
+
+/// A redacted scalar echo for one changed path, or `None` for a
+/// container, an unreachable path (a whole material subtree redacted to
+/// one secret), or a value the caller must not print.
+fn diff_echo(root: &active_core::Value, path: &str) -> Option<String> {
+    let value = if path.is_empty() {
+        root
+    } else {
+        active_core::convert::project_path(root, path).ok()?
+    };
+    let text = match value {
+        active_core::Value::Array(_) | active_core::Value::Table(_) => return None,
+        // Material is never echoed, and never compared: the marker is the
+        // only stable output.
+        active_core::Value::Secret(_) => "\"***SECRET***\"".to_string(),
+        // A blob identity is a content hash: for a secret-derived payload
+        // it is an unsalted oracle, and a one-sided secret change can
+        // leave the other side's identity untainted. Never echo one.
+        active_core::Value::Blob { .. } => "\"***SECRET***\"".to_string(),
+        // Truncate before JSON encoding: a huge string must not be
+        // serialized just to keep 256 characters.
+        active_core::Value::String(value) if value.chars().count() > MAX_DIFF_ECHO_CHARS => {
+            // Encode the ellipsis inside the string, so the echo stays
+            // valid JSON text like every other scalar echo.
+            let preview: String = value
+                .chars()
+                .take(MAX_DIFF_ECHO_CHARS)
+                .chain(std::iter::once('…'))
+                .collect();
+            serde_json::to_string(&preview).unwrap_or_else(|_| "\"\"".to_string())
+        }
+        other => active_core::convert::value_to_pretty_json(other)
+            .trim()
+            .to_string(),
+    };
+    Some(text)
+}
+
+/// A path read by a human or agent: every segment goes through both
+/// documents' redaction, exactly like the other export surfaces.
+fn redact_diff_path(
+    old: &active_core::secret::SecretProfile,
+    new: &active_core::secret::SecretProfile,
+    path: &str,
+) -> String {
+    new.redact_path(&old.redact_path(path))
+}
+
+/// Strip `[index]` suffixes so a resolver sees dotted keys only.
+fn dotted_only(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    let mut depth = 0usize;
+    for ch in path.chars() {
+        match ch {
+            '[' => depth += 1,
+            ']' if depth > 0 => depth -= 1,
+            _ if depth == 0 => out.push(ch),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Resolve the longest dotted prefix of a changed path that names a
+/// node, candidate first. A nested change reports its own consumers
+/// (`t.k`), not just the table's.
+fn resolve_diff_impact<'m>(
+    new_module: &'m active_core::Module,
+    old_module: &'m active_core::Module,
+    path: &str,
+) -> Option<(&'m active_core::Module, String, active_core::ir::NodeId)> {
+    let dotted = dotted_only(path);
+    let mut candidate = dotted.as_str();
+    loop {
+        if !candidate.is_empty() {
+            if let Some(id) = active_core::graph::resolve_key(new_module, candidate) {
+                return Some((new_module, candidate.to_string(), id));
+            }
+            if let Some(id) = active_core::graph::resolve_key(old_module, candidate) {
+                return Some((old_module, candidate.to_string(), id));
+            }
+        }
+        candidate = &candidate[..candidate.rfind('.')?];
+    }
 }
 
 /// Load (or create) the per-user cache MAC key. The key lives outside
@@ -4199,6 +4315,286 @@ fn main() -> anyhow::Result<()> {
             }
             if findings.iter().any(|finding| finding.is_breaking()) {
                 anyhow::bail!("E040: breaking schema changes detected");
+            }
+        }
+        Commands::Diff {
+            old,
+            new,
+            format,
+            profile,
+            allow_parent_escapes,
+            trust_keys,
+            budget,
+        } => {
+            let trust = load_trust(&trust_keys)?;
+            // Strict on both sides: a diff of a repaired or invalid tree
+            // would report a verdict for a document the language refuses.
+            let old_module = parse_input(&old, false, allow_parent_escapes, &trust)?;
+            let new_module = parse_input(&new, false, allow_parent_escapes, &trust)?;
+            let mut engine = Engine::strict();
+            engine.profile_override = profile.clone();
+            engine.budget = budget.resolve()?;
+            let old_name = old.to_string_lossy().to_string();
+            let new_name = new.to_string_lossy().to_string();
+            let (old_value, old_diags, old_seeds) = match engine.evaluate_with_seeds(&old_module) {
+                Ok(out) => out,
+                Err(error) => {
+                    report_eval_error(&error, &old_name);
+                    anyhow::bail!("{}: evaluation failed", old.display());
+                }
+            };
+            let (new_value, new_diags, new_seeds) = match engine.evaluate_with_seeds(&new_module) {
+                Ok(out) => out,
+                Err(error) => {
+                    report_eval_error(&error, &new_name);
+                    anyhow::bail!("{}: evaluation failed", new.display());
+                }
+            };
+            for diagnostic in &old_diags {
+                report(diagnostic, &old_name);
+            }
+            for diagnostic in &new_diags {
+                report(diagnostic, &new_name);
+            }
+            // Strict mode treats a warning as a refusal (the CLI
+            // convention); the report is only meaningful for two clean
+            // documents.
+            if had_failure(&old_diags, false) || had_failure(&new_diags, false) {
+                anyhow::bail!("diff refused: a document has errors or warnings (see diagnostics)");
+            }
+            let mut old_profile =
+                complete_profile(active_core::secret::SecretProfile::for_engine(
+                    &old_module,
+                    &engine,
+                    &old_seeds,
+                ))?;
+            let mut new_profile =
+                complete_profile(active_core::secret::SecretProfile::for_engine(
+                    &new_module,
+                    &engine,
+                    &new_seeds,
+                ))?;
+            // A value that is secret on only ONE side (for example a
+            // plain env read becoming `secret(env.X)`) must redact on
+            // both, or the diff itself becomes the oracle the redaction
+            // exists to prevent. Absorb both directions, then seed the
+            // union's environment values.
+            let new_snapshot = new_profile.clone();
+            old_profile.absorb_material_profile(&new_snapshot);
+            new_profile.absorb_material_profile(&old_profile);
+            old_profile.absorb_environment(&engine.env);
+            new_profile.absorb_environment(&engine.env);
+            // Payload bytes never enter the comparison or the echoes;
+            // dropping them before redaction halves the two-tree memory.
+            let old_redacted =
+                strip_blob_payloads(&active_core::convert::redact_value(&old_profile, &old_value));
+            let new_redacted =
+                strip_blob_payloads(&active_core::convert::redact_value(&new_profile, &new_value));
+            // Compare the REDACTED trees: material values are never
+            // compared (a secret or tainted blob is always "changed"), so
+            // a guess can never be confirmed by an "identical" answer.
+            let mut values = active_core::diff::diff_values(&old_redacted, &new_redacted);
+            for change in &mut values {
+                change.old = diff_echo(&old_redacted, &change.path);
+                change.new = diff_echo(&new_redacted, &change.path);
+            }
+
+            // Schema compatibility when both documents declare a schema;
+            // a one-sided schema is a note, not a finding.
+            let mut schema_findings: Vec<active_core::convert::CompatFinding> = Vec::new();
+            let mut notes: Vec<&str> = Vec::new();
+            match (old_module.schema.is_some(), new_module.schema.is_some()) {
+                (true, true) => {
+                    let mut findings =
+                        active_core::convert::compare_schemas(&old_module, &new_module)
+                            .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    for finding in &mut findings {
+                        for profile in [&old_profile, &new_profile] {
+                            if let Some(text) = profile.redact_authored_text(&finding.message) {
+                                finding.message = text;
+                            }
+                            if let Some(text) = profile.redact_text(&finding.message) {
+                                finding.message = text;
+                            }
+                        }
+                        finding.path =
+                            redact_diff_path(&old_profile, &new_profile, &finding.path);
+                    }
+                    schema_findings = findings;
+                }
+                (true, false) => notes.push("only the old document declares a schema"),
+                (false, true) => notes.push("only the new document declares a schema"),
+                (false, false) => notes.push("neither document declares a schema"),
+            }
+            if !old_module.profiles.is_empty() || !new_module.profiles.is_empty() {
+                notes.push("profile bodies other than the selected profile are not compared");
+            }
+
+            // Dependents of every changed root key, resolved in the
+            // document that still has the key (the candidate first). The
+            // output is capped: a long alias chain must not turn a diff
+            // into an unbounded report.
+            const MAX_DIFF_IMPACT_KEYS: usize = 64;
+            const MAX_DIFF_IMPACT_PATHS: usize = 4096;
+            let mut impact: Vec<serde_json::Value> = Vec::new();
+            let mut impact_truncated = false;
+            let mut total_paths = 0usize;
+            let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+            for change in &values {
+                let Some((module, resolved_key, id)) =
+                    resolve_diff_impact(&new_module, &old_module, &change.path)
+                else {
+                    continue;
+                };
+                if !seen.insert(resolved_key.clone()) {
+                    continue;
+                }
+                if impact.len() >= MAX_DIFF_IMPACT_KEYS {
+                    impact_truncated = true;
+                    break;
+                }
+                let found = active_core::graph::impact_paths_detailed(module, id);
+                let mut paths = found.paths;
+                if total_paths.saturating_add(paths.len()) > MAX_DIFF_IMPACT_PATHS {
+                    paths.truncate(MAX_DIFF_IMPACT_PATHS.saturating_sub(total_paths));
+                    impact_truncated = true;
+                }
+                total_paths = total_paths.saturating_add(paths.len());
+                let paths: Vec<String> = paths
+                    .into_iter()
+                    .map(|path| redact_diff_path(&old_profile, &new_profile, &path))
+                    .collect();
+                impact.push(serde_json::json!({
+                    "key": redact_diff_path(&old_profile, &new_profile, &resolved_key),
+                    "paths": paths,
+                    "table_dependents_excluded": found.table_dependents_excluded,
+                }));
+            }
+            // Paths are read by humans and agents; a material key renders
+            // as the marker like every other export surface.
+            for change in &mut values {
+                change.path = redact_diff_path(&old_profile, &new_profile, &change.path);
+            }
+
+            let behaviour = if values.is_empty() {
+                "identical"
+            } else {
+                "changed"
+            };
+            match format.as_str() {
+                "json" => {
+                    let document = serde_json::json!({
+                        "diff": {
+                            "old": old_name,
+                            "new": new_name,
+                            "behaviour": behaviour,
+                            "values": values,
+                            "schema": schema_findings
+                                .iter()
+                                .map(|finding| serde_json::json!({
+                                    "code": finding.code,
+                                    "severity": finding.severity,
+                                    "path": finding.path,
+                                    "message": finding.message,
+                                }))
+                                .collect::<Vec<_>>(),
+                            "impact": impact,
+                            "impact_truncated": impact_truncated,
+                            "notes": notes,
+                        }
+                    });
+                    outln!(
+                        "{}",
+                        serde_json::to_string_pretty(&document)
+                            .map_err(|e| anyhow::anyhow!("diff serialize failed: {e}"))?
+                    );
+                }
+                "text" => {
+                    outln!("behaviour: {behaviour}");
+                    if values.is_empty() {
+                        outln!("values: none");
+                    } else {
+                        outln!("values:");
+                        for change in &values {
+                            let marker = match change.change {
+                                active_core::diff::ChangeKind::Added => "+",
+                                active_core::diff::ChangeKind::Removed => "-",
+                                active_core::diff::ChangeKind::Changed => "~",
+                            };
+                            let types = match (&change.old_type, &change.new_type) {
+                                (Some(before), Some(after)) if before != after => {
+                                    format!("{before} -> {after}")
+                                }
+                                (Some(before), _) => before.clone(),
+                                (None, Some(after)) => after.clone(),
+                                (None, None) => "unknown".to_string(),
+                            };
+                            let echo = match (&change.old, &change.new) {
+                                (Some(before), Some(after)) => {
+                                    format!(" ({before} -> {after})")
+                                }
+                                (Some(before), None) => format!(" ({before})"),
+                                (None, Some(after)) => format!(" ({after})"),
+                                (None, None) => String::new(),
+                            };
+                            let path = if change.path.is_empty() {
+                                "<root>"
+                            } else {
+                                change.path.as_str()
+                            };
+                            outln!("  {marker} {path}: {types}{echo}");
+                        }
+                    }
+                    if !schema_findings.is_empty() {
+                        outln!("schema:");
+                        for finding in &schema_findings {
+                            outln!(
+                                "  [{}] {} {}: {}",
+                                finding.severity,
+                                finding.code,
+                                finding.path,
+                                finding.message
+                            );
+                        }
+                    }
+                    if !impact.is_empty() {
+                        outln!("impact:");
+                        for entry in &impact {
+                            let key = entry["key"].as_str().unwrap_or("");
+                            let paths = entry["paths"]
+                                .as_array()
+                                .map(|paths| {
+                                    paths
+                                        .iter()
+                                        .filter_map(|path| path.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                })
+                                .unwrap_or_default();
+                            if paths.is_empty() {
+                                if entry["table_dependents_excluded"]
+                                    .as_bool()
+                                    .unwrap_or(false)
+                                {
+                                    outln!(
+                                        "  {key}: no non-table dependents (table dependents excluded by design)"
+                                    );
+                                } else {
+                                    outln!("  {key}: none");
+                                }
+                            } else {
+                                outln!("  {key}: {paths}");
+                            }
+                        }
+                    }
+                    if impact_truncated {
+                        outln!("note: impact output truncated");
+                    }
+                    for note in &notes {
+                        outln!("note: {note}");
+                    }
+                }
+                other => anyhow::bail!("unsupported format: {other}"),
             }
         }
         Commands::Repair {

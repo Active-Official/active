@@ -169,6 +169,18 @@
       }
     },
     {
+      "name": "diff",
+      "entry": "active diff <old> <new> [--format text|json] [--profile NAME] [--budget-profile strict|interactive|trusted] [--allow-parent-escapes] [--trust-keys <toml>]",
+      "description": "Semantic diff of two evaluated documents: added/removed/changed value paths with both types and redacted scalar echoes, schema compatibility findings (C040-C044), dependents of each changed path (longest resolvable prefix), and whether every compared value is equal. Material values are never compared (a secret/blob path always reports changed; the two documents' material sets are unioned); a guess is never confirmed. Both documents parse and evaluate strictly; an error or warning exits nonzero with its stable codes, and schema findings do not gate.",
+      "input": {
+        "old": "baseline .active file",
+        "new": "candidate .active file"
+      },
+      "output": {
+        "report": "text rendering or one JSON document under `diff`"
+      }
+    },
+    {
       "name": "debug",
       "entry": "active debug --from <file> [--break SELECTOR] [--replay [--expect HASH]] [--minimize CODE] [--max-attempts N] [--format json|text]",
       "description": "Deterministic step trace with breakpoints (taint, path:<prefix>, code:<CODE>, node:<n>, budget:<percent>, budget:nodes:<n>), replay hash/code/step comparison, and minimal-case reduction. The reduction report carries the reduced source, the environment variable names it reads, and the effective budget.",
@@ -249,11 +261,11 @@
     },
     "agent": {
       "budget": "interactive",
-      "tools": ["check", "eval", "format", "lint", "convert", "graph", "generate", "schema-introspect", "value-inspect", "explain", "patch", "repair", "compatibility", "capability", "debug", "viz", "budget", "mode", "doc", "schema-query"]
+      "tools": ["check", "eval", "format", "lint", "convert", "graph", "generate", "schema-introspect", "value-inspect", "explain", "patch", "repair", "compatibility", "diff", "capability", "debug", "viz", "budget", "mode", "doc", "schema-query"]
     },
     "trusted": {
       "budget": "trusted",
-      "tools": ["check", "eval", "format", "lint", "convert", "graph", "generate", "schema-introspect", "value-inspect", "explain", "patch", "repair", "compatibility", "capability", "debug", "viz", "budget", "mode", "doc", "schema-query"]
+      "tools": ["check", "eval", "format", "lint", "convert", "graph", "generate", "schema-introspect", "value-inspect", "explain", "patch", "repair", "compatibility", "diff", "capability", "debug", "viz", "budget", "mode", "doc", "schema-query"]
     }
   },
   "features": [
@@ -272,6 +284,7 @@
     "content-addressed-blobs",
     "multi-step-repair",
     "compatibility-report",
+    "semantic-diff",
     "evaluation-modes",
     "graph-queries",
     "partial-evaluation",

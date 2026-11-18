@@ -71,6 +71,7 @@ access. Tool JSON without a committed schema is covered by CLI tests.
 active lint --format sarif svc.active > active.sarif
 active capability --require-major 1 > descriptor.json
 active compatibility old.active new.active --format json
+active diff old.active new.active --format json
 ```
 
 SARIF 2.1.0 uploads to code scanning; the descriptor handshake fails

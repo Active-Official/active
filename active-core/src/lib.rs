@@ -8,6 +8,7 @@ pub mod cache;
 pub mod convert;
 pub mod debug;
 pub mod diag;
+pub mod diff;
 pub mod envelope;
 pub mod eval;
 pub mod fmt;

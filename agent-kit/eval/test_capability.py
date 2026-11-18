@@ -48,6 +48,7 @@ class CapabilityTest(unittest.TestCase):
             "capability",
             "repair",
             "compatibility",
+            "diff",
             "value-inspect",
             "debug",
             "viz",
@@ -57,7 +58,7 @@ class CapabilityTest(unittest.TestCase):
             "schema-query",
         ):
             self.assertIn(required, names, f"tool surface missing {required}")
-        self.assertEqual(len(names), 20, f"tool surface changed: {names}")
+        self.assertEqual(len(names), 21, f"tool surface changed: {names}")
 
     def test_sandbox_profiles_match_code(self) -> None:
         # The descriptor's profiles section and the core's sandbox
@@ -169,6 +170,8 @@ class CapabilityTest(unittest.TestCase):
             "value-inspect",
             "patch",
             "repair",
+            "compatibility",
+            "diff",
         )
         by_name = {t["name"]: t for t in self.doc["tools"]}
         for name in flat:

@@ -46,6 +46,16 @@ readTimeout = 1
 max_retries = 2
 """
 
+DIFF_OLD = """\
+port = 8080
+next = port + 1
+"""
+
+DIFF_NEW = """\
+port = 9090
+next = port + 1
+"""
+
 
 def run(args: list[str]) -> str:
     proc = subprocess.run(
@@ -79,6 +89,10 @@ def main() -> int:
     repair_fixture.write_text(REPAIR_FIXTURE, encoding="utf-8")
     lint_fixture = work / "lint.active"
     lint_fixture.write_text(LINT_FIXTURE, encoding="utf-8")
+    diff_old = work / "old.active"
+    diff_old.write_text(DIFF_OLD, encoding="utf-8")
+    diff_new = work / "new.active"
+    diff_new.write_text(DIFF_NEW, encoding="utf-8")
 
     checks = [
         ("graph", json.loads(run(["graph", str(fixture), "--format", "json"]))),
@@ -100,6 +114,20 @@ def main() -> int:
         (
             "debug-steps",
             json.loads(run(["debug", "--from", str(fixture), "--resilient"])),
+        ),
+        (
+            "diff",
+            json.loads(
+                run(
+                    [
+                        "diff",
+                        str(diff_old),
+                        str(diff_new),
+                        "--format",
+                        "json",
+                    ]
+                )
+            ),
         ),
     ]
     for name, document in checks:

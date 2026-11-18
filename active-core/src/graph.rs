@@ -18,7 +18,15 @@ pub fn resolve_key(module: &Module, key: &str) -> Option<NodeId> {
 
 /// Display label for a node: dotted path, binding name, or
 /// `node{id}` for unmapped internals.
+/// Stable label for a node (`node{id}` for unmapped internals, as
+/// spec/graph.md states).
 pub fn node_label(module: &Module, id: NodeId) -> String {
+    label_or_id(&label_map(module), id)
+}
+
+/// One label map for a whole query. `value_paths()` is O(V); building it
+/// per dependent made impact assembly quadratic.
+fn label_map(module: &Module) -> HashMap<NodeId, String> {
     let mut paths: HashMap<NodeId, String> = HashMap::new();
     for (name, binding) in &module.bindings {
         paths.insert(*binding, name.clone());
@@ -26,6 +34,10 @@ pub fn node_label(module: &Module, id: NodeId) -> String {
     for (node, path) in module.value_paths() {
         paths.insert(node, path);
     }
+    paths
+}
+
+fn label_or_id(paths: &HashMap<NodeId, String>, id: NodeId) -> String {
     paths
         .get(&id)
         .cloned()
@@ -89,11 +101,12 @@ pub struct Impact {
 pub fn impact_paths_detailed(module: &Module, id: NodeId) -> Impact {
     let mut paths: Vec<String> = Vec::new();
     let mut table_dependents_excluded = false;
+    let labels = label_map(module);
     for node in transitive_dependents(module, id) {
         if matches!(module.get(node), Some(Node::Table { .. })) {
             table_dependents_excluded = true;
         } else {
-            paths.push(node_label(module, node));
+            paths.push(label_or_id(&labels, node));
         }
     }
     paths.sort();
@@ -112,9 +125,10 @@ pub fn impact_paths(module: &Module, id: NodeId) -> Vec<String> {
 
 /// Sorted dotted paths of a node's transitive dependencies.
 pub fn why_paths(module: &Module, id: NodeId) -> Vec<String> {
+    let labels = label_map(module);
     let mut paths: Vec<String> = transitive_dependencies(module, id)
         .into_iter()
-        .map(|node| node_label(module, node))
+        .map(|node| label_or_id(&labels, node))
         .collect();
     paths.sort();
     paths

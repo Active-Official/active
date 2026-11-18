@@ -15,6 +15,7 @@ so a shape change fails the build.
 | `sarif.json` | `active lint --format sarif` (SARIF 2.1.0) |
 | `repair-plan.json` | `active repair --from <file> --format json` |
 | `debug-steps.json` | `active debug --from <file>` |
+| `diff.json` | `active diff <old> <new> --format json` |
 
 Rules:
 

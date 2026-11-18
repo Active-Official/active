@@ -5724,7 +5724,7 @@ fn eval_store_dedupes_a_repeated_include() {
     )
     .expect("main");
     let out = active()
-        .args(["eval", "--store"])
+        .args(["--parse-wall-ms", "0", "eval", "--store"])
         .arg(&root)
         .arg(&main)
         .output()
@@ -5753,7 +5753,7 @@ fn lock_store_publishes_without_changing_the_lock_or_exit_code() {
     std::fs::write(&lib, "lib_value = 7\n").expect("lib");
     std::fs::write(&main, "include \"lib.active\"\n").expect("main");
     let plain = active()
-        .arg("lock")
+        .args(["--parse-wall-ms", "0", "lock"])
         .arg(&main)
         .output()
         .expect("run active");
@@ -5763,7 +5763,7 @@ fn lock_store_publishes_without_changing_the_lock_or_exit_code() {
         String::from_utf8_lossy(&plain.stderr)
     );
     let stored = active()
-        .args(["lock", "--store"])
+        .args(["--parse-wall-ms", "0", "lock", "--store"])
         .arg(&root)
         .arg(&main)
         .output()
@@ -5797,12 +5797,12 @@ fn a_store_failure_is_informational_at_the_cli() {
     // Strict mode does not fail on the informational W018; the tree is
     // the same as an unstored run.
     let plain = active()
-        .arg("eval")
+        .args(["--parse-wall-ms", "0", "eval"])
         .arg(&main)
         .output()
         .expect("run active");
     let stored = active()
-        .args(["eval", "--store"])
+        .args(["--parse-wall-ms", "0", "eval", "--store"])
         .arg(&not_a_dir)
         .arg(&main)
         .output()

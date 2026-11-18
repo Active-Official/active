@@ -19,7 +19,12 @@
 //! After parsing, a resolution pass turns Ident nodes that match `let`
 //! bindings into Ref nodes and builds the dependency graph.
 
+mod intern;
 mod lexer;
+
+use intern::IncludeIntern;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 pub(crate) use lexer::ESCAPED_DOLLAR;
 pub(crate) use lexer::SENTINEL_POS;
@@ -647,6 +652,7 @@ fn parse_recovering_impl(
         indent_tables: 0,
         current_file: root_file.map(|p| p.to_path_buf()),
         current_lexical_file: root_file.map(|p| p.to_path_buf()),
+        include_intern: Rc::new(RefCell::new(IncludeIntern::default())),
         include_stack: Vec::new(),
         includes_resolved: 0,
         included_bytes: 0,
@@ -1019,6 +1025,9 @@ struct Parser {
     /// parses keep the virtual spelling so nested callbacks stay
     /// relative and cwd-independent.
     current_lexical_file: Option<std::path::PathBuf>,
+    /// Per-parse include interning (L-P32): source bytes by canonical
+    /// path and lexed streams by content hash. Shared with sub-parsers.
+    include_intern: Rc<RefCell<IncludeIntern>>,
     /// Canonicalized files on the include stack (cycle detection, C-025).
     include_stack: Vec<std::path::PathBuf>,
     /// Includes resolved so far in this parse (LANG-C-002): a diamond
@@ -2446,7 +2455,7 @@ impl Parser {
                     .map(|p| p.to_string_lossy().into_owned())
                     .unwrap_or_else(|| canonical.to_string_lossy().into_owned());
                 match loader(&callback_path) {
-                    Ok(s) => s,
+                    Ok(s) => std::sync::Arc::new(s),
                     Err(e) => {
                         return fail(
                             self,
@@ -2485,7 +2494,8 @@ impl Parser {
                         return fail(self, "E029", message);
                     }
                 }
-                match std::fs::read_to_string(&canonical) {
+                let read = self.include_intern.borrow_mut().source(&canonical);
+                match read {
                     Ok(s) => s,
                     Err(e) => {
                         return fail(
@@ -2497,6 +2507,9 @@ impl Parser {
                 }
             }
         };
+        // One digest per include: pins, provenance, the store, and the
+        // lex cache all use it (L-P03/L-P04/L-P32).
+        let content_hash = crate::provenance::sha256_hex(src.as_bytes());
         if let Some(keys) = &trust {
             let label = canonical.to_string_lossy().into_owned();
             match crate::sign::read_sidecar(&canonical, &label) {
@@ -2520,7 +2533,7 @@ impl Parser {
         // A mismatch is a hard error; a missing pin is an error in Enforce
         // mode and a loud W017 in Warn mode. The accepted resolution is
         // recorded for the audit receipt.
-        let actual_hash = crate::provenance::sha256_hex(src.as_bytes());
+        let actual_hash = content_hash.clone();
         let resolved =
             crate::provenance::root_relative(&canonical, self.options.root_dir.as_deref());
         let mut resolution = crate::ir::IncludeResolutionKind::Unpinned;
@@ -2634,8 +2647,17 @@ impl Parser {
         // unchanged.
         if let Some(root) = self.options.include_store.clone() {
             let store = crate::store::Store::new(root);
-            if let Err(e) = store.put_hashed(&actual_hash, src.as_bytes()) {
-                self.note_at("W018", format!("include store write failed: {e}"), &inc.tok);
+            let published = self.include_intern.borrow().published(&actual_hash);
+            if !published {
+                match store.put_hashed(&actual_hash, src.as_bytes()) {
+                    Ok(()) => self
+                        .include_intern
+                        .borrow_mut()
+                        .mark_published(actual_hash.clone()),
+                    Err(e) => {
+                        self.note_at("W018", format!("include store write failed: {e}"), &inc.tok)
+                    }
+                }
             }
         }
         let pin = crate::ir::IncludePin {
@@ -2671,23 +2693,49 @@ impl Parser {
         // them: an include graph is one parse from the host's point of
         // view, and its bytes extend the budget they consume.
         self.charge_include_bytes(src.len());
-        let mut lexer = Lexer::new(&src);
-        lexer.deadline = self.wall_deadline();
-        let lexed = lexer.tokenize();
-        if lexed.budget_exceeded {
-            let message = format!(
-                "parse budget exceeded: the {} ms parse wall budget was reached while lexing an include",
-                self.wall_budget_ms
-            );
-            self.budget_violation = Some(message.clone());
-            return fail(self, "E029", message);
+        // L-P32: intern the lexed stream by content hash. Distinct-file
+        // fan-out is still bounded by C-002 above; this only avoids
+        // re-lexing identical content already parsed in this evaluation.
+        let cached = self.include_intern.borrow().lexed(&content_hash);
+        if cached.is_some() {
+            // A cache hit skips the lexer loop, so keep the documented
+            // "once per include" clock check before reusing it.
+            if let Some(end) = self.wall_deadline() {
+                if std::time::Instant::now() >= end {
+                    let message = format!(
+                        "parse budget exceeded: the {} ms parse wall budget was reached while lexing an include",
+                        self.wall_budget_ms
+                    );
+                    self.budget_violation = Some(message.clone());
+                    return fail(self, "E029", message);
+                }
+            }
         }
+        let lexed = if let Some(cached) = cached {
+            cached
+        } else {
+            let mut lexer = Lexer::new(&src);
+            lexer.deadline = self.wall_deadline();
+            let lexed = std::sync::Arc::new(lexer.tokenize());
+            if lexed.budget_exceeded {
+                let message = format!(
+                    "parse budget exceeded: the {} ms parse wall budget was reached while lexing an include",
+                    self.wall_budget_ms
+                );
+                self.budget_violation = Some(message.clone());
+                return fail(self, "E029", message);
+            }
+            self.include_intern
+                .borrow_mut()
+                .store_lexed(content_hash.clone(), lexed.clone());
+            lexed
+        };
         let lex_file = self.current_file_name();
         // Included comments join the shared stream with their file
         // stamped, so annotation extraction sees included bindings'
         // contracts (C-033) without cross-file line collisions.
         let n_lex_comments = lexed.comments.len();
-        self.comments.extend(lexed.comments);
+        self.comments.extend(lexed.comments.iter().cloned());
         self.comment_files
             .extend(std::iter::repeat_with(|| lex_file.clone()).take(n_lex_comments));
         // Aliased includes nest under the alias: scope the sub-parse
@@ -2696,8 +2744,8 @@ impl Parser {
             self.current_path.push(alias);
         }
         let lexer_truncated = lexed.errors_truncated;
-        let mut sub_errors = lexed.errors;
-        let mut sub_repairs = lexed.repairs;
+        let mut sub_errors = lexed.errors.clone();
+        let mut sub_repairs = lexed.repairs.clone();
         for d in sub_errors.iter_mut().chain(sub_repairs.iter_mut()) {
             if d.file.is_none() {
                 d.file = lex_file.clone();
@@ -2713,7 +2761,7 @@ impl Parser {
         // mid-stream), so save and restore it around the sub-parse.
         let saved_tokens = std::mem::take(&mut self.tokens);
         let saved_pos = self.pos;
-        self.tokens = lexed.tokens;
+        self.tokens = lexed.tokens.clone();
         self.pos = 0;
         self.parse_document();
         self.tokens = saved_tokens;
@@ -4714,6 +4762,7 @@ impl Parser {
             indent_tables: 0,
             current_file: self.current_file.clone(),
             current_lexical_file: self.current_lexical_file.clone(),
+            include_intern: self.include_intern.clone(),
             include_stack: Vec::new(),
             includes_resolved: self.includes_resolved,
             included_bytes: self.included_bytes,
@@ -6790,6 +6839,7 @@ impl Parser {
             indent_tables: 0,
             current_file: self.current_file.clone(),
             current_lexical_file: self.current_lexical_file.clone(),
+            include_intern: self.include_intern.clone(),
             include_stack: Vec::new(),
             includes_resolved: self.includes_resolved,
             included_bytes: self.included_bytes,

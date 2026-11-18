@@ -251,6 +251,38 @@ The store is an optional local cache keyed by include content:
   and gives a lockfile's hashes a local address; it does not change
   determinism, content hashes, or budgets.
 
+### 4c. Include interning (L-P32)
+
+Within one parse invocation, the include loader interns its inputs by
+content:
+
+- The source bytes of a canonical filesystem include path are read once
+  and reused for every later include of that path in the same parse, so
+  the parse does not observe a mid-parse rewrite of a path that still
+  resolves. Path resolution still happens per include: a path deleted
+  mid-parse fails E017, and a file that grew past a byte bound can still
+  fail the metadata pre-check (E028/E029). A host include loader is still
+  called once per resolution; its bytes are interned by hash, never by
+  path.
+- Lexed token streams are keyed by the SHA-256 of those bytes. A second
+  include with identical content re-parses the cached stream instead of
+  lexing again. The cache is per parse invocation and never persisted.
+- Cache admission is bounded: a stream over 65,536 tokens is not cached,
+  and the cache retains at most 256 streams / 200,000 tokens. A skipped
+  stream is simply lexed again; correctness is unaffected.
+- Interning is not a verification shortcut: every include still resolves
+  its path, verifies signatures and pins against the bytes read, and
+  records its own resolution. A cached stream is used only after those
+  checks pass, and the once-per-include wall-clock check still runs on a
+  cache hit.
+- Interning does **not** bound a malicious fan-out of distinct files.
+  Every resolution still charges the C-002 resolution and byte budgets,
+  so a graph of many distinct files fails at the same cap with or without
+  the cache.
+- Values, diagnostics, content hashes, and audit fields are unchanged;
+  file stamps and annotations stay per include (the cached stream carries
+  no file identity).
+
 ## 5. Threat model notes (for C-052)
 
 - The manifest records plain env values verbatim: authors must
@@ -292,4 +324,8 @@ The store is an optional local cache keyed by include content:
   roots and removes the rest; dry-run touches nothing; malformed roots
   fail closed; parser publishes parsed bytes; a failing store yields
   W018 without changing the tree; repeated includes store once.
+- Interning: a source is read once per parse and a lexed stream is
+  reused by content hash; values, pins, resolutions, and diagnostics
+  match an uninterned parse; the C-002 cap still trips on distinct
+  fan-out.
 - CLI tests for `ACTIVE lock` incl. exit codes and `-o`.

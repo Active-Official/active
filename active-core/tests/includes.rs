@@ -1041,3 +1041,73 @@ fn a_store_failure_is_w018_and_never_changes_the_tree() {
     assert_eq!(eval_seen(&module)["pinned_value"], 7);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn a_repeated_inline_pinned_include_records_each_resolution() {
+    let dir = std::env::temp_dir().join(format!("active_pin_repeat_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("lib.active"), "pinned_value = 7\n").unwrap();
+    std::fs::write(
+        dir.join("main.active"),
+        format!(
+            "include \"lib.active\" sha256:{PINNED_HASH}\ninclude \"lib.active\" sha256:{PINNED_HASH}\n"
+        ),
+    )
+    .unwrap();
+    let module = parse_file(&dir.join("main.active"), parse_options()).expect("parse");
+    assert_eq!(module.include_pins.len(), 2, "each resolution is recorded");
+    assert_eq!(
+        resolution_kinds(&module),
+        vec![IncludeResolutionKind::Inline; 2]
+    );
+    assert_eq!(eval_seen(&module)["pinned_value"], 7);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn repeated_identical_includes_still_trip_the_resolution_cap() {
+    // Interning deduplicates work by content, never the C-002 fan-out
+    // budget: 300 resolutions of one file must still fail.
+    let dir = std::env::temp_dir().join(format!("active_pin_repeat_cap_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("lib.active"), "v = 1\n").unwrap();
+    let mut main = String::new();
+    for _ in 0..300 {
+        main.push_str("include \"lib.active\"\n");
+    }
+    std::fs::write(dir.join("main.active"), main).unwrap();
+    let diags = parse_file(&dir.join("main.active"), parse_options())
+        .expect_err("the resolution cap still applies");
+    assert!(
+        diags.iter().any(|d| d.code == "E028"),
+        "E028 expected, got {:?}",
+        diags.iter().map(|d| d.code.clone()).collect::<Vec<_>>()
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn identical_content_under_two_paths_keeps_per_file_diagnostics() {
+    let dir = std::env::temp_dir().join(format!("active_intern_paths_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // Identical bytes, identical lexical error: the cached stream must
+    // still be attributed to each including file.
+    for name in ["a.active", "b.active"] {
+        std::fs::write(dir.join(name), "x = $\n").unwrap();
+    }
+    std::fs::write(
+        dir.join("main.active"),
+        "include \"a.active\"\ninclude \"b.active\"\n",
+    )
+    .unwrap();
+    let diags = parse_file(&dir.join("main.active"), parse_options())
+        .expect_err("the lexical error is refused");
+    let files: Vec<String> = diags
+        .iter()
+        .filter(|d| d.code == "E005")
+        .filter_map(|d| d.file.clone())
+        .collect();
+    assert_eq!(files.len(), 2, "one E005 per file: {diags:?}");
+    assert_ne!(files[0], files[1], "file stamps stay per include");
+    std::fs::remove_dir_all(&dir).ok();
+}

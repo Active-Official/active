@@ -35,6 +35,20 @@ paths, and a write failure is the informational W018 with an unchanged tree
 and exit status. Root defaults
 to `$ACTIVE_STORE_DIR` or `~/.cache/active/store`.
 
+### L-P32: per-evaluation include interning
+
+Within one parse invocation, a filesystem include's source bytes are
+read once per canonical path, so a mid-parse rewrite of a path that
+still resolves does not change a later include's bytes (a deleted path
+still fails E017 and a grown file can still fail the metadata bound).
+Its lexed stream is interned by content hash. A repeated include of
+identical content reuses the stream instead of lexing again; a host
+loader is still called once per resolution. Verification (signatures,
+pins, resolutions) still runs per include, the once-per-include wall
+check still applies on a cache hit, and the C-002 resolution/byte caps
+still bound a fan-out of distinct files. Values, file stamps,
+annotations, content hashes, and audit fields are unchanged.
+
 ### Master Program (CA, SC, R, PE, M, GQ, CAP, CG, D, T2, AK, AUD/OBS)
 
 Additive surface, no version bump: content-addressed Blob values with

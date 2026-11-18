@@ -266,7 +266,11 @@ fn docgen_stays_linear_with_many_secrets_and_fields() {
         src.push_str(&format!("f{i} = \"value {i}\"\n"));
     }
     let module = parse(&src, "doc-perf").expect("perf document parses");
-    let engine = Engine::new();
+    let mut engine = Engine::new();
+    // Setup only: the shipped 100 ms wall limit is the wrong guard for a
+    // 3000-field fixture on a loaded runner, and this test measures the
+    // docgen walk below, not evaluation latency.
+    engine.budget.max_wall_ms = 10_000;
     let (value, _) = engine.evaluate(&module).expect("perf document evaluates");
     let profile = active_core::secret::SecretProfile::analyze(&module);
     let started = std::time::Instant::now();

@@ -61,6 +61,14 @@ Mitigations:
   bytes; enforcement proves the evaluated graph matches the lock, not
   that the lock is trustworthy. Pin the lockfile's own hash through the
   deployment channel, or sign the document tree, when that matters.
+- **Include store (L-P04, opt-in)**: `--store` writes the raw bytes of
+  every include, including any secrets they contain, into a local cache
+  (default `~/.cache/active/store`; root `0700`/entries `0400` on Unix,
+  inherited ACLs plus the read-only attribute on Windows). The cache is
+  read-only after write but not encrypted, and removing entries requires
+  an explicit `active store gc`. Point `--store` at a directory with the
+  same confidentiality as the sources; an in-repository path can be
+  committed by `git add`, so keep it out of the worktree or ignore it.
 - Patches overlapping `@ai_immutable` fail (E019/C-034).
 
 ### 3.2 Secret exfiltration

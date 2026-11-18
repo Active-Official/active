@@ -202,6 +202,28 @@ impl IncludeLock {
     }
 }
 
+/// Every content hash a lockfile names, through the canonical parser
+/// (L-P04 GC roots): main, recorded includes, and identity pins. A lock
+/// that names nothing - or that the evaluator would reject - is an
+/// error, never an empty root set.
+pub fn lock_roots(lock_text: &str) -> Result<HashSet<String>, String> {
+    let lock = IncludeLock::parse(lock_text)?;
+    let doc: toml::Value =
+        toml::from_str(lock_text).map_err(|e| format!("unparseable lockfile: {e}"))?;
+    let mut roots = lock.hashes;
+    if let Some(main) = doc.get("main") {
+        if !main.is_table() {
+            return Err("lockfile `main` is not a table".to_string());
+        }
+        let hash = valid_pin(main).map_err(|e| format!("lockfile `main`: {e}"))?;
+        roots.insert(hash);
+    }
+    if roots.is_empty() {
+        return Err("lockfile names no sha256 values; refusing to use it as a GC root".to_string());
+    }
+    Ok(roots)
+}
+
 /// Read one 64-hex `sha256` value from a lockfile entry, refusing a
 /// malformed pin instead of silently dropping it. Hex is stored
 /// lowercase so every comparison is exact.

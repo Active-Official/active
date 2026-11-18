@@ -5613,3 +5613,209 @@ fn a_lock_in_another_directory_records_relocatable_paths() {
         "substitution must be refused: {stderr}"
     );
 }
+
+#[test]
+fn store_add_list_gc_round_trip() {
+    let dir = pin_dir("store-cli");
+    let root = dir.join("store");
+    let a = dir.join("a.active");
+    let b = dir.join("b.active");
+    std::fs::write(&a, "a = 1\n").expect("a");
+    std::fs::write(&b, "b = 2\n").expect("b");
+    let add = |file: &std::path::Path| {
+        active()
+            .args(["store", "add"])
+            .arg(file)
+            .arg("--store")
+            .arg(&root)
+            .output()
+            .expect("run active")
+    };
+    let out = add(&a);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let hash_a = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let out = add(&b);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let hash_b = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    assert_ne!(hash_a, hash_b);
+    let list = || {
+        let out = active()
+            .args(["store", "list", "--json", "--store"])
+            .arg(&root)
+            .output()
+            .expect("run active");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice::<Vec<String>>(&out.stdout).expect("json")
+    };
+    assert_eq!(list().len(), 2);
+    // A lockfile roots one entry: the other is collectable.
+    let lock = dir.join("root.toml");
+    std::fs::write(
+        &lock,
+        format!(
+            "version = 2\n[main]\npath = {a:?}\nsha256 = \"{hash_a}\"\n[provenance]\ninclude_pins = []\n"
+        ),
+    )
+    .expect("lock");
+    let out = active()
+        .args(["store", "gc", "--store"])
+        .arg(&root)
+        .arg("--root")
+        .arg(&lock)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains(&hash_b));
+    assert_eq!(list(), vec![hash_a.clone()]);
+    // Dry run reports without deleting; an explicit --all is the only
+    // way to request a full-store collection.
+    let out = active()
+        .args(["store", "gc", "--all", "--dry-run", "--store"])
+        .arg(&root)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains(&hash_a));
+    assert_eq!(list(), vec![hash_a.clone()]);
+    // A truncated root names no hashes and must not authorize a wipe.
+    let empty = dir.join("empty.lock");
+    std::fs::write(&empty, "").expect("empty root");
+    let out = active()
+        .args(["store", "gc", "--store"])
+        .arg(&root)
+        .arg("--root")
+        .arg(&empty)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success(), "an empty root must fail closed");
+    assert_eq!(list(), vec![hash_a]);
+}
+
+#[test]
+fn eval_store_dedupes_a_repeated_include() {
+    let dir = pin_dir("store-eval");
+    let root = dir.join("store");
+    let lib = dir.join("lib.active");
+    let main = dir.join("main.active");
+    std::fs::write(&lib, "v = 1\n").expect("lib");
+    std::fs::write(
+        &main,
+        "include \"lib.active\" as x\ninclude \"lib.active\" as y\n",
+    )
+    .expect("main");
+    let out = active()
+        .args(["eval", "--store"])
+        .arg(&root)
+        .arg(&main)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = active()
+        .args(["store", "list", "--json", "--store"])
+        .arg(&root)
+        .output()
+        .expect("run active");
+    let hashes: Vec<String> = serde_json::from_slice(&out.stdout).expect("json");
+    let want = active_core::provenance::hash_file(lib.to_str().expect("utf8")).expect("hash");
+    assert_eq!(hashes, vec![want], "identical includes store once");
+}
+
+#[test]
+fn lock_store_publishes_without_changing_the_lock_or_exit_code() {
+    let dir = pin_dir("store-lock");
+    let root = dir.join("store");
+    let lib = dir.join("lib.active");
+    let main = dir.join("main.active");
+    std::fs::write(&lib, "lib_value = 7\n").expect("lib");
+    std::fs::write(&main, "include \"lib.active\"\n").expect("main");
+    let plain = active()
+        .arg("lock")
+        .arg(&main)
+        .output()
+        .expect("run active");
+    assert!(
+        plain.status.success(),
+        "{}",
+        String::from_utf8_lossy(&plain.stderr)
+    );
+    let stored = active()
+        .args(["lock", "--store"])
+        .arg(&root)
+        .arg(&main)
+        .output()
+        .expect("run active");
+    assert!(
+        stored.status.success(),
+        "{}",
+        String::from_utf8_lossy(&stored.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&plain.stdout),
+        String::from_utf8_lossy(&stored.stdout),
+        "the store is a cache: lock bytes are unchanged"
+    );
+    let want = active_core::provenance::hash_file(lib.to_str().expect("utf8")).expect("hash");
+    assert!(
+        active_core::store::Store::new(&root).contains(&want),
+        "lock --store publishes the include"
+    );
+}
+
+#[test]
+fn a_store_failure_is_informational_at_the_cli() {
+    let dir = pin_dir("store-bad");
+    let lib = dir.join("lib.active");
+    let main = dir.join("main.active");
+    let not_a_dir = dir.join("not-a-dir");
+    std::fs::write(&lib, "lib_value = 7\n").expect("lib");
+    std::fs::write(&main, "include \"lib.active\"\n").expect("main");
+    std::fs::write(&not_a_dir, "occupied").expect("file");
+    // Strict mode does not fail on the informational W018; the tree is
+    // the same as an unstored run.
+    let plain = active()
+        .arg("eval")
+        .arg(&main)
+        .output()
+        .expect("run active");
+    let stored = active()
+        .args(["eval", "--store"])
+        .arg(&not_a_dir)
+        .arg(&main)
+        .output()
+        .expect("run active");
+    assert!(
+        stored.status.success(),
+        "a cache failure must not fail evaluation: {}",
+        String::from_utf8_lossy(&stored.stderr)
+    );
+    assert_eq!(plain.stdout, stored.stdout);
+    assert!(
+        String::from_utf8_lossy(&stored.stderr).contains("W018"),
+        "the failure is reported: {}",
+        String::from_utf8_lossy(&stored.stderr)
+    );
+}

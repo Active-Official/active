@@ -82,6 +82,7 @@ pub fn explain_code(code: &str) -> &'static str {
         "E040" => "Breaking schema changes detected: the compatibility report lists error-severity findings that must be resolved or explicitly accepted.",
         "E041" => "Include content pin mismatch: the include's bytes are not the ones the document or lockfile pinned. Review the bytes, then update the refusing pin: an inline `sha256:` in the importing document, or re-run `active lock` for a lockfile pin. Never edit an include merely to make its pin match.",
         "W017" => "Unpinned include under a legacy lockfile: the lock predates include pins and admits matching content by hash. Re-run `active lock` to record spellings and resolved paths, or add an inline `sha256:` pin to the include.",
+        "W018" => "Include store write failed: the cache directory is missing, read-only, or full. Evaluation used the bytes already read, so the tree is unchanged. Fix the store path or permissions, or drop `--store` when the cache is not wanted.",
         _ => "No canned guidance for this code: the code and span are the contract — read the message, fix the span it names, and re-run check.",
     }
 }

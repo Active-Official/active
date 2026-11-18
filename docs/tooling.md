@@ -149,6 +149,27 @@ pinned with `--config`): a `disable` array plus a `[severity]` table
 (`off|error|warning|info|hint`). Unknown rules, unknown keys, and a
 malformed discovered file are errors rather than silent no-ops.
 
+## Include store
+
+```sh
+active eval  --store .cache/active doc.active
+active lock  --store .cache/active doc.active -o active-lock.toml
+active store add lib.active --store .cache/active
+active store list --json --store .cache/active
+active store gc --root active-lock.toml --store .cache/active
+```
+
+The store holds one immutable, read-only file per include SHA-256
+(`<root>/<hex>`), deduplicating repeated includes of identical bytes.
+Prefer a project-scoped root: `gc` roots come from one project's
+lockfiles, so running it against the shared `~/.cache` store deletes
+entries other projects still need.
+`gc` keeps everything a given lockfile records and deletes the rest;
+`--dry-run` reports without deleting. The store is a cache: evaluation
+never reads it as an input, and a write failure is the informational
+W018 while the tree and exit status stay unchanged. It contains raw include bytes (including secrets), so
+point it at a directory with the source's confidentiality.
+
 ## Playground loop
 
 `playground/loop/` runs the full agent loop against the shipped CLI:

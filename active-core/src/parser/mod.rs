@@ -200,6 +200,10 @@ pub struct ParseOptions {
     /// recorded in include pins, so a lockfile stays valid when the tree
     /// moves (L-P03). `None` records canonical absolute paths.
     pub root_dir: Option<std::path::PathBuf>,
+    /// Content-addressed store root (L-P04). When set, every include's
+    /// parsed bytes are stored by SHA-256. A store failure is W018 and
+    /// never changes the evaluated tree.
+    pub include_store: Option<std::path::PathBuf>,
 }
 
 /// Default parse input cap: 4 MiB (LANG-C-003). Above any real
@@ -262,6 +266,7 @@ impl Default for ParseOptions {
             include_loader: None,
             include_lock: None,
             root_dir: None,
+            include_store: None,
         }
     }
 }
@@ -280,6 +285,7 @@ impl ParseOptions {
             include_loader: None,
             include_lock: None,
             root_dir: None,
+            include_store: None,
         }
     }
 
@@ -296,6 +302,7 @@ impl ParseOptions {
             include_loader: None,
             include_lock: None,
             root_dir: None,
+            include_store: None,
         }
     }
 }
@@ -1343,6 +1350,21 @@ impl Parser {
     fn warn_at(&mut self, code: &str, message: impl Into<String>, tok: &Token) {
         self.push_heal(Diagnostic {
             severity: Severity::Warning,
+            code: code.into(),
+            message: message.into(),
+            path: None,
+            span: Some(span_of(tok)),
+            repair: None,
+            confidence: 1.0,
+            file: self.current_file_name(),
+        });
+    }
+
+    /// Informational note: reported with the healing diagnostics, never
+    /// fatal under the strict warning policy.
+    fn note_at(&mut self, code: &str, message: impl Into<String>, tok: &Token) {
+        self.push_heal(Diagnostic {
+            severity: Severity::Info,
             code: code.into(),
             message: message.into(),
             path: None,
@@ -2606,6 +2628,15 @@ impl Parser {
                 }
             }
             None => {}
+        }
+        // L-P04: deduplicate the include graph at the storage layer. A
+        // cache failure is informational: the tree and hashes are
+        // unchanged.
+        if let Some(root) = self.options.include_store.clone() {
+            let store = crate::store::Store::new(root);
+            if let Err(e) = store.put_hashed(&actual_hash, src.as_bytes()) {
+                self.note_at("W018", format!("include store write failed: {e}"), &inc.tok);
+            }
         }
         let pin = crate::ir::IncludePin {
             as_written: inc.path.clone(),

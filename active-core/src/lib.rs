@@ -19,6 +19,7 @@ pub mod parser;
 pub mod provenance;
 pub mod secret;
 pub mod sign;
+pub mod store;
 pub mod trace;
 pub mod types;
 pub mod validate;

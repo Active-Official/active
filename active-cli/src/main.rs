@@ -256,6 +256,42 @@ enum GraphQuery {
 }
 
 #[derive(Subcommand)]
+enum StoreAction {
+    /// List stored content digests
+    List {
+        /// Print a JSON array
+        #[arg(long)]
+        json: bool,
+        /// Store root (default: $ACTIVE_STORE_DIR or ~/.cache/active/store)
+        #[arg(long)]
+        store: Option<PathBuf>,
+    },
+    /// Store a file's bytes and print their SHA-256
+    Add {
+        /// File to store
+        file: PathBuf,
+        /// Store root (default: $ACTIVE_STORE_DIR or ~/.cache/active/store)
+        #[arg(long)]
+        store: Option<PathBuf>,
+    },
+    /// Delete entries not referenced by the given lockfiles
+    Gc {
+        /// Lockfile whose sha256 values are GC roots (repeatable)
+        #[arg(long = "root", required_unless_present = "all")]
+        roots: Vec<PathBuf>,
+        /// Delete every entry, including ones a lockfile still names
+        #[arg(long, conflicts_with = "roots")]
+        all: bool,
+        /// Report what would be removed without deleting
+        #[arg(long)]
+        dry_run: bool,
+        /// Store root (default: $ACTIVE_STORE_DIR or ~/.cache/active/store)
+        #[arg(long)]
+        store: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
 enum Commands {
     /// Parse and evaluate a .active file, print as JSON
     Eval {
@@ -285,6 +321,10 @@ enum Commands {
         /// a new edge by content with W017.
         #[arg(long)]
         lockfile: Option<PathBuf>,
+        /// Store every include's parsed bytes in this content-addressed
+        /// directory and deduplicate them by SHA-256 (L-P04)
+        #[arg(long)]
+        store: Option<PathBuf>,
         /// Select a profile by name, overriding the active_profile key
         #[arg(long)]
         profile: Option<String>,
@@ -767,6 +807,10 @@ enum Commands {
         /// Write lockfile here instead of stdout
         #[arg(short, long)]
         output: Option<PathBuf>,
+        /// Store every include's parsed bytes in this content-addressed
+        /// directory and deduplicate them by SHA-256 (L-P04)
+        #[arg(long)]
+        store: Option<PathBuf>,
         /// Enable medium-confidence healing repairs (resilient mode)
         #[arg(long)]
         resilient: bool,
@@ -789,6 +833,11 @@ enum Commands {
         reader_version: Option<String>,
         #[command(flatten)]
         budget: BudgetArgs,
+    },
+    /// Manage the content-addressed include store (L-P04)
+    Store {
+        #[command(subcommand)]
+        action: StoreAction,
     },
     /// Generate an Ed25519 key pair for overlay signing
     Keygen {
@@ -1438,9 +1487,11 @@ fn options_with_lock(
     resilient: bool,
     allow_parent_escapes: bool,
     lock: Option<active_core::provenance::IncludeLock>,
+    store: Option<PathBuf>,
 ) -> ParseOptions {
     let mut options = options(resilient, allow_parent_escapes);
     options.include_lock = lock;
+    options.include_store = store;
     options
 }
 
@@ -1540,7 +1591,7 @@ fn parse_input(
         Some(_) => sibling_include_lock(file)?,
         None => None,
     };
-    let options = options_with_lock(resilient, allow_parent_escapes, lock);
+    let options = options_with_lock(resilient, allow_parent_escapes, lock, None);
     let result = match trust {
         Some(keys) => active_core::parse_file_with_trust(file, options, keys),
         None => parse_file(file, options),
@@ -1563,13 +1614,14 @@ fn parse_input_unpinned(
     resilient: bool,
     allow_parent_escapes: bool,
     trust: &Option<active_core::sign::TrustedKeys>,
+    store: Option<PathBuf>,
 ) -> anyhow::Result<active_core::Module> {
     let name = file.to_string_lossy().to_string();
+    let mut options = options(resilient, allow_parent_escapes);
+    options.include_store = store;
     let result = match trust {
-        Some(keys) => {
-            active_core::parse_file_with_trust(file, options(resilient, allow_parent_escapes), keys)
-        }
-        None => parse_file(file, options(resilient, allow_parent_escapes)),
+        Some(keys) => active_core::parse_file_with_trust(file, options, keys),
+        None => parse_file(file, options),
     };
     result.map_err(|diags| {
         for d in &diags {
@@ -1590,8 +1642,9 @@ fn parse_input_or_diags_locked(
     allow_parent_escapes: bool,
     trust: &Option<active_core::sign::TrustedKeys>,
     lock: Option<active_core::provenance::IncludeLock>,
+    store: Option<PathBuf>,
 ) -> Result<active_core::Module, Vec<active_core::Diagnostic>> {
-    let options = options_with_lock(resilient, allow_parent_escapes, lock);
+    let options = options_with_lock(resilient, allow_parent_escapes, lock, store);
     match trust {
         Some(keys) => active_core::parse_file_with_trust(file, options, keys),
         None => parse_file(file, options),
@@ -2380,6 +2433,7 @@ fn main() -> anyhow::Result<()> {
             allow_parent_escapes,
             trust_keys,
             lockfile,
+            store,
             profile,
             trace,
             materialise_blobs,
@@ -2407,6 +2461,7 @@ fn main() -> anyhow::Result<()> {
                 allow_parent_escapes,
                 &trust,
                 include_lock,
+                store,
             ) {
                 Ok(module) => module,
                 Err(diags) => {
@@ -3251,7 +3306,7 @@ fn main() -> anyhow::Result<()> {
                 // includes resolve exactly as `active repair` resolves
                 // them (spec/viz.md §3).
                 if trust.is_some() {
-                    parse_input_unpinned(&from, false, allow_parent_escapes, &trust)?;
+                    parse_input_unpinned(&from, false, allow_parent_escapes, &trust, None)?;
                 }
                 let source = std::fs::read_to_string(&from)
                     .map_err(|e| anyhow::anyhow!("cannot read source: {e}"))?;
@@ -3571,7 +3626,7 @@ fn main() -> anyhow::Result<()> {
                 // Gate the original file through trust verification
                 // before planning: untrusted includes fail here, the
                 // same as every other tool path.
-                parse_input_unpinned(&from, false, allow_parent_escapes, &trust)?;
+                parse_input_unpinned(&from, false, allow_parent_escapes, &trust, None)?;
             }
             let mut eng = engine(false, &profile, budget.resolve()?, reader_version.as_deref());
             eng.materialise_blobs = false;
@@ -3794,6 +3849,7 @@ fn main() -> anyhow::Result<()> {
         Commands::Lock {
             file,
             output,
+            store,
             resilient,
             allow_parent_escapes,
             trust_keys,
@@ -3803,7 +3859,7 @@ fn main() -> anyhow::Result<()> {
         } => {
             let name = file.to_string_lossy().to_string();
             let trust = load_trust(&trust_keys)?;
-            let module = parse_input_unpinned(&file, resilient, allow_parent_escapes, &trust)?;
+            let module = parse_input_unpinned(&file, resilient, allow_parent_escapes, &trust, store)?;
             let engine = engine(resilient, &profile, budget.resolve()?, reader_version.as_deref());
             let (value, diags, seeds) = engine
                 .evaluate_with_seeds(&module)
@@ -3889,6 +3945,106 @@ fn main() -> anyhow::Result<()> {
             }
             if had_failure(&diags, resilient) {
                 std::process::exit(1);
+            }
+        }
+        Commands::Store { action } => {
+            let resolve_root = |explicit: Option<PathBuf>| -> anyhow::Result<PathBuf> {
+                explicit
+                    .or_else(active_core::store::Store::default_root)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "no store directory: pass --store or set {}",
+                            active_core::store::ENV_STORE_DIR
+                        )
+                    })
+            };
+            match action {
+                StoreAction::Add { file, store } => {
+                    let meta = std::fs::metadata(&file).map_err(|e| {
+                        anyhow::anyhow!("cannot read {}: {e}", file.display())
+                    })?;
+                    if !meta.is_file() {
+                        anyhow::bail!("{} is not a regular file", file.display());
+                    }
+                    if meta.len() > active_core::store::MAX_ENTRY_BYTES {
+                        anyhow::bail!(
+                            "{} is {} bytes; the store limit is {}",
+                            file.display(),
+                            meta.len(),
+                            active_core::store::MAX_ENTRY_BYTES
+                        );
+                    }
+                    let bytes = std::fs::read(&file)
+                        .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", file.display()))?;
+                    let store = active_core::store::Store::new(resolve_root(store)?);
+                    let hash = store.put(&bytes).map_err(|e| anyhow::anyhow!("{e}"))?;
+                    outln!("{hash}");
+                }
+                StoreAction::List { json, store } => {
+                    let store = active_core::store::Store::new(resolve_root(store)?);
+                    let hashes = store.hashes().map_err(|e| anyhow::anyhow!("{e}"))?;
+                    if json {
+                        outln!(
+                            "{}",
+                            serde_json::to_string_pretty(&hashes)
+                                .map_err(|e| anyhow::anyhow!("{e}"))?
+                        );
+                    } else {
+                        for hash in hashes {
+                            outln!("{hash}");
+                        }
+                    }
+                }
+                StoreAction::Gc {
+                    roots,
+                    all,
+                    dry_run,
+                    store,
+                } => {
+                    let store = active_core::store::Store::new(resolve_root(store)?);
+                    let mut keep = std::collections::HashSet::new();
+                    if !all {
+                        for path in roots {
+                            let meta = std::fs::metadata(&path).map_err(|e| {
+                                anyhow::anyhow!("cannot read root {}: {e}", path.display())
+                            })?;
+                            if !meta.is_file() {
+                                anyhow::bail!("{} is not a regular file", path.display());
+                            }
+                            if meta.len() > active_core::store::MAX_ROOT_BYTES {
+                                anyhow::bail!(
+                                    "{} exceeds the {} byte root limit",
+                                    path.display(),
+                                    active_core::store::MAX_ROOT_BYTES
+                                );
+                            }
+                            let text = std::fs::read_to_string(&path).map_err(|e| {
+                                anyhow::anyhow!("cannot read root {}: {e}", path.display())
+                            })?;
+                            let found =
+                                active_core::store::roots_from_lockfile(&text).map_err(|e| {
+                                    anyhow::anyhow!("{}: {e}", path.display())
+                                })?;
+                            keep.extend(found);
+                        }
+                    }
+                    let removed = store
+                        .gc(&keep, dry_run)
+                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    for hash in &removed {
+                        if dry_run {
+                            outln!("would remove {hash}");
+                        } else {
+                            outln!("removed {hash}");
+                        }
+                    }
+                    outln!(
+                        "{} entr{} {}",
+                        removed.len(),
+                        if removed.len() == 1 { "y" } else { "ies" },
+                        if dry_run { "would be removed" } else { "removed" }
+                    );
+                }
             }
         }
         Commands::Keygen { out } => {

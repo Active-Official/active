@@ -213,6 +213,44 @@ Resolution order and outcomes, per include:
 is one of `inline`, `lock-path`, `lock-content`, `unpinned`. The receipt
 therefore shows what was verified, not merely what was read.
 
+### 4b. Content-addressed include store (L-P04)
+
+The store is an optional local cache keyed by include content:
+
+- Root: `$ACTIVE_STORE_DIR`, else `~/.cache/active/store` (`%USERPROFILE%`
+  on Windows; `~` is not shell-expanded by the CLI). These defaults apply
+  to the `active store` subcommands; `eval` and `lock` require an
+  explicit `--store <dir>`. An empty variable is ignored (it never
+  falls back to the cwd); an explicitly empty root is refused.
+- Layout: `<root>/<sha256-hex>` holds one immutable file with the source
+  bytes read. The root is created `0700` on Unix; entries are written
+  through a private `0600` temp file, fsynced, made `0400`, then renamed
+  into place. Windows uses inherited ACLs plus the read-only attribute.
+  The root is created or re-restricted `0700` on Unix; a root that is a
+  symlink or a non-directory is refused. Entry names that are symlinks,
+  hard links, or special files are never listed, read, or chmodded.
+  An existing entry is never rewritten unless its content no longer
+  matches its name, in which case the damaged entry is repaired.
+- `active eval --store <dir>` and `active lock --store <dir>` publish
+  every include's source bytes (the same bytes that were verified). A
+  store failure is W018, an informational diagnostic: evaluation
+  continues with the bytes already read, the value tree and content
+  hashes are unchanged, and no exit status changes.
+- `active store add <file> [--store <dir>]` publishes one file and
+  prints its digest. `active store list [--json]` lists complete
+  (lowercase, regular, non-symlink) entry names.
+- `active store gc --root <lockfile>... [--dry-run]` deletes every entry
+  not named by a `sha256` in the given lockfiles (main, includes, and
+  identity pins alike), using the canonical lock parser. A malformed,
+  truncated, or hashless lockfile fails closed. `--all` is the explicit
+  full wipe and may not be combined with roots. `gc` is not safe
+  concurrently with `put`: run it between evaluations.
+- The store never feeds evaluation on its own: includes still resolve
+  from their declared paths and are verified against their pins. It
+  deduplicates repeated includes of identical bytes at the storage layer
+  and gives a lockfile's hashes a local address; it does not change
+  determinism, content hashes, or budgets.
+
 ## 5. Threat model notes (for C-052)
 
 - The manifest records plain env values verbatim: authors must
@@ -250,4 +288,8 @@ therefore shows what was verified, not merely what was read.
   admission, missing pin under enforce (E041) and warn (W017), both pins
   enforced together, audit receipt sources, and conformance vectors
   `0037`/`0038`.
+- Store: put/get idempotence and read-only entries; GC keeps lockfile
+  roots and removes the rest; dry-run touches nothing; malformed roots
+  fail closed; parser publishes parsed bytes; a failing store yields
+  W018 without changing the tree; repeated includes store once.
 - CLI tests for `ACTIVE lock` incl. exit codes and `-o`.

@@ -998,3 +998,46 @@ fn nested_loader_includes_keep_the_host_lexical_frame() {
     assert_eq!(module.include_pins.len(), 2);
     assert_eq!(module.include_pins[1].as_written, "b.active");
 }
+
+#[test]
+fn include_store_records_each_parsed_include_once() {
+    let root = std::env::temp_dir().join(format!("active_inc_store_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let options = ParseOptions {
+        include_store: Some(root.clone()),
+        ..parse_options()
+    };
+    parse_file(&fixture("main_inline_pin.active"), options).expect("parse");
+    let store = active_core::store::Store::new(root.clone());
+    let hashes = store.hashes().expect("hashes");
+    assert_eq!(hashes, vec![PINNED_HASH.to_string()]);
+    assert_eq!(
+        store.get(PINNED_HASH).expect("get").as_deref(),
+        Some(b"pinned_value = 7\n".as_slice())
+    );
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn a_store_failure_is_w018_and_never_changes_the_tree() {
+    let dir = std::env::temp_dir().join(format!("active_inc_store_bad_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // A file where the store directory should be: every write fails.
+    let not_a_dir = dir.join("not-a-dir");
+    std::fs::write(&not_a_dir, "occupied").unwrap();
+    let options = ParseOptions {
+        include_store: Some(not_a_dir),
+        ..parse_options()
+    };
+    let module = parse_file(&fixture("main_inline_pin.active"), options).expect("parse");
+    assert!(
+        module
+            .healing
+            .iter()
+            .any(|d| d.code == "W018" && d.message.contains("store write failed")),
+        "W018 expected, got {:?}",
+        module.healing
+    );
+    assert_eq!(eval_seen(&module)["pinned_value"], 7);
+    std::fs::remove_dir_all(&dir).ok();
+}

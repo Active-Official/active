@@ -23,6 +23,18 @@ Documents may also carry the pin themselves:
 `include_resolutions` with the source of every include. Lockfile v1
 remains readable; re-run `active lock` to upgrade.
 
+### L-P04: content-addressed include store
+
+`--store <dir>` on `active eval` and `active lock` publishes every
+include's source bytes under `<dir>/<sha256>` as an immutable, read-only
+entry, deduplicating repeated includes at the storage layer. `active
+store add|list|gc` manages the cache; `gc --root <lockfile>` keeps every
+digest a lockfile records and deletes the rest (`--dry-run` reports
+only). The store is a cache: evaluation still resolves from the declared
+paths, and a write failure is the informational W018 with an unchanged tree
+and exit status. Root defaults
+to `$ACTIVE_STORE_DIR` or `~/.cache/active/store`.
+
 ### Master Program (CA, SC, R, PE, M, GQ, CAP, CG, D, T2, AK, AUD/OBS)
 
 Additive surface, no version bump: content-addressed Blob values with

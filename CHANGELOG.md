@@ -10,6 +10,36 @@ standalone Infinity codec).
 
 ## [Unreleased]
 
+### L-T06: envelope v2 with receipts and sender identity
+
+The tool-result envelope gains major 2 (majors 1 and 2 are accepted;
+unknown majors stay E033). A v2 envelope carries:
+
+- `receipt` (required): the audit record for the attempt - `outcome`
+  (`clean`/`failed`), `failure_class` (required when failed), diagnostics,
+  the bound result, schema version, profile, mode, resolved budget, and
+  include resolutions. A missing or malformed receipt is E042, so a
+  parse/budget failure is exchangeable instead of an empty envelope.
+- `sender` (optional): `{ id, key?, signature? }`. Key and signature are
+  given together; the 128-hex Ed25519 signature covers the length-prefixed
+  sender id, key id, envelope version, bound result, and canonical receipt
+  digest (`envelope::sign_sender` / `verify_sender`). A malformed
+  sender/result is E043; signature validity is a receiver-policy check.
+- `result` binding: v2 hashes the key-sorted canonical tuple of payload +
+  schema version + profile + resolved budget limits + mode + capability
+  (`envelope::bound_content_hash`), closing the v1 gap where the hash
+  bound only the value tree (LANG-F-009). A clean v2 result is required,
+  `result` and `receipt.result` must be equal, and the post-evaluation
+  check (`check_evaluated`, E044) catches profile/patch rewrites and
+  payload substitution. V1 hashes are unchanged.
+- Emitter: `active eval --envelope <out.json>` writes the v2 shape for a
+  clean run and for parse/budget/validation failures (`payload = null`,
+  failed receipt with its class).
+
+Spec `tool-result-envelope.md` and `agent-interchange-profile.md`,
+diagnostics E042/E043/E044, the explainer, conformance vectors 0039/0040,
+and the core gate/helpers are updated in the same change.
+
 ### L-P03/L-P06: hash-pinned includes
 
 `active lock` writes lockfile version 2 with `provenance.include_pins`

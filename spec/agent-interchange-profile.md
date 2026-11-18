@@ -49,20 +49,26 @@ envelope = {
 }
 ```
 
-- `version` — envelope schema version (major.minor.patch).
+- `version` — envelope schema version (major.minor.patch); majors 1 and
+  2 are implemented (v2 adds `receipt` and `sender`).
 - `capability` — the sandbox profile the sender evaluated under
   (`strict`/`data`/`agent`/`trusted`).
 - `tainted` — whether the payload structurally contains secrets.
 - `payload` — value tree or content-addressed references.
 - `budget` — optional report (usage and headroom by limit).
-- `result` — content hash of the redacted payload. `result` binds the
-  payload value tree only: it does not bind the schema version, the profile,
-  the budget, or the mode semantics. Receipt comparison must compare the
+- `receipt` — v2 required audit record (outcome, failure class
+  [required when failed], diagnostics, result, schema version, profile,
+  mode, resolved budget); it is present for failed attempts too (L-T06).
+- `sender` — v2 optional identity `{ id, key?, signature? }`; a present
+  key/signature pair is Ed25519 over the bound result hash plus the
+  canonical receipt digest.
+- `result` — content hash of the redacted payload. In v1 it binds the
+  payload value tree only, so receipt comparison must compare the
   audit-trail fields (schema version, profile, budget, mode) alongside
-  `result`; comparing `result` alone over-trusts the receipt (LANG-F-009).
+  it (LANG-F-009). In v2 it binds payload + schema version + profile +
+  resolved budget + mode + capability (`envelope::bound_content_hash`);
+  a clean v2 result is required and must equal `receipt.result`.
 - `diagnostics` — stable codes and paths; never values.
-- `result` — optional content hash of the redacted payload (the audit
-  trail's hash, so replay and audit agree).
 
 ## 3b. Interchange-safe documents (LANG-F-007)
 
@@ -84,7 +90,8 @@ carries no `envelope` table is not an interchange document and is unaffected.
 The receiver gate runs before evaluation on the default path: unknown
 envelope major, capabilities outside the host's advertised set, and
 missing/unparseable `version` are rejected. It is part of evaluation
-(`Engine::envelope_gate`, default-on with the shipped policy: major 1
+(`Engine::envelope_gate`, default-on with the shipped policy: majors 1
+and 2
 and every tool this library ships), refuses with `E033` (version) and
 `E034` (capabilities), and is fatal in strict and resilient modes alike.
 `tainted` is cross-checked against the evaluated payload's structural taint:

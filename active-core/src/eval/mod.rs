@@ -477,6 +477,10 @@ pub struct Engine {
     /// receiver must do only for documents it already trusts (the gate is
     /// the negotiation layer, not a validation nicety).
     pub envelope_gate: Option<crate::envelope::EnvelopeGate>,
+    /// Trusted keys for v2 sender signatures (L-T06 review H4). When a
+    /// sender carries a key/signature and this is `None`, evaluation
+    /// refuses (E045): an unverifiable signature is never accepted.
+    pub envelope_trust: Option<crate::sign::TrustedKeys>,
 }
 
 impl Default for Engine {
@@ -1694,6 +1698,7 @@ impl Engine {
             taint_probe: false,
             blob_salt: None,
             envelope_gate: Some(crate::envelope::EnvelopeGate::shipped()),
+            envelope_trust: None,
         }
     }
 
@@ -1718,7 +1723,9 @@ impl Engine {
         if matches!(
             crate::envelope::sender_taint(module),
             crate::envelope::TaintClaim::Claim(_)
-        ) {
+        ) || module.mode == Mode::Data
+            || !module.patches.is_empty()
+        {
             let mut seeds = SecretRedactor::new();
             return self.evaluate_inner(module, None, None, Some(&mut seeds));
         }
@@ -2680,6 +2687,20 @@ impl Engine {
             .iter()
             .any(|node| matches!(node, crate::ir::Node::Secret { .. }));
         let mut material_profile: Option<SecretProfile> = None;
+        // Build the material profile whenever the document can carry
+        // material, even if the SOURCE has no envelope: a profile/patch
+        // can inject one, and the post-check hashes/verifies its payload
+        // (review H-02).
+        if has_secret || !module.profiles.is_empty() {
+            let _ = material_profile.get_or_insert_with(|| {
+                SecretProfile::with_context(
+                    module,
+                    self.profile_override.as_deref(),
+                    Some(&self.env),
+                    seeds.as_deref(),
+                )
+            });
+        }
         let taint_error = match crate::envelope::sender_taint(module) {
             TaintClaim::NoEnvelope => None,
             TaintClaim::Missing => Some(
@@ -2696,25 +2717,25 @@ impl Engine {
                         .to_string(),
                 ),
                 Some(payload) => {
+                    if has_secret || !module.profiles.is_empty() {
+                        let _ = material_profile.get_or_insert_with(|| {
+                            SecretProfile::with_context(
+                                module,
+                                self.profile_override.as_deref(),
+                                Some(&self.env),
+                                seeds.as_deref(),
+                            )
+                        });
+                    }
                     let actual = value_has_secret(payload)
-                        || (has_secret || !module.profiles.is_empty()) && {
-                            let profile = material_profile.get_or_insert_with(|| {
-                                SecretProfile::with_context(
-                                    module,
-                                    self.profile_override.as_deref(),
-                                    Some(&self.env),
-                                    seeds.as_deref(),
-                                )
-                            });
+                        || material_profile.as_ref().is_some_and(|profile| {
                             // Both sources count: material content
                             // anywhere in the payload (text, a blob's
                             // media type or retained bytes), and a path
-                            // the export redacts whatever kind sits there
-                            // (a profile override inherits materiality,
-                            // so a number can occupy a material path).
+                            // the export redacts whatever kind sits there.
                             payload_has_material_content(payload, profile)
                                 || payload_has_material_path(payload, profile, "envelope.payload")
-                        };
+                        });
                     if claimed == actual {
                         None
                     } else {
@@ -2738,8 +2759,43 @@ impl Engine {
                 file: None,
             });
             if !self.resilient {
+                // Redact carried schema/annotation diagnostics before the
+                // early return; the taint refusal must not leak material
+                // through an adjacent message (review M8).
+                if let Some(profile) = &material_profile {
+                    for diagnostic in &mut diagnostics {
+                        if let Some(path) = &diagnostic.path {
+                            diagnostic.path = Some(profile.redact_path(path));
+                        }
+                        if let Some(text) = profile.redact_text(&diagnostic.message) {
+                            diagnostic.message = text;
+                        }
+                    }
+                }
                 return Err(EvalError::ValidationFailed { diagnostics });
             }
+        }
+        // Post-transform envelope verification (L-T06 review C1/C2):
+        // profiles and patches can rewrite or inject `envelope`, so the
+        // evaluated tree is checked again. Failures are fatal in both
+        // modes: a receiver must not act on an unverifiable envelope.
+        if let Some(gate) = &self.envelope_gate {
+            let effective_profile = self.profile_override.clone().or_else(|| match &result {
+                Value::Table(map) => match map.get("active_profile") {
+                    Some(Value::String(name)) => Some(name.clone()),
+                    _ => None,
+                },
+                _ => None,
+            });
+            crate::envelope::check_evaluated(
+                &result,
+                module,
+                gate,
+                &budget,
+                effective_profile.as_deref(),
+                material_profile.as_ref(),
+                self.envelope_trust.as_ref(),
+            )?;
         }
         // Closing wall-clock sample: small documents take zero walk
         // samples, so the deadline is checked once more at the end.

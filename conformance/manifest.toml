@@ -245,3 +245,15 @@ reason = "include-loader callback absent from shim v1 (F-016 native only)"
 [[pins]]
 id = "0038-include-inline-pin-mismatch"
 reason = "include-loader callback absent from shim v1 (F-016 native only)"
+
+# L-T06: v2 envelope with a receipt and a sender identity is accepted.
+[[cases]]
+id = "0039-envelope-v2"
+file = "cases/0039-envelope-v2.active"
+kind = "clean"
+
+# A v2 envelope without its required receipt is refused before evaluation.
+[[cases]]
+id = "0040-envelope-v2-no-receipt"
+file = "cases/0040-envelope-v2-no-receipt.active"
+kind = "refused"

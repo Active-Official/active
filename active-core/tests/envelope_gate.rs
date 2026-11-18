@@ -235,7 +235,7 @@ fn a_v1_envelope_evaluates_cleanly() {
 
 #[test]
 fn unknown_envelope_majors_are_refused_before_evaluation() {
-    for version in ["2.0.0", "9.9.9", "0.1.0", "42.0.0"] {
+    for version in ["3.0.0", "9.9.9", "0.1.0", "42.0.0"] {
         let err = refusal(&envelope(version));
         assert_eq!(codes(&err), ["E033"], "{version}: {err:?}");
         assert!(
@@ -244,12 +244,12 @@ fn unknown_envelope_majors_are_refused_before_evaluation() {
         );
     }
     // The message names the supported majors, so a sender can act on it.
-    let err = refusal(&envelope("2.0.0"));
+    let err = refusal(&envelope("3.0.0"));
     let EvalError::ValidationFailed { diagnostics } = &err else {
         unreachable!()
     };
     assert!(
-        diagnostics[0].message.contains("supported: 1"),
+        diagnostics[0].message.contains("supported: 1, 2"),
         "{}",
         diagnostics[0].message
     );
@@ -290,8 +290,9 @@ fn unsupported_capabilities_are_refused_and_offered_ones_pass() {
         unreachable!()
     };
     assert!(
-        diagnostics[0].message.contains("teleport"),
-        "{}",
+        diagnostics[0].message.contains("not offered")
+            && !diagnostics[0].message.contains("teleport"),
+        "the capability name must not be echoed: {}",
         diagnostics[0].message
     );
 
@@ -314,8 +315,11 @@ fn refused_capabilities_are_reported_once_each_in_document_order() {
         unreachable!()
     };
     assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
-    assert!(diagnostics[0].message.contains("zeta"));
-    assert!(diagnostics[1].message.contains("alpha"));
+    for diagnostic in diagnostics {
+        assert!(diagnostic.message.contains("not offered"));
+        assert!(!diagnostic.message.contains("zeta"));
+        assert!(!diagnostic.message.contains("alpha"));
+    }
 }
 
 #[test]
@@ -419,4 +423,102 @@ fn a_cyclic_version_alias_is_refused_without_recursing() {
         .evaluate(&module)
         .expect_err("a cyclic version cannot be negotiated");
     assert_eq!(codes(&err), ["E033"], "{err:?}");
+}
+
+#[test]
+fn a_patch_cannot_rewrite_the_envelope_after_the_gate() {
+    // The pre-gate sees 1.0.0; @patch rewrites the version. The
+    // post-evaluation check must refuse it (L-T06 review C1).
+    let src = "active_mode = \"data\"\nenvelope = { version = \"1.0.0\", payload = { ok = true } }\n@patch(\"envelope.version\", \"9.9.9\")\n";
+    let module = parse(src, "gate").expect("parse");
+    let err = Engine::new()
+        .evaluate(&module)
+        .expect_err("a patched envelope version must not pass");
+    let text = format!("{err:?}");
+    assert!(
+        text.contains("E033") || text.contains("E019") || text.contains("E027"),
+        "expected a fail-closed refusal, got {text}"
+    );
+}
+
+#[test]
+fn a_patch_cannot_remove_a_v2_receipt() {
+    let bound = "sha256:cfd046a5febb85c8546852b2f25585a22d0e5746f22377225d0f0f6408f39f25";
+    let src = format!(
+        "active_mode = \"data\"\nenvelope = {{ version = \"2.0.0\", tainted = false, payload = {{ ok = true }}, receipt = {{ outcome = \"clean\", result = \"{bound}\" }}, result = \"{bound}\" }}\n@remove(\"envelope.receipt\")\n"
+    );
+    let module = parse(&src, "gate").expect("parse");
+    let err = Engine::new()
+        .evaluate(&module)
+        .expect_err("patched-out receipt must not pass");
+    let text = format!("{err:?}");
+    assert!(
+        text.contains("E042") || text.contains("E019") || text.contains("E027"),
+        "expected a fail-closed refusal, got {text}"
+    );
+}
+
+#[test]
+fn a_profile_cannot_inject_an_envelope_after_the_gate() {
+    let src = "active_mode = \"data\"\nactive_profile = \"prod\"\nprofile \"prod\" { envelope = { version = \"9.9.9\" } }\nx = 1\n";
+    let module = parse(src, "gate").expect("parse");
+    let err = Engine::new()
+        .evaluate(&module)
+        .expect_err("profile-injected envelope must not pass");
+    let text = format!("{err:?}");
+    assert!(
+        text.contains("E033") || text.contains("E027"),
+        "expected a fail-closed refusal, got {text}"
+    );
+}
+
+#[test]
+fn a_tampered_payload_with_a_stale_result_is_refused() {
+    // The signature/result may be genuine for the original payload, but
+    // the payload was changed: the post-evaluation bound check must catch
+    // it (L-T06 review C2).
+    let stale = "sha256:cfd046a5febb85c8546852b2f25585a22d0e5746f22377225d0f0f6408f39f25";
+    let src = format!(
+        "active_mode = \"data\"\nenvelope = {{ version = \"2.0.0\", capability = \"agent\", tainted = false, payload = {{ ok = true, port = 9090 }}, receipt = {{ outcome = \"clean\", mode = \"data\", result = \"{stale}\", budget = {{ nodes = 100000, depth = 256, array_len = 100000, keys = 100000, wall_ms = 100, value_size = 10000000, total_size = 100000000 }} }}, result = \"{stale}\" }}\n"
+    );
+    let module = parse(&src, "gate").expect("parse");
+    let err = Engine::new()
+        .evaluate(&module)
+        .expect_err("a stale result must not verify");
+    let text = format!("{err:?}");
+    assert!(text.contains("E044"), "expected E044, got {text}");
+}
+
+#[test]
+fn gate_diagnostics_never_echo_document_text() {
+    // The version/capability values are document data and can be
+    // secret-derived; E033/E034 use fixed wording (L-T06 review C3).
+    let cases = [
+        (
+            "version",
+            "active_mode = \"data\"\nkey = \"s3cr3t-version\"\ntoken = secret(key)\nenvelope = { version = key }\n",
+            "s3cr3t-version",
+        ),
+        (
+            "capability",
+            "active_mode = \"data\"\ntoken = secret(\"s3cr3t-capability\")\nactive_capabilities = [\"s3cr3t-capability\"]\nx = 1\n",
+            "s3cr3t-capability",
+        ),
+    ];
+    for (label, src, material) in cases {
+        let err = refusal(src);
+        let text = format!("{err:?}");
+        assert!(!text.contains(material), "{label}: material leaked: {text}");
+        assert!(
+            text.contains("E033") || text.contains("E034"),
+            "{label}: expected a gate refusal, got {text}"
+        );
+    }
+}
+
+#[test]
+fn a_v1_envelope_cannot_smuggle_v2_fields() {
+    let src = "active_mode = \"data\"\nenvelope = { version = \"1.0.0\", tainted = false, payload = { ok = true }, receipt = { outcome = \"clean\" } }\n";
+    let err = refusal(src);
+    assert!(codes(&err).iter().any(|code| code == "E033"), "{err:?}");
 }

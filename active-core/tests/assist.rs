@@ -65,9 +65,9 @@ fn explain_covers_every_documented_code() {
         "W005", "W013", "W014", "W015", "W016", "E027", "E028", "E029", "E033", "E034", "E035",
         "E036", "E037", "E038", "E039", "L017", "T008", "H005", "H006", "H008", "S001", "B001",
         "B002", "B003", "B004", "B005", "C040", "C041", "C042", "C043", "C044", "E040", "E041",
-        "W017", "W018",
+        "E042", "E043", "E044", "E045", "W017", "W018",
     ];
-    assert_eq!(covered.len(), 57);
+    assert_eq!(covered.len(), 61);
     for code in covered {
         let g = explain_code(code);
         assert!(

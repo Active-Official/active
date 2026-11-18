@@ -1,0 +1,30 @@
+{
+  "active_mode": "data",
+  "envelope": {
+    "version": "2.0.0",
+    "capability": "agent",
+    "tainted": false,
+    "payload": {
+      "ok": true,
+      "port": 8080
+    },
+    "receipt": {
+      "outcome": "clean",
+      "result": "sha256:96b0634c75260144b34ae641a7d11a0a054a9edb6978a7e5bc097dc6ab6674a4",
+      "mode": "data",
+      "budget": {
+        "nodes": 100000,
+        "depth": 256,
+        "array_len": 100000,
+        "keys": 100000,
+        "wall_ms": 100,
+        "value_size": 10000000,
+        "total_size": 100000000
+      }
+    },
+    "sender": {
+      "id": "agent://example"
+    },
+    "result": "sha256:96b0634c75260144b34ae641a7d11a0a054a9edb6978a7e5bc097dc6ab6674a4"
+  }
+}

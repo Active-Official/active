@@ -6155,7 +6155,7 @@ fn test_command_skips_only_the_manifest_owned_conformance_tree() {
     std::fs::create_dir_all(&nested).expect("nested");
     canonical(
         &nested.join("bad.active"),
-        "schema:\n  port = Int(min = 1)\n\nport = 0\n",
+        "active_mode = \"data\"\nschema:\n  port = Int(min = 1)\n\nport = 0\n",
     );
     let out = active().arg("test").arg(&dir).output().expect("run active");
     assert!(
@@ -6185,4 +6185,63 @@ fn test_command_skips_only_the_manifest_owned_conformance_tree() {
         "{}",
         String::from_utf8_lossy(&out.stdout)
     );
+}
+
+#[test]
+fn eval_envelope_emits_v2_for_success_and_failures() {
+    let dir = pin_dir("envelope-emit");
+    let good = dir.join("good.active");
+    let bad_schema = dir.join("bad-schema.active");
+    let bad_parse = dir.join("bad-parse.active");
+    canonical(&good, "active_mode = \"data\"\nport = 8080\n");
+    canonical(&bad_schema, "schema:\n  port = Int(min = 1)\n\nport = 0\n");
+    std::fs::write(&bad_parse, "port = [\n").expect("write");
+    let out_json = dir.join("good.json");
+    let out = active()
+        .args(["eval", "--envelope"])
+        .arg(&out_json)
+        .arg(&good)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&out_json).expect("read")).expect("json");
+    assert_eq!(envelope["version"], "2.0.0");
+    assert_eq!(envelope["payload"]["port"], 8080);
+    assert_eq!(envelope["receipt"]["outcome"], "clean");
+    assert!(envelope["result"]
+        .as_str()
+        .expect("result")
+        .starts_with("sha256:"));
+
+    let out = active()
+        .args(["eval", "--envelope"])
+        .arg(dir.join("schema.json"))
+        .arg(&bad_schema)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    let envelope: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("schema.json")).expect("read"))
+            .expect("json");
+    assert_eq!(envelope["receipt"]["outcome"], "failed");
+    assert_eq!(envelope["receipt"]["failure_class"], "validation");
+    assert_eq!(envelope["payload"], serde_json::Value::Null);
+
+    let out = active()
+        .args(["eval", "--envelope"])
+        .arg(dir.join("parse.json"))
+        .arg(&bad_parse)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    let envelope: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("parse.json")).expect("read"))
+            .expect("json");
+    assert_eq!(envelope["receipt"]["outcome"], "failed");
+    assert_eq!(envelope["receipt"]["failure_class"], "parse");
 }

@@ -359,6 +359,14 @@ enum Commands {
         /// itself a valid Active document, never raw values.
         #[arg(long)]
         audit_trail: Option<PathBuf>,
+        /// Write a v2 tool-result envelope (JSON) here, for success and
+        /// for failed attempts (L-T06)
+        #[arg(long)]
+        envelope: Option<PathBuf>,
+        /// Trusted keys for v2 sender signatures (E045 when a signed
+        /// envelope's key is unknown)
+        #[arg(long)]
+        envelope_trust: Option<PathBuf>,
         /// Named sandbox profile (strict|data|agent|trusted): selects
         /// the profile's budget preset and refuses to evaluate
         /// documents declaring capabilities outside the profile
@@ -1787,12 +1795,40 @@ fn source_verdict(engine: &Engine, source: &str, file: &std::path::Path) -> (boo
     (codes.is_empty(), codes)
 }
 
+/// Write a v2 tool-result envelope (L-T06): success and adversarial
+/// outcomes share the shape; a failed attempt carries `payload = null`
+/// and a receipt with its failure class.
+fn write_envelope_v2(
+    path: &std::path::Path,
+    capability: &str,
+    tainted: bool,
+    payload: serde_json::Value,
+    result: Option<&str>,
+    receipt: serde_json::Value,
+    sender: Option<&str>,
+) -> anyhow::Result<()> {
+    let mut envelope = serde_json::Map::new();
+    envelope.insert("version".into(), serde_json::json!("2.0.0"));
+    envelope.insert("capability".into(), serde_json::json!(capability));
+    envelope.insert("tainted".into(), serde_json::json!(tainted));
+    envelope.insert("payload".into(), payload);
+    envelope.insert("receipt".into(), receipt);
+    if let Some(result) = result {
+        envelope.insert("result".into(), serde_json::json!(result));
+    }
+    if let Some(sender) = sender {
+        envelope.insert("sender".into(), serde_json::json!({ "id": sender }));
+    }
+    let text = serde_json::to_string_pretty(&serde_json::Value::Object(envelope))
+        .map_err(|e| anyhow::anyhow!("cannot render envelope: {e}"))?;
+    std::fs::write(path, text).map_err(|e| anyhow::anyhow!("cannot write {}: {e}", path.display()))
+}
+
 /// Secret-redacted audit document (PROPOSAL §5.1, CHECKLIST AUD.001):
-/// counts, diagnostic codes, mode, and the content hash of the
-/// REDACTED result — itself a valid Active document, never raw values
-/// or secrets. Written on success and on validation failure alike (the
-/// outcome field tells them apart); fatal engine errors return before
-/// any value exists, so they carry no audit trail. `value` is the
+/// counts, diagnostic codes, mode, and the content hash of the REDACTED
+/// result — itself a valid Active document, never raw values or secrets.
+/// Written on success, on validation failure, and on fatal engine errors
+/// (LANG-F-010: the failure_class field names the stage). `value` is the
 /// canonical redacted full tree, already payload-free.
 #[allow(clippy::too_many_arguments)]
 fn write_audit_trail(
@@ -2459,6 +2495,8 @@ fn main() -> anyhow::Result<()> {
             materialise_blobs,
             path,
             audit_trail,
+            envelope,
+            envelope_trust,
             peer,
             sandbox,
             budget,
@@ -2500,6 +2538,23 @@ fn main() -> anyhow::Result<()> {
                             peer.as_deref(),
                         )?;
                     }
+                    if let Some(envelope_path) = envelope.as_ref() {
+                        let codes: Vec<String> =
+                            diags.iter().map(|d| d.code.clone()).collect();
+                        write_envelope_v2(
+                            envelope_path,
+                            "agent",
+                            false,
+                            serde_json::Value::Null,
+                            None,
+                            serde_json::json!({
+                                "outcome": "failed",
+                                "failure_class": "parse",
+                                "diagnostics": codes,
+                            }),
+                            peer.as_deref(),
+                        )?;
+                    }
                     return Err(anyhow::anyhow!("parse failed"));
                 }
             };
@@ -2534,15 +2589,34 @@ fn main() -> anyhow::Result<()> {
                 let refused =
                     active_core::convert::refused_capabilities(&module.capabilities, &host_tools);
                 if !refused.is_empty() {
+                    if let Some(path) = envelope.as_ref() {
+                        write_envelope_v2(
+                            path,
+                            "agent",
+                            false,
+                            serde_json::Value::Null,
+                            None,
+                            serde_json::json!({
+                                "outcome": "failed",
+                                "failure_class": "validation",
+                                "diagnostics": ["E034"],
+                            }),
+                            peer.as_deref(),
+                        )?;
+                    }
+                    // Names are document data and may be secret-derived;
+                    // the count locates the problem without echoing them.
                     anyhow::bail!(
-                        "sandbox '{sandbox}' refuses capabilities: {}",
-                        capped_list(&refused)
+                        "sandbox '{sandbox}' refuses {} declared capabilit{}",
+                        refused.len(),
+                        if refused.len() == 1 { "y" } else { "ies" }
                     );
                 }
             }
 
             let mut eng = engine(resilient, &profile, budget, reader_version.as_deref());
             eng.materialise_blobs = materialise_blobs;
+            eng.envelope_trust = load_trust(&envelope_trust)?;
             let engine = eng;
             if audit_trail.is_some() {
                 validate_audit_limits(&engine.budget)?;
@@ -2611,6 +2685,38 @@ fn main() -> anyhow::Result<()> {
                             peer.as_deref(),
                         )?;
                     }
+                    if let Some(envelope_path) = envelope.as_ref() {
+                        let class = match &e {
+                            active_core::EvalError::ValidationFailed { .. } => "validation",
+                            active_core::EvalError::BudgetExceeded { .. } => "budget",
+                            _ => "other",
+                        };
+                        let codes = match &e {
+                            active_core::EvalError::ValidationFailed { diagnostics } => diagnostics
+                                .iter()
+                                .map(|d| d.code.clone())
+                                .collect::<Vec<_>>(),
+                            active_core::EvalError::BudgetExceeded { warnings, .. } => warnings
+                                .iter()
+                                .map(|d| d.code.clone())
+                                .chain(std::iter::once(e.code().to_string()))
+                                .collect(),
+                            _ => vec![e.code().to_string()],
+                        };
+                        write_envelope_v2(
+                            envelope_path,
+                            "agent",
+                            false,
+                            serde_json::Value::Null,
+                            None,
+                            serde_json::json!({
+                                "outcome": "failed",
+                                "failure_class": class,
+                                "diagnostics": codes,
+                            }),
+                            peer.as_deref(),
+                        )?;
+                    }
                     report_eval_error(&e, &name);
                     return Err(anyhow::anyhow!("evaluation failed"));
                 }
@@ -2642,10 +2748,180 @@ fn main() -> anyhow::Result<()> {
             // is marked tainted there, so the demand fails closed with
             // B003 instead of silently dropping the payload.
             if materialise_blobs {
-                active_core::convert::require_materialised(&value).map_err(|e| {
+                if let Err(e) = active_core::convert::require_materialised(&value) {
+                    if let Some(path) = envelope.as_ref() {
+                        write_envelope_v2(
+                            path,
+                            "agent",
+                            false,
+                            serde_json::Value::Null,
+                            None,
+                            serde_json::json!({
+                                "outcome": "failed",
+                                "failure_class": "validation",
+                                "diagnostics": ["B003"],
+                            }),
+                            peer.as_deref(),
+                        )?;
+                    }
                     report_eval_error(&e, &name);
-                    anyhow::anyhow!("evaluation failed")
-                })?;
+                    return Err(anyhow::anyhow!("evaluation failed"));
+                }
+            }
+
+            if let Some(envelope_path) = envelope.as_ref() {
+                // Config documents are not interchange envelopes
+                // (spec/agent-interchange-profile.md §2 rule 1), so a
+                // tool-result envelope is refused rather than produced
+                // for a table that is ordinary data (review M-07).
+                if module.mode != active_core::Mode::Data {
+                    anyhow::bail!(
+                        "--envelope requires a Data-mode document (`active_mode = \"data\"`)"
+                    );
+                }
+                // A material profile/schema selector must not be
+                // written in cleartext (review H-04); refuse emission
+                // instead.
+                for (label, selector) in [
+                    ("profile", effective_profile.as_deref()),
+                    (
+                        "schema_version",
+                        active_core::envelope::document_schema_version(&module).as_deref(),
+                    ),
+                ] {
+                    if selector.is_some_and(|text| {
+                        profile.is_material_text(text)
+                            || profile.redact_text(text).is_some()
+                    }) {
+                        anyhow::bail!(
+                            "refusing to emit envelope: {label} is material and would leak in cleartext"
+                        );
+                    }
+                }
+                // The emitted envelope wraps the full redacted value, or
+                // that document's own `envelope.payload` when it already
+                // is an interchange document. Taint is computed from the
+                // pre-redaction payload, so a plain secret never becomes
+                // `tainted: false` (review M1).
+                let projected = path.is_some();
+                let original_payload = if projected {
+                    value.clone()
+                } else {
+                    match &value {
+                        active_core::Value::Table(root) => match root.get("envelope") {
+                            Some(active_core::Value::Table(fields)) => fields
+                                .get("payload")
+                                .cloned()
+                                .unwrap_or_else(|| value.clone()),
+                            _ => value.clone(),
+                        },
+                        _ => value.clone(),
+                    }
+                };
+                let computed_taint =
+                    active_core::envelope::payload_tainted(&original_payload);
+                let (payload, capability, claimed_tainted) = if projected {
+                    (value.clone(), "agent".to_string(), computed_taint)
+                } else {
+                    match &full_value {
+                        active_core::Value::Table(root) => match root.get("envelope") {
+                            Some(active_core::Value::Table(fields)) => (
+                                fields
+                                    .get("payload")
+                                    .cloned()
+                                    .unwrap_or(active_core::Value::Null),
+                                match fields.get("capability") {
+                                    Some(active_core::Value::String(name)) => name.clone(),
+                                    _ => "agent".to_string(),
+                                },
+                                matches!(
+                                    fields.get("tainted"),
+                                    Some(active_core::Value::Bool(true))
+                                ),
+                            ),
+                            _ => (full_value.clone(), "agent".to_string(), false),
+                        },
+                        _ => (full_value.clone(), "agent".to_string(), false),
+                    }
+                };
+                let mut tainted = claimed_tainted || computed_taint;
+                let capability_used = sandbox
+                    .clone()
+                    .unwrap_or_else(|| "agent".to_string());
+                let _ = capability;
+                let bound = active_core::envelope::bound_content_hash(
+                    &payload,
+                    active_core::envelope::document_schema_version(&module).as_deref(),
+                    effective_profile.as_deref(),
+                    &engine.budget,
+                    module.mode,
+                    Some(&capability_used),
+                    tainted,
+                );
+                let resolved = engine.budget.resolve();
+                let mut receipt = serde_json::Map::new();
+                receipt.insert("outcome".into(), serde_json::json!("clean"));
+                receipt.insert("result".into(), serde_json::json!(bound.clone()));
+                receipt.insert(
+                    "mode".into(),
+                    serde_json::json!(match module.mode {
+                        active_core::Mode::Config => "config",
+                        active_core::Mode::Data => "data",
+                    }),
+                );
+                if let Some(profile) = effective_profile.as_deref() {
+                    receipt.insert("profile".into(), serde_json::json!(profile));
+                }
+                if let Some(version) =
+                    active_core::envelope::document_schema_version(&module)
+                {
+                    receipt.insert("schema_version".into(), serde_json::json!(version));
+                }
+                receipt.insert(
+                    "budget".into(),
+                    serde_json::json!({
+                        "nodes": resolved.max_nodes,
+                        "depth": resolved.max_depth,
+                        "array_len": resolved.max_array_len,
+                        "keys": resolved.max_keys,
+                        "wall_ms": resolved.max_wall_ms,
+                        "value_size": resolved.max_value_size,
+                        "total_size": resolved.max_total_value_size,
+                    }),
+                );
+                receipt.insert(
+                    "diagnostics".into(),
+                    serde_json::json!(diags
+                        .iter()
+                        .map(|d| d.code.clone())
+                        .collect::<Vec<_>>()),
+                );
+                let mut payload_json =
+                    serde_json::from_str(&active_core::convert::value_to_pretty_json(
+                        &payload,
+                    ))
+                    .unwrap_or(serde_json::Value::Null);
+                let mut result = Some(bound.clone());
+                // Strict-mode warnings already make the process exit 1;
+                // the envelope must agree with the audit/exit verdict
+                // (review M2).
+                if had_failure(&diags, resilient) {
+                    payload_json = serde_json::Value::Null;
+                    tainted = false;
+                    result = None;
+                    receipt.insert("outcome".into(), serde_json::json!("failed"));
+                    receipt.insert("failure_class".into(), serde_json::json!("other"));
+                    receipt.remove("result");
+                }
+                write_envelope_v2(
+                    envelope_path,
+                    &capability_used,
+                    tainted,
+                    payload_json,
+                    result.as_deref(),
+                    serde_json::Value::Object(receipt),
+                    peer.as_deref(),
+                )?;
             }
 
             match format.as_str() {

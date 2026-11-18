@@ -148,6 +148,11 @@ pub enum TokenKind {
     Env,
     Secret,
     Blob,
+    /// An inline include content pin: `sha256:<64 hex>` (L-P06). Lexed as
+    /// one token so the parser never has to reassemble `sha256` + `:` +
+    /// a hex run the numeric lexer might split; carries the 64-char hex
+    /// digest only.
+    HashPin(String),
 
     // Operators
     Assign,        // =
@@ -1020,6 +1025,46 @@ impl Lexer {
                         "env" => TokenKind::Env,
                         "secret" => TokenKind::Secret,
                         "blob" => TokenKind::Blob,
+                        // L-P06: `sha256:<64 hex>` is one pin token. The
+                        // digest must be exactly 64 hex characters with
+                        // no trailing hex digit, so a lookalike string
+                        // (`sha256:abc`) stays a plain identifier and the
+                        // parser reports the malformed shape.
+                        "sha256" if self.peek() == Some(':') => {
+                            let mut probe = 1usize;
+                            let mut digest = String::with_capacity(64);
+                            let mut exact = true;
+                            for _ in 0..64 {
+                                match self.peek_ahead(probe) {
+                                    Some(ch) if ch.is_ascii_hexdigit() => {
+                                        digest.push(ch);
+                                        probe += 1;
+                                    }
+                                    _ => {
+                                        exact = false;
+                                        break;
+                                    }
+                                }
+                            }
+                            if exact
+                                && self
+                                    .peek_ahead(probe)
+                                    .is_none_or(|ch| !ch.is_ascii_hexdigit())
+                            {
+                                self.bump(); // ':'
+                                for _ in 0..64 {
+                                    self.bump();
+                                }
+                                tokens.push(self.make_token(
+                                    TokenKind::HashPin(digest.clone()),
+                                    format!("sha256:{digest}"),
+                                    l,
+                                    col,
+                                ));
+                                continue;
+                            }
+                            TokenKind::Ident
+                        }
                         _ => TokenKind::Ident,
                     };
                     tokens.push(self.make_token(kind, s, l, col));

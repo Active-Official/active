@@ -246,11 +246,11 @@ fn lockfile_round_trips_through_toml() {
         provenance,
     );
     let rendered = manifest.render();
-    assert!(rendered.contains("version = 1"), "{rendered}");
+    assert!(rendered.contains("version = 2"), "{rendered}");
     assert!(rendered.contains("content_hash = \"sha256:"), "{rendered}");
     assert!(rendered.contains("value = \"db\""), "{rendered}");
     let reparsed: toml::Value = toml::from_str(&rendered).expect("valid lockfile TOML");
-    assert_eq!(reparsed["version"], toml::Value::Integer(1));
+    assert_eq!(reparsed["version"], toml::Value::Integer(2));
     assert!(reparsed["content_hash"]
         .as_str()
         .expect("hash")
@@ -332,4 +332,85 @@ fn secret_env_hashes_are_salted_and_reproducible() {
         "unsalted digest leaked into the lockfile: {rendered}"
     );
     assert!(rendered.contains(&salt), "the salt is stored: {rendered}");
+}
+
+#[test]
+fn lockfile_verification_rejects_malformed_shapes() {
+    let dir = std::env::temp_dir().join("active-lock-verify-shapes");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let file = dir.join("doc.active");
+    std::fs::write(&file, "v = 1\n").expect("write");
+    let path = file.to_string_lossy().replace('\\', "/");
+    let hash = active_core::provenance::hash_file(file.to_str().expect("utf8")).expect("hash");
+    use active_core::provenance::verify_lockfile_files;
+    assert!(verify_lockfile_files("main = 5\n").is_err());
+    assert!(verify_lockfile_files("[main]\nsha256 = \"x\"\n").is_err());
+    assert!(verify_lockfile_files("provenance = \"oops\"\n").is_err());
+    // Hex case is irrelevant to content identity.
+    let upper = format!(
+        "[main]\npath = {path:?}\nsha256 = \"{}\"\n",
+        hash.to_uppercase()
+    );
+    verify_lockfile_files(&upper).expect("uppercase digest must verify");
+    // A lock naming another main is refused when an expectation is given.
+    let other = dir.join("other.active");
+    std::fs::write(&other, "v = 2\n").expect("write other");
+    let err = active_core::provenance::verify_lockfile_files_at(&upper, Some(&dir), Some(&other))
+        .expect_err("a foreign main must be refused");
+    assert!(err.contains("lockfile is for"), "{err}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn sibling_lock_scope_refuses_paths_outside_the_tree() {
+    let dir = std::env::temp_dir().join("active-lock-scope-inside");
+    let outside = std::env::temp_dir().join("active-lock-scope-outside");
+    std::fs::create_dir_all(&dir).expect("inside dir");
+    std::fs::create_dir_all(&outside).expect("outside dir");
+    let main = dir.join("main.active");
+    let foreign = outside.join("foreign.txt");
+    std::fs::write(&main, "v = 1\n").expect("main");
+    std::fs::write(&foreign, "not yours\n").expect("foreign");
+    let main_path = main.to_string_lossy().replace('\\', "/");
+    let foreign_path = foreign.to_string_lossy().replace('\\', "/");
+    let main_hash = active_core::provenance::hash_file(main.to_str().expect("utf8")).expect("hash");
+    let foreign_hash =
+        active_core::provenance::hash_file(foreign.to_str().expect("utf8")).expect("hash");
+    let text = format!(
+        "[main]\npath = {main_path:?}\nsha256 = \"{main_hash}\"\n[provenance]\n[[provenance.includes]]\npath = {foreign_path:?}\nsha256 = \"{foreign_hash}\"\n"
+    );
+    let err = active_core::provenance::verify_lockfile_files_scoped(
+        &text,
+        Some(&dir),
+        Some(&main),
+        Some(&dir),
+    )
+    .expect_err("an implicit lock must not read outside the document tree");
+    assert!(err.contains("outside the document tree"), "{err}");
+    assert!(
+        !err.contains(&foreign_hash),
+        "the digest must not be echoed"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::remove_dir_all(&outside).ok();
+}
+
+#[test]
+fn a_v1_lock_in_the_cwd_frame_still_verifies() {
+    // Version 1 recorded relative paths in the process working
+    // directory. Verification must not reinterpret one against the
+    // lockfile directory when that file does not exist there.
+    let rel = std::path::PathBuf::from("target").join("v1-lock-frame");
+    let dir = std::env::current_dir().expect("cwd").join(&rel);
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let main = dir.join("main.active");
+    std::fs::write(&main, "v = 1\n").expect("main");
+    let recorded = rel.join("main.active").to_string_lossy().replace('\\', "/");
+    let hash = active_core::provenance::hash_file(main.to_str().expect("utf8")).expect("hash");
+    let text = format!("version = 1\n[main]\npath = {recorded:?}\nsha256 = \"{hash}\"\n");
+    // The lock sits in a subdirectory: base.join(recorded) does not
+    // exist, so the legacy cwd frame decides.
+    active_core::provenance::verify_lockfile_files_at(&text, Some(&dir), Some(&main))
+        .expect("a v1 cwd-frame lock must verify");
+    std::fs::remove_dir_all(&dir).ok();
 }

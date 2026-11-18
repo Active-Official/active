@@ -1072,7 +1072,7 @@ fn lock_emits_versioned_hash_and_provenance() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     for probe in [
-        "version = 1",
+        "version = 2",
         "content_hash = \"sha256:",
         "toolchain = ",
         "locklib.active",
@@ -1082,7 +1082,7 @@ fn lock_emits_versioned_hash_and_provenance() {
     }
     // Re-parses as TOML with the required top-level keys.
     let parsed: toml::Value = toml::from_str(&stdout).expect("valid lockfile");
-    assert_eq!(parsed["version"], toml::Value::Integer(1));
+    assert_eq!(parsed["version"], toml::Value::Integer(2));
     // Deterministic: a second run reproduces the document byte-for-byte.
     let again = active()
         .args(["lock"])
@@ -4879,7 +4879,9 @@ fn eval_lockfile_refuses_drift_in_the_main_or_an_include() {
         .expect("run active");
     assert!(!drifted.status.success(), "include drift must fail");
     let stderr = String::from_utf8_lossy(&drifted.stderr);
-    assert!(stderr.contains("lockfile drift"), "{stderr}");
+    // A v2 lock governs includes through identity pins: the failure is
+    // the per-edge E041, not an uncoded drift message.
+    assert!(stderr.contains("E041"), "{stderr}");
     assert!(stderr.contains("inc.active"), "{stderr}");
     // Restore the include; a changed main also fails.
     std::fs::write(&lib, "host = \"db\"\n").expect("restore lib");
@@ -5059,4 +5061,555 @@ fn doctor_fails_when_an_explicit_path_is_not_a_checkout() {
         .filter_map(|c| c["id"].as_str())
         .collect();
     assert!(failed.contains(&"source-tree"), "{json}");
+}
+
+// ------------------------------------------------------------------
+// L-P03/L-P06: hash-pinned includes.
+// ------------------------------------------------------------------
+
+fn pin_dir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("include-pins")
+        .join(name);
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    dir
+}
+
+#[test]
+fn eval_enforces_an_explicit_lockfile_pin() {
+    let dir = pin_dir("enforce");
+    let lib = dir.join("lib.active");
+    let main = dir.join("main.active");
+    let lock = dir.join("active-lock.toml");
+    std::fs::write(&lib, "lib_value = 7\n").expect("write lib");
+    std::fs::write(&main, "include \"lib.active\"\n").expect("write main");
+    let hash = active_core::provenance::hash_file(lib.to_str().expect("utf8")).expect("hash");
+    let main_hash = active_core::provenance::hash_file(main.to_str().expect("utf8")).expect("hash");
+    std::fs::write(
+        &lock,
+        format!(
+            "version = 2\n[main]\npath = {main_path:?}\nsha256 = \"{main_hash}\"\n[provenance]\n[[provenance.include_pins]]\nas = \"lib.active\"\nsha256 = \"{hash}\"\n",
+            main_path = main.to_string_lossy().replace('\\', "/"),
+        ),
+    )
+    .expect("write lock");
+    let out = active()
+        .args(["eval", "--lockfile"])
+        .arg(&lock)
+        .arg(&main)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "pinned content must evaluate: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains("\"lib_value\": 7"));
+    // Substitute the include's content; the pin refuses it even though
+    // the lock carries no `provenance.includes` drift entry to trip.
+    std::fs::write(&lib, "lib_value = 8\n").expect("rewrite lib");
+    let out = active()
+        .args(["eval", "--lockfile"])
+        .arg(&lock)
+        .arg(&main)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success(), "substituted include must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E041"), "E041 expected: {stderr}");
+    assert!(
+        stderr.contains(&hash),
+        "the pinned digest must be named: {stderr}"
+    );
+}
+
+#[test]
+fn eval_warns_on_an_unpinned_include_under_a_lockfile() {
+    let dir = pin_dir("warn");
+    let lib = dir.join("lib.active");
+    let main = dir.join("main.active");
+    let lock = dir.join("active-lock.toml");
+    std::fs::write(&lib, "lib_value = 7\n").expect("write lib");
+    std::fs::write(&main, "include \"lib.active\"\n").expect("write main");
+    let main_hash = active_core::provenance::hash_file(main.to_str().expect("utf8")).expect("hash");
+    std::fs::write(
+        &lock,
+        format!(
+            "version = 1\n[main]\npath = {main_path:?}\nsha256 = \"{main_hash}\"\n",
+            main_path = main.to_string_lossy().replace('\\', "/"),
+        ),
+    )
+    .expect("write lock");
+    let out = active()
+        .args(["eval", "--resilient", "--lockfile"])
+        .arg(&lock)
+        .arg(&main)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "resilient warn mode must evaluate: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("W017"),
+        "a loud W017 is required: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn audit_records_how_each_include_resolved() {
+    let dir = pin_dir("audit");
+    let lib = dir.join("lib.active");
+    let main = dir.join("main.active");
+    let audit = dir.join("receipt.active");
+    std::fs::write(&lib, "lib_value = 7\n").expect("write lib");
+    let hash = active_core::provenance::hash_file(lib.to_str().expect("utf8")).expect("hash");
+    std::fs::write(&main, format!("include \"lib.active\" sha256:{hash}\n")).expect("write main");
+    let out = active()
+        .args(["eval", "--audit-trail"])
+        .arg(&audit)
+        .arg(&main)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "audit run must succeed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = std::fs::read_to_string(&audit).expect("audit written");
+    assert!(text.contains("include_resolutions = ["), "{text}");
+    assert!(text.contains("resolved = "), "{text}");
+    assert!(
+        text.contains(&format!("sha256 = \"sha256:{hash}\"")),
+        "{text}"
+    );
+    assert!(text.contains("source = \"inline\""), "{text}");
+    // The receipt stays valid Active.
+    let check = active()
+        .arg("check")
+        .arg(&audit)
+        .output()
+        .expect("run active");
+    assert!(
+        check.status.success(),
+        "audit must re-validate: {}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+}
+
+#[test]
+fn trusted_eval_auto_enforces_the_sibling_lockfile() {
+    let dir = pin_dir("trust");
+    let prefix = dir.join("key");
+    assert!(active()
+        .args(["keygen", "--out"])
+        .arg(&prefix)
+        .output()
+        .expect("run")
+        .status
+        .success());
+    let public_hex = std::fs::read_to_string(dir.join("key.public")).expect("public");
+    let trust = dir.join("trust.toml");
+    std::fs::write(
+        &trust,
+        format!("[[keys]]\nid = \"k\"\npublic = \"{public_hex}\"\n"),
+    )
+    .expect("write trust");
+    let lib = dir.join("lib.active");
+    let main = dir.join("main.active");
+    std::fs::write(&lib, "lib_value = 7\n").expect("write lib");
+    std::fs::write(&main, "include \"lib.active\"\n").expect("write main");
+    for (path, spelled) in [(&lib, Some("lib.active")), (&main, None)] {
+        let mut cmd = active();
+        cmd.args(["sign", "--key"])
+            .arg(dir.join("key.secret"))
+            .args(["--kid", "k", "--force"]);
+        if let Some(as_written) = spelled {
+            cmd.args(["--as", as_written]);
+        }
+        let out = cmd.arg(path).output().expect("run active");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let hash = active_core::provenance::hash_file(lib.to_str().expect("utf8")).expect("hash");
+    let main_hash = active_core::provenance::hash_file(main.to_str().expect("utf8")).expect("hash");
+    let lock = dir.join("active-lock.toml");
+    let main_path = main.to_string_lossy().replace('\\', "/");
+    std::fs::write(
+        &lock,
+        format!(
+            "version = 2\n[main]\npath = {main_path:?}\nsha256 = \"{main_hash}\"\n[provenance]\n[[provenance.include_pins]]\nas = \"lib.active\"\nsha256 = \"{hash}\"\n"
+        ),
+    )
+    .expect("write lock");
+    // The sibling lockfile is picked up from --trust-keys alone.
+    let out = active()
+        .args(["eval", "--trust-keys"])
+        .arg(&trust)
+        .arg(&main)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "trusted pinned eval must pass: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // A lockfile that pins the root and some other spelling but not the
+    // include refuses the include: enforced pins are an allow-list of
+    // edges, not just bytes.
+    std::fs::write(
+        &lock,
+        format!(
+            "version = 2\n[main]\npath = {main_path:?}\nsha256 = \"{main_hash}\"\n[provenance]\n[[provenance.include_pins]]\nas = \"other.active\"\nsha256 = \"{hash}\"\n"
+        ),
+    )
+    .expect("rewrite lock");
+    // `check` and `eval` agree (L-P03): both consume the sibling lock.
+    for command in ["eval", "check"] {
+        let out = active()
+            .args([command, "--trust-keys"])
+            .arg(&trust)
+            .arg(&main)
+            .output()
+            .expect("run active");
+        assert!(
+            !out.status.success(),
+            "{command}: unpinned include must fail under trust"
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("E041"), "{command}: {stderr}");
+        assert!(stderr.contains("no lockfile pin"), "{command}: {stderr}");
+    }
+    // No sibling lock at all: the established signature-only behavior is
+    // unchanged; a trusted document is not failed for lacking a lock.
+    std::fs::remove_file(&lock).expect("remove lock");
+    let out = active()
+        .args(["eval", "--trust-keys"])
+        .arg(&trust)
+        .arg(&main)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "a trusted document without a lock keeps signature-only behavior: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn trusted_eval_without_a_lock_keeps_signature_only_behavior() {
+    let dir = pin_dir("trust-nolock");
+    let prefix = dir.join("key");
+    assert!(active()
+        .args(["keygen", "--out"])
+        .arg(&prefix)
+        .output()
+        .expect("run")
+        .status
+        .success());
+    let public_hex = std::fs::read_to_string(dir.join("key.public")).expect("public");
+    let trust = dir.join("trust.toml");
+    std::fs::write(
+        &trust,
+        format!("[[keys]]\nid = \"k\"\npublic = \"{public_hex}\"\n"),
+    )
+    .expect("write trust");
+    // A document with no includes has nothing to pin: no W017.
+    let plain = dir.join("plain.active");
+    std::fs::write(&plain, "port = 8080\n").expect("write plain");
+    let out = active()
+        .args(["sign", "--key"])
+        .arg(dir.join("key.secret"))
+        .args(["--kid", "k", "--force"])
+        .arg(&plain)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = active()
+        .args(["eval", "--trust-keys"])
+        .arg(&trust)
+        .arg(&plain)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "a trusted document with no includes needs no lock: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // All includes carry inline pins: the document is self-describing,
+    // so the missing lockfile is not a warning either.
+    let lib = dir.join("lib.active");
+    let pinned = dir.join("pinned.active");
+    std::fs::write(&lib, "lib_value = 7\n").expect("write lib");
+    let hash = active_core::provenance::hash_file(lib.to_str().expect("utf8")).expect("hash");
+    std::fs::write(&pinned, format!("include \"lib.active\" sha256:{hash}\n"))
+        .expect("write pinned");
+    for (path, spelled) in [(&lib, Some("lib.active")), (&pinned, None)] {
+        let mut cmd = active();
+        cmd.args(["sign", "--key"])
+            .arg(dir.join("key.secret"))
+            .args(["--kid", "k", "--force"]);
+        if let Some(as_written) = spelled {
+            cmd.args(["--as", as_written]);
+        }
+        let out = cmd.arg(path).output().expect("run active");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let out = active()
+        .args(["eval", "--trust-keys"])
+        .arg(&trust)
+        .arg(&pinned)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "an inline-pinned trusted document needs no lock: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // An unpinned include without a lock is the pre-L-P03 world: the
+    // signature still gates the bytes, and evaluation is not failed for
+    // the absence of a lock.
+    let unpinned = dir.join("unpinned.active");
+    std::fs::write(&unpinned, "include \"lib.active\"\n").expect("write unpinned");
+    let out = active()
+        .args(["sign", "--key"])
+        .arg(dir.join("key.secret"))
+        .args(["--kid", "k", "--force"])
+        .arg(&unpinned)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let out = active()
+        .args(["eval", "--trust-keys"])
+        .arg(&trust)
+        .arg(&unpinned)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "signature-only trusted eval must still pass: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn a_lock_created_in_the_document_directory_verifies_from_elsewhere() {
+    let dir = pin_dir("portable");
+    let lib = dir.join("lib.active");
+    let main = dir.join("main.active");
+    let lock = dir.join("active-lock.toml");
+    std::fs::write(&lib, "lib_value = 7\n").expect("write lib");
+    std::fs::write(&main, "include \"lib.active\"\n").expect("write main");
+    // Lock with the document directory as the working directory, so the
+    // recorded main path is relative ("main.active").
+    let out = active()
+        .current_dir(&dir)
+        .args(["lock", "--output", "active-lock.toml", "main.active"])
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Evaluate from another directory: relative lock paths resolve
+    // against the lockfile, and pins are root-relative too (L-P03).
+    let out = active()
+        .args(["eval", "--lockfile"])
+        .arg(&lock)
+        .arg(&main)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "a moved working directory must not break the lock: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // A lock naming another main document is refused, never checked
+    // alongside it.
+    let other = dir.join("other.active");
+    std::fs::write(&other, "port = 1\n").expect("write other");
+    let out = active()
+        .args(["eval", "--lockfile"])
+        .arg(&lock)
+        .arg(&other)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success(), "a foreign main must be refused");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("lockfile is for"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn lock_refreshes_a_stale_tree_under_trust() {
+    let dir = pin_dir("refresh");
+    let prefix = dir.join("key");
+    assert!(active()
+        .args(["keygen", "--out"])
+        .arg(&prefix)
+        .output()
+        .expect("run")
+        .status
+        .success());
+    let public_hex = std::fs::read_to_string(dir.join("key.public")).expect("public");
+    let trust = dir.join("trust.toml");
+    std::fs::write(
+        &trust,
+        format!("[[keys]]\nid = \"k\"\npublic = \"{public_hex}\"\n"),
+    )
+    .expect("write trust");
+    let lib = dir.join("lib.active");
+    let main = dir.join("main.active");
+    let lock = dir.join("active-lock.toml");
+    std::fs::write(&lib, "lib_value = 7\n").expect("write lib");
+    std::fs::write(&main, "include \"lib.active\"\n").expect("write main");
+    let sign = |path: &std::path::Path, spelled: Option<&str>| {
+        let mut cmd = active();
+        cmd.args(["sign", "--key"])
+            .arg(dir.join("key.secret"))
+            .args(["--kid", "k", "--force"]);
+        if let Some(as_written) = spelled {
+            cmd.args(["--as", as_written]);
+        }
+        let out = cmd.arg(path).output().expect("run active");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    sign(&lib, Some("lib.active"));
+    sign(&main, None);
+    let run_lock = || {
+        active()
+            .args(["lock", "--trust-keys"])
+            .arg(&trust)
+            .args(["--output"])
+            .arg(&lock)
+            .arg(&main)
+            .output()
+            .expect("run active")
+    };
+    let out = run_lock();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Change and re-sign the include; the sibling lock is now stale.
+    // `lock` is a maintenance surface: it must be able to refresh it.
+    std::fs::write(&lib, "lib_value = 8\n").expect("rewrite lib");
+    sign(&lib, Some("lib.active"));
+    let out = run_lock();
+    assert!(
+        out.status.success(),
+        "lock must refresh a stale tree: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = std::fs::read_to_string(&lock).expect("lock written");
+    let new_hash = active_core::provenance::hash_file(lib.to_str().expect("utf8")).expect("hash");
+    assert!(
+        text.contains(&new_hash),
+        "lock did not record the new bytes"
+    );
+}
+
+#[test]
+fn a_lock_in_another_directory_records_relocatable_paths() {
+    let base = pin_dir("relocated");
+    let docs = base.join("docs");
+    let locks = base.join("locks");
+    std::fs::create_dir_all(&docs).expect("docs dir");
+    std::fs::create_dir_all(&locks).expect("locks dir");
+    std::fs::write(docs.join("lib.active"), "lib_value = 7\n").expect("write lib");
+    std::fs::write(docs.join("main.active"), "include \"lib.active\"\n").expect("write main");
+    // Lock from the project root into a sibling directory, naming the
+    // document relatively. Both recorded paths must be relative to the
+    // lockfile, not the working directory (L-P03).
+    let out = active()
+        .current_dir(&base)
+        .args(["lock", "--output", "locks/prod.toml", "docs/main.active"])
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let lock = locks.join("prod.toml");
+    let text = std::fs::read_to_string(&lock).expect("lock written");
+    assert!(
+        text.contains("../docs/main.active"),
+        "main must be recorded relative to the lockfile: {text}"
+    );
+    assert!(
+        text.contains("../docs/lib.active"),
+        "includes must be recorded relative to the lockfile: {text}"
+    );
+    // Evaluate from elsewhere; the lockframe paths resolve.
+    let out = active()
+        .args(["eval", "--lockfile"])
+        .arg(&lock)
+        .arg(docs.join("main.active"))
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "the lock must verify from another cwd: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Move the whole project (document tree plus lock) and evaluate
+    // there: relocatable paths and root-relative pins both survive.
+    let moved = base.join("moved");
+    std::fs::create_dir_all(moved.join("docs")).expect("moved docs");
+    std::fs::create_dir_all(moved.join("locks")).expect("moved locks");
+    std::fs::copy(docs.join("lib.active"), moved.join("docs/lib.active")).expect("copy lib");
+    std::fs::copy(docs.join("main.active"), moved.join("docs/main.active")).expect("copy main");
+    std::fs::copy(&lock, moved.join("locks/prod.toml")).expect("copy lock");
+    let out = active()
+        .args(["eval", "--lockfile"])
+        .arg(moved.join("locks/prod.toml"))
+        .arg(moved.join("docs/main.active"))
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "a moved project must keep its lock valid: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Substitute the moved tree's include: the pin still refuses.
+    std::fs::write(moved.join("docs/lib.active"), "lib_value = 8\n").expect("substitute");
+    let out = active()
+        .args(["eval", "--lockfile"])
+        .arg(moved.join("locks/prod.toml"))
+        .arg(moved.join("docs/main.active"))
+        .output()
+        .expect("run active");
+    assert!(!out.status.success(), "substitution must fail after a move");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("E041") || stderr.contains("lockfile drift"),
+        "substitution must be refused: {stderr}"
+    );
 }

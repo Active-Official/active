@@ -1899,6 +1899,9 @@ fn classify(
         K::Blob => Some(TOK_CA),
         K::Let | K::Env | K::True | K::False | K::Null => Some(TOK_KEYWORD),
         K::String(_) | K::SingleString | K::MlString(_) | K::MlSingleString => Some(TOK_STRING),
+        // An inline include content pin (`sha256:<hex>`, L-P06) is
+        // literal data, rendered like a string by the client.
+        K::HashPin(_) => Some(TOK_STRING),
         K::Integer | K::Float | K::Unit(_) => Some(TOK_NUMBER),
         K::Ident => {
             if matches!(text, "active_mode" | "active_capabilities") {

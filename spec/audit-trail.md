@@ -20,6 +20,7 @@ audit = {
   profile = "production",
   budget = { nodes = 100000, depth = 256, array_len = 100000, keys = 100000, wall_ms = 100, value_size = 10000000, total_size = 100000000 },
   parse = { resilient = false, allow_parent_escapes = false, materialise_blobs = false },
+  include_resolutions = [{ path = "base.active", resolved = "base.active", sha256 = "sha256:<hex>", source = "lock-path" }],
   nodes = 42,
   diagnostics = ["T004@host"],
   result = "sha256:<hex of canonical redacted JSON>",
@@ -54,6 +55,16 @@ audit = {
   the parse/evaluation mode the audited run used. Replay must match
   `resilient` and `allow_parent_escapes`; the hash itself is canonical
   across `materialise_blobs` (payloads are stripped).
+- `include_resolutions`: one entry per resolved include (L-P03/L-P06),
+  `{ path, resolved, sha256, source }`. `path` is the spelling the
+  document used, `resolved` is the identity recorded when a lock was
+  active (root-relative when the root directory is known, so a shareable
+  receipt does not name the author's home directory; an include outside
+  the root uses `..` segments and stays absolute only when the two share
+  no root or the parse has no root), `sha256` is the digest of the bytes
+  read, and `source` is `inline` | `lock-path` | `lock-content` |
+  `unpinned`. The field is omitted when the document has no includes.
+  It records what was verified, not merely what was read.
 - Limits are stored as Active integers, so any limit above
   `i64::MAX` is refused before the audit is written (use `0` for
   unlimited).

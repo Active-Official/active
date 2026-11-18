@@ -8,8 +8,213 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
-/// Lockfile format version.
-pub const LOCK_VERSION: u32 = 1;
+/// Locate a path relative to the root document's directory, using `/`
+/// separators so a lockfile stays valid when the tree moves (L-P03).
+/// Paths outside the root use `..` segments; only paths on an unrelated
+/// root (a different Windows volume) stay absolute.
+pub(crate) fn root_relative(path: &Path, root: Option<&Path>) -> String {
+    if let Some(root) = root.filter(|root| !root.as_os_str().is_empty()) {
+        if let Ok(rel) = path.strip_prefix(root) {
+            // A stripped relative path never carries a root or prefix;
+            // if it does, the two paths are not in the same frame.
+            let mut clean = true;
+            for component in rel.components() {
+                if matches!(
+                    component,
+                    std::path::Component::RootDir | std::path::Component::Prefix(_)
+                ) {
+                    clean = false;
+                    break;
+                }
+            }
+            if clean && !rel.as_os_str().is_empty() {
+                return slash_path(rel);
+            }
+        }
+        // An include allowed outside the root still travels with the
+        // tree: record it with `..` segments instead of an absolute
+        // host path.
+        if let Some(rel) = path_relative(root, path) {
+            return slash_path(&rel);
+        }
+    }
+    path.to_string_lossy().into_owned()
+}
+
+/// Render a path with `/` separators, preserving `..` segments.
+fn slash_path(path: &Path) -> String {
+    path.components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
+            std::path::Component::ParentDir => Some("..".to_string()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// Lockfile format version. Version 2 adds `provenance.include_pins`
+/// (L-P03); version 1 lockfiles still parse and resolve by content hash.
+pub const LOCK_VERSION: u32 = 2;
+
+/// How strictly an eval-time lockfile is applied (L-P03).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LockMode {
+    /// A mismatched or missing pin is a hard error (E041).
+    Enforce,
+    /// A mismatch is an error; an include with no pin is a loud W017.
+    Warn,
+}
+
+/// Include pins loaded from a lockfile, for eval-time resolution
+/// (L-P03). `resolved` maps a root-relative identity recorded at lock
+/// time to its pinned digests; `pins` maps a document spelling for pins
+/// recorded without a resolved path. Matching prefers `resolved`, so one
+/// spelling used from several directories stays unambiguous. `hashes`
+/// admits a renamed include with identical content in warn mode.
+#[derive(Debug, Clone)]
+pub struct IncludeLock {
+    pub resolved: BTreeMap<String, Vec<String>>,
+    pub pins: BTreeMap<String, Vec<String>>,
+    pub hashes: HashSet<String>,
+    pub mode: LockMode,
+    /// Whether the lockfile carried `provenance.include_pins` at all.
+    /// Legacy v1 lockfiles do not; they resolve content hashes in warn
+    /// mode because they cannot name the include graph.
+    pub identity_pins: bool,
+}
+
+impl IncludeLock {
+    /// Parse `provenance.include_pins` (L-P03) and fall back to
+    /// `provenance.includes` so a v1 lockfile written before the pin
+    /// section existed still admits content by hash. Legacy include
+    /// paths are lockframe paths, not root-relative identities, so they
+    /// contribute hashes only.
+    pub fn parse(lock_text: &str) -> Result<Self, String> {
+        let doc: toml::Value =
+            toml::from_str(lock_text).map_err(|e| format!("unparseable lockfile: {e}"))?;
+        let mut version = 1i64;
+        if let Some(declared) = doc.get("version") {
+            version = declared
+                .as_integer()
+                .ok_or_else(|| "lockfile version is not an integer".to_string())?;
+            if version < 1 || version > i64::from(LOCK_VERSION) {
+                return Err(format!(
+                    "lockfile version {version} is not supported (this tool reads {LOCK_VERSION})"
+                ));
+            }
+        }
+        let mut resolved = BTreeMap::new();
+        let mut pins = BTreeMap::new();
+        let mut hashes = HashSet::new();
+        let provenance = doc.get("provenance");
+        if let Some(value) = provenance {
+            if !value.is_table() {
+                return Err("provenance is not a table".to_string());
+            }
+        }
+        let include_pins = match provenance.and_then(|p| p.get("include_pins")) {
+            Some(value) => Some(
+                value
+                    .as_array()
+                    .ok_or_else(|| "provenance.include_pins is not an array".to_string())?,
+            ),
+            None => None,
+        };
+        let identity_pins = include_pins.is_some();
+        if version >= 2 && include_pins.is_none() {
+            return Err(
+                "lockfile version 2 requires provenance.include_pins (re-run `active lock`)"
+                    .to_string(),
+            );
+        }
+        if version < 2 && include_pins.is_some() {
+            return Err(
+                "lockfile version 1 cannot carry provenance.include_pins; re-run `active lock`"
+                    .to_string(),
+            );
+        }
+        if let Some(entries) = include_pins {
+            for entry in entries {
+                let as_written = entry
+                    .get("as")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "include pin has no string `as` spelling".to_string())?;
+                let hash = valid_pin(entry)?;
+                match entry.get("resolved") {
+                    Some(value) => {
+                        let path = value
+                            .as_str()
+                            .ok_or_else(|| "include pin `resolved` is not a string".to_string())?;
+                        resolved
+                            .entry(path.to_string())
+                            .or_insert_with(Vec::new)
+                            .push(hash.clone());
+                    }
+                    // A pin without a resolved path can only match by
+                    // spelling; keeping it out of `resolved` is what
+                    // makes an enforced lock refuse a new same-spelling
+                    // edge.
+                    None => pins
+                        .entry(as_written.to_string())
+                        .or_insert_with(Vec::new)
+                        .push(hash.clone()),
+                }
+                hashes.insert(hash);
+            }
+        }
+        let includes = match provenance.and_then(|p| p.get("includes")) {
+            Some(value) => Some(
+                value
+                    .as_array()
+                    .ok_or_else(|| "provenance.includes is not an array".to_string())?,
+            ),
+            None => None,
+        };
+        if let Some(entries) = includes {
+            for entry in entries {
+                entry
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "include entry has no string `path`".to_string())?;
+                let hash = valid_pin(entry)?;
+                // Legacy `includes` paths live in the lockfile frame and
+                // never equal a document's root-relative identity, so
+                // they contribute content hashes only.
+                hashes.insert(hash);
+            }
+        }
+        // A lockfile with identity pins can name the include graph, so
+        // it enforces. A legacy lockfile cannot, and admits matching
+        // content with a warning.
+        let mode = if identity_pins {
+            LockMode::Enforce
+        } else {
+            LockMode::Warn
+        };
+        Ok(Self {
+            resolved,
+            pins,
+            hashes,
+            mode,
+            identity_pins,
+        })
+    }
+}
+
+/// Read one 64-hex `sha256` value from a lockfile entry, refusing a
+/// malformed pin instead of silently dropping it. Hex is stored
+/// lowercase so every comparison is exact.
+fn valid_pin(entry: &toml::Value) -> Result<String, String> {
+    let hash = entry
+        .get("sha256")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "lockfile pin has no string `sha256`".to_string())?;
+    if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(format!("lockfile pin is not 64 hex digits: {hash:?}"));
+    }
+    Ok(hash.to_ascii_lowercase())
+}
 
 /// One environment input declared by the document.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +255,9 @@ pub struct FileInput {
 pub struct Provenance {
     pub env: Vec<EnvInput>,
     pub includes: Vec<FileInput>,
+    /// Include pins by document spelling (L-P03): what the eval-time
+    /// lockfile matches and what `active lock` writes.
+    pub include_pins: Vec<crate::ir::IncludePin>,
     pub main: Option<FileInput>,
     pub profile: Option<String>,
 }
@@ -108,7 +316,7 @@ fn same_file(a: &str, b: &str) -> bool {
     }
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     hasher
@@ -120,7 +328,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 /// SHA-256 hex of a file's contents, or an error naming the file
 /// (never its contents — paths are safe to quote, data is not).
-fn hash_file(path: &str) -> Result<String, String> {
+pub fn hash_file(path: &str) -> Result<String, String> {
     let bytes = std::fs::read(path)
         .map_err(|e| format!("cannot read include file '{path}' for hashing: {e}"))?;
     Ok(sha256_hex(&bytes))
@@ -167,51 +375,183 @@ fn fresh_salt_hex() -> String {
     buf.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// Verify a lockfile's recorded file hashes against disk (LANG-I-002c):
-/// the main document and every recorded include must still hash to the
-/// value the lockfile pins. Fails closed on a missing or changed file;
-/// paths are the ones recorded at lock time.
+/// Verify a lockfile's recorded file hashes against disk (LANG-I-002c).
+/// Fails closed on a missing or changed file. Version 1 lockfiles are
+/// checked in full (main plus `provenance.includes`). Version 2 identity
+/// pins govern include content at parse time (E041 per edge), so this
+/// checks the main document only; use it before evaluation, and let the
+/// pins report the include graph.
 pub fn verify_lockfile_files(lock_text: &str) -> Result<(), String> {
+    verify_lockfile_files_at(lock_text, None, None)
+}
+
+/// Largest file a drift check will hash, and the most entries it will
+/// check. A lockfile is small and its inputs are documents; an
+/// attacker-supplied sibling must not turn verification into an
+/// unbounded read or fan-out.
+const MAX_VERIFY_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_VERIFY_ENTRIES: usize = 1024;
+
+/// [`verify_lockfile_files`] with a base directory for relative recorded
+/// paths and an optional expected main document. `base` is the
+/// lockfile's own directory, so a lock created in the document directory
+/// verifies from anywhere; a recorded main that names another file is
+/// refused rather than silently checked alongside it.
+pub fn verify_lockfile_files_at(
+    lock_text: &str,
+    base: Option<&Path>,
+    expected_main: Option<&Path>,
+) -> Result<(), String> {
+    verify_lockfile_files_scoped(lock_text, base, expected_main, None)
+}
+
+/// [`verify_lockfile_files_at`] with a containment root: every recorded
+/// path must resolve inside it. Implicitly discovered sibling lockfiles
+/// use this so a rogue `active-lock.toml` cannot turn verification into a
+/// read (and digest oracle) of arbitrary host paths.
+pub fn verify_lockfile_files_scoped(
+    lock_text: &str,
+    base: Option<&Path>,
+    expected_main: Option<&Path>,
+    restrict_root: Option<&Path>,
+) -> Result<(), String> {
     let doc: toml::Value =
         toml::from_str(lock_text).map_err(|e| format!("unparseable lockfile: {e}"))?;
-    let mut entries: Vec<(String, String)> = Vec::new();
-    if let Some(main) = doc.get("main") {
-        if let (Some(path), Some(hash)) = (
-            main.get("path").and_then(|v| v.as_str()),
-            main.get("sha256").and_then(|v| v.as_str()),
+    let version = doc.get("version").and_then(|v| v.as_integer()).unwrap_or(1);
+    // Version 1 recorded paths in the process working directory (the old
+    // tool's frame); version 2 records them relative to the lockfile.
+    // Prefer the lockfile frame when that file exists, so a v1 lock made
+    // from the document directory still works after a directory move,
+    // and fall back to the cwd for a v1 lock made from a parent.
+    let resolve = |p: &str| -> std::path::PathBuf {
+        let raw = Path::new(p);
+        if raw.is_relative() {
+            if let Some(base) = base {
+                let joined = base.join(raw);
+                if version >= 2 || joined.exists() {
+                    return joined;
+                }
+            }
+            raw.to_path_buf()
+        } else {
+            raw.to_path_buf()
+        }
+    };
+    if let (Some(expected), Some(recorded)) = (
+        expected_main,
+        doc.get("main")
+            .and_then(|m| m.get("path"))
+            .and_then(|v| v.as_str()),
+    ) {
+        let recorded = resolve(recorded);
+        let same = match (
+            std::fs::canonicalize(&recorded),
+            std::fs::canonicalize(expected),
         ) {
-            entries.push((path.to_string(), hash.to_string()));
+            (Ok(a), Ok(b)) => a == b,
+            _ => same_file(&recorded.to_string_lossy(), &expected.to_string_lossy()),
+        };
+        if !same {
+            return Err(format!(
+                "lockfile is for '{}', not '{}'",
+                recorded.display(),
+                expected.display()
+            ));
         }
     }
-    if let Some(includes) = doc
-        .get("provenance")
-        .and_then(|p| p.get("includes"))
-        .and_then(|i| i.as_array())
-    {
-        for entry in includes {
-            if let (Some(path), Some(hash)) = (
-                entry.get("path").and_then(|v| v.as_str()),
-                entry.get("sha256").and_then(|v| v.as_str()),
-            ) {
-                entries.push((path.to_string(), hash.to_string()));
+    // Version 2 identity pins govern the include graph; checking the
+    // legacy include hashes first would preempt the per-edge E041 with an
+    // uncoded drift error. Main drift is still checked here.
+    let pins_govern_includes = version >= 2
+        && doc
+            .get("provenance")
+            .and_then(|p| p.get("include_pins"))
+            .is_some();
+    let mut entries: Vec<(String, String)> = Vec::new();
+    if let Some(main) = doc.get("main") {
+        if !main.is_table() {
+            return Err("lockfile `main` is not a table".to_string());
+        }
+        let path = main
+            .get("path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "lockfile `main.path` is not a string".to_string())?;
+        let hash = valid_pin(main).map_err(|e| format!("lockfile `main`: {e}"))?;
+        entries.push((path.to_string(), hash));
+    }
+    if let Some(provenance) = doc.get("provenance") {
+        if !provenance.is_table() {
+            return Err("provenance is not a table".to_string());
+        }
+        if let Some(includes) = provenance.get("includes") {
+            let includes = includes
+                .as_array()
+                .ok_or_else(|| "provenance.includes is not an array".to_string())?;
+            for entry in includes {
+                let path = entry
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "include entry has no string `path`".to_string())?;
+                let hash = valid_pin(entry).map_err(|e| format!("include `{path}`: {e}"))?;
+                if !pins_govern_includes {
+                    entries.push((path.to_string(), hash));
+                }
+            }
+        }
+        if let Some(pins) = provenance.get("include_pins") {
+            let pins = pins
+                .as_array()
+                .ok_or_else(|| "provenance.include_pins is not an array".to_string())?;
+            for entry in pins {
+                valid_pin(entry).map_err(|e| format!("include pin: {e}"))?;
             }
         }
     }
     if entries.is_empty() {
+        if pins_govern_includes {
+            return Ok(());
+        }
         return Err("lockfile records no file hashes to verify".to_string());
     }
+    if entries.len() > MAX_VERIFY_ENTRIES {
+        return Err(format!(
+            "lockfile records {} file hashes; the limit is {MAX_VERIFY_ENTRIES}",
+            entries.len()
+        ));
+    }
     let mut drift = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut total_bytes = 0u64;
     for (path, want) in entries {
-        match std::fs::read(&path) {
+        let full = resolve(&path);
+        if let Some(root) = restrict_root {
+            if !path_inside(root, &full) {
+                drift.push(format!("{}: outside the document tree", full.display()));
+                continue;
+            }
+        }
+        // The same file recorded twice costs one read, and the aggregate
+        // stays bounded: a 1 MiB lock naming one 16 MiB file 1024 times
+        // must not multiply the work.
+        if !seen.insert(full.to_string_lossy().into_owned()) {
+            continue;
+        }
+        match read_capped(&full) {
             Ok(bytes) => {
-                let got = sha256_hex(&bytes);
-                if got != want {
-                    drift.push(format!(
-                        "{path}: content changed (lockfile {want}, disk {got})"
+                total_bytes = total_bytes.saturating_add(bytes.len() as u64);
+                if total_bytes > MAX_VERIFY_BYTES {
+                    return Err(format!(
+                        "lockfile verification exceeds the {MAX_VERIFY_BYTES} byte aggregate limit"
                     ));
                 }
+                let got = sha256_hex(&bytes);
+                if !got.eq_ignore_ascii_case(&want) {
+                    // Do not echo the disk digest: a recording that
+                    // names an arbitrary path must not become an oracle.
+                    drift.push(format!("{}: content changed", full.display()));
+                }
             }
-            Err(e) => drift.push(format!("{path}: cannot read ({e})")),
+            Err(e) => drift.push(format!("{}: cannot read ({e})", full.display())),
         }
     }
     if drift.is_empty() {
@@ -219,6 +559,41 @@ pub fn verify_lockfile_files(lock_text: &str) -> Result<(), String> {
     } else {
         Err(format!("lockfile drift: {}", drift.join("; ")))
     }
+}
+
+/// Whether `path` resolves inside `root` (canonical or absolute fallback
+/// on both sides, so a verbatim Windows prefix does not decide the
+/// answer).
+fn path_inside(root: &Path, path: &Path) -> bool {
+    let root = root
+        .canonicalize()
+        .or_else(|_| std::path::absolute(root))
+        .unwrap_or_else(|_| root.to_path_buf());
+    let path = path
+        .canonicalize()
+        .or_else(|_| std::path::absolute(path))
+        .unwrap_or_else(|_| path.to_path_buf());
+    path.starts_with(root)
+}
+
+/// Read one file for hashing under the verification size cap.
+fn read_capped(path: &Path) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+    if !meta.is_file() {
+        return Err("not a regular file".to_string());
+    }
+    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut bytes = Vec::new();
+    file.take(MAX_VERIFY_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() as u64 > MAX_VERIFY_BYTES {
+        return Err(format!(
+            "larger than the {MAX_VERIFY_BYTES} byte verification limit"
+        ));
+    }
+    Ok(bytes)
 }
 
 /// Extract `name -> value_salt` from a previously rendered lockfile so a
@@ -335,6 +710,31 @@ pub fn collect_provenance_with_salts(
     // identity — stamps may differ textually from the CLI path).
     let main_canon = main_file.and_then(|p| std::fs::canonicalize(p).ok());
     let main_label = main_file.map(|p| p.to_string_lossy().into_owned());
+    // L-P03: reuse the digest of the bytes that were PARSED for each
+    // include. Re-reading here would let `include_pins` (parsed bytes)
+    // and `includes` (re-read bytes) disagree inside one lockfile when a
+    // file changes between parse and provenance collection. The lock
+    // then describes exactly what was evaluated; a later rewrite is
+    // caught by the next eval's drift check. A file re-read as different
+    // bytes during the same parse is a hard error.
+    let mut stamp_hash: BTreeMap<String, String> = BTreeMap::new();
+    for pin in &module.include_pins {
+        match stamp_hash.get(&pin.stamp) {
+            Some(existing) if existing != &pin.sha256 => {
+                return Err(format!(
+                    "include `{}` changed while parsing; re-run the lock",
+                    pin.resolved
+                ));
+            }
+            Some(_) => {}
+            None => {
+                stamp_hash.insert(pin.stamp.clone(), pin.sha256.clone());
+            }
+        }
+    }
+    // `include_pins` carry the exact parser stamp; node stamps use the
+    // same string (canonical on disk, lexical-absolute under a loader),
+    // so the parsed digest is reused without a re-read.
     let mut seen: HashSet<String> = HashSet::new();
     let mut includes = Vec::new();
     let mut stamps: Vec<String> = module.node_files.values().cloned().collect();
@@ -353,17 +753,35 @@ pub fn collect_provenance_with_salts(
         if is_main {
             continue;
         }
+        let sha256 = match stamp_hash.get(&stamped) {
+            Some(hash) => {
+                // The digest is the parsed bytes (no check/use gap), but a
+                // file that vanished after parsing still cannot be pinned.
+                std::fs::metadata(&stamped).map_err(|e| {
+                    format!("cannot read include file '{stamped}' for hashing: {e}")
+                })?;
+                hash.clone()
+            }
+            None => hash_file(&stamped)?,
+        };
         includes.push(FileInput {
             path: stamped.clone(),
-            sha256: hash_file(&stamped)?,
+            sha256,
         });
     }
     let main = match main_file {
         Some(path) => {
             let label = path.to_string_lossy().into_owned();
+            // Record the canonical path: a stdout lock is not rebased,
+            // and a canonical identity verifies from any directory. A
+            // file output rebases this to the lockframe.
+            let recorded = main_canon
+                .as_ref()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| label.clone());
             Some(FileInput {
-                path: label.clone(),
-                sha256: std::fs::read(&label)
+                path: recorded.clone(),
+                sha256: std::fs::read(&recorded)
                     .map(|bytes| sha256_hex(&bytes))
                     .map_err(|e| format!("cannot read main file '{label}' for hashing: {e}"))?,
             })
@@ -373,6 +791,7 @@ pub fn collect_provenance_with_salts(
     Ok(Provenance {
         env: env_inputs,
         includes,
+        include_pins: module.include_pins.clone(),
         main,
         profile: profile.map(str::to_string),
     })
@@ -455,6 +874,52 @@ fn collect_blobs(value: &crate::ir::Value, path: &str, out: &mut Vec<BlobRecord>
     }
 }
 
+/// One file's path rewritten relative to a lockfile's directory, or an
+/// absolute path when the two trees share no root component.
+fn lockframe_path(base: &Path, recorded: &str) -> String {
+    let target = Path::new(recorded);
+    let absolute = std::path::absolute(target).ok();
+    let Some(absolute) = absolute else {
+        return recorded.to_string();
+    };
+    let absolute = std::fs::canonicalize(&absolute).unwrap_or(absolute);
+    match path_relative(base, &absolute) {
+        Some(rel) => rel
+            .components()
+            .filter_map(|c| match c {
+                std::path::Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
+                std::path::Component::ParentDir => Some("..".to_string()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("/"),
+        None => absolute.to_string_lossy().into_owned(),
+    }
+}
+
+/// `target` expressed relative to `base`, component-wise. `None` when the
+/// paths share no leading component (different roots).
+fn path_relative(base: &Path, target: &Path) -> Option<std::path::PathBuf> {
+    use std::path::Component;
+    let base: Vec<Component> = base.components().collect();
+    let target: Vec<Component> = target.components().collect();
+    let mut shared = 0;
+    while shared < base.len() && shared < target.len() && base[shared] == target[shared] {
+        shared += 1;
+    }
+    if shared == 0 {
+        return None;
+    }
+    let mut out = std::path::PathBuf::new();
+    for _ in shared..base.len() {
+        out.push("..");
+    }
+    for component in &target[shared..] {
+        out.push(component.as_os_str());
+    }
+    Some(out)
+}
+
 /// A complete lockfile record: hash, toolchain, provenance, and blob
 /// identities. Non-exhaustive: consumers construct it through
 /// [`LockManifest::new`], and future fields stay additive.
@@ -467,10 +932,32 @@ pub struct LockManifest {
     pub main: Option<FileInput>,
     pub env: Vec<EnvInput>,
     pub includes: Vec<FileInput>,
+    /// Include pins by document spelling (L-P03).
+    pub include_pins: Vec<crate::ir::IncludePin>,
     pub blobs: Vec<BlobRecord>,
 }
 
 impl LockManifest {
+    /// Rewrite main/include paths relative to `base`, with `/`
+    /// separators, so a lockfile written into another directory
+    /// verifies from that directory (L-P03). `include_pins[].resolved`
+    /// stays root-relative: it is a document identity, not a lockframe
+    /// path.
+    pub fn rebase_paths(&mut self, base: &Path) {
+        let base = std::path::absolute(base)
+            .ok()
+            .and_then(|p| std::fs::canonicalize(&p).ok().or(Some(p)));
+        let Some(base) = base else {
+            return;
+        };
+        if let Some(main) = &mut self.main {
+            main.path = lockframe_path(&base, &main.path);
+        }
+        for include in &mut self.includes {
+            include.path = lockframe_path(&base, &include.path);
+        }
+    }
+
     pub fn new(toolchain: String, value: &crate::ir::Value, provenance: Provenance) -> Self {
         let profile = provenance.profile.clone();
         let mut blobs = Vec::new();
@@ -483,6 +970,7 @@ impl LockManifest {
             main: provenance.main,
             env: provenance.env,
             includes: provenance.includes,
+            include_pins: provenance.include_pins,
             blobs,
         }
     }
@@ -572,10 +1060,45 @@ impl LockManifest {
             }
             provenance.insert("includes".to_string(), toml::Value::Array(array));
         }
+        {
+            // Stable bytes: sort by (spelling, resolved, digest) and
+            // collapse duplicate resolutions. Version 2 always emits the
+            // section, even empty, so a lockfile that lost it is
+            // distinguishable from a v1 legacy file.
+            let mut pins: Vec<&crate::ir::IncludePin> = self.include_pins.iter().collect();
+            pins.sort_by(|a, b| {
+                (&a.as_written, &a.resolved, &a.sha256).cmp(&(
+                    &b.as_written,
+                    &b.resolved,
+                    &b.sha256,
+                ))
+            });
+            pins.dedup();
+            let mut array = Vec::new();
+            for pin in pins {
+                let mut entry = toml::map::Map::new();
+                entry.insert(
+                    "as".to_string(),
+                    toml::Value::String(pin.as_written.clone()),
+                );
+                entry.insert(
+                    "resolved".to_string(),
+                    toml::Value::String(pin.resolved.clone()),
+                );
+                entry.insert(
+                    "sha256".to_string(),
+                    toml::Value::String(pin.sha256.clone()),
+                );
+                array.push(toml::Value::Table(entry));
+            }
+            provenance.insert("include_pins".to_string(), toml::Value::Array(array));
+        }
         if !provenance.is_empty() {
             doc.insert("provenance".to_string(), toml::Value::Table(provenance));
         }
-        let header = "# Active lockfile v1 — generated by `active lock`. Do not edit.\n";
+        let header = format!(
+            "# Active lockfile v{LOCK_VERSION} — generated by `active lock`. Do not edit.\n"
+        );
         format!(
             "{header}{}",
             toml::to_string(&toml::Value::Table(doc)).unwrap_or_default()

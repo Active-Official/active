@@ -79,7 +79,7 @@ to explicit values.
 
 Every value a host can receive is reachable (LANG-G-007): an unresolved
 reference during evaluation is `UNRESOLVED_REF` (2), an include family
-failure (E015/E016/E017/E028) is `INCLUDE_FAIL` (7), and a schema/unit/
+failure (E015/E016/E017/E028/E041) is `INCLUDE_FAIL` (7), and a schema/unit/
 cycle/budget refusal is its own code. `active_check` and `active_validate`
 also report a class from the set they return: an error-severity diagnostic
 wins, and a set that carries only `W001` (unresolved identifier) reports 2,

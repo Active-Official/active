@@ -10,6 +10,19 @@ standalone Infinity codec).
 
 ## [Unreleased]
 
+### L-P03/L-P06: hash-pinned includes
+
+`active lock` writes lockfile version 2 with `provenance.include_pins`
+(spelling, root-relative identity, SHA-256) and records main/include
+paths relative to the lockfile, so a moved project keeps its lock valid.
+`active eval` resolves each include against those pins (E041 on a
+mismatch; a new edge under an enforced lock is E041), and a v1 lockfile
+still parses as legacy, admitting matching content in warn mode (W017).
+Documents may also carry the pin themselves:
+`include "lib.active" sha256:<hex>` (L-P06). The audit receipt records
+`include_resolutions` with the source of every include. Lockfile v1
+remains readable; re-run `active lock` to upgrade.
+
 ### Master Program (CA, SC, R, PE, M, GQ, CAP, CG, D, T2, AK, AUD/OBS)
 
 Additive surface, no version bump: content-addressed Blob values with

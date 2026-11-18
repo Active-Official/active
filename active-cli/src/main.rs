@@ -272,12 +272,17 @@ enum Commands {
         allow_parent_escapes: bool,
         /// Verify the root document and its includes against a
         /// trusted-keys file (E032; C-052 signed includes, LANG-C-007
-        /// root). Before LANG-C-007 this covered includes only.
+        /// root). A sibling `active-lock.toml`, when present, is applied
+        /// by default (L-P03): a pinned include whose bytes changed is
+        /// E041. With no lockfile, signature verification is unchanged.
         #[arg(long)]
         trust_keys: Option<PathBuf>,
         /// Verify a lockfile's recorded file hashes before evaluating;
-        /// fails closed when the main document or an include changed
-        /// (LANG-I-002c)
+        /// fails closed when the main document changed (LANG-I-002c). Version 2
+        /// locks also pin the include graph by identity (L-P03): a changed
+        /// include is E041 and an include absent from the lock is E041.
+        /// A version 1 lock checks recorded includes as drift and admits
+        /// a new edge by content with W017.
         #[arg(long)]
         lockfile: Option<PathBuf>,
         /// Select a profile by name, overriding the active_profile key
@@ -326,7 +331,9 @@ enum Commands {
         #[command(flatten)]
         budget: BudgetArgs,
     },
-    /// Check a file for errors / cycles / unresolved names
+    /// Check a file for errors / cycles / unresolved names. With
+    /// --trust-keys a sibling `active-lock.toml` is applied by default,
+    /// matching `eval` (L-P03).
     Check {
         file: PathBuf,
         /// Enable medium-confidence healing repairs (resilient mode)
@@ -1425,6 +1432,18 @@ fn options(resilient: bool, allow_parent_escapes: bool) -> ParseOptions {
     })
 }
 
+/// Parse options carrying an include lock (L-P03): include resolution
+/// verifies each file against the pinned content hash.
+fn options_with_lock(
+    resilient: bool,
+    allow_parent_escapes: bool,
+    lock: Option<active_core::provenance::IncludeLock>,
+) -> ParseOptions {
+    let mut options = options(resilient, allow_parent_escapes);
+    options.include_lock = lock;
+    options
+}
+
 /// Load a trusted-keys file for overlay enforcement (C-052), or
 /// nothing when the flag is absent (legacy behavior preserved).
 fn load_trust(path: &Option<PathBuf>) -> anyhow::Result<Option<active_core::sign::TrustedKeys>> {
@@ -1440,8 +1459,106 @@ fn load_trust(path: &Option<PathBuf>) -> anyhow::Result<Option<active_core::sign
     }
 }
 
-/// Parse a file, enforcing overlay signatures when trust is set.
+/// Largest lockfile the CLI will read. A lockfile is a small provenance
+/// document; an attacker-supplied sibling under `--trust-keys` must not
+/// turn evaluation into an unbounded read.
+const MAX_LOCKFILE_BYTES: u64 = 1 << 20;
+
+/// Read and size-check one lockfile, then verify its recorded file
+/// hashes (LANG-I-002c) before it can influence evaluation.
+fn read_lockfile(
+    path: &std::path::Path,
+    expected_main: &std::path::Path,
+    restrict_root: Option<&std::path::Path>,
+) -> anyhow::Result<String> {
+    use std::io::Read;
+    let file = std::fs::File::open(path)
+        .map_err(|e| anyhow::anyhow!("cannot read lockfile {}: {e}", path.display()))?;
+    let mut text = String::new();
+    // Read through a hard cap so a lockfile swapped after open cannot
+    // outgrow the bound between a stat and the read.
+    file.take(MAX_LOCKFILE_BYTES + 1)
+        .read_to_string(&mut text)
+        .map_err(|e| anyhow::anyhow!("cannot read lockfile {}: {e}", path.display()))?;
+    if text.len() as u64 > MAX_LOCKFILE_BYTES {
+        return Err(anyhow::anyhow!(
+            "lockfile {} exceeds the {} byte limit",
+            path.display(),
+            MAX_LOCKFILE_BYTES
+        ));
+    }
+    // Relative recorded paths resolve against the lockfile's directory,
+    // and a lock naming another main document is refused (L-P03).
+    active_core::provenance::verify_lockfile_files_scoped(
+        &text,
+        path.parent(),
+        Some(expected_main),
+        restrict_root,
+    )
+    .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+    Ok(text)
+}
+
+/// Read an explicit lockfile and pick its resolution mode (L-P03). A
+/// lockfile with spelling pins enforces them; a v1 lockfile written
+/// before those existed resolves legacy content hashes in warn mode,
+/// because it cannot name the includes it did not see. `parse` derives
+/// the mode from the pins it found.
+fn explicit_include_lock(
+    path: &std::path::Path,
+    expected_main: &std::path::Path,
+    restrict_root: Option<&std::path::Path>,
+) -> anyhow::Result<active_core::provenance::IncludeLock> {
+    let text = read_lockfile(path, expected_main, restrict_root)?;
+    active_core::provenance::IncludeLock::parse(&text).map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// Discover the sibling `active-lock.toml` used by trusted evaluation
+/// (L-P03). Trust defaults to the lock when one exists; with none, the
+/// established signature-only behavior is unchanged.
+fn sibling_include_lock(
+    file: &std::path::Path,
+) -> anyhow::Result<Option<active_core::provenance::IncludeLock>> {
+    let sibling = file.with_file_name("active-lock.toml");
+    if !sibling.is_file() {
+        return Ok(None);
+    }
+    Ok(Some(explicit_include_lock(&sibling, file, file.parent())?))
+}
+
+/// Parse a file, enforcing overlay signatures when trust is set, and
+/// resolving includes against the sibling lockfile when one exists
+/// (L-P03) so every trusted surface agrees with `eval`.
 fn parse_input(
+    file: &std::path::Path,
+    resilient: bool,
+    allow_parent_escapes: bool,
+    trust: &Option<active_core::sign::TrustedKeys>,
+) -> anyhow::Result<active_core::Module> {
+    let name = file.to_string_lossy().to_string();
+    let lock = match trust {
+        Some(_) => sibling_include_lock(file)?,
+        None => None,
+    };
+    let options = options_with_lock(resilient, allow_parent_escapes, lock);
+    let result = match trust {
+        Some(keys) => active_core::parse_file_with_trust(file, options, keys),
+        None => parse_file(file, options),
+    };
+    result.map_err(|diags| {
+        for d in &diags {
+            report(d, &name);
+        }
+        anyhow::anyhow!("parse failed")
+    })
+}
+
+/// Parse with signature enforcement but WITHOUT lockfile pins. Maintenance
+/// commands (`lock`, `repair`) must be able to read a stale tree to
+/// refresh or repair it; inline `sha256:` pins still apply because they
+/// live in the document. Pin enforcement for lockfiles belongs to
+/// evaluation surfaces.
+fn parse_input_unpinned(
     file: &std::path::Path,
     resilient: bool,
     allow_parent_escapes: bool,
@@ -1464,19 +1581,20 @@ fn parse_input(
 
 /// Parse for the eval path, keeping the diagnostics on failure so a
 /// requested audit can record them before the error propagates
-/// (LANG-F-010). Every other command keeps `parse_input`, which reports and
-/// discards them.
-fn parse_input_or_diags(
+/// (LANG-F-010). Read surfaces keep `parse_input` (pins enforced) or
+/// `parse_input_unpinned` (maintenance only); both report and discard
+/// the diagnostics. Carries an include lock (L-P03).
+fn parse_input_or_diags_locked(
     file: &std::path::Path,
     resilient: bool,
     allow_parent_escapes: bool,
     trust: &Option<active_core::sign::TrustedKeys>,
+    lock: Option<active_core::provenance::IncludeLock>,
 ) -> Result<active_core::Module, Vec<active_core::Diagnostic>> {
+    let options = options_with_lock(resilient, allow_parent_escapes, lock);
     match trust {
-        Some(keys) => {
-            active_core::parse_file_with_trust(file, options(resilient, allow_parent_escapes), keys)
-        }
-        None => parse_file(file, options(resilient, allow_parent_escapes)),
+        Some(keys) => active_core::parse_file_with_trust(file, options, keys),
+        None => parse_file(file, options),
     }
 }
 
@@ -1696,8 +1814,35 @@ fn write_audit_trail(
     let peer_line = peer
         .map(|id| format!("  peer = {},\n", quote(id)))
         .unwrap_or_default();
+    // L-P03: the receipt records how every include was resolved (inline
+    // pin, lockfile path/content, or unpinned), so a replay can prove the
+    // include graph it ran.
+    let include_line = if module.include_resolutions.is_empty() {
+        String::new()
+    } else {
+        let entries = module
+            .include_resolutions
+            .iter()
+            .map(|(pin, kind)| {
+                let source = match kind {
+                    active_core::ir::IncludeResolutionKind::Inline => "inline",
+                    active_core::ir::IncludeResolutionKind::LockPath => "lock-path",
+                    active_core::ir::IncludeResolutionKind::LockContent => "lock-content",
+                    active_core::ir::IncludeResolutionKind::Unpinned => "unpinned",
+                };
+                format!(
+                    "{{ path = {}, resolved = {}, sha256 = \"sha256:{}\", source = \"{source}\" }}",
+                    quote(&pin.as_written),
+                    quote(&pin.resolved),
+                    pin.sha256
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("  include_resolutions = [{entries}],\n")
+    };
     let doc = format!(
-        "audit = {{\n  tool = \"active\",\n  version = {},\n  source = {},\n  mode = \"{}\",\n{}{}{}{}  nodes = {},\n  diagnostics = [{}],\n  result = {},\n  outcome = \"{}\"\n}}\n",
+        "audit = {{\n  tool = \"active\",\n  version = {},\n  source = {},\n  mode = \"{}\",\n{}{}{}{}{}  nodes = {},\n  diagnostics = [{}],\n  result = {},\n  outcome = \"{}\"\n}}\n",
         quote(env!("CARGO_PKG_VERSION")),
         quote(&file.to_string_lossy()),
         match module.mode {
@@ -1708,6 +1853,7 @@ fn write_audit_trail(
         budget_line,
         class_line,
         peer_line,
+        include_line,
         module.arena.len(),
         codes_list,
         result,
@@ -2246,18 +2392,21 @@ fn main() -> anyhow::Result<()> {
         } => {
             let name = file.to_string_lossy().to_string();
             // LANG-I-002c: lockfile drift fails closed before evaluation.
-            if let Some(lock) = lockfile.as_deref() {
-                let text = std::fs::read_to_string(lock)
-                    .map_err(|e| anyhow::anyhow!("cannot read lockfile {}: {e}", lock.display()))?;
-                active_core::provenance::verify_lockfile_files(&text)
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
-            }
+            // L-P03: the same lock also pins the include graph by
+            // spelling/resolved path; `--trust-keys` defaults to the
+            // sibling `active-lock.toml`.
             let trust = load_trust(&trust_keys)?;
-            let module = match parse_input_or_diags(
+            let include_lock = match lockfile.as_deref() {
+                Some(lock) => Some(explicit_include_lock(lock, &file, None)?),
+                None if trust.is_some() => sibling_include_lock(&file)?,
+                None => None,
+            };
+            let module = match parse_input_or_diags_locked(
                 &file,
                 resilient,
                 allow_parent_escapes,
                 &trust,
+                include_lock,
             ) {
                 Ok(module) => module,
                 Err(diags) => {
@@ -3102,7 +3251,7 @@ fn main() -> anyhow::Result<()> {
                 // includes resolve exactly as `active repair` resolves
                 // them (spec/viz.md §3).
                 if trust.is_some() {
-                    parse_input(&from, false, allow_parent_escapes, &trust)?;
+                    parse_input_unpinned(&from, false, allow_parent_escapes, &trust)?;
                 }
                 let source = std::fs::read_to_string(&from)
                     .map_err(|e| anyhow::anyhow!("cannot read source: {e}"))?;
@@ -3422,7 +3571,7 @@ fn main() -> anyhow::Result<()> {
                 // Gate the original file through trust verification
                 // before planning: untrusted includes fail here, the
                 // same as every other tool path.
-                parse_input(&from, false, allow_parent_escapes, &trust)?;
+                parse_input_unpinned(&from, false, allow_parent_escapes, &trust)?;
             }
             let mut eng = engine(false, &profile, budget.resolve()?, reader_version.as_deref());
             eng.materialise_blobs = false;
@@ -3654,7 +3803,7 @@ fn main() -> anyhow::Result<()> {
         } => {
             let name = file.to_string_lossy().to_string();
             let trust = load_trust(&trust_keys)?;
-            let module = parse_input(&file, resilient, allow_parent_escapes, &trust)?;
+            let module = parse_input_unpinned(&file, resilient, allow_parent_escapes, &trust)?;
             let engine = engine(resilient, &profile, budget.resolve()?, reader_version.as_deref());
             let (value, diags, seeds) = engine
                 .evaluate_with_seeds(&module)
@@ -3713,7 +3862,7 @@ fn main() -> anyhow::Result<()> {
             } else {
                 active_core::convert::redact_value(&secret_profile, &value)
             };
-            let manifest = active_core::provenance::LockManifest::new(
+            let mut manifest = active_core::provenance::LockManifest::new(
                 format!(
                     "active-cli {} / active-core {}",
                     env!("CARGO_PKG_VERSION"),
@@ -3722,6 +3871,16 @@ fn main() -> anyhow::Result<()> {
                 &strip_blob_payloads(&canonical),
                 provenance,
             );
+            // A lock written to a file records its inputs relative to
+            // that file, so verification resolves them from the lock's
+            // own directory (L-P03).
+            if let Some(path) = output.as_ref() {
+                let base = match path.parent() {
+                    Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+                    _ => std::path::PathBuf::from("."),
+                };
+                manifest.rebase_paths(&base);
+            }
             let rendered = manifest.render();
             match output {
                 Some(path) => std::fs::write(&path, &rendered)

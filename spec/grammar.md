@@ -22,7 +22,7 @@ string literals, `\r\n` contributes one newline and a lone `\r` becomes LF
 
 ```
 digit        = [0-9]
-hex-digit    — none (no hex literals in the alpha)
+hex-digit    = [0-9a-fA-F]
 letter       = [a-zA-Z]
 ident-start  = letter | "_"
 ident-char   = letter | digit | "_"
@@ -122,6 +122,25 @@ ml-annotated  = "@" semantic-tag ws* ml-string
 - **Spans:** the token span covers the opening delimiter through the closing
   delimiter (or EOF when unterminated); interpolation sub-expression spans
   are rebased onto the string position exactly as in 2.5.
+
+### 1.4.2 Include content pins (L-P06)
+
+```
+hash-pin     = "sha256" ":" 64 * hex-digit
+```
+
+- The keyword, colon, and all 64 hex digits must be adjacent: no
+  whitespace is allowed inside the pin. A `sha256:` followed by fewer or
+  more than 64 hex digits is not a pin token; in include-option position
+  it is a malformed statement (E015).
+- Hex digits are case-insensitive for comparison; the token text keeps
+  the source case.
+- The token is reserved in every position at the lexer level, not only
+  after `include`: a document that spells `sha256:<64 hex>` as a value
+  gets one token. It has meaning only as an include option; elsewhere it
+  is a malformed value.
+- The digest is SHA-256 over the included file's bytes (the bytes the
+  loader returned), never over a re-read file.
 
 ### 1.5 Numbers
 
@@ -261,7 +280,8 @@ belong to that table until EOF, the next `[`-header, or a `let`
 ### 2.7 Include statements (C-025)
 
 ```
-include-stmt  = "include" string-literal [ "as" identifier ] [ "private" ]
+include-stmt  = "include" string-literal [ include-option ]*
+include-option = hash-pin | "as" identifier | "private"
 string-literal = String | SingleString | MlString | MlSingleString
 ```
 
@@ -278,6 +298,25 @@ string-literal = String | SingleString | MlString | MlSingleString
 - `as alias` nests the included file's top-level keys under `alias`.
   `private` keeps the included keys out of the exported value tree while
   leaving them referenceable (C-026).
+- An inline content pin `sha256:<64 hex>` binds the include to the exact
+  bytes read (L-P06): the digest is SHA-256 over the file's contents, hex
+  is case-insensitive, and a mismatch is **E041** before the included
+  file is parsed. The pin makes the importing document self-describing -
+  a copied or substituted include cannot pass. The canonical formatter
+  emits the pin after the path, before `as`/`private`.
+- Options may appear in any order (`include "lib.active" private
+  sha256:<hex> as lib`); repeating any option, or a malformed pin, is
+  E015 and never falls through to an ordinary key-value statement.
+- Lockfile pinning (L-P03): when evaluation is given a lockfile
+  (`--lockfile`, or the sibling `active-lock.toml` under `--trust-keys`),
+  every include is resolved against its recorded digest as well, matching
+  the canonical resolved path first and the document spelling second. A
+  mismatch is E041. A lockfile that pins spellings is an allow-list of
+  edges: an include absent from it is E041, even when its bytes match
+  another pinned file. A legacy lockfile without identity pins resolves
+  by content and warns W017 on a miss unless the include already carries
+  a matching inline pin. Both pin sources apply when both exist;
+  spec/reproducibility.md §4 owns the lockfile side.
 - Paths resolve against the including file's directory. Absolute paths and
   paths escaping the directory via `..` are E015 by default (opt out with
   `allow_parent_escapes`, e.g. the CLI `--allow-parent-escapes` flag).

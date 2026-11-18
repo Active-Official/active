@@ -1063,6 +1063,9 @@ impl<'a> Formatter<'a> {
     fn emit_include(&mut self, inc: &IncludeStmt, depth: usize) {
         self.out.push_str(&INDENT.repeat(depth));
         self.out.push_str(&format!("include {:?}", inc.path));
+        if let Some(hash) = &inc.expected_hash {
+            self.out.push_str(&format!(" sha256:{hash}"));
+        }
         if let Some(alias) = &inc.alias {
             self.out.push_str(&format!(" as {alias}"));
         }

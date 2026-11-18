@@ -178,7 +178,7 @@ pub unsafe extern "C" fn active_last_error() -> i32 {
 /// an include is reported as `ACTIVE_ERR_INCLUDE_FAIL` rather than a
 /// generic parse error, so a host can tell the two apart.
 fn is_include_code(code: &str) -> bool {
-    matches!(code, "E015" | "E016" | "E017" | "E028")
+    matches!(code, "E015" | "E016" | "E017" | "E028" | "E041")
 }
 
 /// ABI class for a parse failure seen through a handle.
@@ -197,7 +197,8 @@ fn parse_failure_code(items: &[DiagSnapshot]) -> i32 {
 /// the ABI can distinguish an include failure (7) from any other parse
 /// failure (1) - both codes already existed in the header but only 1 was
 /// ever set (LANG-G-007). E016 (include depth), E017 (unreadable include),
-/// and E028 (include budget) are the include family.
+/// E028 (include budget), and E041 (content-pin mismatch) are the include
+/// family.
 fn parse_record_mode(text: &str) -> Result<(), i32> {
     let options = with_parse_limits(active_core::ParseOptions {
         enable_includes: true,
@@ -776,7 +777,7 @@ fn error_code_for(code: &str) -> i32 {
         "T001" | "T002" | "T003" => ACTIVE_ERR_UNIT_MISMATCH,
         "T004" | "T005" | "T006" | "T007" | "T008" => ACTIVE_ERR_SCHEMA_FAIL,
         "B001" | "B002" | "B003" | "B004" => ACTIVE_ERR_SCHEMA_FAIL,
-        "E015" | "E016" | "E017" | "E028" => ACTIVE_ERR_INCLUDE_FAIL,
+        "E015" | "E016" | "E017" | "E028" | "E041" => ACTIVE_ERR_INCLUDE_FAIL,
         _ if code.starts_with('X') => ACTIVE_ERR_BUDGET_EXCEEDED,
         _ if code.starts_with('S') => ACTIVE_ERR_UNIT_MISMATCH,
         _ => ACTIVE_ERR_SCHEMA_FAIL,
@@ -1224,6 +1225,32 @@ mod tests {
         // SAFETY: no-deref entry point; always safe to call.
         assert_eq!(unsafe { active_abi_version() }, 1);
         assert_eq!(ACTIVE_ABI_VERSION, 1);
+    }
+
+    #[test]
+    fn include_pin_failures_keep_the_include_class() {
+        // L-P03/L-P06: a content-pin mismatch is an include failure, not
+        // a generic parse or schema failure.
+        assert!(is_include_code("E041"));
+        assert_eq!(error_code_for("E041"), ACTIVE_ERR_INCLUDE_FAIL);
+        assert_eq!(
+            parse_failure_code(&[diag_snapshot_for("E041")]),
+            ACTIVE_ERR_INCLUDE_FAIL
+        );
+    }
+
+    fn diag_snapshot_for(code: &str) -> DiagSnapshot {
+        use std::ffi::CString;
+        DiagSnapshot {
+            code: CString::new(code).expect("code"),
+            severity: 1,
+            message: CString::new("pinned include mismatch").expect("message"),
+            line: 1,
+            column: 1,
+            end_line: 1,
+            end_column: 2,
+            has_span: true,
+        }
     }
 
     #[test]

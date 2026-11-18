@@ -13,9 +13,10 @@ Compared strictly per case: ordered code lists, span tuples
 the refused flag. Codes and values must also equal the committed
 expectations (errors/<id>.json, expected/<id>.json).
 
-Out of scope by design (documented, not silent): 0008-include needs an
-include-loader registration that the shipped binding surfaces do not
-expose; the reference core suite covers it. Every other case runs.
+Out of scope by design (documented, not silent): the include cases
+(0008 and the L-P03/L-P06 pin vectors) need an include-loader
+registration that the shipped binding surfaces do not expose; the
+reference core suite covers them. Every other case runs.
 
 Secrets: fixture sources may contain the raw marker; this script never
 prints sources or raw values, scrubs all output, and fails the run if

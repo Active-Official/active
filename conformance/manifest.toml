@@ -225,3 +225,23 @@ reason = "include-loader callback absent from shim v1 (F-016 native only)"
 [[pins]]
 id = "0011-profile"
 reason = "CLI --profile override absent from shim v1 (in-doc selection covered by 0013-profile-inline)"
+# L-P06: an inline content pin makes the importing document
+# self-describing; a matching digest resolves the include (clean).
+[[cases]]
+id = "0037-include-inline-pin"
+file = "cases/0037-include-inline-pin.active"
+kind = "clean"
+
+# The pinned bytes change: refusing is the whole point of the pin (E041).
+[[cases]]
+id = "0038-include-inline-pin-mismatch"
+file = "cases/0038-include-inline-pin-mismatch.active"
+kind = "refused"
+
+[[pins]]
+id = "0037-include-inline-pin"
+reason = "include-loader callback absent from shim v1 (F-016 native only)"
+
+[[pins]]
+id = "0038-include-inline-pin-mismatch"
+reason = "include-loader callback absent from shim v1 (F-016 native only)"

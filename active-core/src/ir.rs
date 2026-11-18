@@ -39,6 +39,14 @@ pub struct Module {
     /// re-emits them; evaluation merges them per the defaults rule, so
     /// the composed tree does not need them.
     pub includes: Vec<IncludeStmt>,
+    /// Every resolved include's content pin (L-P03): spelling and the
+    /// SHA-256 of the bytes read. The lockfile records these; the audit
+    /// receipt shows what was verified.
+    pub include_pins: Vec<IncludePin>,
+    /// How each include was accepted during this parse (L-P03/L-P06):
+    /// inline pin, lockfile path/content, or unpinned. Recorded in the
+    /// audit receipt; empty when the document has no includes.
+    pub include_resolutions: Vec<(IncludePin, IncludeResolutionKind)>,
     /// Named profiles in source order (spec §2.8, C-027). Never exported
     /// directly; the selected one merges into the root value at
     /// evaluation.
@@ -127,10 +135,46 @@ pub struct IncludeStmt {
     pub alias: Option<String>,
     /// Whether the included keys stay out of the exported tree.
     pub private: bool,
+    /// Optional inline content pin: `include "x" sha256:<hex>`
+    /// (L-P06). The digest is over the included file's bytes; a mismatch
+    /// is a hard error (E041).
+    pub expected_hash: Option<String>,
     /// Scope path where the statement appeared (empty = document root).
     pub scope_path: Vec<String>,
     /// Source line of the statement, for stable formatter emission.
     pub line: u32,
+}
+
+/// One resolved include's content pin (L-P03): the path as the document
+/// spelled it, the root-relative identity the bytes were read from
+/// (`..` for outside-root includes; absolute only across unrelated
+/// roots), and the SHA-256 of those bytes. The lockfile records these so
+/// eval can resolve an include by content and the audit trail can show
+/// what was verified. `resolved` disambiguates one spelling used from
+/// several directories and stays valid when the tree moves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IncludePin {
+    pub as_written: String,
+    pub resolved: String,
+    /// The exact path the parser stamped on the nodes (canonical on the
+    /// filesystem, lexical-absolute under a host loader). Provenance
+    /// reuses this to key parse-time digests without touching the disk.
+    pub stamp: String,
+    pub sha256: String,
+}
+
+/// Why an include was accepted during the locked/inline resolution
+/// (recorded in the audit receipt).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IncludeResolutionKind {
+    /// The document carried the matching inline `sha256:<hex>`.
+    Inline,
+    /// The lockfile pinned this include spelling to the matching digest.
+    LockPath,
+    /// The lockfile pinned a different spelling of the same content.
+    LockContent,
+    /// No lockfile pin applied (lock mode off, or the include is new).
+    Unpinned,
 }
 
 /// One field's schema: a type plus its constraint arguments (spec §2.10,
@@ -270,6 +314,8 @@ impl Module {
             trivia: Vec::new(),
             source_style: Style::Brace,
             includes: Vec::new(),
+            include_pins: Vec::new(),
+            include_resolutions: Vec::new(),
             profiles: IndexMap::new(),
             patches: Vec::new(),
             schema: None,

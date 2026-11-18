@@ -319,7 +319,9 @@ Full-document tokens from the lexer stream (no new parsing):
 keywords (`let`, `true`, `false`, `null`, `profile`, `include`,
 `as`, `private`, `secret`, `env`), strings, numbers (with units),
 comments (incl. `# @…` annotations as comments), property (keys),
-variable (`let` names and references), operators, brackets. Delta
+variable (`let` names and references), operators, brackets. An inline
+include content pin (`sha256:<64 hex>`, L-P06) is one `string` token
+covering the whole pin. Delta
 encoding per LSP; legend fixed in the server.
 
 ## 7. Testing contract

@@ -173,9 +173,11 @@ nested body.
 
 ### 2.5 Include lowering (C-025)
 
-`include "path" [as alias] [private]` splices another file's module into the
-including module, sharing one arena, one binding table, and one dependency
-graph:
+`include "path" [sha256:<64 hex>] [as alias] [private]` splices another
+file's module into the including module, sharing one arena, one binding
+table, and one dependency graph. The optional inline pin (L-P06) binds
+the included bytes; a mismatch is E041. Options may appear in any order
+and at most once each (spec/grammar.md §1.4.2 and §2.7):
 
 - The included file is parsed with a fresh scope stack but the **shared**
   bindings, so its references resolve against the combined namespace and

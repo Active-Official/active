@@ -47,6 +47,20 @@ Mitigations:
   must carry a valid signature from the trusted set (E032
   otherwise). Unsigned ecosystems stay working by default;
   sealed deployments pass the flag.
+- **Content-pinned includes (L-P03/L-P06)**: an inline
+  `include "x" sha256:<hex>` binds the bytes the document expects, and
+  an enforced lockfile (`--lockfile`, or the sibling `active-lock.toml`
+  under `--trust-keys`) pins every include by resolved path and spelling.
+  A changed include is E041; an include absent from an enforced lock is
+  E041. A legacy lockfile without identity pins refuses a changed
+  recorded include as `lockfile drift`, and resolves a new edge by
+  content with W017 on a miss unless the include carries a matching
+  inline pin.
+- **Residual risk (documented)**: lockfiles are not signed. An attacker
+  who can ship the document *and* its sibling lockfile can pin their own
+  bytes; enforcement proves the evaluated graph matches the lock, not
+  that the lock is trustworthy. Pin the lockfile's own hash through the
+  deployment channel, or sign the document tree, when that matters.
 - Patches overlapping `@ai_immutable` fail (E019/C-034).
 
 ### 3.2 Secret exfiltration
@@ -110,6 +124,12 @@ trust file may revoke key ids (LANG-I-002).
 - Identity binding: a sidecar records the identity `path`, and
   verification refuses any other path (E039). Copying a signed overlay
   elsewhere fails closed.
+- The signed identity is the spelling the importing document uses, so a
+  signed `lib.active` copied into another directory under the same
+  spelling is indistinguishable to the signature check. Eval-time lock
+  pins key on the root-relative resolved identity for exactly this reason
+  (L-P03, spec/reproducibility.md §4a): enable an enforced lockfile when
+  same-spelling includes from several directories are in scope.
 - Expiry: a sidecar may carry `expires = "YYYY-MM-DD"`; past it the
   sidecar fails closed (E037). Beyond that there is no timestamping: a
   still-valid, still-bound sidecar that is replayed verifies, and

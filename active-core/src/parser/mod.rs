@@ -191,6 +191,15 @@ pub struct ParseOptions {
     /// Host-provided source resolver consulted INSTEAD of the filesystem
     /// read when set (F-016). `None` preserves all legacy behavior.
     pub include_loader: Option<IncludeLoader>,
+    /// Include pins loaded from a lockfile (L-P03). `None` leaves
+    /// include resolution path-based; `Some` verifies every include's
+    /// content against the pin (E041) and records the resolution.
+    pub include_lock: Option<crate::provenance::IncludeLock>,
+    /// Directory of the root document, canonical when available. File
+    /// based parsers set it; it anchors the root-relative `resolved` path
+    /// recorded in include pins, so a lockfile stays valid when the tree
+    /// moves (L-P03). `None` records canonical absolute paths.
+    pub root_dir: Option<std::path::PathBuf>,
 }
 
 /// Default parse input cap: 4 MiB (LANG-C-003). Above any real
@@ -251,6 +260,8 @@ impl Default for ParseOptions {
             max_wall_ms: DEFAULT_MAX_PARSE_WALL_MS,
             max_nodes: DEFAULT_MAX_PARSE_NODES,
             include_loader: None,
+            include_lock: None,
+            root_dir: None,
         }
     }
 }
@@ -267,6 +278,8 @@ impl ParseOptions {
             max_wall_ms: DEFAULT_MAX_PARSE_WALL_MS,
             max_nodes: DEFAULT_MAX_PARSE_NODES,
             include_loader: None,
+            include_lock: None,
+            root_dir: None,
         }
     }
 
@@ -281,6 +294,8 @@ impl ParseOptions {
             max_wall_ms: DEFAULT_MAX_PARSE_WALL_MS,
             max_nodes: DEFAULT_MAX_PARSE_NODES,
             include_loader: None,
+            include_lock: None,
+            root_dir: None,
         }
     }
 }
@@ -317,6 +332,7 @@ pub fn parse_text_with_file(
 ) -> Result<Module, Vec<Diagnostic>> {
     let mut options = options;
     options.enable_includes = true;
+    options.root_dir = root_dir_of(path, options.include_loader.is_some());
     let (module, errors) = parse_recovering_impl(source, name, options, Some(path), None);
     if errors.is_empty() {
         Ok(module)
@@ -338,7 +354,28 @@ pub fn parse_text_recovering_with_file(
 ) -> (Module, Vec<Diagnostic>) {
     let mut options = options;
     options.enable_includes = true;
+    options.root_dir = root_dir_of(path, options.include_loader.is_some());
     parse_recovering_impl(source, name, options, Some(path), None)
+}
+
+/// Root directory for root-relative include pins (L-P03): the canonical
+/// parent of the document when it exists, else its literal parent. A
+/// loader-backed parse uses a lexical absolute parent instead, so loader
+/// paths and the root share one (non-verbatim) Windows frame.
+fn root_dir_of(path: &std::path::Path, lexical: bool) -> Option<std::path::PathBuf> {
+    if lexical {
+        return std::path::absolute(path)
+            .ok()
+            .and_then(|p| p.parent().map(std::path::Path::to_path_buf));
+    }
+    path.canonicalize()
+        .ok()
+        .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
+        .or_else(|| {
+            std::path::absolute(path)
+                .ok()
+                .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
+        })
 }
 
 /// Parse a file from the filesystem, resolving `include` statements
@@ -398,6 +435,7 @@ pub fn parse_file(
     let src = read_document_file(path, options.max_input_bytes)?;
     let mut options = options;
     options.enable_includes = true;
+    options.root_dir = root_dir_of(path, options.include_loader.is_some());
     let (module, errors) =
         parse_recovering_impl(&src, &path.to_string_lossy(), options, Some(path), None);
     if errors.is_empty() {
@@ -444,6 +482,7 @@ pub fn parse_file_with_trust(
     }
     let mut options = options;
     options.enable_includes = true;
+    options.root_dir = root_dir_of(path, options.include_loader.is_some());
     let (module, errors) =
         parse_recovering_impl(&src, &label, options, Some(path), Some(trusted.clone()));
     if errors.is_empty() {
@@ -600,6 +639,7 @@ fn parse_recovering_impl(
         brace_tables: 0,
         indent_tables: 0,
         current_file: root_file.map(|p| p.to_path_buf()),
+        current_lexical_file: root_file.map(|p| p.to_path_buf()),
         include_stack: Vec::new(),
         includes_resolved: 0,
         included_bytes: 0,
@@ -967,6 +1007,11 @@ struct Parser {
     /// File currently being parsed (None for string input). Diagnostics
     /// record it; include paths resolve against its directory.
     current_file: Option<std::path::PathBuf>,
+    /// The same file in the include loader's lexical frame (the path the
+    /// host knows). Filesystem parses mirror `current_file`; loader
+    /// parses keep the virtual spelling so nested callbacks stay
+    /// relative and cwd-independent.
+    current_lexical_file: Option<std::path::PathBuf>,
     /// Canonicalized files on the include stack (cycle detection, C-025).
     include_stack: Vec<std::path::PathBuf>,
     /// Includes resolved so far in this parse (LANG-C-002): a diamond
@@ -1081,6 +1126,8 @@ struct PendingInclude {
     path: String,
     alias: Option<String>,
     private: bool,
+    /// Inline content pin (`include "x" sha256:<hex>`, L-P06).
+    expected_hash: Option<String>,
     tok: Token,
     /// Length of `module.patches` when the statement was encountered:
     /// included patches splice in at this position so application order
@@ -1711,7 +1758,13 @@ impl Parser {
                                 | TokenKind::Bang
                                 | TokenKind::LParen
                         );
-                    if value_at_statement {
+                    if matches!(tok.kind, TokenKind::HashPin(_)) {
+                        self.error_at(
+                            "E002",
+                            "sha256 content pins are only valid on the include statement line",
+                            &tok,
+                        );
+                    } else if value_at_statement {
                         self.error_at(
                             "E002",
                             "unexpected value at statement position (values need a key: `name = ...`)",
@@ -2088,12 +2141,19 @@ impl Parser {
             );
             return;
         }
-        // Optional `as alias` and `private`, in either order.
+        // Optional inline content pin, `as alias`, and `private`, in any
+        // order (L-P06 pins the file's bytes; the pin belongs in the
+        // importing document).
         let mut alias: Option<String> = None;
         let mut private = false;
+        let mut expected_hash: Option<String> = None;
         loop {
             let t = self.peek().clone();
             match &t.kind {
+                TokenKind::HashPin(digest) if expected_hash.is_none() => {
+                    self.bump();
+                    expected_hash = Some(digest.clone());
+                }
                 TokenKind::Ident if t.text == "as" && alias.is_none() => {
                     self.bump();
                     match self.expect(TokenKind::Ident) {
@@ -2108,6 +2168,36 @@ impl Parser {
                 _ => break,
             }
         }
+        // L-P06: a malformed or repeated option must not fall through to
+        // statement parsing - that would export a bogus `sha256` key and
+        // silently skip the pin. Only same-line tokens are candidate
+        // options; `sha256 = ...` on the next line is an ordinary key.
+        let next = self.peek().clone();
+        if next.line == path_tok.end_line {
+            match &next.kind {
+                TokenKind::HashPin(_) => {
+                    self.error_at(
+                        "E015",
+                        "include statement has a repeated sha256 pin; give the pin once"
+                            .to_string(),
+                        &next,
+                    );
+                    return;
+                }
+                TokenKind::Ident if matches!(next.text.as_str(), "sha256" | "as" | "private") => {
+                    self.error_at(
+                        "E015",
+                        format!(
+                            "malformed include statement: `{}` needs its value and may appear only once",
+                            next.text
+                        ),
+                        &next,
+                    );
+                    return;
+                }
+                _ => {}
+            }
+        }
         let key = alias.clone().unwrap_or_else(|| path.clone());
         self.record_stmt(
             &key,
@@ -2119,6 +2209,7 @@ impl Parser {
             path: path.clone(),
             alias: alias.clone(),
             private,
+            expected_hash: expected_hash.clone(),
             scope_path: self.current_path.clone(),
             line: kw.line,
         });
@@ -2126,6 +2217,7 @@ impl Parser {
             path,
             alias,
             private,
+            expected_hash,
             tok: path_tok,
             patch_mark: self.module.patches.len(),
         });
@@ -2187,9 +2279,16 @@ impl Parser {
                 );
             }
         }
-        let base_dir: PathBuf = self
-            .current_file
-            .as_ref()
+        // A loader parse resolves and calls back in the lexical frame the
+        // host supplied; a filesystem parse uses the canonical file.
+        let base_file = if self.options.include_loader.is_some() {
+            self.current_lexical_file
+                .as_ref()
+                .or(self.current_file.as_ref())
+        } else {
+            self.current_file.as_ref()
+        };
+        let base_dir: PathBuf = base_file
             .and_then(|f| f.parent().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| PathBuf::from("."));
         let joined = base_dir.join(raw);
@@ -2217,8 +2316,14 @@ impl Parser {
             out
         }
         let has_loader = self.options.include_loader.is_some();
-        let canonical = if has_loader {
-            lexical_join(&base_dir, raw)
+        let lexical_include = has_loader.then(|| lexical_join(&base_dir, raw));
+        let canonical = if let Some(lexical) = &lexical_include {
+            // Loader paths never touch the disk. They still share the
+            // document's frame: make the lexical join absolute so
+            // root-relative include pins match a filesystem parse of the
+            // same tree (L-P03). The loader callback keeps receiving the
+            // lexical path (the host's virtual-path contract).
+            std::path::absolute(lexical).unwrap_or_else(|_| lexical.clone())
         } else {
             match joined.canonicalize() {
                 Ok(p) => p,
@@ -2233,7 +2338,8 @@ impl Parser {
         };
         if !self.options.allow_parent_escapes {
             let contained = if has_loader {
-                canonical.starts_with(lexical_join(&base_dir, std::path::Path::new("")))
+                let base = std::path::absolute(&base_dir).unwrap_or_else(|_| base_dir.clone());
+                canonical.starts_with(base)
             } else if let Ok(base_canon) = base_dir.canonicalize() {
                 canonical.starts_with(&base_canon)
             } else {
@@ -2312,16 +2418,22 @@ impl Parser {
         // Canonicalization, depth, and trust verification around it are
         // unchanged; a hook failure surfaces exactly like a read failure.
         let src = match self.options.include_loader.clone() {
-            Some(loader) => match loader(&canonical.to_string_lossy()) {
-                Ok(s) => s,
-                Err(e) => {
-                    return fail(
-                        self,
-                        "E017",
-                        format!("include loader refused `{}`: {e}", canonical.display()),
-                    );
+            Some(loader) => {
+                let callback_path = lexical_include
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| canonical.to_string_lossy().into_owned());
+                match loader(&callback_path) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        return fail(
+                            self,
+                            "E017",
+                            format!("include loader refused `{}`: {e}", canonical.display()),
+                        );
+                    }
                 }
-            },
+            }
             None => {
                 // Size pre-check before allocating (LANG-C-003): an
                 // include over the remaining byte budget must be rejected
@@ -2381,9 +2493,132 @@ impl Parser {
                 }
             }
         }
+        // L-P03/L-P06: verify the include's content against the pin in the
+        // importing document (inline `sha256:<hex>`) and/or the lockfile.
+        // A mismatch is a hard error; a missing pin is an error in Enforce
+        // mode and a loud W017 in Warn mode. The accepted resolution is
+        // recorded for the audit receipt.
+        let actual_hash = crate::provenance::sha256_hex(src.as_bytes());
+        let resolved =
+            crate::provenance::root_relative(&canonical, self.options.root_dir.as_deref());
+        let mut resolution = crate::ir::IncludeResolutionKind::Unpinned;
+        if let Some(expected) = &inc.expected_hash {
+            if !expected.eq_ignore_ascii_case(&actual_hash) {
+                return fail(
+                    self,
+                    "E041",
+                    format!(
+                        "include `{}` content hash mismatch: the document pins sha256:{expected}, the file is sha256:{actual_hash}",
+                        inc.path
+                    ),
+                );
+            }
+            resolution = crate::ir::IncludeResolutionKind::Inline;
+        }
+        // Decide before any diagnostic borrows the parser mutably, so the
+        // lock is read in place (no per-include clone).
+        enum LockVerdict {
+            Matched,
+            Content,
+            Mismatch(String),
+            Missing,
+            Unpinned,
+        }
+        let verdict = match self.options.include_lock.as_ref() {
+            None => None,
+            Some(lock) => {
+                // The resolved path disambiguates one spelling used from
+                // several directories; a spelling pin serves hand-written
+                // locks that record no resolved path.
+                let pinned = lock
+                    .resolved
+                    .get(&resolved)
+                    .or_else(|| lock.pins.get(&inc.path));
+                Some(match pinned {
+                    Some(wants)
+                        if !wants
+                            .iter()
+                            .any(|want| want.eq_ignore_ascii_case(&actual_hash)) =>
+                    {
+                        LockVerdict::Mismatch(wants.first().cloned().unwrap_or_default())
+                    }
+                    Some(_) => LockVerdict::Matched,
+                    // Content admits a renamed include only in warn mode
+                    // (a lockfile that predates spelling pins). Under
+                    // enforcement a lockfile is an allow-list of edges as
+                    // well as bytes: a spelling absent from the lock is
+                    // refused even when its content matches another pin.
+                    None if lock.mode == crate::provenance::LockMode::Warn
+                        && lock.hashes.contains(&actual_hash) =>
+                    {
+                        LockVerdict::Content
+                    }
+                    None if lock.mode == crate::provenance::LockMode::Enforce => {
+                        LockVerdict::Missing
+                    }
+                    None => LockVerdict::Unpinned,
+                })
+            }
+        };
+        match verdict {
+            Some(LockVerdict::Mismatch(want)) => {
+                return fail(
+                    self,
+                    "E041",
+                    format!(
+                        "include `{}` ({resolved}) does not match the lockfile pin (lockfile sha256:{want}, file sha256:{actual_hash})",
+                        inc.path
+                    ),
+                );
+            }
+            Some(LockVerdict::Matched) => {
+                if !matches!(resolution, crate::ir::IncludeResolutionKind::Inline) {
+                    resolution = crate::ir::IncludeResolutionKind::LockPath;
+                }
+            }
+            Some(LockVerdict::Content) => {
+                if !matches!(resolution, crate::ir::IncludeResolutionKind::Inline) {
+                    resolution = crate::ir::IncludeResolutionKind::LockContent;
+                }
+            }
+            Some(LockVerdict::Missing) => {
+                return fail(
+                    self,
+                    "E041",
+                    format!(
+                        "include `{}` has no lockfile pin; re-run `active lock` before evaluating",
+                        inc.path
+                    ),
+                );
+            }
+            Some(LockVerdict::Unpinned) => {
+                // An inline pin already proved this include; a legacy
+                // lock's lack of a spelling pin is not a warning.
+                if !matches!(resolution, crate::ir::IncludeResolutionKind::Inline) {
+                    self.warn_at(
+                        "W017",
+                        format!(
+                            "include `{}` is not pinned by the lockfile; the file is trusted by path only",
+                            inc.path
+                        ),
+                        &inc.tok,
+                    );
+                }
+            }
+            None => {}
+        }
+        let pin = crate::ir::IncludePin {
+            as_written: inc.path.clone(),
+            resolved,
+            stamp: canonical.to_string_lossy().into_owned(),
+            sha256: actual_hash,
+        };
+        self.module.include_pins.push(pin.clone());
+        self.module.include_resolutions.push((pin, resolution));
         // Save per-file session state; the arena, bindings, graph,
         // diagnostics, and options are intentionally shared.
         let saved_file = self.current_file.clone();
+        let saved_lexical_file = self.current_lexical_file.clone();
         let saved_root = self.module.root;
         let saved_scopes = std::mem::take(&mut self.ident_scopes);
         let saved_path = self.current_path.clone();
@@ -2392,6 +2627,7 @@ impl Parser {
         let saved_in_include = self.in_include;
         let saved_in_profile = self.in_profile;
         self.current_file = Some(canonical.clone());
+        self.current_lexical_file = lexical_include.clone().or_else(|| Some(canonical.clone()));
         self.includes_resolved = self.includes_resolved.saturating_add(1);
         self.included_bytes = self.included_bytes.saturating_add(src.len());
         self.include_stack.push(canonical);
@@ -2456,6 +2692,7 @@ impl Parser {
         let sub_root = self.module.root;
         self.module.root = saved_root;
         self.current_file = saved_file;
+        self.current_lexical_file = saved_lexical_file;
         self.include_stack.pop();
         self.current_path = saved_path;
         self.brace_tables = saved_brace;
@@ -4445,6 +4682,7 @@ impl Parser {
             brace_tables: 0,
             indent_tables: 0,
             current_file: self.current_file.clone(),
+            current_lexical_file: self.current_lexical_file.clone(),
             include_stack: Vec::new(),
             includes_resolved: self.includes_resolved,
             included_bytes: self.included_bytes,
@@ -5206,7 +5444,12 @@ impl Parser {
             }
 
             _ => {
-                self.error("E002", format!("unexpected token {:?}", tok.kind));
+                let message = if matches!(tok.kind, TokenKind::HashPin(_)) {
+                    "sha256 content pins are only valid on the include statement line".to_string()
+                } else {
+                    format!("unexpected token {:?}", tok.kind)
+                };
+                self.error("E002", message);
                 self.bump();
                 self.module.add_node(Node::Literal(Value::Null))
             }
@@ -6515,6 +6758,7 @@ impl Parser {
             brace_tables: 0,
             indent_tables: 0,
             current_file: self.current_file.clone(),
+            current_lexical_file: self.current_lexical_file.clone(),
             include_stack: Vec::new(),
             includes_resolved: self.includes_resolved,
             included_bytes: self.included_bytes,

@@ -252,6 +252,19 @@ fn unicode_positions_are_utf16() {
 }
 
 #[test]
+fn semantic_tokens_classify_an_inline_include_pin() {
+    // L-P06: `sha256:<64 hex>` is one token; the client renders it as a
+    // string so a pinned include reads like data, not an operator.
+    let text = "include \"lib.active\" sha256:2b31d5d570b6cc25ed82a4f538b603f5534da6e601f9ba5b1762bf721a19320b\n";
+    let absolute = analysis::semantic_tokens_absolute(text);
+    let pin_start = text.find("sha256:").expect("pin") as u32;
+    assert!(
+        absolute.contains(&(0, pin_start, 71, 1)),
+        "pin must be one string token: {absolute:?}"
+    );
+}
+
+#[test]
 fn semantic_token_categories_cover_statements() {
     let absolute =
         analysis::semantic_tokens_absolute("let limit = 5\n[server]\nport = 1\n# note\n");

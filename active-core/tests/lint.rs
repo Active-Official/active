@@ -663,6 +663,7 @@ fn include_hygiene_flags_duplicates_and_absolute_paths() {
             path: path.to_string(),
             alias: alias.map(str::to_string),
             private: false,
+            expected_hash: None,
             scope_path: Vec::new(),
             line,
         });

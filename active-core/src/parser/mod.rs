@@ -669,6 +669,7 @@ fn parse_recovering_impl(
         pending_profiles: Vec::new(),
         trust,
     };
+    parser.module.source_sha256 = crate::provenance::sha256_hex(source.as_bytes());
     // Lexer diagnostics carry no file; stamp the session file (includes
     // attribute their own file when their sub-parse runs).
     let lex_file = parser.current_file_name();

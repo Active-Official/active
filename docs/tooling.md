@@ -170,6 +170,52 @@ never reads it as an input, and a write failure is the informational
 W018 while the tree and exit status stay unchanged. It contains raw include bytes (including secrets), so
 point it at a directory with the source's confidentiality.
 
+## Evaluation cache
+
+```sh
+active eval --cache .cache/active-eval doc.active
+active eval --cache .cache/active-eval --format yaml doc.active
+```
+
+A repeat run whose inputs are unchanged prints the stored result
+without evaluating. The key is a keyed BLAKE3 MAC over the evaluator
+version, the source and include content hashes, mode, profile, resolved
+budget, the values of every environment variable the document names
+(`env.NAME` or `secret.env(NAME)`), the input path, and the output
+selectors (`--path`, `--materialise-blobs`, `--reader-version`,
+`--resilient`, sandbox). One entry serves all three formats.
+Diagnostics replay with the result, so stdout, stderr, and exit status
+match the run that filled the entry.
+
+The MAC key is a per-user file outside the cache directory:
+`$ACTIVE_CACHE_KEY_FILE` when set, else `active/cache-key` under the
+platform config directory (`%APPDATA%` on Windows, `$XDG_CONFIG_HOME` or
+`~/.config` on Unix). It is generated on first use, created owner-only,
+and refused if it is not a regular file owned by the running user and
+readable only by them (Windows ACLs are not checked). Another user who
+can list or write a private cache directory cannot compute an entry name
+or confirm a guessed environment value; entries are not portable across
+users or machines. Without a usable key file the run proceeds uncached.
+
+Entries are JSON with a v2 receipt binding the value to its schema,
+profile, budget, mode, and capability. A run whose profile or schema
+selector is material writes no entry, so the selector never reaches
+disk in cleartext. Entries hold the printed output,
+including materialised blob payloads when `--materialise-blobs` was
+used, so point `--cache` at a directory with the source's
+confidentiality. On Unix the cache root must belong to the same user as
+the key file, must not be a symlink or group/other-writable, and an
+entry readable by or owned by another user is not served; Windows ACLs
+are not checked. The cache is best-effort: a failed write is a warning,
+and a corrupt, stale, or non-regular entry is a miss with a warning.
+`--audit-trail`, `--envelope`, and `--trace` record or observe the run
+itself, and `--store`, `--trust-keys`, `--lockfile`, and
+`--envelope-trust` add side effects, signature policy, or parse-time
+diagnostics outside the key, so those flags bypass the cache (with a
+warning). The cache never supplies inputs: includes are re-read and
+re-verified every run. Delete the directory to clear entries, including
+ones left by a rebuild at the same version.
+
 ## One-pass test command
 
 ```sh

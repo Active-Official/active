@@ -327,6 +327,14 @@ enum Commands {
         /// directory and deduplicate them by SHA-256 (L-P04)
         #[arg(long)]
         store: Option<PathBuf>,
+        /// Content-keyed evaluation cache directory (L-P29): a repeat run
+        /// with identical source, includes, mode, profile, budget,
+        /// environment, and output variant prints the stored result
+        /// without re-evaluating. Ignored with --audit-trail, --envelope,
+        /// --trace, --store, --trust-keys, --lockfile, and
+        /// --envelope-trust.
+        #[arg(long)]
+        cache: Option<PathBuf>,
         /// Select a profile by name, overriding the active_profile key
         #[arg(long)]
         profile: Option<String>,
@@ -2346,6 +2354,89 @@ fn had_failure(diags: &[Diagnostic], resilient: bool) -> bool {
         .any(|d| d.severity == Severity::Error || (!resilient && d.severity == Severity::Warning))
 }
 
+/// Load (or create) the per-user cache MAC key. The key lives outside
+/// the cache directory, so the directory alone cannot reproduce a key
+/// name or confirm a guessed environment value (L-P29 review F2/F3).
+fn cache_signing_key() -> Result<([u8; active_core::cache::KEY_BYTES], Option<u32>), String> {
+    let path = active_core::cache::default_key_path().ok_or_else(|| {
+        format!(
+            "cannot locate a cache key file; set {}",
+            active_core::cache::KEY_ENV
+        )
+    })?;
+    let key = active_core::cache::load_or_create_key(&path)?;
+    Ok((key, active_core::cache::file_owner(&path)))
+}
+
+/// The v2 receipt stored in an L-P29 cache entry (L-T06 shape): it binds
+/// the served value to the schema, profile, budget, mode, and capability
+/// that produced it, so a cache file is provenance evidence rather than
+/// an unverifiable blob.
+fn cache_receipt(
+    module: &active_core::Module,
+    profile: Option<&str>,
+    budget: &active_core::eval::Budget,
+    value: &active_core::Value,
+    capability: &str,
+    diags: &[Diagnostic],
+    resilient: bool,
+) -> serde_json::Value {
+    let failed = had_failure(diags, resilient);
+    let bound = active_core::envelope::bound_content_hash(
+        value,
+        active_core::envelope::document_schema_version(module).as_deref(),
+        profile,
+        budget,
+        module.mode,
+        Some(capability),
+        active_core::envelope::payload_tainted(value),
+    );
+    let resolved = budget.resolve();
+    let mut receipt = serde_json::Map::new();
+    receipt.insert(
+        "outcome".into(),
+        serde_json::json!(if failed { "failed" } else { "clean" }),
+    );
+    if failed {
+        // Engine-level failures are classified when the envelope names
+        // its stage; a cached resilient run only knows it did not pass.
+        receipt.insert("failure_class".into(), serde_json::json!("other"));
+    } else {
+        receipt.insert("result".into(), serde_json::json!(bound));
+    }
+    receipt.insert("capability".into(), serde_json::json!(capability));
+    receipt.insert(
+        "mode".into(),
+        serde_json::json!(match module.mode {
+            active_core::Mode::Config => "config",
+            active_core::Mode::Data => "data",
+        }),
+    );
+    if let Some(profile) = profile {
+        receipt.insert("profile".into(), serde_json::json!(profile));
+    }
+    if let Some(version) = active_core::envelope::document_schema_version(module) {
+        receipt.insert("schema_version".into(), serde_json::json!(version));
+    }
+    receipt.insert(
+        "budget".into(),
+        serde_json::json!({
+            "nodes": resolved.max_nodes,
+            "depth": resolved.max_depth,
+            "array_len": resolved.max_array_len,
+            "keys": resolved.max_keys,
+            "wall_ms": resolved.max_wall_ms,
+            "value_size": resolved.max_value_size,
+            "total_size": resolved.max_total_value_size,
+        }),
+    );
+    receipt.insert(
+        "diagnostics".into(),
+        serde_json::json!(diags.iter().map(|d| d.code.clone()).collect::<Vec<_>>()),
+    );
+    serde_json::Value::Object(receipt)
+}
+
 /// Dump the opt-in evaluation trail as JSONL on stderr. Events carry
 /// counts and diagnostic codes only, never values, sources, or secrets
 /// (enforced by construction in active_core::trace).
@@ -2490,6 +2581,7 @@ fn main() -> anyhow::Result<()> {
             trust_keys,
             lockfile,
             store,
+            cache,
             profile,
             trace,
             materialise_blobs,
@@ -2513,6 +2605,34 @@ fn main() -> anyhow::Result<()> {
                 None if trust.is_some() => sibling_include_lock(&file)?,
                 None => None,
             };
+            let store_requested = store.is_some();
+            // L-P29: a content-keyed cache turns a repeat run into a
+            // read. Run observers (the audit trail, the envelope, the
+            // trace) record THIS run, and admission flags (the L-P04
+            // store, trust keys, a lockfile, envelope trust) add side
+            // effects, policy, or parse-time diagnostics that are not in
+            // the key; each of those bypasses the cache. Decide before
+            // parsing so the warning also appears on a parse failure.
+            let cache_compatible = audit_trail.is_none()
+                && envelope.is_none()
+                && !trace
+                && !store_requested
+                && trust_keys.is_none()
+                && lockfile.is_none()
+                && envelope_trust.is_none();
+            if cache.is_some() && !cache_compatible {
+                eprintln!(
+                    "warning: --cache is not used with --audit-trail, --envelope, --trace, --store, --trust-keys, --lockfile, or --envelope-trust"
+                );
+            }
+            // An empty root would resolve entry names against the
+            // working directory; refuse it like the include store does.
+            if cache
+                .as_ref()
+                .is_some_and(|path| path.as_os_str().is_empty())
+            {
+                anyhow::bail!("--cache requires a directory path");
+            }
             let module = match parse_input_or_diags_locked(
                 &file,
                 resilient,
@@ -2628,6 +2748,85 @@ fn main() -> anyhow::Result<()> {
                 active_core::secret::active_profile_name(&module)
                     .filter(|name| module.profiles.contains_key(name))
             });
+            // L-P29: a run whose callers need the run itself, or whose
+            // admission adds side effects outside the key, was already
+            // reported as uncached before parsing.
+            let cache_dir = cache.filter(|_| cache_compatible);
+            let cache_variant = format!(
+                "source={:?};path={:?};materialise={materialise_blobs};reader={:?};resilient={resilient};capability={}",
+                file.as_path(),
+                path.as_deref(),
+                reader_version.as_deref(),
+                sandbox.as_deref().unwrap_or("agent"),
+            );
+            // The MAC key lives outside the cache directory: a listing
+            // cannot reproduce a key or confirm a guessed environment
+            // value. Without it the run proceeds uncached.
+            let (cache_key, cache_owner) = if cache_dir.is_some() {
+                match cache_signing_key() {
+                    Ok((key, owner)) => (
+                        active_core::cache::eval_key(
+                            &module,
+                            effective_profile.as_deref(),
+                            &engine.budget,
+                            module.mode,
+                            &cache_variant,
+                            &engine.env,
+                            &key,
+                        ),
+                        owner,
+                    ),
+                    Err(e) => {
+                        eprintln!("warning: --cache is not used: {e}");
+                        (None, None)
+                    }
+                }
+            } else {
+                (None, None)
+            };
+            if let (Some(dir), Some(key)) = (cache_dir.as_ref(), cache_key.as_ref()) {
+                match active_core::cache::EvalCache::new(dir)
+                    .with_owner(cache_owner)
+                    .get(key)
+                {
+                    Ok(Some(entry)) => {
+                        for d in &entry.diagnostics {
+                            report(d, &name);
+                        }
+                        match format.as_str() {
+                            "json" => outln!("{}", entry.json),
+                            "yaml" => match (&entry.yaml, &entry.yaml_error) {
+                                (Some(text), _) => outln!("{text}"),
+                                (None, Some(e)) => anyhow::bail!("yaml export failed: {e}"),
+                                (None, None) => anyhow::bail!(
+                                    "yaml export failed: cache entry carries no rendering"
+                                ),
+                            },
+                            "toml" => match (&entry.toml, &entry.toml_error) {
+                                (Some(text), _) => {
+                                    for d in &entry.export_diagnostics {
+                                        report(d, &name);
+                                    }
+                                    outln!("{text}");
+                                }
+                                (None, Some(e)) => anyhow::bail!("toml export failed: {e}"),
+                                (None, None) => anyhow::bail!(
+                                    "toml export failed: cache entry carries no rendering"
+                                ),
+                            },
+                            other => anyhow::bail!("unsupported format: {other}"),
+                        }
+                        if had_failure(&entry.diagnostics, resilient) {
+                            std::process::exit(1);
+                        }
+                        return Ok(());
+                    }
+                    Ok(None) => {}
+                    // A corrupt entry is a miss with a warning: the cache
+                    // is an optimization, never an input.
+                    Err(e) => eprintln!("warning: ignoring cache entry: {e}"),
+                }
+            }
             active_core::trace::set_tracing(trace);
             let (value, diags, seeds) = match engine.evaluate_with_seeds(&module) {
                 Ok(out) => {
@@ -2924,44 +3123,169 @@ fn main() -> anyhow::Result<()> {
                 )?;
             }
 
-            match format.as_str() {
-                // Payload bytes are an explicit materialisation form;
-                // the generic renderers are identity-only.
-                "json" => {
-                    if materialise_blobs {
-                        outln!("{}", value_to_pretty_json_materialised(&value))
-                    } else {
-                        outln!("{}", value_to_pretty_json(&value))
-                    }
+            // L-P29: with the cache on, render every format once so a
+            // later hit serves any requested format without evaluating
+            // again. Only the requested format prints, and an output
+            // beyond the entry cap skips the cache before anything is
+            // cloned into an entry.
+            let cache_enabled = cache_key.is_some();
+            let json_text = (format == "json" || cache_enabled).then(|| {
+                if materialise_blobs {
+                    value_to_pretty_json_materialised(&value)
+                } else {
+                    value_to_pretty_json(&value)
                 }
-                "yaml" => {
-                    let rendered = if materialise_blobs {
-                        value_to_yaml_string_materialised(&value)
-                    } else {
-                        value_to_yaml_string(&value)
-                    };
-                    match rendered {
-                        Ok(yaml) => outln!("{yaml}"),
-                        Err(e) => anyhow::bail!("yaml export failed: {e}"),
-                    }
+            });
+            let cache_json_fits = json_text.as_ref().is_none_or(|text| {
+                text.len() as u64 <= active_core::cache::MAX_ENTRY_BYTES
+            });
+            let cache_extras = cache_enabled && cache_json_fits;
+            let yaml_render = (format == "yaml" || cache_extras).then(|| {
+                if materialise_blobs {
+                    value_to_yaml_string_materialised(&value)
+                } else {
+                    value_to_yaml_string(&value)
                 }
-                "toml" => {
-                    let rendered = if materialise_blobs {
-                        value_to_toml_string_materialised(&value)
-                    } else {
-                        value_to_toml_string(&value)
-                    };
-                    match rendered {
-                        Ok((toml, export_diags)) => {
-                            for d in &export_diags {
-                                report(d, &name);
-                            }
-                            outln!("{toml}");
+            });
+            let toml_render = (format == "toml" || cache_extras).then(|| {
+                if materialise_blobs {
+                    value_to_toml_string_materialised(&value)
+                } else {
+                    value_to_toml_string(&value)
+                }
+            });
+            if format == "json" {
+                if let Some(text) = json_text.as_deref() {
+                    outln!("{text}");
+                }
+            }
+            if let Some(rendered) = yaml_render.as_ref() {
+                match rendered {
+                    Ok(yaml) if format == "yaml" => outln!("{yaml}"),
+                    Err(e) if format == "yaml" => anyhow::bail!("yaml export failed: {e}"),
+                    _ => {}
+                }
+            }
+            if let Some(rendered) = toml_render.as_ref() {
+                match rendered {
+                    Ok((toml, export_diags)) if format == "toml" => {
+                        for d in export_diags {
+                            report(d, &name);
                         }
-                        Err(e) => anyhow::bail!("toml export failed: {e}"),
+                        outln!("{toml}");
+                    }
+                    Err(e) if format == "toml" => anyhow::bail!("toml export failed: {e}"),
+                    _ => {}
+                }
+            }
+            if !matches!(format.as_str(), "json" | "yaml" | "toml") {
+                anyhow::bail!("unsupported format: {}", format);
+            }
+            if let (Some(dir), Some(key)) = (cache_dir.as_ref(), cache_key.as_ref()) {
+                let yaml_text = yaml_render
+                    .as_ref()
+                    .and_then(|render| render.as_ref().ok().map(String::as_str));
+                let toml_text = toml_render
+                    .as_ref()
+                    .and_then(|render| render.as_ref().ok().map(|(text, _)| text.as_str()));
+                // A material profile or schema selector must not be
+                // written in cleartext (the envelope path refuses the
+                // same leak); the entry is skipped entirely so neither
+                // the selector nor a hash of it lands on disk.
+                let selector_material = effective_profile
+                    .as_deref()
+                    .is_some_and(|text| {
+                        profile.is_material_text(text) || profile.redact_text(text).is_some()
+                    })
+                    || active_core::envelope::document_schema_version(&module)
+                        .as_deref()
+                        .is_some_and(|text| {
+                            profile.is_material_text(text) || profile.redact_text(text).is_some()
+                        });
+                if selector_material {
+                    eprintln!(
+                        "warning: cache entry not written: profile or schema selector is material"
+                    );
+                } else {
+                    let receipt = cache_receipt(
+                        &module,
+                        effective_profile.as_deref(),
+                        &engine.budget,
+                        &value,
+                        sandbox.as_deref().unwrap_or("agent"),
+                        &diags,
+                        resilient,
+                    );
+                    // Count every serialized part, not a guess: long
+                    // diagnostic messages or a large receipt must not
+                    // reach the clones or the writer.
+                    let extra = serde_json::to_string(&diags)
+                        .map(|text| text.len())
+                        .unwrap_or(usize::MAX)
+                        .saturating_add(
+                            serde_json::to_string(&receipt)
+                                .map(|text| text.len())
+                                .unwrap_or(usize::MAX),
+                        )
+                        .saturating_add(match toml_render.as_ref() {
+                            Some(Ok((_, export_diags))) => serde_json::to_string(export_diags)
+                                .map(|text| text.len())
+                                .unwrap_or(usize::MAX),
+                            _ => 0,
+                        })
+                        .saturating_add(match yaml_render.as_ref() {
+                            Some(Err(e)) => e.len(),
+                            _ => 0,
+                        })
+                        .saturating_add(match toml_render.as_ref() {
+                            Some(Err(e)) => e.len(),
+                            _ => 0,
+                        })
+                        .saturating_add(256) as u64;
+                    if !cache_json_fits
+                        || !active_core::cache::entry_fits(
+                            json_text.as_deref().unwrap_or(""),
+                            yaml_text,
+                            toml_text,
+                            extra,
+                        )
+                    {
+                        eprintln!("warning: result exceeds the cache entry limit; not cached");
+                    } else {
+                        let (yaml, yaml_error) = match yaml_render.as_ref() {
+                            Some(Ok(text)) => (Some(text.clone()), None),
+                            Some(Err(e)) => (None, Some(e.clone())),
+                            None => (None, None),
+                        };
+                        let (toml, toml_error, export_diagnostics) = match toml_render.as_ref() {
+                            Some(Ok((text, export_diags))) => {
+                                (Some(text.clone()), None, export_diags.clone())
+                            }
+                            Some(Err(e)) => (None, Some(e.clone()), Vec::new()),
+                            None => (None, None, Vec::new()),
+                        };
+                        let entry = active_core::cache::CacheEntry {
+                            version: active_core::cache::CACHE_VERSION,
+                            key: key.clone(),
+                            json: json_text.clone().unwrap_or_default(),
+                            yaml,
+                            yaml_error,
+                            toml,
+                            toml_error,
+                            export_diagnostics,
+                            diagnostics: diags.clone(),
+                            receipt,
+                        };
+                        // Best-effort: a cache that cannot write never fails
+                        // an evaluation that already succeeded.
+                        if let Err(e) = active_core::cache::EvalCache::new(dir)
+                            .with_owner(cache_owner)
+                            .put(&entry)
+                        {
+                            eprintln!("warning: cannot write cache entry: {e}");
+                        }
                     }
                 }
-                other => anyhow::bail!("unsupported format: {}", other),
             }
             if let Some(audit_path) = audit_trail {
                 // Canonical audit form: when the document builds blobs

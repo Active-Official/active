@@ -21,6 +21,8 @@ pub struct Module {
     pub schemas: HashMap<String, NodeId>,
     pub diagnostics: Vec<Diagnostic>,
     pub source_name: String,
+    /// SHA-256 of the main source bytes (L-P29 cache identity).
+    pub source_sha256: String,
     /// Source spans for nodes, recorded by the parser so evaluation-time
     /// diagnostics can point at real positions.
     pub node_spans: HashMap<NodeId, Span>,
@@ -308,6 +310,7 @@ impl Module {
             schemas: HashMap::new(),
             diagnostics: Vec::new(),
             source_name: source_name.into(),
+            source_sha256: String::new(),
             node_spans: HashMap::new(),
             node_files: HashMap::new(),
             healing: Vec::new(),

@@ -30,8 +30,8 @@
     },
     {
       "name": "eval",
-      "entry": "active eval <file> [--format json|yaml|toml] [--path a.b[0]] [--materialise-blobs] [--audit-trail FILE] [--resilient] [--profile NAME] [--trace] [--sandbox strict|data|agent|trusted]",
-      "description": "Evaluate a file and print a redacted document (JSON, YAML, or TOML per --format). Secrets always render as ***SECRET***; a raw secret in output is a defect, never data. --path emits only the demanded cone, --materialise-blobs includes blob payloads (refused for tainted blobs), and --audit-trail writes a re-validatable redacted audit document.",
+      "entry": "active eval <file> [--format json|yaml|toml] [--path a.b[0]] [--materialise-blobs] [--audit-trail FILE] [--cache DIR] [--resilient] [--profile NAME] [--trace] [--sandbox strict|data|agent|trusted]",
+      "description": "Evaluate a file and print a redacted document (JSON, YAML, or TOML per --format). Secrets always render as ***SECRET***; a raw secret in output is a defect, never data. --path emits only the demanded cone, --materialise-blobs includes blob payloads (refused for tainted blobs), --audit-trail writes a re-validatable redacted audit document, and --cache reuses a content-keyed local result.",
       "input": {
         "file": "path to a .active source file"
       },

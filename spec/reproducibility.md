@@ -283,6 +283,98 @@ content:
   file stamps and annotations stay per include (the cached stream carries
   no file identity).
 
+### 4d. Content-keyed evaluation cache (L-P29)
+
+`active eval --cache <dir>` skips the evaluation walk when the same
+inputs were evaluated before.
+
+- **Key.** A keyed BLAKE3 MAC over a canonical object holding the
+  evaluator's version; the root source's
+  SHA-256; every include's resolved identity and content SHA-256 (sorted);
+  the mode; the statically selected profile name (a computed
+  `active_profile` is covered by the source and environment values in
+  the key); the resolved budget (all seven
+  fields); the values of every environment variable the document names
+  through `env.NAME` or `secret.env(NAME)` (a secret locator's value
+  seeds the redactor, so it changes redacted output); the input file's
+  path as invoked (diagnostics name it); and a variant string naming every
+  non-default output selector (`--path`, `--materialise-blobs`,
+  `--reader-version`, `--resilient`, and the sandbox/capability name).
+  The output format is not in the key: one entry stores JSON, YAML, and
+  TOML. A module with no source bytes has no key and is never cached.
+- **MAC key.** The MAC key is 32 random bytes in a per-user file outside
+  the cache directory: `$ACTIVE_CACHE_KEY_FILE` when set, else
+  `%APPDATA%\active\cache-key` on Windows, or
+  `$XDG_CONFIG_HOME/active/cache-key` / `~/.config/active/cache-key` on
+  Unix. It is created owner-only (`0700` directory via an atomic
+  directory mode, `0600` file) and is
+  read through a small size bound; a non-regular file, one readable by
+  another user, or one owned by another user is refused on Unix
+  (Windows ACLs are not checked). The key file's owner is the identity
+  the cache root and every served entry must also have. Without a usable
+  key the run proceeds
+  uncached. The key makes the entry names unguessable from a directory
+  listing: another user cannot compute the name for chosen inputs,
+  confirm a guessed environment value, or forge an entry. A shared cache
+  would need the same key on every machine, so entries are not portable
+  across users or machines.
+- **Hit.** The stored diagnostics are reported and the stored rendering
+  is printed, so stdout, stderr, and the exit status match the run that
+  filled the entry. There is no evaluation walk and no budget clock.
+- **Miss.** The run evaluates normally, prints the requested format, and
+  publishes one entry atomically (temporary file then rename; root
+  `0700`, entry `0600` on Unix). A write failure is a warning;
+  evaluation output and exit status are unchanged. The rendered parts,
+  the serialized diagnostics and export diagnostics, the errors, and the
+  receipt are checked against the 32 MiB entry cap before they are
+  cloned into an entry; a larger output is printed but not cached.
+- **Entry.** `{version, key, json, yaml, yaml_error, toml, toml_error,
+  export_diagnostics, diagnostics, receipt}`. The `receipt` uses the
+  L-T06 v2 shape: it binds the served value's content hash to the schema
+  version, profile, resolved budget, mode, and capability, and names the
+  capability field. A resilient
+  run that did not pass is stored with `outcome = "failed"` and
+  `failure_class = "other"` (the envelope path is what names a stage).
+  A run whose profile or schema selector is material writes no entry at
+  all, so the selector never reaches disk in cleartext or as a hash.
+  `version` and `key` are re-checked on read; a mismatch is a miss. Only
+  a regular file readable by its owner is read, through a bounded
+  reader, and the opened handle is re-checked, so a symlink, FIFO,
+  device, or shared file at an entry name is
+  a miss instead of a block or an unbounded read. An entry that is
+  missing its JSON rendering or one outcome for YAML/TOML is incomplete
+  and is a miss with a warning, never empty output. A malformed or
+  oversized entry is a miss with a
+  warning. The entry holds the printed output, including materialised
+  blob payloads, so the directory needs the source's confidentiality.
+- **Trust boundary.** The cache directory is trusted local state. On
+  Unix a pre-existing root that is a symlink, is not a directory, is
+  group/other-writable, or is owned by anyone other than the key file's
+  user is
+  refused, as is an entry readable by or owned by another user; Windows
+  ACLs are not
+  checked. The
+  MAC key stops another user who can list or write a private directory
+  from forging an entry for chosen inputs; an account that can read the
+  key file can do anything its owner can. The receipt records provenance;
+  it is not a signature over the entry.
+- **Run observers and admission.** `--audit-trail`, `--envelope`, and
+  `--trace` record or observe the run itself (peer identity, signature,
+  event trail), and `--store`, `--trust-keys`, `--lockfile`, and
+  `--envelope-trust` add side effects, signature policy, or parse-time
+  diagnostics that are not in the key. Each of those bypasses the cache
+  and says so on stderr, including when parsing then fails.
+- **No input substitution.** The cache never supplies an input: includes
+  are re-read and re-verified on every run, and the cache lookup happens
+  after parse admission. Changed content changes the key, so an entry
+  cannot serve a stale result. Entries from a rebuild at the same
+  declared version can differ in evaluator semantics; delete the
+  directory to clear them.
+- **Conformance.** The cache is a CLI optimization, not a language
+  surface: the FFI and WASM embeddings expose no cache entry point, and
+  `active-core` exports only the key/entry helpers, so it carries CLI
+  tests rather than a cross-embedding conformance vector.
+
 ## 5. Threat model notes (for C-052)
 
 - The manifest records plain env values verbatim: authors must
@@ -328,4 +420,17 @@ content:
   reused by content hash; values, pins, resolutions, and diagnostics
   match an uninterned parse; the C-002 cap still trips on distinct
   fan-out.
+- Evaluation cache: a second run is served from the entry (sentinel
+  substitution proves no evaluation); source, include, profile, budget,
+  mode, environment-value, and variant changes each miss; a different
+  MAC key is a different identity; one entry serves JSON, YAML, and TOML;
+  a corrupt, stale, or non-regular entry is a miss with a warning;
+  run observers and admission flags bypass and warn; a material profile
+  or schema selector writes no entry; a shared cache root or a
+  world-readable entry is refused on Unix; host-built modules have no
+  key; the key file round-trips, rejects malformed or oversized content,
+  and sits under the platform config directory; root and entry
+  permissions are owner-only on Unix; the total-cap pre-check counts
+  every part; the entry's receipt binds the served value and names its
+  capability.
 - CLI tests for `ACTIVE lock` incl. exit codes and `-o`.

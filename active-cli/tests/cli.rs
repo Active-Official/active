@@ -6245,3 +6245,432 @@ fn eval_envelope_emits_v2_for_success_and_failures() {
     assert_eq!(envelope["receipt"]["outcome"], "failed");
     assert_eq!(envelope["receipt"]["failure_class"], "parse");
 }
+
+/// `active()` with an isolated per-user cache MAC key, so tests never
+/// read or write the operator's config directory.
+fn cached(dir: &std::path::Path) -> std::process::Command {
+    let mut command = active();
+    command.env("ACTIVE_CACHE_KEY_FILE", dir.join("cache-key"));
+    command
+}
+
+#[test]
+fn eval_cache_replays_clean_results_and_misses_on_change() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("cache-lp29");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let doc = dir.join("doc.active");
+    std::fs::write(&doc, "port = 8080\n").expect("write");
+    let cache = dir.join("cache");
+
+    let out = cached(&dir)
+        .args(["eval", "--cache"])
+        .arg(&cache)
+        .arg(&doc)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let first = String::from_utf8(out.stdout).expect("utf8");
+    assert!(first.contains("\"port\": 8080"), "{first}");
+
+    let entries: Vec<_> = std::fs::read_dir(&cache)
+        .expect("cache dir")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+        .collect();
+    assert_eq!(entries.len(), 1, "one entry per input set");
+    let path = entries[0].path();
+    let mut entry: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json");
+    assert_eq!(entry["receipt"]["outcome"], "clean");
+    assert_eq!(entry["receipt"]["mode"], "config");
+    assert_eq!(entry["receipt"]["capability"], "agent");
+    assert!(entry["receipt"]["result"]
+        .as_str()
+        .is_some_and(|r| r.starts_with("sha256:")));
+    // Replace the stored rendering with a sentinel: a second run that
+    // prints the sentinel proves it was served from the entry.
+    entry["json"] = serde_json::json!("{\"served\": \"cache\"}");
+    std::fs::write(&path, serde_json::to_string(&entry).expect("json")).expect("write sentinel");
+
+    let out = cached(&dir)
+        .args(["eval", "--cache"])
+        .arg(&cache)
+        .arg(&doc)
+        .output()
+        .expect("run active");
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "{\"served\": \"cache\"}"
+    );
+
+    // The entry carries every rendering, so the format is not in the key.
+    let out = cached(&dir)
+        .args(["eval", "--cache"])
+        .arg(&cache)
+        .args(["--format", "yaml"])
+        .arg(&doc)
+        .output()
+        .expect("run active");
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim_end(),
+        "port: 8080"
+    );
+
+    // TOML is served from the same entry.
+    let out = cached(&dir)
+        .args(["eval", "--cache"])
+        .arg(&cache)
+        .args(["--format", "toml"])
+        .arg(&doc)
+        .output()
+        .expect("run active");
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim_end(),
+        "port = 8080"
+    );
+
+    // A changed source is a different key and a fresh entry.
+    std::fs::write(&doc, "port = 8081\n").expect("write");
+    let out = cached(&dir)
+        .args(["eval", "--cache"])
+        .arg(&cache)
+        .arg(&doc)
+        .output()
+        .expect("run active");
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("\"port\": 8081"));
+    let count = std::fs::read_dir(&cache)
+        .expect("cache")
+        .filter_map(|e| e.ok())
+        .count();
+    assert_eq!(count, 2, "the changed source added an entry");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn eval_cache_key_includes_the_environment_values_it_reads() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("cache-lp29-env");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let doc = dir.join("doc.active");
+    std::fs::write(&doc, "host = env.ACTIVE_CACHE_LP29_HOST ?: \"unset\"\n").expect("write");
+    let cache = dir.join("cache");
+
+    for value in ["alpha", "beta"] {
+        let out = cached(&dir)
+            .env("ACTIVE_CACHE_LP29_HOST", value)
+            .args(["eval", "--cache"])
+            .arg(&cache)
+            .arg(&doc)
+            .output()
+            .expect("run active");
+        assert!(out.status.success());
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains(value),
+            "value {value} came from the environment"
+        );
+    }
+    let count = std::fs::read_dir(&cache)
+        .expect("cache")
+        .filter_map(|e| e.ok())
+        .count();
+    assert_eq!(count, 2, "each environment value is its own key");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn eval_cache_ignores_a_corrupt_entry() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("cache-lp29-corrupt");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let doc = dir.join("doc.active");
+    std::fs::write(&doc, "port = 9090\n").expect("write");
+    let cache = dir.join("cache");
+    let out = cached(&dir)
+        .args(["eval", "--cache"])
+        .arg(&cache)
+        .arg(&doc)
+        .output()
+        .expect("run active");
+    assert!(out.status.success());
+    let path = std::fs::read_dir(&cache)
+        .expect("cache")
+        .filter_map(|e| e.ok())
+        .next()
+        .expect("entry")
+        .path();
+    std::fs::write(&path, "not json").expect("corrupt");
+
+    let out = cached(&dir)
+        .args(["eval", "--cache"])
+        .arg(&cache)
+        .arg(&doc)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "a bad entry must not fail the run: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stderr).contains("ignoring cache entry"));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("\"port\": 9090"));
+
+    // A syntactically valid but incomplete entry is damage too: it must
+    // not print empty output or claim a format has no rendering.
+    let key = path
+        .file_stem()
+        .expect("stem")
+        .to_string_lossy()
+        .to_string();
+    let incomplete = serde_json::json!({
+        "version": 3,
+        "key": key,
+        "json": "",
+        "yaml": null,
+        "yaml_error": null,
+        "toml": null,
+        "toml_error": null,
+        "export_diagnostics": [],
+        "diagnostics": [],
+        "receipt": {"outcome": "clean"}
+    });
+    for format in ["json", "yaml", "toml"] {
+        // Rewrite the damage each round: the previous run repaired it.
+        std::fs::write(&path, serde_json::to_string(&incomplete).expect("json")).expect("write");
+        let out = cached(&dir)
+            .args(["eval", "--cache"])
+            .arg(&cache)
+            .args(["--format", format])
+            .arg(&doc)
+            .output()
+            .expect("run active");
+        assert!(
+            out.status.success(),
+            "{format}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(String::from_utf8_lossy(&out.stderr).contains("ignoring cache entry"));
+        assert!(!String::from_utf8_lossy(&out.stdout).contains("cache entry carries no rendering"));
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn eval_cache_key_tracks_includes() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("cache-lp29-include");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let lib = dir.join("lib.active");
+    std::fs::write(&lib, "x = 1\n").expect("write");
+    let doc = dir.join("doc.active");
+    std::fs::write(&doc, "include \"lib.active\"\n").expect("write");
+    let cache = dir.join("cache");
+
+    let out = cached(&dir)
+        .args(["eval", "--cache"])
+        .arg(&cache)
+        .arg(&doc)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains("\"x\": 1"));
+
+    // The include's bytes are part of the key, not just its path.
+    std::fs::write(&lib, "x = 2\n").expect("write");
+    let out = cached(&dir)
+        .args(["eval", "--cache"])
+        .arg(&cache)
+        .arg(&doc)
+        .output()
+        .expect("run active");
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("\"x\": 2"));
+    let count = std::fs::read_dir(&cache)
+        .expect("cache")
+        .filter_map(|e| e.ok())
+        .count();
+    assert_eq!(count, 2, "the include change added an entry");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn eval_cache_identity_is_keyed_by_the_user_key_file() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("cache-lp29-keys");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let doc = dir.join("doc.active");
+    std::fs::write(&doc, "port = 6060\n").expect("write");
+    let cache = dir.join("cache");
+
+    for key_file in ["key-a", "key-b"] {
+        let out = active()
+            .env("ACTIVE_CACHE_KEY_FILE", dir.join(key_file))
+            .args(["eval", "--cache"])
+            .arg(&cache)
+            .arg(&doc)
+            .output()
+            .expect("run active");
+        assert!(
+            out.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(String::from_utf8_lossy(&out.stdout).contains("\"port\": 6060"));
+    }
+    let count = std::fs::read_dir(&cache)
+        .expect("cache")
+        .filter_map(|e| e.ok())
+        .count();
+    assert_eq!(count, 2, "each MAC key is a different cache identity");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn eval_cache_never_writes_a_material_profile_or_schema_selector() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("cache-lp29-material");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let cache = dir.join("cache");
+
+    // The selector equals the secret's value: the printed document
+    // redacts it, so the receipt must not carry it in cleartext.
+    let doc = dir.join("profile.active");
+    std::fs::write(
+        &doc,
+        "active_profile = \"deploy-2026\"\nprofile \"deploy-2026\" {\n  n = \"benign\"\n}\nk = secret.env(\"DEPLOY_TOKEN\")\n",
+    )
+    .expect("write");
+    let out = cached(&dir)
+        .env("DEPLOY_TOKEN", "deploy-2026")
+        .args(["eval", "--cache"])
+        .arg(&cache)
+        .arg(&doc)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains("***SECRET***"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("cache entry not written"));
+    assert!(!cache.exists(), "no entry carries the selector");
+
+    // The same rule covers a material schema version.
+    let doc = dir.join("schema.active");
+    std::fs::write(
+        &doc,
+        "schema = { version = \"1.2.3\", n = Int }\nn = 1\nk = secret(\"1.2.3\")\n",
+    )
+    .expect("write");
+    let out = cached(&dir)
+        .args(["eval", "--cache"])
+        .arg(&cache)
+        .arg(&doc)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stderr).contains("cache entry not written"));
+    assert!(!cache.exists(), "no entry carries the schema version");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn eval_cache_steps_aside_for_run_observers() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("cache-lp29-bypass");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let doc = dir.join("doc.active");
+    std::fs::write(&doc, "port = 7070\n").expect("write");
+    let cache = dir.join("cache");
+    let audit = dir.join("audit.active");
+    let out = cached(&dir)
+        .args(["eval", "--cache"])
+        .arg(&cache)
+        .arg("--audit-trail")
+        .arg(&audit)
+        .arg(&doc)
+        .output()
+        .expect("run active");
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--cache is not used"));
+    assert!(!cache.exists(), "a bypassed run writes no entry");
+    assert!(audit.exists(), "the audit is still written");
+
+    // Envelope trust selects the signature policy, so it bypasses too.
+    let prefix = dir.join("gate");
+    assert!(active()
+        .args(["keygen", "--out"])
+        .arg(&prefix)
+        .output()
+        .expect("run")
+        .status
+        .success());
+    let public = std::fs::read_to_string(dir.join("gate.public")).expect("public");
+    let trust = dir.join("trust.toml");
+    std::fs::write(
+        &trust,
+        format!("[[keys]]\nid = \"gate\"\npublic = \"{}\"\n", public.trim()),
+    )
+    .expect("write trust");
+    let out = cached(&dir)
+        .args(["eval", "--cache"])
+        .arg(&cache)
+        .arg("--envelope-trust")
+        .arg(&trust)
+        .arg(&doc)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--cache is not used"));
+    assert!(!cache.exists(), "envelope trust writes no entry");
+
+    // An empty root would write entry names into the working directory.
+    let out = active()
+        .args(["eval", "--cache="])
+        .arg(&doc)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--cache requires a directory path")
+            || stderr.contains("a value is required for '--cache"),
+        "unexpected: {stderr}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

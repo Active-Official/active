@@ -4,6 +4,7 @@
 
 pub mod ast;
 pub mod blob;
+pub mod cache;
 pub mod convert;
 pub mod debug;
 pub mod diag;

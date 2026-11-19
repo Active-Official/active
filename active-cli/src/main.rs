@@ -7,6 +7,7 @@ use active_core::convert::{
 use active_core::diag::{Diagnostic, Severity};
 use active_core::{parse_file, Budget, Engine, EvalError, ParseOptions, Style};
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 mod test_runner;
@@ -748,6 +749,71 @@ enum Commands {
         trust_keys: Option<PathBuf>,
         #[command(flatten)]
         budget: BudgetArgs,
+    },
+    /// Show what replacing one document with another does (L-P16): the
+    /// semantic diff, the affected dependents, a risk class, and a keyed
+    /// approval hash. Writes a plan file only with --output; `apply` is
+    /// the separate, audited step.
+    Plan {
+        /// Baseline .active file (the one apply replaces)
+        old: PathBuf,
+        /// Candidate .active file
+        new: PathBuf,
+        /// Output format
+        #[arg(short, long, default_value = "text")]
+        format: String,
+        /// Write the JSON plan here (needed for `active apply`)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Directory the plan's relative paths are resolved under
+        /// (default: the inputs' common ancestor)
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Exit nonzero when the plan's risk is `breaking`
+        #[arg(long)]
+        fail_on_breaking: bool,
+        /// Select a profile by name for both documents
+        #[arg(long)]
+        profile: Option<String>,
+        /// Allow includes to use absolute paths or escape the directory
+        #[arg(long)]
+        allow_parent_escapes: bool,
+        /// Verify both documents and their includes against a
+        /// trusted-keys file
+        #[arg(long)]
+        trust_keys: Option<PathBuf>,
+        #[command(flatten)]
+        budget: BudgetArgs,
+    },
+    /// Apply an approved plan (L-P16): verify the plan's keyed hash, the
+    /// recorded context and hashes, re-run the review on the exact
+    /// files, replace the old file atomically, and write an auditable
+    /// receipt.
+    Apply {
+        /// JSON plan written by `active plan --output`
+        plan: PathBuf,
+        /// Approval hash printed by plan (required; `mac:` or bare hex)
+        #[arg(long)]
+        approve: String,
+        /// Directory the plan's relative paths are resolved under
+        /// (default: the plan file's directory)
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Receipt path (default: <plan>.receipt.json)
+        #[arg(long)]
+        receipt: Option<PathBuf>,
+        /// Operator identity recorded in the receipt
+        #[arg(long)]
+        operator: Option<String>,
+        /// Overwrite an existing receipt
+        #[arg(long)]
+        force: bool,
+        /// Output format for the applied receipt
+        #[arg(short, long, default_value = "text")]
+        format: String,
+        /// Trusted keys when the plan was built with --trust-keys
+        #[arg(long)]
+        trust_keys: Option<PathBuf>,
     },
     /// Repair a document toward a goal (PROPOSAL §2.1): multi-step
     /// plan of safe @patch/@rename directives applied through the
@@ -2650,6 +2716,764 @@ fn restore_default_sigpipe() {
     }
 }
 
+/// One semantic-diff result, shared by `active diff` and `active plan`.
+struct DiffOutcome {
+    old: PathBuf,
+    new: PathBuf,
+    old_hash: String,
+    new_hash: String,
+    old_includes: Vec<String>,
+    new_includes: Vec<String>,
+    old_include_paths: Vec<PathBuf>,
+    new_include_paths: Vec<PathBuf>,
+    values: Vec<active_core::diff::ValueChange>,
+    schema: Vec<active_core::convert::CompatFinding>,
+    impact: Vec<serde_json::Value>,
+    impact_truncated: bool,
+    notes: Vec<String>,
+    behaviour: &'static str,
+    old_has_schema: bool,
+    new_has_schema: bool,
+    profile: Option<String>,
+    budget: active_core::eval::Budget,
+    allow_parent_escapes: bool,
+    trusted: bool,
+}
+
+impl DiffOutcome {
+    /// The `diff` object used by `--format json` and embedded in a plan.
+    fn document(&self) -> serde_json::Value {
+        serde_json::json!({
+            "old": self.old.to_string_lossy(),
+            "new": self.new.to_string_lossy(),
+            "behaviour": self.behaviour,
+            "values": self.values,
+            "schema": self.schema.iter().map(|finding| serde_json::json!({
+                "code": finding.code,
+                "severity": finding.severity,
+                "path": finding.path,
+                "message": finding.message,
+            })).collect::<Vec<_>>(),
+            "impact": self.impact,
+            "impact_truncated": self.impact_truncated,
+            "notes": self.notes,
+        })
+    }
+}
+
+/// Largest root document `plan`/`apply` will hash and evaluate. The
+/// parser's own byte cap is the same order; this one runs before any
+/// allocation.
+const MAX_DIFF_INPUT_BYTES: u64 = 4 * 1024 * 1024;
+
+/// Sorted include content identities: enough to verify that the graph
+/// a plan reviewed is the graph apply would install.
+fn include_hashes(module: &active_core::Module) -> Vec<String> {
+    let mut hashes: Vec<String> = module
+        .include_pins
+        .iter()
+        .map(|pin| format!("sha256:{}", pin.sha256))
+        .collect();
+    hashes.sort();
+    hashes.dedup();
+    hashes
+}
+
+fn render_diff_text(outcome: &DiffOutcome) {
+    outln!("behaviour: {}", outcome.behaviour);
+    if outcome.values.is_empty() {
+        outln!("values: none");
+    } else {
+        outln!("values:");
+        for change in &outcome.values {
+            let marker = match change.change {
+                active_core::diff::ChangeKind::Added => "+",
+                active_core::diff::ChangeKind::Removed => "-",
+                active_core::diff::ChangeKind::Changed => "~",
+            };
+            let types = match (&change.old_type, &change.new_type) {
+                (Some(before), Some(after)) if before != after => format!("{before} -> {after}"),
+                (Some(before), _) => before.clone(),
+                (None, Some(after)) => after.clone(),
+                (None, None) => "unknown".to_string(),
+            };
+            let echo = match (&change.old, &change.new) {
+                (Some(before), Some(after)) => format!(" ({before} -> {after})"),
+                (Some(before), None) => format!(" ({before})"),
+                (None, Some(after)) => format!(" ({after})"),
+                (None, None) => String::new(),
+            };
+            let path = if change.path.is_empty() {
+                "<root>"
+            } else {
+                change.path.as_str()
+            };
+            outln!("  {marker} {path}: {types}{echo}");
+        }
+    }
+    if !outcome.schema.is_empty() {
+        outln!("schema:");
+        for finding in &outcome.schema {
+            outln!(
+                "  [{}] {} {}: {}",
+                finding.severity,
+                finding.code,
+                finding.path,
+                finding.message
+            );
+        }
+    }
+    if !outcome.impact.is_empty() {
+        outln!("impact:");
+        for entry in &outcome.impact {
+            let key = entry["key"].as_str().unwrap_or("");
+            let paths = entry["paths"]
+                .as_array()
+                .map(|paths| {
+                    paths
+                        .iter()
+                        .filter_map(|path| path.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            if paths.is_empty() {
+                if entry["table_dependents_excluded"]
+                    .as_bool()
+                    .unwrap_or(false)
+                {
+                    outln!(
+                        "  {key}: no non-table dependents (table dependents excluded by design)"
+                    );
+                } else {
+                    outln!("  {key}: none");
+                }
+            } else {
+                outln!("  {key}: {paths}");
+            }
+        }
+    }
+    if outcome.impact_truncated {
+        outln!("note: impact output truncated");
+    }
+    for note in &outcome.notes {
+        outln!("note: {note}");
+    }
+}
+
+/// Build the strict semantic diff shared by `diff` and `plan`.
+#[allow(clippy::too_many_arguments)]
+fn build_semantic_diff(
+    old: &Path,
+    new: &Path,
+    profile: &Option<String>,
+    allow_parent_escapes: bool,
+    trust: &Option<active_core::sign::TrustedKeys>,
+    budget: active_core::eval::Budget,
+) -> anyhow::Result<DiffOutcome> {
+    let old_bytes = read_plan_input(old)?;
+    let new_bytes = read_plan_input(new)?;
+    let old_hash = active_core::provenance::sha256_hex(&old_bytes);
+    let new_hash = active_core::provenance::sha256_hex(&new_bytes);
+    // Strict on both sides: a diff of a repaired or invalid tree would
+    // report a verdict for a document the language refuses.
+    let old_module = parse_input(old, false, allow_parent_escapes, trust)?;
+    let new_module = parse_input(new, false, allow_parent_escapes, trust)?;
+    // The hash above and the parse below are two reads; if the bytes
+    // moved between them, the plan would describe content it does not
+    // install. Refuse instead of guessing.
+    if read_plan_input(old)? != old_bytes {
+        anyhow::bail!("{} changed while planning; re-run", display_path(old));
+    }
+    if read_plan_input(new)? != new_bytes {
+        anyhow::bail!("{} changed while planning; re-run", display_path(new));
+    }
+    let old_includes = include_hashes(&old_module);
+    let new_includes = include_hashes(&new_module);
+    let old_include_paths: Vec<PathBuf> = old_module
+        .include_pins
+        .iter()
+        .map(|pin| PathBuf::from(&pin.stamp))
+        .collect();
+    let new_include_paths: Vec<PathBuf> = new_module
+        .include_pins
+        .iter()
+        .map(|pin| PathBuf::from(&pin.stamp))
+        .collect();
+    let mut engine = Engine::strict();
+    engine.profile_override = profile.clone();
+    engine.budget = budget;
+    let old_name = old.to_string_lossy().to_string();
+    let new_name = new.to_string_lossy().to_string();
+    let (old_value, old_diags, old_seeds) = match engine.evaluate_with_seeds(&old_module) {
+        Ok(out) => out,
+        Err(error) => {
+            report_eval_error(&error, &old_name);
+            anyhow::bail!("{}: evaluation failed", old.display());
+        }
+    };
+    let (new_value, new_diags, new_seeds) = match engine.evaluate_with_seeds(&new_module) {
+        Ok(out) => out,
+        Err(error) => {
+            report_eval_error(&error, &new_name);
+            anyhow::bail!("{}: evaluation failed", new.display());
+        }
+    };
+    for diagnostic in &old_diags {
+        report(diagnostic, &old_name);
+    }
+    for diagnostic in &new_diags {
+        report(diagnostic, &new_name);
+    }
+    // Strict mode treats a warning as a refusal (the CLI convention);
+    // the report is only meaningful for two clean documents.
+    if had_failure(&old_diags, false) || had_failure(&new_diags, false) {
+        anyhow::bail!("diff refused: a document has errors or warnings (see diagnostics)");
+    }
+    let mut old_profile = complete_profile(active_core::secret::SecretProfile::for_engine(
+        &old_module,
+        &engine,
+        &old_seeds,
+    ))?;
+    let mut new_profile = complete_profile(active_core::secret::SecretProfile::for_engine(
+        &new_module,
+        &engine,
+        &new_seeds,
+    ))?;
+    // A value that is secret on only ONE side (for example a plain env
+    // read becoming `secret(env.X)`) must redact on both, or the diff
+    // itself becomes the oracle the redaction exists to prevent. Absorb
+    // both directions, then seed the union's environment values.
+    let new_snapshot = new_profile.clone();
+    old_profile.absorb_material_profile(&new_snapshot);
+    new_profile.absorb_material_profile(&old_profile);
+    old_profile.absorb_environment(&engine.env);
+    new_profile.absorb_environment(&engine.env);
+    // Payload bytes never enter the comparison or the echoes; dropping
+    // them halves the two-tree memory.
+    let old_redacted = strip_blob_payloads(&active_core::convert::redact_value(
+        &old_profile,
+        &old_value,
+    ));
+    let new_redacted = strip_blob_payloads(&active_core::convert::redact_value(
+        &new_profile,
+        &new_value,
+    ));
+    // Compare the REDACTED trees: material values are never compared (a
+    // secret or blob is always "changed"), so a guess can never be
+    // confirmed by an "identical" answer.
+    let mut values = active_core::diff::diff_values(&old_redacted, &new_redacted);
+    for change in &mut values {
+        change.old = diff_echo(&old_redacted, &change.path);
+        change.new = diff_echo(&new_redacted, &change.path);
+    }
+
+    // Schema compatibility when both documents declare a schema; a
+    // one-sided schema is a note, not a finding.
+    let mut schema_findings: Vec<active_core::convert::CompatFinding> = Vec::new();
+    let mut notes: Vec<String> = Vec::new();
+    match (old_module.schema.is_some(), new_module.schema.is_some()) {
+        (true, true) => {
+            let mut findings = active_core::convert::compare_schemas(&old_module, &new_module)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            for finding in &mut findings {
+                for profile in [&old_profile, &new_profile] {
+                    if let Some(text) = profile.redact_authored_text(&finding.message) {
+                        finding.message = text;
+                    }
+                    if let Some(text) = profile.redact_text(&finding.message) {
+                        finding.message = text;
+                    }
+                }
+                finding.path = redact_diff_path(&old_profile, &new_profile, &finding.path);
+            }
+            schema_findings = findings;
+        }
+        (true, false) => notes.push("only the old document declares a schema".to_string()),
+        (false, true) => notes.push("only the new document declares a schema".to_string()),
+        (false, false) => notes.push("neither document declares a schema".to_string()),
+    }
+    if !old_module.profiles.is_empty() || !new_module.profiles.is_empty() {
+        notes.push("profile bodies other than the selected profile are not compared".to_string());
+    }
+
+    // Dependents of every changed path, resolved to the longest dotted
+    // prefix in the document that still has it (candidate first). The
+    // output is capped: a long alias chain must not turn a diff into an
+    // unbounded report.
+    const MAX_DIFF_IMPACT_KEYS: usize = 64;
+    const MAX_DIFF_IMPACT_PATHS: usize = 4096;
+    let mut impact: Vec<serde_json::Value> = Vec::new();
+    let mut impact_truncated = false;
+    let mut total_paths = 0usize;
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for change in &values {
+        let Some((module, resolved_key, id)) =
+            resolve_diff_impact(&new_module, &old_module, &change.path)
+        else {
+            continue;
+        };
+        if !seen.insert(resolved_key.clone()) {
+            continue;
+        }
+        if impact.len() >= MAX_DIFF_IMPACT_KEYS {
+            impact_truncated = true;
+            break;
+        }
+        let found = active_core::graph::impact_paths_detailed(module, id);
+        let mut paths = found.paths;
+        if total_paths.saturating_add(paths.len()) > MAX_DIFF_IMPACT_PATHS {
+            paths.truncate(MAX_DIFF_IMPACT_PATHS.saturating_sub(total_paths));
+            impact_truncated = true;
+        }
+        total_paths = total_paths.saturating_add(paths.len());
+        let paths: Vec<String> = paths
+            .into_iter()
+            .map(|path| redact_diff_path(&old_profile, &new_profile, &path))
+            .collect();
+        impact.push(serde_json::json!({
+            "key": redact_diff_path(&old_profile, &new_profile, &resolved_key),
+            "paths": paths,
+            "table_dependents_excluded": found.table_dependents_excluded,
+        }));
+    }
+    // Paths are read by humans and agents; a material key renders as the
+    // marker like every other export surface.
+    for change in &mut values {
+        change.path = redact_diff_path(&old_profile, &new_profile, &change.path);
+    }
+
+    let behaviour = if values.is_empty() {
+        "identical"
+    } else {
+        "changed"
+    };
+    Ok(DiffOutcome {
+        old: old.to_path_buf(),
+        new: new.to_path_buf(),
+        old_hash,
+        new_hash,
+        old_includes,
+        new_includes,
+        old_include_paths,
+        new_include_paths,
+        values,
+        schema: schema_findings,
+        impact,
+        impact_truncated,
+        notes,
+        behaviour,
+        old_has_schema: old_module.schema.is_some(),
+        new_has_schema: new_module.schema.is_some(),
+        profile: profile.clone(),
+        budget: engine.budget.resolve(),
+        allow_parent_escapes,
+        trusted: trust.is_some(),
+    })
+}
+
+/// A path for humans: drop the Windows verbatim prefix.
+fn display_path(path: &Path) -> String {
+    let text = path.display().to_string();
+    match text.strip_prefix(r"\\?\") {
+        Some(stripped) => stripped.to_string(),
+        None => text,
+    }
+}
+
+/// Read a regular file with a hard byte cap. Symlinks, devices, and
+/// pipes are refused: a plan must not be able to hang or exhaust a read.
+fn read_capped(path: &Path, limit: u64) -> anyhow::Result<Vec<u8>> {
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|e| anyhow::anyhow!("cannot inspect {}: {e}", path.display()))?;
+    if !metadata.file_type().is_file() {
+        anyhow::bail!("{} is not a regular file", display_path(path));
+    }
+    if metadata.len() > limit {
+        anyhow::bail!("{} exceeds the {limit} byte limit", display_path(path));
+    }
+    let mut bytes = Vec::new();
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        // A FIFO swapped in after the path check must not block the open.
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = options
+        .open(path)
+        .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", path.display()))?;
+    // Re-check the OPENED handle, not only the path.
+    let opened = file
+        .metadata()
+        .map_err(|e| anyhow::anyhow!("cannot inspect {}: {e}", path.display()))?;
+    if !opened.is_file() {
+        anyhow::bail!("{} is not a regular file", display_path(path));
+    }
+    if opened.len() > limit {
+        anyhow::bail!("{} exceeds the {limit} byte limit", display_path(path));
+    }
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", path.display()))?;
+    if bytes.len() as u64 > limit {
+        anyhow::bail!("{} exceeds the {limit} byte limit", display_path(path));
+    }
+    Ok(bytes)
+}
+
+fn read_plan_input(path: &Path) -> anyhow::Result<Vec<u8>> {
+    read_capped(path, MAX_DIFF_INPUT_BYTES)
+}
+
+/// True when two paths name the same target (existing or intended).
+fn same_target(a: &Path, b: &Path) -> bool {
+    fn absolute(path: &Path) -> PathBuf {
+        if let Ok(canonical) = std::fs::canonicalize(path) {
+            return canonical;
+        }
+        let parent = path
+            .parent()
+            .and_then(|parent| std::fs::canonicalize(parent).ok())
+            .unwrap_or_else(|| PathBuf::from("."));
+        parent.join(path.file_name().unwrap_or_default())
+    }
+    absolute(a) == absolute(b)
+}
+
+/// The deepest directory that contains both inputs, used as the
+/// default plan root so the plan's relative paths stay confined.
+fn common_root(old: &Path, new: &Path) -> PathBuf {
+    let mut candidate = old.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
+    while !new.starts_with(&candidate) {
+        candidate = match candidate.parent() {
+            Some(parent) => parent.to_path_buf(),
+            None => return PathBuf::from("."),
+        };
+    }
+    candidate
+}
+
+/// A path relative to the plan's root, slash-separated.
+fn confined_relative(root: &Path, file: &Path) -> anyhow::Result<String> {
+    let relative = file.strip_prefix(root).map_err(|_| {
+        anyhow::anyhow!(
+            "{} is outside --root {}; pass the common ancestor",
+            display_path(file),
+            display_path(root)
+        )
+    })?;
+    let relative = relative.to_str().ok_or_else(|| {
+        anyhow::anyhow!(
+            "{} has a non-UTF-8 name; a plan cannot carry it",
+            display_path(file)
+        )
+    })?;
+    let text = relative.replace('\\', "/");
+    if text.is_empty()
+        || text.starts_with('/')
+        || text
+            .split('/')
+            .any(|segment| segment.is_empty() || segment == "..")
+    {
+        anyhow::bail!("{} is not a confined plan path", display_path(file));
+    }
+    Ok(text)
+}
+
+/// Reject absolute paths and `..` before joining under the apply root.
+fn relative_plan_path(raw: &str) -> anyhow::Result<PathBuf> {
+    if raw.is_empty() {
+        anyhow::bail!("apply refused [plan-shape]: an empty path");
+    }
+    let path = Path::new(raw);
+    if path.is_absolute() {
+        anyhow::bail!("apply refused [root]: absolute plan paths are not allowed");
+    }
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(_) => {}
+            _ => anyhow::bail!("apply refused [root]: a plan path escapes the root"),
+        }
+    }
+    Ok(path.to_path_buf())
+}
+
+/// Resolve a relative plan path under the canonical root, refusing any
+/// escape and any non-regular target.
+fn confined_join(root: &Path, relative: &Path) -> anyhow::Result<PathBuf> {
+    let joined = root.join(relative);
+    let canonical = std::fs::canonicalize(&joined)
+        .map_err(|e| anyhow::anyhow!("apply refused [root]: {}: {e}", display_path(&joined)))?;
+    if !canonical.starts_with(root) {
+        anyhow::bail!(
+            "apply refused [root]: {} escapes the root",
+            display_path(&joined)
+        );
+    }
+    let metadata = std::fs::symlink_metadata(&canonical)
+        .map_err(|e| anyhow::anyhow!("apply refused [root]: {}: {e}", display_path(&canonical)))?;
+    if !metadata.file_type().is_file() {
+        anyhow::bail!(
+            "apply refused [root]: {} is not a regular file",
+            display_path(&canonical)
+        );
+    }
+    Ok(canonical)
+}
+
+fn require_exact_keys(
+    value: &serde_json::Value,
+    expected: &[&str],
+    label: &str,
+) -> anyhow::Result<()> {
+    let map = value
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("apply refused [plan-shape]: {label} is not an object"))?;
+    let mut keys: Vec<&str> = map.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    let mut expected: Vec<&str> = expected.to_vec();
+    expected.sort_unstable();
+    if keys != expected {
+        anyhow::bail!("apply refused [plan-shape]: {label} keys are {keys:?}, want {expected:?}");
+    }
+    Ok(())
+}
+
+fn budget_json(budget: &active_core::eval::Budget) -> serde_json::Value {
+    let resolved = budget.resolve();
+    serde_json::json!({
+        "nodes": resolved.max_nodes,
+        "depth": resolved.max_depth,
+        "array_len": resolved.max_array_len,
+        "keys": resolved.max_keys,
+        "wall_ms": resolved.max_wall_ms,
+        "value_size": resolved.max_value_size,
+        "total_size": resolved.max_total_value_size,
+    })
+}
+
+fn budget_from_json(value: &serde_json::Value) -> anyhow::Result<active_core::eval::Budget> {
+    require_exact_keys(
+        value,
+        &[
+            "nodes",
+            "depth",
+            "array_len",
+            "keys",
+            "wall_ms",
+            "value_size",
+            "total_size",
+        ],
+        "context.budget",
+    )?;
+    let number = |name: &str| {
+        value[name]
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("apply refused [plan-shape]: budget.{name}"))
+    };
+    Ok(active_core::eval::Budget {
+        max_nodes: number("nodes")?,
+        max_depth: number("depth")?,
+        max_array_len: number("array_len")?,
+        max_keys: number("keys")?,
+        max_wall_ms: number("wall_ms")?,
+        max_value_size: number("value_size")?,
+        max_total_value_size: number("total_size")?,
+    })
+}
+
+fn string_array(value: &serde_json::Value, label: &str) -> anyhow::Result<Vec<String>> {
+    let items = value
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("apply refused [plan-shape]: {label} is not an array"))?;
+    items
+        .iter()
+        .map(|item| {
+            item.as_str().map(str::to_string).ok_or_else(|| {
+                anyhow::anyhow!("apply refused [plan-shape]: {label} has a non-string")
+            })
+        })
+        .collect()
+}
+
+/// A domain-separated MAC over a JSON document without its own field.
+fn document_mac(
+    document: &serde_json::Value,
+    field: &str,
+    key: &[u8; active_core::cache::KEY_BYTES],
+    domain: &str,
+) -> anyhow::Result<String> {
+    let mut object = document.clone();
+    let map = object
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("document is not a JSON object"))?;
+    map.remove(field);
+    let canonical = active_core::envelope::canonical_json(&object);
+    Ok(active_core::cache::keyed_mac(
+        key,
+        domain,
+        canonical.as_bytes(),
+    ))
+}
+
+fn plan_risk(outcome: &DiffOutcome) -> &'static str {
+    let breaking = outcome.schema.iter().any(|finding| finding.is_breaking());
+    if breaking || (outcome.old_has_schema && !outcome.new_has_schema) {
+        "breaking"
+    } else if !outcome.values.is_empty() {
+        "behavior-change"
+    } else {
+        "review-required"
+    }
+}
+
+/// A diff view without the display paths, for comparing a plan's
+/// narrative with a fresh review of the resolved files.
+fn narrative(document: &serde_json::Value) -> serde_json::Value {
+    let mut view = document.clone();
+    if let Some(map) = view.as_object_mut() {
+        map.remove("old");
+        map.remove("new");
+    }
+    view
+}
+
+fn looks_like_receipt(path: &Path) -> bool {
+    read_capped(path, 1024 * 1024)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .map(|document| {
+            document["apply"]["version"].as_u64() == Some(1)
+                && document["apply"]["applied"].as_bool() == Some(true)
+        })
+        .unwrap_or(false)
+}
+
+fn normalize_approve(approve: &str) -> String {
+    let approve = approve.trim();
+    if approve.starts_with("mac:") {
+        approve.to_string()
+    } else {
+        format!("mac:{approve}")
+    }
+}
+
+/// A prepared temporary file that removes itself unless published.
+struct Prepared {
+    path: PathBuf,
+    published: bool,
+}
+
+impl Drop for Prepared {
+    fn drop(&mut self) {
+        if !self.published {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+/// Create the temporary file for an atomic publish, owner-only on Unix
+/// and never following a pre-created path. The caller publishes it.
+#[allow(clippy::permissions_set_readonly_false)]
+fn prepare_write(path: &Path, bytes: &[u8]) -> anyhow::Result<Prepared> {
+    // A symlink at the target is not a file to replace.
+    if let Ok(metadata) = std::fs::symlink_metadata(path) {
+        if metadata.file_type().is_symlink() {
+            anyhow::bail!("refusing to replace the symlink {}", display_path(path));
+        }
+    }
+    let parent = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("file");
+    for attempt in 0..16 {
+        let tmp = parent.join(format!(".{name}.tmp-{}-{attempt}", std::process::id()));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = match options.open(&tmp) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                anyhow::bail!("cannot create {}: {error}", display_path(&tmp));
+            }
+        };
+        if let Err(error) = file.write_all(bytes).and_then(|_| file.sync_all()) {
+            let _ = std::fs::remove_file(&tmp);
+            anyhow::bail!("cannot write {}: {error}", display_path(&tmp));
+        }
+        drop(file);
+        if let Ok(metadata) = std::fs::metadata(path) {
+            let permissions = metadata.permissions();
+            if let Err(error) = std::fs::set_permissions(&tmp, permissions) {
+                let _ = std::fs::remove_file(&tmp);
+                anyhow::bail!("cannot set permissions on {}: {error}", display_path(&tmp));
+            }
+        }
+        return Ok(Prepared {
+            path: tmp,
+            published: false,
+        });
+    }
+    anyhow::bail!(
+        "cannot create a temporary file next to {}",
+        display_path(path)
+    );
+}
+
+/// Publish a prepared temporary file over its target.
+#[allow(clippy::permissions_set_readonly_false)]
+fn publish(prepared: &mut Prepared, path: &Path) -> anyhow::Result<()> {
+    let tmp = prepared.path.clone();
+    let original = std::fs::metadata(path).ok().map(|meta| meta.permissions());
+    if let Some(permissions) = original.as_ref() {
+        if permissions.readonly() {
+            let mut writable = permissions.clone();
+            writable.set_readonly(false);
+            let _ = std::fs::set_permissions(path, writable);
+        }
+    }
+    if let Err(error) = std::fs::rename(&tmp, path) {
+        if let Some(permissions) = original {
+            if std::fs::set_permissions(path, permissions).is_err() {
+                let _ = std::fs::remove_file(&tmp);
+                anyhow::bail!(
+                    "cannot publish {} ({error}); the destination's permissions could not be restored",
+                    display_path(path)
+                );
+            }
+        }
+        let _ = std::fs::remove_file(&tmp);
+        anyhow::bail!("cannot publish {}: {error}", display_path(path));
+    }
+    prepared.published = true;
+    #[cfg(unix)]
+    {
+        if let Some(parent) = path.parent() {
+            if let Ok(directory) = std::fs::File::open(parent) {
+                let _ = directory.sync_all();
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Write a file atomically, preserving an existing target's permissions.
+fn atomic_write(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    let mut prepared = prepare_write(path, bytes)?;
+    publish(&mut prepared, path)
+}
+
 fn main() -> anyhow::Result<()> {
     // Before any output: the first write after an early reader close must
     // kill the filter, not panic.
@@ -4327,274 +5151,449 @@ fn main() -> anyhow::Result<()> {
             budget,
         } => {
             let trust = load_trust(&trust_keys)?;
-            // Strict on both sides: a diff of a repaired or invalid tree
-            // would report a verdict for a document the language refuses.
-            let old_module = parse_input(&old, false, allow_parent_escapes, &trust)?;
-            let new_module = parse_input(&new, false, allow_parent_escapes, &trust)?;
-            let mut engine = Engine::strict();
-            engine.profile_override = profile.clone();
-            engine.budget = budget.resolve()?;
-            let old_name = old.to_string_lossy().to_string();
-            let new_name = new.to_string_lossy().to_string();
-            let (old_value, old_diags, old_seeds) = match engine.evaluate_with_seeds(&old_module) {
-                Ok(out) => out,
-                Err(error) => {
-                    report_eval_error(&error, &old_name);
-                    anyhow::bail!("{}: evaluation failed", old.display());
-                }
-            };
-            let (new_value, new_diags, new_seeds) = match engine.evaluate_with_seeds(&new_module) {
-                Ok(out) => out,
-                Err(error) => {
-                    report_eval_error(&error, &new_name);
-                    anyhow::bail!("{}: evaluation failed", new.display());
-                }
-            };
-            for diagnostic in &old_diags {
-                report(diagnostic, &old_name);
-            }
-            for diagnostic in &new_diags {
-                report(diagnostic, &new_name);
-            }
-            // Strict mode treats a warning as a refusal (the CLI
-            // convention); the report is only meaningful for two clean
-            // documents.
-            if had_failure(&old_diags, false) || had_failure(&new_diags, false) {
-                anyhow::bail!("diff refused: a document has errors or warnings (see diagnostics)");
-            }
-            let mut old_profile =
-                complete_profile(active_core::secret::SecretProfile::for_engine(
-                    &old_module,
-                    &engine,
-                    &old_seeds,
-                ))?;
-            let mut new_profile =
-                complete_profile(active_core::secret::SecretProfile::for_engine(
-                    &new_module,
-                    &engine,
-                    &new_seeds,
-                ))?;
-            // A value that is secret on only ONE side (for example a
-            // plain env read becoming `secret(env.X)`) must redact on
-            // both, or the diff itself becomes the oracle the redaction
-            // exists to prevent. Absorb both directions, then seed the
-            // union's environment values.
-            let new_snapshot = new_profile.clone();
-            old_profile.absorb_material_profile(&new_snapshot);
-            new_profile.absorb_material_profile(&old_profile);
-            old_profile.absorb_environment(&engine.env);
-            new_profile.absorb_environment(&engine.env);
-            // Payload bytes never enter the comparison or the echoes;
-            // dropping them before redaction halves the two-tree memory.
-            let old_redacted =
-                strip_blob_payloads(&active_core::convert::redact_value(&old_profile, &old_value));
-            let new_redacted =
-                strip_blob_payloads(&active_core::convert::redact_value(&new_profile, &new_value));
-            // Compare the REDACTED trees: material values are never
-            // compared (a secret or tainted blob is always "changed"), so
-            // a guess can never be confirmed by an "identical" answer.
-            let mut values = active_core::diff::diff_values(&old_redacted, &new_redacted);
-            for change in &mut values {
-                change.old = diff_echo(&old_redacted, &change.path);
-                change.new = diff_echo(&new_redacted, &change.path);
-            }
-
-            // Schema compatibility when both documents declare a schema;
-            // a one-sided schema is a note, not a finding.
-            let mut schema_findings: Vec<active_core::convert::CompatFinding> = Vec::new();
-            let mut notes: Vec<&str> = Vec::new();
-            match (old_module.schema.is_some(), new_module.schema.is_some()) {
-                (true, true) => {
-                    let mut findings =
-                        active_core::convert::compare_schemas(&old_module, &new_module)
-                            .map_err(|e| anyhow::anyhow!("{e}"))?;
-                    for finding in &mut findings {
-                        for profile in [&old_profile, &new_profile] {
-                            if let Some(text) = profile.redact_authored_text(&finding.message) {
-                                finding.message = text;
-                            }
-                            if let Some(text) = profile.redact_text(&finding.message) {
-                                finding.message = text;
-                            }
-                        }
-                        finding.path =
-                            redact_diff_path(&old_profile, &new_profile, &finding.path);
-                    }
-                    schema_findings = findings;
-                }
-                (true, false) => notes.push("only the old document declares a schema"),
-                (false, true) => notes.push("only the new document declares a schema"),
-                (false, false) => notes.push("neither document declares a schema"),
-            }
-            if !old_module.profiles.is_empty() || !new_module.profiles.is_empty() {
-                notes.push("profile bodies other than the selected profile are not compared");
-            }
-
-            // Dependents of every changed root key, resolved in the
-            // document that still has the key (the candidate first). The
-            // output is capped: a long alias chain must not turn a diff
-            // into an unbounded report.
-            const MAX_DIFF_IMPACT_KEYS: usize = 64;
-            const MAX_DIFF_IMPACT_PATHS: usize = 4096;
-            let mut impact: Vec<serde_json::Value> = Vec::new();
-            let mut impact_truncated = false;
-            let mut total_paths = 0usize;
-            let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-            for change in &values {
-                let Some((module, resolved_key, id)) =
-                    resolve_diff_impact(&new_module, &old_module, &change.path)
-                else {
-                    continue;
-                };
-                if !seen.insert(resolved_key.clone()) {
-                    continue;
-                }
-                if impact.len() >= MAX_DIFF_IMPACT_KEYS {
-                    impact_truncated = true;
-                    break;
-                }
-                let found = active_core::graph::impact_paths_detailed(module, id);
-                let mut paths = found.paths;
-                if total_paths.saturating_add(paths.len()) > MAX_DIFF_IMPACT_PATHS {
-                    paths.truncate(MAX_DIFF_IMPACT_PATHS.saturating_sub(total_paths));
-                    impact_truncated = true;
-                }
-                total_paths = total_paths.saturating_add(paths.len());
-                let paths: Vec<String> = paths
-                    .into_iter()
-                    .map(|path| redact_diff_path(&old_profile, &new_profile, &path))
-                    .collect();
-                impact.push(serde_json::json!({
-                    "key": redact_diff_path(&old_profile, &new_profile, &resolved_key),
-                    "paths": paths,
-                    "table_dependents_excluded": found.table_dependents_excluded,
-                }));
-            }
-            // Paths are read by humans and agents; a material key renders
-            // as the marker like every other export surface.
-            for change in &mut values {
-                change.path = redact_diff_path(&old_profile, &new_profile, &change.path);
-            }
-
-            let behaviour = if values.is_empty() {
-                "identical"
-            } else {
-                "changed"
-            };
+            let outcome = build_semantic_diff(
+                &old,
+                &new,
+                &profile,
+                allow_parent_escapes,
+                &trust,
+                budget.resolve()?,
+            )?;
             match format.as_str() {
                 "json" => {
-                    let document = serde_json::json!({
-                        "diff": {
-                            "old": old_name,
-                            "new": new_name,
-                            "behaviour": behaviour,
-                            "values": values,
-                            "schema": schema_findings
-                                .iter()
-                                .map(|finding| serde_json::json!({
-                                    "code": finding.code,
-                                    "severity": finding.severity,
-                                    "path": finding.path,
-                                    "message": finding.message,
-                                }))
-                                .collect::<Vec<_>>(),
-                            "impact": impact,
-                            "impact_truncated": impact_truncated,
-                            "notes": notes,
-                        }
-                    });
+                    let document = serde_json::json!({"diff": outcome.document()});
                     outln!(
                         "{}",
                         serde_json::to_string_pretty(&document)
                             .map_err(|e| anyhow::anyhow!("diff serialize failed: {e}"))?
                     );
                 }
-                "text" => {
-                    outln!("behaviour: {behaviour}");
-                    if values.is_empty() {
-                        outln!("values: none");
-                    } else {
-                        outln!("values:");
-                        for change in &values {
-                            let marker = match change.change {
-                                active_core::diff::ChangeKind::Added => "+",
-                                active_core::diff::ChangeKind::Removed => "-",
-                                active_core::diff::ChangeKind::Changed => "~",
-                            };
-                            let types = match (&change.old_type, &change.new_type) {
-                                (Some(before), Some(after)) if before != after => {
-                                    format!("{before} -> {after}")
-                                }
-                                (Some(before), _) => before.clone(),
-                                (None, Some(after)) => after.clone(),
-                                (None, None) => "unknown".to_string(),
-                            };
-                            let echo = match (&change.old, &change.new) {
-                                (Some(before), Some(after)) => {
-                                    format!(" ({before} -> {after})")
-                                }
-                                (Some(before), None) => format!(" ({before})"),
-                                (None, Some(after)) => format!(" ({after})"),
-                                (None, None) => String::new(),
-                            };
-                            let path = if change.path.is_empty() {
-                                "<root>"
-                            } else {
-                                change.path.as_str()
-                            };
-                            outln!("  {marker} {path}: {types}{echo}");
-                        }
-                    }
-                    if !schema_findings.is_empty() {
-                        outln!("schema:");
-                        for finding in &schema_findings {
-                            outln!(
-                                "  [{}] {} {}: {}",
-                                finding.severity,
-                                finding.code,
-                                finding.path,
-                                finding.message
-                            );
-                        }
-                    }
-                    if !impact.is_empty() {
-                        outln!("impact:");
-                        for entry in &impact {
-                            let key = entry["key"].as_str().unwrap_or("");
-                            let paths = entry["paths"]
-                                .as_array()
-                                .map(|paths| {
-                                    paths
-                                        .iter()
-                                        .filter_map(|path| path.as_str())
-                                        .collect::<Vec<_>>()
-                                        .join(", ")
-                                })
-                                .unwrap_or_default();
-                            if paths.is_empty() {
-                                if entry["table_dependents_excluded"]
-                                    .as_bool()
-                                    .unwrap_or(false)
-                                {
-                                    outln!(
-                                        "  {key}: no non-table dependents (table dependents excluded by design)"
-                                    );
-                                } else {
-                                    outln!("  {key}: none");
-                                }
-                            } else {
-                                outln!("  {key}: {paths}");
-                            }
-                        }
-                    }
-                    if impact_truncated {
-                        outln!("note: impact output truncated");
-                    }
-                    for note in &notes {
-                        outln!("note: {note}");
+                "text" => render_diff_text(&outcome),
+                other => anyhow::bail!("unsupported format: {other}"),
+            }
+        }
+        Commands::Plan {
+            old,
+            new,
+            format,
+            output,
+            root,
+            fail_on_breaking,
+            profile,
+            allow_parent_escapes,
+            trust_keys,
+            budget,
+        } => {
+            if !matches!(format.as_str(), "text" | "json") {
+                anyhow::bail!("unsupported format: {format}");
+            }
+            let trust = load_trust(&trust_keys)?;
+            let outcome = build_semantic_diff(
+                &old,
+                &new,
+                &profile,
+                allow_parent_escapes,
+                &trust,
+                budget.resolve()?,
+            )?;
+            let old_abs = std::fs::canonicalize(&old)
+                .map_err(|e| anyhow::anyhow!("cannot resolve {}: {e}", old.display()))?;
+            let new_abs = std::fs::canonicalize(&new)
+                .map_err(|e| anyhow::anyhow!("cannot resolve {}: {e}", new.display()))?;
+            let root_abs = match root {
+                Some(root) => std::fs::canonicalize(&root).map_err(|e| {
+                    anyhow::anyhow!("cannot resolve --root {}: {e}", root.display())
+                })?,
+                None => common_root(&old_abs, &new_abs),
+            };
+            if old_abs == new_abs {
+                anyhow::bail!("plan refuses to replace a document with itself");
+            }
+            // Relative includes resolve against the file's directory; a
+            // candidate from another directory would install different
+            // semantics than the plan reviewed.
+            if old_abs.parent() != new_abs.parent() {
+                anyhow::bail!(
+                    "plan requires both documents in the same directory; relative includes resolve at the baseline"
+                );
+            }
+            let old_rel = confined_relative(&root_abs, &old_abs)?;
+            let new_rel = confined_relative(&root_abs, &new_abs)?;
+            if let Some(output) = output.as_ref() {
+                let mut targets = vec![old_abs.clone(), new_abs.clone()];
+                targets.extend(outcome.old_include_paths.iter().cloned());
+                targets.extend(outcome.new_include_paths.iter().cloned());
+                targets.push(old_abs.with_file_name("active-lock.toml"));
+                targets.push(new_abs.with_file_name("active-lock.toml"));
+                if let Some(trust) = trust_keys.as_ref() {
+                    targets.push(trust.clone());
+                }
+                for target in &targets {
+                    if same_target(output, target) {
+                        anyhow::bail!("--output must not overwrite {}", display_path(target));
                     }
                 }
-                other => anyhow::bail!("unsupported format: {other}"),
+            }
+            let (key, _) = cache_signing_key()
+                .map_err(|e| anyhow::anyhow!("plan requires the per-user key: {e}"))?;
+            let mut breaking = outcome
+                .schema
+                .iter()
+                .filter(|finding| finding.is_breaking())
+                .count();
+            if outcome.old_has_schema && !outcome.new_has_schema {
+                breaking += 1;
+            }
+            let risk = plan_risk(&outcome);
+            let mut steps = vec![
+                format!("replace {old_rel} with {new_rel}"),
+                format!("review {} value change(s)", outcome.values.len()),
+                format!("accept {breaking} breaking schema finding(s)"),
+                format!("review {} dependent key(s)", outcome.impact.len()),
+            ];
+            if outcome.old_has_schema && !outcome.new_has_schema {
+                steps.push("the new document declares no schema".to_string());
+            }
+            let context = serde_json::json!({
+                "profile": outcome.profile.clone(),
+                "budget": budget_json(&outcome.budget),
+                "allow_parent_escapes": outcome.allow_parent_escapes,
+                "trusted": outcome.trusted,
+            });
+            let mut diff_document = outcome.document();
+            diff_document["old"] = serde_json::json!(old_rel);
+            diff_document["new"] = serde_json::json!(new_rel);
+            let mut plan = serde_json::json!({
+                "version": 1,
+                "old": {"path": old_rel, "sha256": format!("sha256:{}", outcome.old_hash)},
+                "new": {"path": new_rel, "sha256": format!("sha256:{}", outcome.new_hash)},
+                "old_includes": outcome.old_includes.clone(),
+                "new_includes": outcome.new_includes.clone(),
+                "context": context,
+                "risk": risk,
+                "behaviour": outcome.behaviour,
+                "steps": steps.clone(),
+                "diff": diff_document,
+            });
+            let digest = document_mac(&plan, "plan_hash", &key, "active.plan.v1")?;
+            plan["plan_hash"] = serde_json::json!(digest.clone());
+            let document = serde_json::json!({"plan": plan});
+            let rendered = serde_json::to_string_pretty(&document)
+                .map_err(|e| anyhow::anyhow!("plan serialize failed: {e}"))?;
+            if rendered.len() as u64 > 32 * 1024 * 1024 {
+                anyhow::bail!("plan exceeds the 32 MiB limit");
+            }
+            if let Some(output) = output.as_ref() {
+                atomic_write(output, rendered.as_bytes())?;
+            }
+            match format.as_str() {
+                "json" => outln!("{rendered}"),
+                "text" => {
+                    outln!("plan: replace {old_rel} with {new_rel}");
+                    outln!("risk: {risk}");
+                    render_diff_text(&outcome);
+                    outln!("steps:");
+                    for (index, step) in steps.iter().enumerate() {
+                        outln!("  {}. {step}", index + 1);
+                    }
+                    outln!("plan hash: {digest}");
+                    match output.as_ref() {
+                        Some(output) => outln!(
+                            "apply: active apply {} --root {} --approve {digest}",
+                            display_path(output),
+                            display_path(&root_abs)
+                        ),
+                        None => outln!(
+                            "apply: re-run with --output plan.json, then active apply plan.json --root <root> --approve {digest}"
+                        ),
+                    }
+                }
+                _ => unreachable!(),
+            }
+            if fail_on_breaking && risk == "breaking" {
+                std::process::exit(1);
+            }
+        }
+        Commands::Apply {
+            plan,
+            approve,
+            root,
+            receipt,
+            operator,
+            force,
+            format,
+            trust_keys,
+        } => {
+            if !matches!(format.as_str(), "text" | "json") {
+                anyhow::bail!("unsupported format: {format}");
+            }
+            const MAX_PLAN_BYTES: u64 = 32 * 1024 * 1024;
+            let bytes = read_capped(&plan, MAX_PLAN_BYTES)
+                .map_err(|e| anyhow::anyhow!("apply refused [io]: {e}"))?;
+            let document: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| {
+                anyhow::anyhow!(
+                    "apply refused [plan-shape]: {}: {e}",
+                    display_path(&plan)
+                )
+            })?;
+            require_exact_keys(&document, &["plan"], "document")?;
+            let plan_value = &document["plan"];
+            require_exact_keys(
+                plan_value,
+                &[
+                    "version",
+                    "old",
+                    "new",
+                    "old_includes",
+                    "new_includes",
+                    "context",
+                    "risk",
+                    "behaviour",
+                    "steps",
+                    "diff",
+                    "plan_hash",
+                ],
+                "plan",
+            )?;
+            if plan_value["version"].as_u64() != Some(1) {
+                anyhow::bail!("apply refused [plan-shape]: unsupported plan version");
+            }
+            let stored = plan_value["plan_hash"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("apply refused [plan-shape]: no plan_hash"))?;
+            if !stored.starts_with("mac:") {
+                anyhow::bail!("apply refused [plan-hash]: plan_hash is not a keyed MAC");
+            }
+            let (key, _) = cache_signing_key()
+                .map_err(|e| anyhow::anyhow!("apply refused [plan-hash]: {e}"))?;
+            let computed = document_mac(plan_value, "plan_hash", &key, "active.plan.v1")?;
+            if stored != computed {
+                anyhow::bail!(
+                    "apply refused [plan-hash]: the plan changed after it was approved"
+                );
+            }
+            let approve = normalize_approve(&approve);
+            if approve != computed {
+                anyhow::bail!(
+                    "apply refused [plan-hash]: approval hash does not match this plan"
+                );
+            }
+            let old_rel = relative_plan_path(
+                plan_value["old"]["path"].as_str().ok_or_else(|| {
+                    anyhow::anyhow!("apply refused [plan-shape]: no old.path")
+                })?,
+            )?;
+            let new_rel = relative_plan_path(
+                plan_value["new"]["path"].as_str().ok_or_else(|| {
+                    anyhow::anyhow!("apply refused [plan-shape]: no new.path")
+                })?,
+            )?;
+            let root = root.unwrap_or_else(|| {
+                plan.parent()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| PathBuf::from("."))
+            });
+            let root_abs = std::fs::canonicalize(&root).map_err(|e| {
+                anyhow::anyhow!("apply refused [root]: {}: {e}", display_path(&root))
+            })?;
+            let old_path = confined_join(&root_abs, &old_rel)?;
+            let new_path = confined_join(&root_abs, &new_rel)?;
+            if old_path == new_path {
+                anyhow::bail!(
+                    "apply refused [plan-shape]: the plan replaces a document with itself"
+                );
+            }
+            if old_path.parent() != new_path.parent() {
+                anyhow::bail!(
+                    "apply refused [root]: the plan moves a document across directories; relative includes would change"
+                );
+            }
+            let context = &plan_value["context"];
+            require_exact_keys(
+                context,
+                &["profile", "budget", "allow_parent_escapes", "trusted"],
+                "context",
+            )?;
+            let profile = match context["profile"].as_str() {
+                Some(profile) => Some(profile.to_string()),
+                None if context["profile"].is_null() => None,
+                None => anyhow::bail!("apply refused [plan-shape]: context.profile"),
+            };
+            let allow_parent_escapes = context["allow_parent_escapes"].as_bool().ok_or_else(
+                || anyhow::anyhow!("apply refused [plan-shape]: context.allow_parent_escapes"),
+            )?;
+            let trusted = context["trusted"].as_bool().ok_or_else(|| {
+                anyhow::anyhow!("apply refused [plan-shape]: context.trusted")
+            })?;
+            let budget = budget_from_json(&context["budget"])?;
+            let trust = load_trust(&trust_keys)
+                .map_err(|e| anyhow::anyhow!("apply refused [context]: {e}"))?;
+            if trusted && trust.is_none() {
+                anyhow::bail!(
+                    "apply refused [context]: the plan was built with --trust-keys; pass it"
+                );
+            }
+            if !trusted && trust.is_some() {
+                anyhow::bail!(
+                    "apply refused [context]: the plan was built without --trust-keys; drop the flag"
+                );
+            }
+            let baseline_module = parse_input(&old_path, false, allow_parent_escapes, &trust)
+                .map_err(|e| anyhow::anyhow!("apply refused [baseline]: {e}"))?;
+            let mut baseline_engine = Engine::strict();
+            baseline_engine.profile_override = profile.clone();
+            baseline_engine.budget = budget;
+            match baseline_engine.evaluate_with_seeds(&baseline_module) {
+                Ok((_, diagnostics, _)) => {
+                    if had_failure(&diagnostics, false) {
+                        anyhow::bail!(
+                            "apply refused [baseline]: the baseline has errors or warnings"
+                        );
+                    }
+                }
+                Err(error) => {
+                    report_eval_error(&error, &display_path(&old_path));
+                    anyhow::bail!("apply refused [baseline]: evaluation failed");
+                }
+            }
+            let outcome = build_semantic_diff(
+                &old_path,
+                &new_path,
+                &profile,
+                allow_parent_escapes,
+                &trust,
+                budget,
+            )
+            .map_err(|e| anyhow::anyhow!("apply refused [candidate]: {e}"))?;
+            let expected_old = plan_value["old"]["sha256"].as_str().ok_or_else(|| {
+                anyhow::anyhow!("apply refused [plan-shape]: no old.sha256")
+            })?;
+            let expected_new = plan_value["new"]["sha256"].as_str().ok_or_else(|| {
+                anyhow::anyhow!("apply refused [plan-shape]: no new.sha256")
+            })?;
+            if format!("sha256:{}", outcome.old_hash) != expected_old
+                || format!("sha256:{}", outcome.new_hash) != expected_new
+            {
+                anyhow::bail!(
+                    "apply refused [drift]: a document changed since the plan was approved"
+                );
+            }
+            let planned_old_includes = string_array(&plan_value["old_includes"], "old_includes")?;
+            let planned_new_includes = string_array(&plan_value["new_includes"], "new_includes")?;
+            if outcome.old_includes != planned_old_includes
+                || outcome.new_includes != planned_new_includes
+            {
+                anyhow::bail!(
+                    "apply refused [drift]: the include graph changed since the plan was approved"
+                );
+            }
+            if active_core::envelope::canonical_json(&narrative(&outcome.document()))
+                != active_core::envelope::canonical_json(&narrative(&plan_value["diff"]))
+            {
+                anyhow::bail!(
+                    "apply refused [drift]: the plan's diff does not match the files"
+                );
+            }
+            let risk = plan_risk(&outcome);
+            if plan_value["risk"].as_str() != Some(risk)
+                || plan_value["behaviour"].as_str() != Some(outcome.behaviour)
+            {
+                anyhow::bail!(
+                    "apply refused [drift]: the plan's risk or behaviour does not match"
+                );
+            }
+            let receipt_path = receipt.unwrap_or_else(|| plan.with_extension("receipt.json"));
+            let mut targets = vec![old_path.clone(), new_path.clone(), plan.clone()];
+            targets.extend(outcome.old_include_paths.iter().cloned());
+            targets.extend(outcome.new_include_paths.iter().cloned());
+            targets.push(old_path.with_file_name("active-lock.toml"));
+            targets.push(new_path.with_file_name("active-lock.toml"));
+            if let Some(trust) = trust_keys.as_ref() {
+                targets.push(trust.clone());
+            }
+            for target in &targets {
+                if same_target(&receipt_path, target) {
+                    anyhow::bail!(
+                        "apply refused [receipt]: the receipt would overwrite {}",
+                        display_path(target)
+                    );
+                }
+            }
+            if receipt_path.exists() {
+                if !force {
+                    anyhow::bail!(
+                        "apply refused [receipt]: {} exists; pass --force",
+                        display_path(&receipt_path)
+                    );
+                }
+                if !looks_like_receipt(&receipt_path) {
+                    anyhow::bail!(
+                        "apply refused [receipt]: --force only replaces an apply receipt, and {} is not one",
+                        display_path(&receipt_path)
+                    );
+                }
+            }
+            let mut applied = serde_json::json!({
+                "version": 1,
+                "applied": true,
+                "plan_hash": stored,
+                "root": display_path(&root_abs),
+                "old": {"path": display_path(&old_path), "sha256": expected_old},
+                "new": {"path": display_path(&new_path), "sha256": expected_new},
+            });
+            if let Some(operator) = operator.as_deref() {
+                applied["operator"] = serde_json::json!(operator);
+            }
+            let receipt_hash =
+                document_mac(&applied, "receipt_hash", &key, "active.plan-receipt.v1")?;
+            applied["receipt_hash"] = serde_json::json!(receipt_hash);
+            let receipt_document = serde_json::json!({"apply": applied});
+            let rendered = serde_json::to_string_pretty(&receipt_document)
+                .map_err(|e| anyhow::anyhow!("receipt serialize failed: {e}"))?;
+            let mut receipt_tmp = prepare_write(&receipt_path, rendered.as_bytes())
+                .map_err(|e| anyhow::anyhow!("apply refused [receipt]: {e}"))?;
+            let current = read_capped(&old_path, MAX_DIFF_INPUT_BYTES)
+                .map_err(|e| anyhow::anyhow!("apply refused [baseline]: {e}"))?;
+            if format!(
+                "sha256:{}",
+                active_core::provenance::sha256_hex(&current)
+            ) != expected_old
+            {
+                anyhow::bail!(
+                    "apply refused [drift]: the baseline changed before it could be replaced"
+                );
+            }
+            let candidate = read_capped(&new_path, MAX_DIFF_INPUT_BYTES)
+                .map_err(|e| anyhow::anyhow!("apply refused [candidate]: {e}"))?;
+            if format!(
+                "sha256:{}",
+                active_core::provenance::sha256_hex(&candidate)
+            ) != expected_new
+            {
+                anyhow::bail!(
+                    "apply refused [drift]: the candidate changed before it could be installed"
+                );
+            }
+            atomic_write(&old_path, &candidate)
+                .map_err(|e| anyhow::anyhow!("apply refused [baseline]: {e}"))?;
+            if let Err(error) = publish(&mut receipt_tmp, &receipt_path) {
+                outln!(
+                    "apply: baseline {} was replaced, but the receipt could not be published: {error}",
+                    display_path(&old_path)
+                );
+                std::process::exit(1);
+            }
+            match format.as_str() {
+                "json" => outln!("{rendered}"),
+                "text" => {
+                    outln!("applied: {}", display_path(&old_path));
+                    outln!(
+                        "receipt: {} ({receipt_hash})",
+                        display_path(&receipt_path)
+                    );
+                }
+                _ => unreachable!(),
             }
         }
         Commands::Repair {

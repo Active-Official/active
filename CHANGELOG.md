@@ -10,6 +10,25 @@ standalone Infinity codec).
 
 ## [Unreleased]
 
+### L-P16: plan/apply split (`active plan`, `active apply`)
+
+`active plan old new` shows what replacing the baseline with the
+candidate does: the strict semantic diff, affected dependents, a risk
+class (`breaking`/`behavior-change`/`review-required`), the steps an
+approver accepts, and a per-user keyed plan hash (a MAC) over the
+canonical plan. Paths are relative to `--root` (default: the inputs'
+common ancestor); nothing is written unless `--output` names a plan
+file, and `--fail-on-breaking` turns a breaking risk into a nonzero
+exit. `active apply <plan> --approve <mac>` requires the plan's keyed
+hash, confines both paths under `--root`, re-runs the strict review
+(context, document and include hashes, diff, risk) on the exact files,
+replaces the baseline atomically while preserving its mode (ACLs are not copied), and
+writes a deterministic JSON receipt with the plan hash, root, both
+hashes, the optional operator, and the receipt's own keyed hash. An
+existing receipt is refused without `--force`; `apply` is offered by the
+`trusted` sandbox profile only. `docs/schemas/plan.json` and
+`plan-receipt.json` pin the shapes.
+
 ### L-P52: semantic diff (`active diff`)
 
 `active diff <old> <new>` compares evaluated documents rather than text:

@@ -375,6 +375,59 @@ inputs were evaluated before.
   `active-core` exports only the key/entry helpers, so it carries CLI
   tests rather than a cross-embedding conformance vector.
 
+### 4e. Plan/apply receipts (L-P16)
+
+`active plan old new` is the review artifact for a replacement;
+`active apply` is the audited execution.
+
+- **Confinement.** Plan paths are stored relative to `--root` (default:
+  the inputs' common ancestor). `apply` resolves them under its own
+  `--root` (default: the plan file's directory), rejects absolute paths
+  and `..`, canonicalizes the target, and refuses anything outside the
+  root or any non-regular file.
+- **Plan MAC.** `plan_hash` is a per-user keyed MAC (`mac:<hex>`, keyed
+  BLAKE3 over `active.plan.v1\n` + canonical plan JSON without
+  `plan_hash`), using the key file of §4d. A plan minted by another user
+  or edited after approval is refused; an unkeyed plan is refused. The
+  plan carries the canonical document hashes, sorted include-content
+  hashes, and the evaluation context (profile, resolved budget,
+  parent-escape policy, trust).
+- **Apply re-verification.** Before writing, `apply` requires
+  `--approve` to equal the recomputed plan MAC, then re-runs the strict
+  review of the exact files under the plan's context (passing
+  `--trust-keys` when the context is trusted and refusing it otherwise).
+  The document hashes, include hashes, diff narrative, risk, and
+  behaviour must match; any drift refuses with a stable `[drift]` class.
+  The candidate is strict-parsed and evaluated, and its bytes are
+  re-hashed after the final read, so an invalid or swapped document is
+  never installed.
+- **Replace and receipt.** The baseline is replaced atomically
+  (temporary file created owner-only, then rename), preserving its mode
+  and the Windows read-only bit (ACLs and extended attributes are not
+  copied); the baseline is re-hashed immediately before publishing.
+  The receipt temp is prepared before the baseline write, so a receipt
+  path that cannot be written refuses the whole apply. A receipt may not
+  overwrite the baseline, candidate, plan, an include, the sibling
+  lockfile, or the trust-keys file. An existing receipt is refused
+  unless `--force` is passed, and `--force` only replaces a file that is
+  an apply receipt.
+- **Receipt.** `{apply: {version, applied, plan_hash, root, old, new,
+  operator?, receipt_hash}}`; `receipt_hash` is the same keyed MAC over
+  the canonical receipt without `receipt_hash`, domain
+  `active.plan-receipt.v1`. There is no timestamp, so the same plan and
+  operator produce the same receipt bytes. The default path is
+  `<plan>.receipt.json`.
+- **Scope.** The plan covers one baseline file; includes are hashed and
+  re-verified, but `apply` replaces only the baseline file. Deploying
+  other files is the caller's responsibility. The plan and receipt
+  shapes are pinned by `docs/schemas/plan.json` and
+  `docs/schemas/plan-receipt.json`; as CLI tooling surfaces they carry
+  CLI and output-schema coverage rather than a cross-embedding vector.
+- **Trust boundary.** The MAC binds a plan to the local user's key: the
+  approval is meaningful only for a plan this user generated. It is not
+  a signature by a third party. The receiving user should review the
+  rendered diff and steps before copying the MAC into `--approve`.
+
 ## 5. Threat model notes (for C-052)
 
 - The manifest records plain env values verbatim: authors must
@@ -433,4 +486,9 @@ inputs were evaluated before.
   permissions are owner-only on Unix; the total-cap pre-check counts
   every part; the entry's receipt binds the served value and names its
   capability.
+- Plan/apply: the approval hash covers the canonical plan without
+  `plan_hash`; a wrong approval, an edited plan, baseline drift, and
+  candidate drift each refuse; a successful apply replaces the baseline,
+  preserves its permissions, and writes a deterministic receipt whose
+  hash covers the receipt without `receipt_hash`.
 - CLI tests for `ACTIVE lock` incl. exit codes and `-o`.

@@ -181,6 +181,30 @@
       }
     },
     {
+      "name": "plan",
+      "entry": "active plan <old> <new> [--format text|json] [--output FILE] [--root DIR] [--fail-on-breaking] [--profile NAME] [--budget-profile strict|interactive|trusted] [--allow-parent-escapes] [--trust-keys <toml>]",
+      "description": "Show what replacing the baseline with the candidate does: the strict semantic diff, affected dependents, a risk class (breaking/behavior-change/review-required), steps, and a per-user keyed plan hash (a MAC) over the canonical plan. Paths are relative to --root (default: the inputs' common ancestor); nothing is written unless --output names a plan file. apply is the separate audited step.",
+      "input": {
+        "old": "baseline .active file (the one apply replaces)",
+        "new": "candidate .active file"
+      },
+      "output": {
+        "plan": "text rendering, or one JSON document under `plan`; --output writes it"
+      }
+    },
+    {
+      "name": "apply",
+      "entry": "active apply <plan> --approve <hash> [--root DIR] [--receipt FILE] [--operator NAME] [--force] [--format text|json] [--trust-keys <toml>]",
+      "description": "Apply an approved plan: require the plan's per-user keyed hash, verify the paths are confined under --root, re-run the strict review (context, document and include hashes, diff, risk) on the exact files, replace the baseline atomically, and write an auditable receipt. A write action; kept out of the agent sandbox profile.",
+      "input": {
+        "plan": "JSON plan written by `active plan --output`",
+        "approve": "the plan hash printed by plan"
+      },
+      "output": {
+        "receipt": "JSON apply receipt (apply.json shape) and the applied path"
+      }
+    },
+    {
       "name": "debug",
       "entry": "active debug --from <file> [--break SELECTOR] [--replay [--expect HASH]] [--minimize CODE] [--max-attempts N] [--format json|text]",
       "description": "Deterministic step trace with breakpoints (taint, path:<prefix>, code:<CODE>, node:<n>, budget:<percent>, budget:nodes:<n>), replay hash/code/step comparison, and minimal-case reduction. The reduction report carries the reduced source, the environment variable names it reads, and the effective budget.",
@@ -261,11 +285,11 @@
     },
     "agent": {
       "budget": "interactive",
-      "tools": ["check", "eval", "format", "lint", "convert", "graph", "generate", "schema-introspect", "value-inspect", "explain", "patch", "repair", "compatibility", "diff", "capability", "debug", "viz", "budget", "mode", "doc", "schema-query"]
+      "tools": ["check", "eval", "format", "lint", "convert", "graph", "generate", "schema-introspect", "value-inspect", "explain", "patch", "repair", "compatibility", "diff", "plan", "capability", "debug", "viz", "budget", "mode", "doc", "schema-query"]
     },
     "trusted": {
       "budget": "trusted",
-      "tools": ["check", "eval", "format", "lint", "convert", "graph", "generate", "schema-introspect", "value-inspect", "explain", "patch", "repair", "compatibility", "diff", "capability", "debug", "viz", "budget", "mode", "doc", "schema-query"]
+      "tools": ["check", "eval", "format", "lint", "convert", "graph", "generate", "schema-introspect", "value-inspect", "explain", "patch", "repair", "compatibility", "diff", "plan", "apply", "capability", "debug", "viz", "budget", "mode", "doc", "schema-query"]
     }
   },
   "features": [
@@ -285,6 +309,7 @@
     "multi-step-repair",
     "compatibility-report",
     "semantic-diff",
+    "plan-apply",
     "evaluation-modes",
     "graph-queries",
     "partial-evaluation",

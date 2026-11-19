@@ -1733,6 +1733,8 @@ fn capability_tools_all_map_to_real_subcommands() {
     mapping.insert("repair", vec!["repair"]);
     mapping.insert("compatibility", vec!["compatibility"]);
     mapping.insert("diff", vec!["diff"]);
+    mapping.insert("plan", vec!["plan"]);
+    mapping.insert("apply", vec!["apply"]);
     mapping.insert("capability", vec!["capability"]);
     mapping.insert("debug", vec!["debug"]);
     mapping.insert("viz", vec!["viz"]);
@@ -6255,6 +6257,29 @@ fn cached(dir: &std::path::Path) -> std::process::Command {
     command
 }
 
+/// Recompute a plan MAC the way `active plan` does, for tamper tests
+/// that simulate a local operator editing a plan.
+fn plan_mac(dir: &std::path::Path, plan: &serde_json::Value) -> String {
+    let key_hex = std::fs::read_to_string(dir.join("cache-key")).expect("key");
+    let key_hex = key_hex.trim();
+    let mut key = [0u8; 32];
+    for index in 0..32 {
+        let high = u8::from_str_radix(&key_hex[index * 2..index * 2 + 1], 16).expect("hex");
+        let low = u8::from_str_radix(&key_hex[index * 2 + 1..index * 2 + 2], 16).expect("hex");
+        key[index] = (high << 4) | low;
+    }
+    let mut unsigned = plan.clone();
+    unsigned
+        .as_object_mut()
+        .expect("object")
+        .remove("plan_hash");
+    active_core::cache::keyed_mac(
+        &key,
+        "active.plan.v1",
+        active_core::envelope::canonical_json(&unsigned).as_bytes(),
+    )
+}
+
 #[test]
 fn eval_cache_replays_clean_results_and_misses_on_change() {
     let dir = std::env::temp_dir()
@@ -7171,5 +7196,703 @@ fn semantic_diff_notes_uncompared_profile_bodies() {
         .expect("notes")
         .iter()
         .any(|note| note == "profile bodies other than the selected profile are not compared"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn plan_and_apply_produce_a_verifiable_receipt() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("plan-lp16");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+    std::fs::write(&old, "port = 8080\n").expect("old");
+    std::fs::write(&new, "port = 9090\n").expect("new");
+    let plan = dir.join("plan.json");
+    let receipt = dir.join("receipt.json");
+
+    let out = cached(&dir)
+        .args(["plan", "--format", "json", "--output"])
+        .arg(&plan)
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let document: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&plan).expect("plan")).expect("json");
+    let plan_value = document["plan"].clone();
+    assert_eq!(plan_value["risk"], "behavior-change");
+    assert_eq!(plan_value["behaviour"], "changed");
+    assert_eq!(
+        std::fs::read_to_string(&old).expect("old"),
+        "port = 8080\n",
+        "plan must not touch the baseline"
+    );
+    let approve = plan_value["plan_hash"].as_str().expect("hash").to_string();
+    // The approval hash is the canonical document without plan_hash.
+    let mut unsigned = plan_value.clone();
+    unsigned
+        .as_object_mut()
+        .expect("object")
+        .remove("plan_hash");
+    let key_hex = std::fs::read_to_string(dir.join("cache-key")).expect("key");
+    let key_hex = key_hex.trim();
+    let mut key = [0u8; 32];
+    for index in 0..32 {
+        let high = u8::from_str_radix(&key_hex[index * 2..index * 2 + 1], 16).expect("hex");
+        let low = u8::from_str_radix(&key_hex[index * 2 + 1..index * 2 + 2], 16).expect("hex");
+        key[index] = (high << 4) | low;
+    }
+    let expected = active_core::cache::keyed_mac(
+        &key,
+        "active.plan.v1",
+        active_core::envelope::canonical_json(&unsigned).as_bytes(),
+    );
+    assert_eq!(approve, expected);
+    assert!(approve.starts_with("mac:"));
+
+    let out = cached(&dir)
+        .args(["apply"])
+        .arg(&plan)
+        .args(["--approve", &approve, "--operator", "alice", "--receipt"])
+        .arg(&receipt)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(std::fs::read_to_string(&old).expect("old"), "port = 9090\n");
+    let applied: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&receipt).expect("receipt")).expect("json");
+    assert_eq!(applied["apply"]["applied"], true);
+    assert_eq!(applied["apply"]["plan_hash"], approve);
+    assert_eq!(applied["apply"]["operator"], "alice");
+    assert!(applied["apply"]["receipt_hash"]
+        .as_str()
+        .is_some_and(|hash| hash.starts_with("mac:")));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn apply_refuses_a_wrong_approval_or_drift() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("plan-lp16-refuse");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+    std::fs::write(&old, "port = 8080\n").expect("old");
+    std::fs::write(&new, "port = 9090\n").expect("new");
+    let plan = dir.join("plan.json");
+    assert!(cached(&dir)
+        .args(["plan", "--output"])
+        .arg(&plan)
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active")
+        .status
+        .success());
+    let document: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&plan).expect("plan")).expect("json");
+    let approve = document["plan"]["plan_hash"]
+        .as_str()
+        .expect("hash")
+        .to_string();
+
+    let out = cached(&dir)
+        .args(["apply"])
+        .arg(&plan)
+        .args(["--approve", "sha256:deadbeef"])
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("approval hash"));
+
+    // Drift: the baseline changed after approval.
+    std::fs::write(&old, "port = 7070\n").expect("drift");
+    let out = cached(&dir)
+        .args(["apply"])
+        .arg(&plan)
+        .args(["--approve", &approve])
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("changed since the plan"));
+    assert_eq!(std::fs::read_to_string(&old).expect("old"), "port = 7070\n");
+
+    // Candidate drift is refused too.
+    std::fs::write(&old, "port = 8080\n").expect("restore");
+    std::fs::write(&new, "port = 9091\n").expect("candidate drift");
+    let out = cached(&dir)
+        .args(["apply"])
+        .arg(&plan)
+        .args(["--approve", &approve])
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("[drift]"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn plan_classifies_breaking_schema_changes() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("plan-lp16-risk");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+    std::fs::write(
+        &old,
+        "schema = { version = \"1.0.0\", port = Int, legacy = String }\nport = 8080\nlegacy = \"x\"\n",
+    )
+    .expect("old");
+    std::fs::write(
+        &new,
+        "schema = { version = \"1.1.0\", port = Int }\nport = 8080\n",
+    )
+    .expect("new");
+    let out = cached(&dir)
+        .arg("plan")
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("risk: breaking"), "{text}");
+    assert!(text.contains("accept 1 breaking schema finding"), "{text}");
+    assert!(text.contains("plan hash: mac:"), "{text}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn plan_hashes_are_stable_for_the_same_inputs() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("plan-lp16-stable");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+    std::fs::write(&old, "port = 8080\n").expect("old");
+    std::fs::write(&new, "port = 9090\n").expect("new");
+    let mut hashes = Vec::new();
+    for _ in 0..2 {
+        let out = cached(&dir)
+            .args(["plan", "--format", "json"])
+            .arg(&old)
+            .arg(&new)
+            .output()
+            .expect("run active");
+        assert!(out.status.success());
+        let document: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+        hashes.push(
+            document["plan"]["plan_hash"]
+                .as_str()
+                .expect("hash")
+                .to_string(),
+        );
+    }
+    assert_eq!(hashes[0], hashes[1]);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn plan_fail_on_breaking_exits_nonzero() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("plan-lp16-fail");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+    std::fs::write(
+        &old,
+        "schema = { version = \"1.0.0\", port = Int, legacy = String }\nport = 8080\nlegacy = \"x\"\n",
+    )
+    .expect("old");
+    std::fs::write(
+        &new,
+        "schema = { version = \"1.1.0\", port = Int }\nport = 8080\n",
+    )
+    .expect("new");
+    let out = cached(&dir)
+        .args(["plan", "--fail-on-breaking"])
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("risk: breaking"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn apply_refuses_a_plan_that_escapes_the_root() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("plan-lp16-escape");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+    std::fs::write(&old, "port = 8080\n").expect("old");
+    std::fs::write(&new, "port = 9090\n").expect("new");
+    let plan = dir.join("plan.json");
+    assert!(cached(&dir)
+        .args(["plan", "--output"])
+        .arg(&plan)
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active")
+        .status
+        .success());
+    let mut document: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&plan).expect("plan")).expect("json");
+    document["plan"]["old"]["path"] = serde_json::json!("../escape.active");
+    let mac = plan_mac(&dir, &document["plan"]);
+    document["plan"]["plan_hash"] = serde_json::json!(mac);
+    std::fs::write(
+        &plan,
+        serde_json::to_string_pretty(&document).expect("json"),
+    )
+    .expect("write");
+    let approve = document["plan"]["plan_hash"].as_str().expect("hash");
+    let out = cached(&dir)
+        .args(["apply"])
+        .arg(&plan)
+        .args(["--approve", approve])
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("[root]"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn apply_refuses_an_edited_narrative() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("plan-lp16-narrative");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+    std::fs::write(&old, "port = 8080\n").expect("old");
+    std::fs::write(&new, "port = 9090\n").expect("new");
+    let plan = dir.join("plan.json");
+    assert!(cached(&dir)
+        .args(["plan", "--output"])
+        .arg(&plan)
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active")
+        .status
+        .success());
+    let mut document: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&plan).expect("plan")).expect("json");
+    document["plan"]["risk"] = serde_json::json!("review-required");
+    let mac = plan_mac(&dir, &document["plan"]);
+    document["plan"]["plan_hash"] = serde_json::json!(mac);
+    std::fs::write(
+        &plan,
+        serde_json::to_string_pretty(&document).expect("json"),
+    )
+    .expect("write");
+    let approve = document["plan"]["plan_hash"].as_str().expect("hash");
+    let out = cached(&dir)
+        .args(["apply"])
+        .arg(&plan)
+        .args(["--approve", approve])
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("[drift]"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn apply_refuses_unknown_plan_keys_and_receipt_collisions() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("plan-lp16-shape");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+    std::fs::write(&old, "port = 8080\n").expect("old");
+    std::fs::write(&new, "port = 9090\n").expect("new");
+    let plan = dir.join("plan.json");
+    assert!(cached(&dir)
+        .args(["plan", "--output"])
+        .arg(&plan)
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active")
+        .status
+        .success());
+    let original: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&plan).expect("plan")).expect("json");
+    let approve = original["plan"]["plan_hash"].as_str().expect("hash");
+
+    let mut extra = original.clone();
+    extra["plan"]["extra"] = serde_json::json!(1);
+    std::fs::write(&plan, serde_json::to_string_pretty(&extra).expect("json")).expect("write");
+    let out = cached(&dir)
+        .args(["apply"])
+        .arg(&plan)
+        .args(["--approve", approve])
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("[plan-shape]"));
+
+    std::fs::write(
+        &plan,
+        serde_json::to_string_pretty(&original).expect("json"),
+    )
+    .expect("write");
+    let out = cached(&dir)
+        .args(["apply"])
+        .arg(&plan)
+        .args(["--approve", approve, "--receipt"])
+        .arg(&old)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("[receipt]"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn apply_refuses_an_existing_receipt_without_force() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("plan-lp16-receipt");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+    std::fs::write(&old, "port = 8080\n").expect("old");
+    std::fs::write(&new, "port = 9090\n").expect("new");
+    let plan = dir.join("plan.json");
+    assert!(cached(&dir)
+        .args(["plan", "--output"])
+        .arg(&plan)
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active")
+        .status
+        .success());
+    let document: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&plan).expect("plan")).expect("json");
+    let approve = document["plan"]["plan_hash"].as_str().expect("hash");
+    let receipt = dir.join("receipt.json");
+    let first = cached(&dir)
+        .args(["apply"])
+        .arg(&plan)
+        .args(["--approve", approve, "--receipt"])
+        .arg(&receipt)
+        .output()
+        .expect("run active");
+    assert!(first.status.success());
+    std::fs::write(&old, "port = 8080\n").expect("restore");
+    let second = cached(&dir)
+        .args(["apply"])
+        .arg(&plan)
+        .args(["--approve", approve, "--receipt"])
+        .arg(&receipt)
+        .output()
+        .expect("run active");
+    assert!(!second.status.success());
+    assert!(String::from_utf8_lossy(&second.stderr).contains("--force"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn plan_and_apply_refuse_to_overwrite_an_include_or_lockfile() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("plan-lp16-aux");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let lib = dir.join("lib.active");
+    std::fs::write(&lib, "x = 1\n").expect("lib");
+    let old = dir.join("old.active");
+    std::fs::write(&old, "include \"lib.active\"\n").expect("old");
+    let new = dir.join("new.active");
+    std::fs::write(&new, "x = 1\n").expect("new");
+
+    let out = cached(&dir)
+        .args(["plan", "--output"])
+        .arg(&lib)
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("must not overwrite"));
+
+    // The lockfile sibling is protected too.
+    let lock = dir.join("active-lock.toml");
+    std::fs::write(&lock, "# lock\n").expect("lock");
+    let out = cached(&dir)
+        .args(["plan", "--output"])
+        .arg(&lock)
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+
+    // apply's receipt may not replace the include, even with --force.
+    let plan = dir.join("plan.json");
+    assert!(cached(&dir)
+        .args(["plan", "--output"])
+        .arg(&plan)
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active")
+        .status
+        .success());
+    let document: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&plan).expect("plan")).expect("json");
+    let approve = document["plan"]["plan_hash"].as_str().expect("hash");
+    let out = cached(&dir)
+        .args(["apply"])
+        .arg(&plan)
+        .args(["--approve", approve, "--force", "--receipt"])
+        .arg(&lib)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("[receipt]"));
+    assert_eq!(std::fs::read_to_string(&lib).expect("lib"), "x = 1\n");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn apply_reports_a_corrupt_baseline_as_baseline() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("plan-lp16-baseline");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+    std::fs::write(&old, "port = 8080\n").expect("old");
+    std::fs::write(&new, "port = 9090\n").expect("new");
+    let plan = dir.join("plan.json");
+    assert!(cached(&dir)
+        .args(["plan", "--output"])
+        .arg(&plan)
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active")
+        .status
+        .success());
+    let document: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&plan).expect("plan")).expect("json");
+    let approve = document["plan"]["plan_hash"].as_str().expect("hash");
+    std::fs::write(&old, "port = \n").expect("corrupt");
+    let out = cached(&dir)
+        .args(["apply"])
+        .arg(&plan)
+        .args(["--approve", approve])
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("[baseline]"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn apply_preserves_the_baseline_mode() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("plan-lp16-mode");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+    std::fs::write(&old, "port = 8080\n").expect("old");
+    std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o600)).expect("mode");
+    std::fs::write(&new, "port = 9090\n").expect("new");
+    let plan = dir.join("plan.json");
+    assert!(cached(&dir)
+        .args(["plan", "--output"])
+        .arg(&plan)
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active")
+        .status
+        .success());
+    let document: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&plan).expect("plan")).expect("json");
+    let approve = document["plan"]["plan_hash"].as_str().expect("hash");
+    let out = cached(&dir)
+        .args(["apply"])
+        .arg(&plan)
+        .args(["--approve", approve])
+        .output()
+        .expect("run active");
+    assert!(out.status.success());
+    let mode = std::fs::metadata(&old)
+        .expect("metadata")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o600);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn plan_refuses_a_cross_directory_replacement() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("plan-lp16-crossdir");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let first = dir.join("a");
+    let second = dir.join("b");
+    std::fs::create_dir_all(&first).expect("a");
+    std::fs::create_dir_all(&second).expect("b");
+    let old = first.join("cfg.active");
+    let new = second.join("cfg.active");
+    std::fs::write(&old, "port = 8080\n").expect("old");
+    std::fs::write(&new, "port = 9090\n").expect("new");
+    let out = cached(&dir)
+        .arg("plan")
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("same directory"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn apply_reports_a_schema_invalid_baseline_as_baseline() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("plan-lp16-baseline-eval");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+    std::fs::write(&old, "schema = { port = Int(max = 10) }\nport = 1\n").expect("old");
+    std::fs::write(&new, "schema = { port = Int(max = 10) }\nport = 2\n").expect("new");
+    let plan = dir.join("plan.json");
+    assert!(cached(&dir)
+        .args(["plan", "--output"])
+        .arg(&plan)
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active")
+        .status
+        .success());
+    let document: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&plan).expect("plan")).expect("json");
+    let approve = document["plan"]["plan_hash"].as_str().expect("hash");
+    // Parse-valid, schema-invalid drift.
+    std::fs::write(&old, "schema = { port = Int(max = 10) }\nport = 999\n").expect("drift");
+    let out = cached(&dir)
+        .args(["apply"])
+        .arg(&plan)
+        .args(["--approve", approve])
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("[baseline]"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn apply_force_replaces_only_an_apply_receipt() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("plan-lp16-force");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+    std::fs::write(&old, "port = 8080\n").expect("old");
+    std::fs::write(&new, "port = 9090\n").expect("new");
+    let plan = dir.join("plan.json");
+    assert!(cached(&dir)
+        .args(["plan", "--output"])
+        .arg(&plan)
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("run active")
+        .status
+        .success());
+    let document: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&plan).expect("plan")).expect("json");
+    let approve = document["plan"]["plan_hash"].as_str().expect("hash");
+    let receipt = dir.join("receipt.json");
+    std::fs::write(&receipt, "x".repeat(2 * 1024 * 1024)).expect("big receipt");
+    let out = cached(&dir)
+        .args(["apply"])
+        .arg(&plan)
+        .args(["--approve", approve, "--force", "--receipt"])
+        .arg(&receipt)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("[receipt]"));
+
+    // A real receipt may be replaced with --force.
+    std::fs::remove_file(&receipt).expect("remove");
+    assert!(cached(&dir)
+        .args(["apply"])
+        .arg(&plan)
+        .args(["--approve", approve, "--receipt"])
+        .arg(&receipt)
+        .output()
+        .expect("run active")
+        .status
+        .success());
+    std::fs::write(&old, "port = 8080\n").expect("restore");
+    let out = cached(&dir)
+        .args(["apply"])
+        .arg(&plan)
+        .args(["--approve", approve, "--force", "--receipt"])
+        .arg(&receipt)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     std::fs::remove_dir_all(&dir).ok();
 }

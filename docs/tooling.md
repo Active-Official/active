@@ -133,6 +133,49 @@ an error or warning refuses with its stable codes and a nonzero exit
 (the `check`/`eval` convention). Schema findings do not gate. Use
 `active compatibility` for a fail-closed schema gate.
 
+## Plan and apply
+
+```sh
+active plan old.active new.active
+active plan old.active new.active --output plan.json
+active apply plan.json --approve mac:...
+```
+
+`plan` shows what replacing the baseline with the candidate does: the
+strict semantic diff, the affected dependents, a risk class (`breaking`,
+`behavior-change`, `review-required`), the steps an approver is accepting,
+and a **per-user keyed plan hash** (a MAC) over the canonical plan. Paths
+are stored relative to `--root` (default: the inputs' common ancestor),
+so a plan is a confined, local artifact. Both documents must sit in the
+same directory (relative includes resolve at the baseline), and the first
+use may create the per-user key file. It writes no plan unless `--output`
+names a file. `--fail-on-breaking` exits nonzero when the risk is
+`breaking`.
+
+`apply` is the separate, audited step. It requires `--approve` to equal
+the plan's keyed hash; a plan edited after approval, or one minted by a
+different user (no access to the key file), is refused. Paths are
+resolved under `--root` (default: the plan file's directory) and must
+stay inside it. Apply then **re-runs the strict review** on the exact
+files — the recorded context (profile, budget, parent-escape policy,
+trust), document hashes, include-graph hashes, diff, risk, and behaviour
+must all match — before replacing the baseline atomically while
+preserving its mode (and the Windows read-only bit; ACLs and extended
+attributes are not copied). The receipt is written only after its
+temporary file is prepared; an output or receipt may not overwrite the
+baseline, candidate, plan, an include, the sibling lockfile, or the
+trust-keys file. An existing receipt is refused unless `--force` is
+passed, and `--force` only replaces a file that is an apply receipt.
+`--format json` prints the receipt; the default `<plan stem>.receipt.json`
+carries the plan hash, root, both document hashes, the optional operator,
+and the receipt's own keyed hash. Symlinked documents are refused. Refusals carry a stable class:
+`[plan-shape]`, `[plan-hash]`, `[root]`, `[context]`, `[baseline]`,
+`[candidate]`, `[drift]`, `[receipt]`, `[io]`.
+
+`apply` is a write action and is offered by the `trusted` sandbox profile
+only. Treat it as a deployment action: the approver must have reviewed
+that local plan, and the baseline must be the reviewed one.
+
 ## Toolchain self-check
 
 ```sh

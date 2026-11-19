@@ -339,6 +339,16 @@ pub fn eval_key(
     )
 }
 
+/// A domain-separated keyed MAC, `mac:<hex>`. Plans and receipts use
+/// this so a self-applied file cannot mint its own approval.
+pub fn keyed_mac(key: &[u8; KEY_BYTES], domain: &str, bytes: &[u8]) -> String {
+    let mut preimage = Vec::with_capacity(domain.len() + 1 + bytes.len());
+    preimage.extend_from_slice(domain.as_bytes());
+    preimage.push(b'\n');
+    preimage.extend_from_slice(bytes);
+    format!("mac:{}", blake3::keyed_hash(key, &preimage).to_hex())
+}
+
 /// The per-user key file: `$ACTIVE_CACHE_KEY_FILE` when set, else the
 /// platform config directory (`%APPDATA%\active` on Windows,
 /// `$XDG_CONFIG_HOME/active` or `~/.config/active` on Unix). It lives

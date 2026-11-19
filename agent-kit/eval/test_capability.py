@@ -49,6 +49,8 @@ class CapabilityTest(unittest.TestCase):
             "repair",
             "compatibility",
             "diff",
+            "plan",
+            "apply",
             "value-inspect",
             "debug",
             "viz",
@@ -58,7 +60,7 @@ class CapabilityTest(unittest.TestCase):
             "schema-query",
         ):
             self.assertIn(required, names, f"tool surface missing {required}")
-        self.assertEqual(len(names), 21, f"tool surface changed: {names}")
+        self.assertEqual(len(names), 23, f"tool surface changed: {names}")
 
     def test_sandbox_profiles_match_code(self) -> None:
         # The descriptor's profiles section and the core's sandbox
@@ -82,11 +84,13 @@ class CapabilityTest(unittest.TestCase):
             set(profiles["data"]["tools"]) <= set(profiles["agent"]["tools"]),
             "agent must offer everything data offers",
         )
-        self.assertEqual(
-            sorted(profiles["agent"]["tools"]),
-            sorted(profiles["trusted"]["tools"]),
-            "trusted matches the agent tool surface",
+        self.assertTrue(
+            set(profiles["agent"]["tools"]) <= set(profiles["trusted"]["tools"]),
+            "trusted must offer everything agent offers",
         )
+        # apply is an unconfined write; it stays out of the agent profile.
+        self.assertNotIn("apply", profiles["agent"]["tools"])
+        self.assertIn("apply", profiles["trusted"]["tools"])
 
     def test_output_descriptions_cover_formats_and_query_shapes(self) -> None:
         tools = {t.get("name"): t for t in self.doc.get("tools", [])}
@@ -172,6 +176,8 @@ class CapabilityTest(unittest.TestCase):
             "repair",
             "compatibility",
             "diff",
+            "plan",
+            "apply",
         )
         by_name = {t["name"]: t for t in self.doc["tools"]}
         for name in flat:

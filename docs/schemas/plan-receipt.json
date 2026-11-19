@@ -1,0 +1,50 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Active plan receipt",
+  "description": "Output of `active apply <plan> --approve <hash>` (L-P16).",
+  "type": "object",
+  "required": ["apply"],
+  "additionalProperties": false,
+  "properties": {
+    "apply": {
+      "type": "object",
+      "required": [
+        "version",
+        "applied",
+        "plan_hash",
+        "root",
+        "old",
+        "new",
+        "receipt_hash"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "version": { "const": 1 },
+        "applied": { "const": true },
+        "plan_hash": {
+          "type": "string",
+          "pattern": "^mac:[0-9a-f]{64}$"
+        },
+        "root": { "type": "string" },
+        "old": { "$ref": "#/definitions/document" },
+        "new": { "$ref": "#/definitions/document" },
+        "operator": { "type": "string" },
+        "receipt_hash": {
+          "type": "string",
+          "pattern": "^mac:[0-9a-f]{64}$"
+        }
+      }
+    }
+  },
+  "definitions": {
+    "document": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+      }
+    }
+  }
+}

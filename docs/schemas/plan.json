@@ -1,0 +1,158 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Active plan",
+  "description": "Output of `active plan <old> <new> --format json` (L-P16).",
+  "type": "object",
+  "required": ["plan"],
+  "additionalProperties": false,
+  "properties": {
+    "plan": {
+      "type": "object",
+      "required": [
+        "version",
+        "old",
+        "new",
+        "old_includes",
+        "new_includes",
+        "context",
+        "risk",
+        "behaviour",
+        "steps",
+        "diff",
+        "plan_hash"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "version": { "const": 1 },
+        "old": { "$ref": "#/definitions/document" },
+        "new": { "$ref": "#/definitions/document" },
+        "old_includes": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+        },
+        "new_includes": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+        },
+        "context": {
+          "type": "object",
+          "required": [
+            "profile",
+            "budget",
+            "allow_parent_escapes",
+            "trusted"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "profile": { "type": ["string", "null"] },
+            "budget": {
+              "type": "object",
+              "required": [
+                "nodes",
+                "depth",
+                "array_len",
+                "keys",
+                "wall_ms",
+                "value_size",
+                "total_size"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "nodes": { "type": "integer", "minimum": 0 },
+                "depth": { "type": "integer", "minimum": 0 },
+                "array_len": { "type": "integer", "minimum": 0 },
+                "keys": { "type": "integer", "minimum": 0 },
+                "wall_ms": { "type": "integer", "minimum": 0 },
+                "value_size": { "type": "integer", "minimum": 0 },
+                "total_size": { "type": "integer", "minimum": 0 }
+              }
+            },
+            "allow_parent_escapes": { "type": "boolean" },
+            "trusted": { "type": "boolean" }
+          }
+        },
+        "risk": {
+          "enum": ["breaking", "behavior-change", "review-required"]
+        },
+        "behaviour": { "enum": ["identical", "changed"] },
+        "steps": { "type": "array", "items": { "type": "string" } },
+        "diff": {
+          "type": "object",
+          "required": [
+            "old",
+            "new",
+            "behaviour",
+            "values",
+            "schema",
+            "impact",
+            "impact_truncated",
+            "notes"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "old": { "type": "string" },
+            "new": { "type": "string" },
+            "behaviour": { "enum": ["identical", "changed"] },
+            "values": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["path", "change"],
+                "additionalProperties": false,
+                "properties": {
+                  "path": { "type": "string" },
+                  "change": { "enum": ["added", "removed", "changed"] },
+                  "old_type": { "type": "string" },
+                  "new_type": { "type": "string" },
+                  "old": { "type": "string" },
+                  "new": { "type": "string" }
+                }
+              }
+            },
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["code", "severity", "path", "message"],
+                "additionalProperties": false,
+                "properties": {
+                  "code": { "type": "string" },
+                  "severity": { "type": "string" },
+                  "path": { "type": "string" },
+                  "message": { "type": "string" }
+                }
+              }
+            },
+            "impact": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["key", "paths", "table_dependents_excluded"],
+                "additionalProperties": false,
+                "properties": {
+                  "key": { "type": "string" },
+                  "paths": { "type": "array", "items": { "type": "string" } },
+                  "table_dependents_excluded": { "type": "boolean" }
+                }
+              }
+            },
+            "impact_truncated": { "type": "boolean" },
+            "notes": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "plan_hash": { "type": "string", "pattern": "^mac:[0-9a-f]{64}$" }
+      }
+    }
+  },
+  "definitions": {
+    "document": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+      }
+    }
+  }
+}

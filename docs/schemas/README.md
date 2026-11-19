@@ -16,6 +16,8 @@ so a shape change fails the build.
 | `repair-plan.json` | `active repair --from <file> --format json` |
 | `debug-steps.json` | `active debug --from <file>` |
 | `diff.json` | `active diff <old> <new> --format json` |
+| `plan.json` | `active plan <old> <new> --format json` / `--output` |
+| `plan-receipt.json` | `active apply <plan> --approve <hash>` |
 
 Rules:
 

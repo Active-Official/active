@@ -10,7 +10,7 @@ SHA-256 pin for each unchanged artifact.
 |---|---|---|---|
 | `harness.json` / `harness.log` | `python conformance/harness/run.py --out conformance/evidence/harness.json` | `6AB142EEBBF43C12` | byte-identical to the `e06df6d` capture; `ok: true`, `parity: []`, 10 pass and 18 toolchain-absent skips on this host |
 | `codegen.log` | `python conformance/evidence/codegen_check.py` | `E5FC6797C82C14FA` | byte-identical to the `56ef612` capture; `CODEGEN: ALL PASS` |
-| `output-schema.log` | `python conformance/evidence/output_schema_check.py` | `76F7893517DEB2C0` | byte-identical to the `ad77d31` capture; 9/9 outputs |
+| `output-schema.log` | `python conformance/evidence/output_schema_check.py` | `1647A4418EF38296` | regenerated for L-P16 (2026-11-18); 11/11 outputs (diff, plan, and plan-receipt added) |
 | `catalog-diff.log` | `python conformance/evidence/catalog_diff.py` | `D5A909141B29AC94` | byte-identical to the `e06df6d` capture; 89/90/0 |
 | `agentkit-eval.json` / `agentkit.log` | `python agent-kit/eval/run.py --out conformance/evidence/agentkit-eval.json` | `1B40F36277FE5158` | byte-identical to the `204af76` capture; `ok: true` |
 | `container-harness.json` / `.log` | the `docker run` command in the log header (image `active-all-toolchains:phase2`) | `C39ECE9F6039C86C` | regenerated; 28/28 pass, 0 skipped |

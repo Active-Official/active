@@ -12,6 +12,7 @@ Usage: python conformance/evidence/output_schema_check.py
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -83,6 +84,8 @@ def main() -> int:
     if not EXE.exists():
         raise SystemExit(f"CLI not built at {EXE}; run cargo build -p active-cli")
     work = Path(tempfile.mkdtemp(prefix="active-out-schema-"))
+    # Plans and receipts use the per-user key; keep the check hermetic.
+    os.environ["ACTIVE_CACHE_KEY_FILE"] = str(work / "cache-key")
     fixture = work / "doc.active"
     fixture.write_text(FIXTURE, encoding="utf-8")
     repair_fixture = work / "repair.active"
@@ -93,6 +96,12 @@ def main() -> int:
     diff_old.write_text(DIFF_OLD, encoding="utf-8")
     diff_new = work / "new.active"
     diff_new.write_text(DIFF_NEW, encoding="utf-8")
+    apply_old = work / "apply-old.active"
+    apply_old.write_text(DIFF_OLD, encoding="utf-8")
+    apply_new = work / "apply-new.active"
+    apply_new.write_text(DIFF_NEW, encoding="utf-8")
+    plan_file = work / "plan.json"
+    receipt_file = work / "plan.receipt.json"
 
     checks = [
         ("graph", json.loads(run(["graph", str(fixture), "--format", "json"]))),
@@ -129,10 +138,54 @@ def main() -> int:
                 )
             ),
         ),
+        (
+            "plan",
+            json.loads(
+                run(
+                    [
+                        "plan",
+                        str(diff_old),
+                        str(diff_new),
+                        "--format",
+                        "json",
+                    ]
+                )
+            ),
+        ),
     ]
     for name, document in checks:
         validate(name, document)
         print(f"OUTPUT-SCHEMA {name} ok")
+
+    # A plan written to disk must be apply-able and produce a receipt:
+    # validate both the on-disk plan and the receipt.
+    run(
+        [
+            "plan",
+            str(apply_old),
+            str(apply_new),
+            "--output",
+            str(plan_file),
+        ]
+    )
+    plan_document = json.loads(plan_file.read_text(encoding="utf-8"))
+    validate("plan", plan_document)
+    approve = plan_document["plan"]["plan_hash"]
+    run(
+        [
+            "apply",
+            str(plan_file),
+            "--approve",
+            approve,
+            "--operator",
+            "output-schema",
+            "--receipt",
+            str(receipt_file),
+        ]
+    )
+    receipt = json.loads(receipt_file.read_text(encoding="utf-8"))
+    validate("plan-receipt", receipt)
+    print("OUTPUT-SCHEMA plan-receipt ok")
 
     # A file that does not parse still fails the run, but its E-codes
     # are not lint findings: the pinned schema admits `^L[0-9]{3}$`

@@ -25,7 +25,7 @@ agent-kit eval, and the editor smoke run on every push).
 | `catalog-diff.log` | Error-code catalog diff (`catalog_diff.py`) | 89 emitted, 90 catalogued, 0 missing (E009 intentionally unassigned) | re-run at `1fdeaf5`; byte-identical to the `e06df6d` capture (`REFRESH.md`) |
 | `harness-tests.log` | Harness enforcement unit tests | 25/25 `test_run.py`, 20/20 `test_diff_vectors.py`, self-check 15/15, capability 8/8, interchange short-circuit 4/4 | `ebc8ca0`, 2026-10-26 |
 | `miri.log` | Miri (nightly) over `active-core` trace + blob units | 3/3 trace + 3/3 blob pass, no UB (master program EVID.001) | `1fdeaf5`, 2026-10-26 |
-| `output-schema.log` | Tooling JSON output schemas | 9/9 outputs validate, broken-lint control OK | re-run at `1fdeaf5` with `python conformance/evidence/output_schema_check.py`; byte-identical to the `ad77d31` capture (`REFRESH.md`) |
+| `output-schema.log` | Tooling JSON output schemas | 11/11 outputs validate, broken-lint control OK | re-run for L-P16 with `python conformance/evidence/output_schema_check.py`; refreshed capture (`REFRESH.md`) |
 | `packaging-audit.log` | Step 8: packaging and install-surface audit (§8.3) | `PACKAGING-AUDIT: PASS`: twine check on sdist+wheel, npm file list, version coherence, and every documented install command (pip, npm, cargo install, cargo add) | `c5366f4`, 2026-10-26 (`packaging_audit.ps1` procedure: build, pack, install, run) |
 | `research-battery.md` | Research battery + corpus summary | 1,998 RB tests, ported corpora counts, fuzz seeds, secret proofs | captured 2026-10-22, committed 2026-10-23 (`204af76`) |
 

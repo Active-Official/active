@@ -118,7 +118,7 @@ active diff old.active new.active --format json
 
 Compares the evaluated documents, not their text: every added, removed,
 or changed value path with both types and a redacted scalar echo, the
-schema compatibility findings (C040-C044), and the dependents of each
+schema compatibility findings (C040-C045), and the dependents of each
 changed path (resolved to the longest dotted prefix, so a nested change
 names its own consumers). `behaviour: identical` means every *compared*
 value is equal; material values are never compared, so a secret or blob

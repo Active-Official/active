@@ -24,6 +24,7 @@ pub mod sign;
 pub mod store;
 pub mod trace;
 pub mod types;
+pub mod unify;
 pub mod validate;
 pub mod viz;
 

@@ -10,6 +10,25 @@ standalone Infinity codec).
 
 ## [Unreleased]
 
+### L-P19: root-schema `check` blocks (cross-field invariants)
+
+A root schema may declare `check { name = predicate }` (or `check:` with an
+indented body). Predicates are authored expressions evaluated against the
+FINAL tree after schema validation, `@constraint`, profiles, patches, and
+resilient fills, in declaration order. Identifiers are root keys; dotted
+references and interpolations resolve through their authored paths.
+Material and non-scalar `==`/`!=` operands are incomparable (T009), so a
+check can never become an equality oracle. A false, non-boolean, or
+unresolvable predicate is T009 naming the rule (redacted); strict refuses,
+resilient collects. Checks are root-file/root-schema only: nested data
+schemas and included files reject them (E020), and a duplicate schema's
+discarded checks never run. The formatter emits the authored predicate
+text in both styles, so dotted references survive. `active inspect`
+lists checks (redacted) and `active compatibility` reports C045 for
+added/removed/changed rules; code generators document that cross-field
+checks are not representable. Spec `validation.md` section 11, grammar
+2.10, diagnostics T009/C045; conformance vectors 0041/0042.
+
 ### L-P16: plan/apply split (`active plan`, `active apply`)
 
 `active plan old new` shows what replacing the baseline with the

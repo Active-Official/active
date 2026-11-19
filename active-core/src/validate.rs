@@ -313,6 +313,439 @@ impl Engine {
         diagnostics.extend(local);
         Ok(())
     }
+
+    /// Enforce root-schema `check` invariants (L-P19,
+    /// spec/validation.md section 11). The predicate is evaluated against
+    /// the FINAL tree (profile, patches, resilient fills) with the
+    /// document's material model consulted on every value: a plain copy
+    /// of a secret is incomparable exactly like a `secret(...)` node, so
+    /// a check can never become an equality oracle. Strict fails with
+    /// every violation; resilient collects. The message names the rule
+    /// only and is redacted with the same material model.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn validate_checks(
+        &self,
+        module: &Module,
+        values: &HashMap<NodeId, Value>,
+        result: &Value,
+        diagnostics: &mut Vec<Diagnostic>,
+        deadline: Option<std::time::Instant>,
+        wall_limit: u64,
+        account: &mut Accountant,
+    ) -> Result<(), EvalError> {
+        const MAX_CHECK_DIAGNOSTICS: usize = 1024;
+        let Some(schema_id) = module.schema else {
+            return Ok(());
+        };
+        let Some(rules) = module.schema_checks.get(&schema_id) else {
+            return Ok(());
+        };
+        if rules.is_empty() {
+            return Ok(());
+        }
+        let paths = module.value_paths();
+        let profile = crate::secret::SecretProfile::analyze_with_profile(
+            module,
+            self.profile_override.as_deref(),
+        );
+        let redactor = runtime_secret_redactor(values, &profile);
+        let mut local: Vec<Diagnostic> = Vec::new();
+        let mut visited = 0u64;
+        for rule in rules {
+            if let Some(end) = deadline {
+                if std::time::Instant::now() >= end {
+                    return Err(EvalError::budget_exceeded(
+                        BudgetKind::WallClock,
+                        wall_limit,
+                        module,
+                        Some(rule.expr),
+                    ));
+                }
+            }
+            account.charge(module, Some(rule.expr), rule.source.len() as u64)?;
+            let outcome = check_value(
+                module,
+                &paths,
+                result,
+                &self.env,
+                self.env_fallback.as_ref(),
+                &profile,
+                &redactor,
+                deadline,
+                wall_limit,
+                &mut visited,
+                account,
+                rule.expr,
+                0,
+            )?;
+            if matches!(outcome, Some(Value::Bool(true))) {
+                continue;
+            }
+            if local.len() >= MAX_CHECK_DIAGNOSTICS {
+                local.push(Diagnostic {
+                    severity: Severity::Warning,
+                    code: "W019".into(),
+                    message: format!("check diagnostics truncated at {MAX_CHECK_DIAGNOSTICS}"),
+                    path: None,
+                    span: Some(rule.span.clone()),
+                    repair: None,
+                    confidence: 1.0,
+                    file: module.node_files.get(&rule.expr).cloned(),
+                });
+                break;
+            }
+            let shown_name = profile
+                .redact_authored_text(&rule.name)
+                .unwrap_or_else(|| rule.name.clone());
+            let shown_name = redactor
+                .redact_every_occurrence(&shown_name)
+                .unwrap_or(shown_name);
+            let shown_name = truncate_120(&shown_name);
+            let message = match outcome {
+                Some(Value::Bool(false)) => format!("check '{shown_name}' failed"),
+                Some(other) => format!(
+                    "check '{shown_name}' must evaluate to a boolean, got {}",
+                    value_kind_name(&other)
+                ),
+                None => format!(
+                    "check '{shown_name}' could not be evaluated (an operand is missing, material, or not comparable)"
+                ),
+            };
+            local.push(Diagnostic {
+                severity: Severity::Error,
+                code: "T009".into(),
+                message,
+                path: None,
+                span: Some(rule.span.clone()),
+                repair: None,
+                confidence: 1.0,
+                file: module.node_files.get(&rule.expr).cloned(),
+            });
+        }
+        if !local.is_empty() && !self.resilient {
+            return Err(EvalError::ValidationFailed { diagnostics: local });
+        }
+        diagnostics.extend(local);
+        Ok(())
+    }
+}
+
+/// True when a string is structural material for this document: an exact
+/// secret literal, a substring the redactor matches, or a profile/alias
+/// value. Checks never compare material strings.
+fn check_material_text(
+    profile: &crate::secret::SecretProfile,
+    redactor: &crate::secret::SecretRedactor,
+    text: &str,
+) -> bool {
+    profile.is_material_text(text)
+        || profile.redact_text(text).is_some()
+        || redactor.redact_every_occurrence(text).is_some()
+}
+
+/// Charge and gate one produced check value.
+#[allow(clippy::too_many_arguments)]
+fn rate_check_value(
+    module: &Module,
+    profile: &crate::secret::SecretProfile,
+    redactor: &crate::secret::SecretRedactor,
+    account: &mut Accountant,
+    expr: NodeId,
+    value: Value,
+) -> Result<Option<Value>, EvalError> {
+    if let Value::String(text) = &value {
+        if check_material_text(profile, redactor, text) {
+            return Ok(None);
+        }
+    }
+    account.charge(module, Some(expr), measure_value(&value))?;
+    Ok(Some(value))
+}
+
+/// Evaluate a check predicate against the final tree (L-P19).
+///
+/// Identifiers are root keys; references resolve through their authored
+/// value path, so profile/patch/fill results are seen. Material is
+/// incomparable in every form (secret node, plain copy, env alias,
+/// material path); `==`/`!=` on a secret or composite is T009. Any type
+/// or arithmetic error is `None`. Budgets and the wall clock are charged
+/// inside the recursion.
+#[allow(clippy::too_many_arguments)]
+fn check_value(
+    module: &Module,
+    paths: &HashMap<NodeId, String>,
+    result: &Value,
+    env: &HashMap<String, String>,
+    fallback: Option<&crate::eval::EnvLookup>,
+    profile: &crate::secret::SecretProfile,
+    redactor: &crate::secret::SecretRedactor,
+    deadline: Option<std::time::Instant>,
+    wall_limit: u64,
+    visited: &mut u64,
+    account: &mut Accountant,
+    expr: NodeId,
+    depth: usize,
+) -> Result<Option<Value>, EvalError> {
+    const MAX_DEPTH: usize = 256;
+    if depth > MAX_DEPTH {
+        return Ok(None);
+    }
+    *visited = visited.saturating_add(1);
+    if visited.is_multiple_of(256) {
+        if let Some(end) = deadline {
+            if std::time::Instant::now() >= end {
+                return Err(EvalError::budget_exceeded(
+                    BudgetKind::WallClock,
+                    wall_limit,
+                    module,
+                    Some(expr),
+                ));
+            }
+        }
+    }
+    let node = match module.get(expr) {
+        Some(node) => node,
+        None => return Ok(None),
+    };
+    match node {
+        Node::Literal(value) => Ok(Some(value.clone())),
+        Node::Ident(name) => {
+            // Checks are document-level: only the final root table
+            // resolves an identifier. A let or a removed key is T009.
+            if profile.path_is_secret(name) {
+                return Ok(None);
+            }
+            match result {
+                Value::Table(map) => match map.get(name).cloned() {
+                    Some(value) => {
+                        rate_check_value(module, profile, redactor, account, expr, value)
+                    }
+                    None => Ok(None),
+                },
+                _ => Ok(None),
+            }
+        }
+        Node::Ref(target) => {
+            if profile.node_is_secret(*target) {
+                return Ok(None);
+            }
+            match paths.get(target) {
+                Some(path) => {
+                    if profile.path_is_secret(path) {
+                        return Ok(None);
+                    }
+                    match lookup_result_path(result, path).cloned() {
+                        Some(value) => {
+                            rate_check_value(module, profile, redactor, account, expr, value)
+                        }
+                        None => Ok(None),
+                    }
+                }
+                // A reference with no authored value path is a let or an
+                // expression node; checks are document-level, so it is
+                // not resolvable (T009).
+                None => Ok(None),
+            }
+        }
+        Node::Env { name, default } => {
+            let key = crate::eval::canonical_env_name(name);
+            if profile.env_is_material(&key) {
+                return Ok(None);
+            }
+            if let Some(value) = env.get(&key) {
+                return rate_check_value(
+                    module,
+                    profile,
+                    redactor,
+                    account,
+                    expr,
+                    Value::String(value.clone()),
+                );
+            }
+            if let Some(lookup) = fallback {
+                if let Some(value) = lookup(&key) {
+                    return rate_check_value(
+                        module,
+                        profile,
+                        redactor,
+                        account,
+                        expr,
+                        Value::String(value),
+                    );
+                }
+            }
+            match default {
+                Some(default) => check_value(
+                    module,
+                    paths,
+                    result,
+                    env,
+                    fallback,
+                    profile,
+                    redactor,
+                    deadline,
+                    wall_limit,
+                    visited,
+                    account,
+                    *default,
+                    depth + 1,
+                ),
+                // Evaluation maps a missing env to null; a check sees the
+                // same value.
+                None => Ok(Some(Value::Null)),
+            }
+        }
+        Node::Interpolate { parts } => {
+            let mut out = String::new();
+            for part in parts {
+                match part {
+                    crate::ir::InterpPart::Literal(text) => out.push_str(text),
+                    crate::ir::InterpPart::Expr(id) => {
+                        let value = check_value(
+                            module,
+                            paths,
+                            result,
+                            env,
+                            fallback,
+                            profile,
+                            redactor,
+                            deadline,
+                            wall_limit,
+                            visited,
+                            account,
+                            *id,
+                            depth + 1,
+                        )?;
+                        match value {
+                            Some(Value::String(text)) => {
+                                if check_material_text(profile, redactor, &text) {
+                                    return Ok(None);
+                                }
+                                out.push_str(&text);
+                            }
+                            Some(Value::Int(number)) => out.push_str(&number.to_string()),
+                            Some(Value::Float(number)) => out.push_str(&number.to_string()),
+                            Some(Value::Bool(flag)) => out.push_str(&flag.to_string()),
+                            Some(Value::DurationMs(ms)) => out.push_str(&format!("{ms}ms")),
+                            Some(Value::Quantity(number, unit)) => {
+                                out.push_str(&unit.format_amount(number))
+                            }
+                            Some(Value::Null) => out.push_str("null"),
+                            Some(Value::Secret(_))
+                            | Some(Value::Array(_))
+                            | Some(Value::Table(_))
+                            | Some(Value::Blob { .. }) => return Ok(None),
+                            None => return Ok(None),
+                        }
+                    }
+                }
+            }
+            if check_material_text(profile, redactor, &out) {
+                return Ok(None);
+            }
+            account.charge(module, Some(expr), out.len() as u64)?;
+            Ok(Some(Value::String(out)))
+        }
+        Node::Binary { op, lhs, rhs } => {
+            let left = check_value(
+                module,
+                paths,
+                result,
+                env,
+                fallback,
+                profile,
+                redactor,
+                deadline,
+                wall_limit,
+                visited,
+                account,
+                *lhs,
+                depth + 1,
+            )?;
+            let right = check_value(
+                module,
+                paths,
+                result,
+                env,
+                fallback,
+                profile,
+                redactor,
+                deadline,
+                wall_limit,
+                visited,
+                account,
+                *rhs,
+                depth + 1,
+            )?;
+            let (Some(left), Some(right)) = (left, right) else {
+                return Ok(None);
+            };
+            if matches!(op, crate::ir::BinOp::Eq | crate::ir::BinOp::Ne)
+                && (matches!(left, Value::Secret(_))
+                    || matches!(right, Value::Secret(_))
+                    || matches!(left, Value::Array(_) | Value::Table(_))
+                    || matches!(right, Value::Array(_) | Value::Table(_)))
+            {
+                return Ok(None);
+            }
+            Ok(eval_binary(*op, &left, &right).ok())
+        }
+        Node::Unary { op, expr } => {
+            let value = check_value(
+                module,
+                paths,
+                result,
+                env,
+                fallback,
+                profile,
+                redactor,
+                deadline,
+                wall_limit,
+                visited,
+                account,
+                *expr,
+                depth + 1,
+            )?;
+            match value {
+                Some(value) => Ok(eval_unary(*op, &value).ok()),
+                None => Ok(None),
+            }
+        }
+        Node::Secret { .. } => Ok(None),
+        Node::Quantity { value, unit } => {
+            let amount = check_value(
+                module,
+                paths,
+                result,
+                env,
+                fallback,
+                profile,
+                redactor,
+                deadline,
+                wall_limit,
+                visited,
+                account,
+                *value,
+                depth + 1,
+            )?;
+            match amount {
+                Some(Value::Int(number)) => Ok(Some(Value::Quantity(number as f64, unit.clone()))),
+                Some(Value::Float(number)) => Ok(Some(Value::Quantity(number, unit.clone()))),
+                _ => Ok(None),
+            }
+        }
+        _ => match paths.get(&expr) {
+            Some(path) if !profile.path_is_secret(path) => {
+                match lookup_result_path(result, path).cloned() {
+                    Some(value) => {
+                        rate_check_value(module, profile, redactor, account, expr, value)
+                    }
+                    None => Ok(None),
+                }
+            }
+            _ => Ok(None),
+        },
+    }
 }
 
 /// One resilient default insertion: the structured path of the missing
@@ -1861,9 +2294,23 @@ fn display_path(path: &str) -> &str {
 fn lookup_result_path<'v>(result: &'v Value, path: &str) -> Option<&'v Value> {
     let mut cursor = result;
     for segment in path.split('.') {
-        match cursor {
-            Value::Table(map) => cursor = map.get(segment)?,
+        let (key, indices) = match segment.find('[') {
+            Some(bracket) => (&segment[..bracket], &segment[bracket..]),
+            None => (segment, ""),
+        };
+        cursor = match cursor {
+            Value::Table(map) => map.get(key)?,
             _ => return None,
+        };
+        let mut rest = indices;
+        while let Some(start) = rest.find('[') {
+            let end = rest.find(']')?;
+            let index: usize = rest[start + 1..end].parse().ok()?;
+            cursor = match cursor {
+                Value::Array(items) => items.get(index)?,
+                _ => return None,
+            };
+            rest = &rest[end + 1..];
         }
     }
     Some(cursor)

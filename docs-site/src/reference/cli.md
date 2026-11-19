@@ -33,7 +33,7 @@ full `--max-*` budget family.
   introspection (default) or one value path: kind, redacted value, taint,
   size, content-addressed identity, schema contract with constraints, and
   dependency provenance.
-- `active compatibility <old> <new> [--format text|json]` - C040-C044
+- `active compatibility <old> <new> [--format text|json]` - C040-C045
   findings with an E040 summary; exits nonzero on breaking changes.
 - `active capability [--require-major N] [--check-doc FILE] [--profile NAME]`
   - the descriptor, a document-capability handshake, or one sandbox profile.

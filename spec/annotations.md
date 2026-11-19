@@ -72,6 +72,10 @@ port = 8080
   annotations with file attribution; aliased includes scope paths
   under the alias so enforcement matches the merged tree.
 
+For invariants that span several fields, use a root-schema `check` block
+(spec/validation.md section 11), not `@constraint`: a constraint is about one
+annotated value, a check is about the document.
+
 ## 4. @ai_immutable
 
 - Payload: the literal `true` or `false` — or nothing at all, in

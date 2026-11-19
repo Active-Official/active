@@ -775,7 +775,7 @@ fn error_code_for(code: &str) -> i32 {
         "S001" => ACTIVE_ERR_CYCLE,
         "W001" | "S002" | "S003" => ACTIVE_ERR_UNRESOLVED_REF,
         "T001" | "T002" | "T003" => ACTIVE_ERR_UNIT_MISMATCH,
-        "T004" | "T005" | "T006" | "T007" | "T008" => ACTIVE_ERR_SCHEMA_FAIL,
+        "T004" | "T005" | "T006" | "T007" | "T008" | "T009" => ACTIVE_ERR_SCHEMA_FAIL,
         "B001" | "B002" | "B003" | "B004" => ACTIVE_ERR_SCHEMA_FAIL,
         "E015" | "E016" | "E017" | "E028" | "E041" => ACTIVE_ERR_INCLUDE_FAIL,
         _ if code.starts_with('X') => ACTIVE_ERR_BUDGET_EXCEEDED,
@@ -1093,13 +1093,16 @@ pub unsafe extern "C" fn active_value_type(value: *const ActiveValue) -> u32 {
 }
 
 fn is_schema_code(code: &str) -> bool {
-    matches!(code, "T002" | "T003" | "T004" | "T005" | "T006")
+    matches!(
+        code,
+        "T002" | "T003" | "T004" | "T005" | "T006" | "T007" | "T008" | "T009" | "W019"
+    )
 }
 
 /// Validate a module against its in-file schema, returning schema
 /// diagnostics (F-020): the generator feedback signal without parse/type
 /// noise. Runs the single shipped validator through evaluation and keeps
-/// T002-T006; a fatal evaluation failure that prevents validation surfaces
+/// T002-T009; a fatal evaluation failure that prevents validation surfaces
 /// with its true code instead of a lying empty set (empty means
 /// schema-clean AND evaluable: run `active_check` for the full verdict).
 /// Cross-document schemas ride includes (F-016 loader).

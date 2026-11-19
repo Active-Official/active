@@ -66,6 +66,16 @@ pub struct Module {
     /// immutability flags for validators, the language server, and AI
     /// tooling. Comments themselves stay in `trivia` for the formatter.
     pub annotations: HashMap<NodeId, Vec<Annotation>>,
+    /// Cross-field invariants declared by a root schema `check` block
+    /// (L-P19, spec/validation.md section 11), keyed by the schema node
+    /// that declared them. Only the effective root schema's rules run, so
+    /// an included or overwritten schema can never contribute a rule.
+    pub schema_checks: HashMap<NodeId, Vec<CheckRule>>,
+    /// Every arena node belonging to a check predicate. The main walk
+    /// skips them: predicates are evaluated after the transform pass,
+    /// against the final tree, and their expression errors are T009, not
+    /// fatal evaluation errors.
+    pub check_nodes: std::collections::HashSet<NodeId>,
     /// Dependency declarations by scope table (spec/linter.md §2,
     /// C-042): `depends_on` keys holding string arrays are extracted
     /// from value fields at parse (never exported) and recorded here
@@ -118,6 +128,34 @@ pub enum AnnotationKind {
     Constraint { source: String, expr: NodeId },
     /// Agent-immutable flag; `false` behaves as no annotation.
     AiImmutable(bool),
+}
+
+/// One root-schema `check` invariant: a named boolean predicate over the
+/// document's evaluated value (L-P19).
+#[derive(Clone)]
+pub struct CheckRule {
+    /// Author-written rule name (diagnostics).
+    pub name: String,
+    /// The authored predicate text, preserved for the formatter so a
+    /// dotted reference is never rewritten.
+    pub source: String,
+    /// The predicate expression node, parsed in the document's scope.
+    pub expr: NodeId,
+    /// The rule name's span (diagnostics).
+    pub span: Span,
+}
+
+/// Redacted Debug: a rule name or predicate can quote material text;
+/// logging a module must never print it.
+impl std::fmt::Debug for CheckRule {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CheckRule")
+            .field("name", &"<check>")
+            .field("source", &"<source>")
+            .field("expr", &self.expr)
+            .field("span", &self.span)
+            .finish()
+    }
 }
 
 /// A parsed `depends_on` block for one table scope
@@ -323,6 +361,8 @@ impl Module {
             patches: Vec::new(),
             schema: None,
             annotations: HashMap::new(),
+            schema_checks: HashMap::new(),
+            check_nodes: std::collections::HashSet::new(),
             depends_on: HashMap::new(),
             mode: Mode::default(),
             mode_marker: false,

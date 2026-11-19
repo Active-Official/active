@@ -145,3 +145,43 @@ fn a_resilient_schema_error_refuses_at_the_c_abi() {
         free_mod(module);
     }
 }
+
+#[test]
+fn validate_reports_a_failed_check_as_schema_fail() {
+    let path = match cdylib_path() {
+        Some(path) => path,
+        None => {
+            eprintln!("SKIP: cdylib absent (build the crate first)");
+            return;
+        }
+    };
+    // SAFETY: test loads the just-built crate ABI per docs/FFI.md.
+    unsafe {
+        type ValidateFn = unsafe extern "C" fn(
+            *const std::ffi::c_void,
+            *const std::ffi::c_void,
+        ) -> *mut std::ffi::c_void;
+        type LastErrorFn = unsafe extern "C" fn() -> i32;
+        let lib = libloading::Library::new(&path).expect("dlopen cdylib");
+        let parse: libloading::Symbol<ParseFn> = lib.get(b"active_module_parse").expect("parse");
+        let validate: libloading::Symbol<ValidateFn> =
+            lib.get(b"active_validate").expect("validate");
+        let len: libloading::Symbol<LenFn> = lib.get(b"active_diagnostics_len").expect("len");
+        let last_error: libloading::Symbol<LastErrorFn> =
+            lib.get(b"active_last_error").expect("last error");
+        let free_mod: libloading::Symbol<FreeFn> =
+            lib.get(b"active_module_free").expect("free mod");
+        let free_set: libloading::Symbol<FreeFn> =
+            lib.get(b"active_diagnostics_free").expect("free set");
+
+        let src = b"schema { check { ok = port > 0 } }\nport = -1\n";
+        let module = parse(src.as_ptr(), src.len(), std::ptr::null());
+        assert!(!module.is_null(), "the document parses");
+        let diagnostics = validate(module, std::ptr::null());
+        assert!(!diagnostics.is_null(), "a diagnostic set is returned");
+        assert!(len(diagnostics) >= 1, "T009 is in the schema set");
+        assert_eq!(last_error(), 8, "T009 maps to ACTIVE_ERR_SCHEMA_FAIL (8)");
+        free_set(diagnostics);
+        free_mod(module);
+    }
+}

@@ -25,6 +25,9 @@ pub mod code {
     pub const VERSION_REGRESSED: &str = "C043";
     /// `min_reader` raised above the old version (drops readers).
     pub const READER_FLOOR_RAISED: &str = "C044";
+    /// A root-schema cross-field `check` rule was added, removed, or
+    /// changed (L-P19): the document's behavior changes.
+    pub const CHECK_CHANGED: &str = "C045";
     /// Breaking-change summary for a non-empty error set.
     pub const BREAKING_SUMMARY: &str = "E040";
 }
@@ -580,6 +583,53 @@ pub fn compare(old: &Module, new: &Module) -> Result<Vec<CompatFinding>, String>
     check_version_gates(old, new, &mut findings);
 
     // Messages echo schema prose (versions, media types); redact with
+    // L-P19: a cross-field check is behavior. Adding, removing, or
+    // changing a rule can refuse a document that used to pass (or admit
+    // one that used to fail), so each is a breaking finding.
+    let old_checks = old
+        .schema_checks
+        .get(&old_root)
+        .cloned()
+        .unwrap_or_default();
+    let new_checks = new
+        .schema_checks
+        .get(&new_root)
+        .cloned()
+        .unwrap_or_default();
+    let old_by_name: HashMap<&str, &crate::ir::CheckRule> = old_checks
+        .iter()
+        .map(|rule| (rule.name.as_str(), rule))
+        .collect();
+    let new_by_name: HashMap<&str, &crate::ir::CheckRule> = new_checks
+        .iter()
+        .map(|rule| (rule.name.as_str(), rule))
+        .collect();
+    for rule in &old_checks {
+        let path = format!("check.{}", rule.name);
+        match new_by_name.get(rule.name.as_str()) {
+            None => findings.push(CompatFinding::error(
+                code::CHECK_CHANGED,
+                &path,
+                format!("check '{}' removed", rule.name),
+            )),
+            Some(other) if other.source != rule.source => findings.push(CompatFinding::error(
+                code::CHECK_CHANGED,
+                &path,
+                format!("check '{}' changed", rule.name),
+            )),
+            _ => {}
+        }
+    }
+    for rule in &new_checks {
+        if !old_by_name.contains_key(rule.name.as_str()) {
+            findings.push(CompatFinding::error(
+                code::CHECK_CHANGED,
+                &format!("check.{}", rule.name),
+                format!("check '{}' added", rule.name),
+            ));
+        }
+    }
+
     // both documents' material sets so neither side can leak a copy.
     let old_profile = crate::secret::SecretProfile::analyze(old);
     let new_profile = crate::secret::SecretProfile::analyze(new);
@@ -590,6 +640,9 @@ pub fn compare(old: &Module, new: &Module) -> Result<Vec<CompatFinding>, String>
         if let Some(text) = new_profile.redact_authored_text(&finding.message) {
             finding.message = text;
         }
+        // Paths carry the rule name for C045; redact them with both
+        // documents' material models exactly like messages.
+        finding.path = new_profile.redact_path(&old_profile.redact_path(&finding.path));
     }
 
     Ok(findings)

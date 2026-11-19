@@ -412,8 +412,12 @@ identifier    = ASCII letter or "_" followed by ASCII alphanumerics or "_"
 ```
 schema-block  = "schema" ( "=" inline-table | "{" { statement } "}"
                 | ":" newline indent )
-schema-table  = "{" [ schema-entry { "," schema-entry } ] "}"
+schema-table  = "{" [ schema-entry { "," schema-entry } ]
+                { "," check-block } "}"
 schema-entry  = identifier "=" schema-type
+check-block   = "check" ( "{" [ check-entry { "," check-entry } ] "}"
+                        | ":" indented-check-body )
+check-entry   = identifier "=" expression
 schema-type   = bare-type [ "(" [ schema-arg { "," schema-arg } ] ")" ]
               | "Array" "<" schema-type ">"
               | "Table" [ "{" [ schema-entry { "," schema-entry } ] "}" ]
@@ -422,6 +426,14 @@ bare-type     = "Int" | "Float" | "String" | "Bool" | "Null"
               | "Duration" | "Bytes" | "Secret" | "Blob" | "Any" | "Table" | "Array"
 schema-arg    = identifier "=" expression
 ```
+
+`check:` is valid in the indentation-form schema body (`schema:`); a
+brace-body schema uses `check { ... }`. Checks are accepted only in the
+document's root schema (spec/validation.md section 11). Check blocks may
+appear before or after entries and more than once. A nested data
+table, a `let` table, a profile, or an included file that declares one
+is E020.
+
 
 `Blob` fields additionally accept `media_type = "<mime>"` and
 `max_size = <int>` (spec/blob.md); evolution metadata accepts

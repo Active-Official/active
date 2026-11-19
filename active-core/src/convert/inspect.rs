@@ -387,6 +387,25 @@ pub fn schema_inspect_with_profile(
         ),
         _ => (JsonValue::Null, JsonValue::Null, JsonValue::Null),
     };
+    let checks: Vec<JsonValue> = module
+        .schema_checks
+        .get(&root)
+        .map(|rules| {
+            rules
+                .iter()
+                .map(|rule| {
+                    json!({
+                        "name": profile
+                            .redact_authored_text(&rule.name)
+                            .unwrap_or_else(|| rule.name.clone()),
+                        "source": profile
+                            .redact_authored_text(&rule.source)
+                            .unwrap_or_else(|| rule.source.clone()),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     Ok(json!({
         "version": INSPECT_VERSION,
         "schema_version": schema_version,
@@ -397,5 +416,6 @@ pub fn schema_inspect_with_profile(
             crate::ir::Mode::Config => "config",
         },
         "fields": fields,
+        "checks": checks,
     }))
 }

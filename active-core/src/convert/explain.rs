@@ -55,6 +55,7 @@ pub fn explain_code(code: &str) -> &'static str {
         "T005" => "Unexpected key in a closed table: remove the key, move it to the table it belongs to, or follow the did-you-mean suggestion (`@rename`). Opening the table trades a typo guard for silence.",
 
         "T008" => "Removed field still present: the schema scheduled it for removal at or before the document's schema version. Delete the field, or bump the schema version past the schedule only after removing it.",
+        "T009" => "Root-schema check failed: a cross-field invariant named in the message is false, non-boolean, or not evaluable against the final document. Fix the values the rule constrains, or change the rule in the root schema's check block; a material or composite ==/!= operand is deliberately incomparable. Strict refuses; --resilient collects it beside the tree.",
         "T007" => "Reader version floor: the document declares a min_reader above the version this host declared. Upgrade the reader, or evaluate without declaring a version (the floors are advisory then).",
         "W004" => "Patch target warning: a @remove/@rename names a path that does not exist. Nothing was changed; check the path spelling.",
         "W005" => "Resilient default fill (informational): the engine inserted a schema default for a missing key. Harmless in resilient mode; strict mode requires the key written out.",
@@ -64,6 +65,7 @@ pub fn explain_code(code: &str) -> &'static str {
         "L017" => "Sender-side self-containment: an interchange document (one with an `envelope` table) must not read `env.*`, include files, or depend on profiles - the receiver would resolve those against its own state. Pin the values before transmission (LANG-F-007).",
         "H005" => "Unknown key with a near-identical known key: apply the did-you-mean suggestion (`@rename`) when it matches intent.",
 
+        "W019" => "Check truncation notice: more than 1,024 check rules failed, so the T009 list was capped. The document already refuses; fix the first rules and re-run. The parse verdict and the first 1,024 diagnostics are intact.",
         "W016" => "Ambiguous duration shape: a bare `{\"ms\": N}` object was imported as a table. Durations travel as `{\"$active.duration\": {\"ms\": N}}` (LANG-F-001/F-002); a sender that emits the bare shape is indistinguishable from one sending a table.",
         "W015" => "Trailing-token warning: a token follows a complete value on the same line. Active statements are newline-separated; the documented quirks (`x = 5 5`, `d = 1.`) are the only silent shapes. Put the next statement on its own line.",
         "H006" => "Repair stuck: the same diagnostics returned after another repair step, so the loop stopped instead of cycling. Inspect the plan's applied steps; the remaining diagnostics need a repair kind the suggester does not emit.",
@@ -79,6 +81,7 @@ pub fn explain_code(code: &str) -> &'static str {
         "C042" => "Compatibility: a field type changed (or a blob constraint tightened) — existing documents and payloads may fail. Migrate the data or version the schema.",
         "C043" => "Compatibility: the schema version regressed — the new version is older than the old one. Versions only move forward.",
         "C044" => "Compatibility: min_reader or min_writer was raised above the old version — old readers or writers are dropped. Lower the floor or accept the break explicitly.",
+        "C045" => "Compatibility: a root-schema check rule was added, removed, or changed - documents that passed may now fail (or the reverse). Review the rule and version the schema deliberately.",
         "E040" => "Breaking schema changes detected: the compatibility report lists error-severity findings that must be resolved or explicitly accepted.",
         "E041" => "Include content pin mismatch: the include's bytes are not the ones the document or lockfile pinned. Review the bytes, then update the refusing pin: an inline `sha256:` in the importing document, or re-run `active lock` for a lockfile pin. Never edit an include merely to make its pin match.",
         "E042" => "Envelope v2 receipt missing or malformed: a v2 result must ship an audit receipt (outcome, failure class, diagnostics, result) even when the attempt failed. Add a `receipt` table with `outcome = \"clean\"` or `\"failed\"` and a `sha256:` result.",

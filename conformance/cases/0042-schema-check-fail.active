@@ -1,0 +1,10 @@
+schema {
+  port = Int
+  stage = String
+  check {
+    staging_replicas = stage != "staging" || replicas == 10
+  }
+}
+port = 8080
+stage = "staging"
+replicas = 2

@@ -629,9 +629,18 @@ fn parse_recovering_impl(
     // input): annotation block scans match on (line, file), so the
     // stamp must equal `current_file_name()` during the root parse.
     let root_stamp = root_file.map(|p| p.to_string_lossy().into_owned());
+    let source_text = source.strip_prefix('\u{feff}').unwrap_or(source);
+    let mut line_starts = vec![0usize];
+    for (index, ch) in source_text.char_indices() {
+        if ch == '\n' {
+            line_starts.push(index + 1);
+        }
+    }
     let mut parser = Parser {
         tokens: lexed.tokens,
         pos: 0,
+        source: source_text.to_string(),
+        line_starts,
         module: Module::new(name),
         errors: Vec::new(),
         ident_scopes: Vec::new(),
@@ -642,6 +651,7 @@ fn parse_recovering_impl(
         healing_truncated: false,
         options,
         block_depth: 0,
+        value_table_depth: 0,
         schema_depth: 0,
         comments: lexed.comments,
         comment_files: vec![root_stamp; n_comments],
@@ -969,6 +979,10 @@ fn own_fields(fields: SharedFields) -> FieldMap {
 struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+    /// The source text (BOM-stripped), for slicing authored predicates.
+    source: String,
+    /// Byte offset of each source line, so predicate slicing is O(rule).
+    line_starts: Vec<usize>,
     module: Module,
     errors: Vec<Diagnostic>,
     /// Stack of per-scope (owning key, Ident node id) pairs, used to resolve
@@ -1001,6 +1015,10 @@ struct Parser {
     /// Current schema-type nesting depth (`Array<…>` / `Table {…}`),
     /// guarded by MAX_SCHEMA_DEPTH. Schema recursion bypasses both the
     /// expression and block guards, so it needs its own counter.
+    /// Current value-table nesting depth (`{ ... }` and indented
+    /// bodies). A root schema must be at depth zero; a schema inside any
+    /// value table is not the document's root schema.
+    value_table_depth: usize,
     schema_depth: usize,
     /// Comments from the lexer, awaiting attachment computation.
     comments: Vec<(String, Span)>,
@@ -2762,11 +2780,22 @@ impl Parser {
         // mid-stream), so save and restore it around the sub-parse.
         let saved_tokens = std::mem::take(&mut self.tokens);
         let saved_pos = self.pos;
+        let include_source = (*src).clone();
+        let saved_source = std::mem::replace(&mut self.source, include_source.clone());
+        let mut include_line_starts = vec![0usize];
+        for (index, ch) in include_source.char_indices() {
+            if ch == '\n' {
+                include_line_starts.push(index + 1);
+            }
+        }
+        let saved_line_starts = std::mem::replace(&mut self.line_starts, include_line_starts);
         self.tokens = lexed.tokens.clone();
         self.pos = 0;
         self.parse_document();
         self.tokens = saved_tokens;
         self.pos = saved_pos;
+        self.source = saved_source;
+        self.line_starts = saved_line_starts;
         // Restore the outer session; keep the shared arena, bindings,
         // graph, diagnostics, includes list, and trivia.
         let sub_root = self.module.root;
@@ -4271,12 +4300,20 @@ impl Parser {
         // treating `[schema]` as data let a formatter change its meaning by
         // emitting the indented form (fuzz seed crash-504a8155).
         if leaf == "schema" && !self.in_profile && self.array_depth == 0 {
-            let (fields, closed, meta) = self.parse_schema_entries(SchemaEnd::Header(header_level));
+            let root_schema = !self.in_include
+                && !self.in_profile
+                && self.value_table_depth == 0
+                && segments.len() == 1;
+            let (fields, closed, meta, checks) =
+                self.parse_schema_entries(SchemaEnd::Header(header_level), root_schema);
             let schema_id = self.module.add_node(Node::SchemaTable {
                 fields,
                 closed,
                 meta,
             });
+            if !checks.is_empty() {
+                self.module.schema_checks.insert(schema_id, checks);
+            }
             self.module.record_span(
                 schema_id,
                 Span {
@@ -4743,6 +4780,15 @@ impl Parser {
             tokens: lexed.tokens,
             pos: 0,
             module,
+            source: payload.to_string(),
+            line_starts: payload
+                .char_indices()
+                .filter(|(_, ch)| *ch == '\n')
+                .map(|(index, _)| index + 1)
+                .fold(vec![0usize], |mut starts, offset| {
+                    starts.push(offset);
+                    starts
+                }),
             errors: Vec::new(),
             ident_scopes: self.ident_scopes.clone(),
             parent_field_scopes: self.parent_field_scopes.clone(),
@@ -4752,6 +4798,7 @@ impl Parser {
             healing_truncated: false,
             options: self.options.clone(),
             block_depth: 0,
+            value_table_depth: self.value_table_depth,
             schema_depth: self.schema_depth,
             array_depth: self.array_depth,
             comments: Vec::new(),
@@ -5950,15 +5997,25 @@ impl Parser {
         let open = self
             .expect(TokenKind::LBrace)
             .unwrap_or_else(|| key_tok.clone());
-        let (fields, closed, meta) = self.parse_schema_entries(SchemaEnd::Brace);
-        self.add_spanned(
+        let root_schema = !self.in_include
+            && !self.in_profile
+            && self.array_depth == 0
+            && self.value_table_depth == 0
+            && self.current_path.is_empty();
+        let (fields, closed, meta, checks) =
+            self.parse_schema_entries(SchemaEnd::Brace, root_schema);
+        let id = self.add_spanned(
             Node::SchemaTable {
                 fields,
                 closed,
                 meta,
             },
             &open,
-        )
+        );
+        if !checks.is_empty() {
+            self.module.schema_checks.insert(id, checks);
+        }
+        id
     }
 
     /// Parse a `schema { … }` brace block (the `{` is next).
@@ -5967,28 +6024,48 @@ impl Parser {
             .expect(TokenKind::LBrace)
             .unwrap_or_else(|| key_tok.clone());
         self.brace_tables += 1;
-        let (fields, closed, meta) = self.parse_schema_entries(SchemaEnd::Brace);
-        self.add_spanned(
+        let root_schema = !self.in_include
+            && !self.in_profile
+            && self.array_depth == 0
+            && self.value_table_depth == 0
+            && self.current_path.is_empty();
+        let (fields, closed, meta, checks) =
+            self.parse_schema_entries(SchemaEnd::Brace, root_schema);
+        let id = self.add_spanned(
             Node::SchemaTable {
                 fields,
                 closed,
                 meta,
             },
             &open,
-        )
+        );
+        if !checks.is_empty() {
+            self.module.schema_checks.insert(id, checks);
+        }
+        id
     }
 
     /// Parse a `schema:` indented body (the Indent is next).
     fn parse_schema_indent(&mut self, key_tok: &Token, _level: usize) -> NodeId {
-        let (fields, closed, meta) = self.parse_schema_entries(SchemaEnd::Indent);
-        self.add_spanned(
+        let root_schema = !self.in_include
+            && !self.in_profile
+            && self.array_depth == 0
+            && self.value_table_depth == 0
+            && self.current_path.is_empty();
+        let (fields, closed, meta, checks) =
+            self.parse_schema_entries(SchemaEnd::Indent, root_schema);
+        let id = self.add_spanned(
             Node::SchemaTable {
                 fields,
                 closed,
                 meta,
             },
             key_tok,
-        )
+        );
+        if !checks.is_empty() {
+            self.module.schema_checks.insert(id, checks);
+        }
+        id
     }
 
     /// `major.minor.patch` with all-numeric parts (PROPOSAL §2.4):
@@ -6010,11 +6087,21 @@ impl Parser {
     fn parse_schema_entries(
         &mut self,
         end: SchemaEnd,
-    ) -> (IndexMap<String, NodeId>, bool, crate::ir::SchemaMeta) {
+        root_schema: bool,
+    ) -> (
+        IndexMap<String, NodeId>,
+        bool,
+        crate::ir::SchemaMeta,
+        Vec<crate::ir::CheckRule>,
+    ) {
         let mut fields = IndexMap::new();
         let mut closed = false;
         let mut meta = crate::ir::SchemaMeta::default();
+        let mut checks: Vec<crate::ir::CheckRule> = Vec::new();
         loop {
+            if self.check_parse_budget() {
+                break;
+            }
             self.skip_newlines();
             match self.peek_kind() {
                 TokenKind::Eof => {
@@ -6068,6 +6155,30 @@ impl Parser {
                     }
                     let name_tok = self.bump();
                     let name = name_tok.text.clone();
+                    // L-P19: a root-schema `check { ... }` / `check:`
+                    // block. The brace/colon forms are distinct from a
+                    // field (`check = Type`), so they stay additive.
+                    if name == "check" {
+                        match self.peek_kind() {
+                            TokenKind::LBrace => {
+                                self.parse_schema_checks(&name_tok, root_schema, &mut checks);
+                                self.skip_newlines();
+                                if matches!(self.peek_kind(), TokenKind::Comma) {
+                                    self.bump();
+                                }
+                                continue;
+                            }
+                            TokenKind::Colon => {
+                                self.parse_schema_checks_indent(
+                                    &name_tok,
+                                    root_schema,
+                                    &mut checks,
+                                );
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
                     if self.expect(TokenKind::Assign).is_none() {
                         continue;
                     }
@@ -6174,7 +6285,7 @@ impl Parser {
                 }
             }
         }
-        (fields, closed, meta)
+        (fields, closed, meta, checks)
     }
 
     /// Guard one level of schema-type recursion (`Array<…>` nesting,
@@ -6203,6 +6314,189 @@ impl Parser {
 
     fn exit_schema_depth(&mut self) {
         self.schema_depth = self.schema_depth.saturating_sub(1);
+    }
+
+    /// The authored predicate text between two tokens (inclusive end).
+    /// The formatter emits this verbatim, so a dotted reference is never
+    /// rewritten through the value-expression renderer.
+    fn check_source(&self, start: &Token, end: &Token) -> String {
+        let start_line = (start.line as usize).saturating_sub(1);
+        let end_line = (end.end_line as usize).saturating_sub(1);
+        if start_line >= self.line_starts.len() {
+            return String::new();
+        }
+        let line_end = |line: usize| {
+            self.line_starts
+                .get(line + 1)
+                .copied()
+                .unwrap_or(self.source.len())
+        };
+        let byte_at = |line: usize, column: usize| -> usize {
+            let line_start = self.line_starts[line];
+            let text = &self.source[line_start..line_end(line)];
+            text.char_indices()
+                .nth(column.saturating_sub(1))
+                .map(|(index, _)| line_start + index)
+                .unwrap_or_else(|| line_end(line))
+        };
+        let start_byte = byte_at(start_line, start.col as usize);
+        let end_byte = if end_line < self.line_starts.len() {
+            byte_at(end_line, end.end_col as usize)
+        } else {
+            self.source.len()
+        };
+        if end_byte <= start_byte {
+            return String::new();
+        }
+        self.source[start_byte..end_byte].trim().to_string()
+    }
+
+    /// One `name = predicate` entry. The predicate's arena nodes are
+    /// recorded so the main walk skips them; the authored source is kept
+    /// for the formatter.
+    fn parse_schema_check_rule(&mut self, store: bool, checks: &mut Vec<crate::ir::CheckRule>) {
+        let name_tok = self.bump();
+        let name = name_tok.text.clone();
+        if self.expect(TokenKind::Assign).is_none() {
+            return;
+        }
+        let start = self.peek().clone();
+        let first_node = self.module.arena.len();
+        let expr = self.parse_expression();
+        let nodes: Vec<NodeId> = (first_node..self.module.arena.len())
+            .map(|index| NodeId(index as u32))
+            .collect();
+        let end = self
+            .tokens
+            .get(self.pos.saturating_sub(1))
+            .cloned()
+            .unwrap_or_else(|| start.clone());
+        let source = self.check_source(&start, &end);
+        // Skip every parsed predicate, stored or rejected: a nested
+        // rule is E020, and its expression must never reach the main
+        // walk as an orphan (LSP/recovering hosts evaluate the module).
+        self.module.check_nodes.extend(nodes.iter().copied());
+        if store {
+            if checks.iter().any(|rule| rule.name == name) {
+                self.error_at("E020", format!("duplicate check name '{name}'"), &name_tok);
+                return;
+            }
+            checks.push(crate::ir::CheckRule {
+                name,
+                source,
+                expr,
+                span: crate::diag::Span {
+                    line: name_tok.line,
+                    column: name_tok.col,
+                    end_line: name_tok.end_line,
+                    end_column: name_tok.end_col,
+                },
+            });
+        }
+    }
+
+    /// Parse one root-schema `check { name = predicate }` block (L-P19).
+    /// Nested schemas, profiles, and included files reject checks: only
+    /// the effective root schema may constrain the document.
+    fn parse_schema_checks(
+        &mut self,
+        header: &Token,
+        root_schema: bool,
+        checks: &mut Vec<crate::ir::CheckRule>,
+    ) {
+        if !root_schema {
+            self.error_at(
+                "E020",
+                "check blocks are only allowed in the document's root schema",
+                header,
+            );
+        }
+        self.bump(); // `{`
+        loop {
+            if self.check_parse_budget() {
+                break;
+            }
+            self.skip_newlines();
+            match self.peek_kind() {
+                TokenKind::RBrace => {
+                    self.bump();
+                    break;
+                }
+                TokenKind::Eof => {
+                    self.error_at(
+                        "E001",
+                        "unclosed check block: expected `}` before end of file",
+                        header,
+                    );
+                    break;
+                }
+                TokenKind::Comma => {
+                    self.bump();
+                    continue;
+                }
+                TokenKind::Ident => self.parse_schema_check_rule(root_schema, checks),
+                _ => {
+                    let tok = self.peek().clone();
+                    self.error_at("E001", "expected a check name", &tok);
+                    self.bump();
+                }
+            }
+        }
+    }
+
+    /// Indentation-form `check:` block, emitted by the canonical
+    /// formatter for indent-style documents.
+    fn parse_schema_checks_indent(
+        &mut self,
+        header: &Token,
+        root_schema: bool,
+        checks: &mut Vec<crate::ir::CheckRule>,
+    ) {
+        if !root_schema {
+            self.error_at(
+                "E020",
+                "check blocks are only allowed in the document's root schema",
+                header,
+            );
+        }
+        self.bump(); // `:`
+        self.skip_newlines();
+        if !matches!(self.peek_kind(), TokenKind::Indent) {
+            let tok = self.peek().clone();
+            self.error_at("E001", "expected an indented check body", &tok);
+            return;
+        }
+        self.bump(); // Indent
+        loop {
+            if self.check_parse_budget() {
+                break;
+            }
+            self.skip_newlines();
+            match self.peek_kind() {
+                TokenKind::Dedent => {
+                    self.bump();
+                    break;
+                }
+                TokenKind::Eof => {
+                    self.error_at(
+                        "E001",
+                        "unclosed check block: expected a dedent before end of file",
+                        header,
+                    );
+                    break;
+                }
+                TokenKind::Comma => {
+                    self.bump();
+                    continue;
+                }
+                TokenKind::Ident => self.parse_schema_check_rule(root_schema, checks),
+                _ => {
+                    let tok = self.peek().clone();
+                    self.error_at("E001", "expected a check name", &tok);
+                    self.bump();
+                }
+            }
+        }
     }
 
     /// Parse one schema type expression into a SchemaField,
@@ -6355,7 +6649,8 @@ impl Parser {
             if self.enter_schema_depth(&tok) {
                 return self.fallback_schema_field(&tok);
             }
-            let (fields, closed, meta) = self.parse_schema_entries(SchemaEnd::Brace);
+            let (fields, closed, meta, _checks) =
+                self.parse_schema_entries(SchemaEnd::Brace, false);
             self.exit_schema_depth();
             return self.add_spanned(
                 Node::SchemaTable {
@@ -6821,6 +7116,15 @@ impl Parser {
             tokens: lexed.tokens,
             pos: 0,
             module,
+            source: text.to_string(),
+            line_starts: text
+                .char_indices()
+                .filter(|(_, ch)| *ch == '\n')
+                .map(|(index, _)| index + 1)
+                .fold(vec![0usize], |mut starts, offset| {
+                    starts.push(offset);
+                    starts
+                }),
             errors: Vec::new(),
             ident_scopes: std::mem::take(&mut self.ident_scopes),
             parent_field_scopes: std::mem::take(&mut self.parent_field_scopes),
@@ -6830,6 +7134,7 @@ impl Parser {
             healing_truncated: false,
             options: self.options.clone(),
             block_depth: 0,
+            value_table_depth: self.value_table_depth,
             schema_depth: self.schema_depth,
             comments: Vec::new(),
             comment_files: Vec::new(),
@@ -7153,6 +7458,7 @@ impl Parser {
     fn parse_inline_table(&mut self) -> NodeId {
         let open = self.peek().clone();
         self.bump(); // {
+        self.value_table_depth += 1;
         self.ident_scopes.push(Vec::new());
         let mut fields = indexmap::IndexMap::new();
         loop {
@@ -7271,6 +7577,7 @@ impl Parser {
                 scope.extend(leftover);
             }
         }
+        self.value_table_depth = self.value_table_depth.saturating_sub(1);
         self.add_spanned(Node::Table { fields }, &open)
     }
 

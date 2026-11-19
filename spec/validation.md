@@ -287,3 +287,65 @@ Float coercion rejects exponent notation (`"1e3"`) and the `nan`/`inf`
 spellings: the grammar has no exponent notation and non-finite values are
 errors (LANG-B-009), so coercion never invents a spelling the language
 cannot parse nor a value it cannot represent.
+
+## 11. Cross-field checks (L-P19)
+
+A root schema may declare named invariants over the whole document:
+
+```active
+schema {
+  stage = String
+  replicas = Int
+  check {
+    staging_replicas = stage != "staging" || replicas == 10
+  }
+}
+```
+
+or, in indentation style, `check:` with an indented body. Checks are
+allowed only in the **root file's root schema**: a nested data-table
+schema, a schema inside a profile, an include, or a nested schema type
+that declares one is E020. A field named `check` remains an ordinary
+field: the block forms are `check {` and `check:`, while a field is
+`check = Type`.
+
+- **Evaluation.** Each predicate is evaluated against the FINAL tree,
+  after schema validation, `@constraint` enforcement, profile merge,
+  patches, and resilient fills, in declaration order, under the same
+  budget and wall clock. Identifiers are root keys; a `let` name or a removed key is T009.
+  Dotted references and interpolations resolve through their authored
+  value paths, so a removed or type-replaced value is not read from a
+  stale node.
+- **Incomparable operands.** `Secret` and non-scalar (`Array`/`Table`)
+  operands of `==`/`!=` are incomparable: the predicate reports T009
+  "could not be evaluated" rather than yielding a constant boolean. A
+  check can never become an equality oracle. Any other type or
+  arithmetic error (for example division by zero) is also T009, never a
+  fatal T001.
+- **Diagnostics.** A false predicate is `T009 check '<name>' failed`; a
+  non-boolean result is `T009 ... must evaluate to a boolean, got
+  <kind>`; an unresolvable predicate is `T009 ... could not be
+  evaluated (an operand is missing, material, or not comparable)`. The
+  rule name is redacted with the document's material model and the
+  message never echoes a value or the predicate. Strict evaluation
+  refuses; resilient evaluation collects T009 beside the tree. The T009
+  list is capped at 1,024 with a W019 notice.
+- **Formatter.** The authored predicate text is emitted verbatim (never
+  re-rendered from the expression tree), so `a.port == b.port` keeps its
+  meaning. Brace style emits `check { ... }`; indentation style emits
+  `check:` with entries one level deeper; both round-trip and are
+  idempotent.
+- **Surfaces.** `active inspect` lists `{name, source}` (redacted);
+  `active compatibility` reports C045 for a rule added, removed, or
+  changed. JSON Schema and TypeScript/Go/Rust/Python generators cannot
+  express cross-field invariants; they document the gap and leave the
+  check in the source.
+- **Provenance limit.** The L-T06 bound content hash binds the schema
+  version, not the check rules; a rule edit is detected by C045 and the
+  version discipline, not by the envelope hash.
+- **Blob identity.** A blob's identity has no string interpolation
+  form in a check; the rule reports T009. Compare media type/size via
+  the schema's blob fields instead.
+- **Conformance.** Vectors `0041-schema-check-pass` (clean) and
+  `0042-schema-check-fail` (T009) run across the reference, WASM, C ABI,
+  Python, and JS embeddings.

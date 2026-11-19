@@ -578,11 +578,26 @@ impl<'a> Formatter<'a> {
             }) => (fields.clone(), *closed, meta.clone()),
             _ => return,
         };
+        let check_lines: Vec<String> = if self.module.schema == Some(id) {
+            self.module
+                .schema_checks
+                .get(&id)
+                .map(|rules| {
+                    rules
+                        .iter()
+                        .map(|rule| format!("{} = {}", rule.name, rule.source))
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         if fields.is_empty()
             && !closed
             && meta.version.is_none()
             && meta.min_reader.is_none()
             && meta.min_writer.is_none()
+            && check_lines.is_empty()
         {
             let indent = INDENT.repeat(depth);
             self.out.push_str(&format!("{indent}schema = {{}}"));
@@ -617,6 +632,15 @@ impl<'a> Formatter<'a> {
                     let typ = self.render_schema_type(*entry);
                     self.out.push_str(&format!("{inner}{name} = {typ}\n"));
                 }
+                if !check_lines.is_empty() {
+                    // L-P19: predicates are emitted from authored source,
+                    // never through the value-expression renderer.
+                    self.out.push_str(&format!("{inner}check:\n"));
+                    let deeper = INDENT.repeat(depth + 2);
+                    for line in &check_lines {
+                        self.out.push_str(&format!("{deeper}{line}\n"));
+                    }
+                }
             }
             _ => {
                 self.out.push_str(&format!("{indent}schema {{"));
@@ -632,6 +656,14 @@ impl<'a> Formatter<'a> {
                 for (name, entry) in &fields {
                     let typ = self.render_schema_type(*entry);
                     self.out.push_str(&format!("{inner}{name} = {typ}\n"));
+                }
+                if !check_lines.is_empty() {
+                    self.out.push_str(&format!("{inner}check {{\n"));
+                    let deeper = INDENT.repeat(depth + 2);
+                    for line in &check_lines {
+                        self.out.push_str(&format!("{deeper}{line}\n"));
+                    }
+                    self.out.push_str(&format!("{inner}}}\n"));
                 }
                 self.out.push_str(&format!("{indent}}}\n"));
             }

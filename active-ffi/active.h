@@ -353,7 +353,7 @@ uint32_t active_value_type(const struct ActiveValue *value);
  * Validate a module against its in-file schema, returning schema
  * diagnostics (F-020): the generator feedback signal without parse/type
  * noise. Runs the single shipped validator through evaluation and keeps
- * T002-T006; a fatal evaluation failure that prevents validation surfaces
+ * T002-T009; a fatal evaluation failure that prevents validation surfaces
  * with its true code instead of a lying empty set (empty means
  * schema-clean AND evaluable: run `active_check` for the full verdict).
  * Cross-document schemas ride includes (F-016 loader).

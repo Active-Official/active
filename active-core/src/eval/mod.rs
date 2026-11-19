@@ -2041,6 +2041,13 @@ impl Engine {
                 }
             }
             let node_id = module.graph[node_idx];
+            // L-P19: check predicates are evaluated after the transform
+            // pass against the final tree. They are not part of the value
+            // graph, so their expression errors become T009, never fatal
+            // evaluation errors.
+            if module.check_nodes.contains(&node_id) {
+                continue;
+            }
             let diag_start = diagnostics.len();
             let node = module.get(node_id).ok_or(EvalError::MissingNode(node_id))?;
             // Incremental fast path: the fingerprint is computed
@@ -2667,6 +2674,17 @@ impl Engine {
             &mut diagnostics,
             deadline,
             budget.max_wall_ms,
+        )?;
+        // L-P19: root-schema cross-field checks run after annotations,
+        // against the same final tree.
+        self.validate_checks(
+            module,
+            &values,
+            &result,
+            &mut diagnostics,
+            deadline,
+            budget.max_wall_ms,
+            &mut account,
         )?;
         // LANG-F-004: the envelope's `tainted` is a sender assertion about
         // its PAYLOAD; the receiver verifies it against that subtree's

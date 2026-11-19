@@ -33,7 +33,7 @@ size limits stay tighten-only in both modes.
 
 Validate against the in-file schema without returning values (G-015):
 `active_validate(module, budget) -> *mut ActiveDiagnosticSet`. Runs the single shipped validator and keeps
-T002-T006; a fatal evaluation failure surfaces with its true code instead
+T002-T009 (and W019 for check truncation); a fatal evaluation failure surfaces with its true code instead
 of a lying empty set.
 
 Format and convert (G-015): `active_format(module, style: u32) ->

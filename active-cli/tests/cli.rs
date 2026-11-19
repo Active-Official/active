@@ -7896,3 +7896,88 @@ fn apply_force_replaces_only_an_apply_receipt() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn schema_checks_gate_eval_and_survive_formatting() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("checks-lp19");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let doc = dir.join("doc.active");
+    std::fs::write(
+        &doc,
+        "schema {\n  check {\n    same = a.port == b.port\n  }\n}\na = { port = 1 }\nb = { port = 2 }\n",
+    )
+    .expect("write");
+    let out = active()
+        .args(["eval"])
+        .arg(&doc)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("T009"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("same"));
+
+    let out = active()
+        .args(["check"])
+        .arg(&doc)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("T009"));
+
+    // Formatting preserves the authored dotted reference and the gate.
+    for style in ["indent", "brace"] {
+        let out = active()
+            .args(["fmt", "--style", style, "--write"])
+            .arg(&doc)
+            .output()
+            .expect("run active");
+        assert!(
+            out.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let text = std::fs::read_to_string(&doc).expect("read");
+        assert!(text.contains("a.port == b.port"), "{text}");
+        let out = active()
+            .args(["eval"])
+            .arg(&doc)
+            .output()
+            .expect("run active");
+        assert!(!out.status.success(), "the gate vanished: {text}");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("T009"));
+    }
+
+    // A balanced pair passes.
+    std::fs::write(
+        &doc,
+        "schema {\n  check {\n    same = a.port == b.port\n  }\n}\na = { port = 1 }\nb = { port = 1 }\n",
+    )
+    .expect("write");
+    let out = active()
+        .args(["eval"])
+        .arg(&doc)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // An included file may not contribute a check.
+    let lib = dir.join("lib.active");
+    std::fs::write(&lib, "schema { check { bad = false } }\nx = 1\n").expect("lib");
+    let main = dir.join("main.active");
+    std::fs::write(&main, "include \"lib.active\"\n").expect("main");
+    let out = active()
+        .args(["check"])
+        .arg(&main)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("E020"));
+    std::fs::remove_dir_all(&dir).ok();
+}

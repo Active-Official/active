@@ -1,0 +1,5 @@
+{
+  "stage": "staging",
+  "port": 8080,
+  "replicas": 10
+}

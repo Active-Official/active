@@ -234,3 +234,8 @@ Type mapping (SS = ACTIVE schema type):
 - OpenAPI output is the JSON Schema inside a 3.1
   `components.schemas.<Name>` fragment (`--name`, default
   `Config`).
+- Cross-field `check` rules (L-P19) have no representation in JSON
+  Schema, OpenAPI, TypeScript, Go, or Rust serde: the generators leave
+  them in the source and do not invent a runtime validator. `active
+  inspect` lists the rules so a consumer can see what the generated
+  schema omits; the check is enforced by `active check`/`eval`.

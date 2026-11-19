@@ -159,7 +159,7 @@
     {
       "name": "compatibility",
       "entry": "active compatibility <old> <new> [--format text|json]",
-      "description": "Compare two schema blocks for compatibility (C040-C044, E040 summary); exits nonzero on breaking changes.",
+      "description": "Compare two schema blocks for compatibility (C040-C045, E040 summary); exits nonzero on breaking changes.",
       "input": {
         "old": "baseline .active file",
         "new": "candidate .active file"
@@ -171,7 +171,7 @@
     {
       "name": "diff",
       "entry": "active diff <old> <new> [--format text|json] [--profile NAME] [--budget-profile strict|interactive|trusted] [--allow-parent-escapes] [--trust-keys <toml>]",
-      "description": "Semantic diff of two evaluated documents: added/removed/changed value paths with both types and redacted scalar echoes, schema compatibility findings (C040-C044), dependents of each changed path (longest resolvable prefix), and whether every compared value is equal. Material values are never compared (a secret/blob path always reports changed; the two documents' material sets are unioned); a guess is never confirmed. Both documents parse and evaluate strictly; an error or warning exits nonzero with its stable codes, and schema findings do not gate.",
+      "description": "Semantic diff of two evaluated documents: added/removed/changed value paths with both types and redacted scalar echoes, schema compatibility findings (C040-C045), dependents of each changed path (longest resolvable prefix), and whether every compared value is equal. Material values are never compared (a secret/blob path always reports changed; the two documents' material sets are unioned); a guess is never confirmed. Both documents parse and evaluate strictly; an error or warning exits nonzero with its stable codes, and schema findings do not gate.",
       "input": {
         "old": "baseline .active file",
         "new": "candidate .active file"
@@ -309,6 +309,7 @@
     "multi-step-repair",
     "compatibility-report",
     "semantic-diff",
+    "schema-checks",
     "plan-apply",
     "evaluation-modes",
     "graph-queries",

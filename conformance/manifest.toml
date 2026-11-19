@@ -257,3 +257,15 @@ kind = "clean"
 id = "0040-envelope-v2-no-receipt"
 file = "cases/0040-envelope-v2-no-receipt.active"
 kind = "refused"
+
+# L-P19: a root-schema cross-field check passes on the evaluated tree.
+[[cases]]
+id = "0041-schema-check-pass"
+file = "cases/0041-schema-check-pass.active"
+kind = "clean"
+
+# A false cross-field check is refused with T009.
+[[cases]]
+id = "0042-schema-check-fail"
+file = "cases/0042-schema-check-fail.active"
+kind = "refused"

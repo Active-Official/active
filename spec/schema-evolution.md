@@ -81,6 +81,8 @@ schema = {
 | New `version` < old `version` | C043 | error | Versions only move forward |
 | New `min_reader` > old `version` | C044 | error | Old readers are dropped |
 | New `min_writer` > old `version` | C044 | error | Old writers are dropped |
+| Root-schema `check` rule added, removed, or changed (compared as authored text; whitespace-only edits also report) | C045 | error | Cross-field behavior changes; documents that passed may now fail |
+
 
 Findings are deterministic (source order; numeric version compare) and value-free (type names and versions only). Any error-severity finding fails the command closed with E040.
 
@@ -105,6 +107,6 @@ CLI and output-schema coverage rather than a cross-embedding vector.
 
 ## 3. Diagnostic family (SC.007)
 
-C040–C044 findings plus the E040 breaking-change summary. Canned guidance lives in `explain_code`; the codes are pinned in `docs/diagnostics.md` and the assist coverage test. Unknown-reader situations (unparseable versions) fail safe: scheduled-removal requires both sides to parse, otherwise the removal is breaking.
+C040–C045 findings plus the E040 breaking-change summary. Canned guidance lives in `explain_code`; the codes are pinned in `docs/diagnostics.md` and the assist coverage test. Unknown-reader situations (unparseable versions) fail safe: scheduled-removal requires both sides to parse, otherwise the removal is breaking.
 
 **End of schema-evolution.md — SC.005/SC.006/SC.007 complete.**

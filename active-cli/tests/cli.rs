@@ -8114,3 +8114,588 @@ fn schema_checks_gate_eval_and_survive_formatting() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("E020"));
     std::fs::remove_dir_all(&dir).ok();
 }
+
+// ----------------------------------------------------------------------
+// L-P62: propose / gate loop
+// ----------------------------------------------------------------------
+
+fn lp62_fixture(name: &str, contents: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join("active-cli-lp62");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join(name);
+    std::fs::write(&path, contents).expect("write fixture");
+    path
+}
+
+const LP62_GOOD: &str = "schema:\n  port = Int\n  host = String\n\nport = 8080\n\nhost = \"x\"\n";
+
+#[test]
+fn gate_accepts_a_canonical_candidate_and_writes_a_receipt() {
+    let file = lp62_fixture("good.active", LP62_GOOD);
+    let receipt = std::env::temp_dir().join("active-cli-lp62/good.receipt.json");
+    let _ = std::fs::remove_file(&receipt);
+    let out = active()
+        .args(["gate"])
+        .arg(&file)
+        .args(["--format", "json", "--receipt"])
+        .arg(&receipt)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("verdict json");
+    assert_eq!(report["verdict"], "accept", "{report}");
+    let result = report["result"].as_str().expect("result hash");
+    assert!(result.starts_with("sha256:"), "{report}");
+    let envelope: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&receipt).expect("receipt")).expect("json");
+    assert_eq!(envelope["version"], "2.0.0", "{envelope}");
+    assert_eq!(envelope["receipt"]["outcome"], "clean", "{envelope}");
+    assert_eq!(envelope["receipt"]["result"], result, "{envelope}");
+    assert_eq!(envelope["payload"]["port"], 8080, "{envelope}");
+}
+
+#[test]
+fn gate_refuses_to_clobber_a_receipt_without_force() {
+    let file = lp62_fixture("clobber.active", LP62_GOOD);
+    let receipt = std::env::temp_dir().join("active-cli-lp62/clobber.receipt.json");
+    std::fs::write(&receipt, "keep me").expect("seed receipt");
+    let refused = active()
+        .args(["gate"])
+        .arg(&file)
+        .args(["--format", "json", "--receipt"])
+        .arg(&receipt)
+        .output()
+        .expect("run active");
+    assert!(
+        !refused.status.success(),
+        "an existing receipt must not be replaced"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&receipt).expect("receipt"),
+        "keep me"
+    );
+    let forced = active()
+        .args(["gate"])
+        .arg(&file)
+        .args(["--format", "json", "--force", "--receipt"])
+        .arg(&receipt)
+        .output()
+        .expect("run active");
+    assert!(
+        forced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&forced.stderr)
+    );
+    let text = std::fs::read_to_string(&receipt).expect("receipt");
+    assert!(text.contains("\"version\": \"2.0.0\""), "{text}");
+}
+
+#[test]
+fn gate_rejects_a_schema_failure_with_codes() {
+    let file = lp62_fixture("bad.active", "schema:\n  port = Int\n\nport = \"nope\"\n");
+    let out = active()
+        .args(["gate"])
+        .arg(&file)
+        .args(["--format", "json"])
+        .output()
+        .expect("run active");
+    assert!(!out.status.success(), "a schema failure must reject");
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("verdict json");
+    assert_eq!(report["verdict"], "reject", "{report}");
+    let codes: Vec<String> = report["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .flat_map(|f| f["codes"].as_array().cloned().unwrap_or_default())
+        .filter_map(|c| c.as_str().map(str::to_string))
+        .collect();
+    assert!(codes.iter().any(|c| c.starts_with("T00")), "{report}");
+    assert_eq!(report["result"], serde_json::Value::Null, "{report}");
+}
+
+#[test]
+fn gate_rejects_a_non_canonical_document() {
+    let file = lp62_fixture("ugly.active", "port=8080\n");
+    let out = active()
+        .args(["gate"])
+        .arg(&file)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("gate: reject"), "{stdout}");
+    assert!(stdout.contains("not canonical"), "{stdout}");
+}
+
+#[test]
+fn gate_refuses_a_document_that_needs_healing() {
+    let file = lp62_fixture("heal.active", "port = \"abc\n");
+    let out = active()
+        .args(["gate"])
+        .arg(&file)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("needs repair"), "{stdout}");
+}
+
+#[test]
+fn gate_and_eval_agree_on_the_blocking_codes() {
+    // The differential guard: `gate`'s evaluation findings must name the
+    // same codes `eval` refuses on. Format/lint are gate-only by design.
+    let file = lp62_fixture("agree.active", "schema:\n  port = Int\n\nport = \"nope\"\n");
+    let eval = active()
+        .args(["eval"])
+        .arg(&file)
+        .output()
+        .expect("run active");
+    assert!(!eval.status.success());
+    let eval_stderr = String::from_utf8_lossy(&eval.stderr);
+    let gate = active()
+        .args(["gate"])
+        .arg(&file)
+        .args(["--format", "json"])
+        .output()
+        .expect("run active");
+    let report: serde_json::Value = serde_json::from_slice(&gate.stdout).expect("json");
+    let gate_codes: Vec<String> = report["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .filter(|f| f["check"] == "schema")
+        .flat_map(|f| f["codes"].as_array().cloned().unwrap_or_default())
+        .filter_map(|c| c.as_str().map(str::to_string))
+        .collect();
+    assert!(!gate_codes.is_empty(), "{report}");
+    for code in &gate_codes {
+        assert!(
+            eval_stderr.contains(code.as_str()),
+            "eval did not name {code}: {eval_stderr}"
+        );
+    }
+}
+
+#[test]
+fn propose_accepts_a_valid_candidate_and_writes_only_then() {
+    let file = lp62_fixture("p_good.active", LP62_GOOD);
+    let output = std::env::temp_dir().join("active-cli-lp62/p_accepted.active");
+    let _ = std::fs::remove_file(&output);
+    let out = active()
+        .args(["propose", "--request", "a server"])
+        .arg("--candidate")
+        .arg(&file)
+        .arg("--output")
+        .arg(&output)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(output.is_file(), "an accepted candidate is written");
+}
+
+#[test]
+fn propose_repairs_a_rejected_candidate() {
+    let file = lp62_fixture(
+        "p_broken.active",
+        "schema = { closed = false, port = Int(default = 8080) }\n",
+    );
+    let out = active()
+        .args(["propose", "--request", "server"])
+        .arg("--candidate")
+        .arg(&file)
+        .args(["--rounds", "2", "--format", "json"])
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    assert_eq!(report["verdict"], "accept", "{report}");
+    let rounds = report["rounds"].as_array().expect("rounds");
+    assert_eq!(rounds.len(), 2, "{report}");
+    assert_eq!(rounds[1]["verdict"], "accept", "{report}");
+}
+
+#[test]
+fn propose_never_writes_a_rejected_candidate() {
+    let file = lp62_fixture("p_never.active", "port=8080\n");
+    let output = std::env::temp_dir().join("active-cli-lp62/p_never_out.active");
+    let _ = std::fs::remove_file(&output);
+    let out = active()
+        .args(["propose", "--request", "x"])
+        .arg("--candidate")
+        .arg(&file)
+        .args(["--rounds", "1", "--output"])
+        .arg(&output)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    assert!(!output.exists(), "a rejected candidate must not be written");
+}
+
+#[test]
+fn propose_exhaustion_names_the_remaining_check() {
+    // T003 (email format) has no safe repair: the loop must stop at the
+    // bound and say why, never accept.
+    let file = lp62_fixture(
+        "p_exhaust.active",
+        "schema:\n  contact = String(format = \"email\")\n\ncontact = \"not-an-email\"\n",
+    );
+    let out = active()
+        .args(["propose", "--request", "contact"])
+        .arg("--candidate")
+        .arg(&file)
+        .args(["--rounds", "2", "--format", "json"])
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    assert_eq!(report["verdict"], "reject", "{report}");
+    assert_eq!(report["terminal"]["code"], "H008", "{report}");
+    assert!(
+        report["terminal"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("T003"),
+        "{report}"
+    );
+}
+
+#[test]
+fn propose_uses_the_generator_command() {
+    let file = lp62_fixture("p_gen_source.active", LP62_GOOD);
+    let command = if cfg!(windows) {
+        format!("type \"{}\"", file.display())
+    } else {
+        format!("cat \"{}\"", file.display())
+    };
+    let out = active()
+        .args(["propose", "--request", "generate"])
+        .args(["--generator", &command, "--format", "json"])
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    assert_eq!(report["verdict"], "accept", "{report}");
+}
+
+#[test]
+fn propose_resolves_includes_from_the_candidate_directory() {
+    // H1: the verifier copy lives in the candidate's directory, so
+    // includes (and lint discovery) see the candidate's project policy.
+    let dir = std::env::temp_dir()
+        .join("active-cli-lp62")
+        .join("include-project");
+    std::fs::create_dir_all(&dir).expect("dir");
+    std::fs::write(dir.join("inc.active"), "port = 8080\n").expect("include");
+    let main = dir.join("main.active");
+    std::fs::write(&main, "include \"inc.active\"\n\nhost = \"x\"\n").expect("main");
+    let out = active()
+        .args(["propose", "--request", "x"])
+        .arg("--candidate")
+        .arg(&main)
+        .args(["--rounds", "1", "--format", "json"])
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    assert_eq!(report["verdict"], "accept", "{report}");
+}
+
+#[test]
+fn gate_honors_the_include_trust_policy() {
+    // H2: with a trust file, a tampered include must reject, matching
+    // what `eval --trust-keys` refuses.
+    let dir = std::env::temp_dir()
+        .join("active-cli-lp62")
+        .join("trust-project");
+    std::fs::create_dir_all(&dir).expect("dir");
+    let key = dir.join("key");
+    assert!(active()
+        .args(["keygen", "--out"])
+        .arg(&key)
+        .output()
+        .expect("keygen")
+        .status
+        .success());
+    let public = std::fs::read_to_string(dir.join("key.public")).expect("public");
+    let trust = dir.join("trust.toml");
+    std::fs::write(
+        &trust,
+        format!("[[keys]]\nid = \"k\"\npublic = \"{}\"\n", public.trim()),
+    )
+    .expect("trust");
+    let lib = dir.join("lib.active");
+    std::fs::write(&lib, "host = \"db\"\n").expect("lib");
+    let main = dir.join("main.active");
+    std::fs::write(&main, "include \"lib.active\"\n\nport = 8080\n").expect("main");
+    for (path, spelled) in [(&lib, Some("lib.active")), (&main, None)] {
+        let mut sign = active();
+        sign.args(["sign", "--key"])
+            .arg(dir.join("key.secret"))
+            .args(["--kid", "k", "--force"]);
+        if let Some(spelled) = spelled {
+            sign.args(["--as", spelled]);
+        }
+        let signed = sign.arg(path).output().expect("sign");
+        assert!(
+            signed.status.success(),
+            "{}",
+            String::from_utf8_lossy(&signed.stderr)
+        );
+    }
+    // Signed content verifies.
+    let clean = active()
+        .args(["gate"])
+        .arg(&main)
+        .args(["--trust-keys"])
+        .arg(&trust)
+        .output()
+        .expect("gate");
+    assert!(
+        clean.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&clean.stderr)
+    );
+    // Tampering with the include breaks the signature: the trust policy
+    // must reject, even though the document still evaluates.
+    std::fs::write(&lib, "host = \"evil\"\n").expect("tamper");
+    let tampered = active()
+        .args(["gate"])
+        .arg(&main)
+        .args(["--trust-keys"])
+        .arg(&trust)
+        .args(["--format", "json"])
+        .output()
+        .expect("gate");
+    assert!(!tampered.status.success(), "tampered include must reject");
+    let report: serde_json::Value = serde_json::from_slice(&tampered.stdout).expect("json");
+    assert_eq!(report["verdict"], "reject", "{report}");
+    let codes: Vec<String> = report["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .flat_map(|f| f["codes"].as_array().cloned().unwrap_or_default())
+        .filter_map(|c| c.as_str().map(str::to_string))
+        .collect();
+    assert!(
+        codes
+            .iter()
+            .any(|c| c == "E032" || c == "E041" || c == "E039"),
+        "{report}"
+    );
+    // Without the trust policy the same document still evaluates.
+    let untrusted = active().args(["gate"]).arg(&main).output().expect("gate");
+    assert!(
+        untrusted.status.success(),
+        "content is valid without a trust policy"
+    );
+}
+
+#[test]
+fn propose_rejects_an_out_of_range_round_budget() {
+    let file = lp62_fixture("rounds.active", LP62_GOOD);
+    for rounds in ["0", "6"] {
+        let out = active()
+            .args(["propose", "--request", "x"])
+            .arg("--candidate")
+            .arg(&file)
+            .args(["--rounds", rounds])
+            .output()
+            .expect("run active");
+        assert!(
+            !out.status.success(),
+            "--rounds {rounds} must be a usage error"
+        );
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("between 1 and 5"),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+#[test]
+fn propose_rejects_an_oversized_candidate_before_reading_it() {
+    let path = std::env::temp_dir().join("active-cli-lp62/oversized.active");
+    std::fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+    std::fs::write(&path, vec![b' '; (8usize << 20) + 1]).expect("write");
+    let out = active()
+        .args(["propose", "--request", "x"])
+        .arg("--candidate")
+        .arg(&path)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("exceeds"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn gate_honors_lockfile_pins_like_eval() {
+    // H3: with a lockfile, content that no longer matches its pin must
+    // reject, matching `eval --lockfile` (signed or not).
+    let dir = std::env::temp_dir()
+        .join("active-cli-lp62")
+        .join("lock-project");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let lib = dir.join("lib.active");
+    std::fs::write(&lib, "lib_value = 7\n").expect("lib");
+    let main = dir.join("main.active");
+    std::fs::write(&main, "include \"lib.active\"\n\nport = 8080\n").expect("main");
+    let lock = dir.join("active-lock.toml");
+    let locked = active()
+        .args(["lock"])
+        .arg(&main)
+        .args(["--output"])
+        .arg(&lock)
+        .output()
+        .expect("lock");
+    assert!(
+        locked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&locked.stderr)
+    );
+    // Baseline: the pinned tree verifies.
+    let clean = active()
+        .args(["gate"])
+        .arg(&main)
+        .args(["--lockfile"])
+        .arg(&lock)
+        .output()
+        .expect("gate");
+    assert!(
+        clean.status.success(),
+        "{}",
+        String::from_utf8_lossy(&clean.stderr)
+    );
+    // Change the include: the pin no longer matches.
+    std::fs::write(&lib, "lib_value = 8\n").expect("change");
+    let gated = active()
+        .args(["gate"])
+        .arg(&main)
+        .args(["--lockfile"])
+        .arg(&lock)
+        .args(["--format", "json"])
+        .output()
+        .expect("gate");
+    assert!(!gated.status.success(), "a drifted include must reject");
+    let eval = active()
+        .args(["eval", "--lockfile"])
+        .arg(&lock)
+        .arg(&main)
+        .output()
+        .expect("eval");
+    assert!(!eval.status.success(), "eval must reject the same drift");
+    let report: serde_json::Value = serde_json::from_slice(&gated.stdout).expect("json");
+    assert_eq!(report["verdict"], "reject", "{report}");
+    let codes: Vec<String> = report["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .flat_map(|f| f["codes"].as_array().cloned().unwrap_or_default())
+        .filter_map(|c| c.as_str().map(str::to_string))
+        .collect();
+    assert!(codes.iter().any(|c| c == "E041"), "{report}");
+    // Without the lock the same document evaluates.
+    assert!(active()
+        .args(["gate"])
+        .arg(&main)
+        .output()
+        .expect("gate")
+        .status
+        .success());
+}
+
+#[test]
+fn test_walks_skip_hidden_files() {
+    // L-P62 L1: the propose temp candidate is a hidden file; a concurrent
+    // `active test` walk must not pick it up (and must not fail on it).
+    let dir = std::env::temp_dir()
+        .join("active-cli-lp62")
+        .join("hidden-walk");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    std::fs::write(dir.join("clean.active"), "port = 8080\n").expect("clean");
+    std::fs::write(
+        dir.join(".active-propose-1-1-0.active"),
+        "not valid = = =\n",
+    )
+    .expect("hidden");
+    let out = active()
+        .args(["test"])
+        .arg(&dir)
+        .output()
+        .expect("run active");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "stdout: {stdout}\nstderr: {stderr}");
+    assert!(!stdout.contains("hidden"), "{stdout}");
+}
+
+#[test]
+fn propose_anchors_a_pasted_candidate_to_the_current_directory() {
+    // M1: `--candidate -` has no file path; includes and lint discovery
+    // anchor to the invocation directory (the spec's rule), not the
+    // system temp directory.
+    use std::io::Write;
+    use std::process::Stdio;
+    let dir = std::env::temp_dir()
+        .join("active-cli-lp62")
+        .join("stdin-project");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    std::fs::write(dir.join("inc.active"), "port = 8080\n").expect("include");
+    let mut child = active()
+        .current_dir(&dir)
+        .args([
+            "propose",
+            "--request",
+            "x",
+            "--candidate",
+            "-",
+            "--format",
+            "json",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(b"include \"inc.active\"\n\nhost = \"x\"\n")
+        .expect("write stdin");
+    let out = child.wait_with_output().expect("wait");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    assert_eq!(report["verdict"], "accept", "{report}");
+}

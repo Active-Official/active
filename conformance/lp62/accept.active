@@ -1,0 +1,7 @@
+schema:
+  port = Int
+  host = String
+
+port = 8080
+
+host = "x"

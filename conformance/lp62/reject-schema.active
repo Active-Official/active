@@ -1,0 +1,4 @@
+schema:
+  port = Int
+
+port = "nope"

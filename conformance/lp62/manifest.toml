@@ -1,0 +1,34 @@
+# Propose / gate conformance vectors (L-P62).
+# One case per candidate. `mode` selects the command: `gate` verifies
+# once, `propose` runs the bounded loop. `codes` and `checks` are
+# required findings on a reject; `terminal` is the terminal code a
+# bounded propose must report.
+
+version = 1
+
+[[case]]
+id = "lp62-accept"
+file = "accept.active"
+mode = "gate"
+verdict = "accept"
+
+[[case]]
+id = "lp62-reject-schema"
+file = "reject-schema.active"
+mode = "gate"
+verdict = "reject"
+codes = ["T002"]
+
+[[case]]
+id = "lp62-reject-format"
+file = "reject-format.active"
+mode = "gate"
+verdict = "reject"
+checks = ["fmt"]
+
+[[case]]
+id = "lp62-propose-exhaustion"
+file = "unrepairable.active"
+mode = "propose"
+verdict = "reject"
+terminal = "H008"

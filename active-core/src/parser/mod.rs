@@ -445,7 +445,41 @@ fn read_document_file(
             }
         }
     }
-    std::fs::read_to_string(path).map_err(unreadable)
+    let mut src = String::new();
+    {
+        use std::io::Read;
+        let file = std::fs::File::open(path).map_err(unreadable)?;
+        if max_input_bytes == 0 {
+            file.take(u64::MAX)
+                .read_to_string(&mut src)
+                .map_err(unreadable)?;
+        } else {
+            // Read one byte past the limit: the check is authoritative
+            // even if the file grew between the metadata probe and the
+            // read, and a hostile file cannot allocate without bound.
+            // Saturating handles the `usize::MAX` unlimited sentinel.
+            file.take(max_input_bytes.saturating_add(1) as u64)
+                .read_to_string(&mut src)
+                .map_err(unreadable)?;
+        }
+    }
+    if max_input_bytes != 0 && src.len() > max_input_bytes {
+        return Err(vec![Diagnostic {
+            severity: Severity::Error,
+            code: "E029".into(),
+            message: format!(
+                "parse budget exceeded: input is {} bytes; the limit is {}",
+                src.len(),
+                max_input_bytes
+            ),
+            path: None,
+            span: None,
+            repair: None,
+            confidence: 1.0,
+            file: Some(file.clone()),
+        }]);
+    }
+    Ok(src)
 }
 
 pub fn parse_file(
@@ -480,6 +514,33 @@ pub fn parse_file_with_trust(
     // authenticates the document it was handed, not only its includes. The
     // bytes read above are the bytes verified, so there is no check/use
     // window; includes verify their own reads the same way.
+    verify_root_bytes(path, &src, trusted)?;
+    let mut options = options;
+    options.enable_includes = true;
+    options.root_dir = root_dir_of(path, options.include_loader.is_some());
+    let (module, errors) = parse_recovering_impl(
+        &src,
+        &path.to_string_lossy(),
+        options,
+        Some(path),
+        Some(trusted.clone()),
+    );
+    if errors.is_empty() {
+        Ok(module)
+    } else {
+        Err(errors)
+    }
+}
+
+/// Verify a root document's already-read bytes against its sidecar
+/// (LANG-C-007). Callers that hold the bytes (a buffer parse, a tool
+/// verifying caller-supplied text) must never re-open the path: the
+/// bytes verified are the bytes parsed.
+fn verify_root_bytes(
+    path: &std::path::Path,
+    src: &str,
+    trusted: &crate::sign::TrustedKeys,
+) -> Result<(), Vec<Diagnostic>> {
     let label = path.to_string_lossy().into_owned();
     let root_failure = |code: &str, reason: String| {
         vec![Diagnostic {
@@ -495,16 +556,28 @@ pub fn parse_file_with_trust(
     };
     let sidecar = crate::sign::read_sidecar(path, &label)
         .map_err(|failure| root_failure(failure.code, failure.message))?;
-    if let Err(failure) =
-        crate::sign::verify_bytes(&label, &label, src.as_bytes(), &sidecar, trusted)
-    {
-        return Err(root_failure(failure.code, failure.message));
-    }
+    crate::sign::verify_bytes(&label, &label, src.as_bytes(), &sidecar, trusted)
+        .map_err(|failure| root_failure(failure.code, failure.message))?;
+    Ok(())
+}
+
+/// Parse caller-supplied text as if it were the file at `path`, with
+/// overlay enforcement: the same root verification as
+/// [`parse_file_with_trust`], applied to the supplied bytes (never a
+/// re-read of the path), then includes verified on their own reads.
+pub fn parse_text_with_trust(
+    source: &str,
+    name: &str,
+    options: ParseOptions,
+    path: &std::path::Path,
+    trusted: &crate::sign::TrustedKeys,
+) -> Result<Module, Vec<Diagnostic>> {
+    verify_root_bytes(path, source, trusted)?;
     let mut options = options;
     options.enable_includes = true;
     options.root_dir = root_dir_of(path, options.include_loader.is_some());
     let (module, errors) =
-        parse_recovering_impl(&src, &label, options, Some(path), Some(trusted.clone()));
+        parse_recovering_impl(source, name, options, Some(path), Some(trusted.clone()));
     if errors.is_empty() {
         Ok(module)
     } else {

@@ -30,6 +30,11 @@ toml = "0.8"
 # standard Unix filter.
 libc = "0.2"
 
+[dev-dependencies]
+# The L-P62 conformance vector manifest is TOML and deserialized with
+# derive; tests are the only consumer in this crate.
+serde = { workspace = true }
+
 
 [lints]
 workspace = true

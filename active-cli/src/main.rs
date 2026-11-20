@@ -968,6 +968,115 @@ enum Commands {
         #[arg(long = "env", value_name = "KEY=VALUE")]
         env: Vec<String>,
     },
+    /// Propose → verify loop with the verifier as the gate (L-P62)
+    ///
+    /// Takes a candidate (from `--candidate`, stdin, or a `--generator`
+    /// command), verifies it with the same checks as `active gate`, and on
+    /// rejection applies the shipped repair plan and verifies again, up to
+    /// `--rounds`. Writes an output file only when a round is accepted.
+    Propose {
+        /// Prose request the candidate answers (literal text, or @path)
+        #[arg(long)]
+        request: String,
+        /// Candidate supplied by the caller (path, or `-` for stdin)
+        #[arg(long)]
+        candidate: Option<PathBuf>,
+        /// Generator command: reads the request on stdin, writes the
+        /// candidate to stdout (round 1 only)
+        #[arg(long)]
+        generator: Option<String>,
+        /// Rounds of verify-and-repair (default 2, capped at 5)
+        #[arg(long, default_value_t = 2)]
+        rounds: usize,
+        /// Write the ACCEPTED candidate here (never written on rejection)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Output format: text (human) or json (stable record)
+        #[arg(short, long, default_value = "text")]
+        format: String,
+        /// Write the final L-T06 envelope v2 receipt here
+        #[arg(long)]
+        receipt: Option<PathBuf>,
+        /// Fail on warnings as well as errors
+        #[arg(long)]
+        strict: bool,
+        /// Environment value for evaluation as KEY=VALUE (repeatable)
+        #[arg(long = "env", value_name = "KEY=VALUE")]
+        env: Vec<String>,
+        /// Sandbox profile recorded in the receipt (default agent)
+        #[arg(long)]
+        sandbox: Option<String>,
+        /// Named profile to evaluate
+        #[arg(long)]
+        profile: Option<String>,
+        /// Reader version for schema floors
+        #[arg(long)]
+        reader_version: Option<String>,
+        /// Allow includes to use absolute paths or escape the directory
+        #[arg(long)]
+        allow_parent_escapes: bool,
+        /// Verify includes against a trusted-keys file (E032)
+        #[arg(long)]
+        trust_keys: Option<PathBuf>,
+        /// Verify includes against this lockfile
+        #[arg(long)]
+        lockfile: Option<PathBuf>,
+        /// Overwrite existing --output and --receipt files
+        #[arg(long)]
+        force: bool,
+        #[command(flatten)]
+        budget: BudgetArgs,
+    },
+    /// Verify a candidate document end to end and accept or reject it (L-P62)
+    ///
+    /// The verifier is the gate: runs the shipped per-file conformance
+    /// checks (strict parse and healing refusal, canonical formatting,
+    /// strict evaluation under the budget, schema validation, and project
+    /// lint). Named `gate` because `active verify` is the signature
+    /// command. Acceptance can write an L-T06 envelope v2 receipt; a
+    /// rejection writes diagnostics and, with `--receipt`, a receipt with
+    /// its failure class.
+    Gate {
+        /// Candidate .active file
+        file: PathBuf,
+        /// Output format: text (human) or json (stable verdict)
+        #[arg(short, long, default_value = "text")]
+        format: String,
+        /// Write an L-T06 envelope v2 receipt here
+        #[arg(long)]
+        receipt: Option<PathBuf>,
+        /// Fail on warnings as well as errors
+        #[arg(long)]
+        strict: bool,
+        /// Environment value for evaluation as KEY=VALUE (repeatable;
+        /// verification is hermetic otherwise)
+        #[arg(long = "env", value_name = "KEY=VALUE")]
+        env: Vec<String>,
+        /// Sandbox profile recorded in the receipt (default agent)
+        #[arg(long)]
+        sandbox: Option<String>,
+        /// Named profile to evaluate
+        #[arg(long)]
+        profile: Option<String>,
+        /// Reader version for schema floors
+        #[arg(long)]
+        reader_version: Option<String>,
+        /// Verify includes against a trusted-keys file (E032)
+        #[arg(long)]
+        trust_keys: Option<PathBuf>,
+        /// Verify includes against this lockfile (default: the sibling
+        /// `active-lock.toml` when --trust-keys is given, like eval)
+        #[arg(long)]
+        lockfile: Option<PathBuf>,
+        /// Allow includes to use absolute paths or escape the directory
+        #[arg(long)]
+        allow_parent_escapes: bool,
+        /// Overwrite an existing --receipt file
+        #[arg(long)]
+        force: bool,
+        #[command(flatten)]
+        budget: BudgetArgs,
+    },
     /// Generate an Ed25519 key pair for overlay signing
     Keygen {
         /// Output prefix: writes <prefix>.secret (0600 on Unix) and
@@ -1859,10 +1968,171 @@ fn module_has_blobs(module: &active_core::Module) -> bool {
 /// Whether a path is `prefix` or lies below it (a segment boundary, not
 /// a string prefix: `server` does not match `serverBackup`).
 fn path_matches(path: &str, prefix: &str) -> bool {
-    path == prefix
-        || path
-            .strip_prefix(prefix)
+    path == prefix || {
+        path.strip_prefix(prefix)
             .is_some_and(|rest| rest.starts_with('.') || rest.starts_with('['))
+    }
+}
+
+/// Lowercase severity name for machine-readable verdicts.
+fn severity_name(severity: active_core::diag::Severity) -> &'static str {
+    match severity {
+        active_core::diag::Severity::Error => "error",
+        active_core::diag::Severity::Warning => "warning",
+        active_core::diag::Severity::Info => "info",
+        active_core::diag::Severity::Hint => "hint",
+    }
+}
+
+/// Structured findings for `gate` and `propose` output.
+fn findings_json(findings: &[test_runner::Finding]) -> Vec<serde_json::Value> {
+    findings
+        .iter()
+        .map(|finding| {
+            serde_json::json!({
+                "check": finding.check,
+                "severity": severity_name(finding.severity()),
+                "codes": finding.codes,
+                "count": finding.count,
+                "detail": finding.detail,
+            })
+        })
+        .collect()
+}
+
+/// Run the caller's generator (L-P62): the prose request on stdin, the
+/// candidate on stdout. A non-zero exit is a generation failure, never a
+/// rejection.
+fn run_generator(command: &str, request: &str) -> anyhow::Result<String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    use std::sync::mpsc;
+    const MAX_OUTPUT: usize = 8 << 20;
+    const MAX_ERROR: usize = 64 << 10;
+    const DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
+    // Windows runs the command from a temporary `.cmd` file so quoting
+    // behaves like a batch line: a bare `cmd /C "<command>"` argument
+    // cannot carry a quoted path reliably through the standard process
+    // API. Unix uses `sh -c`.
+    #[cfg(windows)]
+    let (mut cmd, script) = {
+        let mut created = None;
+        for attempt in 0..8u32 {
+            let script = std::env::temp_dir()
+                .join(format!("active-generator-{attempt}-{}.cmd", random_token()));
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            match options.open(&script) {
+                Ok(mut file) => {
+                    file.write_all(format!("@echo off\r\n{command}\r\n").as_bytes())
+                        .map_err(|e| anyhow::anyhow!("cannot write generator script: {e}"))?;
+                    drop(file);
+                    created = Some(script);
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => {
+                    anyhow::bail!("cannot create a generator script: {error}");
+                }
+            }
+        }
+        let script = created.ok_or_else(|| anyhow::anyhow!("cannot create a generator script"))?;
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/D", "/C"]).arg(&script);
+        (cmd, Some(script))
+    };
+    #[cfg(not(windows))]
+    let (mut cmd, script) = {
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c").arg(command);
+        (cmd, None)
+    };
+    // Removed on every exit path, including a spawn or wait error.
+    let _script_guard = RemoveOnDrop(script.clone());
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("cannot start generator: {e}"))?;
+    // Streams are drained on their own threads with hard caps, so a
+    // chatty generator cannot deadlock us on a full pipe and cannot make
+    // us allocate without bound; the request is written on its own thread
+    // so a generator that never reads stdin cannot block us either.
+    let mut stdin = child.stdin.take();
+    let request_bytes = request.as_bytes().to_vec();
+    let stdin_thread = std::thread::spawn(move || {
+        if let Some(mut stdin) = stdin.take() {
+            let _ = stdin.write_all(&request_bytes);
+        }
+    });
+    let (tx, rx) = mpsc::channel::<(&'static str, Vec<u8>, usize)>();
+    if let Some(stdout) = child.stdout.take() {
+        let tx = tx.clone();
+        std::thread::spawn(move || drain_stream("stdout", stdout, MAX_OUTPUT, tx));
+    }
+    if let Some(stderr) = child.stderr.take() {
+        let tx = tx.clone();
+        std::thread::spawn(move || drain_stream("stderr", stderr, MAX_ERROR, tx));
+    }
+    drop(tx);
+    let started = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|e| anyhow::anyhow!("generator failed: {e}"))?
+        {
+            break status;
+        }
+        if started.elapsed() > DEADLINE {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(anyhow::anyhow!(
+                "generator did not finish within {} seconds",
+                DEADLINE.as_secs()
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    };
+    let _ = stdin_thread.join();
+    let mut stdout_bytes: Vec<u8> = Vec::new();
+    let mut stdout_total = 0usize;
+    let mut stderr_total = 0usize;
+    let mut seen_stdout = false;
+    let mut seen_stderr = false;
+    let drain_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !(seen_stdout && seen_stderr) {
+        let left = drain_deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            break;
+        }
+        match rx.recv_timeout(left) {
+            Ok(("stdout", bytes, total)) => {
+                stdout_bytes = bytes;
+                stdout_total = total;
+                seen_stdout = true;
+            }
+            Ok((_, _, total)) => {
+                stderr_total = total;
+                seen_stderr = true;
+            }
+            Err(_) => break,
+        }
+    }
+    if !seen_stdout {
+        anyhow::bail!("generator output stream closed without a result");
+    }
+    if stdout_total > MAX_OUTPUT {
+        anyhow::bail!("generator output exceeds {MAX_OUTPUT} bytes");
+    }
+    if !status.success() {
+        anyhow::bail!(
+            "generator exited with status {:?} ({} bytes on stderr)",
+            status.code(),
+            stderr_total
+        );
+    }
+    String::from_utf8(stdout_bytes).map_err(|_| anyhow::anyhow!("generator output is not UTF-8"))
 }
 
 fn source_verdict(
@@ -1918,18 +2188,201 @@ fn source_verdict(
     (codes.is_empty(), codes)
 }
 
-/// Write a v2 tool-result envelope (L-T06): success and adversarial
+/// Drain one generator stream with a hard cap, reporting the kept bytes
+/// and the total read (so an oversize stream is detected after it is
+/// fully drained, never by blocking the child on a full pipe).
+fn drain_stream<R: std::io::Read>(
+    name: &'static str,
+    mut stream: R,
+    cap: usize,
+    tx: std::sync::mpsc::Sender<(&'static str, Vec<u8>, usize)>,
+) {
+    let mut kept: Vec<u8> = Vec::new();
+    let mut total = 0usize;
+    let mut chunk = [0u8; 8192];
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(read) => {
+                total += read;
+                let room = cap.saturating_sub(kept.len());
+                if room > 0 {
+                    kept.extend_from_slice(&chunk[..read.min(room)]);
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    let _ = tx.send((name, kept, total));
+}
+
+/// A 128-bit unpredictable token for temporary names: `RandomState` is
+/// seeded per instance, so two hashers give independent outputs. A
+/// squatter cannot pre-create the names we pick.
+fn random_token() -> u128 {
+    use std::hash::{BuildHasher, Hasher};
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let state = std::collections::hash_map::RandomState::new();
+    let mut time_hasher = state.build_hasher();
+    time_hasher.write_u64(nanos);
+    let mut process_hasher = state.build_hasher();
+    process_hasher.write_u32(std::process::id());
+    ((time_hasher.finish() as u128) << 64) | process_hasher.finish() as u128
+}
+
+/// Removes a file when it leaves scope, including early error returns.
+struct RemoveOnDrop(Option<std::path::PathBuf>);
+
+impl Drop for RemoveOnDrop {
+    fn drop(&mut self) {
+        if let Some(path) = &self.0 {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+/// The directory that anchors include resolution and lint discovery for
+/// a path: its parent, or the current directory for a bare file name (an
+/// empty parent is not the process directory).
+fn parent_dir(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => Some(parent.to_path_buf()),
+        _ => std::env::current_dir().ok(),
+    }
+}
+
+/// A hidden, exclusively-created candidate copy (L-P62). Holds the open
+/// handle so every rewrite goes to the inode we created, and removes the
+/// file on every exit path (including an early error). Hidden files are
+/// skipped by `active test` walks, so a concurrent run cannot see it.
+struct TempCandidate {
+    path: std::path::PathBuf,
+    file: std::fs::File,
+}
+
+impl TempCandidate {
+    fn create(dir: &std::path::Path) -> anyhow::Result<Self> {
+        for attempt in 0..8u32 {
+            let path = dir.join(format!(
+                ".active-propose-{}-{attempt}.active",
+                random_token()
+            ));
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).read(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            match options.open(&path) {
+                Ok(file) => return Ok(Self { path, file }),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => {
+                    anyhow::bail!("cannot create {}: {error}", path.display());
+                }
+            }
+        }
+        anyhow::bail!("cannot create a temporary candidate in {}", dir.display())
+    }
+
+    fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    fn write(&self, text: &str) -> anyhow::Result<()> {
+        use std::io::{Seek, Write};
+        let mut file = &self.file;
+        file.set_len(0)?;
+        file.seek(std::io::SeekFrom::Start(0))?;
+        file.write_all(text.as_bytes())?;
+        file.flush()?;
+        Ok(())
+    }
+}
+
+impl Drop for TempCandidate {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Write a file atomically, refusing to replace an existing one unless
+/// `force`. The bytes land in a fresh sibling file (created exclusively)
+/// and are renamed over the target, so a symlink planted at the target is
+/// replaced as a link, never followed to its destination.
+fn write_checked(path: &std::path::Path, force: bool, bytes: &[u8]) -> anyhow::Result<()> {
+    use std::io::Write;
+    if !force && std::fs::symlink_metadata(path).is_ok() {
+        anyhow::bail!(
+            "{} already exists (pass --force to replace it)",
+            path.display()
+        );
+    }
+    let mut tmp = path.to_path_buf();
+    let name = format!(
+        ".{}.{}.tmp",
+        path.file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| "active".to_string()),
+        random_token()
+    );
+    tmp.set_file_name(name);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&tmp)
+        .map_err(|e| anyhow::anyhow!("cannot create {}: {e}", tmp.display()))?;
+    let result = file
+        .write_all(bytes)
+        .and_then(|()| file.flush())
+        .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", tmp.display()));
+    drop(file);
+    if let Err(error) = result {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(error);
+    }
+    if !force {
+        // Atomic no-replace: the link fails if the destination exists
+        // (a file or a symlink), so a racer that creates the target
+        // after the check still cannot be overwritten.
+        std::fs::hard_link(&tmp, path).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            anyhow::anyhow!(
+                "cannot write {}: {e} (pass --force to replace it)",
+                path.display()
+            )
+        })?;
+        let _ = std::fs::remove_file(&tmp);
+        return Ok(());
+    }
+    // Replace the directory entry (not a symlink target) before the
+    // rename; the rename itself also replaces atomically.
+    let _ = std::fs::remove_file(path);
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        anyhow::anyhow!("cannot write {}: {e}", path.display())
+    })
+}
+
+/// Render a v2 tool-result envelope (L-T06): success and adversarial
 /// outcomes share the shape; a failed attempt carries `payload = null`
 /// and a receipt with its failure class.
-fn write_envelope_v2(
-    path: &std::path::Path,
+fn render_envelope_v2(
     capability: &str,
     tainted: bool,
     payload: serde_json::Value,
     result: Option<&str>,
     receipt: serde_json::Value,
     sender: Option<&str>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<String> {
     let mut envelope = serde_json::Map::new();
     envelope.insert("version".into(), serde_json::json!("2.0.0"));
     envelope.insert("capability".into(), serde_json::json!(capability));
@@ -1942,8 +2395,20 @@ fn write_envelope_v2(
     if let Some(sender) = sender {
         envelope.insert("sender".into(), serde_json::json!({ "id": sender }));
     }
-    let text = serde_json::to_string_pretty(&serde_json::Value::Object(envelope))
-        .map_err(|e| anyhow::anyhow!("cannot render envelope: {e}"))?;
+    serde_json::to_string_pretty(&serde_json::Value::Object(envelope))
+        .map_err(|e| anyhow::anyhow!("cannot render envelope: {e}"))
+}
+
+fn write_envelope_v2(
+    path: &std::path::Path,
+    capability: &str,
+    tainted: bool,
+    payload: serde_json::Value,
+    result: Option<&str>,
+    receipt: serde_json::Value,
+    sender: Option<&str>,
+) -> anyhow::Result<()> {
+    let text = render_envelope_v2(capability, tainted, payload, result, receipt, sender)?;
     std::fs::write(path, text).map_err(|e| anyhow::anyhow!("cannot write {}: {e}", path.display()))
 }
 
@@ -2572,20 +3037,23 @@ fn cache_signing_key() -> Result<([u8; active_core::cache::KEY_BYTES], Option<u3
     Ok((key, active_core::cache::file_owner(&path)))
 }
 
-/// The v2 receipt stored in an L-P29 cache entry (L-T06 shape): it binds
-/// the served value to the schema, profile, budget, mode, and capability
-/// that produced it, so a cache file is provenance evidence rather than
-/// an unverifiable blob.
-fn cache_receipt(
+/// The L-T06 v2 receipt for an evaluation outcome: it binds the served
+/// value to the schema, profile, budget, mode, and capability that
+/// produced it, so a cache entry (L-P29) or a gate verdict (L-P62) is
+/// provenance evidence rather than an unverifiable blob. `failed` is the
+/// caller's verdict (a cache entry derives it from its diagnostics; a
+/// gate adds its format/lint findings).
+#[allow(clippy::too_many_arguments)]
+fn outcome_receipt(
     module: &active_core::Module,
     profile: Option<&str>,
     budget: &active_core::eval::Budget,
     value: &active_core::Value,
     capability: &str,
-    diags: &[Diagnostic],
-    resilient: bool,
+    codes: &[String],
+    failed: bool,
+    failure_class: &str,
 ) -> serde_json::Value {
-    let failed = had_failure(diags, resilient);
     let bound = active_core::envelope::bound_content_hash(
         value,
         active_core::envelope::document_schema_version(module).as_deref(),
@@ -2602,9 +3070,7 @@ fn cache_receipt(
         serde_json::json!(if failed { "failed" } else { "clean" }),
     );
     if failed {
-        // Engine-level failures are classified when the envelope names
-        // its stage; a cached resilient run only knows it did not pass.
-        receipt.insert("failure_class".into(), serde_json::json!("other"));
+        receipt.insert("failure_class".into(), serde_json::json!(failure_class));
     } else {
         receipt.insert("result".into(), serde_json::json!(bound));
     }
@@ -2634,11 +3100,133 @@ fn cache_receipt(
             "total_size": resolved.max_total_value_size,
         }),
     );
-    receipt.insert(
-        "diagnostics".into(),
-        serde_json::json!(diags.iter().map(|d| d.code.clone()).collect::<Vec<_>>()),
-    );
+    receipt.insert("diagnostics".into(), serde_json::json!(codes));
     serde_json::Value::Object(receipt)
+}
+
+/// The evidence behind a gate verdict (L-P62): the redacted payload an
+/// accepted candidate binds, the L-T06 receipt, and the failure class a
+/// rejection names. One implementation for `active gate` and the
+/// terminal round of `active propose`.
+struct GateEvidence {
+    payload: serde_json::Value,
+    tainted: bool,
+    result: Option<String>,
+    receipt: serde_json::Value,
+}
+
+fn gate_evidence(
+    verdict: &test_runner::Verdict,
+    accept: bool,
+    profile: Option<&str>,
+    capability: &str,
+) -> GateEvidence {
+    let mut failure_class = "other";
+    if verdict
+        .findings
+        .iter()
+        .any(|finding| finding.check == "parse" || finding.check == "size")
+    {
+        failure_class = "parse";
+    } else if verdict
+        .findings
+        .iter()
+        .any(|finding| finding.check == "schema" || finding.check == "schema-fatal")
+    {
+        // A fatal evaluation that is a budget trip keeps the L-T06 budget
+        // class; any other schema-stage failure is validation.
+        failure_class = match verdict.eval_failure.as_ref() {
+            Some((code, _)) if code.starts_with('X') => "budget",
+            _ => "validation",
+        };
+    }
+    let mut codes: Vec<String> = Vec::new();
+    for finding in &verdict.findings {
+        for code in &finding.codes {
+            if !codes.contains(code) {
+                codes.push(code.clone());
+            }
+        }
+    }
+    let Some(module) = verdict.module.as_ref() else {
+        return GateEvidence {
+            payload: serde_json::Value::Null,
+            tainted: false,
+            result: None,
+            receipt: serde_json::json!({
+                "outcome": if accept { "clean" } else { "failed" },
+                "failure_class": failure_class,
+                "capability": capability,
+                "diagnostics": codes,
+            }),
+        };
+    };
+    let effective_profile = profile
+        .map(str::to_string)
+        .or_else(|| active_core::secret::active_profile_name(module));
+    // The verdict already ran the evaluation; binding a receipt never
+    // re-evaluates (a second run could disagree with the verdict through
+    // a wall-clock flake).
+    let payload = match verdict.evaluated.as_ref() {
+        Some((value, diags)) => {
+            for diag in diags {
+                if !codes.contains(&diag.code) {
+                    codes.push(diag.code.clone());
+                }
+            }
+            if accept {
+                let material = active_core::secret::SecretProfile::with_context(
+                    module,
+                    effective_profile.as_deref(),
+                    Some(&verdict.env),
+                    None,
+                );
+                active_core::convert::redact_value(&material, value)
+            } else {
+                active_core::Value::Null
+            }
+        }
+        None => {
+            if let Some((code, diagnostics)) = verdict.eval_failure.as_ref() {
+                if !code.is_empty() && !codes.contains(code) {
+                    codes.push(code.clone());
+                }
+                for diag in diagnostics {
+                    if !codes.contains(&diag.code) {
+                        codes.push(diag.code.clone());
+                    }
+                }
+            }
+            active_core::Value::Null
+        }
+    };
+    let receipt = outcome_receipt(
+        module,
+        effective_profile.as_deref(),
+        &verdict.budget,
+        &payload,
+        capability,
+        &codes,
+        !accept,
+        failure_class,
+    );
+    let result = receipt
+        .get("result")
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
+    let mut payload_json = serde_json::Value::Null;
+    let mut tainted = false;
+    if accept {
+        payload_json = serde_json::from_str(&active_core::convert::value_to_pretty_json(&payload))
+            .unwrap_or(serde_json::Value::Null);
+        tainted = active_core::envelope::payload_tainted(&payload);
+    }
+    GateEvidence {
+        payload: payload_json,
+        tainted,
+        result,
+        receipt,
+    }
 }
 
 /// Dump the opt-in evaluation trail as JSONL on stderr. Events carry
@@ -4169,14 +4757,17 @@ fn main() -> anyhow::Result<()> {
                         "warning: cache entry not written: profile or schema selector is material"
                     );
                 } else {
-                    let receipt = cache_receipt(
+                    let diag_codes: Vec<String> =
+                        diags.iter().map(|d| d.code.clone()).collect();
+                    let receipt = outcome_receipt(
                         &module,
                         effective_profile.as_deref(),
                         &engine.budget,
                         &value,
                         sandbox.as_deref().unwrap_or("agent"),
-                        &diags,
-                        resilient,
+                        &diag_codes,
+                        had_failure(&diags, resilient),
+                        "other",
                     );
                     // Count every serialized part, not a guess: long
                     // diagnostic messages or a large receipt must not
@@ -6048,6 +6639,428 @@ fn main() -> anyhow::Result<()> {
                 report.case_failures
             );
             if !report.failures.is_empty() {
+                std::process::exit(1);
+            }
+        }
+        Commands::Propose {
+            request,
+            candidate,
+            generator,
+            rounds,
+            output,
+            format,
+            receipt,
+            strict,
+            env,
+            sandbox,
+            profile,
+            reader_version,
+            allow_parent_escapes,
+            trust_keys,
+            lockfile,
+            force,
+            budget,
+        } => {
+            // L-P62: any generator is acceptable because the verifier is
+            // the gate. The first generator is the caller (a candidate or
+            // a command); later rounds use the shipped repair plan.
+            use active_core::diag::RepairGoal;
+            if !(1..=5).contains(&rounds) {
+                anyhow::bail!("--rounds must be between 1 and 5 (got {rounds})");
+            }
+            const MAX_CANDIDATE_BYTES: usize = 8 << 20;
+            let request_text = match request.strip_prefix('@') {
+                Some(path) => {
+                    let mut text = String::new();
+                    use std::io::Read;
+                    std::fs::File::open(path)
+                        .map_err(|e| anyhow::anyhow!("cannot read request {path}: {e}"))?
+                        .take(MAX_CANDIDATE_BYTES as u64 + 1)
+                        .read_to_string(&mut text)
+                        .map_err(|e| anyhow::anyhow!("cannot read request {path}: {e}"))?;
+                    if text.len() > MAX_CANDIDATE_BYTES {
+                        anyhow::bail!("request {path} exceeds {MAX_CANDIDATE_BYTES} bytes");
+                    }
+                    text
+                }
+                None => request,
+            };
+            let mut values = std::collections::HashMap::new();
+            for item in env {
+                let (key, value) = item.split_once('=').ok_or_else(|| {
+                    anyhow::anyhow!("--env expects KEY=VALUE, got `{item}`")
+                })?;
+                values.insert(key.to_string(), value.to_string());
+            }
+            let eng = engine(false, &profile, budget.resolve()?, reader_version.as_deref())
+                .with_env(values);
+            // Verify a temporary copy in the candidate's own directory when
+            // there is one, so include resolution and lint discovery see
+            // the candidate's project policy; a pasted candidate uses the
+            // output's directory, else the current directory.
+            let base_dir = candidate
+                .as_ref()
+                .filter(|path| path.as_os_str() != "-")
+                .and_then(|path| parent_dir(path))
+                .or_else(|| {
+                    output
+                        .as_ref()
+                        .and_then(|path| parent_dir(path))
+                })
+                .unwrap_or_else(|| {
+                    std::env::current_dir().unwrap_or_else(|_| std::env::temp_dir())
+                });
+            // Keep the candidate's real path (the lock and trust checks
+            // anchor on it); the text below consumes the option.
+            let candidate_path = candidate
+                .as_ref()
+                .filter(|path| path.as_os_str() != "-")
+                .cloned();
+            let mut current = match (candidate, generator) {
+                (Some(_), Some(_)) => {
+                    anyhow::bail!("--candidate and --generator are exclusive")
+                }
+                (None, None) => anyhow::bail!(
+                    "propose needs --candidate <path|-> or --generator <command>"
+                ),
+                (Some(path), None) => {
+                    let text = if path.as_os_str() == "-" {
+                        let mut buf = String::new();
+                        use std::io::Read;
+                        std::io::stdin()
+                            .take(MAX_CANDIDATE_BYTES as u64 + 1)
+                            .read_to_string(&mut buf)
+                            .map_err(|e| anyhow::anyhow!("cannot read stdin: {e}"))?;
+                        buf
+                    } else {
+                        use std::io::Read;
+                        let mut buf = String::new();
+                        std::fs::File::open(&path)
+                            .map_err(|e| {
+                                anyhow::anyhow!(
+                                    "cannot read candidate {}: {e}",
+                                    path.display()
+                                )
+                            })?
+                            .take(MAX_CANDIDATE_BYTES as u64 + 1)
+                            .read_to_string(&mut buf)
+                            .map_err(|e| {
+                                anyhow::anyhow!(
+                                    "cannot read candidate {}: {e}",
+                                    path.display()
+                                )
+                            })?;
+                        buf
+                    };
+                    text
+                }
+                (None, Some(command)) => run_generator(&command, &request_text)?,
+            };
+            if current.len() > MAX_CANDIDATE_BYTES {
+                anyhow::bail!("candidate exceeds {MAX_CANDIDATE_BYTES} bytes");
+            }
+            let capability = sandbox.unwrap_or_else(|| "agent".to_string());
+            // A hidden, exclusively-created directory holds the candidate
+            // copy: `active test` walks skip hidden directories (so a
+            // concurrent run cannot see it), the file is created
+            // exclusively (no pre-existing path or symlink is followed),
+            // and the guard removes it on every exit path, including an
+            // early error.
+            let temp = TempCandidate::create(&base_dir)?;
+            let tmp = temp.path().to_path_buf();
+            temp.write(&current)?;
+            let trust = load_trust(&trust_keys)?;
+            let lock = match (&lockfile, trust.is_some()) {
+                (Some(path), _) => {
+                    let Some(root) = candidate_path.as_deref() else {
+                        anyhow::bail!(
+                            "--lockfile needs --candidate <path>: a lockfile pins the root document"
+                        );
+                    };
+                    Some(explicit_include_lock(path, root, root.parent())?)
+                }
+                (None, true) => match candidate_path.as_deref() {
+                    Some(path) => sibling_include_lock(path)?,
+                    None => None,
+                },
+                (None, false) => None,
+            };
+            let mut rounds_report: Vec<serde_json::Value> = Vec::new();
+            let mut accepted = false;
+            let mut terminal: Option<serde_json::Value> = None;
+            let mut final_verdict: Option<test_runner::Verdict> = None;
+            for round in 1..=rounds {
+                // The candidate text is verified directly (no path read),
+                // so swapping the temp path cannot change what is checked;
+                // the path only anchors includes and lint discovery.
+                let verdict = test_runner::verdict_from(
+                    &tmp,
+                    &current,
+                    strict,
+                    &eng,
+                    trust.as_ref(),
+                    allow_parent_escapes,
+                    lock.as_ref(),
+                );
+                let clean = verdict.clean();
+                rounds_report.push(serde_json::json!({
+                    "round": round,
+                    "verdict": if clean { "accept" } else { "reject" },
+                    "findings": findings_json(&verdict.findings),
+                }));
+                if clean {
+                    accepted = true;
+                    final_verdict = Some(verdict);
+                    break;
+                }
+                let remaining: Vec<String> = verdict
+                    .findings
+                    .iter()
+                    .map(|finding| {
+                        if finding.codes.is_empty() {
+                            finding.check.to_string()
+                        } else {
+                            finding.codes.join(",")
+                        }
+                    })
+                    .collect();
+                if round == rounds {
+                    terminal = Some(serde_json::json!({
+                        "code": "H008",
+                        "message": format!(
+                            "proposal rounds exhausted ({rounds}); remaining [{}]",
+                            remaining.join(",")
+                        ),
+                    }));
+                    final_verdict = Some(verdict);
+                    break;
+                }
+                // The next round is the shipped repair plan applied to the
+                // rejected candidate (L-P53's directives and proofs).
+                let outcome = active_core::convert::repair::repair_with_engine_and_options(
+                    &current,
+                    RepairGoal::Validate,
+                    &[],
+                    8,
+                    &eng,
+                    Some(&tmp),
+                    allow_parent_escapes,
+                );
+                if outcome.repaired_source == current {
+                    terminal = Some(serde_json::json!({
+                        "code": "H008",
+                        "message": format!(
+                            "no safe repair step for remaining [{}]",
+                            remaining.join(",")
+                        ),
+                    }));
+                    final_verdict = Some(verdict);
+                    break;
+                }
+                // A repaired source is not canonical (directives are
+                // prepended); the formatter is value-preserving, so
+                // normalize before the next round. A refused format keeps
+                // the repaired text and fails the next round's check.
+                let mut next = outcome.repaired_source;
+                let syntax_options = crate::with_parse_limits(ParseOptions {
+                    resolve_includes: false,
+                    ..ParseOptions::default()
+                });
+                if let Ok(syntax) = active_core::parser::parse_text_with_file(
+                    &next,
+                    &tmp.to_string_lossy(),
+                    syntax_options,
+                    &tmp,
+                ) {
+                    if let Ok(formatted) =
+                        active_core::fmt::try_format(&syntax, active_core::Style::Indent)
+                    {
+                        next = formatted;
+                    }
+                }
+                current = next;
+                if current.len() > MAX_CANDIDATE_BYTES {
+                    terminal = Some(serde_json::json!({
+                        "code": "H008",
+                        "message": format!(
+                            "a repair grew the candidate past {MAX_CANDIDATE_BYTES} bytes"
+                        ),
+                    }));
+                    final_verdict = Some(verdict);
+                    break;
+                }
+                temp.write(&current)?;
+            }
+            // The candidate becomes real only when a round accepted it.
+            if accepted {
+                if let Some(path) = &output {
+                    write_checked(path, force, current.as_bytes())?;
+                }
+            } else if output.is_some() {
+                eprintln!("warning: candidate was not accepted; no output written");
+            }
+            let evidence = final_verdict
+                .as_ref()
+                .map(|verdict| gate_evidence(verdict, accepted, profile.as_deref(), &capability));
+            let propose_result = evidence.as_ref().and_then(|e| e.result.clone());
+            if let Some(path) = receipt {
+                let evidence = evidence.unwrap_or(GateEvidence {
+                    payload: serde_json::Value::Null,
+                    tainted: false,
+                    result: None,
+                    receipt: serde_json::json!({
+                        "outcome": if accepted { "clean" } else { "failed" },
+                        "failure_class": "other",
+                        "capability": capability,
+                        "diagnostics": [],
+                    }),
+                });
+                let text = render_envelope_v2(
+                    &capability,
+                    evidence.tainted,
+                    evidence.payload,
+                    evidence.result.as_deref(),
+                    evidence.receipt,
+                    None,
+                )?;
+                write_checked(&path, force, text.as_bytes())?;
+            }
+            match format.as_str() {
+                "json" => {
+                    outln!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "verdict": if accepted { "accept" } else { "reject" },
+                            "rounds": rounds_report,
+                            "terminal": terminal,
+                            "result": propose_result,
+                            "output": output.as_ref().map(|p| p.to_string_lossy()),
+                        }))?
+                    );
+                }
+                "text" => {
+                    for record in &rounds_report {
+                        outln!(
+                            "propose: round {} {}",
+                            record["round"],
+                            record["verdict"].as_str().unwrap_or("reject")
+                        );
+                        if let Some(findings) = record["findings"].as_array() {
+                            for finding in findings {
+                                outln!(
+                                    "  {} [{}]",
+                                    finding["check"].as_str().unwrap_or("check"),
+                                    finding["codes"]
+                                        .as_array()
+                                        .map(|codes| codes
+                                            .iter()
+                                            .filter_map(|c| c.as_str())
+                                            .collect::<Vec<_>>()
+                                            .join(","))
+                                        .unwrap_or_default()
+                                );
+                            }
+                        }
+                    }
+                    outln!(
+                        "propose: {}",
+                        if accepted { "accept" } else { "reject" }
+                    );
+                    if let Some(terminal) = &terminal {
+                        outln!(
+                            "  {}: {}",
+                            terminal["code"].as_str().unwrap_or("H008"),
+                            terminal["message"].as_str().unwrap_or("")
+                        );
+                    }
+                }
+                other => anyhow::bail!("unsupported format: {other}"),
+            }
+            if !accepted {
+                std::process::exit(1);
+            }
+        }
+        Commands::Gate {
+            file,
+            format,
+            receipt,
+            strict,
+            env,
+            sandbox,
+            profile,
+            reader_version,
+            trust_keys,
+            lockfile,
+            allow_parent_escapes,
+            force,
+            budget,
+        } => {
+            // L-P62: the verifier is the product. `gate` runs the shipped
+            // per-file conformance checks (the same pipeline
+            // `active test` uses) under the caller's engine, and accepts
+            // or rejects with an L-T06 receipt.
+            let mut values = std::collections::HashMap::new();
+            for item in env {
+                let (key, value) = item.split_once('=').ok_or_else(|| {
+                    anyhow::anyhow!("--env expects KEY=VALUE, got `{item}`")
+                })?;
+                values.insert(key.to_string(), value.to_string());
+            }
+            let eng = engine(false, &profile, budget.resolve()?, reader_version.as_deref())
+                .with_env(values);
+            let trust = load_trust(&trust_keys)?;
+            // Eval's rule: an explicit lockfile always applies; with trust
+            // a sibling `active-lock.toml` applies too.
+            let lock = match (&lockfile, trust.is_some()) {
+                (Some(path), _) => Some(explicit_include_lock(path, &file, file.parent())?),
+                (None, true) => sibling_include_lock(&file)?,
+                (None, false) => None,
+            };
+            let verdict = test_runner::verdict(
+                &file,
+                strict,
+                &eng,
+                trust.as_ref(),
+                allow_parent_escapes,
+                lock.as_ref(),
+            );
+            let accept = verdict.clean();
+            let capability = sandbox.unwrap_or_else(|| "agent".to_string());
+            let evidence = gate_evidence(&verdict, accept, profile.as_deref(), &capability);
+            let result_hash = evidence.result.clone();
+            if let Some(path) = receipt {
+                let text = render_envelope_v2(
+                    &capability,
+                    evidence.tainted,
+                    evidence.payload,
+                    result_hash.as_deref(),
+                    evidence.receipt,
+                    None,
+                )?;
+                write_checked(&path, force, text.as_bytes())?;
+            }
+            match format.as_str() {
+                "json" => {
+                    let findings = findings_json(&verdict.findings);
+                    outln!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "verdict": if accept { "accept" } else { "reject" },
+                            "file": file.to_string_lossy(),
+                            "findings": findings,
+                            "result": result_hash,
+                        }))?
+                    );
+                }
+                "text" => {
+                    outln!("gate: {}", if accept { "accept" } else { "reject" });
+                    for finding in &verdict.findings {
+                        outln!("  {}", test_runner::render(&file, finding));
+                    }
+                }
+                other => anyhow::bail!("unsupported format: {other}"),
+            }
+            if !accept {
                 std::process::exit(1);
             }
         }

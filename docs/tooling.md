@@ -87,6 +87,26 @@ active viz repair --from svc.active
 Load any JSON export into `viz/index.html` for a dependency-free view.
 Shapes: `docs/schemas/{graph,taint,budget}.json`.
 
+## Propose and gate (L-P62)
+
+```sh
+active gate svc.active --format json --receipt svc.receipt.json
+active propose --request "a service on port 8080" \
+  --generator "my-llm-cli" --rounds 2 --output svc.active
+active propose --request "add a port" --candidate candidate.active
+```
+
+`active gate` verifies one candidate with the same per-file checks
+`active test` runs (parse, healing, canonical format, strict evaluation
+and validation, project lint) and accepts or rejects it; `--receipt`
+writes an L-T06 envelope v2 whose `result` binds the redacted accepted
+value. `active propose` runs the verify → repair → re-verify loop over a
+caller-supplied candidate or a generator command (the request goes to
+its stdin, the candidate comes from its stdout); the loop is bounded
+(default 2 rounds, cap 5) and fails closed with H008 naming what
+remains. An output file is written only for an accepted candidate. Spec:
+`spec/propose-verify.md`; vectors: `conformance/lp62/`.
+
 ## Repair browser
 
 ```sh

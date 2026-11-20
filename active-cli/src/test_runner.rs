@@ -118,7 +118,10 @@ fn collect_active(
                 continue;
             }
             collect_active(&path, depth + 1, owned_roots, files)?;
-        } else if metadata.is_file() && path.extension().is_some_and(|e| e == "active") {
+        } else if metadata.is_file()
+            && !name.starts_with('.')
+            && path.extension().is_some_and(|e| e == "active")
+        {
             files.insert(path);
         }
     }
@@ -133,95 +136,251 @@ fn same_dir(a: &Path, b: &Path) -> bool {
     }
 }
 
-fn check_file(path: &Path, strict: bool, env: &HashMap<String, String>, report: &mut Report) {
+/// One check's result for a single file (L-P62). `active test` renders
+/// these as its failure and note strings; `active verify` renders the
+/// same findings as structured data, so the two cannot disagree about a
+/// file.
+#[derive(Debug, Clone)]
+pub(crate) struct Finding {
+    /// Stage key: `read`, `size`, `parse`, `repair`, `fmt`,
+    /// `fmt-refused`, `lint-config`, `lint`, `schema`, `schema-fatal`.
+    pub check: &'static str,
+    pub fatal: bool,
+    pub codes: Vec<String>,
+    /// Diagnostic count behind a note (lint findings, schema warnings).
+    pub count: usize,
+    /// Value-free detail text (an I/O error, a formatter refusal, or a
+    /// fatal evaluation code).
+    pub detail: Option<String>,
+}
+
+impl Finding {
+    fn fatal(check: &'static str, codes: Vec<String>) -> Self {
+        Self {
+            check,
+            fatal: true,
+            codes,
+            count: 0,
+            detail: None,
+        }
+    }
+
+    fn detail(check: &'static str, detail: impl Into<String>, fatal: bool) -> Self {
+        Self {
+            check,
+            fatal,
+            codes: Vec::new(),
+            count: 0,
+            detail: Some(detail.into()),
+        }
+    }
+
+    fn note(check: &'static str, count: usize, codes: Vec<String>) -> Self {
+        Self {
+            check,
+            fatal: false,
+            codes,
+            count,
+            detail: None,
+        }
+    }
+
+    /// Severity reported to `active verify` consumers.
+    pub fn severity(&self) -> Severity {
+        if self.fatal {
+            Severity::Error
+        } else {
+            Severity::Warning
+        }
+    }
+}
+
+/// The full verdict for one file: every stage's findings, in stage
+/// order, plus what the caller needs to bind a receipt (the parsed
+/// module and the one evaluation this verdict already ran — no caller
+/// re-evaluates).
+#[derive(Debug, Default)]
+pub(crate) struct Verdict {
+    pub source: Option<String>,
+    pub module: Option<active_core::Module>,
+    pub findings: Vec<Finding>,
+    /// Evaluation result, when it ran and succeeded.
+    pub evaluated: Option<(active_core::Value, Vec<active_core::Diagnostic>)>,
+    /// Evaluation failure (fatal code or validation diagnostics), when
+    /// it ran and failed.
+    pub eval_failure: Option<(String, Vec<active_core::Diagnostic>)>,
+    /// The engine's environment and budget, so a receipt binds exactly
+    /// what the verdict ran under.
+    pub env: std::collections::HashMap<String, String>,
+    pub budget: active_core::eval::Budget,
+}
+
+impl Verdict {
+    pub fn clean(&self) -> bool {
+        !self.findings.iter().any(|finding| finding.fatal)
+    }
+}
+
+/// Run the shipped per-file checks and collect structured findings.
+/// This is the one implementation behind `active test` and
+/// `active verify`; the stages, options, and severity rules are the
+/// tooling contract (docs/tooling.md).
+pub(crate) fn verdict(
+    path: &Path,
+    strict: bool,
+    engine: &Engine,
+    trust: Option<&active_core::sign::TrustedKeys>,
+    allow_parent_escapes: bool,
+    lock: Option<&active_core::provenance::IncludeLock>,
+) -> Verdict {
+    // Read with a hard cap: a file that grows (or is swapped) between a
+    // stat and the read still cannot allocate past the limit.
     let options = crate::with_parse_limits(ParseOptions::default());
+    let cap = if options.max_input_bytes == 0 {
+        usize::MAX
+    } else {
+        options.max_input_bytes
+    };
     let metadata = match std::fs::metadata(path) {
         Ok(metadata) => metadata,
         Err(e) => {
-            report
-                .failures
-                .push(format!("read {}: {e}", path.display()));
-            return;
+            let mut out = Verdict::default();
+            out.findings
+                .push(Finding::detail("read", e.to_string(), true));
+            return out;
         }
     };
     if !metadata.is_file() {
-        report
-            .failures
-            .push(format!("read {}: not a regular file", path.display()));
-        return;
+        let mut out = Verdict::default();
+        out.findings
+            .push(Finding::detail("read", "not a regular file", true));
+        return out;
     }
-    if options.max_input_bytes != 0 && metadata.len() > options.max_input_bytes as u64 {
-        report.failures.push(format!(
-            "parse {}: input is {} bytes; the limit is {}",
-            path.display(),
-            metadata.len(),
-            options.max_input_bytes
+    if metadata.len() > cap as u64 {
+        let mut out = Verdict::default();
+        out.findings.push(Finding::detail(
+            "size",
+            format!("input is {} bytes; the limit is {cap}", metadata.len()),
+            true,
         ));
-        return;
+        return out;
     }
-    let src = match std::fs::read_to_string(path) {
-        Ok(src) => src,
-        Err(e) => {
-            report
-                .failures
-                .push(format!("read {}: {e}", path.display()));
-            return;
+    let mut src = String::new();
+    {
+        use std::io::Read;
+        let file = match std::fs::File::open(path) {
+            Ok(file) => file,
+            Err(e) => {
+                let mut out = Verdict::default();
+                out.findings
+                    .push(Finding::detail("read", e.to_string(), true));
+                return out;
+            }
+        };
+        if let Err(e) = file
+            .take(cap.saturating_add(1) as u64)
+            .read_to_string(&mut src)
+        {
+            let mut out = Verdict::default();
+            out.findings
+                .push(Finding::detail("read", e.to_string(), true));
+            return out;
         }
+    }
+    verdict_from(
+        path,
+        &src,
+        strict,
+        engine,
+        trust,
+        allow_parent_escapes,
+        lock,
+    )
+}
+
+/// The same verdict over caller-supplied source text (the propose loop
+/// keeps the candidate in memory: no path read, so no swap can change
+/// what is verified). `path` still anchors include resolution and lint
+/// discovery.
+pub(crate) fn verdict_from(
+    path: &Path,
+    src: &str,
+    strict: bool,
+    engine: &Engine,
+    trust: Option<&active_core::sign::TrustedKeys>,
+    allow_parent_escapes: bool,
+    lock: Option<&active_core::provenance::IncludeLock>,
+) -> Verdict {
+    let mut out = Verdict::default();
+    let options = crate::with_parse_limits(ParseOptions::default());
+    let cap = if options.max_input_bytes == 0 {
+        usize::MAX
+    } else {
+        options.max_input_bytes
     };
+    if src.len() > cap {
+        out.findings.push(Finding::detail(
+            "size",
+            format!("input is {} bytes; the limit is {cap}", src.len()),
+            true,
+        ));
+        return out;
+    }
+    out.source = Some(src.to_string());
+    out.env = engine.env.clone();
+    out.budget = engine.budget;
     let name = path.to_string_lossy();
     // Syntax-only module for fmt (the formatter never merges includes),
     // and the resolved module for lint/eval.
     let syntax_options = crate::with_parse_limits(ParseOptions {
         resolve_includes: false,
+        allow_parent_escapes,
         ..ParseOptions::default()
     });
-    let syntax = match active_core::parser::parse_text_with_file(&src, &name, syntax_options, path)
-    {
+    let syntax = match active_core::parser::parse_text_with_file(src, &name, syntax_options, path) {
         Ok(module) => module,
         Err(diags) => {
-            report.failures.push(format!(
-                "parse {}: [{}]",
-                path.display(),
-                codes(&diags).join(",")
-            ));
-            return;
+            out.findings.push(Finding::fatal("parse", codes(&diags)));
+            return out;
         }
     };
     if !syntax.healing.is_empty() {
-        report.failures.push(format!(
-            "repair {}: needs repair [{}] (run `active repair`)",
-            path.display(),
-            codes(&syntax.healing).join(",")
-        ));
+        out.findings
+            .push(Finding::fatal("repair", codes(&syntax.healing)));
     } else {
         // The canonical check uses the same entry point as `fmt --write`,
         // so `active test` never advises a rewrite (or accepts a file)
         // that the formatter would refuse.
         match fmt::try_format(&syntax, Style::Indent) {
             Ok(formatted) if formatted != src => {
-                report.failures.push(format!(
-                    "fmt {}: not canonical (run `active fmt --write`)",
-                    path.display()
-                ));
+                out.findings.push(Finding::fatal("fmt", Vec::new()));
             }
             Ok(_) => {}
             Err(error) => {
-                report.failures.push(format!(
-                    "fmt {}: cannot be formatted ({error})",
-                    path.display()
-                ));
+                out.findings
+                    .push(Finding::detail("fmt-refused", error.to_string(), true));
             }
         }
     }
-    let module = match active_core::parser::parse_text_with_file(&src, &name, options, path) {
+    let options = ParseOptions {
+        allow_parent_escapes,
+        include_lock: lock.cloned(),
+        ..options
+    };
+    // With a trust file the resolved parse runs the shipped file path
+    // (signature and lockfile checks on includes); without one it parses
+    // the buffer we already read.
+    let parsed = match trust {
+        // Verify the bytes we hold: never re-open the path (a swap
+        // between read and parse would otherwise decide the verdict).
+        Some(keys) => active_core::parser::parse_text_with_trust(src, &name, options, path, keys),
+        None => active_core::parser::parse_text_with_file(src, &name, options, path),
+    };
+    let module = match parsed {
         Ok(module) => module,
         Err(diags) => {
-            report.failures.push(format!(
-                "parse {}: [{}]",
-                path.display(),
-                codes(&diags).join(",")
-            ));
-            return;
+            out.findings.push(Finding::fatal("parse", codes(&diags)));
+            return out;
         }
     };
     // Project lint policy travels with the file, exactly as `active
@@ -230,18 +389,16 @@ fn check_file(path: &Path, strict: bool, env: &HashMap<String, String>, report: 
         Ok(Some((_, config))) => match config.options(&[]) {
             Ok(options) => options,
             Err(e) => {
-                report
-                    .failures
-                    .push(format!("lint {}: {e}", path.display()));
-                return;
+                out.findings
+                    .push(Finding::detail("lint-config", e.to_string(), true));
+                return out;
             }
         },
         Ok(None) => lint::LintOptions::default(),
         Err(e) => {
-            report
-                .failures
-                .push(format!("lint {}: {e}", path.display()));
-            return;
+            out.findings
+                .push(Finding::detail("lint-config", e.to_string(), true));
+            return out;
         }
     };
     let findings = lint::lint_with(&module, &lint_options);
@@ -249,53 +406,97 @@ fn check_file(path: &Path, strict: bool, env: &HashMap<String, String>, report: 
         .iter()
         .any(|d| d.severity == Severity::Error || (strict && d.severity == Severity::Warning));
     if lint_fatal {
-        report.failures.push(format!(
-            "lint {}: [{}]",
-            path.display(),
-            codes(&findings).join(",")
-        ));
+        out.findings.push(Finding::fatal("lint", codes(&findings)));
     } else if !findings.is_empty() {
-        report.notes.push(format!(
-            "lint {}: {} finding(s) [{}]",
-            path.display(),
-            findings.len(),
-            codes(&findings).join(",")
-        ));
+        out.findings
+            .push(Finding::note("lint", findings.len(), codes(&findings)));
     }
     // Strict, hermetic evaluation: schema repairs are not silently
     // downgraded. Warnings fail only under --strict and are notes
     // otherwise.
-    let engine = Engine::strict().with_env(env.clone());
     match engine.evaluate(&module) {
-        Ok((_, diags)) => {
+        Ok((value, diags)) => {
             let fatal = diags.iter().any(|d| {
                 d.severity == Severity::Error || (strict && d.severity == Severity::Warning)
             });
             if fatal {
-                report.failures.push(format!(
-                    "schema {}: [{}]",
-                    path.display(),
-                    codes(&diags).join(",")
-                ));
+                out.findings.push(Finding::fatal("schema", codes(&diags)));
             } else if !diags.is_empty() {
-                report.notes.push(format!(
-                    "schema {}: {} warning(s) [{}]",
-                    path.display(),
-                    diags.len(),
-                    codes(&diags).join(",")
-                ));
+                out.findings
+                    .push(Finding::note("schema", diags.len(), codes(&diags)));
             }
+            out.evaluated = Some((value, diags));
         }
         Err(active_core::EvalError::ValidationFailed { diagnostics }) => {
-            report.failures.push(format!(
-                "schema {}: [{}]",
-                path.display(),
-                codes(&diagnostics).join(",")
-            ));
+            out.findings
+                .push(Finding::fatal("schema", codes(&diagnostics)));
+            out.eval_failure = Some((String::new(), diagnostics));
         }
-        Err(error) => report
-            .failures
-            .push(format!("schema {}: {}", path.display(), error.code())),
+        Err(error) => {
+            out.findings
+                .push(Finding::detail("schema-fatal", error.code(), true));
+            out.eval_failure = Some((error.code().to_string(), Vec::new()));
+        }
+    }
+    out.module = Some(module);
+    out
+}
+
+/// Render one finding exactly as `active test` has always printed it.
+pub(crate) fn render(path: &Path, finding: &Finding) -> String {
+    let file = path.display();
+    match finding.check {
+        "read" => format!(
+            "read {file}: {}",
+            finding.detail.as_deref().unwrap_or_default()
+        ),
+        "size" => format!(
+            "parse {file}: {}",
+            finding.detail.as_deref().unwrap_or_default()
+        ),
+        "parse" => format!("parse {file}: [{}]", finding.codes.join(",")),
+        "repair" => format!(
+            "repair {file}: needs repair [{}] (run `active repair`)",
+            finding.codes.join(",")
+        ),
+        "fmt" => format!("fmt {file}: not canonical (run `active fmt --write`)"),
+        "fmt-refused" => format!(
+            "fmt {file}: cannot be formatted ({})",
+            finding.detail.as_deref().unwrap_or_default()
+        ),
+        "lint-config" => format!(
+            "lint {file}: {}",
+            finding.detail.as_deref().unwrap_or_default()
+        ),
+        "lint" if finding.fatal => format!("lint {file}: [{}]", finding.codes.join(",")),
+        "lint" => format!(
+            "lint {file}: {} finding(s) [{}]",
+            finding.count,
+            finding.codes.join(",")
+        ),
+        "schema" if finding.fatal => format!("schema {file}: [{}]", finding.codes.join(",")),
+        "schema" => format!(
+            "schema {file}: {} warning(s) [{}]",
+            finding.count,
+            finding.codes.join(",")
+        ),
+        _ => format!(
+            "schema {file}: {}",
+            finding.detail.as_deref().unwrap_or_default()
+        ),
+    }
+}
+
+fn check_file(path: &Path, strict: bool, env: &HashMap<String, String>, report: &mut Report) {
+    let engine = Engine::strict().with_env(env.clone());
+    let verdict = verdict(path, strict, &engine, None, false, None);
+    for finding in verdict.findings {
+        let text = render(path, &finding);
+        if finding.fatal {
+            report.failures.push(text);
+        } else {
+            report.notes.push(text);
+        }
     }
 }
 

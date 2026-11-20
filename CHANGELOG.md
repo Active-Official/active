@@ -10,6 +10,21 @@ standalone Infinity codec).
 
 ## [Unreleased]
 
+### L-P62: propose / gate loop with the verifier as the product
+
+`active gate` verifies one candidate with the same per-file checks
+`active test` runs (strict parse, healing refusal, canonical format,
+strict evaluation and validation, project lint) and accepts or rejects
+it; `--receipt` writes an L-T06 envelope v2 binding the redacted accepted
+value. `active propose` runs the bounded verify → repair → re-verify loop
+over a caller-supplied candidate or a `--generator` command (the request
+goes to its stdin, the candidate comes back on stdout); the loop defaults
+to two rounds, caps at five, and fails closed with H008 naming the
+remaining checks. An output file is written only for an accepted
+candidate. The `active verify` name stays the signature command; the
+candidate verifier is `gate`. Spec `propose-verify.md`, vectors
+`conformance/lp62/`, docs `tooling.md`.
+
 ### L-P53: repair steps carry proof sketches
 
 Every applied step of `active repair` now carries a `proof` sketch checked

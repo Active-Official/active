@@ -440,3 +440,37 @@ fn the_root_path_binding_rejects_a_renamed_document() {
         "expected E039: {diags:?}"
     );
 }
+
+#[test]
+fn text_with_trust_verifies_the_supplied_bytes_not_the_path() {
+    // L-P62 H1: a tool that holds the candidate text must verify THAT
+    // text. A path re-read would let a swap decide the verdict.
+    use active_core::{parse_text_with_trust, ParseOptions};
+    let (secret, _, kid) = keypair();
+    let trusted = trusted_of(&kid, &secret);
+    let path = temp_fixture("text-trust.active", "port = 8080\n");
+    sign_root(&secret, &kid, &path);
+    // The exact signed bytes parse under trust.
+    parse_text_with_trust(
+        "port = 8080\n",
+        &path.to_string_lossy(),
+        ParseOptions::default(),
+        &path,
+        &trusted,
+    )
+    .expect("matching bytes verify");
+    // Different bytes (a swap) reject with the signature code even though
+    // the path still holds the signed content.
+    let error = parse_text_with_trust(
+        "port = 9999\n",
+        &path.to_string_lossy(),
+        ParseOptions::default(),
+        &path,
+        &trusted,
+    )
+    .expect_err("swapped bytes must reject");
+    assert!(
+        error.iter().any(|d| d.code == "E032"),
+        "expected E032: {error:?}"
+    );
+}

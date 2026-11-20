@@ -183,6 +183,32 @@ fn an_annotation_on_a_repeated_header_keeps_its_path_through_formatting() {
 }
 
 #[test]
+fn a_comment_between_repeated_headers_is_stable() {
+    let src = "[app]\na = 1\n# between\n[app]\nb = 2\n";
+    let module = parse(src, "headers").expect("parse");
+    for style in [active_core::Style::Brace, active_core::Style::Indent] {
+        let once = active_core::fmt::format(&module, style);
+        let reparsed = parse(&once, "fmt").expect("reparse");
+        let twice = active_core::fmt::format(&reparsed, style);
+        assert_eq!(once, twice, "not a fixed point for {style:?}:\n{once}");
+        assert_eq!(once.matches("# between").count(), 1, "{once}");
+    }
+}
+
+#[test]
+fn repeated_header_comment_layout_reaches_a_fixed_point() {
+    let src = "# first\n[app]\na = 1\n# s1\n[app]\nb = 2\n# a2\n[app]\nc = 3\n# s2\n[app]\nd = 4\n";
+    let module = parse(src, "headers").expect("parse");
+    let once = active_core::fmt::format(&module, active_core::Style::Brace);
+    let reparsed = parse(&once, "fmt").expect("reparse");
+    let twice = active_core::fmt::format(&reparsed, active_core::Style::Brace);
+    assert_eq!(once, twice, "not a fixed point:\n{once}");
+    for needle in ["# first", "# s1", "# a2", "# s2"] {
+        assert_eq!(once.matches(needle).count(), 1, "{needle} in:\n{once}");
+    }
+}
+
+#[test]
 fn repeated_header_trailing_comments_are_emitted_once() {
     let src = "[t]\na = 1\n[t]\nb = 2\n# end note\n";
     let module = parse(src, "headers").expect("parse");

@@ -68,7 +68,7 @@ pub fn format(module: &Module, style: Style) -> String {
 /// Passes allowed while searching for the formatter's fixed point. Two is
 /// enough for the attachment cases measured (an already-canonical document
 /// needs one); the cap keeps a hypothetical oscillation bounded.
-const STABILIZE_PASSES: usize = 3;
+const STABILIZE_PASSES: usize = 16;
 
 fn format_once(module: &Module, style: Style) -> String {
     let style = match style {

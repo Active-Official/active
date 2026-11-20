@@ -33,7 +33,9 @@ active inspect --from svc.active --path token --profile production
 
 Path reports carry kind, redacted value, taint, size, content-addressed
 identity (`blake3:…`, size, media type), schema constraints, and
-dependency provenance. Taint is structural and value-aware: a plain
+dependency provenance. Version 2 adds `layer` and a bounded, redacted
+`merge` record (winning source and losing source identities; no values;
+truncation reported). Taint is structural and value-aware: a plain
 value used as a `secret(...)` locator (a `let`, table field, or `env`
 lookup), any interpolation or container built from it, a copy of a
 runtime secret, and a blob payload embedding one all report

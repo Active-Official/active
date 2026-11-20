@@ -4,9 +4,30 @@
   "type": "object",
   "required": ["version", "path", "kind", "tainted", "value", "size_bytes", "dependencies"],
   "properties": {
-    "version": { "const": 1 },
+    "version": { "const": 2 },
     "path": { "type": "string" },
     "kind": { "type": "string" },
+    "layer": {
+      "type": "string",
+      "description": "Winning profile/patch layer for this path, absent for base values"
+    },
+    "merge_truncated": {
+      "type": "boolean",
+      "description": "True when the merge-provenance map dropped records at its cap; an absent merge record is then not proof of a base value"
+    },
+    "merge": {
+      "type": "object",
+      "required": ["winner", "losers", "losers_truncated"],
+      "properties": {
+        "winner": { "$ref": "#/definitions/merge_source" },
+        "losers": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/merge_source" }
+        },
+        "losers_truncated": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
     "tainted": { "type": "boolean" },
     "value": {},
     "size_bytes": {
@@ -45,6 +66,22 @@
         "size": { "type": "integer", "minimum": 0 },
         "media_type": { "type": "string" },
         "tainted": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "definitions": {
+    "merge_source": {
+      "type": "object",
+      "required": ["kind", "file", "line", "label"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["default", "include", "local", "profile"]
+        },
+        "file": { "type": ["string", "null"] },
+        "line": { "type": "integer", "minimum": 0 },
+        "label": { "type": "string" }
       },
       "additionalProperties": false
     }

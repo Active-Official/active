@@ -49,13 +49,33 @@ pub(crate) fn is_active() -> bool {
 }
 
 /// Record that `layer` wrote the value at `path` (last writer wins).
+/// Largest layer map kept in memory; beyond this further layer records
+/// are dropped (the merge provenance map reports its own truncation).
+const MAX_LAYER_PATHS: usize = 65_536;
+/// Longest path or layer text retained (hostile keys are bounded).
+const MAX_LAYER_TEXT: usize = 4_096;
+
+fn bounded(text: &str) -> String {
+    if text.len() <= MAX_LAYER_TEXT {
+        return text.to_string();
+    }
+    let mut cut = MAX_LAYER_TEXT;
+    while cut > 0 && !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    text[..cut].to_string()
+}
+
 pub(crate) fn record(path: &str, layer: &str) {
     if !is_active() {
         return;
     }
     LAYERS.with(|cell| {
         if let Some(map) = cell.borrow_mut().as_mut() {
-            map.insert(path.to_string(), layer.to_string());
+            if map.len() >= MAX_LAYER_PATHS && !map.contains_key(path) {
+                return;
+            }
+            map.insert(bounded(path), bounded(layer));
         }
     });
 }

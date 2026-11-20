@@ -129,7 +129,7 @@ pub fn inspect_path_with_profile_env(
         .collect();
     dependencies.dedup();
     let mut report = json!({
-        "version": 1,
+        "version": 2,
         "path": profile.redact_path(path),
         "kind": kind,
         "tainted": tainted,
@@ -357,6 +357,35 @@ pub fn render_text(report: &JsonValue) -> String {
             ""
         }
     ));
+    if let Some(layer) = report.get("layer").and_then(JsonValue::as_str) {
+        out.push_str(&format!("  layer: {layer}\n"));
+    }
+    if let Some(merge) = report.get("merge") {
+        let source_text = |source: &JsonValue| {
+            format!(
+                "{} {} ({}:{})",
+                source["kind"].as_str().unwrap_or("?"),
+                source["label"].as_str().unwrap_or("?"),
+                source["file"].as_str().unwrap_or("-"),
+                source["line"].as_u64().unwrap_or(0)
+            )
+        };
+        out.push_str(&format!(
+            "  merge winner: {}\n",
+            source_text(&merge["winner"])
+        ));
+        if let Some(losers) = merge["losers"].as_array() {
+            for loser in losers {
+                out.push_str(&format!("  merge loser: {}\n", source_text(loser)));
+            }
+        }
+        if merge["losers_truncated"].as_bool().unwrap_or(false) {
+            out.push_str("  merge losers truncated\n");
+        }
+    }
+    if report["merge_truncated"].as_bool().unwrap_or(false) {
+        out.push_str("  merge records truncated\n");
+    }
     if let Some(schema) = report.get("schema") {
         out.push_str(&format!(
             "  schema: {}{}\n",
@@ -554,6 +583,53 @@ pub fn inspect_path_with_layers(
         inspect_path_with_profile_env(module, root, path, override_profile, env, seeds)?;
     if let Some(layer) = layers.get(path) {
         report["layer"] = JsonValue::String(layer.clone());
+    }
+    Ok(report)
+}
+
+/// Inspect a value path with both layer and L-P09 merge provenance.
+/// `merge` names the winning source and the losers for this path; source
+/// labels and paths are redacted like any other authored text.
+#[allow(clippy::too_many_arguments)]
+pub fn inspect_path_with_layers_and_merges(
+    module: &Module,
+    root: &Value,
+    path: &str,
+    override_profile: Option<&str>,
+    env: Option<&std::collections::HashMap<String, String>>,
+    seeds: Option<&crate::secret::SecretRedactor>,
+    layers: &std::collections::BTreeMap<String, String>,
+    merges: Option<&crate::unify::MergeProvenance>,
+) -> Result<JsonValue, String> {
+    let mut report =
+        inspect_path_with_layers(module, root, path, override_profile, env, seeds, layers)?;
+    if let Some(map) = merges {
+        report["merge_truncated"] = JsonValue::Bool(map.truncated());
+    }
+    if let Some(record) = merges.and_then(|map| map.get(path)) {
+        // Use the same context as the value report: runtime env values
+        // and seeds can appear in source labels/paths.
+        let profile =
+            crate::secret::SecretProfile::with_context(module, override_profile, env, seeds);
+        profile.begin_redaction_pass();
+        let source = |source: &crate::unify::MergeSource| -> JsonValue {
+            let redact = |text: &str| {
+                profile
+                    .redact_authored_text(text)
+                    .unwrap_or_else(|| text.to_string())
+            };
+            serde_json::json!({
+                "kind": serde_json::to_value(source.priority).unwrap_or(JsonValue::Null),
+                "file": source.file.as_deref().map(redact),
+                "line": source.line,
+                "label": redact(&source.label),
+            })
+        };
+        report["merge"] = serde_json::json!({
+            "winner": source(&record.winner),
+            "losers": record.losers.iter().map(source).collect::<Vec<_>>(),
+            "losers_truncated": record.losers_truncated,
+        });
     }
     Ok(report)
 }

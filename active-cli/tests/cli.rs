@@ -444,6 +444,31 @@ fn declined_repair_fails_in_strict_and_heals_in_resilient() {
 }
 
 #[test]
+fn inspect_reports_merge_provenance() {
+    let f = fixture(
+        "inspect_merge.active",
+        "base = 1\nprofile \"prod\" { base = 2 }\nactive_profile = \"prod\"\n",
+    );
+    let out = active()
+        .args(["inspect", "--format", "json", "--from"])
+        .arg(&f)
+        .args(["--path", "base"])
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json inspection");
+    assert_eq!(report["version"], serde_json::json!(2));
+    assert_eq!(
+        report["merge"]["winner"]["kind"],
+        serde_json::json!("profile")
+    );
+}
+
+#[test]
 fn include_merge_conflict_is_e046_in_strict_and_resilient() {
     // L-P09: two includes at the same priority disagree at server.port.
     let dir = "merge_conflict";

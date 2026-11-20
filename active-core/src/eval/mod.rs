@@ -964,8 +964,16 @@ fn apply_pending_merges(
                 &mut provenance,
                 &merge_limits,
             ) {
-                Ok(merged) => current = merged,
+                Ok(merged) => {
+                    crate::unify::record(&provenance);
+                    current = merged;
+                }
                 Err(error @ MergeError::Conflict(_)) => {
+                    // Expose the contested path even though the merge
+                    // kept the first source: winner = first, loser = second.
+                    let mut contested = MergeProvenance::new();
+                    contested.record_conflict(&path, &first.source, &candidate.source);
+                    crate::unify::record(&contested);
                     if *reported < MAX_MERGE_DIAGNOSTICS {
                         let mut diagnostic = error.to_diagnostic();
                         diagnostic.span = module.node_spans.get(&candidate.node).cloned();
@@ -1145,19 +1153,10 @@ fn redact_material_value(value: &Value) -> Value {
         ),
         Value::Array(items) => Value::Array(items.iter().map(redact_material_value).collect()),
         Value::Secret(_) => value.clone(),
-        Value::Blob {
-            hash,
-            size,
-            tainted,
-            media_type,
-            payload,
-        } => Value::Blob {
-            hash: *hash,
-            size: *size,
-            tainted: *tainted,
-            media_type: media_type.clone(),
-            payload: payload.clone(),
-        },
+        // A blob at a material path is incomparable, not an identity to
+        // compare: comparing its (untainted) identity would answer
+        // whether two material payloads are equal.
+        Value::Blob { .. } => Value::Secret(zeroize::Zeroizing::new(String::new())),
         _ => Value::Secret(zeroize::Zeroizing::new(String::new())),
     }
 }
@@ -3374,6 +3373,56 @@ impl Engine {
         outcome.map(|(value, diagnostics)| (value, diagnostics, layers))
     }
 
+    /// Evaluate and return the L-P09 merge provenance (path -> winner
+    /// and losing source identities). The map is bounded and never
+    /// contains values.
+    pub fn evaluate_with_merges(
+        &self,
+        module: &Module,
+    ) -> Result<(Value, Vec<Diagnostic>, MergeProvenance), EvalError> {
+        let owned = crate::unify::begin_recording();
+        let outcome = self.evaluate(module);
+        let provenance = crate::unify::finish_recording(owned).unwrap_or_default();
+        outcome.map(|(value, diagnostics)| (value, diagnostics, provenance))
+    }
+
+    /// Layers plus merge provenance in one evaluation (inspect).
+    pub fn evaluate_with_layers_and_merges(
+        &self,
+        module: &Module,
+    ) -> Result<(Value, Vec<Diagnostic>, LayerMap, MergeProvenance), EvalError> {
+        self.evaluate_with_layers_merges_and_seeds(module)
+            .map(|(value, diagnostics, layers, merges, _)| (value, diagnostics, layers, merges))
+    }
+
+    /// One evaluation returning the tree, layers, merge provenance, and
+    /// runtime secret seeds (inspect needs all four; a second evaluation
+    /// would double the wall-clock cost and could diverge).
+    pub fn evaluate_with_layers_merges_and_seeds(
+        &self,
+        module: &Module,
+    ) -> Result<
+        (
+            Value,
+            Vec<Diagnostic>,
+            LayerMap,
+            MergeProvenance,
+            crate::secret::SecretRedactor,
+        ),
+        EvalError,
+    > {
+        let owned_layers = crate::layers::begin();
+        let owned_merges = crate::unify::begin_recording();
+        let (outcome, seeds) = self.evaluate_collecting_seeds(module);
+        let layers = if owned_layers {
+            crate::layers::finish()
+        } else {
+            LayerMap::new()
+        };
+        let provenance = crate::unify::finish_recording(owned_merges).unwrap_or_default();
+        outcome.map(|(value, diagnostics)| (value, diagnostics, layers, provenance, seeds))
+    }
+
     /// Reject a patch whose targets overlap an `@ai_immutable` path
     /// (spec/annotations.md §4, C-034). Every target is checked; the first
     /// overlap fails the whole patch application with E019 at the
@@ -3829,6 +3878,7 @@ impl Engine {
                 file: module.node_files.get(&profile_id).cloned(),
             },
         })?;
+        crate::unify::record(&provenance);
         let after = measure_merge_value(&merged);
         if budget.max_value_size != 0 && after > budget.max_value_size {
             return Err(EvalError::budget_exceeded(

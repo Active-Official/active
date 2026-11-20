@@ -1568,18 +1568,13 @@ fn run_inspect(
             // the taint check; the report strips payloads before output.
             evaluation_engine.materialise_blobs = true;
             evaluation_engine.taint_probe = true;
-            let (value, _, seeds) = evaluation_engine
-                .evaluate_with_seeds(&module)
+            // One evaluation supplies the tree, redaction seeds, layer
+            // provenance, and merge provenance: a second pass would double
+            // the wall cost and could diverge on a marginal budget.
+            let (value, _, layers, merges, seeds) = evaluation_engine
+                .evaluate_with_layers_merges_and_seeds(&module)
                 .map_err(|e| anyhow::anyhow!("cannot evaluate for inspection: {e}"))?;
-            // LANG-F-014: report which layer wrote this value last. The
-            // provenance run is a second evaluation (the first already
-            // produced the tree for the redaction context); it is the same
-            // evaluation plus bookkeeping, so results cannot differ.
-            let layers = evaluation_engine
-                .evaluate_with_layers(&module)
-                .map(|(_, _, layers)| layers)
-                .map_err(|e| anyhow::anyhow!("cannot evaluate for inspection: {e}"))?;
-            let report = active_core::convert::inspect_path_with_layers(
+            let report = active_core::convert::inspect_path_with_layers_and_merges(
                 &module,
                 &value,
                 path,
@@ -1587,6 +1582,7 @@ fn run_inspect(
                 Some(&evaluation_engine.env),
                 Some(&seeds),
                 &layers,
+                Some(&merges),
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?;
             match format {

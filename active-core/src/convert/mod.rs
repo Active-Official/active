@@ -50,8 +50,9 @@ pub use suggest::{
     PatchKind, PatchSuggestion,
 };
 pub use value_inspect::{
-    inspect_path, inspect_path_with_layers, inspect_path_with_profile,
-    inspect_path_with_profile_env, render_text as render_inspection_text,
+    inspect_path, inspect_path_with_layers, inspect_path_with_layers_and_merges,
+    inspect_path_with_profile, inspect_path_with_profile_env,
+    render_text as render_inspection_text,
 };
 
 /// Profile-unaware JSON mapping. Identity-only: retained blob payload

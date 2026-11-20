@@ -19,6 +19,47 @@ use serde::{Deserialize, Serialize};
 
 use crate::ir::{NodeId, Value};
 
+thread_local! {
+    /// Active merge recorder for one evaluation (inspect/audit exposure).
+    static RECORDER: std::cell::RefCell<Option<MergeProvenance>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Start collecting merge provenance. Returns `false` when an outer
+/// evaluation already owns the recorder; that outer map keeps collecting
+/// this evaluation's merges and must not be stolen by the inner call.
+pub fn begin_recording() -> bool {
+    RECORDER.with(|slot| {
+        if slot.borrow().is_some() {
+            false
+        } else {
+            *slot.borrow_mut() = Some(MergeProvenance::new());
+            true
+        }
+    })
+}
+
+/// Stop collecting and return the records when this call owns the
+/// recorder. `None` for a nested evaluation.
+pub fn finish_recording(owned: bool) -> Option<MergeProvenance> {
+    if owned {
+        RECORDER.with(|slot| slot.borrow_mut().take())
+    } else {
+        None
+    }
+}
+
+/// Absorb one merge's records into the active evaluation recorder. The
+/// recorder's own caps apply; a missing recorder is a no-op. The source
+/// map is borrowed, so a large map is not cloned per merge.
+pub(crate) fn record(provenance: &MergeProvenance) {
+    RECORDER.with(|slot| {
+        if let Some(active) = slot.borrow_mut().as_mut() {
+            active.extend_ref(provenance);
+        }
+    });
+}
+
 /// Largest provenance map kept in memory. Beyond this the map reports
 /// truncation; a merge never fails just because provenance is large.
 pub const MAX_PROVENANCE_PATHS: usize = 65_536;
@@ -224,7 +265,7 @@ impl MergeProvenance {
         if let Some(mut record) = self.records.get(path).cloned() {
             match winner.priority.cmp(&record.winner.priority) {
                 std::cmp::Ordering::Greater => {
-                    if self.try_charge(source_bytes(&winner), source_bytes(&record.winner)) {
+                    if self.try_charge(source_bytes(&winner), 0) {
                         record.losers.push(record.winner.clone());
                     }
                     record.winner = winner;
@@ -314,20 +355,33 @@ impl MergeProvenance {
     /// Merge another map into this one, preserving the stronger winner
     /// and the union of losers.
     fn extend(&mut self, other: MergeProvenance) {
+        self.extend_ref(&other);
+    }
+
+    /// Borrowing form used by the evaluation recorder (no whole-map
+    /// clone per merge).
+    fn extend_ref(&mut self, other: &MergeProvenance) {
         if other.truncated {
             self.truncated = true;
         }
-        for (path, record) in other.records {
-            self.record(&path, &record.winner, None);
+        for (path, record) in &other.records {
+            self.record(path, &record.winner, None);
             for loser in &record.losers {
-                self.record(&path, &record.winner, Some(loser));
+                self.record(path, &record.winner, Some(loser));
             }
             if record.losers_truncated {
-                if let Some(stored) = self.records.get_mut(&path) {
+                if let Some(stored) = self.records.get_mut(path) {
                     stored.losers_truncated = true;
                 }
             }
         }
+    }
+
+    /// Record an equal-priority disagreement: the first source is the
+    /// resilient winner and the second is a loser. Used when `unify`
+    /// returns E046 (its own map is unchanged on failure).
+    pub(crate) fn record_conflict(&mut self, path: &str, left: &MergeSource, right: &MergeSource) {
+        self.record(path, left, Some(right));
     }
 }
 
@@ -534,6 +588,9 @@ impl Default for MergeLimits {
 struct MergeState<'a> {
     depth: usize,
     limits: &'a MergeLimits,
+    /// Paths whose value was replaced (not unioned); caller provenance
+    /// below them is stale and pruned after a successful merge.
+    pruned: Vec<String>,
 }
 
 impl MergeState<'_> {
@@ -748,7 +805,11 @@ pub fn unify_with_limits(
     precheck.walk(left, path)?;
     precheck.walk(right, path)?;
     let mut local = MergeProvenance::with_limits(provenance.limit, provenance.byte_limit);
-    let mut state = MergeState { depth: 0, limits };
+    let mut state = MergeState {
+        depth: 0,
+        limits,
+        pruned: Vec::new(),
+    };
     let value = unify_inner(
         left,
         left_source,
@@ -761,9 +822,17 @@ pub fn unify_with_limits(
     if local.truncated() {
         provenance.mark_truncated();
     }
-    // A successful merge replaces the subtree at `path`; records below it
-    // describe values the output no longer contains.
-    provenance.prune_subtree(path);
+    // A successful *replacement* at `path` drops descendant records; a
+    // table union keeps both sides, so its descendants (including
+    // include/header records) stay valid. Nested replacements prune at
+    // their own paths.
+    let union = matches!((left, right), (Value::Table(_), Value::Table(_)));
+    if !union {
+        provenance.prune_subtree(path);
+    }
+    for replaced in &state.pruned {
+        provenance.prune_subtree(replaced);
+    }
     provenance.extend(local);
     Ok(value)
 }
@@ -854,6 +923,7 @@ fn unify_inner(
     } else {
         (right, right_source, left_source)
     };
+    state.pruned.push(path.to_string());
     provenance.record(path, winner_source, Some(loser));
     Ok(winner.clone())
 }
@@ -1604,6 +1674,49 @@ mod tests {
         assert_eq!(diagnostic.code, "E046");
         assert_eq!(diagnostic.path.as_deref(), Some("port"));
         assert!(matches!(diagnostic.severity, crate::diag::Severity::Error));
+    }
+
+    #[test]
+    fn recorder_nesting_keeps_the_outer_map() {
+        assert!(begin_recording());
+        assert!(!begin_recording(), "inner begin must not own");
+        let mut inner = MergeProvenance::new();
+        inner.record("inner", &source(MergePriority::Local, "x"), None);
+        record(&inner);
+        assert!(
+            finish_recording(false).is_none(),
+            "inner finish must not steal"
+        );
+        let outer = finish_recording(true).expect("outer owns the map");
+        assert!(outer.get("inner").is_some());
+    }
+
+    #[test]
+    fn a_replaced_subtree_prunes_but_a_union_keeps_descendants() {
+        let mut provenance = MergeProvenance::new();
+        provenance.record("t.inner", &source(MergePriority::Include, "inc"), None);
+        // Table union at the root keeps the descendant record.
+        unify(
+            &table(&[("t", table(&[("a", Value::Int(1))]))]),
+            &source(MergePriority::Local, "base"),
+            &table(&[("t", table(&[("b", Value::Int(2))]))]),
+            &source(MergePriority::Profile, "prod"),
+            "",
+            &mut provenance,
+        )
+        .expect("union");
+        assert!(provenance.get("t.inner").is_some());
+        // A scalar replacement at the path prunes it.
+        unify(
+            &table(&[("t", table(&[("a", Value::Int(1))]))]),
+            &source(MergePriority::Local, "base"),
+            &table(&[("t", Value::Int(5))]),
+            &source(MergePriority::Profile, "prod"),
+            "",
+            &mut provenance,
+        )
+        .expect("replacement");
+        assert!(provenance.get("t.inner").is_none());
     }
 
     #[test]

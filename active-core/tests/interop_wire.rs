@@ -164,6 +164,46 @@ fn profile_layers_cover_parents_and_array_indices() {
 }
 
 #[test]
+fn merge_provenance_is_exposed_on_inspect() {
+    use active_core::convert::inspect_path_with_layers_and_merges;
+    let src = "base = 1\nprofile \"prod\" { base = 2 }\nactive_profile = \"prod\"\n";
+    let module = parse(src, "merges").expect("parse");
+    let (value, diags, layers, merges) = Engine::hermetic()
+        .evaluate_with_layers_and_merges(&module)
+        .expect("evaluate");
+    assert!(diags.is_empty(), "{diags:?}");
+    let record = merges.get("base").expect("profile record");
+    assert!(matches!(
+        record.winner.priority,
+        active_core::unify::MergePriority::Profile
+    ));
+    assert!(record
+        .losers
+        .iter()
+        .any(|loser| loser.priority == active_core::unify::MergePriority::Local));
+    let report = inspect_path_with_layers_and_merges(
+        &module,
+        &value,
+        "base",
+        None,
+        None,
+        None,
+        &layers,
+        Some(&merges),
+    )
+    .expect("inspect");
+    assert_eq!(report["version"], serde_json::json!(2));
+    assert_eq!(
+        report["merge"]["winner"]["kind"],
+        serde_json::json!("profile")
+    );
+    assert_eq!(
+        report["merge"]["losers"][0]["kind"],
+        serde_json::json!("local")
+    );
+}
+
+#[test]
 fn inspection_reports_the_layer_that_wrote_a_value() {
     // LANG-F-014: the wire form is layer-flattened by design; the
     // inspection surface names the winning layer so an operator (or a

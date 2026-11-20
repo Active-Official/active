@@ -10,6 +10,21 @@ standalone Infinity codec).
 
 ## [Unreleased]
 
+### L-P53: repair steps carry proof sketches
+
+Every applied step of `active repair` now carries a `proof` sketch checked
+by the loop's next evaluation: the `CODE@path` diagnostics it removed, the
+ones it introduced (none for a verified step), and every evaluated path
+outside its own blast radius whose value changed. Both trees are redacted
+before comparison, so material never enters it. The comparison is bounded
+(65,536 visited values, 16 reported paths) and fails rather than
+truncating. `--format text` prints a `proof:` line under each applied
+step; the JSON plan and the browser model (which embeds the plan) carry
+the object, and `docs/schemas/repair-plan.json` documents the shape.
+Spec: `spec/repair-ui.md` section 3. Internally, `Engine::evaluate_tree`
+runs the walk with validation disabled so the planner can compare trees
+while the validation diagnostics are its input.
+
 ### L-P09: unification as the one merge semantics (2.0.0 language change)
 
 Every source merge is one operation with priorities Default < Include <

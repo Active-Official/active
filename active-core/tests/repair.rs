@@ -273,3 +273,87 @@ fn metadata_defaults_are_not_repair_candidates() {
         );
     }
 }
+
+#[test]
+fn applied_steps_carry_verified_proofs() {
+    // L-P53: every applied step records the mechanical check the loop
+    // ran after it: it removed an addressed diagnostic, introduced none,
+    // and changed no value outside its own path.
+    let src =
+        "schema = { closed = true, host = String, port = Int(default = 8080) }\nHost = \"x\"\n";
+    let out = validate(src);
+    assert!(out.clean, "{out:?}");
+    assert!(!out.steps.is_empty());
+    for step in &out.steps {
+        let proof = step.proof.as_ref().expect("applied step has a proof");
+        assert!(proof.verified, "{step:?}");
+        assert!(!proof.removes.is_empty(), "{step:?}");
+        assert!(!proof.addresses.is_empty(), "{step:?}");
+        assert!(proof.introduces.is_empty(), "{step:?}");
+        assert!(proof.changes_elsewhere.is_empty(), "{step:?}");
+        assert!(proof.reason.is_none(), "{step:?}");
+    }
+    // The plan record carries the proof to any consumer (browser model,
+    // JSON output) because it is part of the step.
+    let json = serde_json::to_value(&out).expect("json");
+    assert_eq!(
+        json["steps"][0]["proof"]["verified"],
+        serde_json::json!(true)
+    );
+}
+
+#[test]
+fn a_proof_never_carries_material() {
+    // A secret in the document must not change the proof contract: the
+    // tree comparison treats material as opaque, and the record carries
+    // codes and paths only.
+    let mut env = std::collections::HashMap::new();
+    env.insert(
+        "ACTIVE_PROOF_TOKEN".to_string(),
+        "s3cr3t-proof-value".to_string(),
+    );
+    let engine = active_core::Engine::new().with_env(env);
+    let src = "schema = { closed = false, port = Int(default = 8080) }\ntoken = secret.env(\"ACTIVE_PROOF_TOKEN\")\n";
+    let out =
+        active_core::convert::repair_with_engine(src, RepairGoal::Validate, &[], 8, &engine, None);
+    assert!(out.clean, "{out:?}");
+    let proof = out.steps[0].proof.as_ref().expect("proof");
+    assert!(proof.verified, "{proof:?}");
+    let json = serde_json::to_string(&out).expect("json");
+    assert!(
+        !json.contains("s3cr3t-proof-value"),
+        "proof record leaked material: {json}"
+    );
+}
+
+#[test]
+fn a_plan_only_run_has_no_proofs() {
+    // Nothing applied means nothing claimed.
+    let src =
+        "schema = { closed = true, host = String, port = Int(default = 8080) }\nHost = \"x\"\n";
+    let out = repair_document(src, RepairGoal::Validate, &[], 0);
+    assert!(!out.clean);
+    assert!(
+        out.steps.iter().all(|step| step.proof.is_none()),
+        "{:?}",
+        out.steps
+    );
+}
+
+#[test]
+fn the_library_caps_the_step_budget() {
+    // An embedder cannot ask for an unbounded plan: the loop clamps to
+    // the documented hard cap.
+    let mut schema = String::from("schema = {");
+    for index in 0..100 {
+        schema.push_str(&format!(" k{index} = Int(default = {index}),"));
+    }
+    schema.push_str(" }\n");
+    let out = repair_document(&schema, RepairGoal::Validate, &[], 10_000);
+    assert!(
+        out.steps.len() <= active_core::convert::repair::MAX_REPAIR_STEPS,
+        "steps={}",
+        out.steps.len()
+    );
+    assert!(!out.clean, "100 missing keys cannot all fit the cap");
+}

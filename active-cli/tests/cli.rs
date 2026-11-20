@@ -1931,6 +1931,51 @@ fn repair_reports_json_plan_and_output_file() {
 }
 
 #[test]
+fn repair_reports_a_verified_proof_per_applied_step() {
+    // L-P53: the plan carries the mechanical check (removed / introduced /
+    // changed elsewhere), and the text surface prints it.
+    let f = fixture(
+        "repair_proof.active",
+        "schema = { closed = true, host = String, port = Int(default = 8080) }\nHost = \"x\"\n",
+    );
+    let out = active()
+        .args(["repair", "--from"])
+        .arg(&f)
+        .args(["--format", "json"])
+        .output()
+        .expect("run active");
+    assert!(out.status.success());
+    let plan: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).expect("JSON plan");
+    let steps = plan["steps"].as_array().expect("steps");
+    assert!(!steps.is_empty());
+    for step in steps {
+        let proof = &step["proof"];
+        assert_eq!(proof["verified"], serde_json::json!(true), "{step}");
+        assert!(
+            !proof["removes"].as_array().expect("removes").is_empty(),
+            "{step}"
+        );
+        assert!(proof["introduces"]
+            .as_array()
+            .expect("introduces")
+            .is_empty());
+        assert!(proof["changes_elsewhere"]
+            .as_array()
+            .expect("changes")
+            .is_empty());
+    }
+    let text = active()
+        .args(["repair", "--from"])
+        .arg(&f)
+        .args(["--format", "text"])
+        .output()
+        .expect("run active");
+    let stdout = String::from_utf8_lossy(&text.stdout);
+    assert!(stdout.contains("proof: verified"), "{stdout}");
+}
+
+#[test]
 fn repair_fails_closed_on_unrepairable() {
     let f = fixture(
         "repair_bad.active",
@@ -2266,6 +2311,28 @@ fn partial_repair_json_describes_the_applied_subset() {
         "only the selected directive may be reported: {source}"
     );
     assert_eq!(report["clean"], false, "{report}");
+    // A partial subset's terminal state is its own: the full plan's
+    // stuck/unrepairable/findings describe a trajectory the subset did
+    // not run (L-P53 round-2 M3).
+    assert_eq!(report["stuck"], false, "{report}");
+    assert_eq!(report["unrepairable"], false, "{report}");
+    assert_eq!(
+        report["findings"].as_array().map(|a| a.len()),
+        Some(0),
+        "{report}"
+    );
+    // L-P53 H2: a demoted (skipped) step carries no proof: its check
+    // describes a document this run did not write.
+    assert_eq!(
+        report["steps"][1]["proof"],
+        serde_json::Value::Null,
+        "skipped step must not keep a proof: {report}"
+    );
+    assert_eq!(
+        report["steps"][0]["proof"]["verified"],
+        serde_json::json!(true),
+        "the applied step keeps its verified proof: {report}"
+    );
     assert!(
         report["final_codes"]
             .as_array()

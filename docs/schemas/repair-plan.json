@@ -46,7 +46,22 @@
               }
             ]
           },
-          "side_effects": { "type": "array", "items": { "type": "string" } }
+          "side_effects": { "type": "array", "items": { "type": "string" } },
+          "proof": {
+            "description": "L-P53: the mechanical check the loop ran after the step. Absent on skipped steps.",
+            "type": "object",
+            "required": ["addresses", "removes", "introduces", "changes_elsewhere", "verified", "checked_paths"],
+            "properties": {
+              "addresses": { "type": "array", "items": { "type": "string" } },
+              "removes": { "type": "array", "items": { "type": "string" } },
+              "introduces": { "type": "array", "items": { "type": "string" } },
+              "changes_elsewhere": { "type": "array", "items": { "type": "string" } },
+              "verified": { "type": "boolean" },
+              "reason": { "type": "string" },
+              "checked_paths": { "type": "integer", "minimum": 0 }
+            },
+            "additionalProperties": false
+          }
         },
         "additionalProperties": false
       }

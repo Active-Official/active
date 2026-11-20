@@ -97,8 +97,11 @@ active repair --from svc.active --cherry-pick server --output fixed.active
 
 `--browser` pairs diagnostics with the multi-step plan (no source text,
 so authored secrets are never echoed). Partial application applies only
-safe steps inside the index bound or path prefix. Spec:
-`spec/repair-ui.md`.
+safe steps inside the index bound or path prefix. Every applied step in
+the plan carries a `proof` sketch (L-P53): the blocking codes it removed,
+any it introduced, and any evaluated path outside its own that changed,
+checked by the loop's next evaluation over redacted trees; `--format
+text` prints it under each `applied` line. Spec: `spec/repair-ui.md`.
 
 ## Query CLIs
 

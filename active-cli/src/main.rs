@@ -1856,33 +1856,59 @@ fn module_has_blobs(module: &active_core::Module) -> bool {
 /// Evaluate an in-memory source in the given file context and report
 /// whether it is clean plus its sorted diagnostic codes. Used by partial
 /// repair so the reported verdict describes the applied subset.
-fn source_verdict(engine: &Engine, source: &str, file: &std::path::Path) -> (bool, Vec<String>) {
-    fn code_of(d: &active_core::Diagnostic) -> String {
-        format!(
-            "{}{}",
-            d.code,
-            d.path
-                .as_deref()
-                .map(|p| format!("@{p}"))
-                .unwrap_or_default()
-        )
-    }
-    let options = with_parse_limits(ParseOptions {
-        enable_includes: true,
-        ..Default::default()
-    });
+/// Whether a path is `prefix` or lies below it (a segment boundary, not
+/// a string prefix: `server` does not match `serverBackup`).
+fn path_matches(path: &str, prefix: &str) -> bool {
+    path == prefix
+        || path
+            .strip_prefix(prefix)
+            .is_some_and(|rest| rest.starts_with('.') || rest.starts_with('['))
+}
+
+fn source_verdict(
+    engine: &Engine,
+    source: &str,
+    file: &std::path::Path,
+    allow_parent_escapes: bool,
+) -> (bool, Vec<String>) {
+    // Mirror the repair loop exactly: `ParseOptions::strict()` (no CLI
+    // limit overrides, which the loop does not apply either) plus the
+    // caller's include policy, so a partial verdict can never disagree
+    // with the loop about what the document is.
+    let mut options = ParseOptions::strict();
+    options.enable_includes = true;
+    options.allow_parent_escapes = allow_parent_escapes;
     let name = file.to_string_lossy();
     let (module, parse_diags) =
         active_core::parse_text_recovering_with_file(source, &name, options, file);
-    let mut codes: Vec<String> = parse_diags.iter().map(code_of).collect();
+    // `final_codes` convention (RepairOutcome): parse failures carry bare
+    // codes, evaluation diagnostics carry `CODE@path`, and only blocking
+    // severities count toward `clean`.
+    let mut codes: Vec<String> = parse_diags.iter().map(|d| d.code.clone()).collect();
     if parse_diags.is_empty() {
+        let blocking = |d: &active_core::Diagnostic| {
+            matches!(
+                d.severity,
+                active_core::diag::Severity::Error | active_core::diag::Severity::Warning
+            )
+        };
+        let code_of = |d: &active_core::Diagnostic| {
+            format!(
+                "{}{}",
+                d.code,
+                d.path
+                    .as_deref()
+                    .map(|p| format!("@{p}"))
+                    .unwrap_or_default()
+            )
+        };
         match engine.evaluate(&module) {
-            Ok((_, diags)) => codes.extend(diags.iter().map(code_of)),
+            Ok((_, diags)) => codes.extend(diags.iter().filter(|d| blocking(d)).map(code_of)),
             // Strict validation surfaces its diagnostics inside the
             // error; keep their paths so the verdict names the failing
             // location, exactly as the Ok path does.
             Err(active_core::EvalError::ValidationFailed { diagnostics }) => {
-                codes.extend(diagnostics.iter().map(code_of));
+                codes.extend(diagnostics.iter().filter(|d| blocking(d)).map(code_of));
             }
             Err(e) => codes.push(e.code().to_string()),
         }
@@ -5678,11 +5704,15 @@ fn main() -> anyhow::Result<()> {
                             let code = item["code"].as_str().unwrap_or_default();
                             let severity = item["severity"].as_str().unwrap_or_default();
                             let path = item["path"].as_str().unwrap_or_default();
+                            // A path filter selects that path and its
+                            // subtree, never a sibling whose name merely
+                            // starts with the same text.
+                            let path_ok = filter_path.is_empty()
+                                || filter_path.iter().any(|p| path_matches(path, p));
                             (filter_code.is_empty() || filter_code.iter().any(|c| c == code))
                                 && (filter_severity.is_empty()
                                     || filter_severity.iter().any(|s| s == severity))
-                                && (filter_path.is_empty()
-                                    || filter_path.iter().any(|p| path.starts_with(p)))
+                                && path_ok
                         });
                     }
                 }
@@ -5748,11 +5778,21 @@ fn main() -> anyhow::Result<()> {
                         step.status = active_core::convert::repair::StepStatus::Skipped {
                             reason: "not selected by --apply-step/--cherry-pick".to_string(),
                         };
+                        // A skipped step carries no proof: its check
+                        // describes a document this run did not write.
+                        step.proof = None;
                     }
                 }
-                let (clean, codes) = source_verdict(&eng, &target_source, &from);
+                let (clean, codes) =
+                    source_verdict(&eng, &target_source, &from, allow_parent_escapes);
                 display.clean = clean;
                 display.final_codes = codes;
+                // The full plan's terminal state describes a trajectory the
+                // subset did not run: a subset cannot be "stuck" (no loop
+                // ran) and its findings belong to the full plan.
+                display.stuck = false;
+                display.unrepairable = false;
+                display.findings.clear();
             }
             match format.as_str() {
                 "json" => outln!(
@@ -5767,7 +5807,28 @@ fn main() -> anyhow::Result<()> {
                     for step in &display.steps {
                         match &step.status {
                             active_core::convert::repair::StepStatus::Applied => {
-                                outln!("applied {} {}", step.kind, step.directive)
+                                outln!("applied {} {}", step.kind, step.directive);
+                                // L-P53: the mechanical proof the loop
+                                // checked by re-evaluation. Codes and
+                                // paths only, never values.
+                                if let Some(proof) = &step.proof {
+                                    if proof.verified {
+                                        outln!(
+                                            "  proof: verified (removed {}; no new diagnostics; {} values checked)",
+                                            if proof.removes.is_empty() {
+                                                "none".to_string()
+                                            } else {
+                                                proof.removes.join(", ")
+                                            },
+                                            proof.checked_paths
+                                        );
+                                    } else {
+                                        outln!(
+                                            "  proof: unverified ({})",
+                                            proof.reason.as_deref().unwrap_or("no reason recorded")
+                                        );
+                                    }
+                                }
                             }
                             active_core::convert::repair::StepStatus::Skipped { reason } => {
                                 outln!("skipped {} {} ({reason})", step.kind, step.directive)
@@ -5793,7 +5854,7 @@ fn main() -> anyhow::Result<()> {
                 if partial && !applied_directives.is_empty() {
                     std::fs::write(&path, &target_source)
                         .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", path.display()))?;
-                    if !outcome.clean {
+                    if !display.clean {
                         eprintln!(
                             "warning: wrote a partial repair to {} (plan is not clean yet)",
                             path.display()

@@ -2124,6 +2124,21 @@ impl Engine {
         self.evaluate_inner(module, None, None, None)
     }
 
+    /// Evaluate the tree without schema, annotation, or check validation.
+    ///
+    /// The repair planner (L-P53) needs the evaluated value while the
+    /// validation diagnostics are its own input, and strict validation
+    /// never mutates the tree, so this is the same value validation
+    /// would see. Crate-internal on purpose: an unvalidated tree is
+    /// never an export.
+    pub(crate) fn evaluate_tree(
+        &self,
+        module: &Module,
+    ) -> Result<(Value, Vec<Diagnostic>), EvalError> {
+        self.evaluate_walk(module, None, None, None, false)
+            .map_err(|e| attach_progressive_warnings(module, &self.budget.resolve(), e))
+    }
+
     /// Evaluate and also return the runtime secret seeds observed by the
     /// walk: every material node's evaluated text. Export surfaces seed
     /// their redactor with this so a secret copied through a `let`
@@ -2262,12 +2277,13 @@ impl Engine {
         // error, so re-derive the progressive warnings the walk had already
         // collected and carry them on the error. Only the abort path pays
         // for this (one extra static scan).
-        self.evaluate_walk(module, memo, steps, seeds).map_err(|e| {
-            // Resolve before deriving W013: an unresolved zero field would
-            // read as "limit 0" and skip the warning the success path
-            // emits (review finding on LANG-C-009).
-            attach_progressive_warnings(module, &self.budget.resolve(), e)
-        })
+        self.evaluate_walk(module, memo, steps, seeds, true)
+            .map_err(|e| {
+                // Resolve before deriving W013: an unresolved zero field would
+                // read as "limit 0" and skip the warning the success path
+                // emits (review finding on LANG-C-009).
+                attach_progressive_warnings(module, &self.budget.resolve(), e)
+            })
     }
 
     fn evaluate_walk(
@@ -2276,6 +2292,7 @@ impl Engine {
         mut memo: Option<&mut IncrementalMemo>,
         steps: Option<&mut Vec<StepEvent>>,
         mut seeds: Option<&mut SecretRedactor>,
+        validate: bool,
     ) -> Result<(Value, Vec<Diagnostic>), EvalError> {
         // One meaning for a zero field on every surface (LANG-C-015): zero
         // resolves to the shipped default; disabling a limit needs
@@ -3134,37 +3151,41 @@ impl Engine {
         // mutable here. Constraint predicates run after schema
         // validation (spec/annotations.md §3). Both share the
         // evaluation deadline computed before the walk
-        // (spec/budgets.md §2).
-        self.validate_schema(
-            module,
-            &values,
-            &mut result,
-            &mut diagnostics,
-            BudgetCx {
+        // (spec/budgets.md §2). `validate` is false only for the
+        // repair planner's value snapshot (L-P53), which needs the tree
+        // while the diagnostics are exactly what it plans from.
+        if validate {
+            self.validate_schema(
+                module,
+                &values,
+                &mut result,
+                &mut diagnostics,
+                BudgetCx {
+                    deadline,
+                    wall_limit: budget.max_wall_ms,
+                    account: &mut account,
+                },
+            )?;
+            self.validate_annotations(
+                module,
+                &values,
+                &result,
+                &mut diagnostics,
                 deadline,
-                wall_limit: budget.max_wall_ms,
-                account: &mut account,
-            },
-        )?;
-        self.validate_annotations(
-            module,
-            &values,
-            &result,
-            &mut diagnostics,
-            deadline,
-            budget.max_wall_ms,
-        )?;
-        // L-P19: root-schema cross-field checks run after annotations,
-        // against the same final tree.
-        self.validate_checks(
-            module,
-            &values,
-            &result,
-            &mut diagnostics,
-            deadline,
-            budget.max_wall_ms,
-            &mut account,
-        )?;
+                budget.max_wall_ms,
+            )?;
+            // L-P19: root-schema cross-field checks run after annotations,
+            // against the same final tree.
+            self.validate_checks(
+                module,
+                &values,
+                &result,
+                &mut diagnostics,
+                deadline,
+                budget.max_wall_ms,
+                &mut account,
+            )?;
+        }
         // LANG-F-004: the envelope's `tainted` is a sender assertion about
         // its PAYLOAD; the receiver verifies it against that subtree's
         // structural taint, not the whole document (an unrelated root

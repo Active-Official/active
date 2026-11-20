@@ -1,0 +1,16 @@
+# Serve transport vectors (L-T05).
+# Each case sends the file's bytes as the request `source` over one
+# length-prefixed frame and checks the envelope receipt.
+
+version = 1
+
+[[case]]
+id = "serve-accept"
+file = "accept.active"
+outcome = "clean"
+
+[[case]]
+id = "serve-reject-schema"
+file = "reject-schema.active"
+outcome = "failed"
+codes = ["T002"]

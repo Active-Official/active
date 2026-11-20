@@ -10,6 +10,19 @@ standalone Infinity codec).
 
 ## [Unreleased]
 
+### L-T05: `active serve` (stdio document transport)
+
+A long-lived stdio server for Active documents: `u32` little-endian
+length-prefixed JSON requests (`{id, source, name?, env?}`) and one L-T06
+envelope v2 per response (`{id, envelope}`). The 16 MiB frame cap is
+enforced from the length prefix before any allocation (an over-cap frame
+gets one clean `E029` error frame and the server stops); a document over
+the parse cap is refused before parsing. The server is hermetic: no
+include reads (an `include` is E015) and no ambient environment (only the
+request's `env`), carries no state between requests, and binds the same
+`result` hash as `active eval --envelope`. Spec `serve.md`, vectors
+`conformance/serve/`, docs `tooling.md`.
+
 ### L-P62: propose / gate loop with the verifier as the product
 
 `active gate` verifies one candidate with the same per-file checks

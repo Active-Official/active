@@ -8699,3 +8699,546 @@ fn propose_anchors_a_pasted_candidate_to_the_current_directory() {
     let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
     assert_eq!(report["verdict"], "accept", "{report}");
 }
+
+// ----------------------------------------------------------------------
+// L-T05: stdio document transport (`active serve`)
+// ----------------------------------------------------------------------
+
+fn serve_spawn(extra: &[&str]) -> std::process::Child {
+    let mut command = active();
+    command.arg("serve");
+    for arg in extra {
+        command.arg(arg);
+    }
+    command
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn serve")
+}
+
+fn write_serve_frame(child: &mut std::process::Child, bytes: &[u8]) {
+    use std::io::Write;
+    let stdin = child.stdin.as_mut().expect("stdin");
+    stdin
+        .write_all(&(bytes.len() as u32).to_le_bytes())
+        .expect("header");
+    stdin.write_all(bytes).expect("payload");
+    stdin.flush().expect("flush");
+}
+
+fn read_serve_frame(child: &mut std::process::Child) -> Option<serde_json::Value> {
+    read_serve_frame_sized(child).map(|(_, value)| value)
+}
+
+fn read_serve_frame_sized(child: &mut std::process::Child) -> Option<(usize, serde_json::Value)> {
+    use std::io::Read;
+    let stdout = child.stdout.as_mut().expect("stdout");
+    let mut header = [0u8; 4];
+    stdout.read_exact(&mut header).ok()?;
+    let len = u32::from_le_bytes(header) as usize;
+    let mut payload = vec![0u8; len];
+    stdout.read_exact(&mut payload).ok()?;
+    let value = serde_json::from_slice(&payload).ok()?;
+    Some((len, value))
+}
+
+#[test]
+fn serve_round_trips_a_document_and_matches_eval() {
+    // The envelope surface is Data-mode (`--envelope` refuses a Config
+    // document); serve binds the same hash through the same builder.
+    let source = "active_mode = \"data\"\nport = 8080\n";
+    let file = lp62_fixture("serve_doc.active", source);
+    let envelope_path = std::env::temp_dir().join("active-cli-lp62/serve_doc.envelope.json");
+    let _ = std::fs::remove_file(&envelope_path);
+    let eval = active()
+        .args(["eval", "--envelope"])
+        .arg(&envelope_path)
+        .arg(&file)
+        .output()
+        .expect("eval");
+    assert!(
+        eval.status.success(),
+        "{}",
+        String::from_utf8_lossy(&eval.stderr)
+    );
+    let eval_envelope: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&envelope_path).expect("envelope"))
+            .expect("json");
+    let eval_result = eval_envelope["result"]
+        .as_str()
+        .expect("result")
+        .to_string();
+
+    let mut child = serve_spawn(&[]);
+    let request = serde_json::json!({ "id": 1, "source": source, "name": "svc" });
+    write_serve_frame(&mut child, request.to_string().as_bytes());
+    let response = read_serve_frame(&mut child).expect("response");
+    child.stdin.take();
+    let status = child.wait().expect("wait");
+    assert!(status.success(), "serve must exit cleanly on EOF");
+    assert_eq!(response["id"], 1, "{response}");
+    let envelope = &response["envelope"];
+    assert_eq!(envelope["version"], "2.0.0", "{response}");
+    assert_eq!(envelope["payload"]["port"], 8080, "{response}");
+    assert_eq!(envelope["receipt"]["outcome"], "clean", "{response}");
+    assert_eq!(
+        envelope["result"], eval_result,
+        "serve and eval must agree: {response}"
+    );
+}
+
+#[test]
+fn serve_rejects_a_schema_failure_with_codes() {
+    let mut child = serve_spawn(&[]);
+    let request = serde_json::json!({
+        "id": 7,
+        "source": "schema:\n  port = Int\n\nport = \"nope\"\n",
+    });
+    write_serve_frame(&mut child, request.to_string().as_bytes());
+    let response = read_serve_frame(&mut child).expect("response");
+    child.stdin.take();
+    let _ = child.wait();
+    assert_eq!(response["id"], 7, "{response}");
+    let envelope = &response["envelope"];
+    assert_eq!(envelope["receipt"]["outcome"], "failed", "{response}");
+    assert_eq!(
+        envelope["receipt"]["failure_class"], "validation",
+        "{response}"
+    );
+    assert_eq!(envelope["receipt"]["diagnostics"][0], "T002", "{response}");
+    assert!(envelope["payload"].is_null(), "{response}");
+}
+
+#[test]
+fn serve_refuses_an_oversize_frame_before_allocation() {
+    use std::io::Write;
+    // The cap is 256 bytes; the header claims 257 and no payload follows.
+    // A server that trusts the prefix would block or allocate; the shipped
+    // one answers a clean diagnostic from the header alone, and the error
+    // frame itself fits the cap.
+    let mut child = serve_spawn(&["--max-frame", "256"]);
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(&257u32.to_le_bytes())
+        .expect("header");
+    child.stdin.as_mut().expect("stdin").flush().expect("flush");
+    // Close the stream: the server must answer from the header alone. A
+    // server that trusted the prefix would wait for 257 bytes that never
+    // arrive and exit without a frame.
+    child.stdin.take();
+    let (length, response) = read_serve_frame_sized(&mut child).expect("error frame");
+    let status = child.wait().expect("wait");
+    assert!(status.success(), "a refused frame is a clean stop");
+    assert!(length <= 256, "error frame exceeds the cap: {length} bytes");
+    assert_eq!(response["error"]["code"], "E029", "{response}");
+    assert!(
+        response["error"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("256"),
+        "{response}"
+    );
+}
+
+#[test]
+fn serve_treats_a_torn_header_as_an_error() {
+    use std::io::Write;
+    let mut child = serve_spawn(&[]);
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(&[0u8, 0u8])
+        .expect("partial header");
+    child.stdin.take();
+    let status = child.wait().expect("wait");
+    assert!(!status.success(), "a torn header is not a clean shutdown");
+}
+
+#[test]
+fn serve_answers_malformed_json_and_continues() {
+    let mut child = serve_spawn(&[]);
+    write_serve_frame(&mut child, b"{not json");
+    let first = read_serve_frame(&mut child).expect("error frame");
+    assert_eq!(first["error"]["code"], "E017", "{first}");
+    assert!(first["id"].is_null(), "{first}");
+    // The stream is still in sync: a valid request is answered.
+    write_serve_frame(&mut child, br#"{"id":2,"source":"port = 1\n"}"#);
+    let second = read_serve_frame(&mut child).expect("response");
+    assert_eq!(second["id"], 2, "{second}");
+    assert_eq!(
+        second["envelope"]["receipt"]["outcome"], "clean",
+        "{second}"
+    );
+    child.stdin.take();
+    let _ = child.wait();
+}
+
+#[test]
+fn serve_is_hermetic_and_uses_only_the_request_env() {
+    let mut child = serve_spawn(&[]);
+    // Includes are refused (never read from the filesystem).
+    write_serve_frame(&mut child, br#"{"id":1,"source":"include \"x.active\"\n"}"#);
+    let include = read_serve_frame(&mut child).expect("response");
+    assert_eq!(
+        include["envelope"]["receipt"]["outcome"], "failed",
+        "{include}"
+    );
+    assert_eq!(
+        include["envelope"]["receipt"]["failure_class"], "parse",
+        "{include}"
+    );
+    assert!(
+        include["envelope"]["receipt"]["diagnostics"]
+            .as_array()
+            .expect("diagnostics")
+            .iter()
+            .any(|code| code == "E015"),
+        "{include}"
+    );
+    // The request supplies the only environment the document can see.
+    write_serve_frame(
+        &mut child,
+        br#"{"id":2,"source":"v = env.SERVE_PROBE\n","env":{"SERVE_PROBE":"from-request"}}"#,
+    );
+    let env = read_serve_frame(&mut child).expect("response");
+    assert_eq!(env["envelope"]["payload"]["v"], "from-request", "{env}");
+    child.stdin.take();
+    let _ = child.wait();
+}
+
+#[test]
+fn serve_refuses_a_document_over_the_parse_budget_before_parsing() {
+    let mut child = serve_spawn(&[]);
+    let big = " ".repeat((4 << 20) + 1);
+    let request = serde_json::json!({ "id": 9, "source": big });
+    write_serve_frame(&mut child, request.to_string().as_bytes());
+    let response = read_serve_frame(&mut child).expect("response");
+    child.stdin.take();
+    let _ = child.wait();
+    let envelope = &response["envelope"];
+    assert_eq!(envelope["receipt"]["outcome"], "failed", "{response}");
+    assert_eq!(envelope["receipt"]["failure_class"], "parse", "{response}");
+    assert_eq!(envelope["receipt"]["diagnostics"][0], "E029", "{response}");
+    assert!(
+        envelope["receipt"]["budget"].is_object(),
+        "a pre-parse refusal still records the budget: {response}"
+    );
+}
+
+#[test]
+fn serve_redacts_runtime_secrets_like_eval() {
+    // A secret copied through a let binding only appears in the runtime
+    // seeds; redaction without them would leak it over the wire.
+    let mut child = serve_spawn(&[]);
+    let request = serde_json::json!({
+        "id": 1,
+        "source": "let token = secret.env(\"SERVE_TOKEN\")\ncopy = token\n",
+        "env": { "SERVE_TOKEN": "hunter2-serve" },
+    });
+    write_serve_frame(&mut child, request.to_string().as_bytes());
+    let response = read_serve_frame(&mut child).expect("response");
+    child.stdin.take();
+    let _ = child.wait();
+    let text = response.to_string();
+    assert!(
+        !text.contains("hunter2-serve"),
+        "runtime secret leaked: {text}"
+    );
+    assert_eq!(
+        response["envelope"]["receipt"]["outcome"], "clean",
+        "{text}"
+    );
+    assert_eq!(
+        response["envelope"]["payload"]["copy"], "***SECRET***",
+        "{text}"
+    );
+}
+
+#[test]
+fn serve_refuses_a_material_profile_selector() {
+    let mut child = serve_spawn(&[]);
+    let request = serde_json::json!({
+        "id": 1,
+        "source": "profile \"prod\" { port = 2 }\nactive_profile = env.SERVE_PROFILE\nport = 1\n",
+        "env": { "SERVE_PROFILE": "prod-secret" },
+    });
+    write_serve_frame(&mut child, request.to_string().as_bytes());
+    let response = read_serve_frame(&mut child).expect("response");
+    child.stdin.take();
+    let _ = child.wait();
+    let text = response.to_string();
+    assert!(!text.contains("prod-secret"), "selector leaked: {text}");
+    assert_eq!(
+        response["envelope"]["receipt"]["outcome"], "failed",
+        "{text}"
+    );
+    assert!(
+        response["envelope"]["receipt"].get("profile").is_none(),
+        "a material selector must not be bound: {text}"
+    );
+    assert!(response["envelope"]["payload"].is_null(), "{text}");
+}
+
+#[test]
+fn serve_drops_a_dangling_in_document_profile() {
+    // The document's own `active_profile = "ghost"` names a profile that
+    // does not exist: eval fails W002 and binds no selector; serve must
+    // match.
+    let mut child = serve_spawn(&[]);
+    write_serve_frame(
+        &mut child,
+        br#"{"id":1,"source":"active_profile = \"ghost\"\nport = 1\n"}"#,
+    );
+    let response = read_serve_frame(&mut child).expect("response");
+    child.stdin.take();
+    let _ = child.wait();
+    assert_eq!(
+        response["envelope"]["receipt"]["outcome"], "failed",
+        "{response}"
+    );
+    assert!(
+        response["envelope"]["receipt"].get("profile").is_none(),
+        "a dangling in-document selector must not be bound: {response}"
+    );
+}
+
+#[test]
+fn serve_drops_a_dangling_profile_selector() {
+    let mut child = serve_spawn(&["--profile", "ghost"]);
+    write_serve_frame(&mut child, br#"{"id":1,"source":"port = 1\n"}"#);
+    let response = read_serve_frame(&mut child).expect("response");
+    child.stdin.take();
+    let _ = child.wait();
+    // An unknown profile is an evaluation failure (W002), exactly as in
+    // eval; the dangling name is not bound into the receipt.
+    assert_eq!(
+        response["envelope"]["receipt"]["outcome"], "failed",
+        "{response}"
+    );
+    assert!(
+        response["envelope"]["receipt"].get("profile").is_none(),
+        "a dangling selector must not be bound: {response}"
+    );
+}
+
+#[test]
+fn serve_reports_budget_trips_with_their_code() {
+    let mut child = serve_spawn(&["--max-nodes", "5"]);
+    write_serve_frame(
+        &mut child,
+        br#"{"id":1,"source":"a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7\nh = 8\n"}"#,
+    );
+    let response = read_serve_frame(&mut child).expect("response");
+    child.stdin.take();
+    let _ = child.wait();
+    let envelope = &response["envelope"];
+    assert_eq!(envelope["receipt"]["outcome"], "failed", "{response}");
+    assert_eq!(envelope["receipt"]["failure_class"], "budget", "{response}");
+    let codes: Vec<String> = envelope["receipt"]["diagnostics"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|code| code.as_str().map(str::to_string))
+        .collect();
+    assert!(codes.iter().any(|code| code.starts_with('X')), "{response}");
+}
+
+#[test]
+fn serve_rejects_malformed_request_fields_with_e017() {
+    let mut child = serve_spawn(&[]);
+    for (index, request) in [
+        serde_json::json!({"id": [1], "source": "port = 1\n"}),
+        serde_json::json!({"source": "port = 1\n", "name": 7}),
+        serde_json::json!({"source": "port = 1\n", "env": "not-an-object"}),
+        serde_json::json!({"source": "port = 1\n", "env": {"A": 1}}),
+        serde_json::json!({"id": 1}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        write_serve_frame(&mut child, request.to_string().as_bytes());
+        let response = read_serve_frame(&mut child).expect("error frame");
+        assert_eq!(
+            response["error"]["code"], "E017",
+            "case {index}: {response}"
+        );
+    }
+    // The stream stayed in sync: a valid request is still answered.
+    write_serve_frame(&mut child, br#"{"id": 9, "source": "port = 1\n"}"#);
+    let response = read_serve_frame(&mut child).expect("response");
+    assert_eq!(response["id"], 9, "{response}");
+    child.stdin.take();
+    let _ = child.wait();
+}
+
+#[test]
+fn serve_rejects_an_out_of_range_frame_cap() {
+    let out = active()
+        .args(["serve", "--max-frame", "10"])
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("between 256"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn serve_error_frames_fit_the_cap_even_with_a_large_id() {
+    // A 200-byte echoed id would make the refusal itself unframable; the
+    // server drops the id before giving up.
+    let mut child = serve_spawn(&["--max-frame", "256"]);
+    let request = serde_json::json!({
+        "id": "A".repeat(200),
+        "source": "port = 1\n",
+    });
+    write_serve_frame(&mut child, request.to_string().as_bytes());
+    let (length, response) = read_serve_frame_sized(&mut child).expect("frame");
+    child.stdin.take();
+    let _ = child.wait();
+    assert!(length <= 256, "error frame is {length} bytes");
+    // Either the normal response was refused for size (E029) or a large id
+    // was echoed with a small envelope; both fit and decode.
+    assert!(
+        response.get("error").is_some() || response.get("envelope").is_some(),
+        "{response}"
+    );
+}
+
+#[test]
+fn serve_torn_payload_is_an_error_with_no_frame() {
+    use std::io::Write;
+    let mut child = serve_spawn(&[]);
+    let stdin = child.stdin.as_mut().expect("stdin");
+    stdin.write_all(&10u32.to_le_bytes()).expect("header");
+    stdin.write_all(b"abc").expect("partial payload");
+    child.stdin.take();
+    let out = child.wait_with_output().expect("wait");
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty(), "no frame may be written");
+}
+
+#[test]
+fn serve_torn_header_writes_no_frame() {
+    use std::io::Write;
+    let mut child = serve_spawn(&[]);
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(&[1u8, 2u8])
+        .expect("partial header");
+    child.stdin.take();
+    let out = child.wait_with_output().expect("wait");
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty(), "no frame may be written");
+}
+
+#[test]
+fn serve_honors_the_process_parse_limits() {
+    // The operator's `--max-input-bytes` is a process-wide parse limit;
+    // serve must apply it before tokenizing.
+    let mut child = active()
+        .args(["--max-input-bytes", "16", "serve"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn serve");
+    write_serve_frame(
+        &mut child,
+        br#"{"id":1,"source":"port = 8080\nhost = \"example\"\n"}"#,
+    );
+    let response = read_serve_frame(&mut child).expect("response");
+    child.stdin.take();
+    let _ = child.wait();
+    assert_eq!(
+        response["envelope"]["receipt"]["outcome"], "failed",
+        "{response}"
+    );
+    assert_eq!(
+        response["envelope"]["receipt"]["failure_class"], "parse",
+        "{response}"
+    );
+    assert_eq!(
+        response["envelope"]["receipt"]["diagnostics"][0], "E029",
+        "{response}"
+    );
+}
+
+#[test]
+fn serve_never_reads_the_ambient_environment() {
+    let mut child = active()
+        .arg("serve")
+        .env("SERVE_AMBIENT", "poison")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn serve");
+    write_serve_frame(
+        &mut child,
+        br#"{"id":1,"source":"v = env.SERVE_AMBIENT\n"}"#,
+    );
+    let response = read_serve_frame(&mut child).expect("response");
+    child.stdin.take();
+    let _ = child.wait();
+    let text = response.to_string();
+    assert!(!text.contains("poison"), "ambient value leaked: {text}");
+    assert!(response["envelope"]["payload"]["v"].is_null(), "{text}");
+}
+
+#[test]
+fn serve_drops_a_dangling_cli_override_instead_of_falling_back() {
+    // An explicit unknown selector must not fall back to the document's
+    // selector: the receipt must not claim the document's profile.
+    let mut child = serve_spawn(&["--profile", "ghost"]);
+    write_serve_frame(
+        &mut child,
+        br#"{"id":1,"source":"profile \"real\" { port = 2 }\nactive_profile = \"real\"\nport = 1\n"}"#,
+    );
+    let response = read_serve_frame(&mut child).expect("response");
+    child.stdin.take();
+    let _ = child.wait();
+    assert!(
+        response["envelope"]["receipt"].get("profile").is_none(),
+        "the override must not fall back to the document selector: {response}"
+    );
+}
+
+#[test]
+fn propose_leaves_no_working_copy_behind() {
+    // The hidden working copy is removed on every exit path, including
+    // the rejection exit (which skips Rust destructors unless dropped
+    // explicitly).
+    let dir = std::env::temp_dir()
+        .join("active-cli-lp62")
+        .join("no-stray");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let candidate = dir.join("bad.active");
+    std::fs::write(&candidate, "port=8080\n").expect("candidate");
+    let out = active()
+        .args(["propose", "--request", "x"])
+        .arg("--candidate")
+        .arg(&candidate)
+        .args(["--rounds", "1"])
+        .output()
+        .expect("run active");
+    assert!(!out.status.success());
+    let strays: Vec<_> = std::fs::read_dir(&dir)
+        .expect("dir")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().to_string())
+        .filter(|name| name.starts_with(".active-propose-"))
+        .collect();
+    assert!(strays.is_empty(), "working copies left behind: {strays:?}");
+}

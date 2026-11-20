@@ -1077,6 +1077,22 @@ enum Commands {
         #[command(flatten)]
         budget: BudgetArgs,
     },
+    /// Serve documents over stdio with length-prefixed frames (L-T05)
+    ///
+    /// Each request is a JSON object `{id, source, name?, env?}` in a
+    /// `u32` little-endian length-prefixed frame; each response carries
+    /// the shared L-T06 envelope v2. The server is hermetic: it resolves
+    /// no includes and reads no ambient environment (request `env` only).
+    Serve {
+        /// Maximum frame payload in bytes (enforced before allocation)
+        #[arg(long, default_value_t = 16 * 1024 * 1024)]
+        max_frame: usize,
+        /// Named profile for every request
+        #[arg(long)]
+        profile: Option<String>,
+        #[command(flatten)]
+        budget: BudgetArgs,
+    },
     /// Generate an Ed25519 key pair for overlay signing
     Keygen {
         /// Output prefix: writes <prefix>.secret (0600 on Unix) and
@@ -2135,6 +2151,405 @@ fn run_generator(command: &str, request: &str) -> anyhow::Result<String> {
     String::from_utf8(stdout_bytes).map_err(|_| anyhow::anyhow!("generator output is not UTF-8"))
 }
 
+// ----------------------------------------------------------------------
+// L-T05: stdio document transport (`active serve`)
+// ----------------------------------------------------------------------
+
+/// Read length-prefixed request frames from stdin and write one response
+/// frame per request. The cap is checked from the length prefix before
+/// any payload allocation; an oversized frame is answered with a clean
+/// diagnostic and the stream stops (it cannot be resynchronized).
+fn serve_stdio(
+    profile: &Option<String>,
+    budget: active_core::eval::Budget,
+    max_frame: usize,
+) -> anyhow::Result<()> {
+    use std::io::{Read, Write};
+    let stdin = std::io::stdin();
+    let mut reader = stdin.lock();
+    let stdout = std::io::stdout();
+    let mut writer = stdout.lock();
+    loop {
+        let mut header = [0u8; 4];
+        // A zero-byte read is a clean EOF; a partial header is a torn
+        // stream and ends the server non-zero with no frame (the client
+        // must not see a clean shutdown for a dropped request).
+        match reader.read(&mut header[..1]) {
+            Ok(0) => return Ok(()),
+            Ok(_) => {}
+            Err(error) => {
+                return Err(anyhow::anyhow!("cannot read a frame header: {error}"));
+            }
+        }
+        reader
+            .read_exact(&mut header[1..])
+            .map_err(|_| anyhow::anyhow!("truncated frame header"))?;
+        let len = u32::from_le_bytes(header) as usize;
+        if len > max_frame {
+            let frame = serde_json::json!({
+                "id": serde_json::Value::Null,
+                "error": {
+                    "code": "E029",
+                    "message": format!("frame is {len} bytes; the limit is {max_frame}"),
+                },
+            });
+            write_frame(&mut writer, &serde_json::to_vec(&frame)?)?;
+            writer.flush()?;
+            return Ok(());
+        }
+        let mut payload = Vec::new();
+        payload
+            .try_reserve_exact(len)
+            .map_err(|_| anyhow::anyhow!("cannot allocate a {len}-byte frame payload"))?;
+        payload.resize(len, 0);
+        reader
+            .read_exact(&mut payload)
+            .map_err(|e| anyhow::anyhow!("cannot read a frame payload: {e}"))?;
+        let response = serve_request(&payload, profile, budget, max_frame);
+        write_frame(&mut writer, &response)?;
+        writer.flush()?;
+    }
+}
+
+fn write_frame(writer: &mut impl std::io::Write, payload: &[u8]) -> anyhow::Result<()> {
+    let len = u32::try_from(payload.len())
+        .map_err(|_| anyhow::anyhow!("response exceeds the frame-length field"))?;
+    writer.write_all(&len.to_le_bytes())?;
+    writer.write_all(payload)?;
+    Ok(())
+}
+
+/// An error frame that always fits the cap: a large echoed `id` would
+/// otherwise make the refusal itself unframable, so the fallback drops the
+/// id before giving up. Never returns an empty frame.
+fn serve_error_frame(
+    id: serde_json::Value,
+    code: &str,
+    message: &str,
+    max_frame: usize,
+) -> Vec<u8> {
+    let build = |id: serde_json::Value| {
+        serde_json::to_vec(&serde_json::json!({
+            "id": id,
+            "error": { "code": code, "message": message },
+        }))
+        .unwrap_or_default()
+    };
+    let bytes = build(id);
+    if bytes.len() <= max_frame && !bytes.is_empty() {
+        return bytes;
+    }
+    let fallback = build(serde_json::Value::Null);
+    if fallback.len() <= max_frame && !fallback.is_empty() {
+        return fallback;
+    }
+    // The message is fixed and short, and the cap is at least 256; this
+    // is unreachable for a valid cap but must never emit a zero-length
+    // frame.
+    br#"{"id":null,"error":{"code":"E029","message":"frame too large"}}"#.to_vec()
+}
+
+fn serve_request(
+    payload: &[u8],
+    profile: &Option<String>,
+    budget: active_core::eval::Budget,
+    max_frame: usize,
+) -> Vec<u8> {
+    let request: serde_json::Value = match serde_json::from_slice(payload) {
+        Ok(value) => value,
+        Err(_) => {
+            return serve_error_frame(
+                serde_json::Value::Null,
+                "E017",
+                "request is not valid JSON",
+                max_frame,
+            )
+        }
+    };
+    let id = request
+        .get("id")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    if matches!(
+        id,
+        serde_json::Value::Array(_) | serde_json::Value::Object(_)
+    ) {
+        return serve_error_frame(
+            serde_json::Value::Null,
+            "E017",
+            "request `id` must be a JSON scalar",
+            max_frame,
+        );
+    }
+    let Some(source) = request.get("source").and_then(|value| value.as_str()) else {
+        return serve_error_frame(id, "E017", "request needs a string `source`", max_frame);
+    };
+    let name = match request.get("name") {
+        None | Some(serde_json::Value::Null) => "serve".to_string(),
+        Some(serde_json::Value::String(text)) => text.clone(),
+        Some(_) => {
+            return serve_error_frame(id, "E017", "request `name` must be a string", max_frame);
+        }
+    };
+    let mut env = std::collections::HashMap::new();
+    match request.get("env") {
+        None | Some(serde_json::Value::Null) => {}
+        Some(serde_json::Value::Object(map)) => {
+            for (key, value) in map {
+                let Some(text) = value.as_str() else {
+                    return serve_error_frame(
+                        id,
+                        "E017",
+                        "request `env` values must be strings",
+                        max_frame,
+                    );
+                };
+                env.insert(key.clone(), text.to_string());
+            }
+        }
+        Some(_) => {
+            return serve_error_frame(id, "E017", "request `env` must be an object", max_frame);
+        }
+    }
+    let mut engine = Engine::hermetic();
+    engine.resilient = false;
+    engine.profile_override = profile.clone();
+    engine.budget = budget;
+    let engine = engine.with_env(env);
+    let envelope = serve_evaluate(source, &name, &engine);
+    if envelope.is_null() {
+        return serve_error_frame(id, "E029", "cannot render the response envelope", max_frame);
+    }
+    let frame = serde_json::json!({ "id": id, "envelope": envelope });
+    let bytes = serde_json::to_vec(&frame).unwrap_or_default();
+    if bytes.len() > max_frame {
+        return serve_error_frame(id, "E029", "response exceeds the frame limit", max_frame);
+    }
+    bytes
+}
+
+/// Evaluate one document and produce the shared L-T06 envelope: the same
+/// shape, hash binding, and redaction every other transport uses.
+fn serve_evaluate(source: &str, name: &str, engine: &Engine) -> serde_json::Value {
+    // The process-wide parse limits (`--max-input-bytes`,
+    // `--parse-wall-ms`) apply here like every other parse path.
+    let options = crate::with_parse_limits(ParseOptions::default());
+    // Budget before parse: an oversized document is refused with the
+    // shipped parse diagnostic, without tokenizing a byte.
+    if options.max_input_bytes != 0 && source.len() > options.max_input_bytes {
+        let codes = vec!["E029".to_string()];
+        let receipt = serve_failure_receipt(None, &engine.budget, codes, "parse");
+        return render_envelope_v2("agent", false, serde_json::Value::Null, None, receipt, None)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or(serde_json::Value::Null);
+    }
+    // Hermetic: no include reads (an `include` is E015, not a file read)
+    // and no ambient environment (only the request's explicit `env`).
+    let hermetic_options = ParseOptions {
+        enable_includes: false,
+        resolve_includes: false,
+        ..options
+    };
+    let module = match active_core::parse_with(source, name, hermetic_options) {
+        Ok(module) => module,
+        Err(diagnostics) => {
+            let codes: Vec<String> = diagnostics.iter().map(|d| d.code.clone()).collect();
+            let receipt = serve_failure_receipt(None, &engine.budget, codes, "parse");
+            return render_envelope_v2(
+                "agent",
+                false,
+                serde_json::Value::Null,
+                None,
+                receipt,
+                None,
+            )
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or(serde_json::Value::Null);
+        }
+    };
+    // An explicit selector wins even when it is unknown (eval then fails
+    // W002); falling back to the document's selector here would bind a
+    // profile the evaluator never used.
+    let effective_profile = match &engine.profile_override {
+        Some(name) => module.profiles.contains_key(name).then(|| name.clone()),
+        None => active_core::secret::active_profile_name(&module)
+            .filter(|name| module.profiles.contains_key(name)),
+    };
+    // Runtime secrets (a let-bound copy, a computed value, a lazy env
+    // lookup) only appear in the seeds; redaction without them leaks a
+    // value eval redacts. The analysis is also refused when it hit its
+    // own bounds: a truncated profile may lie.
+    let (evaluated, seeds, codes, failure) = match engine.evaluate_with_seeds(&module) {
+        Ok((value, diagnostics, seeds)) => {
+            let codes: Vec<String> = diagnostics.iter().map(|d| d.code.clone()).collect();
+            let failed = had_failure(&diagnostics, engine.resilient);
+            (
+                Some(value),
+                Some(seeds),
+                codes,
+                if failed { Some("validation") } else { None },
+            )
+        }
+        Err(active_core::EvalError::ValidationFailed { diagnostics }) => {
+            let codes: Vec<String> = diagnostics.iter().map(|d| d.code.clone()).collect();
+            (None, None, codes, Some("validation"))
+        }
+        Err(error) => {
+            // Keep the progressive warnings eval prints: a budget trip
+            // carries the W013/X-code pair, and the code alone reads as a
+            // different failure.
+            let mut codes: Vec<String> = error
+                .attached_warnings()
+                .iter()
+                .map(|d| d.code.clone())
+                .collect();
+            codes.push(error.code().to_string());
+            let class = if error.code().starts_with('X') {
+                "budget"
+            } else {
+                "other"
+            };
+            (None, None, codes, Some(class))
+        }
+    };
+    let failed = failure.is_some();
+    let mut payload = active_core::Value::Null;
+    let mut payload_json = serde_json::Value::Null;
+    let mut tainted = false;
+    // A material selector must not be written in cleartext (eval H-04)
+    // and a truncated secret analysis may lie: both refuse the envelope.
+    let selectors_material = |profile: &active_core::secret::SecretProfile| {
+        [
+            effective_profile.as_deref(),
+            active_core::envelope::document_schema_version(&module).as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|text| profile.is_material_text(text) || profile.redact_text(text).is_some())
+    };
+    let mut refusal: Option<(&'static str, &'static str)> = None;
+    if let Some(seeds) = &seeds {
+        match complete_profile(active_core::secret::SecretProfile::for_engine(
+            &module, engine, seeds,
+        )) {
+            Ok(profile) => {
+                if selectors_material(&profile) {
+                    refusal = Some(("E027", "other"));
+                } else if !failed {
+                    if let Some(value) = &evaluated {
+                        payload = active_core::convert::redact_value(&profile, value);
+                        payload_json = serde_json::from_str(
+                            &active_core::convert::value_to_pretty_json(&payload),
+                        )
+                        .unwrap_or(serde_json::Value::Null);
+                        tainted = active_core::envelope::payload_tainted(&payload);
+                    }
+                }
+            }
+            // The analysis hit its own bounds; a benign value might be
+            // redacted or a material one missed. Refuse.
+            Err(_) => refusal = Some(("E029", "budget")),
+        }
+    } else if failed {
+        let profile = active_core::secret::SecretProfile::with_context(
+            &module,
+            effective_profile.as_deref(),
+            Some(&engine.env),
+            None,
+        );
+        if selectors_material(&profile) {
+            refusal = Some(("E027", "other"));
+        }
+    }
+    let receipt = if let Some((code, class)) = refusal {
+        let mut refusal_codes = codes.clone();
+        if !refusal_codes.iter().any(|existing| existing == code) {
+            refusal_codes.push(code.to_string());
+        }
+        serve_failure_receipt(Some(&module), &engine.budget, refusal_codes, class)
+    } else {
+        outcome_receipt(
+            &module,
+            effective_profile.as_deref(),
+            &engine.budget,
+            &payload,
+            "agent",
+            &codes,
+            failed,
+            failure.unwrap_or("other"),
+        )
+    };
+    let refused =
+        refusal.is_some() || receipt.get("outcome").and_then(|v| v.as_str()) == Some("failed");
+    let result = if refused {
+        None
+    } else {
+        receipt
+            .get("result")
+            .and_then(|value| value.as_str())
+            .map(str::to_string)
+    };
+    if refused {
+        payload_json = serde_json::Value::Null;
+        tainted = false;
+    }
+    render_envelope_v2(
+        "agent",
+        tainted,
+        payload_json,
+        result.as_deref(),
+        receipt,
+        None,
+    )
+    .ok()
+    .and_then(|text| serde_json::from_str(&text).ok())
+    .unwrap_or(serde_json::Value::Null)
+}
+
+/// A failed-attempt receipt for a refusal that never reaches
+/// `outcome_receipt` (pre-parse, parse failure, material selector,
+/// truncated analysis). It carries the resolved budget and, when the
+/// document parsed, its mode; it never carries a value or a selector.
+fn serve_failure_receipt(
+    module: Option<&active_core::Module>,
+    budget: &active_core::eval::Budget,
+    codes: Vec<String>,
+    failure_class: &str,
+) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    map.insert("outcome".into(), serde_json::json!("failed"));
+    map.insert("failure_class".into(), serde_json::json!(failure_class));
+    map.insert("capability".into(), serde_json::json!("agent"));
+    if let Some(module) = module {
+        map.insert(
+            "mode".into(),
+            serde_json::json!(match module.mode {
+                active_core::Mode::Config => "config",
+                active_core::Mode::Data => "data",
+            }),
+        );
+    }
+    map.insert("budget".into(), receipt_budget(budget));
+    map.insert("diagnostics".into(), serde_json::json!(codes));
+    serde_json::Value::Object(map)
+}
+
+/// The resolved budget block a receipt records.
+fn receipt_budget(budget: &active_core::eval::Budget) -> serde_json::Value {
+    let resolved = budget.resolve();
+    serde_json::json!({
+        "nodes": resolved.max_nodes,
+        "depth": resolved.max_depth,
+        "array_len": resolved.max_array_len,
+        "keys": resolved.max_keys,
+        "wall_ms": resolved.max_wall_ms,
+        "value_size": resolved.max_value_size,
+        "total_size": resolved.max_total_value_size,
+    })
+}
+
 fn source_verdict(
     engine: &Engine,
     source: &str,
@@ -2244,8 +2659,7 @@ impl Drop for RemoveOnDrop {
     }
 }
 
-/// The directory that anchors include resolution and lint discovery for
-/// a path: its parent, or the current directory for a bare file name (an
+/// The directory that anchors include resolution and lint discovery for/// a path: its parent, or the current directory for a bare file name (an
 /// empty parent is not the process directory).
 fn parent_dir(path: &std::path::Path) -> Option<std::path::PathBuf> {
     match path.parent() {
@@ -6977,6 +7391,9 @@ fn main() -> anyhow::Result<()> {
                 other => anyhow::bail!("unsupported format: {other}"),
             }
             if !accepted {
+                // `process::exit` skips destructors: remove the working
+                // copy explicitly before leaving.
+                drop(temp);
                 std::process::exit(1);
             }
         }
@@ -7064,8 +7481,23 @@ fn main() -> anyhow::Result<()> {
                 std::process::exit(1);
             }
         }
-        Commands::Store { action } => {
-            let resolve_root = |explicit: Option<PathBuf>| -> anyhow::Result<PathBuf> {
+        Commands::Serve {
+            max_frame,
+            profile,
+            budget,
+        } => {
+            // L-T05: stdio document transport. The frame cap is enforced
+            // from the length prefix BEFORE any payload allocation, and
+            // the server is hermetic (no include reads, no ambient env).
+            if max_frame < 256 || max_frame > u32::MAX as usize {
+                anyhow::bail!(
+                    "--max-frame must be between 256 and {} bytes",
+                    u32::MAX
+                );
+            }
+            serve_stdio(&profile, budget.resolve()?, max_frame)?;
+        }
+        Commands::Store { action } => {            let resolve_root = |explicit: Option<PathBuf>| -> anyhow::Result<PathBuf> {
                 explicit
                     .or_else(active_core::store::Store::default_root)
                     .ok_or_else(|| {

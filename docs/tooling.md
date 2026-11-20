@@ -87,6 +87,22 @@ active viz repair --from svc.active
 Load any JSON export into `viz/index.html` for a dependency-free view.
 Shapes: `docs/schemas/{graph,taint,budget}.json`.
 
+## Serve documents over stdio (L-T05)
+
+```sh
+active serve --max-frame 16777216
+```
+
+A long-lived document transport: stdin carries `u32` little-endian
+length-prefixed JSON requests (`{id, source, name?, env?}`), stdout
+carries one L-T06 envelope v2 per request (`{id, envelope}`). The frame
+cap is enforced from the length prefix before any allocation; an over-cap
+frame gets one clean `E029` error frame and the server stops. The server
+is hermetic (no include reads, no ambient environment — only the
+request's `env`) and refuses a document over the parse cap before
+parsing. EOF ends it. Spec: `spec/serve.md`; vectors:
+`conformance/serve/`.
+
 ## Propose and gate (L-P62)
 
 ```sh

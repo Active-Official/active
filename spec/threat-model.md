@@ -35,8 +35,9 @@ Read with spec/reproducibility.md (provenance, lockfiles).
 Includes execute as data: they contribute bindings, tables, and
 patches to the merged module. A hostile include can exfiltrate
 (via interpolation into exported strings — blocked for secrets
-by S004, but plain values DO export), override keys (last-wins
-merge), or inject patches (applied post-evaluation).
+by S004, but plain values DO export), override keys (local keys win;
+  two includes that disagree at equal priority are E046, L-P09), or
+  inject patches (applied post-evaluation).
 
 Mitigations:
 

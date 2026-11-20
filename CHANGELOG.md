@@ -10,6 +10,30 @@ standalone Infinity codec).
 
 ## [Unreleased]
 
+### L-P09: unification as the one merge semantics (2.0.0 language change)
+
+Every source merge is one operation with priorities Default < Include <
+Local < Profile. Tables merge recursively; equal values agree; a scalar,
+array, or shape disagreement between same-priority sources is E046. The
+first source in source order remains in resilient output; strict and
+resilient both report the error. Provenance is a bounded side map
+(65,536 paths, 8 MiB of path/source text, 16 losers per path) exposed by
+`active inspect --path` (value report v2: `merge` plus truncation flags)
+and by `Engine::evaluate_with_merges`; records never contain values.
+
+Migration fallout: includes are equal-priority peers, so a document that
+relied on the last include winning now reports E046 when the includes
+disagree (a local key still beats every include). Repeated table headers
+and brace/indent bodies merge instead of discarding the earlier body;
+W011 no longer fires for table bodies (duplicate scalar keys keep it).
+Schemas in repeated bodies follow the same Local/Include direction and
+keep the first `closed` flag. Profiles merge at Profile priority, a
+profile type change is not a warning (W003 is retired and reserved), a
+material `active_profile` selector refuses with E027, and a profile's own
+`active_profile` is allowed but never reselects or replaces the exported
+selector. A table body cannot extend an alias (E046). Dotted headers cap
+at 256 segments (E011). Conformance vectors 0043-0048.
+
 ### L-P19: root-schema `check` blocks (cross-field invariants)
 
 A root schema may declare `check { name = predicate }` (or `check:` with an

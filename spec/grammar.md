@@ -376,10 +376,10 @@ profile-block = "profile" string-literal "{" [ newline { statement } ] "}"
   profile merges (base configuration only); if it names no defined
   profile, or is not a string, a W002 warning is emitted and no profile
   merges.
-- Merge (normative): the selected profile's fields merge into the
-  document root — scalars last-wins (profile wins), tables deep-merge
-  with the same local-wins semantics as includes (the profile counts as
-  the "later" layer over base). A profile value whose type differs from
+- Merge (normative, L-P09): the selected profile's fields merge into the
+  document root at Profile priority over the base (Local) — tables union
+  recursively and a profile scalar replaces a base scalar of any type.
+  A profile value whose type differs from
   the base value still wins, with no warning (L-P09; provenance records
   the winner). A profile's own `active_profile` never reselects and is
   not exported over the base selector. Profile blocks never

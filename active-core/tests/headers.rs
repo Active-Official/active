@@ -4,10 +4,44 @@
 //! Local priority: disjoint keys union, equal leaves agree, a scalar,
 //! array, or shape disagreement is E046 and the first body stays.
 
-use active_core::{parse, Engine};
+use active_core::Engine;
+
+fn parse_headers(src: &str) -> active_core::Module {
+    active_core::parse_with(
+        src,
+        "headers",
+        active_core::ParseOptions {
+            max_wall_ms: 30_000,
+            ..active_core::ParseOptions::default()
+        },
+    )
+    .unwrap_or_else(|d| panic!("parse: {d:?}"))
+}
+
+fn parse_fmt(src: &str) -> active_core::Module {
+    active_core::parse_with(
+        src,
+        "fmt",
+        active_core::ParseOptions {
+            max_wall_ms: 30_000,
+            ..active_core::ParseOptions::default()
+        },
+    )
+    .unwrap_or_else(|d| panic!("parse: {d:?}"))
+}
 
 fn eval(src: &str) -> (active_core::Value, Vec<active_core::Diagnostic>) {
-    let module = parse(src, "headers").unwrap_or_else(|d| panic!("parse: {d:?}"));
+    // A loaded CI runner must not turn a tiny fixture into an E029 flake;
+    // the shipped parse bounds are pinned by their own tests.
+    let module = active_core::parse_with(
+        src,
+        "headers",
+        active_core::ParseOptions {
+            max_wall_ms: 30_000,
+            ..active_core::ParseOptions::default()
+        },
+    )
+    .unwrap_or_else(|d| panic!("parse: {d:?}"));
     Engine::new()
         .evaluate(&module)
         .unwrap_or_else(|e| panic!("evaluate: {e}"))
@@ -33,7 +67,7 @@ fn repeated_headers_merge_disjoint_keys_in_every_style() {
         "t {\n  a = 1\n}\nt {\n  b = 2\n}\n",
         "t:\n  a = 1\nt:\n  b = 2\n",
     ] {
-        let module = parse(src, "headers").expect("parse");
+        let module = parse_headers(src);
         assert!(
             module.healing.iter().all(|d| d.code != "W011"),
             "no discard warning for tables: {:?}",
@@ -101,7 +135,7 @@ fn three_repeated_headers_union_all_bodies() {
 fn duplicate_scalar_keys_keep_last_wins_and_w011() {
     // Phase 3 covers table headers. A repeated scalar key keeps its
     // long-standing last-wins policy, announced as W011.
-    let module = parse("x = 1\nx = 2\n", "headers").expect("parse");
+    let module = parse_headers("x = 1\nx = 2\n");
     assert!(
         module.healing.iter().any(|d| d.code == "W011"),
         "{:?}",
@@ -117,14 +151,14 @@ fn duplicate_scalar_keys_keep_last_wins_and_w011() {
 #[test]
 fn repeated_header_formatting_is_stable_and_value_preserving() {
     let src = "[t]\na = 1\n[t]\nb = 2\n";
-    let module = parse(src, "headers").expect("parse");
+    let module = parse_headers(src);
     for style in [
         active_core::Style::Brace,
         active_core::Style::Indent,
         active_core::Style::Preserve,
     ] {
         let once = active_core::fmt::format(&module, style);
-        let reparsed = parse(&once, "fmt").expect("reparse");
+        let reparsed = parse_fmt(&once);
         let again = active_core::fmt::format(&reparsed, style);
         assert_eq!(once, again, "formatting is not idempotent for {style:?}");
         let (source_value, _) = eval(src);
@@ -169,13 +203,13 @@ fn immutable_patch_is_refused(module: &active_core::Module) -> bool {
 #[test]
 fn an_annotation_on_a_repeated_header_keeps_its_path_through_formatting() {
     let src = "[t]\na = 1\n# @ai_immutable: true\n[t]\nb = 2\n@patch(\"t.c\", 3)\n";
-    let module = parse(src, "headers").expect("parse");
+    let module = parse_headers(src);
     assert!(
         immutable_patch_is_refused(&module),
         "immutability must guard t"
     );
     let out = active_core::fmt::format(&module, active_core::Style::Brace);
-    let reparsed = parse(&out, "fmt").expect("reparse");
+    let reparsed = parse_fmt(&out);
     assert!(
         immutable_patch_is_refused(&reparsed),
         "formatting moved the annotation off t:\n{out}"
@@ -185,10 +219,10 @@ fn an_annotation_on_a_repeated_header_keeps_its_path_through_formatting() {
 #[test]
 fn a_comment_between_repeated_headers_is_stable() {
     let src = "[app]\na = 1\n# between\n[app]\nb = 2\n";
-    let module = parse(src, "headers").expect("parse");
+    let module = parse_headers(src);
     for style in [active_core::Style::Brace, active_core::Style::Indent] {
         let once = active_core::fmt::format(&module, style);
-        let reparsed = parse(&once, "fmt").expect("reparse");
+        let reparsed = parse_fmt(&once);
         let twice = active_core::fmt::format(&reparsed, style);
         assert_eq!(once, twice, "not a fixed point for {style:?}:\n{once}");
         assert_eq!(once.matches("# between").count(), 1, "{once}");
@@ -198,9 +232,9 @@ fn a_comment_between_repeated_headers_is_stable() {
 #[test]
 fn repeated_header_comment_layout_reaches_a_fixed_point() {
     let src = "# first\n[app]\na = 1\n# s1\n[app]\nb = 2\n# a2\n[app]\nc = 3\n# s2\n[app]\nd = 4\n";
-    let module = parse(src, "headers").expect("parse");
+    let module = parse_headers(src);
     let once = active_core::fmt::format(&module, active_core::Style::Brace);
-    let reparsed = parse(&once, "fmt").expect("reparse");
+    let reparsed = parse_fmt(&once);
     let twice = active_core::fmt::format(&reparsed, active_core::Style::Brace);
     assert_eq!(once, twice, "not a fixed point:\n{once}");
     for needle in ["# first", "# s1", "# a2", "# s2"] {
@@ -211,7 +245,7 @@ fn repeated_header_comment_layout_reaches_a_fixed_point() {
 #[test]
 fn repeated_header_trailing_comments_are_emitted_once() {
     let src = "[t]\na = 1\n[t]\nb = 2\n# end note\n";
-    let module = parse(src, "headers").expect("parse");
+    let module = parse_headers(src);
     for style in [active_core::Style::Brace, active_core::Style::Indent] {
         let once = active_core::fmt::format(&module, style);
         assert_eq!(
@@ -219,7 +253,7 @@ fn repeated_header_trailing_comments_are_emitted_once() {
             1,
             "comment duplicated for {style:?}:\n{once}"
         );
-        let reparsed = parse(&once, "fmt").expect("reparse");
+        let reparsed = parse_fmt(&once);
         let again = active_core::fmt::format(&reparsed, style);
         assert_eq!(once, again, "not a fixed point for {style:?}:\n{once}");
     }
@@ -228,10 +262,10 @@ fn repeated_header_trailing_comments_are_emitted_once() {
 #[test]
 fn empty_nested_repeated_bodies_never_replace_the_merge() {
     let src = "outer {\n  t { a = 1 }\n  t {}\n}\n";
-    let module = parse(src, "headers").expect("parse");
+    let module = parse_headers(src);
     for style in [active_core::Style::Brace, active_core::Style::Indent] {
         let once = active_core::fmt::format(&module, style);
-        let reparsed = parse(&once, "fmt").expect("reparse");
+        let reparsed = parse_fmt(&once);
         let again = active_core::fmt::format(&reparsed, style);
         assert_eq!(once, again, "not a fixed point for {style:?}:\n{once}");
         let (source_value, _) = eval(src);
@@ -247,7 +281,7 @@ fn empty_nested_repeated_bodies_never_replace_the_merge() {
 #[test]
 fn extracted_metadata_is_not_reemitted_by_repeated_bodies() {
     let with_depends = "[t]\ndepends_on = [\"x.active\"]\n[t]\na = 1\n";
-    let module = parse(with_depends, "headers").expect("parse");
+    let module = parse_headers(with_depends);
     let out = active_core::fmt::format(&module, active_core::Style::Brace);
     assert_eq!(
         out.matches("depends_on").count(),
@@ -255,7 +289,7 @@ fn extracted_metadata_is_not_reemitted_by_repeated_bodies() {
         "depends_on duplicated:\n{out}"
     );
     assert!(!out.contains("schema = null"), "{out}");
-    let reparsed = parse(&out, "fmt").expect("reparse");
+    let reparsed = parse_fmt(&out);
     assert!(
         reparsed.healing.iter().all(|d| d.code != "W011"),
         "{:?}",
@@ -263,10 +297,10 @@ fn extracted_metadata_is_not_reemitted_by_repeated_bodies() {
     );
 
     let with_schema = "[t]\nschema { a = Int }\n[t]\na = 1\nb = 1\n";
-    let module = parse(with_schema, "headers").expect("parse");
+    let module = parse_headers(with_schema);
     let out = active_core::fmt::format(&module, active_core::Style::Brace);
     assert!(!out.contains("schema = null"), "{out}");
-    let reparsed = parse(&out, "fmt").expect("reparse");
+    let reparsed = parse_fmt(&out);
     let (_, diags) = Engine::new().evaluate(&reparsed).expect("evaluate");
     assert!(diags.is_empty(), "{diags:?}");
 }
@@ -306,14 +340,26 @@ fn formatting_a_resolved_module_keeps_include_priority() {
         "outer {\n  t { x = \"local\" }\n  t { include \"d.active\" }\n}\n",
     )
     .unwrap();
-    let module =
-        active_core::parse_file(&main, active_core::ParseOptions::default()).expect("parse");
+    let module = active_core::parse_file(
+        &main,
+        active_core::ParseOptions {
+            max_wall_ms: 30_000,
+            ..active_core::ParseOptions::default()
+        },
+    )
+    .expect("parse");
     let (before, _) = Engine::new().evaluate(&module).expect("evaluate");
     let out = active_core::fmt::format(&module, active_core::Style::Brace);
     let formatted = dir.join("formatted.active");
     std::fs::write(&formatted, &out).unwrap();
-    let reparsed =
-        active_core::parse_file(&formatted, active_core::ParseOptions::default()).expect("parse");
+    let reparsed = active_core::parse_file(
+        &formatted,
+        active_core::ParseOptions {
+            max_wall_ms: 30_000,
+            ..active_core::ParseOptions::default()
+        },
+    )
+    .expect("parse");
     let (after, diags) = Engine::new().evaluate(&reparsed).expect("evaluate");
     assert!(
         diags.iter().all(|d| d.code != "E046"),
@@ -338,8 +384,14 @@ fn repeated_body_schemas_follow_local_priority() {
         "[t]\ninclude \"def_schema.active\"\n[t]\nschema { a = String }\na = \"x\"\n",
     )
     .unwrap();
-    let module =
-        active_core::parse_file(&main, active_core::ParseOptions::default()).expect("parse");
+    let module = active_core::parse_file(
+        &main,
+        active_core::ParseOptions {
+            max_wall_ms: 30_000,
+            ..active_core::ParseOptions::default()
+        },
+    )
+    .expect("parse");
     let (_, diags) = Engine::new().evaluate(&module).expect("evaluate");
     assert!(
         diags.iter().all(|d| d.code != "T003"),
@@ -352,8 +404,14 @@ fn repeated_body_schemas_follow_local_priority() {
         "[t]\nschema { closed = true, a = Int }\na = 1\n[t]\nschema { b = Int }\nb = 2\nextra = 3\n",
     )
     .unwrap();
-    let module =
-        active_core::parse_file(&closed, active_core::ParseOptions::default()).expect("parse");
+    let module = active_core::parse_file(
+        &closed,
+        active_core::ParseOptions {
+            max_wall_ms: 30_000,
+            ..active_core::ParseOptions::default()
+        },
+    )
+    .expect("parse");
     let (_, diags) = Engine::new().evaluate(&module).expect("evaluate");
     assert!(
         diags.iter().any(|d| d.code == "T005"),
@@ -365,10 +423,10 @@ fn repeated_body_schemas_follow_local_priority() {
 #[test]
 fn nested_metadata_in_extra_bodies_is_not_reemitted_as_data() {
     let src = "[t]\ninner { x = 1 }\n[t]\ninner { schema { b = Int }\n  y = 2\n  b = 2\n}\n";
-    let module = parse(src, "headers").expect("parse");
+    let module = parse_headers(src);
     let out = active_core::fmt::format(&module, active_core::Style::Brace);
     assert!(!out.contains("schema = null"), "{out}");
-    let reparsed = parse(&out, "fmt").expect("reparse");
+    let reparsed = parse_fmt(&out);
     let (value, diags) = Engine::new().evaluate(&reparsed).expect("evaluate");
     assert!(
         diags.iter().all(|d| d.code != "E046"),
@@ -392,9 +450,9 @@ fn nested_metadata_in_extra_bodies_is_not_reemitted_as_data() {
 #[test]
 fn a_profile_and_a_same_named_table_keep_separate_metadata() {
     let src = "profile \"a\" { x = 1 }\n[a]\ndepends_on = [\"x\"]\nx = 1\n";
-    let module = parse(src, "headers").expect("parse");
+    let module = parse_headers(src);
     let out = active_core::fmt::format(&module, active_core::Style::Brace);
-    let reparsed = parse(&out, "fmt").expect("reparse");
+    let reparsed = parse_fmt(&out);
     assert!(
         reparsed.diagnostics.iter().all(|d| d.code != "E022"),
         "metadata moved into the profile: {out}\n{:?}",
@@ -408,7 +466,7 @@ fn a_profile_and_a_same_named_table_keep_separate_metadata() {
 #[test]
 fn repeated_body_schemas_union() {
     let src = "[t]\na = 1\nschema { a = Int }\n[t]\nschema { b = Int(default = 42) }\n";
-    let module = parse(src, "headers").expect("parse");
+    let module = parse_headers(src);
     let (value, diags) = Engine::new().evaluate(&module).expect("evaluate");
     assert!(
         diags.iter().all(|d| d.code == "W005"),
@@ -418,7 +476,7 @@ fn repeated_body_schemas_union() {
     assert_eq!(table_get(&value, "t", "b"), "42");
     let out = active_core::fmt::format(&module, active_core::Style::Brace);
     assert!(!out.contains("schema = null"), "{out}");
-    let reparsed = parse(&out, "fmt").expect("reparse");
+    let reparsed = parse_fmt(&out);
     let (formatted, diags) = Engine::new().evaluate(&reparsed).expect("evaluate");
     assert!(
         diags.iter().all(|d| d.code == "W005"),

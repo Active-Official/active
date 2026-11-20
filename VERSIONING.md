@@ -159,6 +159,11 @@ Breaking changes the 2.0.0 release notes must enumerate:
 - Parse and evaluation amplification bounds; previously accepted documents
   may now be refused.
 - Cross-table references resolve.
+- L-P09 unification: includes are equal-priority peers (last-include wins
+  is gone; two includes that disagree are E046), repeated table bodies
+  merge instead of last-wins/W011 (same-priority disagreement is E046),
+  profiles merge at Profile priority with W003 retired, and
+  `active inspect --path` reports value report v2 with merge provenance.
 - `active compatibility` detects numeric-bound/pattern/format/closed
   tightenings.
 - MSRV 1.85 → 1.89.

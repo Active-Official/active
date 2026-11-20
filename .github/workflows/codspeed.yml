@@ -50,14 +50,11 @@ jobs:
       - name: Build the benchmark target(s)
         run: cargo codspeed build
       - name: Run benchmarks
-        # Regression tracking needs the one-time owner connection at
-        # codspeed.io for Active-Official/active (BLOCKS.md). Until that
-        # exists the upload returns `401 Unauthorized`, so this step is
-        # best-effort. The hard panic gate lives in ci.yml ("Benches run
-        # once"), which does not depend on an external service: a broken
-        # benchmark still fails CI. Remove this line once the connection
-        # is confirmed and the first baseline is recorded.
-        continue-on-error: true
+        # The owner connection at codspeed.io is in place (2026-11-20), so
+        # the upload authenticates through OIDC and a significant
+        # regression against the base branch fails this job. The hard
+        # panic gate still lives in ci.yml ("Benches run once"), which
+        # does not depend on an external service.
         uses: CodSpeedHQ/action@v5
         with:
           mode: simulation

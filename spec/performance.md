@@ -56,15 +56,14 @@ Run with `cargo bench`. Two gates apply (LANG-K-002/K-004):
   external service.
 - **Regression tracking, in `.github/workflows/codspeed.yml`:**
   `cargo codspeed build`, then the action with `mode: simulation` and
-  `run: cargo codspeed run`. Once the repository is connected at
-  codspeed.io, the run fails on a significant regression against the base
-  branch. The connection is a one-time owner step; while it is missing
-  the action's upload returns `401 Unauthorized` and the step is marked
-  `continue-on-error` (see `BLOCKS.md`). OIDC (`id-token: write`)
-  authenticates the public repository. Plain `cargo bench` under the
-  action does not work — the compat crate requires the runner environment
-  and panics without it — so the workflow shape follows the CodSpeed Rust
-  docs exactly; local runs fall back to stock criterion.
+  `run: cargo codspeed run`. The repository is connected at codspeed.io
+  (owner step completed 2026-11-20), so the upload authenticates and the
+  run fails on a significant regression against the base branch; the
+  step is a gate. OIDC (`id-token: write`) authenticates the public
+  repository. Plain `cargo bench` under the action does not work — the
+  compat crate requires the runner environment and panics without it —
+  so the workflow shape follows the CodSpeed Rust docs exactly; local
+  runs fall back to stock criterion.
 
 ## 2. Incremental evaluation (`Engine::evaluate_incremental`)
 

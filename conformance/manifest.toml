@@ -303,3 +303,15 @@ kind = "clean"
 id = "0044-duplicate-header-conflict"
 file = "cases/0044-duplicate-header-conflict.active"
 kind = "refused"
+
+# L-P09 phase 4: a profile scalar is the stronger Profile layer.
+[[cases]]
+id = "0045-profile-override-local"
+file = "cases/0045-profile-override-local.active"
+kind = "clean"
+
+# Profile and base tables union; the profile's key is added.
+[[cases]]
+id = "0046-profile-table-union"
+file = "cases/0046-profile-table-union.active"
+kind = "clean"

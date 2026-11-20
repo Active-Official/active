@@ -3111,7 +3111,14 @@ impl Engine {
 
         let root = module.root.ok_or(EvalError::MissingRoot)?;
         let result = values.get(&root).cloned().unwrap_or(Value::Null);
-        let result = self.apply_profile(module, &values, result, &mut diagnostics, &mut account)?;
+        let result = self.apply_profile(
+            module,
+            &values,
+            result,
+            &mut diagnostics,
+            &mut account,
+            &budget,
+        )?;
         let mut result = result;
         self.apply_patches(module, &values, &mut result, &mut diagnostics, &mut account)?;
         // Patch edits compose arena values at paths and can deepen the
@@ -3552,7 +3559,8 @@ impl Engine {
     /// Select and merge the active profile (spec §3.5). The `--profile`
     /// override wins; otherwise the root value's `active_profile` field
     /// decides. Missing key → base only. Unknown name or non-string →
-    /// W002. Type changes on override → W003. Every profile evaluates
+    /// W002. A profile is the Profile priority over the base; type
+    /// changes win without a warning (L-P09). Every profile evaluates
     /// whether selected or not (strictness catches rot in inactive
     /// environments); selection reads the BASE key only.
     fn apply_profile(
@@ -3562,6 +3570,7 @@ impl Engine {
         result: Value,
         diagnostics: &mut Vec<Diagnostic>,
         account: &mut Accountant,
+        budget: &Budget,
     ) -> Result<Value, EvalError> {
         if module.profiles.is_empty() {
             // No profiles defined: the effective selector (override first,
@@ -3623,9 +3632,59 @@ impl Engine {
             }
             return Ok(result);
         }
+        // A material selector must not choose between profiles: which
+        // tree merges would reveal the value. Refuse before branching.
+        if self.profile_override.is_none() {
+            if let Some(root) = module.root {
+                if let Some(Node::Table { fields }) = module.get(root) {
+                    if let Some(selector) = fields.get("active_profile") {
+                        let profile = crate::secret::SecretProfile::analyze(module);
+                        if profile.node_is_secret(*selector)
+                            || profile.path_is_secret("active_profile")
+                        {
+                            return Err(EvalError::ProfileError {
+                                message:
+                                    "active_profile selector is material; refusing to choose a profile"
+                                        .into(),
+                                span: module.node_spans.get(selector).cloned(),
+                                file: module.node_files.get(selector).cloned(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        // Every profile is checked, selected or not: an inactive body
+        // with metadata would otherwise fail only after --profile selects
+        // it (strictness catches rot in inactive environments).
+        for (profile_name, profile_node) in &module.profiles {
+            if let Some(Node::Table { fields, .. }) = module.get(*profile_node) {
+                if let Some(key) = fields.keys().find(|key| is_profile_metadata(key)) {
+                    return Err(EvalError::ProfileError {
+                        message: format!(
+                            "profile \"{profile_name}\" cannot rewrite document metadata `{key}`"
+                        ),
+                        span: module.node_spans.get(profile_node).cloned(),
+                        file: module.node_files.get(profile_node).cloned(),
+                    });
+                }
+            }
+        }
         let base_table = match &result {
             Value::Table(map) => map.clone(),
-            _ => return Ok(result),
+            _ => {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    code: "W002".into(),
+                    message: "profiles cannot merge into a non-table root".into(),
+                    path: Some("active_profile".into()),
+                    span: None,
+                    repair: None,
+                    confidence: 1.0,
+                    file: None,
+                });
+                return Ok(result);
+            }
         };
         let selected: Option<String> = match &self.profile_override {
             Some(name) => Some(name.clone()),
@@ -3687,37 +3746,107 @@ impl Engine {
             return Ok(result);
         };
         // Document metadata is fixed at parse; a profile must not
-        // rewrite the mode or capability declaration after the
-        // handshake read them.
-        if let Some(Node::Table { fields, .. }) = module.get(profile_id) {
-            if let Some(key) = fields.keys().find(|key| is_document_metadata(key)) {
-                let message = format!("profile cannot rewrite document metadata `{key}`");
-                return Err(EvalError::ProfileError {
-                    message,
-                    span: module.node_spans.get(&profile_id).cloned(),
-                    file: module.node_files.get(&profile_id).cloned(),
-                });
+        // rewrite the mode, capability declaration, or schema contract
+        // after the handshake read them. `active_profile` is allowed but
+        // never reselects (spec §3.5).
+        let mut profile_value = values.get(&profile_id).cloned().unwrap_or(Value::Null);
+        if let Value::Table(map) = &mut profile_value {
+            // The selector was read from the base; a profile value must
+            // not change the exported selector.
+            map.shift_remove("active_profile");
+        }
+        let base_value = Value::Table(base_table);
+        let before = measure_merge_value(&base_value);
+        let profile_size = measure_merge_value(&profile_value);
+        let profile_label = profile_selector_label(module, &name, self.profile_override.is_some());
+        // F-014 layers: record the profile-owned paths before the union
+        // (scalars replaced, keys added; table/table pairs recurse).
+        if crate::layers::is_active() {
+            let layer = format!(
+                "profile:{}",
+                profile_label.trim_matches(|c| c == '\'' || c == '"')
+            );
+            if let Value::Table(base_table) = &base_value {
+                record_profile_layers(base_table, &profile_value, &layer, "");
             }
         }
-        let profile_value = values.get(&profile_id).cloned().unwrap_or(Value::Null);
-        // Merging copies the profile subtree into the result: charge
-        // its measured size (over-approximates replacement as
-        // addition — fail-safe direction).
-        account.charge(module, Some(profile_id), measure_value(&profile_value))?;
-        let mut merged = base_table;
-        // A computed selector's value may be material: never echo it
-        // into a diagnostic (W003 uses this label).
-        let profile_label = profile_selector_label(module, &name, self.profile_override.is_some());
-        merge_profile_value(
-            &mut merged,
-            profile_value,
-            &profile_label,
-            String::new(),
-            module.node_spans.get(&profile_id).cloned(),
+        // L-P09: a profile is the strongest layer (Profile over Local).
+        // Tables union; a profile scalar replaces the base scalar; no
+        // override warning (provenance records the winner in phase 5).
+        let base_source =
+            crate::unify::MergeSource::new(crate::unify::MergePriority::Local, None, 0, "base");
+        let profile_source = crate::unify::MergeSource::new(
+            crate::unify::MergePriority::Profile,
             module.node_files.get(&profile_id).cloned(),
-            diagnostics,
+            module
+                .node_spans
+                .get(&profile_id)
+                .map_or(0, |span| span.line),
+            format!("profile {profile_label}"),
         );
-        Ok(Value::Table(merged))
+        // Engine ceilings apply to the profile union, like any merge.
+        let limits = crate::unify::MergeLimits {
+            max_depth: if budget.max_depth == 0 {
+                crate::unify::MAX_MERGE_DEPTH
+            } else {
+                (budget.max_depth as usize).min(crate::unify::MAX_MERGE_DEPTH)
+            },
+            max_nodes: if budget.max_nodes == 0 {
+                crate::unify::MAX_MERGE_NODES
+            } else {
+                budget.max_nodes.min(crate::unify::MAX_MERGE_NODES)
+            },
+            max_bytes: if budget.max_total_value_size == 0 {
+                crate::unify::MAX_MERGE_BYTES
+            } else {
+                budget
+                    .max_total_value_size
+                    .min(crate::unify::MAX_MERGE_BYTES)
+            },
+        };
+        let mut provenance = MergeProvenance::new();
+        let merged = crate::unify::unify_with_limits(
+            &base_value,
+            &base_source,
+            &profile_value,
+            &profile_source,
+            "",
+            &mut provenance,
+            &limits,
+        )
+        .map_err(|error| match error {
+            MergeError::Budget(budget) => {
+                let kind = match budget.kind {
+                    MergeBudgetKind::Depth => BudgetKind::Depth,
+                    MergeBudgetKind::Nodes => BudgetKind::Nodes,
+                    MergeBudgetKind::Bytes => BudgetKind::TotalSize,
+                };
+                EvalError::budget_exceeded(kind, budget.limit, module, Some(profile_id))
+            }
+            MergeError::Conflict(conflict) => EvalError::ProfileError {
+                message: conflict.message(),
+                span: module.node_spans.get(&profile_id).cloned(),
+                file: module.node_files.get(&profile_id).cloned(),
+            },
+        })?;
+        let after = measure_merge_value(&merged);
+        if budget.max_value_size != 0 && after > budget.max_value_size {
+            return Err(EvalError::budget_exceeded(
+                BudgetKind::ValueSize,
+                budget.max_value_size,
+                module,
+                Some(profile_id),
+            ));
+        }
+        // Charge the larger of the copied profile and the true growth;
+        // material bytes are a constant, so the outcome cannot reveal a
+        // secret's length.
+        account.charge(
+            module,
+            Some(profile_id),
+            profile_size.max(after.saturating_sub(before)),
+        )?;
+        Ok(merged)
     }
 }
 
@@ -3730,6 +3859,12 @@ pub(crate) fn is_document_metadata(key: &str) -> bool {
         key,
         "active_mode" | "active_capabilities" | "active_profile" | "schema"
     )
+}
+
+/// Keys a profile body may not rewrite. `active_profile` is allowed but
+/// ignored for selection and stripped from the exported overlay.
+pub(crate) fn is_profile_metadata(key: &str) -> bool {
+    matches!(key, "active_mode" | "active_capabilities" | "schema")
 }
 
 /// True when a patch path targets document metadata or anything under
@@ -3795,83 +3930,71 @@ pub(crate) fn value_kind_name(v: &Value) -> String {
     }
 }
 
-/// Merge a profile table into the base table in place (spec §3.5):
-/// tables recurse, scalars last-wins (profile wins). Additions are
-/// silent; a profile value that overrides a base value of a different
-/// kind wins with a W003 warning naming the dotted path. `span`/`file`
-/// locate the profile block for the warning.
-fn merge_profile_value(
-    base: &mut indexmap::IndexMap<String, Value>,
-    overlay: Value,
-    profile: &str,
-    path: String,
-    span: Option<crate::diag::Span>,
-    file: Option<String>,
-    diagnostics: &mut Vec<Diagnostic>,
+/// Record F-014 layer provenance for paths a profile owns: an added key or
+/// a scalar replacement is profile-owned; table/table pairs recurse.
+fn record_profile_layers(
+    base: &indexmap::IndexMap<String, Value>,
+    overlay: &Value,
+    layer: &str,
+    path: &str,
 ) {
     let Value::Table(fields) = overlay else {
         return;
     };
-    for (k, v) in fields {
+    for (key, value) in fields {
         let child = if path.is_empty() {
-            k.clone()
+            key.clone()
         } else {
-            format!("{path}.{k}")
+            format!("{path}.{key}")
         };
-        match base.get(&k) {
-            None => {
-                if crate::layers::is_active() {
-                    crate::layers::record(
-                        &child,
-                        &format!(
-                            "profile:{}",
-                            profile.trim_matches(|c| c == '\'' || c == '"')
-                        ),
-                    );
-                }
-                base.insert(k, v);
+        match (base.get(key), value) {
+            (Some(Value::Table(base_sub)), Value::Table(_)) => {
+                // The profile contributes to the parent table as well as
+                // its leaves; inspect at the parent path must show the
+                // profile layer.
+                crate::layers::record(&child, layer);
+                record_profile_layers(base_sub, value, layer, &child);
             }
-            Some(existing) => match (existing, &v) {
-                (Value::Table(_), Value::Table(_)) => {
-                    if let Some(Value::Table(base_sub)) = base.get_mut(&k) {
-                        merge_profile_value(
-                            base_sub,
-                            v,
-                            profile,
-                            child,
-                            span.clone(),
-                            file.clone(),
-                            diagnostics,
-                        );
+            (_, Value::Table(fields)) => {
+                // A scalar-to-table replacement owns the whole subtree.
+                crate::layers::record(&child, layer);
+                record_profile_subtree(fields, layer, &child);
+            }
+            (_, Value::Array(items)) => {
+                crate::layers::record(&child, layer);
+                for (index, item) in items.iter().enumerate() {
+                    let item_path = format!("{child}[{index}]");
+                    crate::layers::record(&item_path, layer);
+                    if let Value::Table(nested) = item {
+                        record_profile_subtree(nested, layer, &item_path);
                     }
                 }
-                _ => {
-                    if crate::layers::is_active() {
-                        crate::layers::record(
-                            &child,
-                            &format!(
-                                "profile:{}",
-                                profile.trim_matches(|c| c == '\'' || c == '"')
-                            ),
-                        );
+            }
+            _ => crate::layers::record(&child, layer),
+        }
+    }
+}
+
+fn record_profile_subtree(fields: &indexmap::IndexMap<String, Value>, layer: &str, path: &str) {
+    for (key, value) in fields {
+        let child = if path.is_empty() {
+            key.clone()
+        } else {
+            format!("{path}.{key}")
+        };
+        crate::layers::record(&child, layer);
+        match value {
+            Value::Table(nested) => record_profile_subtree(nested, layer, &child),
+            Value::Array(items) => {
+                for (index, item) in items.iter().enumerate() {
+                    let item_path = format!("{child}[{index}]");
+                    crate::layers::record(&item_path, layer);
+                    if let Value::Table(nested) = item {
+                        record_profile_subtree(nested, layer, &item_path);
                     }
-                    if value_kind_name(existing) != value_kind_name(&v) {
-                        diagnostics.push(Diagnostic {
-                            severity: Severity::Warning,
-                            code: "W003".into(),
-                            message: format!(
-                                "profile {profile} overrides '{child}' with a different type"
-                            ),
-                            path: Some(child),
-                            span: span.clone(),
-                            repair: None,
-                            confidence: 1.0,
-                            file: file.clone(),
-                        });
-                    }
-                    base.insert(k, v);
                 }
-            },
+            }
+            _ => {}
         }
     }
 }

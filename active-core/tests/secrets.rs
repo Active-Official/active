@@ -101,12 +101,10 @@ fn profile_and_patch_secrets_redact() {
     assert!(diags.is_empty(), "{diags:?}");
     assert_eq!(v["database"]["password"], "***SECRET***");
     assert!(!json.contains(RAW_C), "raw secret in JSON: {json}");
-    // A string→secret profile override is a type change (W003, values
-    // never quoted) and still redacts.
+    // A string-to-secret profile override is a higher-priority layer (no
+    // W003) and still redacts.
     let (v, json, diags) = eval_resilient_file("profile_secret.active");
-    assert_eq!(diags.len(), 1, "{diags:?}");
-    assert_eq!(diags[0].code, "W003");
-    assert!(!diags[0].message.contains(RAW_B), "{:?}", diags[0]);
+    assert!(diags.is_empty(), "{diags:?}");
     assert_eq!(v["database"]["password"], "***SECRET***");
     assert!(!json.contains(RAW_B), "raw secret in JSON: {json}");
 }
@@ -329,27 +327,24 @@ fn simple_toml_blob_media_is_escaped() {
 }
 
 #[test]
-fn unknown_computed_profile_selector_is_not_echoed() {
+fn a_material_profile_selector_refuses_without_echoing_it() {
     use std::collections::HashMap;
     let src =
         "p = env.R14W\nk = secret(p)\nactive_profile = env.R14W\nprofile \"prod\" { x = 1 }\n";
     let module = parse(src, "w002-computed").expect("must parse");
     let mut env = HashMap::new();
     env.insert("R14W".to_string(), "ENVSECRET-profname".to_string());
-    let (_, diagnostics) = Engine::hermetic()
+    let err = Engine::hermetic()
         .with_env(env)
         .evaluate(&module)
-        .expect("resilient evaluate");
-    let w002 = diagnostics
-        .iter()
-        .find(|d| d.code == "W002")
-        .expect("W002 unknown profile");
+        .expect_err("a material selector must refuse");
+    assert_eq!(err.code(), "E027", "{err:?}");
+    let message = format!("{err}");
     assert!(
-        !w002.message.contains("ENVSECRET"),
-        "W002 echoed a computed selector: {}",
-        w002.message
+        !message.contains("ENVSECRET"),
+        "refusal echoed the selector: {message}"
     );
-    assert!(w002.message.contains("computed"), "{}", w002.message);
+    assert!(message.contains("material"), "{message}");
 }
 
 #[test]

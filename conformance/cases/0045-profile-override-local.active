@@ -1,0 +1,6 @@
+active_profile = "prod"
+port = 8080
+
+profile "prod" {
+  port = 9090
+}

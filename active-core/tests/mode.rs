@@ -29,9 +29,23 @@ fn patches_and_profiles_cannot_rewrite_document_metadata() {
         .expect_err("profile metadata rewrite must fail closed");
     assert_eq!(err.code(), "E027", "{src}: {err}");
     assert!(
-        format!("{err}").contains("profile cannot rewrite document metadata"),
+        format!("{err}").contains("cannot rewrite document metadata"),
         "message text is preserved: {err}"
     );
+}
+
+#[test]
+fn a_profile_may_set_active_profile_without_reselecting() {
+    // spec §3.5: selection reads the BASE selector; a profile value of
+    // `active_profile` neither reselects nor rewrites the exported one.
+    let src = "active_profile = \"p\"\nprofile \"p\" { active_profile = \"q\"\n x = 1 }\n";
+    let module = parse(src, "mode-profile-selector").expect("must parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
+    assert!(diags.is_empty(), "{diags:?}");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    let v: serde_json::Value = serde_json::from_str(&json).expect("json");
+    assert_eq!(v["active_profile"], "p");
+    assert_eq!(v["x"], 1);
 }
 
 fn mode_of(src: &str) -> active_core::Mode {

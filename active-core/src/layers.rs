@@ -1,9 +1,10 @@
 //! Per-value layer provenance (LANG-F-014).
 //!
 //! The evaluated `Value` is layer-flattened by design: profile overlays and
-//! patches are merged into one tree (last writer wins, with W003 on a type
-//! change), and the JSON wire form carries no record of which layer wrote a
-//! value. That is correct for the wire - a receiver must not have to
+//! patches are merged into one tree (highest priority wins; a profile type
+//! change is not a warning under L-P09), and the JSON wire form carries no
+//! record of which layer wrote a value. That is correct for the wire - a
+//! receiver must not have to
 //! re-implement merges - but an operator deciding how much to trust a value,
 //! or a receiver auditing a peer document, needs to know whether a value came
 //! from the base document, a profile, or a patch.

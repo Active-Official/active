@@ -38,7 +38,8 @@ from the value tree with the same shapes:
   caller-supplied hash beside bytes it does not describe.
 
 The JSON export is **layer-flattened by design**: profile overlays and
-patches are merged into one tree (last writer wins, W003 on a type change),
+patches are merged into one tree (Profile priority wins; no W003 on a
+type change under L-P09),
 and no export carries a record of which layer wrote a value - a receiver must
 not have to re-implement merges. Provenance is available on the inspection
 surface instead: `active inspect <file> <path>` reports `layer`

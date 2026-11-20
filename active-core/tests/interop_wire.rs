@@ -141,6 +141,29 @@ fn secrets_and_blobs_keep_their_documented_boundary_behaviour() {
 }
 
 #[test]
+fn profile_layers_cover_parents_and_array_indices() {
+    use active_core::convert::inspect_path_with_layers;
+    let src = "server { host = \"a\" }\narr = [1, 2]\n\
+               profile \"prod\" { server { port = 1 }\n arr = [3, 4, 5] }\n\
+               active_profile = \"prod\"\n";
+    let module = parse(src, "layers-nested").expect("parse");
+    let (value, diags, layers) = Engine::hermetic()
+        .evaluate_with_layers(&module)
+        .expect("evaluate");
+    assert!(diags.is_empty(), "{diags:?}");
+    for path in ["server", "server.port", "arr", "arr[0]", "arr[1]"] {
+        assert_eq!(
+            layers.get(path).map(String::as_str),
+            Some("profile:prod"),
+            "{path}: {layers:?}"
+        );
+    }
+    let report = inspect_path_with_layers(&module, &value, "server", None, None, None, &layers)
+        .expect("inspect");
+    assert_eq!(report["layer"], serde_json::json!("profile:prod"));
+}
+
+#[test]
 fn inspection_reports_the_layer_that_wrote_a_value() {
     // LANG-F-014: the wire form is layer-flattened by design; the
     // inspection surface names the winning layer so an operator (or a

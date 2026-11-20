@@ -380,7 +380,9 @@ profile-block = "profile" string-literal "{" [ newline { statement } ] "}"
   document root — scalars last-wins (profile wins), tables deep-merge
   with the same local-wins semantics as includes (the profile counts as
   the "later" layer over base). A profile value whose type differs from
-  the base value still wins, with a W003 warning. Profile blocks never
+  the base value still wins, with no warning (L-P09; provenance records
+  the winner). A profile's own `active_profile` never reselects and is
+  not exported over the base selector. Profile blocks never
   appear in the exported tree; `active_profile` itself stays visible.
 
 ### 2.9 Structural patches (C-028)

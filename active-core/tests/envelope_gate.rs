@@ -107,8 +107,9 @@ fn a_profile_replacement_inherits_payload_taint_for_non_string_values() {
                 envelope = { version = \"1.0.0\", tainted = CLAIM, payload = secret(\"sensitive\") }\n\
                 profile \"prod\" { envelope { payload = 42 } }\n";
     let err = refusal(&base.replace("CLAIM", "false"));
-    // W003 records the profile's type change; E035 is the taint refusal.
-    assert_eq!(codes(&err), ["W003", "E035"], "{err:?}");
+    // The profile's type change is a higher-priority override (no W003);
+    // E035 is the taint refusal.
+    assert_eq!(codes(&err), ["E035"], "{err:?}");
 
     let module = parse(&base.replace("CLAIM", "true"), "gate").expect("parse");
     let engine = Engine::hermetic();

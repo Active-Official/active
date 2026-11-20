@@ -84,11 +84,14 @@ fn unknown_profile_warns_w002_without_merge() {
 }
 
 #[test]
-fn type_mismatch_override_warns_w003_and_wins() {
+fn type_mismatch_override_wins_without_a_warning() {
     let module =
         parse_file(&fixture("main_mismatch.active"), ParseOptions::default()).expect("must parse");
     let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
-    assert!(diags.iter().any(|d| d.code == "W003"), "{diags:?}");
+    assert!(
+        diags.iter().all(|d| d.code != "W003"),
+        "higher-priority overrides are not warnings: {diags:?}"
+    );
     let json = active_core::convert::value_to_pretty_json(&value);
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(v["server"]["port"], "fast");
@@ -209,17 +212,128 @@ fn no_profile_override_takes_precedence_over_invalid_root_selector() {
 }
 
 #[test]
-fn null_to_value_override_warns_w003() {
+fn null_to_value_override_wins_without_a_warning() {
     let module = parse_file(
         &fixture("main_null_override.active"),
         ParseOptions::default(),
     )
     .expect("must parse");
     let (value, diags) = Engine::new().evaluate(&module).expect("must evaluate");
-    assert!(diags.iter().any(|d| d.code == "W003"), "{diags:?}");
+    assert!(
+        diags.iter().all(|d| d.code != "W003"),
+        "higher-priority overrides are not warnings: {diags:?}"
+    );
     let json = active_core::convert::value_to_pretty_json(&value);
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(v["server"]["port"], 443);
+}
+
+#[test]
+fn a_material_selector_refuses_to_choose_a_profile() {
+    let src = "active_profile = env.PICK\nk = secret(env.PICK)\nprofile \"a\" { v = 1 }\nprofile \"b\" { v = 2 }\n";
+    let module = active_core::parse(src, "profiles").expect("parse");
+    for pick in ["a", "b"] {
+        let mut env = std::collections::HashMap::new();
+        env.insert("PICK".to_string(), pick.to_string());
+        let err = Engine::hermetic()
+            .with_env(env)
+            .evaluate(&module)
+            .expect_err("material selector must refuse");
+        assert_eq!(err.code(), "E027", "{err:?}");
+        assert!(
+            format!("{err}").contains("material"),
+            "message names the reason: {err}"
+        );
+    }
+}
+
+#[test]
+fn metadata_in_an_unselected_profile_is_e027() {
+    let src = "active_profile = \"a\"\nprofile \"a\" { x = 1 }\nprofile \"b\" { active_mode = \"data\" }\n";
+    let module = active_core::parse(src, "profiles").expect("parse");
+    let err = Engine::new()
+        .evaluate(&module)
+        .expect_err("inactive metadata must fail closed");
+    assert_eq!(err.code(), "E027", "{err:?}");
+}
+
+#[test]
+fn profile_shapes_all_follow_profile_priority() {
+    let cases = [
+        ("x = 1", "x = [1, 2]", "array"),
+        ("x = { a = 1 }", "x = 5", "number"),
+        ("x = 5", "x = { a = 1 }", "table"),
+        ("x = 1s", "x = 2m", "duration"),
+        ("x = secret(\"base\")", "x = \"plain\"", "string"),
+        ("x = \"plain\"", "x = secret(\"prod\")", "secret"),
+    ];
+    for (base, overlay, kind) in cases {
+        let src = format!("active_profile = \"p\"\n{base}\nprofile \"p\" {{\n  {overlay}\n}}\n");
+        let module = active_core::parse(&src, "profiles").expect("parse");
+        let (value, diags) = Engine::new().evaluate(&module).expect("evaluate");
+        assert!(
+            diags.iter().all(|d| d.code != "W003" && d.code != "E046"),
+            "{src}: {diags:?}"
+        );
+        let active_core::Value::Table(root) = value else {
+            panic!("root");
+        };
+        let Some(x) = root.get("x") else {
+            panic!("x missing");
+        };
+        let actual = match x {
+            active_core::Value::Array(_) => "array",
+            active_core::Value::Int(_) | active_core::Value::Float(_) => "number",
+            active_core::Value::Table(_) => "table",
+            active_core::Value::DurationMs(_) => "duration",
+            active_core::Value::String(_) => "string",
+            active_core::Value::Secret(_) => "secret",
+            other => panic!("unexpected {other:?}"),
+        };
+        assert_eq!(actual, kind, "{src}");
+    }
+}
+
+#[test]
+fn profile_merge_respects_the_value_budget() {
+    let mut base = String::from("active_profile = \"p\"\n");
+    for index in 0..50 {
+        base.push_str(&format!("k{index} = {index}\n"));
+    }
+    base.push_str("profile \"p\" {\n");
+    for index in 0..50 {
+        base.push_str(&format!("q{index} = {index}\n"));
+    }
+    base.push_str("}\n");
+    let module = active_core::parse(&base, "profiles").expect("parse");
+    let mut engine = Engine::new();
+    engine.budget = active_core::Budget {
+        max_total_value_size: 50,
+        ..active_core::Budget::default()
+    };
+    let err = engine
+        .evaluate(&module)
+        .expect_err("merge growth must trip X006");
+    assert_eq!(err.code(), "X006");
+}
+
+#[test]
+fn profile_budgets_do_not_reveal_secret_length() {
+    fn outcome(length: usize) -> bool {
+        let mut env = std::collections::HashMap::new();
+        env.insert("PROFILE_TOKEN".to_string(), "x".repeat(length));
+        let src =
+            "active_profile = \"p\"\nx = 0\nprofile \"p\" { x = secret(env.PROFILE_TOKEN) }\n";
+        let module = active_core::parse(src, "profiles").expect("parse");
+        let mut engine = Engine::hermetic().with_env(env);
+        engine.budget = active_core::Budget {
+            max_value_size: 20,
+            ..active_core::Budget::default()
+        };
+        engine.evaluate(&module).is_ok()
+    }
+    assert_eq!(outcome(5), outcome(50), "secret length changed the budget");
+    assert!(outcome(5), "a short secret must fit");
 }
 
 #[test]

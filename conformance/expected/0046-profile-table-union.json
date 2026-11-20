@@ -1,0 +1,7 @@
+{
+  "active_profile": "prod",
+  "server": {
+    "host": "base.local",
+    "port": 9090
+  }
+}

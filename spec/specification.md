@@ -317,9 +317,9 @@ After the root table evaluates, selection reads the root value's
 
 - Missing → no profile merges; the base tree is the result.
 - A string naming a defined profile → that profile's evaluated table
-  merges into the root value: tables recurse, scalars last-wins
-  (profile wins). A profile value whose type differs from the base
-  value still wins, with a W003 warning naming the path.
+  merges into the root value at Profile priority over the base (Local):
+  tables union recursively, and a profile scalar replaces a base scalar
+  of any type without a warning; provenance records the winner.
 - A string naming nothing → W002, no merge. A non-string → W002, no merge.
 
 Every profile evaluates whether selected or not: an unselected profile's

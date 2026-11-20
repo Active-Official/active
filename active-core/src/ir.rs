@@ -82,6 +82,18 @@ pub struct Module {
     /// after evaluation: equal values agree, a disagreement is E046, and
     /// a table union replaces the kept first candidate at its path.
     pub merge_pending: HashMap<NodeId, Vec<PendingMerge>>,
+    /// Extra bodies of a repeated table, in source order, keyed by the
+    /// surviving first table (L-P09 phase 3). The parser merges their
+    /// fields structurally and defers same-priority leaf collisions; the
+    /// formatter re-emits each body as its own statement.
+    pub repeated_tables: HashMap<NodeId, Vec<NodeId>>,
+    /// The fields a repeated table's first body had before later bodies
+    /// merged into it, for the formatter's statement-preserving output.
+    pub body_fields: HashMap<NodeId, IndexMap<String, NodeId>>,
+    /// Full document paths where a local body replaced an include-derived
+    /// value (L-P09 phase 3). Deferred include merges below these paths are
+    /// masked: the local value wins and the include pair is not compared.
+    pub replaced_paths: std::collections::HashSet<String>,
     /// Dependency declarations by scope table (spec/linter.md §2,
     /// C-042): `depends_on` keys holding string arrays are extracted
     /// from value fields at parse (never exported) and recorded here
@@ -187,6 +199,9 @@ pub struct IncludeStmt {
     pub expected_hash: Option<String>,
     /// Scope path where the statement appeared (empty = document root).
     pub scope_path: Vec<String>,
+    /// True when the statement appeared inside a profile body. Profiles
+    /// and value tables are separate namespaces with the same path text.
+    pub profile: bool,
     /// Source line of the statement, for stable formatter emission.
     pub line: u32,
 }
@@ -370,6 +385,9 @@ impl Module {
             schema_checks: HashMap::new(),
             check_nodes: std::collections::HashSet::new(),
             merge_pending: HashMap::new(),
+            repeated_tables: HashMap::new(),
+            body_fields: HashMap::new(),
+            replaced_paths: std::collections::HashSet::new(),
             depends_on: HashMap::new(),
             mode: Mode::default(),
             mode_marker: false,

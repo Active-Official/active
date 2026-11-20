@@ -68,13 +68,15 @@ fn rb_002_duplicate_key_warns_last_wins() {
         codes.iter().any(|c| c == "W011"),
         "duplicate key must warn W011, got {codes:?}"
     );
-    // Repeated table headers keep last-wins with the same notice.
+    // Repeated table headers merge (L-P09 phase 3): disjoint keys union,
+    // no discard warning. Duplicate scalar keys keep last-wins + W011.
     let v = eval_json("[server]\nhost = \"a\"\n[server]\nport = 1\n");
+    assert_eq!(v["server"]["host"], "a");
     assert_eq!(v["server"]["port"], 1);
     let codes = codes_of("[server]\nhost = \"a\"\n[server]\nport = 1\n");
     assert!(
-        codes.iter().any(|c| c == "W011"),
-        "redefined header must warn W011, got {codes:?}"
+        !codes.iter().any(|c| c == "W011"),
+        "repeated tables merge without W011, got {codes:?}"
     );
     // Inline tables and `let` redefinitions behave the same.
     assert_eq!(eval_json("x = {a = 1, a = 2}\n")["x"]["a"], 2);
@@ -972,15 +974,16 @@ fn rb_054_no_surrogate_materialization() {
 
 /// RB-055 — Header redefinition warns, last wins (HIST-TOML-00N §2).
 #[test]
-fn rb_055_header_redefinition_warns() {
+fn rb_055_header_redefinition_merges() {
     let src = "[a.b]\nc = 1\n[a]\nd = 2\n";
     let codes = codes_of(src);
     assert!(
-        codes.iter().any(|c| c == "W011"),
-        "redefined header must warn W011, got {codes:?}"
+        !codes.iter().any(|c| c == "W011"),
+        "repeated headers merge without W011, got {codes:?}"
     );
     let v = eval_json(src);
-    assert_eq!(v["a"]["d"], 2, "last header wins: {v}");
+    assert_eq!(v["a"]["b"]["c"], 1, "nested body survives: {v}");
+    assert_eq!(v["a"]["d"], 2, "later body unions: {v}");
 }
 
 /// RB-056 — Include traversal rejected (HIST-YAML-041 §3).
@@ -2138,14 +2141,17 @@ fn rb_115_nested_arrays_tables_of_inline_tables() {
 /// Table-level last-wins (RB-002 policy): the second `[fruit]` table
 /// replaces the first wholesale, announced by W011 — never a silent merge.
 #[test]
-fn rb_116_table_redefinition_warns_last_wins() {
+fn rb_116_table_redefinition_merges() {
     let src = "[fruit]\nname = \"apple\"\n[fruit]\ncolor = \"red\"\n";
     let v = eval_json(src);
-    assert_eq!(v["fruit"], serde_json::json!({"color": "red"}));
+    assert_eq!(
+        v["fruit"],
+        serde_json::json!({"name": "apple", "color": "red"})
+    );
     let codes = codes_of(src);
     assert!(
-        codes.iter().any(|c| c == "W011"),
-        "redefined table must warn W011, got {codes:?}"
+        !codes.iter().any(|c| c == "W011"),
+        "repeated tables merge without W011, got {codes:?}"
     );
     // Positive control: distinct tables coexist.
     let v = eval_json("[a]\nx = 1\n[b]\ny = 2\n");
@@ -2157,14 +2163,14 @@ fn rb_116_table_redefinition_warns_last_wins() {
 /// Same RB-002 policy across definition styles: the `[t]` block replaces
 /// the inline `t` wholesale, announced by W011.
 #[test]
-fn rb_117_inline_then_block_warns_last_wins() {
+fn rb_117_inline_then_block_merges() {
     let src = "t = {a = 1}\n[t]\nb = 2\n";
     let v = eval_json(src);
-    assert_eq!(v["t"], serde_json::json!({"b": 2}));
+    assert_eq!(v["t"], serde_json::json!({"a": 1, "b": 2}));
     let codes = codes_of(src);
     assert!(
-        codes.iter().any(|c| c == "W011"),
-        "inline-then-block conflict must warn W011, got {codes:?}"
+        !codes.iter().any(|c| c == "W011"),
+        "inline-then-block merges without W011, got {codes:?}"
     );
     // Positive control: non-conflicting inline + block coexist.
     let v = eval_json("u = {a = 1}\n[t]\nb = 2\n");
@@ -2851,13 +2857,19 @@ fn rb_152_extend_defined_aot_last_wins() {
 /// Same locked W011 policy in header form (cross-syntax consistency
 /// per the catalogue's dual-form guidance).
 #[test]
-fn rb_153_extending_table_header_last_wins() {
+fn rb_153_extending_table_header_same_leaf_conflicts() {
     let src = "[fruit]\nname = \"apple\"\n[fruit]\nname = \"banana\"\n";
-    assert_eq!(eval_json(src)["fruit"]["name"], "banana");
+    // The tables union, but the same leaf disagreeing is E046 at Local
+    // priority; the first body stays.
+    assert_eq!(eval_json(src)["fruit"]["name"], "apple");
     let codes = codes_of(src);
     assert!(
-        codes.iter().any(|c| c == "W011"),
-        "W011 expected, got {codes:?}"
+        codes.iter().any(|c| c == "E046"),
+        "same-leaf conflict must be E046, got {codes:?}"
+    );
+    assert!(
+        !codes.iter().any(|c| c == "W011"),
+        "no discard warning for tables, got {codes:?}"
     );
     // Positive control: extending a table with new keys keeps both.
     let v = eval_json("[fruit]\nname = \"apple\"\n[veg]\nname = \"carrot\"\n");

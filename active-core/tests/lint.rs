@@ -665,6 +665,7 @@ fn include_hygiene_flags_duplicates_and_absolute_paths() {
             private: false,
             expected_hash: None,
             scope_path: Vec::new(),
+            profile: false,
             line,
         });
     }

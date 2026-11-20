@@ -687,7 +687,6 @@ fn parse_recovering_impl(
         pending_profiles: Vec::new(),
         trust,
         merge_scopes: Vec::new(),
-        merge_scope_profiles: Vec::new(),
     };
     parser.module.source_sha256 = crate::provenance::sha256_hex(source.as_bytes());
     // Lexer diagnostics carry no file; stamp the session file (includes
@@ -717,6 +716,7 @@ fn parse_recovering_impl(
     parser.extract_schemas();
     // Dependency metadata leaves value fields the same way (spec §2.11).
     parser.extract_depends_on();
+    parser.scrub_repeated_metadata();
     // Mode marker resolution (PROPOSAL §0.2, Phase M): reads the
     // `active_mode` marker but leaves it as data (self-describing
     // documents carry the marker into evaluated JSON).
@@ -769,6 +769,11 @@ impl Parser {
 
         let mut trivia = Vec::with_capacity(comments.len());
         for ((text, span), file) in comments.into_iter().zip(comment_files) {
+            // Attachment scans every statement; sample the parse clock so
+            // a comment flood cannot run past the wall budget.
+            if self.check_parse_budget() {
+                break;
+            }
             let attachment = self.attach_one(&span, &file, &statements, &blocks);
             trivia.push(TriviaComment {
                 text,
@@ -807,6 +812,19 @@ impl Parser {
         // at exactly the comment's own indentation level.
         let owner = self.owning_block(line, level, file, stmts, blocks);
         if let Some(b) = &owner {
+            // A comment immediately before a repeated header of the same
+            // table leads that header (L-P09 phase 3). Without this it
+            // would attach to the first key of the new body, moving an
+            // annotation (`@ai_immutable`) off the table path.
+            let next_after = stmts
+                .iter()
+                .filter(|s| &s.file == file && s.start_line > line)
+                .min_by_key(|s| s.start_line);
+            if let Some(stmt) = next_after {
+                if qualified(&stmt.path, &stmt.key) == b.path {
+                    return Attachment::Leading(b.path.clone());
+                }
+            }
             // Rule 2: any statement (including a nested table header)
             // follows within the same block.
             if let Some(stmt) = stmts
@@ -1116,9 +1134,6 @@ struct Parser {
     /// scope (L-P09). The innermost scope receives records; the vector is
     /// attached to the scope's table node once that node exists.
     merge_scopes: Vec<Vec<PendingMerge>>,
-    /// Whether each open merge scope sits inside a profile body (parallel
-    /// to `merge_scopes`). Profiles are a separate namespace for discard.
-    merge_scope_profiles: Vec<bool>,
 }
 
 impl Parser {
@@ -1129,16 +1144,14 @@ impl Parser {
 
     /// Open a merge scope before parsing a table body (L-P09). `profile`
     /// marks a body inside a profile block (a separate namespace).
-    fn push_merge_scope(&mut self, profile: bool) {
+    fn push_merge_scope(&mut self) {
         self.merge_scopes.push(Vec::new());
-        self.merge_scope_profiles.push(profile);
     }
 
     /// Attach the closed scope's deferred merges to its table node and
     /// make every later candidate a dependency of that node, so the
     /// evaluator has their values when it applies the merge.
     fn attach_merge_scope(&mut self, node: NodeId) {
-        self.merge_scope_profiles.pop();
         let Some(pending) = self.merge_scopes.pop() else {
             return;
         };
@@ -1190,40 +1203,309 @@ impl Parser {
                 source: self.merge_source(incoming),
             },
         ];
-        let in_profile = self.merge_scope_profiles.last().copied().unwrap_or(false);
         if let Some(scope) = self.merge_scopes.last_mut() {
             scope.push(PendingMerge {
                 path,
                 local: local.to_string(),
                 candidates,
-                profile: in_profile,
             });
         }
     }
 
-    /// Drop deferred merges for a discarded table subtree. The old body is
-    /// no longer part of the document (W011), so its conflicts must not
-    /// refuse the replacement. Entries in any scope that name the
-    /// discarded path are purged too: the replacement is local content.
-    fn discard_merge_scopes(&mut self, root: NodeId, path: &str) {
-        let prefix = format!("{path}.");
-        for pending in self.module.merge_pending.values_mut() {
-            pending.retain(|entry| {
-                // Profiles are a separate namespace: a table with the
-                // same name must not purge a profile's conflict entry.
-                entry.profile || (entry.path != path && !entry.path.starts_with(&prefix))
+    /// Source identity for a local value (a repeated table header). Both
+    /// sides are Local priority; the first body stays in the tree.
+    fn local_source(&self, id: NodeId, label: &str) -> MergeSource {
+        let line = self.module.node_spans.get(&id).map_or(0, |span| span.line);
+        MergeSource::new(MergePriority::Local, None, line, label)
+    }
+
+    /// Source identity for a same-priority local collision: a node from
+    /// another file is include-provided (Include), a node from the
+    /// current file is Local.
+    fn priority_source(&self, id: NodeId, label: &str) -> MergeSource {
+        let file = self.module.node_files.get(&id);
+        let current = self.current_file_name();
+        let local = file.is_none() || file == current.as_ref();
+        if local {
+            self.local_source(id, label)
+        } else {
+            self.merge_source(id)
+        }
+    }
+
+    /// Record a same-priority leaf collision (L-P09 phase 3). The first
+    /// node stays in the tree; the evaluator compares the values and
+    /// reports E046 at a disagreement.
+    fn record_local_pending(&mut self, existing: NodeId, incoming: NodeId, local: &str) {
+        if self.merge_scopes.is_empty() {
+            return;
+        }
+        let label = format!("[{local}]");
+        let scope = self.current_path.join(".");
+        let path = if scope.is_empty() {
+            local.to_string()
+        } else {
+            format!("{scope}.{local}")
+        };
+        let candidates = vec![
+            MergeCandidate {
+                node: existing,
+                source: self.priority_source(existing, &label),
+            },
+            MergeCandidate {
+                node: incoming,
+                source: self.priority_source(incoming, &label),
+            },
+        ];
+        if let Some(scope) = self.merge_scopes.last_mut() {
+            scope.push(PendingMerge {
+                path,
+                local: local.to_string(),
+                candidates,
             });
         }
-        let mut stack = vec![root];
-        while let Some(node) = stack.pop() {
-            self.module.merge_pending.remove(&node);
-            let children: Vec<NodeId> = match self.module.get(node) {
-                Some(Node::Table { fields }) => fields.values().copied().collect(),
-                _ => Vec::new(),
+    }
+
+    /// Add `from -> to` to the dependency graph unless the edge would
+    /// close a cycle. A moved merge candidate that reads the surviving
+    /// table cannot be ordered before it; its value is then absent and
+    /// the evaluator reports a fail-closed merge diagnostic.
+    fn ensure_merge_edge(&mut self, from: NodeId, to: NodeId) {
+        if self.check_parse_budget() {
+            return;
+        }
+        if from == to {
+            return;
+        }
+        let (Some(&f), Some(&t)) = (
+            self.module.node_to_graph.get(&from),
+            self.module.node_to_graph.get(&to),
+        ) else {
+            return;
+        };
+        if petgraph::algo::has_path_connecting(&self.module.graph, t, f, None) {
+            return;
+        }
+        self.module.graph.add_edge(f, t, ());
+    }
+
+    /// Merge a repeated table body into the first one at parse time
+    /// (L-P09 phase 3). Tables union recursively; a leaf written again in
+    /// the same file is deferred as a same-priority collision (E046 at
+    /// eval); a leaf supplied by an include is Include priority and the
+    /// local body replaces it. The first body's pre-merge fields are
+    /// snapshotted for the formatter.
+    fn merge_local_fields(&mut self, existing: NodeId, incoming: NodeId, path: &str) {
+        let inc_fields = match self.module.get(incoming) {
+            Some(Node::Table { fields }) => fields.clone(),
+            _ => return,
+        };
+        if matches!(self.module.get(existing), Some(Node::Ref(_))) {
+            // A body cannot extend an alias: the candidate's value may be
+            // a table, so a value-level merge would silently union it and
+            // the formatter cannot re-emit the body after the alias line.
+            // Refuse the shape instead.
+            let message = "a repeated table body cannot extend an alias; assign a literal table";
+            if let Some(span) = self.module.node_spans.get(&existing).cloned() {
+                self.error_at_span("E046", message, &span);
+            } else {
+                self.error("E046", message);
+            }
+            return;
+        }
+        if !matches!(self.module.get(existing), Some(Node::Table { .. })) {
+            // A table body over a scalar/array/expression is a shape
+            // conflict at equal priority, not a silent failure.
+            self.record_local_pending(existing, incoming, path);
+            return;
+        }
+        if !self.module.body_fields.contains_key(&existing) {
+            let snapshot = match self.module.get(existing) {
+                Some(Node::Table { fields }) => Some(fields.clone()),
+                _ => None,
             };
-            for child in children {
-                if matches!(self.module.get(child), Some(Node::Table { .. })) {
-                    stack.push(child);
+            if let Some(fields) = snapshot {
+                self.module.body_fields.entry(existing).or_insert(fields);
+            }
+        }
+        // The incoming body's own scope merges move to the first table:
+        // they are evaluated against the merged scope. Pin their later
+        // candidates as dependencies of the surviving table, unless that
+        // would close a cycle (a candidate that reads the table).
+        if let Some(pending) = self.module.merge_pending.remove(&incoming) {
+            for entry in &pending {
+                for candidate in &entry.candidates {
+                    self.ensure_merge_edge(candidate.node, existing);
+                }
+            }
+            self.module
+                .merge_pending
+                .entry(existing)
+                .or_default()
+                .extend(pending);
+        }
+        if let Some(extra) = self.module.repeated_tables.remove(&incoming) {
+            self.module
+                .repeated_tables
+                .entry(existing)
+                .or_default()
+                .extend(extra);
+        }
+        for (key, inc_node) in inc_fields {
+            let child_path = if path.is_empty() {
+                key.clone()
+            } else {
+                format!("{path}.{key}")
+            };
+            let old = match self.module.get(existing) {
+                Some(Node::Table { fields }) => fields.get(&key).copied(),
+                _ => None,
+            };
+            match old {
+                None => {
+                    if let Some(Node::Table { fields }) = self.module.get_mut(existing) {
+                        fields.insert(key.clone(), inc_node);
+                    }
+                    self.module.add_edge(inc_node, existing);
+                }
+                Some(old) if old == inc_node => {}
+                Some(old) => {
+                    if key == "depends_on" {
+                        let old_elements = match self.module.get(old) {
+                            Some(Node::Array { elements }) => Some(elements.clone()),
+                            _ => None,
+                        };
+                        let new_elements = match self.module.get(inc_node) {
+                            Some(Node::Array { elements }) => Some(elements.clone()),
+                            _ => None,
+                        };
+                        if let (Some(old_elements), Some(new_elements)) =
+                            (old_elements, new_elements)
+                        {
+                            // Metadata lists union by path; a bad entry is
+                            // E022, exactly like the first declaration.
+                            let mut paths: Vec<String> = Vec::new();
+                            for element in &old_elements {
+                                if let Some(Node::Literal(Value::String(path))) =
+                                    self.module.get(*element)
+                                {
+                                    paths.push(path.clone());
+                                }
+                            }
+                            let mut additions: Vec<NodeId> = Vec::new();
+                            let mut bad = false;
+                            for element in &new_elements {
+                                match self.module.get(*element) {
+                                    Some(Node::Literal(Value::String(path))) => {
+                                        if !paths.contains(path) {
+                                            paths.push(path.clone());
+                                            additions.push(*element);
+                                        }
+                                    }
+                                    _ => {
+                                        bad = true;
+                                        if let Some(span) =
+                                            self.module.node_spans.get(element).cloned()
+                                        {
+                                            self.error_at_span(
+                                                "E022",
+                                                "depends_on entries must be string literals",
+                                                &span,
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                            if bad {
+                                continue;
+                            }
+                            if let Some(Node::Array { elements }) = self.module.get_mut(old) {
+                                elements.extend(additions.iter().copied());
+                            }
+                            for element in additions {
+                                self.module.add_edge(element, old);
+                            }
+                            continue;
+                        }
+                        if let Some(Node::Array { elements }) = self.module.get(inc_node) {
+                            let elements = elements.clone();
+                            for element in elements {
+                                if !matches!(
+                                    self.module.get(element),
+                                    Some(Node::Literal(Value::String(_)))
+                                ) {
+                                    if let Some(span) =
+                                        self.module.node_spans.get(&element).cloned()
+                                    {
+                                        self.error_at_span(
+                                            "E022",
+                                            "depends_on entries must be string literals",
+                                            &span,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let old_schema = matches!(self.module.get(old), Some(Node::SchemaTable { .. }));
+                    let inc_schema =
+                        matches!(self.module.get(inc_node), Some(Node::SchemaTable { .. }));
+                    if old_schema && inc_schema {
+                        // Schema declarations follow the same priority
+                        // direction as values: a local body upgrades an
+                        // include schema; an include never overrides a
+                        // local one; same-priority declarations keep the
+                        // first field and the first `closed` flag.
+                        let current = self.current_file_name();
+                        let old_local = self
+                            .module
+                            .node_files
+                            .get(&old)
+                            .is_none_or(|file| Some(file) == current.as_ref());
+                        let new_local = self
+                            .module
+                            .node_files
+                            .get(&inc_node)
+                            .is_none_or(|file| Some(file) == current.as_ref());
+                        if old_local && !new_local {
+                            continue;
+                        }
+                        let overwrite = new_local && !old_local;
+                        let mut marks = std::collections::HashSet::new();
+                        self.merge_schemas_inner(old, inc_node, &child_path, &mut marks, overwrite);
+                        continue;
+                    }
+                    let both_tables = matches!(self.module.get(old), Some(Node::Table { .. }))
+                        && matches!(self.module.get(inc_node), Some(Node::Table { .. }));
+                    if both_tables {
+                        self.merge_local_fields(old, inc_node, &child_path);
+                    } else {
+                        let current = self.current_file_name();
+                        let old_file = self.module.node_files.get(&old).cloned();
+                        let new_file = self.module.node_files.get(&inc_node).cloned();
+                        let old_local = old_file.is_none() || old_file.as_ref() == current.as_ref();
+                        let new_local = new_file.is_none() || new_file.as_ref() == current.as_ref();
+                        if !old_local && new_local {
+                            // Local beats Include: replace the included
+                            // leaf; its pending (if any) is skipped because
+                            // the tree no longer holds its candidate.
+                            if let Some(Node::Table { fields }) = self.module.get_mut(existing) {
+                                fields.insert(key, inc_node);
+                            }
+                            self.module.add_edge(inc_node, existing);
+                            let full = if self.current_path.is_empty() {
+                                child_path.clone()
+                            } else {
+                                format!("{}.{}", self.path_str(), child_path)
+                            };
+                            self.module.replaced_paths.insert(full);
+                        } else if old_local && !new_local {
+                            // Include never overrides local: keep the
+                            // earlier local value.
+                        } else {
+                            self.record_local_pending(old, inc_node, &child_path);
+                        }
+                    }
                 }
             }
         }
@@ -2249,7 +2531,7 @@ impl Parser {
         let mut pending = Vec::new();
         let saved_in_profile = self.in_profile;
         self.in_profile = true;
-        self.push_merge_scope(true);
+        self.push_merge_scope();
         match body {
             ProfileBody::Brace => self.parse_body(&mut fields, BodyEnd::Brace, &mut pending),
             ProfileBody::Block(level) => {
@@ -2406,6 +2688,7 @@ impl Parser {
             private,
             expected_hash: expected_hash.clone(),
             scope_path: self.current_path.clone(),
+            profile: self.in_profile,
             line: kw.line,
         });
         pending.push(PendingInclude {
@@ -3081,11 +3364,17 @@ impl Parser {
             let Some(pending) = self.module.merge_pending.remove(&root) else {
                 continue;
             };
-            for entry in pending {
+            for mut entry in pending {
                 // The path is include-provided in this scope (a later
                 // source may have replaced the node itself), so both
                 // peers compete; a local path stays local-wins.
                 if spliced.contains(&entry.local) {
+                    // Relative to this document every candidate came
+                    // through an include, even when it was local to the
+                    // included file.
+                    for candidate in &mut entry.candidates {
+                        candidate.source = self.merge_source(candidate.node);
+                    }
                     if let Some(scope) = self.merge_scopes.last_mut() {
                         scope.push(entry);
                     }
@@ -3637,7 +3926,7 @@ impl Parser {
         let mut fields: SharedFields = std::rc::Rc::new(FieldMap::new());
         let mut pending = Vec::new();
         self.parent_field_scopes.push(parent.clone());
-        self.push_merge_scope(false);
+        self.push_merge_scope();
         self.parse_body(&mut fields, BodyEnd::Block(level), &mut pending);
         self.splice_includes(&mut fields, pending, false);
         let idents = self.ident_scopes.pop().unwrap_or_default();
@@ -3655,30 +3944,19 @@ impl Parser {
         self.statements[stmt_idx].end_line = self.last_end_line();
         self.current_path.pop();
         self.extract_annotations(&key, table_id, key_tok.line);
-        // A redefined table replaces the WHOLE earlier one, so the warning
-        // says that rather than the generic key wording: an author splitting
-        // a long section loses every key the first block held (LANG-B-014).
-        if parent.contains_key(&key) {
-            self.push_heal(Diagnostic {
-                severity: Severity::Warning,
-                code: "W011".into(),
-                message: format!("duplicate table '{key}'; previous body discarded"),
-                path: None,
-                span: Some(span_of(&key_tok)),
-                repair: None,
-                confidence: 1.0,
-                file: self.current_file_name(),
-            });
-            if let Some(old) = parent.get(&key).copied() {
-                let discarded = if self.current_path.is_empty() {
-                    key.clone()
-                } else {
-                    format!("{}.{}", self.path_str(), key)
-                };
-                self.discard_merge_scopes(old, &discarded);
-            }
+        // Repeated tables merge (L-P09): the first body stays in the
+        // tree, the second is a Local-priority candidate. Tables union;
+        // a disagreeing leaf is E046. No W011: nothing is discarded.
+        if let Some(old) = parent.get(&key).copied() {
+            self.merge_local_fields(old, table_id, &key);
+            self.module
+                .repeated_tables
+                .entry(old)
+                .or_default()
+                .push(table_id);
+        } else {
+            std::rc::Rc::make_mut(parent).insert(key, table_id);
         }
-        std::rc::Rc::make_mut(parent).insert(key, table_id);
     }
 
     /// `key { … }` brace-style table block (HCL-style, §2).
@@ -3728,7 +4006,7 @@ impl Parser {
         let mut fields: SharedFields = std::rc::Rc::new(FieldMap::new());
         let mut pending = Vec::new();
         self.parent_field_scopes.push(parent.clone());
-        self.push_merge_scope(false);
+        self.push_merge_scope();
         self.parse_body(&mut fields, BodyEnd::Brace, &mut pending);
         self.splice_includes(&mut fields, pending, false);
         let idents = self.ident_scopes.pop().unwrap_or_default();
@@ -3745,30 +4023,19 @@ impl Parser {
         self.statements[stmt_idx].end_line = self.last_end_line();
         self.current_path.pop();
         self.extract_annotations(&key, table_id, key_tok.line);
-        // A redefined table replaces the WHOLE earlier one, so the warning
-        // says that rather than the generic key wording: an author splitting
-        // a long section loses every key the first block held (LANG-B-014).
-        if parent.contains_key(&key) {
-            self.push_heal(Diagnostic {
-                severity: Severity::Warning,
-                code: "W011".into(),
-                message: format!("duplicate table '{key}'; previous body discarded"),
-                path: None,
-                span: Some(span_of(&key_tok)),
-                repair: None,
-                confidence: 1.0,
-                file: self.current_file_name(),
-            });
-            if let Some(old) = parent.get(&key).copied() {
-                let discarded = if self.current_path.is_empty() {
-                    key.clone()
-                } else {
-                    format!("{}.{}", self.path_str(), key)
-                };
-                self.discard_merge_scopes(old, &discarded);
-            }
+        // Repeated tables merge (L-P09): the first body stays in the
+        // tree, the second is a Local-priority candidate. Tables union;
+        // a disagreeing leaf is E046. No W011: nothing is discarded.
+        if let Some(old) = parent.get(&key).copied() {
+            self.merge_local_fields(old, table_id, &key);
+            self.module
+                .repeated_tables
+                .entry(old)
+                .or_default()
+                .push(table_id);
+        } else {
+            std::rc::Rc::make_mut(parent).insert(key, table_id);
         }
-        std::rc::Rc::make_mut(parent).insert(key, table_id);
     }
 
     /// Diagnostic at an explicit token's span.
@@ -3800,9 +4067,9 @@ impl Parser {
         });
     }
 
-    /// A repeated table definition replaces the whole earlier table,
-    /// so the warning says that: an author splitting a long section
-    /// loses every key the first block held (LANG-B-014).
+    /// A repeated *schema* header still replaces the whole earlier schema
+    /// (schema contracts union separately at value extraction); value
+    /// table bodies merge under L-P09 and never reach this warning.
     fn warn_duplicate_table(&mut self, key: &str, span: Span) {
         self.push_heal(Diagnostic {
             severity: Severity::Warning,
@@ -3874,6 +4141,9 @@ impl Parser {
                     // Detach from value fields so it never exports.
                     if let Some(Node::Table { fields }) = self.module.get_mut(table_id) {
                         fields.shift_remove("schema");
+                    }
+                    if let Some(snapshot) = self.module.body_fields.get_mut(&table_id) {
+                        snapshot.shift_remove("schema");
                     }
                     Some(id)
                 }
@@ -3974,6 +4244,74 @@ impl Parser {
             return;
         };
         self.extract_table_depends_on(root);
+    }
+
+    /// Remove extracted metadata from repeated bodies so the formatter
+    /// does not re-emit `schema` as data or a second `depends_on` block.
+    /// Runs after the live tree's extraction.
+    fn scrub_repeated_metadata(&mut self) {
+        let bodies: Vec<NodeId> = self
+            .module
+            .repeated_tables
+            .values()
+            .flatten()
+            .copied()
+            .collect();
+        let mut visited = std::collections::HashSet::new();
+        for id in bodies {
+            self.scrub_metadata_subtree(id, &mut visited);
+        }
+    }
+
+    /// Remove extracted metadata from one repeated-body table and every
+    /// nested table below it, including any formatter snapshot.
+    fn scrub_metadata_subtree(
+        &mut self,
+        id: NodeId,
+        visited: &mut std::collections::HashSet<NodeId>,
+    ) {
+        if !visited.insert(id) {
+            return;
+        }
+        let fields = match self.module.get(id) {
+            Some(Node::Table { fields }) => fields.clone(),
+            _ => return,
+        };
+        let remove_schema = fields
+            .get("schema")
+            .is_some_and(|node| matches!(self.module.get(*node), Some(Node::SchemaTable { .. })));
+        let remove_depends = fields.get("depends_on").is_some_and(|node| {
+            matches!(
+                self.module.get(*node),
+                Some(Node::Array { elements })
+                    if elements.iter().all(|element| matches!(
+                        self.module.get(*element),
+                        Some(Node::Literal(Value::String(_)))
+                    ))
+            )
+        });
+        if let Some(Node::Table { fields }) = self.module.get_mut(id) {
+            if remove_schema {
+                fields.shift_remove("schema");
+            }
+            if remove_depends {
+                fields.shift_remove("depends_on");
+            }
+        }
+        if let Some(snapshot) = self.module.body_fields.get_mut(&id) {
+            if remove_schema {
+                snapshot.shift_remove("schema");
+            }
+            if remove_depends {
+                snapshot.shift_remove("depends_on");
+            }
+        }
+        let children: Vec<NodeId> = fields.values().copied().collect();
+        for child in children {
+            if matches!(self.module.get(child), Some(Node::Table { .. })) {
+                self.scrub_metadata_subtree(child, visited);
+            }
+        }
     }
 
     /// Resolve the evaluation mode from a root-level
@@ -4152,6 +4490,9 @@ impl Parser {
                     if let Some(Node::Table { fields }) = self.module.get_mut(table_id) {
                         fields.shift_remove("depends_on");
                     }
+                    if let Some(snapshot) = self.module.body_fields.get_mut(&table_id) {
+                        snapshot.shift_remove("depends_on");
+                    }
                     let span =
                         self.module
                             .node_spans
@@ -4300,7 +4641,7 @@ impl Parser {
         self.ident_scopes.push(Vec::new());
 
         let mut pending = Vec::new();
-        self.push_merge_scope(false);
+        self.push_merge_scope();
         self.parse_body(&mut root_fields, BodyEnd::Document, &mut pending);
         self.splice_includes(&mut root_fields, pending, false);
 
@@ -4498,9 +4839,6 @@ impl Parser {
         }
         let name = segments.join(".");
         let leaf = segments.last().cloned().unwrap_or_default();
-        // The path enclosing this header, before its segments are pushed:
-        // a discarded body's document path needs it (nested headers).
-        let header_base = self.path_str();
         let stmt_idx = self.statements.len();
         self.statements.push(StmtInfo {
             key: name.clone(),
@@ -4594,7 +4932,7 @@ impl Parser {
         self.ident_scopes.push(Vec::new());
         let mut fields: SharedFields = std::rc::Rc::new(FieldMap::new());
         let mut pending = Vec::new();
-        self.push_merge_scope(false);
+        self.push_merge_scope();
         // Snapshot the enclosing scopes: the live parent map (always
         // available mid-parse) and, for a dotted header, the table the
         // path nests under (its fields already exist in the arena).
@@ -4634,44 +4972,49 @@ impl Parser {
             self.current_path.pop();
         }
         self.extract_annotations(&name, table_id, open.line);
-        let discarded_path = if header_base.is_empty() {
-            segments.join(".")
-        } else {
-            format!("{header_base}.{}", segments.join("."))
-        };
+        let header_local = segments.join(".");
         match scope {
             None => {
-                if parent.contains_key(&leaf) {
-                    self.warn_duplicate_table(&leaf, span_of(&open));
-                    if let Some(old) = parent.get(&leaf).copied() {
-                        self.discard_merge_scopes(old, &discarded_path);
-                    }
+                if let Some(old) = parent.get(&leaf).copied() {
+                    // Repeated header: merge the body structurally at
+                    // Local priority; a same-file leaf conflict defers to
+                    // the evaluator as E046.
+                    self.merge_local_fields(old, table_id, &header_local);
+                    self.module
+                        .repeated_tables
+                        .entry(old)
+                        .or_default()
+                        .push(table_id);
+                } else {
+                    std::rc::Rc::make_mut(parent).insert(leaf, table_id);
                 }
-                std::rc::Rc::make_mut(parent).insert(leaf, table_id);
             }
             Some(pid) => {
                 let old = match self.module.get(pid) {
                     Some(Node::Table { fields }) => fields.get(&leaf).copied(),
                     _ => None,
                 };
-                if old.is_some() {
-                    self.warn_duplicate_table(&leaf, span_of(&open));
-                }
                 if let Some(old) = old {
-                    self.discard_merge_scopes(old, &discarded_path);
-                }
-                match self.module.get_mut(pid) {
-                    Some(Node::Table { fields }) => {
-                        fields.insert(leaf, table_id);
-                    }
-                    _ => {
-                        self.error(
-                            "E001",
-                            format!(
-                                "table path '{}' conflicts with a non-table value",
-                                segments.join(".")
-                            ),
-                        );
+                    self.merge_local_fields(old, table_id, &header_local);
+                    self.module
+                        .repeated_tables
+                        .entry(old)
+                        .or_default()
+                        .push(table_id);
+                } else {
+                    match self.module.get_mut(pid) {
+                        Some(Node::Table { fields }) => {
+                            fields.insert(leaf, table_id);
+                        }
+                        _ => {
+                            self.error(
+                                "E001",
+                                format!(
+                                    "table path '{}' conflicts with a non-table value",
+                                    segments.join(".")
+                                ),
+                            );
+                        }
                     }
                 }
             }
@@ -5065,7 +5408,6 @@ impl Parser {
             pending_profiles: Vec::new(),
             trust: self.trust.clone(),
             merge_scopes: Vec::new(),
-            merge_scope_profiles: Vec::new(),
         };
         let node_base = sub.module.arena.len() as u32;
         let id = sub.parse_expression();
@@ -7403,7 +7745,6 @@ impl Parser {
             pending_profiles: Vec::new(),
             trust: self.trust.clone(),
             merge_scopes: Vec::new(),
-            merge_scope_profiles: Vec::new(),
         };
         // Arena ids below this base predate the embedded expression (the
         // sub-parser shares the outer arena); only spans at or above it

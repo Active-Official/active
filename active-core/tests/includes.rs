@@ -157,13 +157,23 @@ fn a_transitive_leaf_union_survives_an_outer_include() {
 }
 
 #[test]
-fn a_header_replacement_discards_an_ancestor_conflict_entry() {
+fn a_local_header_value_masks_an_ancestor_include_conflict() {
     let (value, diags) = eval_file_with_diags("main_discarded_header_conflict.active");
     assert!(
         diags.iter().all(|d| d.code != "E046"),
-        "discarded ancestor conflict leaked: {diags:?}"
+        "local value must mask the include conflict: {diags:?}"
     );
     assert_eq!(value["a"]["b"]["p"], 9);
+}
+
+#[test]
+fn a_local_value_equal_to_an_include_still_masks_the_conflict() {
+    let (value, diags) = eval_file_with_diags("main_local_masks_equal.active");
+    assert!(
+        diags.iter().all(|d| d.code != "E046"),
+        "equal-valued local replacement must mask the include conflict: {diags:?}"
+    );
+    assert_eq!(value["a"]["b"]["p"], 1);
 }
 
 #[test]
@@ -186,11 +196,11 @@ fn a_profile_survives_a_same_named_table_replacement() {
 }
 
 #[test]
-fn a_nested_header_replacement_discards_its_conflict_entry() {
+fn a_nested_local_header_value_masks_an_include_conflict() {
     let (value, diags) = eval_file_with_diags("main_nested_header_discard.active");
     assert!(
         diags.iter().all(|d| d.code != "E046"),
-        "nested discarded conflict leaked: {diags:?}"
+        "nested local value must mask the include conflict: {diags:?}"
     );
     assert_eq!(value["outer"]["a"]["b"]["p"], 9);
 }
@@ -203,6 +213,60 @@ fn a_shadowed_alias_include_does_not_report_its_internal_conflict() {
         "shadowed include's conflict leaked: {diags:?}"
     );
     assert_eq!(value["base"], 5);
+}
+
+#[test]
+fn an_included_file_repeated_header_conflict_survives_the_include() {
+    let dir = std::env::temp_dir().join(format!("active_inc_header_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("c.active"), "[t]\na = 1\n[t]\na = 2\n").unwrap();
+    std::fs::write(dir.join("a.active"), "include \"c.active\"\n").unwrap();
+    std::fs::write(dir.join("b.active"), "[t]\na = 1\n").unwrap();
+    let main = dir.join("main.active");
+    std::fs::write(&main, "include \"a.active\"\ninclude \"b.active\"\n").unwrap();
+    let module = parse_file(&main, parse_options()).expect("parse");
+    let (value, diags) = Engine::new()
+        .evaluate(&module)
+        .unwrap_or_else(|e| panic!("evaluate: {e}"));
+    let conflict = diags
+        .iter()
+        .find(|d| d.code == "E046")
+        .unwrap_or_else(|| panic!("expected E046, got {diags:?}"));
+    assert_eq!(conflict.path.as_deref(), Some("t.a"));
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(json.contains("\"a\": 1"), "{json}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn an_include_never_overrides_an_earlier_local_repeated_body() {
+    let dir = std::env::temp_dir().join(format!("active_inc_priority_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("def_host.active"), "host = \"inc\"\n").unwrap();
+    for (name, src) in [
+        (
+            "local_first.active",
+            "t { host = \"local\" }\nt { include \"def_host.active\" }\n",
+        ),
+        (
+            "include_first.active",
+            "t { include \"def_host.active\" }\nt { host = \"local\" }\n",
+        ),
+    ] {
+        let main = dir.join(name);
+        std::fs::write(&main, src).unwrap();
+        let module = parse_file(&main, parse_options()).expect("parse");
+        let (value, diags) = Engine::new()
+            .evaluate(&module)
+            .unwrap_or_else(|e| panic!("evaluate: {e}"));
+        assert!(diags.is_empty(), "{name}: {diags:?}");
+        let json = active_core::convert::value_to_pretty_json(&value);
+        assert!(
+            json.contains("\"host\": \"local\""),
+            "{name}: include overrode local: {json}"
+        );
+    }
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -362,18 +426,21 @@ fn an_included_leaf_under_a_local_container_still_conflicts() {
 }
 
 #[test]
-fn a_discarded_duplicate_body_reports_no_merge_conflict() {
+fn a_repeated_body_merges_and_keeps_its_internal_conflict() {
     let (value, diags) = eval_file_with_diags("main_discarded_duplicate.active");
+    // The first outer body's two includes conflict internally; repeated
+    // tables now merge, so that conflict is real (E046), and the first
+    // body's value is kept while the second body's keys union.
     assert!(
-        diags.iter().all(|d| d.code != "E046"),
-        "discarded body's conflict leaked: {diags:?}"
+        diags.iter().any(|d| d.code == "E046"),
+        "internal include conflict must report: {diags:?}"
     );
     assert!(
-        diags.iter().any(|d| d.code == "W011"),
-        "replacement must stay announced: {diags:?}"
+        diags.iter().all(|d| d.code != "W011"),
+        "repeated tables are no longer discarded: {diags:?}"
     );
+    assert_eq!(value["outer"]["outer"]["port"], 100);
     assert_eq!(value["outer"]["y"], 1);
-    assert!(value["outer"].get("port").is_none());
 }
 
 #[test]

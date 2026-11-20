@@ -291,3 +291,15 @@ reason = "include-loader callback absent from shim v1 (F-016 native only)"
 [[pins]]
 id = "0048-include-merge-equal"
 reason = "include-loader callback absent from shim v1 (F-016 native only)"
+
+# L-P09 phase 3: repeated headers merge tables at Local priority.
+[[cases]]
+id = "0043-duplicate-header-merge"
+file = "cases/0043-duplicate-header-merge.active"
+kind = "clean"
+
+# Two repeated headers disagree on the same leaf: E046.
+[[cases]]
+id = "0044-duplicate-header-conflict"
+file = "cases/0044-duplicate-header-conflict.active"
+kind = "refused"

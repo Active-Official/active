@@ -85,6 +85,7 @@ fn format_once(module: &Module, style: Style) -> String {
         trailing_document: Vec::new(),
         pending_blank: false,
         flat: false,
+        emitted_scopes: std::collections::HashSet::new(),
         out: String::new(),
     };
     f.flat = f.needs_flat_rendering();
@@ -109,6 +110,10 @@ struct Formatter<'a> {
     /// is rendered as a `[dotted.path]` header instead of a nested body
     /// (see the constants above). Chosen once per pass from the tree.
     flat: bool,
+    /// Scope identities whose includes/schema/depends_on blocks were
+    /// already emitted. Keyed by (profile, path): profiles and value
+    /// tables are separate namespaces with the same text.
+    emitted_scopes: std::collections::HashSet<(bool, String)>,
     out: String,
 }
 
@@ -313,6 +318,19 @@ impl<'a> Formatter<'a> {
     /// `schema` is this table's schema node for parallel emission:
     /// a `schema = { … }` block leads the body (spec §2.10).
     fn emit_table_body(&mut self, id: NodeId, depth: usize, path: &str, is_root: bool) {
+        self.emit_table_body_with(id, depth, path, is_root, false);
+    }
+
+    /// Emit a table body. `profile` selects the namespace: a profile
+    /// body and a value table can share the same path text.
+    fn emit_table_body_with(
+        &mut self,
+        id: NodeId,
+        depth: usize,
+        path: &str,
+        is_root: bool,
+        profile: bool,
+    ) {
         // Only a REF to a named table is rendered as its name by the
         // caller; a table definition emits its own body.
         if matches!(self.module.get(id), Some(Node::Ref(_)))
@@ -320,36 +338,57 @@ impl<'a> Formatter<'a> {
         {
             return;
         }
-        let fields = match self.module.get(self.resolve_ref(id)) {
-            Some(Node::Table { fields }) => fields.clone(),
-            _ => return,
+        let resolved = self.resolve_ref(id);
+        let fields = match self.module.body_fields.get(&resolved) {
+            Some(snapshot) => snapshot.clone(),
+            None => match self.module.get(resolved) {
+                Some(Node::Table { fields }) => fields.clone(),
+                _ => return,
+            },
         };
+        // Defense in depth: a schema node that survived extraction must
+        // never render as data (`schema = null`).
+        let fields: indexmap::IndexMap<String, NodeId> = fields
+            .into_iter()
+            .filter(|(key, node)| {
+                !(key == "schema"
+                    && matches!(
+                        self.module.get(self.resolve_ref(*node)),
+                        Some(Node::SchemaTable { .. })
+                    ))
+                    && !self.is_include_node(*node)
+            })
+            .collect();
         // Include statements recorded for this scope come first, in
         // source order: under the defaults rule (spec §2.7) their
         // position relative to keys never changes semantics. Root
         // includes emit with root patches (positional application
         // order), so only nested scopes emit here.
-        if !path.is_empty() {
+        if !path.is_empty() && self.emitted_scopes.insert((profile, path.to_string())) {
             let mut includes: Vec<&IncludeStmt> = self
                 .module
                 .includes
                 .iter()
-                .filter(|inc| inc.scope_path.join(".") == path)
+                .filter(|inc| inc.profile == profile && inc.scope_path.join(".") == path)
                 .collect();
             includes.sort_by_key(|inc| inc.line);
             for inc in includes {
                 self.emit_include(inc, depth);
             }
-            // A nested `schema` block leads its table's body (spec
-            // §2.10). It was detached from value fields at parse, so
-            // re-emit it here from the schema tree. The root schema
-            // emits once from emit_module instead.
-            if let Some(schema) = self.schema_for_path(path) {
-                self.emit_schema_table(schema, depth);
+            if !profile {
+                if let Some(schema) = self.schema_for_path(path) {
+                    self.emit_schema_table(schema, depth);
+                }
             }
             // Dependency metadata follows the schema (spec/linter.md
-            // §2), ahead of the keys it constrains.
-            self.emit_depends_on(id, depth);
+            // §2), ahead of the keys it constrains. The scope node is
+            // the surviving first table at `path` (or the profile body).
+            let scope_id = if profile {
+                self.module.profiles.get(path).copied().unwrap_or(resolved)
+            } else {
+                self.table_id_at_path(path).unwrap_or(resolved)
+            };
+            self.emit_depends_on(scope_id, depth);
         }
         // A reference to a table is a table here: rendering it as a
         // scalar expression (`key = { ... }`) made the next pass
@@ -502,7 +541,15 @@ impl<'a> Formatter<'a> {
                     // FLAT_DEPTH_THRESHOLD).
                     self.emit_flat_table(*node, &child_path, key, depth);
                 } else {
-                    self.emit_table_block(*node, &child_path, key, depth, is_root, has_next);
+                    self.emit_table_block(
+                        *node,
+                        &child_path,
+                        key,
+                        depth,
+                        is_root,
+                        has_next,
+                        profile,
+                    );
                 }
             } else {
                 let value = self.render_expr(*node);
@@ -513,7 +560,7 @@ impl<'a> Formatter<'a> {
             }
         }
 
-        if let Some(comments) = self.trailing_block.get(path).cloned() {
+        if let Some(comments) = self.trailing_block.remove(path) {
             for text in comments {
                 self.out.push_str(&INDENT.repeat(depth));
                 self.out.push_str(&text);
@@ -898,7 +945,7 @@ impl<'a> Formatter<'a> {
                 .module
                 .includes
                 .iter()
-                .filter(|inc| inc.scope_path.join(".") == full)
+                .filter(|inc| !inc.profile && inc.scope_path.join(".") == full)
                 .cloned()
                 .collect();
             includes.sort_by_key(|inc| inc.line);
@@ -937,6 +984,7 @@ impl<'a> Formatter<'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn emit_table_block(
         &mut self,
         id: NodeId,
@@ -945,6 +993,7 @@ impl<'a> Formatter<'a> {
         depth: usize,
         is_root: bool,
         has_next: bool,
+        profile: bool,
     ) {
         // Resolve the alias first: a field can be a `Ref` to a table
         // definition, and the empty-vs-block decision must look at the
@@ -953,10 +1002,31 @@ impl<'a> Formatter<'a> {
         // and then rendered inline (`ye = {}`) on the second pass - fuzz
         // seed crash-f438d19.
         let id = self.resolve_ref(id);
-        let empty = matches!(
-            self.module.get(id),
-            Some(Node::Table { fields }) if fields.is_empty()
-        );
+        // A body whose only fields came from an include still owns the
+        // include/schema/depends blocks; it must render as a block.
+        let has_scope_meta = !path.is_empty()
+            && (self
+                .module
+                .includes
+                .iter()
+                .any(|inc| !inc.profile && inc.scope_path.join(".") == path)
+                || self.schema_for_path(path).is_some()
+                || self
+                    .table_id_at_path(path)
+                    .is_some_and(|scope| self.module.depends_on.contains_key(&scope)));
+        let empty = self.table_is_empty(id) && !has_scope_meta;
+        let has_non_empty_extras = self
+            .module
+            .repeated_tables
+            .get(&id)
+            .is_some_and(|bodies| bodies.iter().any(|body| !self.table_is_empty(*body)));
+        if empty && has_non_empty_extras {
+            // An empty body contributes nothing; emitting it inline would
+            // replace the merged table on the next parse. Emit only the
+            // non-empty repeated bodies.
+            self.emit_repeated_tables(id, path, key, depth, is_root, profile);
+            return;
+        }
         match self.style {
             Style::Indent => {
                 // Indentation style cannot express a bodyless block, so an
@@ -971,7 +1041,7 @@ impl<'a> Formatter<'a> {
                     // blank line goes BEFORE those comments: leaving it
                     // after them makes the next parse re-attach them to
                     // the following key and breaks idempotence.
-                    if let Some(comments) = self.trailing_block.get(path).cloned() {
+                    if let Some(comments) = self.trailing_block.remove(path) {
                         if is_root && has_next {
                             self.out.push('\n');
                             self.pending_blank = true;
@@ -982,13 +1052,15 @@ impl<'a> Formatter<'a> {
                             self.out.push('\n');
                         }
                     }
+                    self.emit_repeated_tables(id, path, key, depth, is_root, profile);
                     return;
                 }
                 self.out
                     .push_str(&format!("{}{key}:", INDENT.repeat(depth)));
                 self.emit_trailing(path);
                 self.out.push('\n');
-                self.emit_table_body(id, depth + 1, path, false);
+                self.emit_table_body_with(id, depth + 1, path, false, profile);
+                self.emit_repeated_tables(id, path, key, depth, is_root, profile);
             }
             _ => {
                 if is_root && depth == 0 {
@@ -1010,7 +1082,8 @@ impl<'a> Formatter<'a> {
                         self.out.push('\n');
                         self.pending_blank = true;
                     }
-                    self.emit_table_body(id, 0, path, false);
+                    self.emit_table_body_with(id, 0, path, false, profile);
+                    self.emit_repeated_tables(id, path, key, depth, is_root, profile);
                 } else if empty {
                     // Inline form: a `key {\n}` block followed by a
                     // comment makes the next parse attach that comment
@@ -1019,15 +1092,71 @@ impl<'a> Formatter<'a> {
                         .push_str(&format!("{}{key} = {{}}", INDENT.repeat(depth)));
                     self.emit_trailing(path);
                     self.out.push('\n');
+                    self.emit_repeated_tables(id, path, key, depth, is_root, profile);
                 } else {
                     self.out
                         .push_str(&format!("{}{key} {{", INDENT.repeat(depth)));
                     self.emit_trailing(path);
                     self.out.push('\n');
-                    self.emit_table_body(id, depth + 1, path, false);
+                    self.emit_table_body_with(id, depth + 1, path, false, profile);
                     self.out.push_str(&format!("{}}}\n", INDENT.repeat(depth)));
+                    self.emit_repeated_tables(id, path, key, depth, is_root, profile);
                 }
             }
+        }
+    }
+
+    /// True when a node came from an included file. A resolved module
+    /// materializes those values as fields; the formatter must not also
+    /// emit them as literals (the include statement recreates them at
+    /// Include priority).
+    fn is_include_node(&self, id: NodeId) -> bool {
+        let Some(file) = self.module.node_files.get(&id) else {
+            return false;
+        };
+        self.module
+            .include_pins
+            .iter()
+            .any(|pin| &pin.stamp == file)
+    }
+
+    /// True when a body (its snapshot, for a first body) has no fields of
+    /// its own; include-provided fields are recreated by the include.
+    fn table_is_empty(&self, id: NodeId) -> bool {
+        let id = self.resolve_ref(id);
+        let fields = match self.module.body_fields.get(&id) {
+            Some(snapshot) => snapshot.clone(),
+            None => match self.module.get(id) {
+                Some(Node::Table { fields }) => fields.clone(),
+                _ => return true,
+            },
+        };
+        fields.values().all(|node| self.is_include_node(*node))
+    }
+
+    /// Re-emit each extra body of a repeated table as its own statement
+    /// (L-P09 phase 3). Scope metadata (includes, schema, depends_on)
+    /// stays with the first body; only fields repeat. Empty extra bodies
+    /// are omitted: they contribute no value, and an inline empty table
+    /// would replace the merged table on the next parse.
+    fn emit_repeated_tables(
+        &mut self,
+        id: NodeId,
+        path: &str,
+        key: &str,
+        depth: usize,
+        is_root: bool,
+        profile: bool,
+    ) {
+        let extras = match self.module.repeated_tables.get(&id) {
+            Some(bodies) => bodies.clone(),
+            None => return,
+        };
+        for body in extras {
+            if self.table_is_empty(body) {
+                continue;
+            }
+            self.emit_table_block(body, path, key, depth, is_root, false, profile);
         }
     }
 
@@ -1074,7 +1203,7 @@ impl<'a> Formatter<'a> {
     /// would otherwise exceed the parser's block budget too).
     fn emit_profile_body(&mut self, id: NodeId, name: &str, depth: usize) {
         if !self.flat {
-            self.emit_table_body(id, depth, name, false);
+            self.emit_table_body_with(id, depth, name, false, true);
             return;
         }
         let fields = match self.module.get(id) {
@@ -1174,6 +1303,18 @@ impl<'a> Formatter<'a> {
     /// Follow `Ref` links to the node that holds the value. The
     /// dependency graph is acyclic (S001 refuses cycles), so this
     /// terminates; the step bound is defense in depth.
+    /// The surviving table node at a document path, for scope metadata.
+    fn table_id_at_path(&self, path: &str) -> Option<NodeId> {
+        let mut node = self.module.root?;
+        for segment in path.split('.').filter(|segment| !segment.is_empty()) {
+            match self.module.get(self.resolve_ref(node)) {
+                Some(Node::Table { fields }) => node = *fields.get(segment)?,
+                _ => return None,
+            }
+        }
+        Some(self.resolve_ref(node))
+    }
+
     fn resolve_ref(&self, mut id: NodeId) -> NodeId {
         for _ in 0..1024 {
             match self.module.get(id) {

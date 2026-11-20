@@ -297,32 +297,17 @@ fn confidence_policy_is_reflected_in_severity() {
 }
 
 #[test]
-fn a_redefined_table_header_warns_w011_and_replaces_the_body() {
-    // LANG-B-014: a repeated [table] header replaces the whole earlier body
-    // (last wins). The warning must name the discarded body, and evaluation
-    // must show the replacement - the earlier test cited for this finding
-    // covered duplicate schema FIELDS (B-015), not repeated headers.
+fn a_redefined_table_header_merges_without_a_discard_warning() {
+    // L-P09 phase 3: repeated [table] headers merge recursively. Nothing
+    // is discarded, so there is no W011; both bodies' keys survive.
     let module =
         active_core::parse("[t]\na = 1\n[t]\nb = 2\n", "dup-table").expect("recovering parse");
     let w011: Vec<_> = module.healing.iter().filter(|d| d.code == "W011").collect();
-    assert_eq!(w011.len(), 1, "{:?}", module.healing);
-    assert!(
-        w011[0].message.contains("duplicate table 't'"),
-        "{}",
-        w011[0].message
-    );
-    assert!(
-        w011[0].message.contains("previous body discarded"),
-        "{}",
-        w011[0].message
-    );
+    assert!(w011.is_empty(), "{:?}", module.healing);
     let (value, _) = active_core::Engine::new()
         .evaluate(&module)
         .expect("evaluates");
     let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(json.contains("\"a\": 1"), "{json}");
     assert!(json.contains("\"b\": 2"), "{json}");
-    assert!(
-        !json.contains("\"a\": 1"),
-        "the earlier body must be gone: {json}"
-    );
 }

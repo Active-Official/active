@@ -39,10 +39,6 @@ pub struct PendingMerge {
     pub path: String,
     pub local: String,
     pub candidates: Vec<MergeCandidate>,
-    /// True when the scope sits inside a profile body. Discarding a
-    /// same-named table must not purge a profile's entries: profiles
-    /// are a separate namespace.
-    pub profile: bool,
 }
 
 /// Bytes of path and source text one provenance map may retain. Paths are
@@ -867,7 +863,7 @@ fn unify_inner(
 /// Blob identity is hash, size, media type, and taint; the retained
 /// payload is a materialization cache, not identity. Callers pass
 /// evaluated (raw) trees; redacted trees would defeat the material guard.
-fn merge_agree(left: &Value, right: &Value) -> bool {
+pub(crate) fn merge_agree(left: &Value, right: &Value) -> bool {
     let mut stack = vec![(left, right)];
     while let Some((left, right)) = stack.pop() {
         match (left, right) {

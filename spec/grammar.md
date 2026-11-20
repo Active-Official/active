@@ -270,12 +270,19 @@ key-value     = identifier "=" expression
 ```
 
 Dotted headers (`[a.b.c]`) descend through (or create) nested tables;
-the body belongs to the leaf. Repeated headers merge at shared
-prefixes (`[a.b]` then `[a.c]` keep both); a repeated leaf is
-last-wins, exactly like repeated single headers. Descending through
-a present non-table value is E001. After a table header, key-values
-belong to that table until EOF, the next `[`-header, or a `let`
-(a `let` inside a table body ends the table).
+the body belongs to the leaf. Repeated table bodies merge at shared
+prefixes (`[a.b]` then `[a.c]` keep both). A repeated leaf unifies
+(L-P09, 2.0.0) for every body form: `[header]`, brace `name { ... }`,
+indentation `name: ...`, and an inline `name = { ... }` followed by a
+body. Tables merge recursively at Local priority, equal values agree,
+and a scalar, array, or shape disagreement at a path is **E046 merge
+conflict**; the first body's value stays in resilient mode. An include
+inside a later body never overrides an earlier local leaf (Local beats
+Include at every level). The formatter re-emits every repeated body as
+its own statement. Descending through a present non-table value is
+E001. After a table header, key-values belong to that table until EOF,
+the next `[`-header, or a `let` (a `let` inside a table body ends the
+table).
 
 ### 2.7 Include statements (C-025)
 

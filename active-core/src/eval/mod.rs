@@ -799,20 +799,51 @@ fn apply_pending_merges(
     // by node), preserving source order across the parser's pairs.
     let mut grouped: indexmap::IndexMap<String, (String, Vec<crate::unify::MergeCandidate>)> =
         indexmap::IndexMap::new();
+    let mut seen: indexmap::IndexMap<String, std::collections::HashSet<NodeId>> =
+        indexmap::IndexMap::new();
     for entry in pending {
+        if let Some(end) = deadline {
+            if std::time::Instant::now() >= end {
+                return Err(EvalError::budget_exceeded(
+                    BudgetKind::WallClock,
+                    budget.max_wall_ms,
+                    module,
+                    None,
+                ));
+            }
+        }
         let slot = grouped
             .entry(entry.local.clone())
             .or_insert_with(|| (entry.path.clone(), Vec::new()));
+        let known = seen.entry(entry.local.clone()).or_default();
         for candidate in &entry.candidates {
-            if !slot.1.iter().any(|known| known.node == candidate.node) {
+            if known.insert(candidate.node) {
                 slot.1.push(candidate.clone());
             }
         }
     }
     for (local, (path, candidates)) in grouped {
-        // `depends_on` is extracted at parse and never exported; a merge
-        // entry naming it must not re-insert or diagnose it.
-        if local.split('.').any(|segment| segment == "depends_on") {
+        // `depends_on` is extracted at parse and never exported. Skip
+        // only an actual extracted metadata key; a data key with the same
+        // name must still conflict normally.
+        let metadata_depends_on = match local.rsplit_once('.') {
+            Some((parent, "depends_on")) => scope_node_at(module, scope, parent)
+                .is_some_and(|parent_id| module.depends_on.contains_key(&parent_id)),
+            None => local == "depends_on" && module.depends_on.contains_key(&scope),
+            _ => false,
+        };
+        if metadata_depends_on {
+            continue;
+        }
+        // A local body replaced an include-derived value here (or at an
+        // ancestor): the local value wins and the include pair is not an
+        // observable conflict, even when the values happen to agree.
+        if module.replaced_paths.iter().any(|replaced| {
+            path == *replaced
+                || (path.len() > replaced.len()
+                    && path.starts_with(replaced.as_str())
+                    && path.as_bytes()[replaced.len()] == b'.')
+        }) {
             continue;
         }
         // Engine ceilings apply to merges too; the fixed merge defaults
@@ -840,19 +871,36 @@ fn apply_pending_merges(
         let Some(first) = candidates.next() else {
             continue;
         };
-        let group_material =
-            profile.is_some_and(|p| p.node_is_secret(first.node) || p.path_is_secret(&path));
-        // Start from the tree, not the raw first candidate: an earlier
-        // group at a deeper path may already have unioned this subtree.
-        let Some(mut current) = value_at_path(map, &local)
-            .cloned()
-            .or_else(|| values.get(&first.node).cloned())
-        else {
+        let live = value_at_path(map, &local).cloned();
+        let tree_node = scope_node_at(module, scope, &local);
+        let base = match (tree_node, live) {
+            // The kept candidate is still the tree node: fold onto it.
+            (Some(node), Some(value)) if node == first.node => Some(value),
+            // A different node occupies the path. If its value equals the
+            // first candidate (an earlier body with the same value), the
+            // merge is still live and its later candidates must be
+            // compared; a genuinely different value means a higher
+            // priority or local replacement took the path.
+            (Some(_), Some(value)) => match values.get(&first.node) {
+                Some(first_value) if crate::unify::merge_agree(&value, first_value) => Some(value),
+                _ => None,
+            },
+            (Some(_), None) => values.get(&first.node).cloned(),
+            // No node at the path: extracted metadata or a malformed
+            // host-built module. Fail closed.
+            (None, _) => None,
+        };
+        let Some(mut current) = base else {
             if *reported < MAX_MERGE_DIAGNOSTICS {
+                let message = if tree_node.is_none() {
+                    format!("merge target '{path}' has no evaluated value")
+                } else {
+                    format!("merge candidate at '{path}' has no evaluated value")
+                };
                 diagnostics.push(Diagnostic {
                     severity: Severity::Error,
                     code: "E046".into(),
-                    message: format!("merge target '{path}' has no evaluated value"),
+                    message,
                     path: Some(path),
                     span: module.node_spans.get(&first.node).cloned(),
                     file: module.node_files.get(&first.node).cloned(),
@@ -863,6 +911,8 @@ fn apply_pending_merges(
             }
             continue;
         };
+        let group_material =
+            profile.is_some_and(|p| p.node_is_secret(first.node) || p.path_is_secret(&path));
         // Material is never compared: redact material leaves first, so
         // unify sees a Secret (never equal) instead of the plaintext.
         if group_material {
@@ -972,6 +1022,24 @@ fn apply_pending_merges(
         }
     }
     Ok(())
+}
+
+/// Resolve a scope-relative dotted path to the node currently placed in
+/// that scope's table fields (AST identity, not values).
+fn scope_node_at(module: &Module, scope: NodeId, path: &str) -> Option<NodeId> {
+    let Some(Node::Table { fields }) = module.get(scope) else {
+        return None;
+    };
+    let mut segments = path.split('.');
+    let first = segments.next()?;
+    let mut node = *fields.get(first)?;
+    for segment in segments {
+        match module.get(node) {
+            Some(Node::Table { fields }) => node = *fields.get(segment)?,
+            _ => return None,
+        }
+    }
+    Some(node)
 }
 
 fn value_at_path<'a>(map: &'a indexmap::IndexMap<String, Value>, path: &str) -> Option<&'a Value> {
@@ -2307,6 +2375,11 @@ impl Engine {
                 stack.extend(module.profiles.values().copied());
                 stack.extend(module.patches.iter().copied());
                 stack.extend(module.schema);
+                for pending in module.merge_pending.values() {
+                    for entry in pending {
+                        stack.extend(entry.candidates.iter().map(|candidate| candidate.node));
+                    }
+                }
                 while let Some(id) = stack.pop() {
                     if !set.insert(id) {
                         continue;

@@ -1,0 +1,6 @@
+a {
+  include "discard_nested_a.active"
+  include "discard_nested_b.active"
+}
+[a.b]
+p = 1

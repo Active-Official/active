@@ -1,0 +1,7 @@
+outer {
+  include "discard_a.active"
+  include "discard_b.active"
+}
+outer {
+  y = 1
+}

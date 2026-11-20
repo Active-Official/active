@@ -1,0 +1,6 @@
+profile "a" {
+  include "conflict_a.active"
+  include "conflict_b.active"
+}
+a { x = 1 }
+a { y = 2 }

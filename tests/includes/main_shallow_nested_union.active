@@ -1,0 +1,3 @@
+include "merge_shallow_a.active"
+include "merge_shallow_b.active"
+include "merge_shallow_c.active"

@@ -1,0 +1,7 @@
+server {
+  db {
+    local = 1
+  }
+}
+include "nested_local_container_a.active"
+include "nested_local_container_b.active"

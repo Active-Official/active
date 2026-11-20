@@ -1,0 +1,2 @@
+include "dep_a.active"
+include "dep_b.active"

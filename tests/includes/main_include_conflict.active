@@ -1,0 +1,2 @@
+include "conflict_a.active"
+include "conflict_b.active"

@@ -444,6 +444,47 @@ fn declined_repair_fails_in_strict_and_heals_in_resilient() {
 }
 
 #[test]
+fn include_merge_conflict_is_e046_in_strict_and_resilient() {
+    // L-P09: two includes at the same priority disagree at server.port.
+    let dir = "merge_conflict";
+    fixture_in(dir, "a.active", "[server]\nport = 100\n");
+    fixture_in(dir, "b.active", "[server]\nport = 200\n");
+    let main = fixture_in(
+        dir,
+        "main.active",
+        "include \"a.active\"\ninclude \"b.active\"\n",
+    );
+    let strict = active()
+        .arg("eval")
+        .arg(&main)
+        .output()
+        .expect("run active");
+    assert!(
+        !strict.status.success(),
+        "E046 must fail the strict exit code"
+    );
+    let stderr = String::from_utf8_lossy(&strict.stderr);
+    assert!(stderr.contains("E046"), "{stderr}");
+    assert!(stderr.contains("conflict"), "{stderr}");
+
+    let resilient = active()
+        .args(["eval", "--resilient"])
+        .arg(&main)
+        .output()
+        .expect("run active");
+    // E046 is an Error in both modes; resilient only keeps the first
+    // source's value instead of refusing the tree.
+    assert!(
+        !resilient.status.success(),
+        "resilient must still report E046"
+    );
+    let stderr = String::from_utf8_lossy(&resilient.stderr);
+    assert!(stderr.contains("E046"), "{stderr}");
+    let stdout = String::from_utf8_lossy(&resilient.stdout);
+    assert!(stdout.contains("100"), "first source must win: {stdout}");
+}
+
+#[test]
 fn unexpected_character_is_rejected_in_both_modes() {
     // Backtick is not part of the language in any position (note: `@`
     // became a real token with semantic blocks in C-024, so it no longer

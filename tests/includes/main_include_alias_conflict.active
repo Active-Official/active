@@ -1,0 +1,2 @@
+include "alias_conflict_a.active" as base
+include "alias_conflict_b.active" as base

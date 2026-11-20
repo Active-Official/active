@@ -17,11 +17,34 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ir::Value;
+use crate::ir::{NodeId, Value};
 
 /// Largest provenance map kept in memory. Beyond this the map reports
 /// truncation; a merge never fails just because provenance is large.
 pub const MAX_PROVENANCE_PATHS: usize = 65_536;
+/// One candidate in a deferred merge: the parsed value and its source
+/// identity. The parser keeps the first candidate in the tree; the
+/// evaluator unifies the candidates once their values exist.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergeCandidate {
+    pub node: NodeId,
+    pub source: MergeSource,
+}
+
+/// A comparison the parser could not make because it depends on evaluated
+/// values. `local` is relative to the scope table; `path` is the full
+/// document path used in diagnostics and provenance.
+#[derive(Debug, Clone)]
+pub struct PendingMerge {
+    pub path: String,
+    pub local: String,
+    pub candidates: Vec<MergeCandidate>,
+    /// True when the scope sits inside a profile body. Discarding a
+    /// same-named table must not purge a profile's entries: profiles
+    /// are a separate namespace.
+    pub profile: bool,
+}
+
 /// Bytes of path and source text one provenance map may retain. Paths are
 /// caller-controlled, so the count cap alone does not bound memory: 65k
 /// paths built from long keys would otherwise allocate gigabytes.
@@ -51,7 +74,7 @@ pub enum MergePriority {
 
 /// One side of a merge: priority, source location, and a label for
 /// diagnostics (`include "lib.active"`, `[server]`, `profile "prod"`).
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MergeSource {
     /// Serialized as `kind`, matching the published provenance shape.

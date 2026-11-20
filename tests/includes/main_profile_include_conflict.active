@@ -1,0 +1,6 @@
+active_profile = "prod"
+
+profile "prod" {
+  include "profile_include_a.active"
+  include "profile_include_b.active"
+}

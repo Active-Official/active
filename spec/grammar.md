@@ -327,16 +327,21 @@ string-literal = String | SingleString | MlString | MlSingleString
   separator or a Windows drive-letter absolute (`C:\x`, `C:/x`) is
   **E026** on all platforms — the form cannot mean the same file
   everywhere, so it is refused instead of resolving differently per host.
-- Merge semantics (normative): **included files provide defaults**.
-  Explicit local keys always win, regardless of position; when several
-  included files define the same key, the LAST include wins (cascade).
-  Tables merge recursively — local scalars win at every level, and a
-  later include only overwrites paths a previous include provided, never
-  explicit local content (so a later `key = scalar` can never discard a
-  local table holding local keys). Deep structural composition beyond
-  defaults is the domain of profiles (C-027) and patches (C-028/029). An
-  included file's `let` bindings are visible to the including module but
-  never exported.
+- Merge semantics (normative, 2.0.0; L-P09): **included files provide
+  defaults, and includes are equal peers to one another.** Local keys beat
+  included values at every level (Local over Include), regardless of
+  position. Tables merge recursively. Two included files are the same
+  priority: equal values agree, and a scalar, array, or table/array shape
+  disagreement at a path is **E046 merge conflict**, naming the path and
+  both sources. E046 is an error in strict and resilient modes; resilient
+  evaluation keeps the first source in source order, so the exported tree
+  is deterministic. Included includes compose by the same rule (each
+  included file's local keys win inside that file before it participates
+  as one included value). Secrets never compare equal, so a path both
+  includes fill with material is E046 rather than an equality oracle. Deep
+  structural composition beyond defaults is the domain of profiles (C-027)
+  and patches (C-028/029). An included file's `let` bindings are visible
+  to the including module but never exported.
 - Included root metadata: `active_mode` and `active_capabilities` stay
   local to the main document (mode is a host decision, spec/mode.md
   §1). A root `active_profile` is an ordinary value that the evaluator

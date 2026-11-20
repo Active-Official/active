@@ -46,6 +46,16 @@ fn eval_file_with(name: &str, options: ParseOptions) -> serde_json::Value {
     serde_json::from_str(&json).expect("valid json")
 }
 
+fn eval_file_with_diags(name: &str) -> (serde_json::Value, Vec<active_core::Diagnostic>) {
+    let module = parse_file(&fixture(name), parse_options())
+        .unwrap_or_else(|diags| panic!("{name}: parse failed: {diags:?}"));
+    let (value, diags) = Engine::new()
+        .evaluate(&module)
+        .unwrap_or_else(|e| panic!("{name}: evaluation failed: {e}"));
+    let json = active_core::convert::value_to_pretty_json(&value);
+    (serde_json::from_str(&json).expect("valid json"), diags)
+}
+
 fn parse_err_codes(name: &str) -> Vec<String> {
     parse_file(&fixture(name), parse_options())
         .expect_err(&format!("{name} must fail"))
@@ -70,6 +80,476 @@ fn later_include_cascades_but_local_still_wins() {
     assert_eq!(v["server"]["host"], "a.local");
     assert_eq!(v["server"]["port"], 1);
     assert_eq!(v["server"]["debug"], true);
+}
+
+#[test]
+fn conflicting_includes_are_e046_and_keep_the_first_source() {
+    let (value, diags) = eval_file_with_diags("main_include_conflict.active");
+    let conflict = diags
+        .iter()
+        .find(|d| d.code == "E046")
+        .unwrap_or_else(|| panic!("expected E046, got {diags:?}"));
+    assert_eq!(conflict.severity, active_core::Severity::Error);
+    assert_eq!(conflict.path.as_deref(), Some("server.port"));
+    assert!(
+        conflict.message.contains("conflict_a.active"),
+        "{conflict:?}"
+    );
+    assert!(
+        conflict.message.contains("conflict_b.active"),
+        "{conflict:?}"
+    );
+    // Values are never echoed in the conflict report.
+    assert!(!conflict.message.contains("100"), "{conflict:?}");
+    assert!(!conflict.message.contains("200"), "{conflict:?}");
+    // Resilient tie-break: the first include in source order remains.
+    assert_eq!(value["server"]["port"], 100);
+}
+
+#[test]
+fn equal_values_across_includes_agree() {
+    let (value, diags) = eval_file_with_diags("main_include_equal.active");
+    assert!(diags.is_empty(), "{diags:?}");
+    assert_eq!(value["server"]["port"], 100);
+    assert_eq!(value["server"]["host"], "equal.local");
+}
+
+#[test]
+fn a_three_way_include_merge_reports_one_conflict() {
+    let (value, diags) = eval_file_with_diags("main_include_three_way.active");
+    let conflicts: Vec<_> = diags.iter().filter(|d| d.code == "E046").collect();
+    assert_eq!(conflicts.len(), 1, "{diags:?}");
+    assert_eq!(value["server"]["port"], 100);
+}
+
+#[test]
+fn opaque_table_values_union_across_includes() {
+    let (value, diags) = eval_file_with_diags("main_include_opaque_union.active");
+    assert!(diags.is_empty(), "{diags:?}");
+    assert_eq!(value["shared"]["x"], 1);
+    assert_eq!(value["shared"]["y"], 2);
+}
+
+#[test]
+fn a_bare_transitive_include_keeps_the_eval_time_union() {
+    let (value, diags) = eval_file_with_diags("main_transitive_opaque_union.active");
+    assert!(diags.is_empty(), "{diags:?}");
+    assert_eq!(value["x"]["y"], 1);
+    assert_eq!(value["x"]["z"], 2);
+}
+
+#[test]
+fn a_shallow_union_keeps_a_deeper_union_applied_first() {
+    let (value, diags) = eval_file_with_diags("main_shallow_nested_union.active");
+    assert!(diags.is_empty(), "{diags:?}");
+    assert_eq!(value["x"]["p"]["y"], 11);
+    assert_eq!(value["x"]["p"]["z"], 22);
+    assert_eq!(value["x"]["q"], 33);
+}
+
+#[test]
+fn a_transitive_leaf_union_survives_an_outer_include() {
+    let (value, diags) = eval_file_with_diags("main_transitive_leaf_union.active");
+    assert!(diags.is_empty(), "{diags:?}");
+    assert_eq!(value["x"]["p"]["r"], 0);
+    assert_eq!(value["x"]["p"]["y"], 11);
+    assert_eq!(value["x"]["p"]["z"], 22);
+}
+
+#[test]
+fn a_header_replacement_discards_an_ancestor_conflict_entry() {
+    let (value, diags) = eval_file_with_diags("main_discarded_header_conflict.active");
+    assert!(
+        diags.iter().all(|d| d.code != "E046"),
+        "discarded ancestor conflict leaked: {diags:?}"
+    );
+    assert_eq!(value["a"]["b"]["p"], 9);
+}
+
+#[test]
+fn extracted_metadata_is_never_a_merge_target() {
+    let (value, diags) = eval_file_with_diags("main_depends_merge.active");
+    assert!(
+        diags.iter().all(|d| d.code != "E046"),
+        "metadata produced a merge conflict: {diags:?}"
+    );
+    assert!(value.get("depends_on").is_none(), "{value}");
+}
+
+#[test]
+fn a_profile_survives_a_same_named_table_replacement() {
+    let (_, diags) = eval_file_with_diags("main_profile_name_collision.active");
+    assert!(
+        diags.iter().any(|d| d.code == "E046"),
+        "profile conflict was purged: {diags:?}"
+    );
+}
+
+#[test]
+fn a_nested_header_replacement_discards_its_conflict_entry() {
+    let (value, diags) = eval_file_with_diags("main_nested_header_discard.active");
+    assert!(
+        diags.iter().all(|d| d.code != "E046"),
+        "nested discarded conflict leaked: {diags:?}"
+    );
+    assert_eq!(value["outer"]["a"]["b"]["p"], 9);
+}
+
+#[test]
+fn a_shadowed_alias_include_does_not_report_its_internal_conflict() {
+    let (value, diags) = eval_file_with_diags("main_shadowed_alias_conflict.active");
+    assert!(
+        diags.iter().all(|d| d.code != "E046"),
+        "shadowed include's conflict leaked: {diags:?}"
+    );
+    assert_eq!(value["base"], 5);
+}
+
+#[test]
+fn a_material_union_never_exports_plaintext() {
+    let module =
+        parse_file(&fixture("main_material_union.active"), parse_options()).expect("parse");
+    let engine = Engine::new();
+    let (value, diags, seeds) = engine.evaluate_with_seeds(&module).expect("evaluate");
+    assert!(diags.is_empty(), "{diags:?}");
+    let profile = active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
+    let redacted = active_core::convert::redact_value(&profile, &value);
+    let json = active_core::convert::value_to_pretty_json(&redacted);
+    assert!(!json.contains("1234"), "material Int leaked: {json}");
+    assert!(json.contains("SECRET"), "marker missing: {json}");
+}
+
+#[test]
+fn material_merge_never_becomes_an_equality_oracle() {
+    fn outcome(guess: &str) -> Vec<String> {
+        let dir = std::env::temp_dir().join(format!(
+            "active_oracle_{}_{}",
+            std::process::id(),
+            guess.len()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("env.active"), "x = env.AUDIT_TOKEN\n").unwrap();
+        std::fs::write(dir.join("guess.active"), format!("x = \"{guess}\"\n")).unwrap();
+        std::fs::write(dir.join("secret.active"), "k = secret(env.AUDIT_TOKEN)\n").unwrap();
+        let main = dir.join("main.active");
+        std::fs::write(
+            &main,
+            "include \"secret.active\"\ninclude \"env.active\"\ninclude \"guess.active\"\n",
+        )
+        .unwrap();
+        let module = parse_file(&main, parse_options()).expect("parse");
+        let mut env = std::collections::HashMap::new();
+        env.insert("AUDIT_TOKEN".to_string(), "s3cr3t".to_string());
+        let engine = Engine::hermetic().with_env(env);
+        let (_, diags, _) = engine.evaluate_with_seeds(&module).expect("evaluate");
+        let result = diags
+            .iter()
+            .map(|d| format!("{}|{}|{:?}", d.code, d.message, d.path))
+            .collect();
+        std::fs::remove_dir_all(&dir).ok();
+        result
+    }
+    let correct = outcome("s3cr3t");
+    let wrong = outcome("wrong");
+    assert_eq!(correct, wrong, "diagnostics revealed the guess");
+    assert!(correct.iter().any(|line| line.starts_with("E046")));
+}
+
+#[test]
+fn merge_budgets_do_not_reveal_secret_length() {
+    fn outcome(length: usize) -> bool {
+        let dir =
+            std::env::temp_dir().join(format!("active_len_{}_{}", std::process::id(), length));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.active"), "[x]\na = 1\n").unwrap();
+        std::fs::write(
+            dir.join("b.active"),
+            "token = secret(env.TOKEN)\nlet t = { token = token }\nx = t\n",
+        )
+        .unwrap();
+        let main = dir.join("main.active");
+        std::fs::write(&main, "include \"a.active\"\ninclude \"b.active\"\n").unwrap();
+        let module = parse_file(&main, parse_options()).expect("parse");
+        let mut env = std::collections::HashMap::new();
+        env.insert("TOKEN".to_string(), "x".repeat(length));
+        let mut engine = Engine::hermetic().with_env(env);
+        engine.budget = active_core::Budget {
+            max_value_size: 20,
+            ..active_core::Budget::default()
+        };
+        let ok = engine.evaluate(&module).is_ok();
+        std::fs::remove_dir_all(&dir).ok();
+        ok
+    }
+    assert_eq!(outcome(5), outcome(50), "secret length changed the budget");
+    assert!(outcome(5), "a short secret must fit");
+}
+
+#[test]
+fn merged_growth_is_charged_to_the_budgets() {
+    let dir = std::env::temp_dir().join(format!("active_growth_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let large = "x".repeat(300_000);
+    std::fs::write(dir.join("a.active"), "[x]\na = 1\n").unwrap();
+    std::fs::write(
+        dir.join("b.active"),
+        format!("let t = {{ b = \"{large}\" }}\nx = t\n"),
+    )
+    .unwrap();
+    let mut main = String::from("include \"a.active\"\ninclude \"b.active\"\n");
+    for index in 0..50 {
+        main.push_str(&format!("y{index} = x\n"));
+    }
+    let main_path = dir.join("main.active");
+    std::fs::write(&main_path, main).unwrap();
+    let module = parse_file(&main_path, parse_options()).expect("parse");
+    let mut engine = Engine::new();
+    engine.budget = active_core::Budget {
+        max_value_size: 200_000,
+        max_total_value_size: 2_000_000,
+        ..active_core::Budget::default()
+    };
+    let error = engine.evaluate(&module).expect_err("growth must trip X006");
+    assert_eq!(error.code(), "X006");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn an_oversized_dotted_header_is_refused_not_aborted() {
+    let header = format!("[{}]\nv = 1\n", vec!["a"; 1_000].join("."));
+    let codes: Vec<String> = match active_core::parse(&header, "deep-header") {
+        Ok(module) => module.diagnostics.iter().map(|d| d.code.clone()).collect(),
+        Err(diags) => diags.iter().map(|d| d.code.clone()).collect(),
+    };
+    assert!(codes.iter().any(|code| code == "E011"), "{codes:?}");
+}
+
+#[test]
+fn equal_large_includes_fit_the_value_budget_once() {
+    let dir = std::env::temp_dir().join(format!("active_merge_budget_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let big = "v".repeat(600);
+    let body = format!("t = {{ v = \"{big}\" }}\n");
+    std::fs::write(dir.join("a.active"), &body).unwrap();
+    std::fs::write(dir.join("b.active"), &body).unwrap();
+    let main = dir.join("main.active");
+    std::fs::write(&main, "include \"a.active\"\ninclude \"b.active\"\n").unwrap();
+    let module = parse_file(&main, parse_options()).expect("parse");
+    let mut engine = Engine::new();
+    engine.budget = active_core::Budget {
+        max_value_size: 1_000,
+        ..active_core::Budget::default()
+    };
+    let (value, diags) = engine
+        .evaluate(&module)
+        .unwrap_or_else(|e| panic!("equal values must fit: {e}"));
+    assert!(diags.is_empty(), "{diags:?}");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(json.contains(&big), "union value lost");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn an_included_leaf_under_a_local_container_still_conflicts() {
+    let (value, diags) = eval_file_with_diags("main_nested_local_container.active");
+    let conflict = diags
+        .iter()
+        .find(|d| d.code == "E046")
+        .unwrap_or_else(|| panic!("expected E046, got {diags:?}"));
+    assert_eq!(conflict.path.as_deref(), Some("server.db.port"));
+    assert_eq!(value["server"]["db"]["port"], 1);
+    assert_eq!(value["server"]["db"]["local"], 1);
+}
+
+#[test]
+fn a_discarded_duplicate_body_reports_no_merge_conflict() {
+    let (value, diags) = eval_file_with_diags("main_discarded_duplicate.active");
+    assert!(
+        diags.iter().all(|d| d.code != "E046"),
+        "discarded body's conflict leaked: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.code == "W011"),
+        "replacement must stay announced: {diags:?}"
+    );
+    assert_eq!(value["outer"]["y"], 1);
+    assert!(value["outer"].get("port").is_none());
+}
+
+#[test]
+fn nested_include_conflicts_report_their_full_path() {
+    let (_, diags) = eval_file_with_diags("main_include_nested_conflict.active");
+    let conflict = diags
+        .iter()
+        .find(|d| d.code == "E046")
+        .unwrap_or_else(|| panic!("expected E046, got {diags:?}"));
+    assert_eq!(conflict.path.as_deref(), Some("outer.inner.value"));
+}
+
+#[test]
+fn aliased_includes_conflict_under_the_alias_path() {
+    let (value, diags) = eval_file_with_diags("main_include_alias_conflict.active");
+    let conflict = diags
+        .iter()
+        .find(|d| d.code == "E046")
+        .unwrap_or_else(|| panic!("expected E046, got {diags:?}"));
+    assert_eq!(conflict.path.as_deref(), Some("base.server.port"));
+    assert_eq!(value["base"]["server"]["port"], 400);
+}
+
+#[test]
+fn include_conflicts_inside_a_profile_body_are_reported() {
+    let (_, diags) = eval_file_with_diags("main_profile_include_conflict.active");
+    let conflict = diags
+        .iter()
+        .find(|d| d.code == "E046")
+        .unwrap_or_else(|| panic!("expected E046, got {diags:?}"));
+    assert!(
+        conflict
+            .path
+            .as_deref()
+            .is_some_and(|p| p.ends_with("feature.on")),
+        "{conflict:?}"
+    );
+}
+
+#[test]
+fn secret_conflicts_never_echo_material() {
+    let (value, diags) = eval_file_with_diags("main_include_secret_conflict.active");
+    let conflict = diags
+        .iter()
+        .find(|d| d.code == "E046")
+        .unwrap_or_else(|| panic!("expected E046, got {diags:?}"));
+    assert!(!conflict.message.contains("first-material"), "{conflict:?}");
+    assert!(
+        !conflict.message.contains("second-material"),
+        "{conflict:?}"
+    );
+    // Exported JSON is redacted, so material never appears.
+    let json = serde_json::to_string(&value).expect("json");
+    assert!(!json.contains("first-material"), "{json}");
+    assert!(!json.contains("second-material"), "{json}");
+}
+
+#[test]
+fn incremental_merge_conflicts_keep_their_own_position() {
+    let dir = std::env::temp_dir().join(format!("active_merge_memo_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.active"), "[server]\nport = 100\n").unwrap();
+    std::fs::write(dir.join("b.active"), "[server]\nport = 200\n").unwrap();
+    let main = dir.join("main.active");
+    std::fs::write(&main, "include \"a.active\"\ninclude \"b.active\"\n").unwrap();
+    let module = parse_file(&main, parse_options()).expect("parse");
+    let engine = Engine::new();
+    let mut memo = active_core::IncrementalMemo::default();
+    let (_, first) = engine
+        .evaluate_incremental(&module, &mut memo)
+        .expect("evaluate");
+    let first = first
+        .iter()
+        .find(|d| d.code == "E046")
+        .unwrap_or_else(|| panic!("expected E046, got {first:?}"))
+        .clone();
+    assert!(first.span.is_some(), "candidate position lost");
+
+    // Whole-memo hit: the cached diagnostic keeps its own position
+    // instead of being re-anchored to the scope (which has none).
+    let (_, warm) = engine
+        .evaluate_incremental(&module, &mut memo)
+        .expect("evaluate");
+    let warm = warm
+        .iter()
+        .find(|d| d.code == "E046")
+        .unwrap_or_else(|| panic!("expected E046, got {warm:?}"));
+    assert_eq!(
+        warm.span
+            .as_ref()
+            .map(|s| (s.line, s.column, s.end_line, s.end_column)),
+        first
+            .span
+            .as_ref()
+            .map(|s| (s.line, s.column, s.end_line, s.end_column)),
+        "warm span drifted"
+    );
+    assert_eq!(warm.file, first.file, "warm file drifted");
+    assert_eq!(warm.message, first.message, "warm message drifted");
+
+    // A shifted include line invalidates the fingerprint; the fresh
+    // diagnostic must match a cold evaluation exactly.
+    std::fs::write(dir.join("b.active"), "# shifted\n[server]\nport = 200\n").unwrap();
+    let shifted = parse_file(&main, parse_options()).expect("parse");
+    let (_, warm) = engine
+        .evaluate_incremental(&shifted, &mut memo)
+        .expect("evaluate");
+    let warm = warm
+        .iter()
+        .find(|d| d.code == "E046")
+        .unwrap_or_else(|| panic!("expected E046, got {warm:?}"));
+    let (_, cold) = Engine::new().evaluate(&shifted).expect("evaluate");
+    let cold = cold
+        .iter()
+        .find(|d| d.code == "E046")
+        .unwrap_or_else(|| panic!("expected E046, got {cold:?}"));
+    assert_eq!(
+        warm.span
+            .as_ref()
+            .map(|s| (s.line, s.column, s.end_line, s.end_column)),
+        cold.span
+            .as_ref()
+            .map(|s| (s.line, s.column, s.end_line, s.end_column)),
+        "shifted span drifted"
+    );
+    assert_eq!(warm.file, cold.file, "shifted file drifted");
+    assert_eq!(warm.message, cold.message, "shifted message drifted");
+
+    // A column-only shift must also invalidate the fingerprint.
+    std::fs::write(dir.join("b.active"), "[server]\nport    = 200\n").unwrap();
+    let shifted = parse_file(&main, parse_options()).expect("parse");
+    let (_, warm) = engine
+        .evaluate_incremental(&shifted, &mut memo)
+        .expect("evaluate");
+    let warm = warm
+        .iter()
+        .find(|d| d.code == "E046")
+        .unwrap_or_else(|| panic!("expected E046, got {warm:?}"));
+    let (_, cold) = Engine::new().evaluate(&shifted).expect("evaluate");
+    let cold = cold
+        .iter()
+        .find(|d| d.code == "E046")
+        .unwrap_or_else(|| panic!("expected E046, got {cold:?}"));
+    assert_eq!(
+        warm.span
+            .as_ref()
+            .map(|s| (s.line, s.column, s.end_line, s.end_column)),
+        cold.span
+            .as_ref()
+            .map(|s| (s.line, s.column, s.end_line, s.end_column)),
+        "column shift served a stale position"
+    );
+
+    // An identical document under another directory must not serve the
+    // first document's absolute file path from the shared memo.
+    let other = dir.join("other");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(other.join("a.active"), "[server]\nport = 100\n").unwrap();
+    std::fs::write(other.join("b.active"), "[server]\nport = 200\n").unwrap();
+    let other_main = other.join("main.active");
+    std::fs::write(&other_main, "include \"a.active\"\ninclude \"b.active\"\n").unwrap();
+    let moved = parse_file(&other_main, parse_options()).expect("parse");
+    let (_, warm) = engine
+        .evaluate_incremental(&moved, &mut memo)
+        .expect("evaluate");
+    let warm = warm
+        .iter()
+        .find(|d| d.code == "E046")
+        .unwrap_or_else(|| panic!("expected E046, got {warm:?}"));
+    let (_, cold) = Engine::new().evaluate(&moved).expect("evaluate");
+    let cold = cold
+        .iter()
+        .find(|d| d.code == "E046")
+        .unwrap_or_else(|| panic!("expected E046, got {cold:?}"));
+    assert_eq!(warm.file, cold.file, "foreign file path served");
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]

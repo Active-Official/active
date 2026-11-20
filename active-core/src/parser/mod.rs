@@ -97,6 +97,13 @@ const MAX_EXPR_DEPTH: usize = 64;
 /// on pathological input; exceeding it is E011 (see C-037).
 const MAX_BLOCK_DEPTH: usize = 64;
 
+/// Maximum dotted segments in one table header. Dotted headers do not
+/// consume the lexical block budget, so they need their own ceiling:
+/// the recursive extraction/marking walks must never exhaust the stack.
+/// 256 keeps the formatter's deep-header round-trip (70) and stays far
+/// below the measured overflow threshold (~1000).
+const MAX_TABLE_PATH_SEGMENTS: usize = 256;
+
 /// Maximum schema-type nesting depth (`Array<Array<…>>`,
 /// `Table { … Table { … } … }`). Bounds parser recursion on pathological
 /// input; exceeding it is E004 (see C-037).
@@ -128,6 +135,7 @@ const TRUNCATED_MESSAGE: &str =
 use crate::diag::{thresholds, Diagnostic, Repair, RepairKind, Severity, Span};
 use crate::ir::{NodeId, SchemaField, SemanticTag, *};
 use crate::types::{ActiveType, Unit};
+use crate::unify::{MergeCandidate, MergePriority, MergeSource, PendingMerge};
 use indexmap::IndexMap;
 
 /// Host-provided include source resolver (F-016): maps a canonical path
@@ -678,6 +686,8 @@ fn parse_recovering_impl(
         binding_spliced: std::collections::HashSet::new(),
         pending_profiles: Vec::new(),
         trust,
+        merge_scopes: Vec::new(),
+        merge_scope_profiles: Vec::new(),
     };
     parser.module.source_sha256 = crate::provenance::sha256_hex(source.as_bytes());
     // Lexer diagnostics carry no file; stamp the session file (includes
@@ -1102,12 +1112,141 @@ struct Parser {
     /// must carry a valid sibling signature from this set (E032
     /// otherwise). `None` preserves all legacy behavior.
     trust: Option<crate::sign::TrustedKeys>,
+    /// Deferred same-priority merge candidates, one vector per open
+    /// scope (L-P09). The innermost scope receives records; the vector is
+    /// attached to the scope's table node once that node exists.
+    merge_scopes: Vec<Vec<PendingMerge>>,
+    /// Whether each open merge scope sits inside a profile body (parallel
+    /// to `merge_scopes`). Profiles are a separate namespace for discard.
+    merge_scope_profiles: Vec<bool>,
 }
 
 impl Parser {
     /// The dotted path of the enclosing table (empty at document level).
     fn path_str(&self) -> String {
         self.current_path.join(".")
+    }
+
+    /// Open a merge scope before parsing a table body (L-P09). `profile`
+    /// marks a body inside a profile block (a separate namespace).
+    fn push_merge_scope(&mut self, profile: bool) {
+        self.merge_scopes.push(Vec::new());
+        self.merge_scope_profiles.push(profile);
+    }
+
+    /// Attach the closed scope's deferred merges to its table node and
+    /// make every later candidate a dependency of that node, so the
+    /// evaluator has their values when it applies the merge.
+    fn attach_merge_scope(&mut self, node: NodeId) {
+        self.merge_scope_profiles.pop();
+        let Some(pending) = self.merge_scopes.pop() else {
+            return;
+        };
+        if pending.is_empty() {
+            return;
+        }
+        for entry in &pending {
+            for candidate in entry.candidates.iter().skip(1) {
+                self.module.add_edge(candidate.node, node);
+            }
+        }
+        self.module.merge_pending.insert(node, pending);
+    }
+
+    /// True for contract nodes, which merge by schema rules rather than
+    /// by value unification.
+    fn is_contract(&self, id: NodeId) -> bool {
+        matches!(
+            self.module.get(id),
+            Some(Node::SchemaTable { .. } | Node::SchemaField { .. } | Node::SchemaArray { .. })
+        )
+    }
+
+    /// Record two same-priority candidates the parser cannot compare.
+    /// The existing node stays in the tree (first in source order); the
+    /// evaluator unifies their values once evaluation produces them.
+    fn record_merge(&mut self, existing: NodeId, incoming: NodeId, local: &str) {
+        // Schema trees are contracts merged by their own rules; they do
+        // not evaluate to values, so a value merge cannot compare them.
+        if self.is_contract(existing) || self.is_contract(incoming) {
+            return;
+        }
+        if self.merge_scopes.is_empty() {
+            return;
+        }
+        let scope = self.current_path.join(".");
+        let path = if scope.is_empty() {
+            local.to_string()
+        } else {
+            format!("{scope}.{local}")
+        };
+        let candidates = vec![
+            MergeCandidate {
+                node: existing,
+                source: self.merge_source(existing),
+            },
+            MergeCandidate {
+                node: incoming,
+                source: self.merge_source(incoming),
+            },
+        ];
+        let in_profile = self.merge_scope_profiles.last().copied().unwrap_or(false);
+        if let Some(scope) = self.merge_scopes.last_mut() {
+            scope.push(PendingMerge {
+                path,
+                local: local.to_string(),
+                candidates,
+                profile: in_profile,
+            });
+        }
+    }
+
+    /// Drop deferred merges for a discarded table subtree. The old body is
+    /// no longer part of the document (W011), so its conflicts must not
+    /// refuse the replacement. Entries in any scope that name the
+    /// discarded path are purged too: the replacement is local content.
+    fn discard_merge_scopes(&mut self, root: NodeId, path: &str) {
+        let prefix = format!("{path}.");
+        for pending in self.module.merge_pending.values_mut() {
+            pending.retain(|entry| {
+                // Profiles are a separate namespace: a table with the
+                // same name must not purge a profile's conflict entry.
+                entry.profile || (entry.path != path && !entry.path.starts_with(&prefix))
+            });
+        }
+        let mut stack = vec![root];
+        while let Some(node) = stack.pop() {
+            self.module.merge_pending.remove(&node);
+            let children: Vec<NodeId> = match self.module.get(node) {
+                Some(Node::Table { fields }) => fields.values().copied().collect(),
+                _ => Vec::new(),
+            };
+            for child in children {
+                if matches!(self.module.get(child), Some(Node::Table { .. })) {
+                    stack.push(child);
+                }
+            }
+        }
+    }
+
+    /// Source identity for an included value. The document spelling from
+    /// the include pin keeps diagnostics portable; the span line points
+    /// into the included file.
+    fn merge_source(&self, id: NodeId) -> MergeSource {
+        let spelled = self.module.node_files.get(&id).and_then(|stamp| {
+            self.module
+                .include_pins
+                .iter()
+                .rev()
+                .find(|pin| &pin.stamp == stamp)
+                .map(|pin| pin.as_written.clone())
+        });
+        let line = self.module.node_spans.get(&id).map_or(0, |span| span.line);
+        let label = match &spelled {
+            Some(name) => format!("include \"{name}\""),
+            None => "include".to_string(),
+        };
+        MergeSource::new(MergePriority::Include, None, line, label)
     }
 
     /// End line of the most recently consumed token.
@@ -2056,6 +2195,10 @@ impl Parser {
         // `"\$"` collide instead of silently replacing). Only marked
         // sentinels convert; a literal U+E000 keeps its identity.
         let name = Self::render_marked(&name, &Self::sentinel_marks(&name, &name_tok.kind));
+        if name.is_empty() {
+            self.error_at("E018", "profile name must not be empty", &name_tok);
+            return;
+        }
         if self.module.profiles.contains_key(&name) {
             self.error_at("E018", format!("duplicate profile \"{name}\""), &name_tok);
             return;
@@ -2106,6 +2249,7 @@ impl Parser {
         let mut pending = Vec::new();
         let saved_in_profile = self.in_profile;
         self.in_profile = true;
+        self.push_merge_scope(true);
         match body {
             ProfileBody::Brace => self.parse_body(&mut fields, BodyEnd::Brace, &mut pending),
             ProfileBody::Block(level) => {
@@ -2123,6 +2267,7 @@ impl Parser {
         let table_id = self.module.add_node(Node::Table {
             fields: own_fields(fields),
         });
+        self.attach_merge_scope(table_id);
         self.statements[profile_stmt].end_line = self.last_end_line();
         self.current_path.pop();
         self.module.profiles.insert(name, table_id);
@@ -2849,6 +2994,11 @@ impl Parser {
         // unmarked path is local content that never loses. Subtree paths
         // are marked on insert so nested levels decide correctly.
         let mut spliced: std::collections::HashSet<String> = std::collections::HashSet::new();
+        // Bare includes splice their root's *fields*, so the included root
+        // node is not part of the parent tree. Its deferred merges must be
+        // transferred to this scope for the accepted paths, or the union
+        // would be computed on an orphan value.
+        let mut bare_roots: Vec<NodeId> = Vec::new();
         let mut pi = 0usize;
         while pi < pending.len() {
             let inc = pending[pi].clone();
@@ -2919,6 +3069,25 @@ impl Parser {
                 None => {
                     for (k, v) in sub_fields {
                         self.merge_key(fields, k, v, &mut spliced);
+                    }
+                    bare_roots.push(sub_root);
+                }
+            }
+        }
+        // A bare include's root node is not live in this tree, so move the
+        // deferred merges it recorded to this scope, but only for paths
+        // whose kept candidate actually survived the local-wins splice.
+        for root in bare_roots {
+            let Some(pending) = self.module.merge_pending.remove(&root) else {
+                continue;
+            };
+            for entry in pending {
+                // The path is include-provided in this scope (a later
+                // source may have replaced the node itself), so both
+                // peers compete; a local path stays local-wins.
+                if spliced.contains(&entry.local) {
+                    if let Some(scope) = self.merge_scopes.last_mut() {
+                        scope.push(entry);
                     }
                 }
             }
@@ -3067,11 +3236,17 @@ impl Parser {
             // Scalar-vs-table conflict: replace only when cascading over a
             // fully include-provided table. A table with any local
             // (unmarked) content keeps local-wins and ignores the scalar.
-            if overwrite {
+            if spliced.contains(key) {
                 if let Some(&local_id) = fields.get(key) {
                     if !self.has_unmarked(local_id, key, spliced) {
-                        std::rc::Rc::make_mut(fields).insert(key.to_string(), inc_id);
-                        self.mark_subtree(key, inc_id, spliced);
+                        if self.is_contract(local_id) || self.is_contract(inc_id) {
+                            std::rc::Rc::make_mut(fields).insert(key.to_string(), inc_id);
+                            self.mark_subtree(key, inc_id, spliced);
+                        } else {
+                            // Two included values disagree on shape; the
+                            // evaluator compares them and reports E046.
+                            self.record_merge(local_id, inc_id, key);
+                        }
                     }
                 }
             }
@@ -3086,10 +3261,15 @@ impl Parser {
         }
         let Some(Node::Table { .. }) = self.module.get(local_id) else {
             // Table-vs-scalar conflict: a marked (previously included)
-            // scalar cascades, a local scalar always wins.
-            if overwrite && spliced.contains(key) {
-                std::rc::Rc::make_mut(fields).insert(key.to_string(), inc_id);
-                self.mark_subtree(key, inc_id, spliced);
+            // scalar is an equal-priority disagreement; a local scalar
+            // always wins.
+            if spliced.contains(key) {
+                if self.is_contract(local_id) || self.is_contract(inc_id) {
+                    std::rc::Rc::make_mut(fields).insert(key.to_string(), inc_id);
+                    self.mark_subtree(key, inc_id, spliced);
+                } else {
+                    self.record_merge(local_id, inc_id, key);
+                }
             }
             return;
         };
@@ -3132,17 +3312,21 @@ impl Parser {
                         (Some(Node::Table { .. }), Some(Node::Table { .. }))
                     );
                     if !both_tables {
-                        if overwrite && spliced.contains(&child) {
-                            merged.insert(k.clone(), *v);
-                            self.module.add_edge(*v, local_id);
-                            changed = true;
+                        if spliced.contains(&child) {
+                            if self.is_contract(sub_local) || self.is_contract(*v) {
+                                merged.insert(k.clone(), *v);
+                                self.module.add_edge(*v, local_id);
+                                changed = true;
+                            } else {
+                                self.record_merge(sub_local, *v, &child);
+                            }
                         }
                         continue;
                     }
-                    // Recurse: cascade only through included paths, so a
-                    // purely local nested table keeps local-wins even
-                    // inside a composition.
-                    let sub_overwrite = overwrite && spliced.contains(&child);
+                    // Recurse: the overwrite decision follows the leaf's
+                    // own mark, so an included leaf nested under a local
+                    // container still competes at equal priority.
+                    let sub_overwrite = spliced.contains(&child);
                     if self.merge_tables_inner(sub_local, *v, &child, spliced, sub_overwrite) {
                         changed = true;
                     }
@@ -3211,14 +3395,18 @@ impl Parser {
                         (Some(Node::Table { .. }), Some(Node::Table { .. }))
                     );
                     if !both_tables {
-                        if overwrite && spliced.contains(&child) {
-                            merged.insert(k.clone(), *v);
-                            self.module.add_edge(*v, local_id);
-                            changed = true;
+                        if spliced.contains(&child) {
+                            if self.is_contract(sub_local) || self.is_contract(*v) {
+                                merged.insert(k.clone(), *v);
+                                self.module.add_edge(*v, local_id);
+                                changed = true;
+                            } else {
+                                self.record_merge(sub_local, *v, &child);
+                            }
                         }
                         continue;
                     }
-                    let sub_overwrite = overwrite && spliced.contains(&child);
+                    let sub_overwrite = spliced.contains(&child);
                     if self.merge_tables_inner(sub_local, *v, &child, spliced, sub_overwrite) {
                         changed = true;
                     }
@@ -3449,6 +3637,7 @@ impl Parser {
         let mut fields: SharedFields = std::rc::Rc::new(FieldMap::new());
         let mut pending = Vec::new();
         self.parent_field_scopes.push(parent.clone());
+        self.push_merge_scope(false);
         self.parse_body(&mut fields, BodyEnd::Block(level), &mut pending);
         self.splice_includes(&mut fields, pending, false);
         let idents = self.ident_scopes.pop().unwrap_or_default();
@@ -3462,6 +3651,7 @@ impl Parser {
             },
             &key_tok,
         );
+        self.attach_merge_scope(table_id);
         self.statements[stmt_idx].end_line = self.last_end_line();
         self.current_path.pop();
         self.extract_annotations(&key, table_id, key_tok.line);
@@ -3479,6 +3669,14 @@ impl Parser {
                 confidence: 1.0,
                 file: self.current_file_name(),
             });
+            if let Some(old) = parent.get(&key).copied() {
+                let discarded = if self.current_path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{}.{}", self.path_str(), key)
+                };
+                self.discard_merge_scopes(old, &discarded);
+            }
         }
         std::rc::Rc::make_mut(parent).insert(key, table_id);
     }
@@ -3530,6 +3728,7 @@ impl Parser {
         let mut fields: SharedFields = std::rc::Rc::new(FieldMap::new());
         let mut pending = Vec::new();
         self.parent_field_scopes.push(parent.clone());
+        self.push_merge_scope(false);
         self.parse_body(&mut fields, BodyEnd::Brace, &mut pending);
         self.splice_includes(&mut fields, pending, false);
         let idents = self.ident_scopes.pop().unwrap_or_default();
@@ -3542,6 +3741,7 @@ impl Parser {
             },
             &key_tok,
         );
+        self.attach_merge_scope(table_id);
         self.statements[stmt_idx].end_line = self.last_end_line();
         self.current_path.pop();
         self.extract_annotations(&key, table_id, key_tok.line);
@@ -3559,6 +3759,14 @@ impl Parser {
                 confidence: 1.0,
                 file: self.current_file_name(),
             });
+            if let Some(old) = parent.get(&key).copied() {
+                let discarded = if self.current_path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{}.{}", self.path_str(), key)
+                };
+                self.discard_merge_scopes(old, &discarded);
+            }
         }
         std::rc::Rc::make_mut(parent).insert(key, table_id);
     }
@@ -4092,6 +4300,7 @@ impl Parser {
         self.ident_scopes.push(Vec::new());
 
         let mut pending = Vec::new();
+        self.push_merge_scope(false);
         self.parse_body(&mut root_fields, BodyEnd::Document, &mut pending);
         self.splice_includes(&mut root_fields, pending, false);
 
@@ -4124,6 +4333,7 @@ impl Parser {
         let root_id = self.module.add_node(Node::Table {
             fields: own_fields(root_fields),
         });
+        self.attach_merge_scope(root_id);
         self.module.root = Some(root_id);
     }
 
@@ -4214,6 +4424,19 @@ impl Parser {
             Some(t) => t,
             None => return,
         };
+        // A dotted header is block nesting: cap it like any other so the
+        // recursive extraction/marking walks cannot exhaust the stack.
+        if segments.len() > MAX_TABLE_PATH_SEGMENTS {
+            self.error_at(
+                "E011",
+                format!(
+                    "maximum table path depth ({MAX_TABLE_PATH_SEGMENTS}) exceeded: {} segments",
+                    segments.len()
+                ),
+                &close,
+            );
+            return;
+        }
         self.brace_tables += 1;
         // Descend to the leaf container, creating intermediate tables
         // (span-less synthetics, like the document root). A present
@@ -4275,6 +4498,9 @@ impl Parser {
         }
         let name = segments.join(".");
         let leaf = segments.last().cloned().unwrap_or_default();
+        // The path enclosing this header, before its segments are pushed:
+        // a discarded body's document path needs it (nested headers).
+        let header_base = self.path_str();
         let stmt_idx = self.statements.len();
         self.statements.push(StmtInfo {
             key: name.clone(),
@@ -4368,6 +4594,7 @@ impl Parser {
         self.ident_scopes.push(Vec::new());
         let mut fields: SharedFields = std::rc::Rc::new(FieldMap::new());
         let mut pending = Vec::new();
+        self.push_merge_scope(false);
         // Snapshot the enclosing scopes: the live parent map (always
         // available mid-parse) and, for a dotted header, the table the
         // path nests under (its fields already exist in the arena).
@@ -4389,6 +4616,7 @@ impl Parser {
         let table_id = self.module.add_node(Node::Table {
             fields: own_fields(fields),
         });
+        self.attach_merge_scope(table_id);
         self.module.record_span(
             table_id,
             Span {
@@ -4406,20 +4634,31 @@ impl Parser {
             self.current_path.pop();
         }
         self.extract_annotations(&name, table_id, open.line);
+        let discarded_path = if header_base.is_empty() {
+            segments.join(".")
+        } else {
+            format!("{header_base}.{}", segments.join("."))
+        };
         match scope {
             None => {
                 if parent.contains_key(&leaf) {
                     self.warn_duplicate_table(&leaf, span_of(&open));
+                    if let Some(old) = parent.get(&leaf).copied() {
+                        self.discard_merge_scopes(old, &discarded_path);
+                    }
                 }
                 std::rc::Rc::make_mut(parent).insert(leaf, table_id);
             }
             Some(pid) => {
-                let existed = matches!(
-                    self.module.get(pid),
-                    Some(Node::Table { fields }) if fields.contains_key(&leaf)
-                );
-                if existed {
+                let old = match self.module.get(pid) {
+                    Some(Node::Table { fields }) => fields.get(&leaf).copied(),
+                    _ => None,
+                };
+                if old.is_some() {
                     self.warn_duplicate_table(&leaf, span_of(&open));
+                }
+                if let Some(old) = old {
+                    self.discard_merge_scopes(old, &discarded_path);
                 }
                 match self.module.get_mut(pid) {
                     Some(Node::Table { fields }) => {
@@ -4825,6 +5064,8 @@ impl Parser {
             binding_spliced: self.binding_spliced.clone(),
             pending_profiles: Vec::new(),
             trust: self.trust.clone(),
+            merge_scopes: Vec::new(),
+            merge_scope_profiles: Vec::new(),
         };
         let node_base = sub.module.arena.len() as u32;
         let id = sub.parse_expression();
@@ -7161,6 +7402,8 @@ impl Parser {
             binding_spliced: std::mem::take(&mut self.binding_spliced),
             pending_profiles: Vec::new(),
             trust: self.trust.clone(),
+            merge_scopes: Vec::new(),
+            merge_scope_profiles: Vec::new(),
         };
         // Arena ids below this base predate the embedded expression (the
         // sub-parser shares the outer arena); only spans at or above it

@@ -1,0 +1,2 @@
+include "opaque_transitive_a.active"
+include "opaque_transitive_b.active"

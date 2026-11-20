@@ -187,12 +187,13 @@ and at most once each (spec/grammar.md §1.4.2 and §2.7):
   overwrites an existing one).
 - Its root-table keys merge by mode: **public** (default) inserts them into
   the enclosing scope's fields as defaults — an explicit local key always
-  wins, and among several included files the LAST include wins (cascade).
-  Tables merge recursively with local-wins at every level; a scalar from
-  a later include replaces only include-provided paths, never a table
-  that still holds explicit local keys. `as alias` nests the whole root
-  table under `alias` instead. **Private** puts the keys (or the alias)
-  into the shared bindings: referenceable, never exported.
+  wins, and included files are equal priority to one another (L-P09,
+  2.0.0). Tables merge recursively; two includes that agree on a value
+  keep it, and a scalar, array, or shape disagreement at a path is E046
+  merge conflict. E046 is an error in strict and resilient modes; resilient
+  evaluation keeps the first source in source order. `as alias` nests the
+  whole root table under `alias` instead. **Private** puts the keys (or the
+  alias) into the shared bindings: referenceable, never exported.
 - Include cycles (a file already on the include stack) and depth beyond 32
   are E016; the composed graph's value cycles are still S001 as usual.
 

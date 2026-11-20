@@ -410,8 +410,10 @@ fn profile_include_schema_is_e020() {
 
 #[test]
 fn later_include_cascades_over_earlier_schema() {
-    // lib_cas_a says mode = String; lib_cas_b says mode = Int.
-    // Last include wins, like any other key.
+    // lib_cas_a's own schema says mode = String (it is data here, not
+    // validated in isolation); lib_cas_b says mode = Int and is the last
+    // schema, so its type wins. The included *values* must agree now that
+    // includes are equal priority (L-P09), so both set 1.
     let module = parse_file(
         &fixture("main_cascade_schema.active"),
         ParseOptions::default(),

@@ -1,0 +1,2 @@
+include "alias_lib_conflict.active" as base
+base = 5

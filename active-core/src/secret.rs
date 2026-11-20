@@ -1781,6 +1781,19 @@ impl SecretProfile {
                     }
                 }
             }
+            // Deferred merge candidates (L-P09) are inputs to the scope
+            // table's value even though they are not AST fields. Marking
+            // the scope (and its ancestors) material when a candidate is
+            // material is the fail-closed direction.
+            for (scope, pending) in &module.merge_pending {
+                for entry in pending {
+                    for candidate in &entry.candidates {
+                        if let Some(slot) = parents.get_mut(candidate.node.0 as usize) {
+                            slot.push(*scope);
+                        }
+                    }
+                }
+            }
             let mut stack: Vec<NodeId> = nodes.iter().copied().collect();
             while let Some(id) = stack.pop() {
                 if let Some(list) = parents.get(id.0 as usize) {
@@ -2157,6 +2170,15 @@ impl SecretProfile {
                 for child in node_children(node) {
                     if let Some(slot) = parents.get_mut(child.0 as usize) {
                         slot.push(parent);
+                    }
+                }
+            }
+            for (scope, pending) in &module.merge_pending {
+                for entry in pending {
+                    for candidate in &entry.candidates {
+                        if let Some(slot) = parents.get_mut(candidate.node.0 as usize) {
+                            slot.push(*scope);
+                        }
                     }
                 }
             }

@@ -1,0 +1,2 @@
+include "include_merge_a.active"
+include "include_merge_b.active"

@@ -778,6 +778,9 @@ fn error_code_for(code: &str) -> i32 {
         "T004" | "T005" | "T006" | "T007" | "T008" | "T009" => ACTIVE_ERR_SCHEMA_FAIL,
         "B001" | "B002" | "B003" | "B004" => ACTIVE_ERR_SCHEMA_FAIL,
         "E015" | "E016" | "E017" | "E028" | "E041" => ACTIVE_ERR_INCLUDE_FAIL,
+        // A merge conflict makes the document denote no value; it is a
+        // fail-closed source-layer refusal, like a parse failure.
+        "E046" => ACTIVE_ERR_PARSE,
         _ if code.starts_with('X') => ACTIVE_ERR_BUDGET_EXCEEDED,
         _ if code.starts_with('S') => ACTIVE_ERR_UNIT_MISMATCH,
         _ => ACTIVE_ERR_SCHEMA_FAIL,
@@ -1137,7 +1140,7 @@ pub unsafe extern "C" fn active_validate(
         let typed: Vec<DiagSnapshot> = match engine.evaluate(&parsed) {
             Ok((_, diags)) => diags
                 .iter()
-                .filter(|d| is_schema_code(&d.code))
+                .filter(|d| is_schema_code(&d.code) || d.code == "E046")
                 .map(snapshot)
                 .collect(),
             Err(EvalError::ValidationFailed { diagnostics }) => {
@@ -1240,6 +1243,13 @@ mod tests {
             parse_failure_code(&[diag_snapshot_for("E041")]),
             ACTIVE_ERR_INCLUDE_FAIL
         );
+    }
+
+    #[test]
+    fn merge_conflict_maps_to_the_parse_class() {
+        // L-P09: E046 is a fail-closed source refusal (no value), not a
+        // schema violation.
+        assert_eq!(error_code_for("E046"), ACTIVE_ERR_PARSE);
     }
 
     fn diag_snapshot_for(code: &str) -> DiagSnapshot {

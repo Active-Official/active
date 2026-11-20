@@ -1,0 +1,4 @@
+let pin = 1234
+let k = secret(pin)
+let t = { pin = pin }
+x = t

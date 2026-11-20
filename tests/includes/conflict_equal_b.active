@@ -1,0 +1,3 @@
+[server]
+port = 100
+host = "equal.local"

@@ -269,3 +269,25 @@ kind = "clean"
 id = "0042-schema-check-fail"
 file = "cases/0042-schema-check-fail.active"
 kind = "refused"
+
+# L-P09: two includes at the same priority disagree on a value.
+[[cases]]
+id = "0047-include-merge-conflict"
+file = "cases/0047-include-merge-conflict.active"
+kind = "refused"
+
+# Equal values from two includes agree (no conflict).
+[[cases]]
+id = "0048-include-merge-equal"
+file = "cases/0048-include-merge-equal.active"
+kind = "clean"
+
+# L-P09 include-merge vectors need the native include loader (same pin
+# reason as 0008); the reference core suite still exercises them.
+[[pins]]
+id = "0047-include-merge-conflict"
+reason = "include-loader callback absent from shim v1 (F-016 native only)"
+
+[[pins]]
+id = "0048-include-merge-equal"
+reason = "include-loader callback absent from shim v1 (F-016 native only)"

@@ -19,6 +19,7 @@ use crate::ir::*;
 use crate::parser::{validate_patch_path, PathSeg};
 use crate::secret::{SecretProfile, SecretRedactor};
 use crate::types::Unit;
+use crate::unify::{MergeBudgetKind, MergeError, MergeProvenance};
 
 /// Host-provided environment lookup (F-016): consulted on map miss before
 /// defaults apply. Mirrors the map-hit charging exactly (bytes as delta),
@@ -770,6 +771,250 @@ pub(crate) struct BudgetCx<'a> {
 /// Iterative value-size measure in DP units (scalars 1, strings and
 /// secrets plus their bytes, composites 1 plus children). Matches
 /// `check_dp_bounds` semantics for transform-site accounting.
+/// Cap on E046 diagnostics from deferred merges in one evaluation. The
+/// merge itself still runs for every entry; only the report is bounded.
+const MAX_MERGE_DIAGNOSTICS: usize = 1_024;
+
+/// Resolve one scope's deferred same-priority merges (L-P09). Equal
+/// values agree; a disagreement is E046 and keeps the first source in
+/// source order; tables union. Entries sharing a path are folded once in
+/// candidate order, so a three-way union never discards a prior pair's
+/// keys. Parse-time shape choices stay in place until this runs, so
+/// references and provenance see one value.
+#[allow(clippy::too_many_arguments)]
+fn apply_pending_merges(
+    module: &Module,
+    scope: NodeId,
+    pending: &[crate::unify::PendingMerge],
+    map: &mut indexmap::IndexMap<String, Value>,
+    values: &HashMap<NodeId, Value>,
+    diagnostics: &mut Vec<Diagnostic>,
+    account: &mut Accountant,
+    deadline: Option<std::time::Instant>,
+    budget: &Budget,
+    profile: Option<&SecretProfile>,
+    reported: &mut usize,
+) -> Result<(), EvalError> {
+    // Merge all entries for a path into one candidate list (deduplicated
+    // by node), preserving source order across the parser's pairs.
+    let mut grouped: indexmap::IndexMap<String, (String, Vec<crate::unify::MergeCandidate>)> =
+        indexmap::IndexMap::new();
+    for entry in pending {
+        let slot = grouped
+            .entry(entry.local.clone())
+            .or_insert_with(|| (entry.path.clone(), Vec::new()));
+        for candidate in &entry.candidates {
+            if !slot.1.iter().any(|known| known.node == candidate.node) {
+                slot.1.push(candidate.clone());
+            }
+        }
+    }
+    for (local, (path, candidates)) in grouped {
+        // `depends_on` is extracted at parse and never exported; a merge
+        // entry naming it must not re-insert or diagnose it.
+        if local.split('.').any(|segment| segment == "depends_on") {
+            continue;
+        }
+        // Engine ceilings apply to merges too; the fixed merge defaults
+        // are only fallbacks for a host that disabled a limit.
+        let merge_limits = crate::unify::MergeLimits {
+            max_depth: if budget.max_depth == 0 {
+                crate::unify::MAX_MERGE_DEPTH
+            } else {
+                (budget.max_depth as usize).min(crate::unify::MAX_MERGE_DEPTH)
+            },
+            max_nodes: if budget.max_nodes == 0 {
+                crate::unify::MAX_MERGE_NODES
+            } else {
+                budget.max_nodes.min(crate::unify::MAX_MERGE_NODES)
+            },
+            max_bytes: if budget.max_total_value_size == 0 {
+                crate::unify::MAX_MERGE_BYTES
+            } else {
+                budget
+                    .max_total_value_size
+                    .min(crate::unify::MAX_MERGE_BYTES)
+            },
+        };
+        let mut candidates = candidates.iter();
+        let Some(first) = candidates.next() else {
+            continue;
+        };
+        let group_material =
+            profile.is_some_and(|p| p.node_is_secret(first.node) || p.path_is_secret(&path));
+        // Start from the tree, not the raw first candidate: an earlier
+        // group at a deeper path may already have unioned this subtree.
+        let Some(mut current) = value_at_path(map, &local)
+            .cloned()
+            .or_else(|| values.get(&first.node).cloned())
+        else {
+            if *reported < MAX_MERGE_DIAGNOSTICS {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Error,
+                    code: "E046".into(),
+                    message: format!("merge target '{path}' has no evaluated value"),
+                    path: Some(path),
+                    span: module.node_spans.get(&first.node).cloned(),
+                    file: module.node_files.get(&first.node).cloned(),
+                    repair: None,
+                    confidence: 1.0,
+                });
+                *reported += 1;
+            }
+            continue;
+        };
+        // Material is never compared: redact material leaves first, so
+        // unify sees a Secret (never equal) instead of the plaintext.
+        if group_material {
+            current = redact_material_value(&current);
+        }
+        for candidate in candidates {
+            if let Some(end) = deadline {
+                if std::time::Instant::now() >= end {
+                    return Err(EvalError::budget_exceeded(
+                        BudgetKind::WallClock,
+                        budget.max_wall_ms,
+                        module,
+                        Some(candidate.node),
+                    ));
+                }
+            }
+            let Some(next) = values.get(&candidate.node) else {
+                if *reported < MAX_MERGE_DIAGNOSTICS {
+                    diagnostics.push(Diagnostic {
+                        severity: Severity::Error,
+                        code: "E046".into(),
+                        message: format!("merge candidate at '{path}' has no evaluated value"),
+                        path: Some(path.clone()),
+                        span: module.node_spans.get(&candidate.node).cloned(),
+                        file: module.node_files.get(&candidate.node).cloned(),
+                        repair: None,
+                        confidence: 1.0,
+                    });
+                    *reported += 1;
+                }
+                continue;
+            };
+            let candidate_material =
+                group_material || profile.is_some_and(|p| p.node_is_secret(candidate.node));
+            let redacted;
+            let next = if candidate_material {
+                redacted = redact_material_value(next);
+                &redacted
+            } else {
+                next
+            };
+            let mut provenance = MergeProvenance::new();
+            match crate::unify::unify_with_limits(
+                &current,
+                &first.source,
+                next,
+                &candidate.source,
+                &path,
+                &mut provenance,
+                &merge_limits,
+            ) {
+                Ok(merged) => current = merged,
+                Err(error @ MergeError::Conflict(_)) => {
+                    if *reported < MAX_MERGE_DIAGNOSTICS {
+                        let mut diagnostic = error.to_diagnostic();
+                        diagnostic.span = module.node_spans.get(&candidate.node).cloned();
+                        diagnostic.file = module.node_files.get(&candidate.node).cloned();
+                        diagnostics.push(diagnostic);
+                        *reported += 1;
+                    }
+                }
+                Err(MergeError::Budget(budget)) => {
+                    let kind = match budget.kind {
+                        MergeBudgetKind::Depth => BudgetKind::Depth,
+                        MergeBudgetKind::Nodes => BudgetKind::Nodes,
+                        MergeBudgetKind::Bytes => BudgetKind::TotalSize,
+                    };
+                    return Err(EvalError::budget_exceeded(
+                        kind,
+                        budget.limit,
+                        module,
+                        Some(candidate.node),
+                    ));
+                }
+            }
+        }
+        let before = value_at_path(map, &local)
+            .map(measure_merge_value)
+            .unwrap_or(0);
+        if set_value_at(map, &local, current) {
+            let after = value_at_path(map, &local)
+                .map(measure_merge_value)
+                .unwrap_or(0);
+            if budget.max_value_size != 0 && after > budget.max_value_size {
+                return Err(EvalError::budget_exceeded(
+                    BudgetKind::ValueSize,
+                    budget.max_value_size,
+                    module,
+                    Some(scope),
+                ));
+            }
+            account.charge(module, Some(scope), after.saturating_sub(before))?;
+        } else if *reported < MAX_MERGE_DIAGNOSTICS {
+            // A host-built module can name a path the tree does not
+            // contain; dropping the merged value would be fail-open.
+            diagnostics.push(Diagnostic {
+                severity: Severity::Error,
+                code: "E046".into(),
+                message: format!("merge target '{path}' is missing from the composed tree"),
+                path: Some(path),
+                span: module.node_spans.get(&first.node).cloned(),
+                file: module.node_files.get(&first.node).cloned(),
+                repair: None,
+                confidence: 1.0,
+            });
+            *reported += 1;
+        }
+    }
+    Ok(())
+}
+
+fn value_at_path<'a>(map: &'a indexmap::IndexMap<String, Value>, path: &str) -> Option<&'a Value> {
+    let mut segments = path.split('.');
+    let first = segments.next()?;
+    let mut value = map.get(first)?;
+    for segment in segments {
+        let Value::Table(child) = value else {
+            return None;
+        };
+        value = child.get(segment)?;
+    }
+    Some(value)
+}
+
+/// Replace the value at a scope-relative dotted path. The parser keeps
+/// the path in the tree, so a missing segment means the path was pruned
+/// by an earlier transform; leave the tree alone.
+fn set_value_at(map: &mut indexmap::IndexMap<String, Value>, path: &str, value: Value) -> bool {
+    let mut segments = path.split('.');
+    let Some(first) = segments.next() else {
+        return false;
+    };
+    let rest: Vec<&str> = segments.collect();
+    if rest.is_empty() {
+        // Never insert: a missing key means the path was extracted
+        // metadata or already replaced, and inventing it would re-export
+        // reserved keys (depends_on) or values the tree dropped.
+        return match map.get_mut(first) {
+            Some(slot) => {
+                *slot = value;
+                true
+            }
+            None => false,
+        };
+    }
+    let Some(Value::Table(child)) = map.get_mut(first) else {
+        return false;
+    };
+    set_value_at(child, &rest.join("."), value)
+}
+
+/// Measure a value.
 pub(crate) fn measure_value(value: &Value) -> u64 {
     let mut total = 0u64;
     let mut stack = vec![value];
@@ -793,6 +1038,60 @@ pub(crate) fn measure_value(value: &Value) -> u64 {
         }
     }
     total
+}
+
+/// Merge-budget size: material costs a constant, never its byte length,
+/// so X006 outcomes cannot reveal a secret's size.
+fn measure_merge_value(value: &Value) -> u64 {
+    let mut total = 0u64;
+    let mut stack = vec![value];
+    while let Some(v) = stack.pop() {
+        total = total.saturating_add(1);
+        match v {
+            Value::String(s) => {
+                total = total.saturating_add(s.len() as u64);
+            }
+            // Constant: secret length is material.
+            Value::Secret(_) => {}
+            Value::Blob { size, .. } => {
+                total = total.saturating_add(*size);
+            }
+            Value::Array(items) => stack.extend(items.iter()),
+            Value::Table(map) => stack.extend(map.values()),
+            _ => {}
+        }
+    }
+    total
+}
+
+/// Replace every scalar leaf with a `Secret`, keeping container shape.
+/// Used before comparing or exporting a merge group that is material:
+/// a plaintext copy of a material Int/Bool/Quantity has no textual
+/// marker, so the only safe representation is the secret marker itself.
+fn redact_material_value(value: &Value) -> Value {
+    match value {
+        Value::Table(map) => Value::Table(
+            map.iter()
+                .map(|(key, child)| (key.clone(), redact_material_value(child)))
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(redact_material_value).collect()),
+        Value::Secret(_) => value.clone(),
+        Value::Blob {
+            hash,
+            size,
+            tainted,
+            media_type,
+            payload,
+        } => Value::Blob {
+            hash: *hash,
+            size: *size,
+            tainted: *tainted,
+            media_type: media_type.clone(),
+            payload: payload.clone(),
+        },
+        _ => Value::Secret(zeroize::Zeroizing::new(String::new())),
+    }
 }
 
 /// Static budget pre-checks (spec/budgets.md §2, C-037): arena-wide
@@ -914,6 +1213,10 @@ fn check_dp_bounds(
                         child_depth = child_depth.max(depth[c]);
                     }
                 }
+                // Deferred merges are charged when they run (true union
+                // growth), not here: the first candidate is already a
+                // field, and summing candidates would double-count and
+                // refuse valid equal-value merges.
                 size[i] = sat_size(1, child_size);
                 depth[i] = child_depth.saturating_add(1).min(depth_cap);
             }
@@ -1350,6 +1653,28 @@ fn fingerprint_one(
             for (key, child_id) in fields {
                 key.hash(&mut hasher);
                 child(child_id)?.hash(&mut hasher);
+            }
+            // Deferred merges change this table's value, so every
+            // candidate is an input to the fingerprint.
+            if let Some(pending) = module.merge_pending.get(&id) {
+                pending.len().hash(&mut hasher);
+                for entry in pending {
+                    entry.path.hash(&mut hasher);
+                    entry.local.hash(&mut hasher);
+                    for candidate in &entry.candidates {
+                        // Source identity and the candidate's own position
+                        // are part of the diagnostic, so they are part of
+                        // the fingerprint too.
+                        candidate.source.hash(&mut hasher);
+                        module.node_files.get(&candidate.node).hash(&mut hasher);
+                        module
+                            .node_spans
+                            .get(&candidate.node)
+                            .map(|s| (s.line, s.column, s.end_line, s.end_column))
+                            .hash(&mut hasher);
+                        child(&candidate.node)?.hash(&mut hasher);
+                    }
+                }
             }
         }
         Node::Quantity { value, unit } => {
@@ -1967,6 +2292,37 @@ impl Engine {
         // their static and DP checks; only time needs watching mid-walk.
         // `deadline` was computed at entry and shared with validation.
         let mut visited = 0u64;
+        // Global E046 report cap for this evaluation, shared by every
+        // scope (no per-scope 1024 multiplication).
+        let mut merge_reported = 0usize;
+        // Deferred merges apply only to scopes still present in the
+        // composed tree (a shadowed include root is evaluated for its own
+        // diagnostics but its conflicts are not the document's).
+        let merge_reachable: Option<std::collections::HashSet<NodeId>> =
+            (!module.merge_pending.is_empty()).then(|| {
+                let mut set = std::collections::HashSet::new();
+                let mut stack: Vec<NodeId> = Vec::new();
+                stack.extend(module.root);
+                stack.extend(module.bindings.values().copied());
+                stack.extend(module.profiles.values().copied());
+                stack.extend(module.patches.iter().copied());
+                stack.extend(module.schema);
+                while let Some(id) = stack.pop() {
+                    if !set.insert(id) {
+                        continue;
+                    }
+                    if let Some(node) = module.get(id) {
+                        stack.extend(crate::secret::node_children(node));
+                        if let Node::PatchDirective {
+                            op: PatchOp::Set { value, .. },
+                        } = node
+                        {
+                            stack.push(*value);
+                        }
+                    }
+                }
+                set
+            });
         // Step paths are built once, only when the caller asked for a
         // stepper; plain evaluation pays nothing.
         let step_paths: Option<HashMap<NodeId, String>> = steps.as_ref().map(|_| {
@@ -1992,10 +2348,12 @@ impl Engine {
         // A caller that asked for runtime seeds needs the analysis even
         // when the document has no `secret(...)` node: a profile can be
         // material by selection alone, and a fail-closed bound trip
-        // marks every env read.
+        // marks every env read. Deferred merges need it too: material
+        // must never be compared or exported raw at a merged path.
         let secret_profile: Option<SecretProfile> = (steps.is_some()
             || has_blobs
-            || seeds.is_some())
+            || seeds.is_some()
+            || !module.merge_pending.is_empty())
         .then(|| SecretProfile::analyze_with_profile(module, self.profile_override.as_deref()));
         // Whether a node still renders through a benign export path is
         // a property of the post-transform profile; no separate walk is
@@ -2083,16 +2441,29 @@ impl Engine {
                         values.insert(node_id, value.clone());
                         let span = module.node_spans.get(&node_id).cloned();
                         let file = module.node_files.get(&node_id).cloned();
-                        diagnostics.extend(diags.iter().map(|d| {
+                        for d in diags {
+                            // The global E046 cap covers memo-served
+                            // diagnostics too: a warm run must not report
+                            // more conflicts than a cold one.
+                            if d.code == "E046" {
+                                if merge_reported >= MAX_MERGE_DIAGNOSTICS {
+                                    continue;
+                                }
+                                merge_reported += 1;
+                            }
                             let mut fresh = d.clone();
-                            // Unconditional: a missing current
-                            // position means "unknown", and serving
-                            // a stale position as fact is worse
-                            // than serving none.
-                            fresh.span = span.clone();
-                            fresh.file = file.clone();
-                            fresh
-                        }));
+                            // Most memoized diagnostics carry a position
+                            // from the cached parse and must be re-anchored
+                            // to the current node. A merge conflict is the
+                            // exception: its span/file name the *candidate*
+                            // source, which the fingerprint pins, so it is
+                            // already current and must not be erased.
+                            if fresh.code != "E046" {
+                                fresh.span = span.clone();
+                                fresh.file = file.clone();
+                            }
+                            diagnostics.push(fresh);
+                        }
                         memo.last_memo_hits += 1;
                         if let Some(out) = seeds.as_deref_mut() {
                             if let Some(profile) = secret_profile.as_ref() {
@@ -2441,6 +2812,26 @@ impl Engine {
                     for (k, id) in fields {
                         map.insert(k.clone(), values.get(id).cloned().unwrap_or(Value::Null));
                     }
+                    if let Some(pending) = module.merge_pending.get(&node_id) {
+                        let reachable = merge_reachable
+                            .as_ref()
+                            .is_none_or(|set| set.contains(&node_id));
+                        if reachable {
+                            apply_pending_merges(
+                                module,
+                                node_id,
+                                pending,
+                                &mut map,
+                                &values,
+                                &mut diagnostics,
+                                &mut account,
+                                deadline,
+                                &budget,
+                                secret_profile.as_ref(),
+                                &mut merge_reported,
+                            )?;
+                        }
+                    }
                     Value::Table(map)
                 }
 
@@ -2464,12 +2855,21 @@ impl Engine {
                             .map(|e| actual_sizes.get(e.0 as usize).copied().unwrap_or(0))
                             .fold(0u64, u64::saturating_add),
                     ),
-                    Some(Node::Table { fields }) => 1u64.saturating_add(
-                        fields
-                            .values()
-                            .map(|e| actual_sizes.get(e.0 as usize).copied().unwrap_or(0))
-                            .fold(0u64, u64::saturating_add),
-                    ),
+                    Some(Node::Table { fields }) => {
+                        if module.merge_pending.contains_key(&node_id) {
+                            // Deferred keys are not AST fields; measure
+                            // the merged value so Ref clones charge the
+                            // real growth instead of the field bound.
+                            measure_merge_value(&value)
+                        } else {
+                            1u64.saturating_add(
+                                fields
+                                    .values()
+                                    .map(|e| actual_sizes.get(e.0 as usize).copied().unwrap_or(0))
+                                    .fold(0u64, u64::saturating_add),
+                            )
+                        }
+                    }
                     Some(Node::Ref(t)) => actual_sizes.get(t.0 as usize).copied().unwrap_or(0),
                     Some(Node::Interpolate { .. }) => match &value {
                         Value::String(text) => 1u64.saturating_add(text.len() as u64),

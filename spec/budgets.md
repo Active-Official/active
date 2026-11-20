@@ -13,7 +13,7 @@ process, not the document.
 
 | Half | Where | What it caps | Failure mode |
 |---|---|---|---|
-| Static caps | Parser (per file, at parse time) | Input bytes (`max_input_bytes`, default 4 MiB, E029), arena nodes (1,000,000, E029), parse wall clock (`max_wall_ms`, base 100 ms + 30 ms/KiB, E029), expression nesting (64, E004), block nesting (64, E011), schema-type nesting (64, E004), include depth (32 files, E016), include fan-out (256 resolutions / 16 MiB, E028) | **Fail closed** on the three work bounds (no tree is returned); diagnose with a span and **recover** on the shape bounds (substitute null / skip body) — parsing always terminates |
+| Static caps | Parser (per file, at parse time) | Input bytes (`max_input_bytes`, default 4 MiB, E029), arena nodes (1,000,000, E029), parse wall clock (`max_wall_ms`, base 100 ms + 30 ms/KiB, E029), expression nesting (64, E004), block nesting (64, E011), dotted table path segments (256, E011), schema-type nesting (64, E004), include depth (32 files, E016), include fan-out (256 resolutions / 16 MiB, E028) | **Fail closed** on the three work bounds (no tree is returned); diagnose with a span and **recover** on the shape bounds (substitute null / skip body) — parsing always terminates |
 | Runtime accountant | Evaluator (`Engine::budget`) | Nodes visited, value nesting depth, array length, total keys, wall-clock time | **Abort** with X001–X006 — no value tree is returned |
 
 The parser is recursive descent, so reaching the 64-level expression limit

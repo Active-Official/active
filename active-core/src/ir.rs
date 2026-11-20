@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use crate::diag::{Diagnostic, Span};
 use crate::types::{ActiveType, Constraint, Unit};
+use crate::unify::PendingMerge;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeId(pub u32);
@@ -76,6 +77,11 @@ pub struct Module {
     /// against the final tree, and their expression errors are T009, not
     /// fatal evaluation errors.
     pub check_nodes: std::collections::HashSet<NodeId>,
+    /// Deferred same-priority merges recorded by the parser, keyed by the
+    /// scope table node that owns them (L-P09). Their values are compared
+    /// after evaluation: equal values agree, a disagreement is E046, and
+    /// a table union replaces the kept first candidate at its path.
+    pub merge_pending: HashMap<NodeId, Vec<PendingMerge>>,
     /// Dependency declarations by scope table (spec/linter.md §2,
     /// C-042): `depends_on` keys holding string arrays are extracted
     /// from value fields at parse (never exported) and recorded here
@@ -363,6 +369,7 @@ impl Module {
             annotations: HashMap::new(),
             schema_checks: HashMap::new(),
             check_nodes: std::collections::HashSet::new(),
+            merge_pending: HashMap::new(),
             depends_on: HashMap::new(),
             mode: Mode::default(),
             mode_marker: false,

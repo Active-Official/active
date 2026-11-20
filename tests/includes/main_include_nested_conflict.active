@@ -1,0 +1,2 @@
+include "nested_conflict_a.active"
+include "nested_conflict_b.active"

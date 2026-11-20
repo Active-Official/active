@@ -15,6 +15,32 @@ fn open(text: &str) -> Doc {
 }
 
 #[test]
+fn range_formatting_refuses_a_document_that_needs_repair() {
+    // A healed parse is never rewritten (LANG-D-001): the repair would be
+    // baked into the buffer by a range edit too, not only by a full one.
+    let doc = open("port = \"abc\nsecond=2\n");
+    assert!(!doc.module.healing.is_empty(), "fixture must heal");
+    assert!(
+        analysis::formatting_edits(&doc).is_empty(),
+        "full formatting must refuse a healed document"
+    );
+    let edits = analysis::range_formatting_edits(
+        &doc,
+        Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 8,
+            },
+        },
+    );
+    assert!(edits.is_empty(), "range formatting refused: {edits:?}");
+}
+
+#[test]
 fn formatting_edits_are_canonical_and_idempotent() {
     let doc = open("port=8080\n");
     let edits = analysis::formatting_edits(&doc);

@@ -11,7 +11,7 @@
 //! That keeps `active-fmt`/`active fmt` usable as a CI gate: a clean exit
 //! means the file was already canonical, not that it was quietly repaired.
 
-use active_core::fmt::format;
+use active_core::fmt::try_format as format;
 use active_core::{parse_file, Module, ParseOptions, Style};
 use clap::{Parser, ValueEnum};
 use std::fs;
@@ -103,7 +103,8 @@ fn main() -> anyhow::Result<()> {
     })?;
     refuse_healing(&module, &name)?;
 
-    let out = format(&module, style);
+    let out = format(&module, style)
+        .map_err(|error| anyhow::anyhow!("cannot format {}: {error}", cli.file.display()))?;
     // Compare BYTES (D-005): a stray encoding mismatch must surface as the
     // same "needs formatting" verdict, never as an I/O error above it, and
     // the same comparison drives --write's skip (LANG-D-901).

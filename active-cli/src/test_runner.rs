@@ -193,11 +193,25 @@ fn check_file(path: &Path, strict: bool, env: &HashMap<String, String>, report: 
             path.display(),
             codes(&syntax.healing).join(",")
         ));
-    } else if fmt::format(&syntax, Style::Indent) != src {
-        report.failures.push(format!(
-            "fmt {}: not canonical (run `active fmt --write`)",
-            path.display()
-        ));
+    } else {
+        // The canonical check uses the same entry point as `fmt --write`,
+        // so `active test` never advises a rewrite (or accepts a file)
+        // that the formatter would refuse.
+        match fmt::try_format(&syntax, Style::Indent) {
+            Ok(formatted) if formatted != src => {
+                report.failures.push(format!(
+                    "fmt {}: not canonical (run `active fmt --write`)",
+                    path.display()
+                ));
+            }
+            Ok(_) => {}
+            Err(error) => {
+                report.failures.push(format!(
+                    "fmt {}: cannot be formatted ({error})",
+                    path.display()
+                ));
+            }
+        }
     }
     let module = match active_core::parser::parse_text_with_file(&src, &name, options, path) {
         Ok(module) => module,

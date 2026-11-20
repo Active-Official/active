@@ -39,7 +39,11 @@ of a lying empty set.
 Format and convert (G-015): `active_format(module, style: u32) ->
 *mut ActiveString` with style 0 brace, 1 indent, 2 preserve (other values
 fail closed with BAD_ARGUMENT; the playground brace/indent toggle calls
-this, never a host reimplementation).
+this, never a host reimplementation). The formatter refuses a document
+whose text it cannot vouch for: the result is then null with
+`ACTIVE_ERR_UNRESOLVED_REF` (a reference has no renderable form) or
+`ACTIVE_ERR_PARSE` (the formatted text does not re-parse), and the host
+must keep the original file.
 
 Inspection: `active_value_to_json(value) -> *mut ActiveString` (secrets
 always redacted; provenance of this guarantee: core taint rules, H-001

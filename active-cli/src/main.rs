@@ -6216,7 +6216,12 @@ fn main() -> anyhow::Result<()> {
                     }
                     anyhow::bail!("cannot format a file that needs repair: {name}");
                 }
-                let out = active_core::fmt::format(&module, style);
+                // `try_format` refuses when the result cannot be trusted
+                // (a reference graph the parser never builds, or an
+                // output that does not re-parse), so `--write` never
+                // replaces a valid file with an invalid one.
+                let out = active_core::fmt::try_format(&module, style)
+                    .map_err(|error| anyhow::anyhow!("cannot format {name}: {error}"))?;
                 let current = std::fs::read(file)?;
                 let unchanged = current == out.as_bytes();
                 if check {

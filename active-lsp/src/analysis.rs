@@ -2352,7 +2352,11 @@ pub fn formatting_edits(doc: &Doc) -> Vec<TextEdit> {
     if !module.healing.is_empty() {
         return Vec::new();
     }
-    let formatted = active_core::fmt::format(&module, active_core::Style::Preserve);
+    // A refused format yields no edit: the client must never apply text
+    // the formatter could not vouch for.
+    let Ok(formatted) = active_core::fmt::try_format(&module, active_core::Style::Preserve) else {
+        return Vec::new();
+    };
     if formatted == doc.text {
         return Vec::new();
     }
@@ -2384,7 +2388,15 @@ pub fn range_formatting_edits(doc: &Doc, range: Range) -> Vec<TextEdit> {
     let Some(module) = formatting_module(doc) else {
         return Vec::new();
     };
-    let formatted = active_core::fmt::format(&module, active_core::Style::Preserve);
+    // A document the parser had to repair is not formatted (LANG-D-001):
+    // the edit would bake the repair into the buffer. Same rule as
+    // `formatting_edits`.
+    if !module.healing.is_empty() {
+        return Vec::new();
+    }
+    let Ok(formatted) = active_core::fmt::try_format(&module, active_core::Style::Preserve) else {
+        return Vec::new();
+    };
     if formatted == doc.text {
         return Vec::new();
     }
@@ -2406,8 +2418,10 @@ pub fn range_formatting_edits(doc: &Doc, range: Range) -> Vec<TextEdit> {
     let sel_start = range.start.line as usize;
     let sel_end = range.end.line as usize;
     // The hunk must start inside the selection and end before its last
-    // line, so every replaced byte sits inside `range`.
-    if prefix < sel_start || prefix > sel_end || original_end > sel_end {
+    // line, so every replaced byte sits inside `range`. The replacement is
+    // bounded too: a hunk that grows past the selection would rewrite
+    // lines the client did not select.
+    if prefix < sel_start || prefix > sel_end || original_end > sel_end || updated_end > sel_end {
         return Vec::new();
     }
     let mut new_text = updated[prefix..updated_end].join("\n");
@@ -3379,7 +3393,9 @@ fn convert_actions(doc: &Doc) -> Vec<CodeAction> {
         ("brace", active_core::Style::Brace),
         ("indent", active_core::Style::Indent),
     ] {
-        let converted = active_core::fmt::format(&module, style);
+        let Ok(converted) = active_core::fmt::try_format(&module, style) else {
+            continue;
+        };
         if converted == doc.text {
             continue;
         }

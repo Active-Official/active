@@ -36,11 +36,29 @@ Guarantees (tested, spec/dual-syntax.md §8): idempotence
 documents, comment/annotation/semantic-block survival in every mode,
 and cross-style tree equality (both styles parse to the same IR).
 
+A reference is re-emitted as the dotted path of the node it names
+(`a.port == b.port`), written relative to the table body that contains it
+(`is_prod` inside `[flags]`, `x.port` inside `[deeper]`) when that shorter
+form resolves back to the same node. Two tables with the same leaf name
+therefore stay distinct, and formatting never changes the evaluated value
+of an expression: a path that a nearer table shadows, or that names the
+enclosing table itself (which resolution refuses as a cycle), is not
+emitted; the target's expression is inlined instead. A reference to a node
+with no addressable name also inlines. Every written form resolves to the
+node the source resolved to.
+
+`format` is the display form. `fmt::try_format` is the fail-closed entry:
+it returns an error when a reference has no renderable form (a graph the
+parser never builds) or when the formatter's own output does not re-parse.
+Every surface that writes text - `active fmt --write`/`--check`, the
+`active-fmt` binary, LSP formatting edits, and the FFI formatter - uses
+`try_format`, so a refusal is reported and nothing is written.
+
 Idempotence is implemented as a fixed-point guarantee: comment attachment is
 scored by source position (spec/dual-syntax.md section 7.2), so a comment whose
 canonical position differs from where it was written can attach elsewhere after
 one rewrite. `format` therefore re-parses and re-formats its own output until it
-stops changing (at most three passes) and returns that result, which makes
+stops changing (at most sixteen passes) and returns that result, which makes
 `format(parse(out)) == out` hold by construction without changing the attachment
 rules. An already-canonical document costs one extra parse and format pass.
 
@@ -77,11 +95,13 @@ At least one file is required; an empty file list is an error
   the gate.
 - `--write` and `--check` together are an error (contradictory).
 - Exit codes: `0` = clean / written; `1` = differences found
-  (`--check`), parse errors, I/O errors, or flag misuse. Parse
-  errors report diagnostics like `ACTIVE check` and abort before any
+  (`--check`), parse errors, I/O errors, a refused format, or flag misuse.
+  Parse errors report diagnostics like `ACTIVE check` and abort before any
   write — a file that does not parse is never reformatted, and when
   several files are given, files before the failure keep their
-  results (writes already done stay done).
+  results (writes already done stay done). A refusal (a reference with no
+  renderable form, or an output that would not re-parse) likewise writes
+  nothing for that file.
 - Formatting parses with includes **unresolved**
   (`resolve_includes = false`): the composition structure of the
   input survives byte-for-byte in intent (include statements stay

@@ -33,9 +33,60 @@ const PARSER_MAX_BLOCK_DEPTH: usize = 64;
 /// the document body itself and for re-parsing/re-formatting the output.
 const FLAT_DEPTH_THRESHOLD: usize = PARSER_MAX_BLOCK_DEPTH - 4;
 
-/// Format a module in the requested style. `Preserve` uses the style the
-/// source predominantly used.
-pub fn format(module: &Module, style: Style) -> String {
+/// How many unnamed `Ref` targets may be inlined into one expression.
+/// Resolution refuses cycles (S001), so this only fires on a module the
+/// formatter was handed without resolution; the bound keeps a malformed
+/// graph from overflowing the stack.
+const MAX_INLINE_DEPTH: usize = 128;
+
+/// Why the formatter refused to produce a document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FormatError {
+    /// A reference graph the parser never builds (a cycle, or a chain
+    /// longer than the inline bound). Its text would not mean anything.
+    UnrenderableReference,
+    /// A reference's recorded path does not resolve to its target at the
+    /// site; emitting it could change what the reference reads.
+    UnverifiedReference,
+    /// The formatter's own output did not re-parse, so writing it would
+    /// replace a valid file with an invalid one.
+    OutputDoesNotParse,
+}
+
+impl std::fmt::Display for FormatError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FormatError::UnrenderableReference => {
+                f.write_str("a reference has no renderable form (cyclic or unresolved graph)")
+            }
+            FormatError::UnverifiedReference => {
+                f.write_str("a reference path does not resolve to its target at write time")
+            }
+            FormatError::OutputDoesNotParse => {
+                f.write_str("the formatted output does not re-parse")
+            }
+        }
+    }
+}
+
+impl std::error::Error for FormatError {}
+
+/// Format a module in the requested style, refusing when the result cannot
+/// be trusted. Writing surfaces (the CLI's `--write`/`--check` and the
+/// standalone binary) must use this, so a refusal is never persisted.
+pub fn try_format(module: &Module, style: Style) -> Result<String, FormatError> {
+    let (out, failure) = stabilize(module, style);
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(out),
+    }
+}
+
+/// Run the fixed-point loop. Only an unrenderable reference graph stops it
+/// early (its text is not worth re-formatting); an unverified reference is
+/// reported but does not stop the search, because the next pass can settle
+/// the text into a stable shape.
+fn stabilize(module: &Module, style: Style) -> (String, Option<FormatError>) {
     let style = match style {
         Style::Preserve => module.source_style,
         other => other,
@@ -45,24 +96,56 @@ pub fn format(module: &Module, style: Style) -> String {
     // position differs from where it was written can attach elsewhere after
     // one rewrite. The contract agents rely on is `format(parse(out)) ==
     // out`, so re-format the result until it stops changing (at most
-    // `STABILIZE_PASSES`), and return that fixed point. Formatting is cheap
-    // next to the parse it already did; the loop runs once for documents
-    // that are already canonical, which is most of them.
-    let mut current = format_once(module, style);
+    // `STABILIZE_PASSES`), and return that fixed point.
+    let (mut current, mut failure) = format_once(module, style);
+    if failure == Some(FormatError::UnrenderableReference) {
+        return (current, failure);
+    }
     for _ in 0..STABILIZE_PASSES {
-        let Ok(reparsed) = crate::parser::parse(&current, "fmt-stabilize") else {
-            // The output must always re-parse; if it somehow does not, the
-            // caller's input is still better served by a deterministic
-            // answer than by a rewrite loop.
-            return current;
+        // The re-parse mirrors the input: formatting parses with includes
+        // enabled but unresolved (spec/formatter.md section 2), so the
+        // fixed-point check records include statements without reading
+        // them.
+        let options = crate::ParseOptions {
+            enable_includes: true,
+            resolve_includes: false,
+            ..crate::ParseOptions::default()
         };
-        let next = format_once(&reparsed, style);
+        let Ok(reparsed) = crate::parser::parse_with(&current, &module.source_name, options) else {
+            return (current, failure.or(Some(FormatError::OutputDoesNotParse)));
+        };
+        if !reparsed.healing.is_empty() {
+            // The output only parses after a repair: writing it would bake
+            // the repair into the file (spec/formatter.md section 2).
+            return (current, failure.or(Some(FormatError::OutputDoesNotParse)));
+        }
+        let (next, next_failure) = format_once(&reparsed, style);
+        if next_failure == Some(FormatError::UnrenderableReference) {
+            return (next, failure.or(next_failure));
+        }
+        // Sticky: a reference the first pass could not verify stays
+        // reported even if a later pass happens to re-spell it, because
+        // the text may already have lost the source's meaning.
+        failure = match (failure, next_failure) {
+            (Some(first), _) => Some(first),
+            (None, later) => later,
+        };
         if next == current {
-            return current;
+            return (current, failure);
         }
         current = next;
     }
-    current
+    (current, failure)
+}
+
+/// Format a module in the requested style. `Preserve` uses the style the
+/// source predominantly uses.
+///
+/// This is the display form: when [`try_format`] refuses, it returns the
+/// stabilized text so a caller that only prints still has an answer.
+/// Anything that writes a file must call [`try_format`].
+pub fn format(module: &Module, style: Style) -> String {
+    stabilize(module, style).0
 }
 
 /// Passes allowed while searching for the formatter's fixed point. Two is
@@ -70,7 +153,7 @@ pub fn format(module: &Module, style: Style) -> String {
 /// needs one); the cap keeps a hypothetical oscillation bounded.
 const STABILIZE_PASSES: usize = 16;
 
-fn format_once(module: &Module, style: Style) -> String {
+fn format_once(module: &Module, style: Style) -> (String, Option<FormatError>) {
     let style = match style {
         Style::Preserve => module.source_style,
         other => other,
@@ -86,12 +169,17 @@ fn format_once(module: &Module, style: Style) -> String {
         pending_blank: false,
         flat: false,
         emitted_scopes: std::collections::HashSet::new(),
+        expr_scope: String::new(),
+        expr_base: None,
+        expr_base_prefix: String::new(),
+        inline_depth: std::cell::Cell::new(0),
+        failure: std::cell::Cell::new(None),
         out: String::new(),
     };
     f.flat = f.needs_flat_rendering();
     f.index_trivia();
     f.emit_module();
-    f.out
+    (f.out, f.failure.get())
 }
 
 struct Formatter<'a> {
@@ -114,11 +202,33 @@ struct Formatter<'a> {
     /// already emitted. Keyed by (profile, path): profiles and value
     /// tables are separate namespaces with the same text.
     emitted_scopes: std::collections::HashSet<(bool, String)>,
+    /// Dotted path of the table body currently rendering expressions.
+    /// References inside that scope render relative (`is_prod`), while
+    /// references to other tables render their full path (`a.port`).
+    expr_scope: String,
+    /// The table that dotted paths resolve against: the document root, or
+    /// a profile's body while that profile renders (profile overlays are
+    /// evaluated in their own scope, falling back to the root).
+    expr_base: Option<NodeId>,
+    /// Text prefix of `expr_base` inside `expr_scope`: empty at the root,
+    /// the profile name inside a profile body.
+    expr_base_prefix: String,
+    /// Depth of unnamed-target inlining; a malformed/cyclic module must
+    /// not recurse without bound.
+    inline_depth: std::cell::Cell<usize>,
+    /// Set when the pass hit a fallback that makes its text untrustworthy;
+    /// [`try_format`] turns this into an error instead of a document.
+    failure: std::cell::Cell<Option<FormatError>>,
     out: String,
 }
 
 /// Map every named node back to its name (let bindings and table keys,
 /// including profile trees so profile-internal references render).
+///
+/// When a node is reachable under more than one path, the first one is
+/// recorded; the expression renderer verifies that it resolves back to the
+/// node before emitting it, so a second spelling costs fidelity only where
+/// the first does not resolve.
 fn build_names(module: &Module) -> HashMap<NodeId, String> {
     /// Schema trees are detached from value fields, so a reference that
     /// resolved to a schema node had no name and rendered as `<?>` -
@@ -136,23 +246,30 @@ fn build_names(module: &Module) -> HashMap<NodeId, String> {
             walk_schema(module, child, names);
         }
     }
-    fn walk(module: &Module, id: NodeId, names: &mut HashMap<NodeId, String>) {
+    fn walk_path(module: &Module, id: NodeId, prefix: &str, names: &mut HashMap<NodeId, String>) {
         if let Some(Node::Table { fields }) = module.get(id) {
             for (key, child) in fields {
-                names.entry(*child).or_insert_with(|| key.clone());
-                walk(module, *child, names);
+                let path = if prefix.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{prefix}.{key}")
+                };
+                names.entry(*child).or_insert_with(|| path.clone());
+                walk_path(module, *child, &path, names);
             }
         }
     }
     let mut names = HashMap::new();
     for (name, id) in &module.bindings {
         names.entry(*id).or_insert_with(|| name.clone());
+        // A let-bound table's members are addressable as `name.member`.
+        walk_path(module, *id, name, &mut names);
     }
     if let Some(root) = module.root {
-        walk(module, root, &mut names);
+        walk_path(module, root, "", &mut names);
     }
     for id in module.profiles.values() {
-        walk(module, *id, &mut names);
+        walk_path(module, *id, "", &mut names);
     }
     if let Some(schema) = module.schema {
         names.entry(schema).or_insert_with(|| "schema".to_string());
@@ -339,26 +456,10 @@ impl<'a> Formatter<'a> {
             return;
         }
         let resolved = self.resolve_ref(id);
-        let fields = match self.module.body_fields.get(&resolved) {
-            Some(snapshot) => snapshot.clone(),
-            None => match self.module.get(resolved) {
-                Some(Node::Table { fields }) => fields.clone(),
-                _ => return,
-            },
+        let fields = match self.scoped_fields(resolved) {
+            Some(fields) => fields,
+            None => return,
         };
-        // Defense in depth: a schema node that survived extraction must
-        // never render as data (`schema = null`).
-        let fields: indexmap::IndexMap<String, NodeId> = fields
-            .into_iter()
-            .filter(|(key, node)| {
-                !(key == "schema"
-                    && matches!(
-                        self.module.get(self.resolve_ref(*node)),
-                        Some(Node::SchemaTable { .. })
-                    ))
-                    && !self.is_include_node(*node)
-            })
-            .collect();
         // Include statements recorded for this scope come first, in
         // source order: under the defaults rule (spec §2.7) their
         // position relative to keys never changes semantics. Root
@@ -516,6 +617,14 @@ impl<'a> Formatter<'a> {
         }
 
         // Scalars-first at the root, source order inside blocks.
+        // The root body resolves dotted paths against the root table;
+        // nested bodies keep the enclosing base.
+        let saved_expr_scope = std::mem::replace(&mut self.expr_scope, path.to_string());
+        let saved_base = if is_root {
+            Some(self.expr_base.replace(resolved))
+        } else {
+            None
+        };
         let mut first = true;
         let entry_count = ordered.len();
         for (index, (key, node)) in ordered.iter().enumerate() {
@@ -539,7 +648,7 @@ impl<'a> Formatter<'a> {
                     // A tree deeper than the parser's block budget: emit
                     // dotted headers instead of nesting (see
                     // FLAT_DEPTH_THRESHOLD).
-                    self.emit_flat_table(*node, &child_path, key, depth);
+                    self.emit_flat_table(*node, &child_path, key, depth, false);
                 } else {
                     self.emit_table_block(
                         *node,
@@ -558,6 +667,10 @@ impl<'a> Formatter<'a> {
                 self.emit_trailing(&qkey);
                 self.out.push('\n');
             }
+        }
+        self.expr_scope = saved_expr_scope;
+        if let Some(saved) = saved_base {
+            self.expr_base = saved;
         }
 
         if let Some(comments) = self.trailing_block.remove(path) {
@@ -888,16 +1001,42 @@ impl<'a> Formatter<'a> {
         })
     }
 
+    /// The fields a body emits, from the surviving first body's snapshot:
+    /// include-materialized fields and a surviving schema node are
+    /// metadata and never render as data (`schema = null`).
+    fn scoped_fields(&self, id: NodeId) -> Option<indexmap::IndexMap<String, NodeId>> {
+        let fields = match self.module.body_fields.get(&id) {
+            Some(snapshot) => snapshot.clone(),
+            None => match self.module.get(id) {
+                Some(Node::Table { fields }) => fields.clone(),
+                _ => return None,
+            },
+        };
+        Some(
+            fields
+                .into_iter()
+                .filter(|(key, node)| {
+                    !(key == "schema"
+                        && matches!(
+                            self.module.get(self.resolve_ref(*node)),
+                            Some(Node::SchemaTable { .. })
+                        ))
+                        && !self.is_include_node(*node)
+                })
+                .collect(),
+        )
+    }
+
     /// Emit one table of a deep tree as a `[dotted.path]` header: its
     /// non-table entries at `depth + 1`, then every child table as a
     /// sibling header at `depth`. Sibling headers close each body before
     /// the next one starts, so the parser merges the dotted path into the
     /// already-finished ancestors.
-    fn emit_flat_table(&mut self, id: NodeId, full: &str, rel: &str, depth: usize) {
+    fn emit_flat_table(&mut self, id: NodeId, full: &str, rel: &str, depth: usize, profile: bool) {
         let id = self.resolve_ref(id);
-        let fields = match self.module.get(id) {
-            Some(Node::Table { fields }) => fields.clone(),
-            _ => return,
+        let fields = match self.scoped_fields(id) {
+            Some(fields) => fields,
+            None => return,
         };
         self.emit_leading(full, depth);
         self.out
@@ -909,7 +1048,29 @@ impl<'a> Formatter<'a> {
         // the header's column (the long-standing brace-root form is `[a]`
         // then `k = 0` at column 0). The next sibling header at this level
         // closes the body.
-        self.emit_flat_body(id, &fields, full, depth);
+        self.emit_flat_body(id, &fields, full, depth, profile);
+        // Extra repeated bodies of the same path are sibling headers too:
+        // the non-flat path emits them as repeated blocks, and dropping
+        // them here would change the merged value.
+        let extras = self
+            .module
+            .repeated_tables
+            .get(&id)
+            .cloned()
+            .unwrap_or_default();
+        for body in extras {
+            let body = self.resolve_ref(body);
+            let Some(extra_fields) = self.scoped_fields(body) else {
+                continue;
+            };
+            if extra_fields.is_empty() {
+                continue;
+            }
+            self.out
+                .push_str(&format!("{}[{rel}]", INDENT.repeat(depth)));
+            self.out.push('\n');
+            self.emit_flat_body(body, &extra_fields, full, depth, profile);
+        }
         for (key, node) in &fields {
             if !self.is_block_table(node, key) {
                 continue;
@@ -924,7 +1085,7 @@ impl<'a> Formatter<'a> {
             } else {
                 format!("{rel}.{key}")
             };
-            self.emit_flat_table(*node, &child_full, &child_rel, depth);
+            self.emit_flat_table(*node, &child_full, &child_rel, depth, profile);
         }
     }
 
@@ -938,25 +1099,39 @@ impl<'a> Formatter<'a> {
         fields: &indexmap::IndexMap<String, NodeId>,
         full: &str,
         depth: usize,
+        profile: bool,
     ) {
         let indent = INDENT.repeat(depth);
-        if !full.is_empty() {
+        if full.is_empty() {
+            self.emit_depends_on(id, depth);
+        } else if self.emitted_scopes.insert((profile, full.to_string())) {
+            // Includes, schema, and dependency metadata belong to the
+            // scope, not to one body: repeated bodies share the path, so
+            // emit them once (the non-flat path guards the same block).
             let mut includes: Vec<IncludeStmt> = self
                 .module
                 .includes
                 .iter()
-                .filter(|inc| !inc.profile && inc.scope_path.join(".") == full)
+                .filter(|inc| inc.profile == profile && inc.scope_path.join(".") == full)
                 .cloned()
                 .collect();
             includes.sort_by_key(|inc| inc.line);
             for inc in &includes {
                 self.emit_include(inc, depth);
             }
-            if let Some(schema) = self.schema_for_path(full) {
-                self.emit_schema_table(schema, depth);
+            // A profile body is an overlay, not a scope that owns a
+            // value schema (spec §3.5).
+            if !profile {
+                if let Some(schema) = self.schema_for_path(full) {
+                    self.emit_schema_table(schema, depth);
+                }
             }
+            self.emit_depends_on(id, depth);
         }
-        self.emit_depends_on(id, depth);
+        // Flat mode renders every table as a header, so the expressions
+        // in this body belong to `full`'s scope exactly like a nested
+        // body's do.
+        let saved_expr_scope = std::mem::replace(&mut self.expr_scope, full.to_string());
         for (key, node) in fields {
             if self.is_block_table(node, key) {
                 continue;
@@ -972,6 +1147,7 @@ impl<'a> Formatter<'a> {
             self.emit_trailing(&child_full);
             self.out.push('\n');
         }
+        self.expr_scope = saved_expr_scope;
         if let Some(comments) = self.trailing_block.get(full).cloned() {
             if !self.out.ends_with('\n') {
                 self.out.push('\n');
@@ -1202,22 +1378,36 @@ impl<'a> Formatter<'a> {
     /// the body depth (profiles nest one level, so a deep profile tree
     /// would otherwise exceed the parser's block budget too).
     fn emit_profile_body(&mut self, id: NodeId, name: &str, depth: usize) {
+        // A profile overlay evaluates in its own scope, with the root as
+        // the outward fallback (spec §3.5), so dotted paths inside it
+        // resolve against the profile body first.
+        let base = self.resolve_ref(id);
+        let saved_base = self.expr_base.replace(base);
+        let saved_prefix = std::mem::replace(&mut self.expr_base_prefix, name.to_string());
         if !self.flat {
             self.emit_table_body_with(id, depth, name, false, true);
+            self.expr_base = saved_base;
+            self.expr_base_prefix = saved_prefix;
             return;
         }
-        let fields = match self.module.get(id) {
-            Some(Node::Table { fields }) => fields.clone(),
-            _ => return,
+        let fields = match self.scoped_fields(self.resolve_ref(id)) {
+            Some(fields) => fields,
+            None => {
+                self.expr_base = saved_base;
+                self.expr_base_prefix = saved_prefix;
+                return;
+            }
         };
-        self.emit_flat_body(id, &fields, name, depth);
+        self.emit_flat_body(id, &fields, name, depth, true);
         for (key, node) in &fields {
             if !self.is_block_table(node, key) {
                 continue;
             }
             let child_full = format!("{name}.{key}");
-            self.emit_flat_table(*node, &child_full, key, depth);
+            self.emit_flat_table(*node, &child_full, key, depth, true);
         }
+        self.expr_base = saved_base;
+        self.expr_base_prefix = saved_prefix;
     }
 
     /// Emit one `include` statement (spec §2.7) at the given depth.
@@ -1322,12 +1512,145 @@ impl<'a> Formatter<'a> {
                 _ => return id,
             }
         }
+        // A chain this long is not something the parser builds; the
+        // downstream text cannot be trusted.
+        self.failure.set(Some(FormatError::UnrenderableReference));
         id
+    }
+
+    /// The current body's path relative to `expr_base`.
+    fn relative_scope(&self) -> String {
+        if self.expr_base_prefix.is_empty() {
+            return self.expr_scope.clone();
+        }
+        match self.expr_scope.strip_prefix(&self.expr_base_prefix) {
+            Some(rest) => rest.trim_start_matches('.').to_string(),
+            None => self.expr_scope.clone(),
+        }
+    }
+
+    /// The value node at `path` inside `base`, following table fields.
+    fn value_at(&self, base: NodeId, path: &str) -> Option<NodeId> {
+        let mut segments = path.split('.').filter(|segment| !segment.is_empty());
+        let first = segments.next()?;
+        let mut node = *self.table_fields(base)?.get(first)?;
+        for segment in segments {
+            node = *self.table_fields(self.resolve_ref(node))?.get(segment)?;
+        }
+        Some(self.resolve_ref(node))
+    }
+
+    /// The value node at a path whose first segment is a document-level
+    /// `let` binding. Bindings are visible from every scope, including
+    /// profile bodies (spec §2.8).
+    fn binding_value(&self, path: &str) -> Option<NodeId> {
+        let mut segments = path.split('.').filter(|segment| !segment.is_empty());
+        let first = segments.next()?;
+        let mut node = *self.module.bindings.get(first)?;
+        for segment in segments {
+            node = *self.table_fields(self.resolve_ref(node))?.get(segment)?;
+        }
+        Some(self.resolve_ref(node))
+    }
+
+    fn table_fields(&self, id: NodeId) -> Option<&indexmap::IndexMap<String, NodeId>> {
+        match self.module.get(id) {
+            Some(Node::Table { fields }) => Some(fields),
+            _ => None,
+        }
+    }
+
+    /// Resolve a path as an expression written in the current body would:
+    /// the innermost enclosing table first, then each ancestor, then the
+    /// document root (which stays visible inside a profile overlay), then
+    /// the document's `let` bindings (the parser consults them last).
+    fn resolve_expr_path(&self, path: &str) -> Option<NodeId> {
+        let base = self.resolve_ref(self.expr_base.or(self.module.root)?);
+        let relative = self.relative_scope();
+        let mut prefix = relative.as_str();
+        loop {
+            let full = if prefix.is_empty() {
+                path.to_string()
+            } else {
+                format!("{prefix}.{path}")
+            };
+            if let Some(id) = self.value_at(base, &full) {
+                return Some(id);
+            }
+            if prefix.is_empty() {
+                break;
+            }
+            prefix = prefix.rsplit_once('.').map(|(head, _)| head).unwrap_or("");
+        }
+        let root = self.resolve_ref(self.module.root?);
+        if root != base {
+            if let Some(id) = self.value_at(root, path) {
+                return Some(id);
+            }
+        }
+        self.binding_value(path)
+    }
+
+    /// Whether a path starts with the name of the table being written.
+    /// Resolution refuses that spelling as a self-reference (S001), even
+    /// from a nested body, so the formatter must not emit it.
+    fn path_is_self_referencing(&self, path: &str) -> bool {
+        let scope = self.relative_scope();
+        let head = match scope.split('.').next() {
+            Some(head) if !head.is_empty() => head,
+            _ => return false,
+        };
+        path.split('.').next() == Some(head)
+    }
+
+    /// Whether a node renders as a scalar-shaped value expression, so
+    /// inlining it preserves the value without expanding a table tree.
+    fn is_scalar_expression(&self, id: NodeId) -> bool {
+        matches!(
+            self.module.get(id),
+            Some(
+                Node::Literal(_)
+                    | Node::Env { .. }
+                    | Node::Secret { .. }
+                    | Node::ContentAddressed { .. }
+                    | Node::Ident(_)
+                    | Node::Interpolate { .. }
+                    | Node::Binary { .. }
+                    | Node::Unary { .. }
+                    | Node::Quantity { .. }
+            )
+        )
+    }
+
+    /// Render an unnamed or unaddressable reference target by inlining its
+    /// expression. A malformed Ref chain (which resolution would have
+    /// rejected) is bounded rather than recursing without end.
+    fn inline_ref(&self, target: NodeId) -> String {
+        let depth = self.inline_depth.get();
+        if depth >= MAX_INLINE_DEPTH {
+            // A parsed module cannot reach this: S001 refuses cycles and
+            // the parser never builds a chain this long. Refuse the whole
+            // document rather than emit a value that could pass a check.
+            self.failure.set(Some(FormatError::UnrenderableReference));
+            return "null".to_string();
+        }
+        self.inline_depth.set(depth + 1);
+        let text = self.render_expr(target);
+        self.inline_depth.set(depth);
+        text
     }
 
     fn render_expr(&self, id: NodeId) -> String {
         match self.module.get(id) {
-            Some(Node::Literal(v)) => render_literal(v),
+            Some(Node::Literal(v)) => {
+                // A materialized secret or blob has no source form: the
+                // placeholder would parse as an ordinary string, dropping
+                // its taint. Print it for display, but never write it.
+                if matches!(v, Value::Secret(_) | Value::Blob { .. }) {
+                    self.failure.set(Some(FormatError::UnrenderableReference));
+                }
+                render_literal(v)
+            }
             Some(Node::Env { name, default }) => match default {
                 Some(d) => {
                     let d = self.render_expr(*d);
@@ -1365,8 +1688,44 @@ impl<'a> Formatter<'a> {
             // dependency graph is acyclic (S001 refuses cycles), so
             // this recursion terminates.
             Some(Node::Ref(target)) => match self.names.get(target).cloned() {
-                Some(name) => name,
-                None => self.render_expr(*target),
+                Some(name) => {
+                    // A reference is written as the path it names, and a
+                    // path only means the same node if it resolves back
+                    // to that node from this body. A same-body key is
+                    // written relative (`is_prod` inside `[flags]`);
+                    // anything else keeps its full dotted path (`a.port`),
+                    // which is the bug this guard fixes. A shadowed or
+                    // ambiguous path inlines the target's expression, so
+                    // formatting can never change what a reference reads.
+                    let target = self.resolve_ref(*target);
+                    let scope = self.relative_scope();
+                    if !scope.is_empty() {
+                        let prefix = format!("{scope}.");
+                        if let Some(relative) = name.strip_prefix(&prefix) {
+                            if self.resolve_expr_path(relative) == Some(target) {
+                                return relative.to_string();
+                            }
+                        }
+                    }
+                    if !self.path_is_self_referencing(&name)
+                        && self.resolve_expr_path(&name) == Some(target)
+                    {
+                        return name;
+                    }
+                    // The recorded name does not resolve back to the
+                    // target here (a shadowed or malformed graph). Inline
+                    // a scalar target so the value is preserved; a
+                    // table-shaped one keeps its name (inlining it would
+                    // expand the tree without bound) and the pass is
+                    // marked so no writing surface persists it.
+                    if self.is_scalar_expression(target) {
+                        self.inline_ref(target)
+                    } else {
+                        self.failure.set(Some(FormatError::UnverifiedReference));
+                        name
+                    }
+                }
+                None => self.inline_ref(*target),
             },
             Some(Node::Ident(name)) => name.clone(),
             Some(Node::Interpolate { parts }) => {
@@ -1415,8 +1774,12 @@ impl<'a> Formatter<'a> {
             // Unreachable for every node the parser builds (named nodes
             // render by name, literals and containers by structure); the
             // old `<?>` placeholder broke re-parsing for the WHOLE
-            // document, so the fallback is a parseable literal.
-            _ => "null".into(),
+            // document, so the fallback is a parseable literal, and the
+            // pass is marked untrustworthy so a writing surface refuses.
+            _ => {
+                self.failure.set(Some(FormatError::UnrenderableReference));
+                "null".into()
+            }
         }
     }
 

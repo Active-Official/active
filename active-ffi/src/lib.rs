@@ -1192,10 +1192,25 @@ pub unsafe extern "C" fn active_format(
             ..active_core::ParseOptions::default()
         });
         match active_core::parse_with(&handle.source, "ffi", options) {
-            Ok(parsed) => {
-                set_last(ACTIVE_ERR_OK);
-                cstring_lossy(&active_core::fmt::format(&parsed, style)).into_raw()
-            }
+            Ok(parsed) => match active_core::fmt::try_format(&parsed, style) {
+                Ok(out) => {
+                    set_last(ACTIVE_ERR_OK);
+                    cstring_lossy(&out).into_raw()
+                }
+                Err(error) => {
+                    // A refusal must not hand the embedder text it would
+                    // write back: null, with a documented code.
+                    let code = match error {
+                        active_core::fmt::FormatError::UnrenderableReference
+                        | active_core::fmt::FormatError::UnverifiedReference => {
+                            ACTIVE_ERR_UNRESOLVED_REF
+                        }
+                        active_core::fmt::FormatError::OutputDoesNotParse => ACTIVE_ERR_PARSE,
+                    };
+                    set_last(code);
+                    std::ptr::null_mut()
+                }
+            },
             Err(_) => {
                 set_last(ACTIVE_ERR_PARSE);
                 std::ptr::null_mut()

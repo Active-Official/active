@@ -41,6 +41,11 @@ schema = { port = Int(default = 8080), host = String(default = "x") }
 unexpected = 1
 """
 
+REPAIR_RECEIPT_FIXTURE = """\
+schema = { closed = true, host = String, port = Int(default = 8080) }
+Host = "x"
+"""
+
 LINT_FIXTURE = """\
 [server]
 readTimeout = 1
@@ -90,6 +95,8 @@ def main() -> int:
     fixture.write_text(FIXTURE, encoding="utf-8")
     repair_fixture = work / "repair.active"
     repair_fixture.write_text(REPAIR_FIXTURE, encoding="utf-8")
+    repair_receipt_fixture = work / "repair-receipt.active"
+    repair_receipt_fixture.write_text(REPAIR_RECEIPT_FIXTURE, encoding="utf-8")
     lint_fixture = work / "lint.active"
     lint_fixture.write_text(LINT_FIXTURE, encoding="utf-8")
     diff_old = work / "old.active"
@@ -157,6 +164,50 @@ def main() -> int:
         validate(name, document)
         print(f"OUTPUT-SCHEMA {name} ok")
 
+    # L-P41: the repair receipt (a committed success and a refusal).
+    repair_out = work / "repair-out.active"
+    repair_receipt = work / "repair.receipt.json"
+    run(
+        [
+            "repair",
+            "--from",
+            str(repair_receipt_fixture),
+            "--output",
+            str(repair_out),
+            "--receipt",
+            str(repair_receipt),
+        ]
+    )
+    validate(
+        "repair-receipt",
+        json.loads(repair_receipt.read_text(encoding="utf-8")),
+    )
+    print("OUTPUT-SCHEMA repair-receipt ok")
+
+    broken_repair = work / "broken-repair.active"
+    broken_repair.write_text("port = \n", encoding="utf-8")
+    refused_repair = work / "repair-refused.receipt.json"
+    refused = subprocess.run(
+        [
+            str(EXE),
+            "repair",
+            "--from",
+            str(broken_repair),
+            "--receipt",
+            str(refused_repair),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    if refused.returncode == 0 or not refused_repair.is_file():
+        raise SystemExit(f"OUTPUT-SCHEMA repair refusal not audited: {refused.stderr}")
+    validate(
+        "repair-receipt",
+        json.loads(refused_repair.read_text(encoding="utf-8")),
+    )
+    print("OUTPUT-SCHEMA repair-receipt refusal ok")
+
     # A plan written to disk must be apply-able and produce a receipt:
     # validate both the on-disk plan and the receipt.
     run(
@@ -186,6 +237,29 @@ def main() -> int:
     receipt = json.loads(receipt_file.read_text(encoding="utf-8"))
     validate("plan-receipt", receipt)
     print("OUTPUT-SCHEMA plan-receipt ok")
+
+    # L-P41: a refused apply writes a refusal receipt and never touches the
+    # baseline. Replaying the same plan now drifts (the baseline is the
+    # installed candidate), which is a stable refusal class.
+    refusal_file = work / "refused.receipt.json"
+    refused = subprocess.run(
+        [
+            str(EXE),
+            "apply",
+            str(plan_file),
+            "--approve",
+            approve,
+            "--receipt",
+            str(refusal_file),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    if refused.returncode == 0 or not refusal_file.is_file():
+        raise SystemExit(f"OUTPUT-SCHEMA apply refusal not audited: {refused.stderr}")
+    validate("plan-receipt", json.loads(refusal_file.read_text(encoding="utf-8")))
+    print("OUTPUT-SCHEMA plan-receipt refusal ok")
 
     # A file that does not parse still fails the run, but its E-codes
     # are not lint findings: the pinned schema admits `^L[0-9]{3}$`

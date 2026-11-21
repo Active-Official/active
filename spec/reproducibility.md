@@ -477,14 +477,29 @@ inputs were evaluated before.
   unless `--force` is passed, and `--force` only replaces a file that is
   an apply receipt.
 - **Receipt.** `{apply: {version, applied, plan_hash, root, old, new,
-  operator?, receipt_hash}}`; `receipt_hash` is the same keyed MAC over
-  the canonical receipt without `receipt_hash`, domain
+  steps?, operator?, receipt_hash}}`; `steps` is the applied set (the
+  plan's structural steps, as approved), and `receipt_hash` is the same
+  keyed MAC over the canonical receipt without `receipt_hash`, domain
   `active.plan-receipt.v1`. There is no timestamp, so the same plan and
   operator produce the same receipt bytes. The default path is
-  `<plan>.receipt.json`.
+  `<plan>.receipt.json`. The receipt is published atomically (the same
+  temp-and-rename discipline as the baseline).
+- **Refusal receipt (L-P41).** A refused apply writes
+  `{refusal: {version, applied: false, failure_class, plan_hash?,
+  steps?, receipt_hash}}` to the receipt path (the same default) instead
+  of a success receipt. `failure_class` is the stable `[class]` token
+  (`plan-shape`, `plan-hash`, `root`, `context`, `baseline`, `candidate`,
+  `drift`, `receipt`, `io`, or `other`). `plan_hash` and `steps` are
+  recorded only after the plan MAC and approval verified, so untrusted
+  plan text never lands in a receipt. A refusal never touches the
+  baseline and leaves no temp behind; an existing receipt is still
+  protected by `--force`.
 - **Scope.** The plan covers one baseline file; includes are hashed and
-  re-verified, but `apply` replaces only the baseline file. Deploying
-  other files is the caller's responsibility. The plan and receipt
+  re-verified, but `apply` replaces only the baseline file. No shipped
+  command writes multiple documents as one commit, so multi-file
+  atomicity is not claimed; an overlay would need a two-phase journal
+  (intent file, per-file temp, fsync, rename, recovery) and is a future
+  item. Deploying other files is the caller's responsibility. The plan and receipt
   shapes are pinned by `docs/schemas/plan.json` and
   `docs/schemas/plan-receipt.json`; as CLI tooling surfaces they carry
   CLI and output-schema coverage rather than a cross-embedding vector.

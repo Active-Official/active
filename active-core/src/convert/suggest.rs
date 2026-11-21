@@ -123,6 +123,15 @@ fn rename_for(
     {
         return None;
     }
+    // L-P41: the directive's target is a plain leaf. A dotted/bracketed
+    // endpoint (host-built repair) cannot be expressed as a safe step and
+    // the applier refuses it, so never suggest it.
+    if repair.suggested.contains('.')
+        || repair.suggested.contains('[')
+        || repair.suggested.contains(']')
+    {
+        return None;
+    }
     // Returns (path, from, to, directive).
     let built = if repair.original.contains('.') || repair.suggested.contains('.') {
         // Defensive only: every KeyTypo repair in the codebase carries
@@ -171,7 +180,9 @@ fn rename_for(
         path,
         from.clone(),
         to.clone(),
-        format!("@rename(\"{from}\", \"{to}\")"),
+        // The parser requires a plain leaf key in `to`; the parent is the
+        // source's parent, so the full endpoint in `to` is metadata only.
+        format!("@rename(\"{from}\", \"{}\")", repair.suggested),
     ))
 }
 

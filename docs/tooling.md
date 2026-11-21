@@ -131,6 +131,7 @@ remains. An output file is written only for an accepted candidate. Spec:
 active repair --from svc.active --browser
 active repair --from svc.active --apply-step 0 --format text
 active repair --from svc.active --cherry-pick server --output fixed.active
+active repair --from svc.active --output fixed.active --receipt fixed.receipt.json
 ```
 
 `--browser` pairs diagnostics with the multi-step plan (no source text,
@@ -140,6 +141,15 @@ the plan carries a `proof` sketch (L-P53): the blocking codes it removed,
 any it introduced, and any evaluated path outside its own that changed,
 checked by the loop's next evaluation over redacted trees; `--format
 text` prints it under each `applied` line. Spec: `spec/repair-ui.md`.
+
+`--output` is a commit (L-P41): the composed source is validated first,
+then published atomically (no partial file; a refusal leaves no temp, and a
+hard kill can leave only a uniquely named one). The
+`--receipt` L-T06 envelope records the applied set and the source/result
+hashes on success, and a refusal writes a failed receipt with the
+attempted set and a failure class - never a value or a directive's text.
+A partial selection commits exactly the selected steps and reports the
+subset's own verdict. Spec: `spec/repair.md` §3.1.
 
 ## Query CLIs
 
@@ -210,8 +220,12 @@ baseline, candidate, plan, an include, the sibling lockfile, or the
 trust-keys file. An existing receipt is refused unless `--force` is
 passed, and `--force` only replaces a file that is an apply receipt.
 `--format json` prints the receipt; the default `<plan stem>.receipt.json`
-carries the plan hash, root, both document hashes, the optional operator,
-and the receipt's own keyed hash. Symlinked documents are refused. Refusals carry a stable class:
+carries the plan hash, root, both document hashes, the applied steps, the
+optional operator, and the receipt's own keyed hash. A refused apply
+writes a refusal receipt instead (`applied: false`, a stable failure
+class, and — only after the plan's hash and approval verified — the plan
+hash and steps); the baseline is never touched and the receipt is
+published atomically. Symlinked documents are refused. Refusals carry a stable class:
 `[plan-shape]`, `[plan-hash]`, `[root]`, `[context]`, `[baseline]`,
 `[candidate]`, `[drift]`, `[receipt]`, `[io]`.
 

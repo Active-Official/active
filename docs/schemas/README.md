@@ -17,7 +17,8 @@ so a shape change fails the build.
 | `debug-steps.json` | `active debug --from <file>` |
 | `diff.json` | `active diff <old> <new> --format json` |
 | `plan.json` | `active plan <old> <new> --format json` / `--output` |
-| `plan-receipt.json` | `active apply <plan> --approve <hash>` |
+| `plan-receipt.json` | `active apply <plan> --approve <hash>` (success or refusal) |
+| `repair-receipt.json` | `active repair --from <file> --output <path> --receipt <path>` (success or refusal) |
 
 Rules:
 
@@ -25,8 +26,9 @@ Rules:
   same change; removing or retyping a field is breaking.
 - `taint`, `budget`, and `inspect-value` carry a `version`; `graph`,
   `lint`, `repair-plan`, and `debug-steps` are fixed shapes.
-- `repair-plan.json` includes `repaired_source`, which can contain an
-  authored secret literal. Treat that field as sensitive; use
-  `repair --browser` or `viz repair` for display, which omit it.
+- `repair-plan.json` includes `repaired_source`. The CLI redacts known
+  material in the printed copy (L-P41); the unmodified source is written
+  only by `--output`. Use `repair --browser` or `viz repair` for display,
+  which omit the source entirely.
 - Secrets never appear as material in the redacted fields of these
   outputs; source text is the one documented exception above.

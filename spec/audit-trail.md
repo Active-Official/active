@@ -96,6 +96,16 @@ audit = {
   that produces neither a value nor validation diagnostics) carry no
   audit trail.
 
+**Commit receipts are a separate artifact (L-P41).** An audit trail
+records an evaluation. A document commit (`active apply` of a plan, or
+`active repair --output`) writes a commit receipt instead: the plan
+receipt (`spec/reproducibility.md` §4e) or an L-T06 repair envelope
+(`spec/repair.md` §3.1). Both are published atomically, both record the
+applied set on success, and a refused commit writes a refusal receipt
+with a stable failure class. The two families share the same principle -
+an adversarial outcome leaves evidence - but a commit receipt never
+substitutes for an evaluation audit.
+
 
 ## 3. Agent use
 

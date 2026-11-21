@@ -1,0 +1,151 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Active repair receipt (L-T06 envelope v2)",
+  "description": "Output of `active repair --from <doc> --output <path> --receipt <path>` (L-P41). The payload is present only for a committed run; a refusal is a failed envelope with a null payload and the attempted set.",
+  "type": "object",
+  "required": ["version", "capability", "tainted", "payload", "receipt"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": "2.0.0" },
+    "capability": { "type": "string" },
+    "tainted": { "type": "boolean" },
+    "payload": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": [
+            "goal",
+            "steps",
+            "document_clean",
+            "source_sha256",
+            "result_sha256"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "goal": { "enum": ["validate", "preserve-key", "minimize-diff"] },
+            "preserve": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "steps": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/step" }
+            },
+            "document_clean": { "type": "boolean" },
+            "source_sha256": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            "result_sha256": {
+              "type": "string",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            }
+          }
+        }
+      ]
+    },
+    "receipt": {
+      "type": "object",
+      "required": [
+        "outcome",
+        "capability",
+        "budget",
+        "diagnostics",
+        "applied",
+        "document_clean"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "outcome": { "enum": ["clean", "failed"] },
+        "failure_class": {
+          "enum": ["parse", "budget", "validation", "other"]
+        },
+        "result": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "capability": { "type": "string" },
+        "mode": { "enum": ["config", "data"] },
+        "profile": { "type": "string" },
+        "schema_version": { "type": "string" },
+        "budget": { "$ref": "#/definitions/budget" },
+        "diagnostics": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "applied": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/step" }
+        },
+        "document_clean": { "type": "boolean" }
+      }
+    },
+    "result": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  },
+  "definitions": {
+    "step": {
+      "type": "object",
+      "required": ["kind", "path", "status", "side_effects"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "type": "string" },
+        "path": { "type": "string" },
+        "status": { "enum": ["applied", "skipped"] },
+        "side_effects": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "proof": {
+          "type": "object",
+          "required": [
+            "addresses",
+            "removes",
+            "introduces",
+            "changes_elsewhere",
+            "verified",
+            "checked_paths"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "addresses": { "type": "array", "items": { "type": "string" } },
+            "removes": { "type": "array", "items": { "type": "string" } },
+            "introduces": { "type": "array", "items": { "type": "string" } },
+            "changes_elsewhere": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "verified": { "type": "boolean" },
+            "reason": { "type": "string" },
+            "checked_paths": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "required": [
+        "nodes",
+        "depth",
+        "array_len",
+        "keys",
+        "wall_ms",
+        "value_size",
+        "total_size"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "nodes": { "type": "integer", "minimum": 0 },
+        "depth": { "type": "integer", "minimum": 0 },
+        "array_len": { "type": "integer", "minimum": 0 },
+        "keys": { "type": "integer", "minimum": 0 },
+        "wall_ms": { "type": "integer", "minimum": 0 },
+        "value_size": { "type": "integer", "minimum": 0 },
+        "total_size": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

@@ -3599,6 +3599,21 @@ impl Engine {
     ) -> Result<(), EvalError> {
         use crate::ir::PatchOp;
 
+        // L-P41: validate-then-commit. The whole set is applied to a
+        // staging clone; only when every directive succeeds does it
+        // replace the caller's tree. A fatal directive (metadata rewrite,
+        // immutable target, invalid path, rename collision) therefore
+        // leaves the tree byte-identical, structurally rather than only
+        // because the caller discards an Err. W004 stays a warning: a
+        // blocked or missing target is skipped, not a failing directive.
+        if module.patches.is_empty() {
+            return Ok(());
+        }
+        // The staging materialisation is real work: charge it so a large
+        // patched tree cannot clone for free.
+        account.charge(module, None, measure_value(result))?;
+        let mut staged = result.clone();
+
         for &patch_id in &module.patches {
             let (op, span, file) = match module.get(patch_id) {
                 Some(Node::PatchDirective { op }) => (
@@ -3650,9 +3665,11 @@ impl Engine {
                     // Failed sets roll back: navigation may have
                     // materialized intermediate tables before hitting a
                     // blocked hop, and a failed patch must leave no trace.
-                    let snapshot = result.clone();
-                    if !patch_set(result, &segs, v) {
-                        *result = snapshot;
+                    // The snapshot is a real clone: charge it like one.
+                    account.charge(module, Some(patch_id), measure_value(&staged))?;
+                    let snapshot = staged.clone();
+                    if !patch_set(&mut staged, &segs, v) {
+                        staged = snapshot;
                         warn(
                             "W004",
                             format!("patch target `{path}` is blocked or out of bounds"),
@@ -3677,20 +3694,42 @@ impl Engine {
                             patch_id,
                         )
                     })?;
-                    if !patch_remove(result, &segs) {
+                    // L-P41: every directive pays for its own work; a
+                    // flood of removes cannot run unbudgeted.
+                    account.charge(module, Some(patch_id), segs.len() as u64)?;
+                    if !patch_remove(&mut staged, &segs) {
                         warn("W004", format!("remove target `{path}` does not exist"));
                     }
                 }
                 PatchOp::Rename { from, to } => {
-                    if path_targets_document_metadata(&from) || path_targets_document_metadata(&to)
-                    {
+                    // L-P41/M2: `to` is a plain leaf; checks that speak in
+                    // dotted paths (metadata, ai_immutable) need the full
+                    // destination under the source's parent. A host-built
+                    // module could pass a dotted leaf, which the source
+                    // parser rejects; refuse it here too.
+                    if to.is_empty() || to.contains('.') || to.contains('[') || to.contains(']') {
                         return Err(EvalError::patch_error(
-                            format!("patch cannot rewrite document metadata `{from}` -> `{to}`"),
+                            format!("rename target `{to}` must be a plain key name"),
                             module,
                             patch_id,
                         ));
                     }
-                    Self::check_immutable(module, patch_id, &[&from, &to])?;
+                    let to_path = match from.rsplit_once('.') {
+                        Some((parent, _)) => format!("{parent}.{to}"),
+                        None => to.clone(),
+                    };
+                    if path_targets_document_metadata(&from)
+                        || path_targets_document_metadata(&to_path)
+                    {
+                        return Err(EvalError::patch_error(
+                            format!(
+                                "patch cannot rewrite document metadata `{from}` -> `{to_path}`"
+                            ),
+                            module,
+                            patch_id,
+                        ));
+                    }
+                    Self::check_immutable(module, patch_id, &[&from, &to_path])?;
                     let segs = validate_patch_path(&from).map_err(|why| {
                         EvalError::patch_error(
                             format!("invalid patch path `{from}`: {why}"),
@@ -3698,7 +3737,10 @@ impl Engine {
                             patch_id,
                         )
                     })?;
-                    match patch_rename(result, &segs, &to) {
+                    // A rename walks the source and writes the new key:
+                    // charge both.
+                    account.charge(module, Some(patch_id), segs.len().saturating_add(1) as u64)?;
+                    match patch_rename(&mut staged, &segs, &to) {
                         RenameOutcome::Ok => {}
                         RenameOutcome::Missing => {
                             warn("W004", format!("rename source `{from}` does not exist"));
@@ -3714,6 +3756,8 @@ impl Engine {
                 }
             }
         }
+        // Every directive succeeded: commit the staged set in one move.
+        *result = staged;
         Ok(())
     }
 
@@ -4693,5 +4737,132 @@ fn value_eq(a: &Value, b: &Value) -> bool {
         (Value::DurationMs(x), Value::DurationMs(y)) => x == y,
         (Value::Quantity(x, ux), Value::Quantity(y, uy)) => x == y && ux == uy,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod patch_transaction_tests {
+    use super::*;
+
+    fn value_table(pairs: &[(&str, Value)]) -> Value {
+        Value::Table(
+            pairs
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.clone()))
+                .collect::<indexmap::IndexMap<String, Value>>(),
+        )
+    }
+
+    #[test]
+    fn a_fatal_directive_leaves_the_tree_untouched() {
+        // L-P41: the whole set stages on a clone. The first directive
+        // applies there; the second (a metadata rewrite) is fatal, so the
+        // caller's tree must be byte-identical to before.
+        let module = crate::parse(
+            "@patch(\"a\", 1)\n@patch(\"active_mode\", 1)\nb = 0\n",
+            "patch-transaction",
+        )
+        .unwrap_or_else(|diags| panic!("parse: {diags:?}"));
+        let engine = Engine::new();
+        let mut value = value_table(&[("a", Value::Int(0)), ("b", Value::Int(0))]);
+        let before = value.clone();
+        let values = HashMap::new();
+        let mut diagnostics = Vec::new();
+        let mut account = Accountant {
+            spent: 0,
+            limit: 1_000_000,
+            deadline: None,
+            wall_limit: 0,
+            bytes_since_sample: 0,
+        };
+        let error = engine
+            .apply_patches(&module, &values, &mut value, &mut diagnostics, &mut account)
+            .expect_err("a metadata rewrite is fatal");
+        assert!(
+            error.to_string().contains("metadata"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(
+            crate::convert::value_to_pretty_json(&value),
+            crate::convert::value_to_pretty_json(&before),
+            "a failed set must leave the caller's tree byte-identical"
+        );
+    }
+
+    #[test]
+    fn a_successful_set_commits_as_one_move() {
+        let module = crate::parse(
+            "@patch(\"a\", 1)\n@patch(\"c\", 2)\nb = 0\n",
+            "patch-commit",
+        )
+        .unwrap_or_else(|diags| panic!("parse: {diags:?}"));
+        let engine = Engine::new();
+        let mut value = value_table(&[("a", Value::Int(0)), ("b", Value::Int(0))]);
+        let mut diagnostics = Vec::new();
+        let mut account = Accountant {
+            spent: 0,
+            limit: 1_000_000,
+            deadline: None,
+            wall_limit: 0,
+            bytes_since_sample: 0,
+        };
+        engine
+            .apply_patches(
+                &module,
+                &HashMap::new(),
+                &mut value,
+                &mut diagnostics,
+                &mut account,
+            )
+            .expect("the set commits");
+        let Value::Table(map) = &value else {
+            panic!("root stays a table");
+        };
+        // Values are absent from the map, so the sets write Null at `a`
+        // and create `c`; the point is the whole set committed.
+        assert!(map.contains_key("c"), "the second directive applied");
+        assert!(map.contains_key("a") && map.contains_key("b"));
+    }
+}
+
+#[cfg(test)]
+mod patch_charge_tests {
+    use super::*;
+
+    #[test]
+    fn a_set_snapshot_is_charged() {
+        // L-P41/L2: the per-Set rollback snapshot is a real clone; with a
+        // budget just above the staging charge, the snapshot must trip it.
+        let module = crate::parse("@patch(\"a\", 1)\na = 0\nb = 0\nc = 0\n", "patch-charge")
+            .unwrap_or_else(|diags| panic!("parse: {diags:?}"));
+        let engine = Engine::new();
+        let mut value = Value::Table(
+            [
+                ("a".to_string(), Value::Int(0)),
+                ("b".to_string(), Value::Int(0)),
+                ("c".to_string(), Value::Int(0)),
+            ]
+            .into_iter()
+            .collect::<indexmap::IndexMap<String, Value>>(),
+        );
+        let staging = measure_value(&value);
+        let mut diagnostics = Vec::new();
+        let mut account = Accountant {
+            spent: 0,
+            limit: staging + 1,
+            deadline: None,
+            wall_limit: 0,
+            bytes_since_sample: 0,
+        };
+        let error = engine
+            .apply_patches(
+                &module,
+                &HashMap::new(),
+                &mut value,
+                &mut diagnostics,
+                &mut account,
+            )
+            .expect_err("the snapshot charge must trip the total budget");
+        assert_eq!(error.code(), "X006", "{error}");
     }
 }

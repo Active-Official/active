@@ -208,3 +208,51 @@ fn descendant_metadata_patch_paths_are_rejected() {
         assert_eq!(err.code(), "E019", "path {path}: {err}");
     }
 }
+
+#[test]
+fn a_remove_flood_is_charged() {
+    // L-P41: every directive pays for its own work. A flood of removes
+    // (each a W004 skip) must trip the cumulative budget instead of
+    // running unbudgeted.
+    let mut src = String::new();
+    for index in 0..400 {
+        src.push_str(&format!("@remove(\"missing{index}\")\n"));
+    }
+    src.push_str("a = 1\n");
+    let module = parse(&src, "patch-flood").expect("parse");
+    let mut engine = Engine::new();
+    engine.budget = active_core::Budget {
+        max_total_value_size: 64,
+        ..active_core::Budget::default()
+    };
+    engine.budget.max_wall_ms = active_core::eval::UNLIMITED;
+    let error = engine
+        .evaluate(&module)
+        .expect_err("the flood must trip the budget");
+    assert_eq!(error.code(), "X006", "{error}");
+}
+
+#[test]
+fn a_rename_cannot_create_a_path_under_an_immutable_ancestor() {
+    // L-P41/M2: the destination is checked at its full path, not the bare
+    // leaf, so a rename cannot smuggle a key under an immutable table.
+    let src = "# @ai_immutable: true\n[server]\nx = 1\n@rename(\"server.x\", \"protected\")\n";
+    let module = parse(src, "immutable-rename").expect("parse");
+    let error = active_core::Engine::new()
+        .evaluate(&module)
+        .expect_err("an immutable ancestor must refuse the rename");
+    let text = format!("{error}");
+    assert!(
+        text.contains("immutable") || text.contains("ai_immutable"),
+        "{text}"
+    );
+
+    // Positive control: without the annotation the same rename applies.
+    let src = "[server]\nx = 1\n@rename(\"server.x\", \"protected\")\n";
+    let module = parse(src, "plain-rename").expect("parse");
+    let (value, _) = active_core::Engine::new()
+        .evaluate(&module)
+        .expect("evaluates");
+    let json = active_core::convert::value_to_pretty_json(&value);
+    assert!(json.contains("protected"), "{json}");
+}

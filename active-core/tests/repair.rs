@@ -357,3 +357,34 @@ fn the_library_caps_the_step_budget() {
     );
     assert!(!out.clean, "100 missing keys cannot all fit the cap");
 }
+
+#[test]
+fn a_nested_typo_rename_uses_a_leaf_target_and_reaches_clean() {
+    // L-P41/M1: the directive names a plain leaf (the parser's rule); the
+    // full destination is metadata only. Before the fix the directive was
+    // "@rename(\"server.Hots\", \"server.host\")", which the parser rejects,
+    // so no nested typo could ever repair.
+    let src = "schema = { server = Table { closed = true, nested_configuration_timeout = Int } }\nserver = { nested_configuration_timeoutt = 1 }\n";
+    let out = validate(src);
+    assert!(out.clean, "{out:?}");
+    let rename = out
+        .steps
+        .iter()
+        .find(|step| step.kind == "rename")
+        .expect("a rename step");
+    assert!(
+        rename
+            .directive
+            .contains("\"server.nested_configuration_timeoutt\"")
+            && rename
+                .directive
+                .contains("\"nested_configuration_timeout\""),
+        "the directive must carry the leaf target: {}",
+        rename.directive
+    );
+    let module = active_core::parse(&out.repaired_source, "repair-nested").expect("parses");
+    let (_, diags) = active_core::Engine::strict()
+        .evaluate(&module)
+        .expect("evaluates");
+    assert!(diags.is_empty(), "{diags:?}");
+}

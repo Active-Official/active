@@ -637,6 +637,23 @@ pub fn apply_selected(
     max_index: Option<usize>,
     prefix: Option<&str>,
 ) -> (String, Vec<String>) {
+    let (source, indexes) = apply_selected_with_indexes(source, steps, max_index, prefix);
+    let directives = indexes
+        .iter()
+        .map(|index| steps[*index].directive.clone())
+        .collect();
+    (source, directives)
+}
+
+/// The indexed twin of [`apply_selected`] (L-P41): the committed set is a
+/// list of step positions, so two steps with identical directive text can
+/// never conflate their status or proof.
+pub fn apply_selected_with_indexes(
+    source: &str,
+    steps: &[PlannedStep],
+    max_index: Option<usize>,
+    prefix: Option<&str>,
+) -> (String, Vec<usize>) {
     let mut applied = Vec::new();
     for (index, step) in steps.iter().enumerate() {
         let index_ok = max_index.is_none_or(|limit| index <= limit);
@@ -645,10 +662,14 @@ pub fn apply_selected(
         // select `serverBackup`).
         let prefix_ok = prefix.is_none_or(|p| path_within(&step.path, p));
         if index_ok && prefix_ok && step.safe && matches!(step.status, StepStatus::Applied) {
-            applied.push(step.directive.clone());
+            applied.push(index);
         }
     }
-    (prepend_directives(source, &applied), applied)
+    let directives: Vec<String> = applied
+        .iter()
+        .map(|index| steps[*index].directive.clone())
+        .collect();
+    (prepend_directives(source, &directives), applied)
 }
 
 /// Prepend directives to source while keeping a leading BOM at byte 0
@@ -926,6 +947,88 @@ fn report_change(changed: &mut Vec<String>, path: &str) -> Result<(), ()> {
         path.to_string()
     });
     Ok(())
+}
+
+/// L-P41 receipt shape (structural): the goal, the selected/applied
+/// steps, and source/target hashes. Directives and values never appear -
+/// a directive can carry a value, so only kind/path/status/side effects
+/// and the proof (codes and paths) are recorded.
+impl RepairOutcome {
+    pub fn receipt_payload(
+        &self,
+        applied: &[usize],
+        source_sha256: &str,
+        result_sha256: Option<&str>,
+        document_clean: bool,
+    ) -> crate::ir::Value {
+        use crate::ir::Value;
+        use indexmap::IndexMap;
+
+        fn text(value: &str) -> Value {
+            Value::String(value.to_string())
+        }
+        fn texts(values: &[String]) -> Value {
+            Value::Array(values.iter().map(|value| text(value)).collect())
+        }
+        fn proof_value(proof: &RepairProof) -> Value {
+            let mut map = IndexMap::new();
+            map.insert("addresses".to_string(), texts(&proof.addresses));
+            map.insert("removes".to_string(), texts(&proof.removes));
+            map.insert("introduces".to_string(), texts(&proof.introduces));
+            map.insert(
+                "changes_elsewhere".to_string(),
+                texts(&proof.changes_elsewhere),
+            );
+            map.insert("verified".to_string(), Value::Bool(proof.verified));
+            if let Some(reason) = &proof.reason {
+                map.insert("reason".to_string(), text(reason));
+            }
+            map.insert(
+                "checked_paths".to_string(),
+                Value::Int(proof.checked_paths.min(i64::MAX as u64) as i64),
+            );
+            Value::Table(map)
+        }
+        let steps: Vec<Value> = applied
+            .iter()
+            .filter_map(|index| self.steps.get(*index))
+            .map(|step| {
+                let mut map = IndexMap::new();
+                map.insert("kind".to_string(), text(&step.kind));
+                map.insert("path".to_string(), text(&step.path));
+                map.insert(
+                    "status".to_string(),
+                    text(match &step.status {
+                        StepStatus::Applied => "applied",
+                        StepStatus::Skipped { .. } => "skipped",
+                    }),
+                );
+                map.insert("side_effects".to_string(), texts(&step.side_effects));
+                if let Some(proof) = &step.proof {
+                    map.insert("proof".to_string(), proof_value(proof));
+                }
+                Value::Table(map)
+            })
+            .collect();
+
+        let mut payload = IndexMap::new();
+        let goal = match &self.goal {
+            RepairGoal::Validate => "validate",
+            RepairGoal::PreserveKey(_) => "preserve-key",
+            RepairGoal::MinimizeDiff => "minimize-diff",
+        };
+        payload.insert("goal".to_string(), text(goal));
+        if let RepairGoal::PreserveKey(paths) = &self.goal {
+            payload.insert("preserve".to_string(), texts(paths));
+        }
+        payload.insert("steps".to_string(), Value::Array(steps));
+        payload.insert("document_clean".to_string(), Value::Bool(document_clean));
+        payload.insert("source_sha256".to_string(), text(source_sha256));
+        if let Some(result) = result_sha256 {
+            payload.insert("result_sha256".to_string(), text(result));
+        }
+        Value::Table(payload)
+    }
 }
 
 #[cfg(test)]
@@ -1225,4 +1328,27 @@ mod proof_tests {
         assert!(proof.removes.is_empty());
         assert!(proof.changes_elsewhere.is_empty());
     }
+}
+
+#[test]
+fn identical_directives_keep_distinct_indexes() {
+    // L-P41: the applied set is addressed by position, so two steps with
+    // the same directive text cannot conflate their status or proof.
+    let step = |path: &str| PlannedStep {
+        kind: "set".to_string(),
+        path: path.to_string(),
+        directive: "@patch(\"a\", 1)".to_string(),
+        safe: true,
+        status: StepStatus::Applied,
+        side_effects: Vec::new(),
+        proof: None,
+    };
+    let steps = vec![step("a"), step("a")];
+    let (_, first) = apply_selected_with_indexes("x = 1\n", &steps, Some(0), None);
+    assert_eq!(first, vec![0]);
+    let (_, all) = apply_selected_with_indexes("x = 1\n", &steps, None, None);
+    assert_eq!(all, vec![0, 1]);
+    // The directive-returning wrapper keeps its historical shape.
+    let (_, directives) = apply_selected("x = 1\n", &steps, Some(0), None);
+    assert_eq!(directives, vec!["@patch(\"a\", 1)".to_string()]);
 }

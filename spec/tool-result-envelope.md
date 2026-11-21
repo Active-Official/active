@@ -38,6 +38,8 @@ payload:
 | `budget` | optional object | The **resolved limits** used for evaluation (the envelope's top-level `budget` is observed usage/headroom). **Required for a clean outcome**, with all seven fields: `nodes`, `depth`, `array_len`, `keys`, `wall_ms`, `value_size`, `total_size`, each a positive integer |
 | `diagnostics` | optional array of strings | Stable diagnostic codes (the audit file carries the full objects); never values |
 | `include_resolutions` | optional array | `{path, resolved, sha256, source}` when includes were resolved |
+| `applied` | optional array | L-P41: the commit set a repair receipt describes: `{kind, path, status, side_effects?, proof?}` entries. Paths, kinds, statuses, and proof codes/paths only — a repair directive can carry a value, so the directive text and every value are omitted. On a failed repair receipt it records the refused/attempted set |
+| `document_clean` | optional boolean | L-P41: a repair receipt's verdict on the resulting document (independent of the tool outcome: a committed partial repair can be clean=false) |
 | `closed_tables` | optional array | L-P11 audit of every closed schema table instance in a **clean** run: `{path, keys}` and exactly those two members. `path` is the dotted document path (`"."` is the root); `keys` are the key names present at that instance, sorted. Key names only — values and material never appear. Several structurally matching disjunction branches at one path record once. Absent when the schema declares no closed table or the outcome is failed |
 
 A v2 envelope without `receipt` is refused with **E042**. A malformed

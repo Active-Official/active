@@ -1,10 +1,10 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Active plan receipt",
-  "description": "Output of `active apply <plan> --approve <hash>` (L-P16).",
+  "description": "Output of `active apply <plan> --approve <hash>` (L-P16, L-P41): a commit receipt (`apply`) or a refusal receipt (`refusal`). Exactly one of the two is present.",
   "type": "object",
-  "required": ["apply"],
   "additionalProperties": false,
+  "oneOf": [{ "required": ["apply"] }, { "required": ["refusal"] }],
   "properties": {
     "apply": {
       "type": "object",
@@ -29,6 +29,47 @@
         "old": { "$ref": "#/definitions/document" },
         "new": { "$ref": "#/definitions/document" },
         "operator": { "type": "string" },
+        "steps": {
+          "description": "L-P41: the applied set (the plan's structural steps, as approved). Paths only; the receipt_hash covers it. Optional for receipts written before L-P41.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "receipt_hash": {
+          "type": "string",
+          "pattern": "^mac:[0-9a-f]{64}$"
+        }
+      }
+    },
+    "refusal": {
+      "type": "object",
+      "required": ["version", "applied", "failure_class", "receipt_hash"],
+      "additionalProperties": false,
+      "properties": {
+        "version": { "const": 1 },
+        "applied": { "const": false },
+        "failure_class": {
+          "enum": [
+            "plan-shape",
+            "plan-hash",
+            "root",
+            "context",
+            "baseline",
+            "candidate",
+            "drift",
+            "receipt",
+            "io",
+            "other"
+          ]
+        },
+        "plan_hash": {
+          "type": "string",
+          "pattern": "^mac:[0-9a-f]{64}$"
+        },
+        "steps": {
+          "description": "L-P41: the refused set. Recorded only after the plan's MAC and approval verified; untrusted plan text never lands in a receipt.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
         "receipt_hash": {
           "type": "string",
           "pattern": "^mac:[0-9a-f]{64}$"

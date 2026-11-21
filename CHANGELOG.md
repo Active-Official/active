@@ -739,6 +739,40 @@ reference for any behavior. `release.yml` now runs a provenance gate
 the tag, or whose workspace version differs from the tag, so this cannot
 recur.
 
+### L-P41: patch and repair commits are atomic, with receipts
+
+Patching is now validate-then-commit. The engine's `apply_patches` applies
+the whole directive set to a staging clone and installs it only when every
+directive succeeds; a fatal directive (metadata rewrite, immutable target,
+invalid path, rename collision) leaves the caller's tree byte-identical.
+A blocked or missing target stays W004 (a skip, not a failing directive).
+A nested key typo now emits `@rename("server.old", "new")` — the parser's
+plain-leaf form — instead of a dotted target the parser refused, so nested
+typos reach clean; the full endpoint stays in the plan metadata, and the
+destination/metadata/immutable checks resolve it under the source's parent
+(which also closes the rename-to-absent-immutable-path gap).
+`active repair --output` publishes through the atomic same-directory
+temp-and-rename path: a refusal or graceful abort leaves the destination
+byte-identical and no `.tmp` behind (a hard kill can leave a uniquely
+named temp, never a partial destination). `--receipt` writes an L-T06 envelope
+v2 (also atomically) on success and on refusal: the payload is the
+structural applied set plus source/result hashes, the receipt carries
+`applied` and `document_clean`, and directives/values never appear (a
+directive can carry a value). A refused repair writes a failed receipt
+with the attempted set and a failure class, and no output.
+
+`active apply`'s plan receipt gains `steps` (the applied set);
+a refused apply writes a `refusal` receipt (applied false, the stable
+`[class]`, and the plan hash/steps only after the MAC and approval
+verified) and never touches the baseline. All receipt writers now publish
+atomically, including `write_envelope_v2`. The plan-receipt schema is
+updated and the output-schema gate validates both the success and refusal
+shapes. Honest scope: every shipped commit is single-file; no multi-file
+overlay writer exists, so multi-file atomicity is not claimed (a future
+overlay needs a two-phase journal). Spec repair §3.1, reproducibility §4e,
+tool-result-envelope §1.1, audit-trail; docs/tooling; CLI + core tests and
+three negative controls.
+
 ### L-P14: evaluated values are frozen at the boundary; determinism is D-1
 
 `spec/reproducibility.md` §1.2 names the determinism property **D-1**: for

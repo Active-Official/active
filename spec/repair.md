@@ -62,6 +62,41 @@ nothing, is reported rather than retried in place. Applied directives
 accumulate in reverse order so the newest edit is applied last, which
 keeps composed renames and fills stable.
 
+### 3.1 Atomic commit and receipt (L-P41)
+
+`active repair` is validate-then-commit. The planner only selects steps it
+has already re-evaluated (`Applied` + `safe`); before any write, the
+composed source is re-parsed and re-evaluated (`source_verdict`).
+`--output` is published through the atomic same-directory temp-and-rename
+path: a refusal or a graceful abort leaves the destination byte-identical
+and no `.tmp` file behind (a hard kill can leave a uniquely named temp,
+never a partial destination). A partial selection (`--apply-step` /
+`--cherry-pick`) commits exactly the selected steps and reports that
+subset's own verdict; it warns that the plan is not clean instead of
+claiming one. An in-place commit (`--output` == input) re-reads and
+compares the input immediately before publishing; the window between that
+check and the rename remains for an external writer that ignores the
+command (no portable compare-and-swap exists), and the receipt's hashes
+record what was verified.
+
+`--receipt <path>` writes an L-T06 envelope v2 (atomically), on success
+and on refusal:
+
+- payload (a committed run only): `{goal, preserve?, steps,
+  document_clean, source_sha256, result_sha256}`. Each step is `{kind,
+  path, status, side_effects?, proof?}`; directives and values never
+  appear (a directive can carry a value).
+- `receipt.applied`: the committed (or refused/attempted) set, the same
+  structural entries; `receipt.document_clean`: the resulting document's
+  verdict, independent of the tool outcome (a committed partial repair
+  can be clean=false).
+- refusal: `outcome: failed`, `failure_class: validation` (or `other`),
+  a null payload, no output written, and the receipt still records the
+  attempted set.
+- the output is published before the receipt. If the receipt cannot be
+  written after a committed output, the command reports it and exits
+  nonzero (the commit stands; its evidence is missing).
+
 ## 4. Terminal states
 
 | State | Meaning |
@@ -82,8 +117,9 @@ loop bounded and predictable.
 ## 5. Safety
 
 - Repaired source can contain authored secret literals, so the repair
-  model (`browser_model`) never carries `repaired_source`; only
-  `--output` writes it, to a caller-chosen file.
+  model (`browser_model`) never carries `repaired_source`; the
+  `--format json` plan carries a copy with known material redacted, and
+  only `--output` writes the unmodified source, to a caller-chosen file.
 - Diagnostics in the plan and browser model are value-free for secrets.
 - Preserved subtrees are never touched, including through a rename
   that would move an ancestor.

@@ -287,7 +287,8 @@ fn suggest_ignores_secret_and_deprecated_defaults() {
 
 #[test]
 fn suggest_handles_nested_paths_and_dynamic_defaults() {
-    // Nested safe typo resolves against the full dotted path.
+    // Nested safe typo resolves against the full dotted path; the
+    // directive names the leaf (L-P41), the metadata keeps the endpoint.
     let (module, diags) = strict_diags(
         "schema = { closed = true, server = Table { closed = true, host = String } }\n[server]\nHost = \"x\"\n",
     );
@@ -295,7 +296,7 @@ fn suggest_handles_nested_paths_and_dynamic_defaults() {
     assert!(
         patches
             .iter()
-            .any(|p| p == "@rename(\"server.Host\", \"server.host\")"),
+            .any(|p| p == "@rename(\"server.Host\", \"host\")"),
         "{patches:?}"
     );
     // A computed default has no source-text form: no @patch.

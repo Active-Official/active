@@ -850,6 +850,10 @@ enum Commands {
         /// skipped with a warning unless the result is clean)
         #[arg(short, long)]
         output: Option<PathBuf>,
+        /// Write the L-T06 v2 repair receipt here (applied set, statuses,
+        /// proofs, source/target hashes; written on success and refusal)
+        #[arg(long)]
+        receipt: Option<PathBuf>,
         /// Apply only steps up to this zero-based index (partial apply)
         #[arg(long)]
         apply_step: Option<usize>,
@@ -2561,12 +2565,21 @@ fn receipt_budget(budget: &active_core::eval::Budget) -> serde_json::Value {
     })
 }
 
+/// L-P41: the effective parse input cap for a source read (the process-wide
+/// limit, which `--max-input-bytes` may raise or disable).
+fn parse_input_cap() -> u64 {
+    PARSE_LIMITS
+        .get()
+        .map(|(bytes, _)| *bytes as u64)
+        .unwrap_or(active_core::parser::DEFAULT_MAX_INPUT_BYTES as u64)
+}
+
 fn source_verdict(
     engine: &Engine,
     source: &str,
     file: &std::path::Path,
     allow_parent_escapes: bool,
-) -> (bool, Vec<String>) {
+) -> (bool, Vec<String>, bool) {
     // Mirror the repair loop exactly: `ParseOptions::strict()` (no CLI
     // limit overrides, which the loop does not apply either) plus the
     // caller's include policy, so a partial verdict can never disagree
@@ -2611,7 +2624,22 @@ fn source_verdict(
     }
     codes.sort();
     codes.dedup();
-    (codes.is_empty(), codes)
+    (codes.is_empty(), codes, parse_diags.is_empty())
+}
+
+/// L-P41: refuse to overwrite an in-place repair target when its bytes
+/// changed since the command read them. The window between this check and
+/// the atomic rename is the documented external-writer residual.
+fn verify_unchanged(path: &Path, expected: &[u8]) -> anyhow::Result<()> {
+    let current = read_capped(path, parse_input_cap())
+        .map_err(|e| anyhow::anyhow!("cannot re-read {}: {e}", display_path(path)))?;
+    if current != expected {
+        anyhow::bail!(
+            "refusing to overwrite {}: the input changed since it was read",
+            display_path(path)
+        );
+    }
+    Ok(())
 }
 
 /// Drain one generator stream with a hard cap, reporting the kept bytes
@@ -2834,7 +2862,10 @@ fn write_envelope_v2(
     sender: Option<&str>,
 ) -> anyhow::Result<()> {
     let text = render_envelope_v2(capability, tainted, payload, result, receipt, sender)?;
-    std::fs::write(path, text).map_err(|e| anyhow::anyhow!("cannot write {}: {e}", path.display()))
+    // L-P41: a receipt is a committed artifact too. A plain truncating
+    // write can leave half a receipt after a crash; publish it through
+    // the same atomic path the plan receipts use.
+    atomic_write(path, text.as_bytes())
 }
 
 /// Secret-redacted audit document (PROPOSAL §5.1, CHECKLIST AUD.001):
@@ -3561,6 +3592,203 @@ fn closed_tables_member(
     ))
 }
 
+/// L-P41: the L-T06 failure class for a refused repair. The classes are
+/// the envelope's closed set (parse|budget|validation|other); a bare
+/// parser code means the composed source never became a document.
+fn repair_failure_class(codes: &[String]) -> &'static str {
+    fn base(code: &str) -> &str {
+        code.split_once('@').map_or(code, |(code, _)| code)
+    }
+    fn number(code: &str) -> Option<u32> {
+        base(code).strip_prefix('E')?.parse().ok()
+    }
+    if codes.iter().any(|code| base(code).starts_with('X')) {
+        return "budget";
+    }
+    if codes.iter().any(|code| base(code) == "E029") {
+        return "budget";
+    }
+    if codes
+        .iter()
+        .any(|code| matches!(number(code), Some(1..=18) | Some(22) | Some(23) | Some(26)))
+    {
+        return "parse";
+    }
+    if codes.iter().any(|code| base(code).starts_with('E')) {
+        // Schema, annotation, patch, mode, capability, and secret-selector
+        // refusals are validation-class, not parse.
+        return "validation";
+    }
+    if codes.iter().any(|code| {
+        let code = base(code);
+        code.starts_with('T')
+            || code.starts_with('W')
+            || code.starts_with('H')
+            || code.starts_with('B')
+            || code.starts_with('C')
+            || code.starts_with('L')
+            || code.starts_with('S')
+    }) {
+        return "validation";
+    }
+    "other"
+}
+
+/// L-P41: the L-T06 v2 repair receipt. The payload (a committed run only)
+/// is the structural applied set and the source/target hashes; a refusal
+/// carries no payload and `failure_class`, and the receipt's `applied`
+/// member records the attempted set. Directives and values never appear:
+/// a repair directive can carry a value, so kind/path/status/side effects
+/// and the proof (codes and paths) stand in for it.
+#[allow(clippy::too_many_arguments)]
+fn write_repair_receipt(
+    path: &std::path::Path,
+    engine: &active_core::Engine,
+    profile_flag: Option<&str>,
+    outcome: &active_core::convert::repair::RepairOutcome,
+    applied: &[usize],
+    source: &str,
+    target: &str,
+    from: &std::path::Path,
+    allow_parent_escapes: bool,
+    committed: bool,
+    document_clean: bool,
+) -> anyhow::Result<()> {
+    let source_hash = format!(
+        "sha256:{}",
+        active_core::provenance::sha256_hex(source.as_bytes())
+    );
+    let target_hash = committed.then(|| {
+        format!(
+            "sha256:{}",
+            active_core::provenance::sha256_hex(target.as_bytes())
+        )
+    });
+    let raw_payload = outcome.receipt_payload(
+        applied,
+        &source_hash,
+        target_hash.as_deref(),
+        document_clean,
+    );
+    // L-P41/L1: parse with the file's include context, exactly as the loop
+    // and the verdict do. The target supplies the mode/schema/profile when
+    // it parses cleanly; the source always supplies the material model for
+    // redaction (a refusal's target may not parse).
+    fn parse_with_context(
+        source: &str,
+        from: &std::path::Path,
+        allow_parent_escapes: bool,
+    ) -> (active_core::Module, bool) {
+        let mut options = ParseOptions::strict();
+        options.enable_includes = true;
+        options.allow_parent_escapes = allow_parent_escapes;
+        let name = from.to_string_lossy();
+        let (module, diags) =
+            active_core::parse_text_recovering_with_file(source, &name, options, from);
+        (module, diags.is_empty())
+    }
+    let (source_module, _) = parse_with_context(source, from, allow_parent_escapes);
+    let (target_module, target_clean) = parse_with_context(target, from, allow_parent_escapes);
+    let context = target_clean.then_some(&target_module);
+    let material = active_core::secret::SecretProfile::with_context(
+        &source_module,
+        profile_flag,
+        Some(&engine.env),
+        None,
+    );
+    let payload = active_core::convert::redact_value(&material, &raw_payload);
+    let tainted = active_core::envelope::payload_tainted(&payload);
+    let effective_profile = engine.profile_override.clone().or_else(|| {
+        context.and_then(|module| {
+            active_core::secret::active_profile_name(module)
+                .filter(|name| module.profiles.contains_key(name))
+        })
+    });
+    let schema_version = context.and_then(active_core::envelope::document_schema_version);
+    let mode = context.map(|module| module.mode);
+    let payload_json = serde_json::from_str(&active_core::convert::value_to_pretty_json(&payload))
+        .unwrap_or(serde_json::Value::Null);
+    let applied_json = payload_json
+        .get("steps")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!([]));
+    let resolved = engine.budget.resolve();
+    let mut receipt = serde_json::Map::new();
+    receipt.insert(
+        "outcome".into(),
+        serde_json::json!(if committed { "clean" } else { "failed" }),
+    );
+    let bound = if committed {
+        let bound = active_core::envelope::bound_content_hash(
+            &payload,
+            schema_version.as_deref(),
+            effective_profile.as_deref(),
+            &engine.budget,
+            mode.unwrap_or(active_core::Mode::Config),
+            Some("agent"),
+            tainted,
+        );
+        receipt.insert("result".into(), serde_json::json!(bound));
+        Some(bound)
+    } else {
+        receipt.insert(
+            "failure_class".into(),
+            serde_json::json!(repair_failure_class(&outcome.final_codes)),
+        );
+        None
+    };
+    receipt.insert("capability".into(), serde_json::json!("agent"));
+    if let Some(mode) = mode {
+        receipt.insert(
+            "mode".into(),
+            serde_json::json!(match mode {
+                active_core::Mode::Config => "config",
+                active_core::Mode::Data => "data",
+            }),
+        );
+    }
+    if let Some(profile) = effective_profile.as_deref() {
+        receipt.insert("profile".into(), serde_json::json!(profile));
+    }
+    if let Some(version) = schema_version {
+        receipt.insert("schema_version".into(), serde_json::json!(version));
+    }
+    receipt.insert(
+        "budget".into(),
+        serde_json::json!({
+            "nodes": resolved.max_nodes,
+            "depth": resolved.max_depth,
+            "array_len": resolved.max_array_len,
+            "keys": resolved.max_keys,
+            "wall_ms": resolved.max_wall_ms,
+            "value_size": resolved.max_value_size,
+            "total_size": resolved.max_total_value_size,
+        }),
+    );
+    let codes: Vec<String> = outcome
+        .final_codes
+        .iter()
+        .map(|code| material.redact_text(code).unwrap_or_else(|| code.clone()))
+        .collect();
+    receipt.insert("diagnostics".into(), serde_json::json!(codes));
+    receipt.insert("applied".into(), applied_json);
+    receipt.insert("document_clean".into(), serde_json::json!(document_clean));
+    let payload_out = if committed {
+        payload_json
+    } else {
+        serde_json::Value::Null
+    };
+    write_envelope_v2(
+        path,
+        "agent",
+        tainted && committed,
+        payload_out,
+        bound.as_deref(),
+        serde_json::Value::Object(receipt),
+        None,
+    )
+}
+
 /// The evidence behind a gate verdict (L-P62): the redacted payload an
 /// accepted candidate binds, the L-T06 receipt, and the failure class a
 /// rejection names. One implementation for `active gate` and the
@@ -4157,7 +4385,7 @@ fn read_capped(path: &Path, limit: u64) -> anyhow::Result<Vec<u8>> {
     if !metadata.file_type().is_file() {
         anyhow::bail!("{} is not a regular file", display_path(path));
     }
-    if metadata.len() > limit {
+    if metadata.len() > limit && limit != u64::MAX {
         anyhow::bail!("{} exceeds the {limit} byte limit", display_path(path));
     }
     let mut bytes = Vec::new();
@@ -4179,13 +4407,13 @@ fn read_capped(path: &Path, limit: u64) -> anyhow::Result<Vec<u8>> {
     if !opened.is_file() {
         anyhow::bail!("{} is not a regular file", display_path(path));
     }
-    if opened.len() > limit {
+    if opened.len() > limit && limit != u64::MAX {
         anyhow::bail!("{} exceeds the {limit} byte limit", display_path(path));
     }
-    file.take(limit + 1)
+    file.take(limit.saturating_add(1))
         .read_to_end(&mut bytes)
         .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", path.display()))?;
-    if bytes.len() as u64 > limit {
+    if bytes.len() as u64 > limit && limit != u64::MAX {
         anyhow::bail!("{} exceeds the {limit} byte limit", display_path(path));
     }
     Ok(bytes)
@@ -4413,10 +4641,84 @@ fn looks_like_receipt(path: &Path) -> bool {
         .ok()
         .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
         .map(|document| {
-            document["apply"]["version"].as_u64() == Some(1)
-                && document["apply"]["applied"].as_bool() == Some(true)
+            let applied = document["apply"]["version"].as_u64() == Some(1)
+                && document["apply"]["applied"].as_bool() == Some(true);
+            // L-P41: a refusal receipt is a receipt too; --force may
+            // replace it (the baseline was never touched).
+            let refused = document["refusal"]["version"].as_u64() == Some(1)
+                && document["refusal"]["applied"].as_bool() == Some(false);
+            applied || refused
         })
         .unwrap_or(false)
+}
+
+/// L-P41: the stable refusal class an `active apply` failure printed, for
+/// the refusal receipt. Unknown shapes become `other` (the CLI's message
+/// prefix is the public contract; the class list is closed).
+fn apply_refusal_class(error: &anyhow::Error) -> &'static str {
+    let text = format!("{error}");
+    let Some((_, rest)) = text.split_once("apply refused [") else {
+        return "other";
+    };
+    let Some((class, _)) = rest.split_once(']') else {
+        return "other";
+    };
+    match class {
+        "plan-shape" => "plan-shape",
+        "plan-hash" => "plan-hash",
+        "root" => "root",
+        "context" => "context",
+        "baseline" => "baseline",
+        "candidate" => "candidate",
+        "drift" => "drift",
+        "receipt" => "receipt",
+        "io" => "io",
+        _ => "other",
+    }
+}
+
+/// L-P41: the refusal receipt for a failed `active apply`. It records the
+/// stable class and, only when the plan's MAC and approval verified, the
+/// plan hash and its structural steps. The baseline is never touched.
+fn write_apply_refusal_receipt(
+    path: &Path,
+    force: bool,
+    class: &str,
+    plan_hash: Option<&str>,
+    steps: Option<&serde_json::Value>,
+    key: &[u8; active_core::cache::KEY_BYTES],
+) -> anyhow::Result<()> {
+    if path.exists() {
+        if !force {
+            anyhow::bail!(
+                "apply refused [receipt]: {} exists; pass --force",
+                display_path(path)
+            );
+        }
+        if !looks_like_receipt(path) {
+            anyhow::bail!(
+                "apply refused [receipt]: --force only replaces an apply receipt, and {} is not one",
+                display_path(path)
+            );
+        }
+    }
+    let mut refusal = serde_json::json!({
+        "version": 1,
+        "applied": false,
+        "failure_class": class,
+    });
+    if let Some(hash) = plan_hash {
+        refusal["plan_hash"] = serde_json::json!(hash);
+    }
+    if let Some(steps) = steps {
+        refusal["steps"] = steps.clone();
+    }
+    let receipt_hash = document_mac(&refusal, "receipt_hash", key, "active.plan-receipt.v1")?;
+    refusal["receipt_hash"] = serde_json::json!(receipt_hash);
+    let document = serde_json::json!({ "refusal": refusal });
+    let rendered = serde_json::to_string_pretty(&document)
+        .map_err(|e| anyhow::anyhow!("receipt serialize failed: {e}"))?;
+    atomic_write(path, rendered.as_bytes())
 }
 
 fn normalize_approve(approve: &str) -> String {
@@ -4432,6 +4734,9 @@ fn normalize_approve(approve: &str) -> String {
 struct Prepared {
     path: PathBuf,
     published: bool,
+    /// The target's permissions, applied after the rename so a secret
+    /// temporary file never inherits a wider mode before it is published.
+    permissions: Option<std::fs::Permissions>,
 }
 
 impl Drop for Prepared {
@@ -4461,7 +4766,14 @@ fn prepare_write(path: &Path, bytes: &[u8]) -> anyhow::Result<Prepared> {
         .and_then(|name| name.to_str())
         .unwrap_or("file");
     for attempt in 0..16 {
-        let tmp = parent.join(format!(".{name}.tmp-{}-{attempt}", std::process::id()));
+        // An unpredictable name: a local squatter cannot pre-create the
+        // one file the write will use. The create_new open remains the
+        // authority; a collision retries with a fresh token.
+        let tmp = parent.join(format!(
+            ".{name}.tmp-{}-{:x}-{attempt}",
+            std::process::id(),
+            random_token()
+        ));
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -4481,16 +4793,13 @@ fn prepare_write(path: &Path, bytes: &[u8]) -> anyhow::Result<Prepared> {
             anyhow::bail!("cannot write {}: {error}", display_path(&tmp));
         }
         drop(file);
-        if let Ok(metadata) = std::fs::metadata(path) {
-            let permissions = metadata.permissions();
-            if let Err(error) = std::fs::set_permissions(&tmp, permissions) {
-                let _ = std::fs::remove_file(&tmp);
-                anyhow::bail!("cannot set permissions on {}: {error}", display_path(&tmp));
-            }
-        }
+        // Capture but do not apply the target's permissions: the temp
+        // stays owner-only until the rename, then the mode is restored.
+        let permissions = std::fs::metadata(path).ok().map(|meta| meta.permissions());
         return Ok(Prepared {
             path: tmp,
             published: false,
+            permissions,
         });
     }
     anyhow::bail!(
@@ -4503,8 +4812,10 @@ fn prepare_write(path: &Path, bytes: &[u8]) -> anyhow::Result<Prepared> {
 #[allow(clippy::permissions_set_readonly_false)]
 fn publish(prepared: &mut Prepared, path: &Path) -> anyhow::Result<()> {
     let tmp = prepared.path.clone();
-    let original = std::fs::metadata(path).ok().map(|meta| meta.permissions());
-    if let Some(permissions) = original.as_ref() {
+    // The temp stays owner-only until the rename; the target's mode is
+    // restored afterwards (a read-only target must be writable to rename
+    // over on Windows, so clear that bit first).
+    if let Some(permissions) = prepared.permissions.as_ref() {
         if permissions.readonly() {
             let mut writable = permissions.clone();
             writable.set_readonly(false);
@@ -4512,7 +4823,7 @@ fn publish(prepared: &mut Prepared, path: &Path) -> anyhow::Result<()> {
         }
     }
     if let Err(error) = std::fs::rename(&tmp, path) {
-        if let Some(permissions) = original {
+        if let Some(permissions) = prepared.permissions.take() {
             if std::fs::set_permissions(path, permissions).is_err() {
                 let _ = std::fs::remove_file(&tmp);
                 anyhow::bail!(
@@ -4525,6 +4836,14 @@ fn publish(prepared: &mut Prepared, path: &Path) -> anyhow::Result<()> {
         anyhow::bail!("cannot publish {}: {error}", display_path(path));
     }
     prepared.published = true;
+    if let Some(permissions) = prepared.permissions.take() {
+        if let Err(error) = std::fs::set_permissions(path, permissions) {
+            anyhow::bail!(
+                "published {} but could not restore its permissions: {error}",
+                display_path(path)
+            );
+        }
+    }
     #[cfg(unix)]
     {
         if let Some(parent) = path.parent() {
@@ -6412,6 +6731,21 @@ fn main() -> anyhow::Result<()> {
             format,
             trust_keys,
         } => {
+            // L-P41: a refused apply still produces an auditable receipt.
+            // The receipt path is known before validation; the plan hash
+            // and steps are recorded only after the MAC and approval
+            // verified (untrusted plan text never lands in a receipt).
+            let refusal_receipt = receipt
+                .clone()
+                .unwrap_or_else(|| plan.with_extension("receipt.json"));
+            let mut refusal_plan_hash: Option<String> = None;
+            let mut refusal_steps: Option<serde_json::Value> = None;
+            // The key is needed for every refusal receipt, including a plan
+            // that fails shape checks, so resolve it before the attempt.
+            let (apply_key, _) = cache_signing_key()
+                .map_err(|e| anyhow::anyhow!("apply refused [plan-hash]: {e}"))?;
+            let refusal_key: Option<[u8; active_core::cache::KEY_BYTES]> = Some(apply_key);
+            let applied_run = (|| -> anyhow::Result<()> {
             if !matches!(format.as_str(), "text" | "json") {
                 anyhow::bail!("unsupported format: {format}");
             }
@@ -6452,8 +6786,7 @@ fn main() -> anyhow::Result<()> {
             if !stored.starts_with("mac:") {
                 anyhow::bail!("apply refused [plan-hash]: plan_hash is not a keyed MAC");
             }
-            let (key, _) = cache_signing_key()
-                .map_err(|e| anyhow::anyhow!("apply refused [plan-hash]: {e}"))?;
+            let key = apply_key;
             let computed = document_mac(plan_value, "plan_hash", &key, "active.plan.v1")?;
             if stored != computed {
                 anyhow::bail!(
@@ -6466,6 +6799,10 @@ fn main() -> anyhow::Result<()> {
                     "apply refused [plan-hash]: approval hash does not match this plan"
                 );
             }
+            // The plan is now authenticated: a refusal may record its
+            // hash and structural steps without copying untrusted text.
+            refusal_plan_hash = Some(stored.to_string());
+            refusal_steps = Some(plan_value["steps"].clone());
             let old_rel = relative_plan_path(
                 plan_value["old"]["path"].as_str().ok_or_else(|| {
                     anyhow::anyhow!("apply refused [plan-shape]: no old.path")
@@ -6591,7 +6928,7 @@ fn main() -> anyhow::Result<()> {
                     "apply refused [drift]: the plan's risk or behaviour does not match"
                 );
             }
-            let receipt_path = receipt.unwrap_or_else(|| plan.with_extension("receipt.json"));
+            let receipt_path = refusal_receipt.clone();
             let mut targets = vec![old_path.clone(), new_path.clone(), plan.clone()];
             targets.extend(outcome.old_include_paths.iter().cloned());
             targets.extend(outcome.new_include_paths.iter().cloned());
@@ -6629,6 +6966,9 @@ fn main() -> anyhow::Result<()> {
                 "root": display_path(&root_abs),
                 "old": {"path": display_path(&old_path), "sha256": expected_old},
                 "new": {"path": display_path(&new_path), "sha256": expected_new},
+                // L-P41: the applied set (the plan's structural steps, as
+                // approved). The receipt_hash below covers it.
+                "steps": plan_value["steps"].clone(),
             });
             if let Some(operator) = operator.as_deref() {
                 applied["operator"] = serde_json::json!(operator);
@@ -6683,6 +7023,26 @@ fn main() -> anyhow::Result<()> {
                 }
                 _ => unreachable!(),
             }
+            Ok(())
+            })();
+            if let Err(error) = applied_run {
+                if let Some(key) = refusal_key.as_ref() {
+                    let class = apply_refusal_class(&error);
+                    if let Err(receipt_error) = write_apply_refusal_receipt(
+                        &refusal_receipt,
+                        force,
+                        class,
+                        refusal_plan_hash.as_deref(),
+                        refusal_steps.as_ref(),
+                        key,
+                    ) {
+                        eprintln!(
+                            "warning: could not write the refusal receipt: {receipt_error}"
+                        );
+                    }
+                }
+                return Err(error);
+            }
         }
         Commands::Repair {
             from,
@@ -6691,6 +7051,7 @@ fn main() -> anyhow::Result<()> {
             max_steps,
             format,
             output,
+            receipt,
             apply_step,
             cherry_pick,
             browser,
@@ -6709,6 +7070,19 @@ fn main() -> anyhow::Result<()> {
                     "--max-steps capped at 64 (bounded loop; larger plans split across runs)"
                 );
             }
+            // L-P41: a commit must never write two artifacts to one path.
+            // In-place repair (`--output` == input) stays allowed and is
+            // drift-checked immediately before the publish.
+            if let Some(receipt_path) = receipt.as_ref() {
+                if same_target(receipt_path, &from) {
+                    anyhow::bail!("--receipt must not overwrite the input document");
+                }
+                if let Some(output_path) = output.as_ref() {
+                    if same_target(receipt_path, output_path) {
+                        anyhow::bail!("--output and --receipt must be different files");
+                    }
+                }
+            }
             let goal_parsed = match goal.as_str() {
                 "validate" => RepairGoal::Validate,
                 "minimize-diff" => RepairGoal::MinimizeDiff,
@@ -6722,8 +7096,10 @@ fn main() -> anyhow::Result<()> {
                     "unknown repair goal: {other} (want validate|preserve-key|minimize-diff)"
                 ),
             };
-            let source = std::fs::read_to_string(&from)
+            let source = read_capped(&from, parse_input_cap())
                 .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", from.display()))?;
+            let source = String::from_utf8(source)
+                .map_err(|_| anyhow::anyhow!("{} is not UTF-8", from.display()))?;
             let trust = load_trust(&trust_keys)?;
             if trust.is_some() {
                 // Gate the original file through trust verification
@@ -6738,6 +7114,9 @@ fn main() -> anyhow::Result<()> {
                     anyhow::bail!(
                         "--browser emits the JSON model and cannot be combined with --apply-step, --cherry-pick, or --output"
                     );
+                }
+                if receipt.is_some() {
+                    anyhow::bail!("--browser emits the JSON model and cannot be combined with --receipt");
                 }
                 if format != "text" && format != "json" {
                     anyhow::bail!("--browser always emits JSON (--format json|text)");
@@ -6800,46 +7179,50 @@ fn main() -> anyhow::Result<()> {
             );
             // Partial application (REPAIR-UI.003): an explicit subset
             // applies only safe steps inside the index bound and/or
-            // matching the path prefix, in plan order.
+            // matching the path prefix, in plan order. Indexes (not
+            // directive text) identify the set, so two identical
+            // directives never conflate their status or proof.
             let partial = apply_step.is_some() || cherry_pick.is_some();
-            let (target_source, applied_directives) = if partial {
-                active_core::convert::repair::apply_selected(
+            let (target_source, applied_indexes) = if partial {
+                active_core::convert::repair::apply_selected_with_indexes(
                     &source,
                     &outcome.steps,
                     apply_step,
                     cherry_pick.as_deref(),
                 )
             } else {
-                (
-                    outcome.repaired_source.clone(),
-                    outcome
-                        .steps
-                        .iter()
-                        .filter(|step| {
-                            matches!(
-                                step.status,
-                                active_core::convert::repair::StepStatus::Applied
-                            )
-                        })
-                        .map(|step| step.directive.clone())
-                        .collect(),
-                )
+                let indexes = outcome
+                    .steps
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, step)| {
+                        matches!(
+                            step.status,
+                            active_core::convert::repair::StepStatus::Applied
+                        )
+                    })
+                    .map(|(index, _)| index)
+                    .collect();
+                (outcome.repaired_source.clone(), indexes)
             };
-            // PreserveKey carries its paths inside the goal for the
-            // plan record; the loop itself used the raw list.
-            // A partial apply reports the APPLIED subset: unselected
-            // steps are skipped and the source/hash/verdict describe
-            // the document that was actually written.
+            // L-P41: validate the composed source before ANY write, for the
+            // full plan and the selected subset alike. `parsed` separates a
+            // parse failure (never publish) from remaining warnings (a
+            // partial commit may proceed, and says so).
+            let (verified_clean, verified_codes, verified_parsed) =
+                source_verdict(&eng, &target_source, &from, allow_parent_escapes);
             let mut display = outcome.clone();
+            display.clean = verified_clean;
+            display.final_codes = verified_codes;
             if partial {
-                let selected: std::collections::HashSet<&str> =
-                    applied_directives.iter().map(String::as_str).collect();
+                let selected: std::collections::HashSet<usize> =
+                    applied_indexes.iter().copied().collect();
                 display.repaired_source = target_source.clone();
-                for step in &mut display.steps {
+                for (index, step) in display.steps.iter_mut().enumerate() {
                     if matches!(
                         step.status,
                         active_core::convert::repair::StepStatus::Applied
-                    ) && !selected.contains(step.directive.as_str())
+                    ) && !selected.contains(&index)
                     {
                         step.status = active_core::convert::repair::StepStatus::Skipped {
                             reason: "not selected by --apply-step/--cherry-pick".to_string(),
@@ -6849,10 +7232,6 @@ fn main() -> anyhow::Result<()> {
                         step.proof = None;
                     }
                 }
-                let (clean, codes) =
-                    source_verdict(&eng, &target_source, &from, allow_parent_escapes);
-                display.clean = clean;
-                display.final_codes = codes;
                 // The full plan's terminal state describes a trajectory the
                 // subset did not run: a subset cannot be "stuck" (no loop
                 // ran) and its findings belong to the full plan.
@@ -6860,17 +7239,46 @@ fn main() -> anyhow::Result<()> {
                 display.unrepairable = false;
                 display.findings.clear();
             }
+            // L-P41/F4: the printed plan must not echo authored secret
+            // literals (the source is written only by --output). Redact the
+            // displayed source and directive text with the document's
+            // material profile; the receipt and the output use the
+            // unmodified source.
+            let mut shown = display.clone();
+            {
+                let mut options = ParseOptions::strict();
+                options.enable_includes = true;
+                options.allow_parent_escapes = allow_parent_escapes;
+                let name = from.to_string_lossy();
+                let (module, _) = active_core::parse_text_recovering_with_file(
+                    &source, &name, options, &from,
+                );
+                let material = active_core::secret::SecretProfile::with_context(
+                    &module,
+                    profile.as_deref(),
+                    Some(&eng.env),
+                    None,
+                );
+                if let Some(text) = material.redact_text(&shown.repaired_source) {
+                    shown.repaired_source = text;
+                }
+                for step in &mut shown.steps {
+                    if let Some(text) = material.redact_text(&step.directive) {
+                        step.directive = text;
+                    }
+                }
+            }
             match format.as_str() {
                 "json" => outln!(
                     "{}",
-                    serde_json::to_string_pretty(&display)
+                    serde_json::to_string_pretty(&shown)
                         .map_err(|e| anyhow::anyhow!("repair serialize failed: {e}"))?
                 ),
                 "text" => {
-                    if display.clean {
+                    if shown.clean {
                         outln!("repair: clean");
                     }
-                    for step in &display.steps {
+                    for step in &shown.steps {
                         match &step.status {
                             active_core::convert::repair::StepStatus::Applied => {
                                 outln!("applied {} {}", step.kind, step.directive);
@@ -6901,34 +7309,59 @@ fn main() -> anyhow::Result<()> {
                             }
                         }
                     }
-                    for finding in &display.findings {
+                    for finding in &shown.findings {
                         report(finding, &from.to_string_lossy());
                     }
-                    if !display.clean {
-                        outln!("repair: not clean ({})", display.final_codes.join(", "));
+                    if !shown.clean {
+                        outln!("repair: not clean ({})", shown.final_codes.join(", "));
                     }
                     if partial {
-                        outln!("selected: {} directives", applied_directives.len());
-                        for directive in &applied_directives {
-                            outln!("apply {directive}");
+                        outln!("selected: {} directives", applied_indexes.len());
+                        for index in &applied_indexes {
+                            outln!("apply {}", shown.steps[*index].directive);
                         }
                     }
                 }
                 other => anyhow::bail!("unsupported format: {other}"),
             }
+            let mut committed = false;
             if let Some(path) = output {
-                if partial && !applied_directives.is_empty() {
-                    std::fs::write(&path, &target_source)
+                // L-P41: a commit validates the whole set first (the plan
+                // loop and `source_verdict` already did), then publishes
+                // the composed source atomically. A refusal or crash leaves
+                // the destination byte-identical and no temp behind.
+                let should_write = if partial {
+                    // A partial commit is allowed with warnings, never with
+                    // an unparseable source.
+                    verified_parsed && !applied_indexes.is_empty()
+                } else {
+                    verified_clean
+                };
+                if should_write {
+                    // An in-place repair must not clobber a concurrent edit
+                    // between the initial read and the publish.
+                    if same_target(&path, &from) {
+                        verify_unchanged(&path, source.as_bytes())?;
+                    }
+                    atomic_write(&path, target_source.as_bytes())
                         .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", path.display()))?;
-                    if !display.clean {
+                    committed = true;
+                    if partial && !display.clean {
                         eprintln!(
                             "warning: wrote a partial repair to {} (plan is not clean yet)",
                             path.display()
                         );
                     }
-                } else if !partial && outcome.clean {
-                    std::fs::write(&path, &target_source)
-                        .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", path.display()))?;
+                } else if !verified_parsed {
+                    eprintln!(
+                        "warning: not writing {}: the repaired source does not parse",
+                        path.display()
+                    );
+                } else if partial {
+                    eprintln!(
+                        "warning: not writing {}: no steps were selected",
+                        path.display()
+                    );
                 } else {
                     eprintln!(
                         "warning: not writing {}: repair did not reach clean",
@@ -6936,11 +7369,26 @@ fn main() -> anyhow::Result<()> {
                     );
                 }
             }
+            if let Some(path) = receipt {
+                write_repair_receipt(
+                    &path,
+                    &eng,
+                    profile.as_deref(),
+                    &display,
+                    &applied_indexes,
+                    &source,
+                    &target_source,
+                    &from,
+                    allow_parent_escapes,
+                    committed,
+                    display.clean,
+                )?;
+            }
             if partial {
-                if applied_directives.is_empty() {
+                if applied_indexes.is_empty() || !verified_parsed {
                     std::process::exit(1);
                 }
-            } else if !outcome.clean {
+            } else if !verified_clean {
                 std::process::exit(1);
             }
         }
@@ -7942,5 +8390,69 @@ mod panic_isolation_tests {
     fn a_clean_worker_result_passes_through() {
         let handle = std::thread::spawn(|| -> anyhow::Result<()> { Ok(()) });
         assert!(join_worker(handle, "the command").expect("clean").is_ok());
+    }
+}
+
+#[cfg(test)]
+mod lp41_unit_tests {
+    use super::*;
+
+    #[test]
+    fn in_place_drift_is_detected() {
+        let dir = std::env::temp_dir().join("active-cli-lp41-unit");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("doc.active");
+        std::fs::write(&path, "one = 1\n").expect("write");
+        assert!(verify_unchanged(&path, b"one = 1\n").is_ok());
+        assert!(
+            verify_unchanged(&path, b"one = 2\n").is_err(),
+            "a changed in-place target must be refused"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod lp41_unix_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn the_prepared_temp_stays_owner_only() {
+        let dir = std::env::temp_dir().join("active-cli-lp41-mode");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("doc.active");
+        std::fs::write(&path, b"old").expect("write");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("mode");
+        let prepared = prepare_write(&path, b"new").expect("prepare");
+        let mode = std::fs::metadata(&prepared.path)
+            .expect("temp metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600, "the temp must stay owner-only");
+        drop(prepared);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn atomic_write_restores_the_target_mode_after_the_rename() {
+        let dir = std::env::temp_dir().join("active-cli-lp41-mode2");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("doc.active");
+        std::fs::write(&path, b"old").expect("write");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).expect("mode");
+        atomic_write(&path, b"new").expect("write");
+        let mode = std::fs::metadata(&path)
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o640, "the target's mode is restored");
+        assert_eq!(std::fs::read(&path).expect("read"), b"new");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

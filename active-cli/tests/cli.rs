@@ -9482,3 +9482,336 @@ fn check_pure_refuses_ambient_input_like_eval() {
         .expect("run active");
     assert!(plain.status.success(), "check without --pure is unchanged");
 }
+
+#[test]
+fn repair_commits_atomically_and_writes_an_lt06_receipt() {
+    // L-P41: the output is a validated, atomic commit; the receipt is an
+    // L-T06 v2 envelope carrying the applied set and source/result hashes.
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("lp41-repair");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let input = dir.join("in.active");
+    let output = dir.join("out.active");
+    let receipt = dir.join("receipt.json");
+    std::fs::write(
+        &input,
+        "schema = { closed = true, host = String, port = Int(default = 8080) }\nHost = \"x\"\n",
+    )
+    .expect("input");
+    let run = active()
+        .args(["repair", "--from"])
+        .arg(&input)
+        .args(["--output"])
+        .arg(&output)
+        .args(["--receipt"])
+        .arg(&receipt)
+        .output()
+        .expect("run active");
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let written = std::fs::read_to_string(&output).expect("output");
+    assert!(written.contains("@patch("), "{written}");
+    let text = std::fs::read_to_string(&receipt).expect("receipt");
+    let envelope: serde_json::Value = serde_json::from_str(&text).expect("json");
+    assert_eq!(envelope["version"], "2.0.0", "{text}");
+    assert_eq!(envelope["receipt"]["outcome"], "clean", "{text}");
+    assert_eq!(envelope["receipt"]["document_clean"], true, "{text}");
+    assert!(
+        envelope["receipt"]["applied"]
+            .as_array()
+            .is_some_and(|steps| !steps.is_empty()),
+        "{text}"
+    );
+    let source = std::fs::read_to_string(&input).expect("input");
+    assert_eq!(
+        envelope["payload"]["source_sha256"],
+        format!(
+            "sha256:{}",
+            active_core::provenance::sha256_hex(source.as_bytes())
+        ),
+        "{text}"
+    );
+    assert!(envelope["payload"]["result_sha256"].is_string(), "{text}");
+    assert!(
+        !text.contains("@patch(") && !text.contains("@rename("),
+        "directives stay out of the receipt: {text}"
+    );
+    assert!(
+        !text.contains("8080"),
+        "values stay out of the receipt: {text}"
+    );
+    assert!(
+        !std::fs::read_dir(&dir)
+            .expect("dir")
+            .flatten()
+            .any(|entry| entry.file_name().to_string_lossy().contains(".tmp")),
+        "no temp file is left behind"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_refused_repair_leaves_the_destination_and_writes_a_failed_receipt() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("lp41-refusal");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let input = dir.join("in.active");
+    let output = dir.join("out.active");
+    let receipt = dir.join("receipt.json");
+    std::fs::write(&input, "schema = { n = Int(min = 10) }\nn = 1\n").expect("input");
+    std::fs::write(&output, "ORIGINAL").expect("output");
+    let run = active()
+        .args(["repair", "--from"])
+        .arg(&input)
+        .args(["--output"])
+        .arg(&output)
+        .args(["--receipt"])
+        .arg(&receipt)
+        .output()
+        .expect("run active");
+    assert!(!run.status.success(), "a refused repair exits nonzero");
+    assert_eq!(
+        std::fs::read_to_string(&output).expect("output"),
+        "ORIGINAL",
+        "the destination is byte-identical after a refusal"
+    );
+    let text = std::fs::read_to_string(&receipt).expect("receipt");
+    let envelope: serde_json::Value = serde_json::from_str(&text).expect("json");
+    assert_eq!(envelope["receipt"]["outcome"], "failed", "{text}");
+    assert_eq!(envelope["receipt"]["failure_class"], "validation", "{text}");
+    assert!(envelope["payload"].is_null(), "{text}");
+    assert!(
+        envelope["receipt"]["applied"]
+            .as_array()
+            .is_some_and(|steps| steps.is_empty()),
+        "{text}"
+    );
+    assert!(
+        !std::fs::read_dir(&dir)
+            .expect("dir")
+            .flatten()
+            .any(|entry| entry.file_name().to_string_lossy().contains(".tmp")),
+        "no temp file is left behind"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_refused_apply_writes_a_refusal_receipt_and_keeps_the_baseline() {
+    // L-P41: replaying a consumed plan drifts; the baseline must stay
+    // byte-identical and the refusal must be auditable.
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("lp41-apply-refusal");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let old = dir.join("old.active");
+    let new = dir.join("new.active");
+    std::fs::write(&old, "port = 8080\n").expect("old");
+    std::fs::write(&new, "port = 9090\n").expect("new");
+    let plan = dir.join("plan.json");
+    assert!(cached(&dir)
+        .args(["plan", "--output"])
+        .arg(&plan)
+        .arg(&old)
+        .arg(&new)
+        .output()
+        .expect("plan")
+        .status
+        .success());
+    let document: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&plan).expect("plan")).expect("json");
+    let approve = document["plan"]["plan_hash"].as_str().expect("hash");
+    let first_receipt = dir.join("first.receipt.json");
+    assert!(cached(&dir)
+        .args(["apply"])
+        .arg(&plan)
+        .args(["--approve", approve, "--receipt"])
+        .arg(&first_receipt)
+        .output()
+        .expect("apply")
+        .status
+        .success());
+    let installed = std::fs::read(&old).expect("baseline");
+    let refusal_receipt = dir.join("refused.receipt.json");
+    let refused = cached(&dir)
+        .args(["apply"])
+        .arg(&plan)
+        .args(["--approve", approve, "--receipt"])
+        .arg(&refusal_receipt)
+        .output()
+        .expect("apply");
+    assert!(!refused.status.success());
+    assert_eq!(
+        std::fs::read(&old).expect("baseline"),
+        installed,
+        "a refused apply leaves the baseline byte-identical"
+    );
+    let text = std::fs::read_to_string(&refusal_receipt).expect("refusal receipt");
+    let document: serde_json::Value = serde_json::from_str(&text).expect("json");
+    assert_eq!(document["refusal"]["applied"], false, "{text}");
+    assert_eq!(document["refusal"]["failure_class"], "drift", "{text}");
+    assert_eq!(document["refusal"]["plan_hash"], approve, "{text}");
+    assert!(document["refusal"]["steps"].is_array(), "{text}");
+    assert!(document["refusal"]["receipt_hash"].is_string(), "{text}");
+    assert!(
+        !std::fs::read_dir(&dir)
+            .expect("dir")
+            .flatten()
+            .any(|entry| entry.file_name().to_string_lossy().contains(".tmp")),
+        "no temp file is left behind"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn repair_refuses_output_and_receipt_on_one_path() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("lp41-same-path");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let input = dir.join("in.active");
+    let target = dir.join("same.out");
+    std::fs::write(&input, "a = 1\n").expect("input");
+    let run = active()
+        .args(["repair", "--from"])
+        .arg(&input)
+        .arg("--output")
+        .arg(&target)
+        .arg("--receipt")
+        .arg(&target)
+        .output()
+        .expect("run active");
+    assert!(!run.status.success());
+    assert!(
+        String::from_utf8_lossy(&run.stderr).contains("must be different files"),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(!target.exists(), "nothing was written");
+    let receipt_as_input = active()
+        .args(["repair", "--from"])
+        .arg(&input)
+        .arg("--receipt")
+        .arg(&input)
+        .output()
+        .expect("run active");
+    assert!(!receipt_as_input.status.success());
+    assert_eq!(
+        std::fs::read_to_string(&input).expect("input"),
+        "a = 1\n",
+        "the input is untouched"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn repair_json_output_redacts_authored_secrets() {
+    // L-P41/F4: the printed plan may carry the repaired source, so it must
+    // redact an authored secret literal. Only --output writes the source.
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("lp41-redact");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let input = dir.join("in.active");
+    std::fs::write(
+        &input,
+        "schema = { closed = true, host = String }\nHost = \"x\"\ntoken = secret(\"hunter2\")\n",
+    )
+    .expect("input");
+    let run = active()
+        .args(["repair", "--from"])
+        .arg(&input)
+        .args(["--format", "json"])
+        .output()
+        .expect("run active");
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        !stdout.contains("hunter2"),
+        "the plan must not echo the secret: {stdout}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_parse_failure_repair_receipt_names_the_parse_class() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("lp41-parse-class");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let input = dir.join("in.active");
+    let receipt = dir.join("receipt.json");
+    std::fs::write(&input, "port = \n").expect("input");
+    let run = active()
+        .args(["repair", "--from"])
+        .arg(&input)
+        .arg("--receipt")
+        .arg(&receipt)
+        .output()
+        .expect("run active");
+    assert!(!run.status.success());
+    let text = std::fs::read_to_string(&receipt).expect("receipt");
+    let envelope: serde_json::Value = serde_json::from_str(&text).expect("json");
+    assert_eq!(envelope["receipt"]["outcome"], "failed", "{text}");
+    assert_eq!(envelope["receipt"]["failure_class"], "parse", "{text}");
+    assert!(envelope["payload"].is_null(), "{text}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn an_oversize_repair_input_is_refused_fast() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("lp41-oversize");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let input = dir.join("big.active");
+    let mut bytes = vec![b'x'; 4 * 1024 * 1024 + 1];
+    bytes.push(b'\n');
+    std::fs::write(&input, bytes).expect("write");
+    let run = active()
+        .args(["repair", "--from"])
+        .arg(&input)
+        .output()
+        .expect("run active");
+    assert!(!run.status.success());
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(stderr.contains("exceeds"), "{stderr}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_budget_trip_repair_receipt_names_the_budget_class() {
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("lp41-budget-class");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let input = dir.join("in.active");
+    let receipt = dir.join("receipt.json");
+    std::fs::write(&input, "a = 1\n").expect("input");
+    let run = active()
+        .args(["repair", "--from"])
+        .arg(&input)
+        .args(["--max-total-value-size", "1"])
+        .arg("--receipt")
+        .arg(&receipt)
+        .output()
+        .expect("run active");
+    assert!(!run.status.success());
+    let text = std::fs::read_to_string(&receipt).expect("receipt");
+    let envelope: serde_json::Value = serde_json::from_str(&text).expect("json");
+    assert_eq!(envelope["receipt"]["outcome"], "failed", "{text}");
+    assert_eq!(envelope["receipt"]["failure_class"], "budget", "{text}");
+    std::fs::remove_dir_all(&dir).ok();
+}

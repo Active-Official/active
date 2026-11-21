@@ -33,9 +33,16 @@ fn generate(seed: u64) -> String {
     out
 }
 
-fn open(text: &str) -> analysis::Doc {
+/// A real temp file path: a literal `file:///name.active` URI has no
+/// drive letter on Windows, so that platform takes the memory-parse
+/// branch while Unix parses it as a file at the filesystem root. A temp
+/// path takes the same file branch everywhere (the convention the
+/// line-index test documents). One path per test so parallel tests never
+/// share a document identity.
+fn open(text: &str, name: &str) -> analysis::Doc {
+    let path = std::env::temp_dir().join(format!("active-property-{name}.active"));
     analysis::open_doc(
-        Url::parse("file:///property.active").expect("url"),
+        Url::from_file_path(path).expect("file uri"),
         text.to_string(),
         1,
         None,
@@ -46,11 +53,21 @@ fn open(text: &str) -> analysis::Doc {
 fn analysis_entry_points_are_total_over_generated_documents() {
     for seed in 1..=25u64 {
         let text = generate(seed);
-        let doc = open(&text);
+        let doc = open(&text, &format!("entry-points-{seed}"));
         let symbols = analysis::document_symbols(&doc);
         assert!(
             symbols.len() >= 2,
-            "seed {seed}: expected root paths, got {symbols:?}"
+            "seed {seed}: expected root paths, got {symbols:?}; root={:?} paths={} parse={:?} eval={:?}\n--- text ---\n{text}",
+            doc.module.root.is_some(),
+            doc.module.value_paths().len(),
+            doc.parse_diags
+                .iter()
+                .map(|d| d.code.clone())
+                .collect::<Vec<_>>(),
+            doc.eval_diags
+                .iter()
+                .map(|d| d.code.clone())
+                .collect::<Vec<_>>(),
         );
         // Every symbol range must be inside the document.
         let line_count = text.split('\n').count() as u32;
@@ -93,7 +110,7 @@ fn analysis_entry_points_are_total_over_generated_documents() {
 fn hover_and_inspection_never_reveal_generated_secrets() {
     for seed in 1..=15u64 {
         let text = generate(seed);
-        let doc = open(&text);
+        let doc = open(&text, &format!("hover-{seed}"));
         let line_count = text.split('\n').count();
         for line in 0..line_count {
             if let Some(hover) = analysis::hover_at(&doc, line as u32, 0) {
@@ -126,7 +143,7 @@ fn hover_and_inspection_never_reveal_generated_secrets() {
 #[test]
 fn hover_redacts_secret_locator_and_interpolation() {
     let text = "x = \"hunter2-hover\"\nmsg = \"prefix ${x}\"\nk = secret(x)\n";
-    let doc = open(text);
+    let doc = open(text, "hover-redaction");
     for line in 0..3 {
         if let Some(hover) = analysis::hover_at(&doc, line, 0) {
             let rendered = format!("{hover:?}");

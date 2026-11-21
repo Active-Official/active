@@ -32,6 +32,27 @@ Enforcement points (audited, tested):
 - Budgets bound every dimension (C-037); unbounded work cannot
   hang a deployment.
 
+### 1.1 `--pure`: the promise as a mode (L-P05)
+
+`--pure` turns the closed-world rule into an enforced mode. Before the
+walk, the engine refuses (E047, fail-closed) when the module or the host
+supplies any of:
+
+- an `env.NAME` read anywhere in the arena (including a `secret.env`
+  locator), naming the variable. An injected snapshot is refused too:
+  purity means the document alone, not "a closed snapshot existed";
+- an include whose recorded resolution is unpinned (`Unpinned`,
+  L-P03/L-P06). Parse still verifies pins (E041); purity additionally
+  demands that one existed;
+- a host-selected profile (`Engine.profile_override`, `--profile`). The
+  document's own `profile` block and `active_profile` key are document
+  input and stay allowed.
+
+A pure document evaluates identically with and without the flag: same
+value bytes and same `content_hash`. The default (non-pure) evaluation
+is unchanged, and the check is a structural pre-scan, so dead code in an
+unselected profile cannot hide an ambient read either.
+
 ## 2. Provenance manifest
 
 Collected post-evaluation from the module, the snapshot, and the

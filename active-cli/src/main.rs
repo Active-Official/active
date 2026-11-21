@@ -306,6 +306,12 @@ enum Commands {
         /// Enable medium-confidence healing repairs (resilient mode)
         #[arg(long)]
         resilient: bool,
+        /// Refuse ambient input (L-P05): any env read, any include without
+        /// a content pin, and any profile override is E047. The document's
+        /// own profile block stays allowed, and a pure document evaluates
+        /// identically with and without the flag.
+        #[arg(long)]
+        pure: bool,
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
@@ -398,6 +404,10 @@ enum Commands {
         /// Enable medium-confidence healing repairs (resilient mode)
         #[arg(long)]
         resilient: bool,
+        /// Refuse ambient input (L-P05): env reads, unpinned includes, and
+        /// profile overrides are E047, matching `eval --pure`.
+        #[arg(long)]
+        pure: bool,
         /// Allow includes to use absolute paths or escape the directory
         #[arg(long)]
         allow_parent_escapes: bool,
@@ -4541,6 +4551,7 @@ fn main() -> anyhow::Result<()> {
             file,
             format,
             resilient,
+            pure,
             allow_parent_escapes,
             trust_keys,
             lockfile,
@@ -4701,6 +4712,9 @@ fn main() -> anyhow::Result<()> {
             let mut eng = engine(resilient, &profile, budget, reader_version.as_deref());
             eng.materialise_blobs = materialise_blobs;
             eng.envelope_trust = load_trust(&envelope_trust)?;
+            // L-P05: the flag is enforced in the engine (pre-scan), not by
+            // filtering here, so FFI/WASM hosts get the same refusals.
+            eng.pure = pure;
             let engine = eng;
             if audit_trail.is_some() {
                 validate_audit_limits(&engine.budget)?;
@@ -4737,6 +4751,7 @@ fn main() -> anyhow::Result<()> {
                             &cache_variant,
                             &engine.env,
                             &key,
+                            engine.pure,
                         ),
                         owner,
                     ),
@@ -5307,6 +5322,7 @@ fn main() -> anyhow::Result<()> {
         Commands::Check {
             file,
             resilient,
+            pure,
             allow_parent_escapes,
             trust_keys,
             profile,
@@ -5318,7 +5334,8 @@ fn main() -> anyhow::Result<()> {
             let trust = load_trust(&trust_keys)?;
             match parse_input(&file, resilient, allow_parent_escapes, &trust) {
                 Ok(module) => {
-                    let engine = engine(resilient, &profile, budget.resolve()?, reader_version.as_deref());
+                    let mut engine = engine(resilient, &profile, budget.resolve()?, reader_version.as_deref());
+                    engine.pure = pure;
                     active_core::trace::set_tracing(trace);
                     match engine.evaluate(&module) {
                         Ok((_, diags)) => {

@@ -58,6 +58,11 @@ thread, must not re-enter eval on the same module, and return owned buffers
 under Model A below. Callback failures surface as diagnostics; they never
 hang the call.
 
+Pure mode (L-P05): `active_set_pure(module, u8)` makes eval and check refuse
+env reads, unpinned includes, and profile overrides with
+`PURE_REFUSED` (15) / diagnostic `E047` before any work. `0` is the default
+off. The document's own profile block stays allowed.
+
 Budget zeros: `ActiveBudget` uses `0` for "keep the current limit" per
 field, exactly like `Budget::resolve()` uses zero for the shipped default.
 A non-zero field is accepted only when it is at or below the current limit
@@ -96,7 +101,9 @@ documented and allocated so the number is never reused.
 Stable `ACTIVE_ERR_*` integers: OK(0), PARSE(1), UNRESOLVED_REF(2),
 CYCLE(3), UNIT_MISMATCH(4), SECRET_REFUSAL(5), BUDGET_EXCEEDED(6),
 INCLUDE_FAIL(7), SCHEMA_FAIL(8), NULL_HANDLE(9), PANIC_CAUGHT(10),
-ABI_MISMATCH(11), BAD_BUDGET(12), UTF8(13), BAD_ARGUMENT(14). Codes map from internal
+ABI_MISMATCH(11), BAD_BUDGET(12), UTF8(13), BAD_ARGUMENT(14),
+PURE_REFUSED(15) (L-P05: `active_set_pure`; eval, check, and validate all
+report it for an ambient input). Codes map from internal
 diagnostic classes (E/W/H/T/S/X plus budgets); codes are never reused and
 change only additively within 1.x. Diagnostics export stable code, span
 (path or index, line, column, end line, end column), severity, and optional

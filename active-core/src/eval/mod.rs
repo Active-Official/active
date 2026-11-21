@@ -66,6 +66,15 @@ pub enum EvalError {
         span: Option<Span>,
         file: Option<String>,
     },
+    /// L-P05: a pure evaluation refused an ambient input (E047). The
+    /// message names the input (env variable, include spelling, or
+    /// profile) and the refusal family.
+    #[error("{message}")]
+    PureRefused {
+        message: String,
+        span: Option<Span>,
+        file: Option<String>,
+    },
     #[error("secret used in unsafe context")]
     SecretLeak { file: Option<String> },
     /// Blob materialisation failures (spec/blob.md §8): tainted
@@ -317,6 +326,7 @@ impl EvalError {
             EvalError::TypeError { .. } => "T001",
             EvalError::PatchError { .. } => "E019",
             EvalError::ProfileError { .. } => "E027",
+            EvalError::PureRefused { .. } => "E047",
             EvalError::SecretLeak { .. } => "S004",
             EvalError::BlobError { code, .. } => code,
             EvalError::BudgetExceeded { kind, .. } => match kind {
@@ -346,6 +356,7 @@ impl EvalError {
             EvalError::TypeError { span, .. }
             | EvalError::PatchError { span, .. }
             | EvalError::ProfileError { span, .. } => span.as_ref(),
+            EvalError::PureRefused { span, .. } => span.as_ref(),
             EvalError::BlobError { span, .. } => span.as_ref(),
             EvalError::BudgetExceeded { span, .. } => span.as_ref(),
             EvalError::ValidationFailed { diagnostics } => {
@@ -363,6 +374,7 @@ impl EvalError {
             | EvalError::PatchError { file, .. }
             | EvalError::ProfileError { file, .. } => file.as_deref(),
             EvalError::BlobError { file, .. } => file.as_deref(),
+            EvalError::PureRefused { file, .. } => file.as_deref(),
             EvalError::SecretLeak { file } => file.as_deref(),
             EvalError::BudgetExceeded { file, .. } => file.as_deref(),
             EvalError::ValidationFailed { diagnostics } => {
@@ -448,6 +460,13 @@ pub struct Engine {
     /// Lazy host lookup consulted on snapshot miss, before defaults
     /// (F-016). `None` preserves legacy behavior exactly.
     pub env_fallback: Option<EnvLookup>,
+    /// L-P05: refuse ambient input before evaluation — any `env.NAME`
+    /// read (including a `secret.env` locator), any include without a
+    /// content pin, and any profile override. The document's own profile
+    /// block is part of the document and stays allowed. A refusal is
+    /// `E047`; a legitimate environment snapshot is still refused by
+    /// this mode, because the promise is "reads no ambient input".
+    pub pure: bool,
     /// Blob payload materialisation (spec/blob.md §5): when true,
     /// untainted blob values retain their payload bytes (charged
     /// against the materialised-size budgets); otherwise values carry
@@ -1408,7 +1427,7 @@ fn check_dp_bounds(
     Ok((total, size, max_depth_seen))
 }
 
-type MemoConfig = (bool, Option<String>, Budget, bool, bool, Mode, bool);
+type MemoConfig = (bool, Option<String>, Budget, bool, bool, Mode, bool, bool);
 
 /// Memo store for incremental evaluation (C-055, spec/performance.md
 /// §2): fingerprint → evaluated value plus the diagnostics produced
@@ -2085,6 +2104,7 @@ impl Engine {
             budget: Budget::default(),
             env: std::collections::HashMap::new(),
             env_fallback: None,
+            pure: false,
             materialise_blobs: false,
             reader_version: None,
             taint_probe: false,
@@ -2104,6 +2124,14 @@ impl Engine {
     /// Lazy host lookup consulted on snapshot miss (F-016).
     pub fn with_env_fallback(mut self, lookup: EnvLookup) -> Self {
         self.env_fallback = Some(lookup);
+        self
+    }
+
+    /// L-P05: refuse ambient input (env reads, unpinned includes, profile
+    /// overrides) before evaluation. A document that is pure evaluates
+    /// identically with and without this mode.
+    pub fn with_pure(mut self, pure: bool) -> Self {
+        self.pure = pure;
         self
     }
 
@@ -2232,6 +2260,9 @@ impl Engine {
             self.taint_probe,
             module.mode,
             self.env_fallback.is_some(),
+            // L-P05: a pure run refuses before the walk; a cached tree
+            // from a default run must not satisfy it.
+            self.pure,
         );
         if memo.config.as_ref() != Some(&token) {
             memo.map.clear();
@@ -2286,6 +2317,58 @@ impl Engine {
             })
     }
 
+    /// L-P05: the ambient inputs a pure evaluation refuses, in a fixed
+    /// order (profile override, unpinned include, env read) so the
+    /// diagnostic is deterministic when a document has several.
+    fn pure_refusal(&self, module: &Module) -> Option<EvalError> {
+        if let Some(name) = &self.profile_override {
+            return Some(EvalError::PureRefused {
+                message: format!("pure evaluation refused a profile override: '{name}'"),
+                span: None,
+                file: None,
+            });
+        }
+        if let Some((pin, _)) = module
+            .include_resolutions
+            .iter()
+            .find(|(_, kind)| *kind == crate::ir::IncludeResolutionKind::Unpinned)
+        {
+            // The include statement has a line but no node span; the file
+            // is the document that wrote it.
+            let line = module
+                .includes
+                .iter()
+                .find(|stmt| stmt.path == pin.as_written)
+                .map(|stmt| stmt.line);
+            let message = match line {
+                Some(line) => format!(
+                    "pure evaluation refused an unpinned include: '{}' (line {line})",
+                    pin.as_written
+                ),
+                None => format!(
+                    "pure evaluation refused an unpinned include: '{}'",
+                    pin.as_written
+                ),
+            };
+            return Some(EvalError::PureRefused {
+                message,
+                span: None,
+                file: Some(module.source_name.clone()),
+            });
+        }
+        for (index, node) in module.arena.iter().enumerate() {
+            if let Node::Env { name, .. } = node {
+                let id = NodeId(index as u32);
+                return Some(EvalError::PureRefused {
+                    message: format!("pure evaluation refused an env read: '{name}'"),
+                    span: module.node_spans.get(&id).cloned(),
+                    file: module.node_files.get(&id).cloned(),
+                });
+            }
+        }
+        None
+    }
+
     fn evaluate_walk(
         &self,
         module: &Module,
@@ -2294,6 +2377,14 @@ impl Engine {
         mut seeds: Option<&mut SecretRedactor>,
         validate: bool,
     ) -> Result<(Value, Vec<Diagnostic>), EvalError> {
+        // L-P05: purity is a structural pre-scan, so every entry point
+        // (value, seeds, tree-only) refuses the same ambient inputs and
+        // dead code in an unselected profile cannot hide one.
+        if self.pure {
+            if let Some(refusal) = self.pure_refusal(module) {
+                return Err(refusal);
+            }
+        }
         // One meaning for a zero field on every surface (LANG-C-015): zero
         // resolves to the shipped default; disabling a limit needs
         // `Budget::unlimited()` (the UNLIMITED sentinel).

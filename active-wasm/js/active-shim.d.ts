@@ -27,6 +27,13 @@ export interface ActiveEvaluateResult {
 
 export interface ActiveAPI {
 	evaluate(source: string): ActiveEvaluateResult;
+	/**
+	 * L-P05: evaluate under pure mode. Env reads, unpinned includes, and
+	 * profile overrides are refused with E047 before any work. Throws when
+	 * the loaded module predates the mode (fail loud, never evaluate
+	 * impurely by accident).
+	 */
+	evaluatePure(source: string): ActiveEvaluateResult;
 	abiVersion: 1;
 }
 

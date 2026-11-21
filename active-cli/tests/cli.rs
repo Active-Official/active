@@ -9242,3 +9242,145 @@ fn propose_leaves_no_working_copy_behind() {
         .collect();
     assert!(strays.is_empty(), "working copies left behind: {strays:?}");
 }
+
+// ----------------------------------------------------------------------
+// L-P05: eval --pure
+// ----------------------------------------------------------------------
+
+#[test]
+fn eval_pure_refuses_an_env_read_and_names_it() {
+    let file = fixture("pure_env.active", "v = env.PURITY_CLI ?: 1\n");
+    let refused = active()
+        .args(["eval", "--pure"])
+        .arg(&file)
+        .output()
+        .expect("run active");
+    assert!(!refused.status.success(), "--pure must refuse");
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("E047"), "{stderr}");
+    assert!(stderr.contains("PURITY_CLI"), "{stderr}");
+    // The default evaluation is unchanged.
+    let plain = active()
+        .args(["eval"])
+        .arg(&file)
+        .output()
+        .expect("run active");
+    assert!(
+        plain.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&plain.stderr)
+    );
+}
+
+#[test]
+fn eval_pure_refuses_a_profile_override() {
+    let file = fixture(
+        "pure_profile.active",
+        "profile \"prod\" { port = 2 }\nactive_profile = \"prod\"\nport = 1\n",
+    );
+    let refused = active()
+        .args(["eval", "--pure", "--profile", "prod"])
+        .arg(&file)
+        .output()
+        .expect("run active");
+    assert!(!refused.status.success());
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("E047"), "{stderr}");
+    assert!(stderr.contains("profile override"), "{stderr}");
+    // The document's own selection is allowed under --pure.
+    let own = active()
+        .args(["eval", "--pure"])
+        .arg(&file)
+        .output()
+        .expect("run active");
+    assert!(
+        own.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&own.stderr)
+    );
+}
+
+#[test]
+fn eval_pure_identity_pins_the_document() {
+    let file = fixture(
+        "pure_identity.active",
+        "schema = { port = Int(min = 1) }\nport = 8080\n",
+    );
+    let plain = active()
+        .args(["eval"])
+        .arg(&file)
+        .output()
+        .expect("run active");
+    let pure = active()
+        .args(["eval", "--pure"])
+        .arg(&file)
+        .output()
+        .expect("run active");
+    assert!(plain.status.success());
+    assert!(pure.status.success());
+    assert_eq!(
+        plain.stdout, pure.stdout,
+        "a pure document must be identical"
+    );
+}
+
+#[test]
+fn eval_cache_never_serves_a_default_entry_to_a_pure_run() {
+    // Round-1 high: the cache key must include the purity mode, or a
+    // default run's entry would satisfy a --pure run and skip E047.
+    let dir = std::env::temp_dir().join("active-cli-lp05-cache");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("cache dir");
+    let file = fixture("pure_cache.active", "v = env.PURITY_CACHE ?: 1\n");
+    let filled = active()
+        .args(["eval", "--cache"])
+        .arg(&dir)
+        .arg(&file)
+        .output()
+        .expect("run active");
+    assert!(
+        filled.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&filled.stderr)
+    );
+    let pure = active()
+        .args(["eval", "--cache"])
+        .arg(&dir)
+        .args(["--pure"])
+        .arg(&file)
+        .output()
+        .expect("run active");
+    assert!(
+        !pure.status.success(),
+        "a cached entry must not bypass --pure"
+    );
+    assert!(
+        String::from_utf8_lossy(&pure.stderr).contains("E047"),
+        "{}",
+        String::from_utf8_lossy(&pure.stderr)
+    );
+}
+
+#[test]
+fn check_pure_refuses_ambient_input_like_eval() {
+    // Round-2 medium: gate scripts use `check`; it must expose the mode
+    // the engine and the FFI check call enforce.
+    let file = fixture("check_pure.active", "v = env.PURITY_CHECK ?: 1\n");
+    let refused = active()
+        .args(["check", "--pure"])
+        .arg(&file)
+        .output()
+        .expect("run active");
+    assert!(!refused.status.success(), "check --pure must refuse");
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("E047"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    let plain = active()
+        .args(["check"])
+        .arg(&file)
+        .output()
+        .expect("run active");
+    assert!(plain.status.success(), "check without --pure is unchanged");
+}

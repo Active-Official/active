@@ -45,6 +45,8 @@ struct Case {
     file: String,
     kind: String,
     profile: Option<String>,
+    /// L-P05: evaluate under `--pure` for this case.
+    pure: bool,
 }
 
 fn load_manifest() -> Vec<Case> {
@@ -71,6 +73,7 @@ fn load_manifest() -> Vec<Case> {
                     .get("profile")
                     .and_then(|v| v.as_str())
                     .map(str::to_string),
+                pure: t.get("pure").and_then(|v| v.as_bool()).unwrap_or(false),
             }
         })
         .collect()
@@ -118,6 +121,7 @@ fn conformance_manifest_is_green() {
         };
         let mut engine = hermetic_engine();
         engine.profile_override = case.profile.clone();
+        engine.pure = case.pure;
         match engine.evaluate(&module) {
             Ok((value, diags)) => {
                 let got_codes = codes_of(&diags);

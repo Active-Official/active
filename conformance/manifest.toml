@@ -346,3 +346,45 @@ kind = "diagnosed"
 id = "0053-oneof-bad-default"
 file = "cases/0053-oneof-bad-default.active"
 kind = "refused"
+
+# L-P05: `--pure` refusals (E047). Env reads, unpinned includes, and
+# host-selected profile overrides are ambient input; a pure document
+# evaluates identically with and without the mode.
+[[cases]]
+id = "0054-pure-env-refused"
+file = "cases/0054-pure-env-refused.active"
+kind = "refused"
+pure = true
+
+[[cases]]
+id = "0055-pure-unpinned-include"
+file = "cases/0055-pure-unpinned-include.active"
+kind = "refused"
+pure = true
+
+[[cases]]
+id = "0056-pure-profile-override"
+file = "cases/0056-pure-profile-override.active"
+kind = "refused"
+pure = true
+profile = "prod"
+
+[[cases]]
+id = "0057-pure-identity"
+file = "cases/0057-pure-identity.active"
+kind = "clean"
+pure = true
+
+# The shim harnesses do not expose the pure mode yet (L-P05 follow-up); the
+# reference core suite above runs these refusals.
+[[pins]]
+id = "0054-pure-env-refused"
+reason = "pure mode is not exposed by the shim harness yet (L-P05 native only)"
+
+[[pins]]
+id = "0055-pure-unpinned-include"
+reason = "pure mode is not exposed by the shim harness yet (L-P05 native only)"
+
+[[pins]]
+id = "0056-pure-profile-override"
+reason = "pure mode is not exposed by the shim harness yet (L-P05 native only)"

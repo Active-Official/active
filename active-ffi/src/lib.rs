@@ -34,6 +34,8 @@ pub const ACTIVE_ERR_ABI_MISMATCH: i32 = 11;
 pub const ACTIVE_ERR_BAD_BUDGET: i32 = 12;
 pub const ACTIVE_ERR_UTF8: i32 = 13;
 pub const ACTIVE_ERR_BAD_ARGUMENT: i32 = 14;
+/// L-P05: a pure evaluation refused an ambient input (E047).
+pub const ACTIVE_ERR_PURE_REFUSED: i32 = 15;
 
 thread_local! {
     static LAST_ERROR: Cell<i32> = const { Cell::new(ACTIVE_ERR_OK) };
@@ -67,6 +69,9 @@ pub struct ActiveModule {
     /// may raise the wall-clock ceiling above the shipped default. Count
     /// and size limits stay tighten-only in both modes.
     trusted: bool,
+    /// L-P05: pure evaluation (refuse env reads, unpinned includes, and
+    /// profile overrides). Off by default; `active_set_pure` turns it on.
+    pure: bool,
 }
 
 /// A registered host callback: C function plus userdata (F-016).
@@ -273,6 +278,26 @@ pub unsafe extern "C" fn active_set_env_lookup(
     })
 }
 
+/// Request pure evaluation on a live handle (L-P05): eval and check then
+/// refuse env reads, unpinned includes, and profile overrides with E047,
+/// before any evaluation work. `0` turns it off (the default).
+#[no_mangle]
+/// # Safety
+///
+/// Live handle, calling thread (docs/FFI.md sections 1, 6).
+pub unsafe extern "C" fn active_set_pure(module: *mut ActiveModule, pure: u8) {
+    guard((), || {
+        if module.is_null() {
+            set_last(ACTIVE_ERR_NULL_HANDLE);
+            return;
+        }
+        // SAFETY: live handle, calling thread.
+        let handle = unsafe { &mut *module };
+        handle.pure = pure != 0;
+        set_last(ACTIVE_ERR_OK);
+    })
+}
+
 /// Parse UTF-8 source bytes into an owned module handle (null on error;
 /// detail via `active_last_error`). Null-safe on the source pointer.
 #[no_mangle]
@@ -332,6 +357,7 @@ pub unsafe extern "C" fn active_module_parse(
                     include_cb: None,
                     env_cb: None,
                     trusted,
+                    pure: false,
                 }))
             }
             Err(code) => {
@@ -578,6 +604,10 @@ fn handle_options(handle: &ActiveModule) -> active_core::ParseOptions {
 /// defaults exactly like snapshot misses.
 fn handle_engine(handle: &ActiveModule) -> Engine {
     let mut engine = hermetic_engine();
+    // L-P05: the per-module purity request travels into every eval and
+    // check, so the C boundary refuses the same ambient inputs as the
+    // CLI (E047).
+    engine.pure = handle.pure;
     if let Some(cb) = handle.env_cb {
         // Same justification as above: thread-confined handle, Arc for
         // intra-thread cloning into the engine, never shared across threads.
@@ -741,6 +771,12 @@ pub unsafe extern "C" fn active_eval(
                 set_last(ACTIVE_ERR_SECRET_REFUSAL);
                 std::ptr::null_mut()
             }
+            // L-P05: purity is a refusal class of its own at the boundary,
+            // so a host can tell "impure document" from a schema failure.
+            Err(EvalError::PureRefused { .. }) => {
+                set_last(ACTIVE_ERR_PURE_REFUSED);
+                std::ptr::null_mut()
+            }
             Err(EvalError::TypeError { .. }) => {
                 set_last(ACTIVE_ERR_UNIT_MISMATCH);
                 std::ptr::null_mut()
@@ -776,11 +812,16 @@ fn error_code_for(code: &str) -> i32 {
         "W001" | "S002" | "S003" => ACTIVE_ERR_UNRESOLVED_REF,
         "T001" | "T002" | "T003" => ACTIVE_ERR_UNIT_MISMATCH,
         "T004" | "T005" | "T006" | "T007" | "T008" | "T009" => ACTIVE_ERR_SCHEMA_FAIL,
+        // B0xx are blob/content-addressed constraint failures
+        // (spec/blob.md), a schema-class refusal, not a budget trip.
         "B001" | "B002" | "B003" | "B004" => ACTIVE_ERR_SCHEMA_FAIL,
         "E015" | "E016" | "E017" | "E028" | "E041" => ACTIVE_ERR_INCLUDE_FAIL,
         // A merge conflict makes the document denote no value; it is a
         // fail-closed source-layer refusal, like a parse failure.
         "E046" => ACTIVE_ERR_PARSE,
+        // L-P05: a pure refusal keeps its own class through check and
+        // validate too (eval maps the error variant directly).
+        "E047" => ACTIVE_ERR_PURE_REFUSED,
         _ if code.starts_with('X') => ACTIVE_ERR_BUDGET_EXCEEDED,
         _ if code.starts_with('S') => ACTIVE_ERR_UNIT_MISMATCH,
         _ => ACTIVE_ERR_SCHEMA_FAIL,
@@ -1140,7 +1181,16 @@ pub unsafe extern "C" fn active_validate(
         let typed: Vec<DiagSnapshot> = match engine.evaluate(&parsed) {
             Ok((_, diags)) => diags
                 .iter()
-                .filter(|d| is_schema_code(&d.code) || d.code == "E046")
+                // Schema diagnostics plus every error-severity item that
+                // the resilient walk reports beside a tree (blob errors,
+                // merge conflicts): filtering to schema codes alone would
+                // return an empty set, and `OK(0)`, for a document that
+                // failed (round-3 M2).
+                .filter(|d| {
+                    d.severity == active_core::Severity::Error
+                        || is_schema_code(&d.code)
+                        || d.code == "E046"
+                })
                 .map(snapshot)
                 .collect(),
             Err(EvalError::ValidationFailed { diagnostics }) => {
@@ -1499,6 +1549,52 @@ mod tests {
             active_value_free(value);
             active_module_free(module);
         }
+    }
+
+    #[test]
+    fn pure_refusal_crosses_the_boundary() {
+        unsafe {
+            let src = b"port = env.HOST_PORT ?: 1\n";
+            let module = active_module_parse(src.as_ptr(), src.len(), std::ptr::null());
+            assert!(!module.is_null());
+            active_set_pure(module, 1);
+            let value = active_eval(module, std::ptr::null());
+            assert!(value.is_null(), "a pure eval must refuse the env read");
+            assert_eq!(active_last_error(), ACTIVE_ERR_PURE_REFUSED);
+            let set = active_check(module, std::ptr::null());
+            assert!(!set.is_null());
+            assert_eq!(active_diagnostics_len(set), 1);
+            let code = std::ffi::CStr::from_ptr(active_diagnostic_code(set, 0))
+                .to_string_lossy()
+                .into_owned();
+            assert_eq!(code, "E047");
+            // The numeric class must match eval's, or automation would
+            // mistake a purity refusal for a schema failure.
+            assert_eq!(active_last_error(), ACTIVE_ERR_PURE_REFUSED);
+            active_diagnostics_free(set);
+            let set = active_validate(module, std::ptr::null());
+            assert!(!set.is_null());
+            assert_eq!(active_diagnostics_len(set), 1);
+            assert_eq!(active_last_error(), ACTIVE_ERR_PURE_REFUSED);
+            active_diagnostics_free(set);
+            // Off again: the default evaluation is unchanged.
+            active_set_pure(module, 0);
+            let value = active_eval(module, std::ptr::null());
+            assert!(!value.is_null(), "default eval must still work");
+            active_value_free(value);
+            active_module_free(module);
+            // Null-safe setter.
+            active_set_pure(std::ptr::null_mut(), 1);
+            assert_eq!(active_last_error(), ACTIVE_ERR_NULL_HANDLE);
+        }
+    }
+
+    #[test]
+    fn validation_errors_keep_their_abi_class() {
+        // Round-3 M3: blob constraints are schema-class, not budget.
+        assert_eq!(error_code_for("B001"), ACTIVE_ERR_SCHEMA_FAIL);
+        assert_eq!(error_code_for("E047"), ACTIVE_ERR_PURE_REFUSED);
+        assert_eq!(error_code_for("X001"), ACTIVE_ERR_BUDGET_EXCEEDED);
     }
 
     #[test]

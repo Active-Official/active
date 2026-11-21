@@ -30,12 +30,29 @@
 		const read = (ptr, len) =>
 			new TextDecoder().decode(mem().slice(ptr, ptr + len));
 
-		function evaluate(input) {
+		function evaluateWith(input, pure) {
 			const src = new TextEncoder().encode(input);
 			const sp = ex.active_alloc(src.length);
+			// A request over the 64 MiB transport cap returns null; without
+			// this check `mem().set` would clobber the zero page and the
+			// length slot would read garbage. Fail loudly instead.
+			if (!sp) {
+				throw new Error("active-wasm: input allocation failed (64 MiB cap)");
+			}
 			mem().set(src, sp);
 			const slot = ex.active_alloc(4);
-			const out = ex.active_eval_json(sp, src.length, slot);
+			if (!slot) {
+				ex.active_free(sp, src.length);
+				throw new Error("active-wasm: envelope length allocation failed");
+			}
+			const out = pure
+				? ex.active_eval_json_pure(sp, src.length, slot)
+				: ex.active_eval_json(sp, src.length, slot);
+			if (!out) {
+				ex.active_free(sp, src.length);
+				ex.active_free(slot, 4);
+				throw new Error("active-wasm: evaluation returned no envelope");
+			}
 			const n = new DataView(ex.memory.buffer, slot, 4).getUint32(0, true);
 			let env;
 			try {
@@ -57,7 +74,23 @@
 			};
 		}
 
-		const api = { evaluate, abiVersion: 1 };
+		function evaluate(input) {
+			return evaluateWith(input, false);
+		}
+
+		// L-P05: refuse env reads, unpinned includes, and profile overrides
+		// (E047). A module without the export is stale; fail loudly rather
+		// than silently evaluating impurely.
+		function evaluatePure(input) {
+			if (typeof ex.active_eval_json_pure !== "function") {
+				throw new Error(
+					"active-wasm: pure mode requires a module built with L-P05 (active_eval_json_pure)",
+				);
+			}
+			return evaluateWith(input, true);
+		}
+
+		const api = { evaluate, evaluatePure, abiVersion: 1 };
 		if (typeof window !== "undefined") window.ActiveAPI = api;
 		return api;
 	}

@@ -285,6 +285,12 @@ active eval --cache .cache/active-eval doc.active
 active eval --cache .cache/active-eval --format yaml doc.active
 ```
 
+`eval --pure` (L-P05) refuses ambient input before the walk: any
+`env.NAME` read (including a `secret.env` locator), any include without a
+content pin, and any `--profile` override is E047. The document's own
+`profile` block and `active_profile` key stay allowed. A document that is
+pure evaluates identically with and without the flag.
+
 A repeat run whose inputs are unchanged prints the stored result
 without evaluating. The key is a keyed BLAKE3 MAC over the evaluator
 version, the source and include content hashes, mode, profile, resolved

@@ -283,6 +283,9 @@ pub fn referenced_env_names(module: &Module) -> BTreeSet<String> {
 /// capability); the format is chosen from one entry, so it is not in the
 /// key. `None` means the module carries no source bytes (a host-built
 /// tree), so there is no stable identity to key on.
+/// The key enumerates every input; a struct wrapper would not make the
+/// call site clearer and churns the public signature.
+#[allow(clippy::too_many_arguments)]
 pub fn eval_key(
     module: &Module,
     profile: Option<&str>,
@@ -291,6 +294,7 @@ pub fn eval_key(
     variant: &str,
     env: &HashMap<String, String>,
     key: &[u8; KEY_BYTES],
+    pure: bool,
 ) -> Option<String> {
     if module.source_sha256.is_empty() {
         return None;
@@ -330,6 +334,10 @@ pub fn eval_key(
         },
         "env": env_values,
         "variant": variant,
+        // L-P05: a pure evaluation refuses impure documents, so it must
+        // never read (or overwrite) the entry a default evaluation
+        // filled for the same inputs.
+        "pure": pure,
     });
     let canonical = crate::envelope::canonical_json(&object);
     Some(
@@ -649,6 +657,7 @@ mod tests {
             variant,
             &HashMap::new(),
             &KEY,
+            false,
         )
         .expect("source-backed module")
     }
@@ -676,6 +685,7 @@ mod tests {
             "",
             &HashMap::new(),
             &[9u8; KEY_BYTES],
+            false,
         )
         .expect("key");
         assert_ne!(base, other_key, "the MAC key is part of the identity");
@@ -691,7 +701,8 @@ mod tests {
             Mode::Config,
             "",
             &HashMap::new(),
-            &KEY
+            &KEY,
+            false,
         )
         .is_none());
     }
@@ -716,9 +727,9 @@ mod tests {
         let empty = key(&module, None, &budget, Mode::Config, "");
         let mut env = HashMap::new();
         env.insert("ACTIVE_CACHE_HOST".to_string(), "a".to_string());
-        let a = eval_key(&module, None, &budget, Mode::Config, "", &env, &KEY).expect("key");
+        let a = eval_key(&module, None, &budget, Mode::Config, "", &env, &KEY, false).expect("key");
         env.insert("ACTIVE_CACHE_HOST".to_string(), "b".to_string());
-        let b = eval_key(&module, None, &budget, Mode::Config, "", &env, &KEY).expect("key");
+        let b = eval_key(&module, None, &budget, Mode::Config, "", &env, &KEY, false).expect("key");
         assert_ne!(empty, a);
         assert_ne!(a, b);
         // A secret locator's value seeds the redactor, so it changes the
@@ -726,7 +737,7 @@ mod tests {
         env.insert("ACTIVE_CACHE_SECRET".to_string(), "x".to_string());
         assert_ne!(
             b,
-            eval_key(&module, None, &budget, Mode::Config, "", &env, &KEY).expect("key")
+            eval_key(&module, None, &budget, Mode::Config, "", &env, &KEY, false).expect("key")
         );
     }
 

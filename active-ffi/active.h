@@ -56,6 +56,11 @@ extern "C" {
 #define ACTIVE_ERR_BAD_ARGUMENT 14
 
 /**
+ * L-P05: a pure evaluation refused an ambient input (E047).
+ */
+#define ACTIVE_ERR_PURE_REFUSED 15
+
+/**
  * Owned diagnostic set from check/eval (F-013). Empty means clean.
  */
 typedef struct ActiveDiagnosticSet ActiveDiagnosticSet;
@@ -173,6 +178,16 @@ void active_set_include_loader(struct ActiveModule *module, ActiveLookupFn cb, v
  * malloc-allocated return buffers.
  */
 void active_set_env_lookup(struct ActiveModule *module, ActiveLookupFn cb, void *userdata);
+
+/**
+ * Request pure evaluation on a live handle (L-P05): eval and check then
+ * refuse env reads, unpinned includes, and profile overrides with E047,
+ * before any evaluation work. `0` turns it off (the default).
+ * # Safety
+ *
+ * Live handle, calling thread (docs/FFI.md sections 1, 6).
+ */
+void active_set_pure(struct ActiveModule *module, uint8_t pure);
 
 /**
  * Parse UTF-8 source bytes into an owned module handle (null on error;

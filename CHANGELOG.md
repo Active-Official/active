@@ -755,3 +755,17 @@ constraints and the default; TypeScript, Zod, and Python render unions;
 Go and Rust refuse instead of widening the field. `explain` gains T006 (a
 pre-existing gap) and T010. Spec validation §3/§5/§9, grammar §2.10,
 schema-evolution, converters; conformance vectors 0049–0053.
+
+### L-P05: `eval --pure` (an enforced purity mode)
+
+`active eval --pure` refuses ambient input before evaluation: any
+`env.NAME` read (including a `secret.env` locator), any include without a
+content pin, and any profile override is E047, fail-closed. The check
+lives in the engine (`Engine.pure`), so FFI/WASM hosts get the same
+refusal; the document's own profile block and `active_profile` key stay
+allowed, and an injected environment snapshot is refused too. A pure
+document evaluates identically with and without the mode (same bytes,
+same content hash); default evaluation is unchanged. Spec
+`spec/reproducibility.md` §1.1, `docs/tooling.md`, diagnostics/explain,
+vectors 0054–0057 (the shim harnesses are pinned until they expose the
+mode).

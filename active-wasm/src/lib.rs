@@ -68,7 +68,9 @@ fn release(ptr: *mut u8) -> bool {
 pub const MAX_ALLOC_BYTES: usize = 64 * 1024 * 1024;
 
 /// Allocate `size` bytes of linear memory for the host to fill. Free with
-/// `active_free` using the same pointer (size rechecked, registry rules).
+/// `active_free` using the same pointer. `size == 0` still returns a
+/// distinct, free-able allocation (a zero-length `Vec`'s dangling pointer
+/// would alias every other zero-length request).
 ///
 /// `active_alloc(size)` is capped at 67108864 bytes (64 MiB); larger
 /// requests return null instead of allocating, so a bad length cannot abort
@@ -78,14 +80,16 @@ pub extern "C" fn active_alloc(size: usize) -> *mut u8 {
     if size > MAX_ALLOC_BYTES {
         return std::ptr::null_mut();
     }
-    let (ptr, _) = retain(vec![0u8; size]);
+    let (ptr, _) = retain(vec![0u8; size.max(1)]);
     ptr
 }
 
 /// Free memory previously returned by `active_alloc`/`active_eval_json`.
 /// Unknown pointers are ignored in every build profile (a host bug, never
 /// a trap: a release build already ignored them, so a debug-only assert
-/// made the two profiles disagree). Null is accepted.
+/// made the two profiles disagree). Null is accepted. The registry owns
+/// the length, so `size` is advisory; a mismatch frees the registered
+/// buffer rather than trapping.
 #[no_mangle]
 pub extern "C" fn active_free(ptr: *mut u8, size: usize) {
     if ptr.is_null() {
@@ -203,7 +207,7 @@ fn escape_json(text: &str) -> String {
     out
 }
 
-fn eval_inner(source: &str) -> String {
+fn eval_inner(source: &str, pure: bool) -> String {
     let module = match parse(source, "wasm") {
         Ok(m) => m,
         Err(diags) => {
@@ -217,7 +221,7 @@ fn eval_inner(source: &str) -> String {
     // Hermetic construction: Engine::new() snapshots the process ambient,
     // which aborts on wasm32-unknown-unknown. Hosts resolve env before
     // calling in (same rule as the FFI boundary).
-    let engine = Engine::hermetic();
+    let engine = Engine::hermetic().with_pure(pure);
     match engine.evaluate_with_seeds(&module) {
         Ok((value, diags, seeds)) => {
             // Structural material (plain locator sources and derived
@@ -299,7 +303,49 @@ pub unsafe extern "C" fn active_eval_json(
         // SAFETY: host guarantees readable bytes per WIRING.md.
         let bytes = unsafe { slice::from_raw_parts(src_ptr, src_len) };
         match str::from_utf8(bytes) {
-            Ok(text) => eval_inner(text),
+            Ok(text) => eval_inner(text, false),
+            Err(_) => envelope_err("UTF8", "source is not valid UTF-8", "null"),
+        }
+    })) {
+        Ok(env) => env,
+        Err(_) => envelope_err("PANIC", "evaluation panicked; input rejected", "null"),
+    };
+    let bytes = envelope.into_bytes();
+    let len = bytes.len();
+    let (ptr, _) = retain(bytes);
+    // SAFETY: out_len was checked non-null at entry.
+    unsafe {
+        *out_len = len;
+    }
+    ptr
+}
+
+/// Evaluate UTF-8 source under pure mode (L-P05): env reads, unpinned
+/// includes, and profile overrides are refused with E047 before any
+/// work. This symbol is always pure (there is no flag to pass 0 through
+/// it); the default mode stays [`active_eval_json`]. The envelope shape
+/// is identical.
+///
+/// # Safety
+///
+/// Same obligations as [`active_eval_json`].
+#[no_mangle]
+pub unsafe extern "C" fn active_eval_json_pure(
+    src_ptr: *const u8,
+    src_len: usize,
+    out_len: *mut usize,
+) -> *mut u8 {
+    if out_len.is_null() {
+        return std::ptr::null_mut();
+    }
+    let envelope = match catch_unwind(AssertUnwindSafe(|| {
+        if src_ptr.is_null() {
+            return envelope_err("ABI", "null pointer argument", "null");
+        }
+        // SAFETY: host guarantees readable bytes per WIRING.md.
+        let bytes = unsafe { slice::from_raw_parts(src_ptr, src_len) };
+        match str::from_utf8(bytes) {
+            Ok(text) => eval_inner(text, true),
             Err(_) => envelope_err("UTF8", "source is not valid UTF-8", "null"),
         }
     })) {
@@ -327,8 +373,59 @@ mod tests {
     use super::*;
 
     fn envelope_of(src: &str) -> serde_json::Value {
-        let out = eval_inner(src);
+        let out = eval_inner(src, false);
         serde_json::from_str(&out).expect("envelope is JSON")
+    }
+
+    #[test]
+    fn pure_mode_refuses_an_env_read() {
+        // L-P05: the AA path carries the same refusal as the CLI/FFI.
+        let out = eval_inner("v = env.PURITY_WASM ?: 1\n", true);
+        let env: serde_json::Value = serde_json::from_str(&out).expect("envelope");
+        assert_eq!(env["ok"], false);
+        assert!(
+            env["diagnostics"].as_str().unwrap().contains("E047"),
+            "{env}"
+        );
+        assert!(env["diagnostics"].as_str().unwrap().contains("PURITY_WASM"));
+        // The same source evaluates under the default mode.
+        let plain = envelope_of("v = env.PURITY_WASM ?: 1\n");
+        assert_eq!(plain["ok"], true);
+        assert_eq!(plain["json"]["v"], 1);
+    }
+
+    #[test]
+    fn zero_length_allocations_are_distinct_and_free_safe() {
+        // Round-3 M1: a zero-length Vec's dangling pointer would alias
+        // every other zero-length request.
+        let a = active_alloc(0);
+        let b = active_alloc(0);
+        assert!(!a.is_null() && !b.is_null());
+        assert_ne!(a, b, "zero-length allocations must not alias");
+        active_free(a, 0);
+        active_free(b, 0);
+        // Over the transport cap: null, never a trap.
+        assert!(active_alloc(MAX_ALLOC_BYTES + 1).is_null());
+    }
+
+    #[test]
+    fn pure_export_symbol_refuses_through_the_abi() {
+        // F5: the exported symbol itself (not just eval_inner) refuses,
+        // and a null out_len stays the documented null.
+        let src = b"v = env.PURITY_ABI ?: 1\n";
+        let mut len = 0usize;
+        let ptr = unsafe { active_eval_json_pure(src.as_ptr(), src.len(), &mut len) };
+        assert!(!ptr.is_null());
+        let text = unsafe { std::slice::from_raw_parts(ptr, len) };
+        let env: serde_json::Value = serde_json::from_slice(text).expect("envelope");
+        assert_eq!(env["ok"], false);
+        assert!(
+            env["diagnostics"].as_str().unwrap().contains("E047"),
+            "{env}"
+        );
+        active_free(ptr, len);
+        let null = unsafe { active_eval_json_pure(src.as_ptr(), src.len(), std::ptr::null_mut()) };
+        assert!(null.is_null());
     }
 
     #[test]
@@ -513,7 +610,7 @@ mod tests {
             source.push_str(&format!("a{i} = \"${{{prev}}}${{{prev}}}\"\n"));
             prev = format!("a{i}");
         }
-        let envelope = eval_inner(&source);
+        let envelope = eval_inner(&source, false);
         let parsed: serde_json::Value = serde_json::from_str(&envelope).expect("json");
         assert_eq!(parsed["ok"], serde_json::json!(false), "{envelope}");
         assert!(

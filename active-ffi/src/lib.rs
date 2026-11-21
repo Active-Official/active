@@ -1808,6 +1808,41 @@ mod tests {
     }
 
     #[test]
+    fn a_value_handle_is_immutable_across_host_copies() {
+        // L-P14: the returned JSON is a host-owned copy. Mutating it in
+        // place cannot change the handle, a later serialization, or the
+        // handle's type: the value crosses as an immutable view.
+        unsafe {
+            let src = b"v = { a = 1, items = [1, 2, 3] }\n";
+            let module = active_module_parse(src.as_ptr(), src.len(), std::ptr::null());
+            assert!(!module.is_null());
+            let value = active_eval(module, std::ptr::null());
+            assert!(!value.is_null());
+            let kind = active_value_type(value);
+
+            let first_ptr = active_value_to_json(value);
+            let first = std::ffi::CStr::from_ptr(first_ptr)
+                .to_string_lossy()
+                .into_owned();
+            // Corrupt the host's copy: no language state may observe it.
+            *first_ptr = b'X' as std::os::raw::c_char;
+
+            let second_ptr = active_value_to_json(value);
+            let second = std::ffi::CStr::from_ptr(second_ptr)
+                .to_string_lossy()
+                .into_owned();
+            assert_eq!(second, first, "the host's copy is isolated");
+            assert_eq!(active_value_type(value), kind, "the handle is unchanged");
+            assert!(second.contains("\"a\""), "{second}");
+
+            active_string_free(first_ptr);
+            active_string_free(second_ptr);
+            active_value_free(value);
+            active_module_free(module);
+        }
+    }
+
+    #[test]
     fn eval_secret_member_redacts_at_root_table() {
         unsafe {
             // Root evaluates to a table; the secret member inside must redact.

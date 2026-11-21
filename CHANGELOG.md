@@ -739,6 +739,32 @@ reference for any behavior. `release.yml` now runs a provenance gate
 the tag, or whose workspace version differs from the tag, so this cannot
 recur.
 
+### L-P14: evaluated values are frozen at the boundary; determinism is D-1
+
+`spec/reproducibility.md` §1.2 names the determinism property **D-1**: for
+a fixed input tuple (source and include bytes, injected environment,
+engine configuration, evaluator build), evaluation produces byte-identical
+canonical JSON, identical diagnostics, and the same `content_hash` /
+`bound_content_hash`; wall time may refuse a run but never changes a
+value. A dedicated `determinism.rs` test pins the property for tables,
+strict mode, injected env, redacted secrets, profiles, and fresh engines.
+The `content_hash` canonicaliser now sorts object keys recursively, as
+§3 has always specified (`serde_json` runs with `preserve_order`, so the
+old code followed source order); the same table in another key order now
+hashes identically, the hash stays over the redacted tree, and the two
+shipped example envelopes whose payloads were not already sorted carry
+refreshed hashes.
+The boundary is now explicit: the C ABI value handle is opaque and every
+reader takes `const` (only `active_value_free` takes a mutable pointer, for
+ownership release); a header-surface test allowlists every `ActiveValue`
+export and a runtime test proves mutating the returned JSON copy cannot
+change the handle. The WASM JS shim deep-freezes its result record and
+diagnostic items (asserted by the conformance runner), and its typings are
+readonly. No export computes a hash over a host-owned mutable object, so a
+host that copies and mutates a value holds a different value. Docs
+(`docs/FFI.md`, `docs/bindings.md`), spec, and the boundary tests ship
+together; no header change.
+
 ### L-P11: closing a table is an auditable promise
 
 `active compatibility` now reports every `closed` flag change as C046 at

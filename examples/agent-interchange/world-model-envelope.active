@@ -13,5 +13,5 @@ envelope = {
   },
   budget = { nodes = 32, headroom = 0.97 },
   diagnostics = [],
-  result = "sha256:d6c9cfd9e8b9e1d46f07d22afeb2d0554f2aaaee1bfb3a0c685b74ec79f87e88"
+  result = "sha256:92b16574c3b08aadd4af2775d0a531ff62c9587ea712d851862ef302410510f1"
 }

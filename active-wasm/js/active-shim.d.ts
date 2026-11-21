@@ -1,28 +1,34 @@
 export interface ActiveDiagnosticSpan {
-	line: number;
-	column: number;
-	end_line: number;
-	end_column: number;
+	readonly line: number;
+	readonly column: number;
+	readonly end_line: number;
+	readonly end_column: number;
 }
 
 export interface ActiveDiagnostic {
-	code: string;
-	message: string;
-	severity: "error" | "warning" | "info" | "hint";
+	readonly code: string;
+	readonly message: string;
+	readonly severity: "error" | "warning" | "info" | "hint";
 	/** Structured span, or null when the core left it out. */
-	span: ActiveDiagnosticSpan | null;
+	readonly span: ActiveDiagnosticSpan | null;
 }
 
+/**
+ * L-P14: the shim returns the host's frozen copy. Both the record and the
+ * nested diagnostic items are `Object.freeze`d at runtime, so a mutation
+ * fails instead of silently corrupting a run; the readonly types express
+ * the same contract to TypeScript.
+ */
 export interface ActiveEvaluateResult {
-	ok: boolean;
-	json: string;
-	diagnostics: string;
+	readonly ok: boolean;
+	readonly json: string;
+	readonly diagnostics: string;
 	/**
 	 * Structured diagnostics, passed through verbatim when the module
 	 * carries them and ABSENT otherwise: the bindings fail closed on a
 	 * missing array, so the shim never invents an empty one.
 	 */
-	items?: ActiveDiagnostic[];
+	readonly items?: readonly ActiveDiagnostic[];
 }
 
 export interface ActiveAPI {

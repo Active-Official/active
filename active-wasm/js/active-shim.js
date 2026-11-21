@@ -30,6 +30,25 @@
 		const read = (ptr, len) =>
 			new TextDecoder().decode(mem().slice(ptr, ptr + len));
 
+		// L-P14: the result record is the host's copy; freeze it (and the
+		// nested diagnostic items) so an accidental mutation fails instead
+		// of silently corrupting a run. The language's hash is computed
+		// before this copy exists; a host that copies and mutates still
+		// holds a different value, per the determinism contract.
+		function deepFreeze(value) {
+			if (value && typeof value === "object" && !Object.isFrozen(value)) {
+				Object.freeze(value);
+				// Own data properties only: never trigger a getter and never
+				// walk an inherited prototype. JSON.parse results are plain
+				// data, so this covers every nested span and item.
+				for (const key of Object.getOwnPropertyNames(value)) {
+					const descriptor = Object.getOwnPropertyDescriptor(value, key);
+					if (descriptor && "value" in descriptor) deepFreeze(descriptor.value);
+				}
+			}
+			return value;
+		}
+
 		function evaluateWith(input, pure) {
 			const src = new TextEncoder().encode(input);
 			const sp = ex.active_alloc(src.length);
@@ -62,7 +81,7 @@
 				ex.active_free(out, n);
 				ex.active_free(slot, 4);
 			}
-			return {
+			return deepFreeze({
 				ok: env.ok === true,
 				json: JSON.stringify(env.json),
 				diagnostics: String(env.diagnostics || ""),
@@ -71,7 +90,7 @@
 				// shim must never substitute a default here (a stale module
 				// would otherwise read as a false clean).
 				...(env.items !== undefined ? { items: env.items } : {}),
-			};
+			});
 		}
 
 		function evaluate(input) {
@@ -90,7 +109,7 @@
 			return evaluateWith(input, true);
 		}
 
-		const api = { evaluate, evaluatePure, abiVersion: 1 };
+		const api = Object.freeze({ evaluate, evaluatePure, abiVersion: 1 });
 		if (typeof window !== "undefined") window.ActiveAPI = api;
 		return api;
 	}

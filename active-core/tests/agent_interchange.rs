@@ -187,7 +187,7 @@ fn every_shipped_envelope_carries_a_real_payload_hash() {
         };
         assert_eq!(
             claimed, &expected,
-            "{name}: `result` must equal content_hash(payload); update the fixture"
+            "{name}: `result` must equal content_hash(payload) = {expected}; update the fixture"
         );
     }
 }

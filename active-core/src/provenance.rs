@@ -832,10 +832,12 @@ pub fn collect_provenance_with_salts(
 /// Retained blob payloads are stripped first, so `--materialise-blobs`
 /// cannot change a document's identity.
 pub fn content_hash(value: &crate::ir::Value) -> String {
-    let canonical = serde_json::to_string(&crate::convert::value_to_json(
-        &crate::convert::strip_blob_payloads(value),
-    ))
-    .unwrap_or_else(|_| "null".to_string());
+    // `serde_json` runs with `preserve_order`, so `to_string` alone follows
+    // insertion order. Sort recursively (the same canonical writer the
+    // bound hash and the receipt digest use) to make key order - and the
+    // "same tree" identity - independent of source order, as §3 promises.
+    let json = crate::convert::value_to_json(&crate::convert::strip_blob_payloads(value));
+    let canonical = crate::envelope::canonical_json(&json);
     format!("sha256:{}", sha256_hex(canonical.as_bytes()))
 }
 

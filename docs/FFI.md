@@ -10,6 +10,15 @@ Hosts never inspect interiors, never free them except through the matching
 `active_*_free` function, and never pass a freed handle back. Every entry
 point treats null handles as `ACTIVE_ERR_NULL_HANDLE`, never as UB.
 
+`ActiveValue` is an **immutable view** once evaluated (L-P14). The header
+declares it opaque; every reader takes `const struct ActiveValue *`; the
+only export that takes a mutable handle is `active_value_free`, which
+releases ownership without reading or changing the value. Serialization
+returns a fresh host-owned string: mutating that copy cannot change the
+handle or a later serialization, and no export hashes a host-owned object.
+The canonical `content_hash` is computed by the language over its own
+evaluated tree (spec/reproducibility.md §1.2, D-1).
+
 ## 2. Entry points
 
 Lifecycle: `active_module_parse(source: *const u8, len: usize,

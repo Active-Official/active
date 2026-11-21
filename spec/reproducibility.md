@@ -53,6 +53,47 @@ value bytes and same `content_hash`. The default (non-pure) evaluation
 is unchanged, and the check is a structural pre-scan, so dead code in an
 unselected profile cannot hide an ambient read either.
 
+### 1.2 Determinism (D-1): the testable contract (L-P14)
+
+**D-1.** For a fixed input tuple, evaluation is byte-deterministic. The
+tuple is:
+
+- the parsed module: source bytes plus every include's bytes and pin;
+- the injected environment snapshot (`Engine.env`);
+- the engine configuration: mode, resilient flag, profile override,
+  budgets, reader version, and the pure flag (L-P05);
+- the evaluator build.
+
+Given the same tuple, two runs produce:
+
+- byte-identical canonical JSON for the value (`value_to_pretty_json`,
+  and the redacted form when a secret profile applies);
+- identical diagnostics: the same codes, messages, paths, spans,
+  severities, and order;
+- the same `content_hash` over the redacted value (the §3 canonical form,
+  keys sorted), and the same `bound_content_hash` for the same schema
+  version, profile, resolved budget, mode, and capability.
+
+Wall-clock time may **refuse** a run (a budget trip, X00x) but never
+changes a value it produces. Time, randomness, locale, host paths, and
+the ambient environment are not inputs: §1 already makes the evaluator
+I/O-free and the snapshot the only ambient source. A pure evaluation
+(§1.1) is a special case with a narrower tuple.
+
+**Where the promise ends.** The language computes the hash over its own
+evaluated tree. Values cross the embedding boundary as immutable views:
+the C ABI returns an owned, opaque handle whose every reader takes a
+`const` pointer (only `active_value_free` takes a mutable pointer, and
+it releases ownership without reading or changing the value), and the
+WASM boundary returns JSON bytes plus a JS record the shim freezes. A
+host that copies a value and mutates the copy holds a *different* value;
+re-hashing that copy is not the language's result. No shipped API hashes
+a host-owned mutable object.
+
+Enforcement: `active-core/tests/determinism.rs` (the named property) and
+the multi-embedding conformance harness (every vector runs through the
+reference core, the C ABI, WASM, and native bindings).
+
 ## 2. Provenance manifest
 
 Collected post-evaluation from the module, the snapshot, and the
@@ -107,8 +148,11 @@ filesystem (for hashes only):
 ## 3. Content hashing
 
 `content_hash = sha256:<hex>` over the canonical redacted form:
-compact JSON (`serde_json::Map` is a `BTreeMap`, so keys sort —
-byte-stable), secrets already replaced by `***SECRET***`
+compact JSON with keys sorted recursively by the shared `canonical_json`
+writer (the same writer the bound hash and the receipt digest use;
+`serde_json` runs with `preserve_order`, so a plain `to_string` would
+follow insertion order — the canonical form never does), secrets already
+replaced by `***SECRET***`
 (`value_to_json`), retained blob payloads stripped first.
 Hashing the redacted, payload-free tree (never raw secrets)
 keeps lockfiles publishable and makes the identity independent of

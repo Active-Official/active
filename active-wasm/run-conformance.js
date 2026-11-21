@@ -56,6 +56,26 @@ async function main() {
 	const api = await SHIM.load(
 		bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
 	);
+	// L-P14: the shim returns the host's frozen copy. Every Conformance CI
+	// job runs this runner, so the boundary discipline is gated. The probe
+	// walks the whole record (nested spans included) and the API object.
+	const freezeProbe = api.evaluate("v = 1\n");
+	const deepFrozen = (value) => {
+		if (!value || typeof value !== "object") return true;
+		if (!Object.isFrozen(value)) return false;
+		return Object.getOwnPropertyNames(value).every((key) => {
+			const descriptor = Object.getOwnPropertyDescriptor(value, key);
+			return (
+				!descriptor || !("value" in descriptor) || deepFrozen(descriptor.value)
+			);
+		});
+	};
+	if (!deepFrozen(freezeProbe) || !Object.isFrozen(api)) {
+		console.error(
+			"FREEZE-FAIL: the shim must return a deep-frozen record/items and a frozen API object",
+		);
+		process.exit(1);
+	}
 	let pass = 0;
 	let pins = 0;
 	for (const c of manifest.cases) {

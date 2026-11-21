@@ -33,6 +33,18 @@ checking `is_secret` semantics (redaction happens inside, verify with a
 secret fixture), enforce your own timeout (Worker terminate on WASM;
 budgets bound everything else).
 
+Determinism (L-P14, spec/reproducibility.md §1.2, D-1): the input tuple
+is the source bytes plus every include's bytes and pin, the injected
+environment snapshot, the engine configuration (mode, resilient flag,
+profile override, budgets, reader version, pure flag), and the evaluator
+build. The same tuple produces byte-identical canonical JSON, identical
+diagnostics, and the same `content_hash` / `bound_content_hash`; wall time
+may refuse a run but never changes a value. The reference shim returns a
+frozen record (and frozen diagnostic items); the C ABI's value handle is
+an opaque, const-read-only view. A host that copies a value and mutates
+the copy holds a different value - the language's hash is over its own
+tree, never over a host-owned object.
+
 ## Rules (from 04, non-negotiable)
 
 Ship idiomatic wrappers, callback adapters, error mapping, a conformance

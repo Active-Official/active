@@ -315,7 +315,7 @@ fn constraint_tightening_is_breaking_c042() {
     // LANG-B-004: a type-only signature reported every one of these as
     // "no schema changes" while the old document genuinely fails the new
     // schema.
-    let cases: [(&str, &str, &str); 4] = [
+    let cases: [(&str, &str, &str); 3] = [
         (
             "min tighten",
             "schema = { n = Int(min = 0) }\nn = 1\n",
@@ -331,11 +331,6 @@ fn constraint_tightening_is_breaking_c042() {
             "schema = { s = String(format = \"email\") }\ns = \"a@b.co\"\n",
             "schema = { s = String(format = \"uuid\") }\ns = \"a@b.co\"\n",
         ),
-        (
-            "closed add",
-            "schema = { t = Table { a = Int } }\nt = { a = 1 }\n",
-            "schema = { t = Table { closed = true, a = Int } }\nt = { a = 1 }\n",
-        ),
     ];
     for (what, old, new) in cases {
         let findings = compare_docs(old, new);
@@ -346,6 +341,193 @@ fn constraint_tightening_is_breaking_c042() {
             "{what}: tightening must be C042: {findings:?}"
         );
     }
+}
+
+#[test]
+fn closing_an_open_table_is_breaking_c046() {
+    // L-P11: closing is first-class, not a generic constraint change. The
+    // B-004 "closed add" case moves here so its regression coverage (the
+    // change is reported at error severity) survives the code change.
+    let findings = compare_docs(
+        "schema = { t = Table { a = Int } }\nt = { a = 1 }\n",
+        "schema = { t = Table { closed = true, a = Int } }\nt = { a = 1 }\n",
+    );
+    let finding = findings
+        .iter()
+        .find(|f| f.code == code::CLOSED_CHANGED)
+        .expect("closing must be C046");
+    assert_eq!(finding.severity, "error");
+    assert_eq!(finding.path, "t");
+    assert!(
+        finding.message.contains("closed (was open)"),
+        "{}",
+        finding.message
+    );
+    assert!(
+        findings.iter().all(|f| f.code != code::TYPE_CHANGED),
+        "closing is C046, not a generic tightening: {findings:?}"
+    );
+}
+
+#[test]
+fn opening_a_closed_table_is_breaking_not_a_loosening() {
+    // The trap L-P11 records: opening grows the accepted value set but
+    // withdraws the promise readers rely on, so it is breaking.
+    let findings = compare_docs(
+        "schema = { t = Table { closed = true, a = Int } }\nt = { a = 1 }\n",
+        "schema = { t = Table { a = Int } }\nt = { a = 1 }\n",
+    );
+    let finding = findings
+        .iter()
+        .find(|f| f.code == code::CLOSED_CHANGED)
+        .expect("opening must be C046");
+    assert_eq!(finding.severity, "error");
+    assert_eq!(finding.path, "t");
+    assert!(
+        finding.message.contains("opened (was closed)"),
+        "{}",
+        finding.message
+    );
+}
+
+#[test]
+fn the_root_table_close_and_open_are_breaking_c046() {
+    let open = "schema = { a = Int }\na = 1\n";
+    let closed = "schema = { closed = true, a = Int }\na = 1\n";
+    for (old, new) in [(open, closed), (closed, open)] {
+        let findings = compare_docs(old, new);
+        let finding = findings
+            .iter()
+            .find(|f| f.code == code::CLOSED_CHANGED)
+            .unwrap_or_else(|| panic!("root close/open must be C046: {findings:?}"));
+        assert_eq!(finding.severity, "error");
+        assert_eq!(finding.path, "<root>");
+    }
+}
+
+#[test]
+fn disjunction_branch_close_and_open_are_breaking_c046() {
+    let open = "schema = { v = OneOf(Table { a = Int }, String) }\nv = { a = 1 }\n";
+    let closed =
+        "schema = { v = OneOf(Table { closed = true, a = Int }, String) }\nv = { a = 1 }\n";
+    for (old, new, needle) in [
+        (open, closed, "closed (was open)"),
+        (closed, open, "opened (was closed)"),
+    ] {
+        let findings = compare_docs(old, new);
+        let finding = findings
+            .iter()
+            .find(|f| f.code == code::CLOSED_CHANGED)
+            .unwrap_or_else(|| panic!("branch close/open must be C046: {findings:?}"));
+        assert_eq!(finding.severity, "error");
+        assert_eq!(finding.path, "v");
+        assert!(finding.message.contains(needle), "{}", finding.message);
+        assert!(
+            finding.message.contains("disjunction branch Table{")
+                && finding.message.contains("at 'v'"),
+            "the finding names the branch by type: {}",
+            finding.message
+        );
+        assert!(
+            findings.iter().all(|f| f.code != code::TYPE_CHANGED),
+            "a close/open pair is one C046, not a removed branch: {findings:?}"
+        );
+    }
+}
+
+#[test]
+fn array_element_table_close_and_open_are_breaking_c046() {
+    // Review round 1: an array element's own table row was never
+    // collected, so closing or opening it was invisible.
+    let open = "schema = { items = Array<Table { a = Int }> }\nitems = [{ a = 1 }]\n";
+    let closed =
+        "schema = { items = Array<Table { closed = true, a = Int }> }\nitems = [{ a = 1 }]\n";
+    for (old, new) in [(open, closed), (closed, open)] {
+        let findings = compare_docs(old, new);
+        let finding = findings
+            .iter()
+            .find(|f| f.code == code::CLOSED_CHANGED)
+            .unwrap_or_else(|| panic!("element close/open must be C046: {findings:?}"));
+        assert_eq!(finding.severity, "error");
+        assert_eq!(finding.path, "items[]");
+    }
+}
+
+#[test]
+fn a_branch_that_closes_and_tightens_reports_both_codes() {
+    // Review round 1: pairing by the open key (which includes bounds)
+    // missed C046 when the same edit also tightened a constraint.
+    let findings = compare_docs(
+        "schema = { v = OneOf(Table { a = Int(min = 0) }, String) }\nv = { a = 1 }\n",
+        "schema = { v = OneOf(Table { closed = true, a = Int(min = 10) }, String) }\nv = { a = 1 }\n",
+    );
+    let closed = findings
+        .iter()
+        .find(|f| f.code == code::CLOSED_CHANGED)
+        .unwrap_or_else(|| panic!("the promise change is C046 too: {findings:?}"));
+    assert_eq!(closed.severity, "error");
+    assert!(
+        closed.message.contains("disjunction branch Table{") && closed.message.contains("at 'v'"),
+        "{}",
+        closed.message
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.code == code::TYPE_CHANGED && f.severity == "error"),
+        "the simultaneous tightening stays C042: {findings:?}"
+    );
+}
+
+#[test]
+fn a_nested_disjunction_table_close_is_c046() {
+    // Review round 2: a closed table inside a disjunction branch's nested
+    // OneOf is still a table promise; its open key normalizes the nested
+    // flag, so the branch is paired and the change is C046 (not C042).
+    let findings = compare_docs(
+        "schema = { t = OneOf(Table { v = OneOf(Table { closed = true, a = Int }, String) }, Bool) }\nt = { v = { a = 1 } }\n",
+        "schema = { t = OneOf(Table { v = OneOf(Table { a = Int }, String) }, Bool) }\nt = { v = { a = 1 } }\n",
+    );
+    let finding = findings
+        .iter()
+        .find(|f| f.code == code::CLOSED_CHANGED)
+        .unwrap_or_else(|| panic!("a nested table close is C046: {findings:?}"));
+    assert_eq!(finding.severity, "error");
+    assert!(
+        finding.message.contains("opened (was closed)"),
+        "{}",
+        finding.message
+    );
+    assert!(
+        finding.message.contains("OneOf("),
+        "the descriptor names the nested alternatives: {}",
+        finding.message
+    );
+    assert!(
+        findings.iter().all(|f| f.code != code::TYPE_CHANGED),
+        "a pure nested close/open is not a branch removal: {findings:?}"
+    );
+}
+
+#[test]
+fn a_branch_descriptor_is_order_independent() {
+    // Review round 2: the descriptor must not depend on field or member
+    // order (branch order is not a change).
+    let findings = compare_docs(
+        "schema = { v = OneOf(Table { a = Int, b = String }, Bool) }\nv = { a = 1, b = \"x\" }\n",
+        "schema = { v = OneOf(Table { closed = true, b = String, a = Int }, Bool) }\nv = { a = 1, b = \"x\" }\n",
+    );
+    let finding = findings
+        .iter()
+        .find(|f| f.code == code::CLOSED_CHANGED)
+        .expect("closing is C046");
+    assert!(
+        finding
+            .message
+            .contains("Table{closed=true, a:Int, b:String}"),
+        "the descriptor sorts fields: {}",
+        finding.message
+    );
 }
 
 #[test]
@@ -579,32 +761,15 @@ fn computed_or_duration_branch_tightening_is_c042() {
 
 #[test]
 fn a_table_branch_relaxation_is_not_breaking() {
-    // Round-3 medium: structural widening recurses into fields and the
-    // closed flag instead of demanding an exact match.
+    // Round-3 medium: structural widening recurses into fields (and keeps
+    // the closed promise; the close/open directions are covered by
+    // `disjunction_branch_close_and_open_are_breaking_c046`).
     let findings = compare_docs(
         "schema = { v = OneOf(Table { a = Int(min = 0) }, String) }\nv = { a = 1 }\n",
         "schema = { v = OneOf(Table { a = Int }, String) }\nv = { a = 1 }\n",
     );
     assert!(
-        findings.iter().all(|f| f.code != code::TYPE_CHANGED),
+        findings.is_empty(),
         "an interior relaxation widens: {findings:?}"
-    );
-    let findings = compare_docs(
-        "schema = { v = OneOf(Table { closed = true, a = Int }, String) }\nv = { a = 1 }\n",
-        "schema = { v = OneOf(Table { a = Int }, String) }\nv = { a = 1 }\n",
-    );
-    assert!(
-        findings.iter().all(|f| f.code != code::TYPE_CHANGED),
-        "closed to open widens: {findings:?}"
-    );
-    let findings = compare_docs(
-        "schema = { v = OneOf(Table { a = Int }, String) }\nv = { a = 1 }\n",
-        "schema = { v = OneOf(Table { closed = true, a = Int }, String) }\nv = { a = 1 }\n",
-    );
-    assert!(
-        findings
-            .iter()
-            .any(|f| f.code == code::TYPE_CHANGED && f.severity == "error"),
-        "open to closed narrows: {findings:?}"
     );
 }

@@ -116,7 +116,9 @@ active propose --request "add a port" --candidate candidate.active
 `active test` runs (parse, healing, canonical format, strict evaluation
 and validation, project lint) and accepts or rejects it; `--receipt`
 writes an L-T06 envelope v2 whose `result` binds the redacted accepted
-value. `active propose` runs the verify → repair → re-verify loop over a
+value. A clean receipt also audits every closed schema table
+(`closed_tables`: dotted path plus the key names present, never values).
+`active propose` runs the verify → repair → re-verify loop over a
 caller-supplied candidate or a generator command (the request goes to
 its stdin, the candidate comes from its stdout); the loop is bounded
 (default 2 rounds, cap 5) and fails closed with H008 naming what
@@ -159,7 +161,7 @@ active diff old.active new.active --format json
 
 Compares the evaluated documents, not their text: every added, removed,
 or changed value path with both types and a redacted scalar echo, the
-schema compatibility findings (C040-C045), and the dependents of each
+schema compatibility findings (C040-C046), and the dependents of each
 changed path (resolved to the longest dotted prefix, so a nested change
 names its own consumers). `behaviour: identical` means every *compared*
 value is equal; material values are never compared, so a secret or blob

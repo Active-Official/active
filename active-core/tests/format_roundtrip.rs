@@ -691,3 +691,22 @@ fn a_tree_deeper_than_the_block_budget_formats_as_headers() {
         "deep profile formatting is not idempotent"
     );
 }
+
+#[test]
+fn closed_tables_render_and_round_trip() {
+    // L-P11 surface agreement: `closed = true` is rendered in the
+    // canonical lead position of every table form, formatting is
+    // idempotent, and closing does not change the evaluated tree.
+    let src = "schema = { t = Table { closed = true, a = Int } }\nt = { a = 1 }\n";
+    for style in [Style::Brace, Style::Indent, Style::Preserve] {
+        let once = fmt(src, style);
+        assert!(once.contains("closed = true"), "{once}");
+        let twice = format(&parse_ok(&once), style);
+        assert_eq!(once, twice, "closed table formatting is not idempotent");
+        assert_eq!(
+            tree(src),
+            tree(&once),
+            "closing changed the evaluated value"
+        );
+    }
+}

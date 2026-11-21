@@ -357,6 +357,18 @@ impl EnvelopeGate {
                 "envelope.receipt.budget must be a table",
             );
         }
+        // L-P11: the optional closed-table audit is a sender claim (bound
+        // by receipt_digest, not recomputed by the receiver), but a
+        // malformed receipt is still a malformed receipt.
+        if receipt_fields.contains_key("closed_tables")
+            && !closed_tables_shape_ir(module, receipt_fields)
+        {
+            push(
+                "E042",
+                "envelope.receipt.closed_tables",
+                "envelope.receipt.closed_tables must be an array of `{ path, keys }` tables with string names",
+            );
+        }
 
         let sender_fields = match field_table(module, fields, "sender") {
             FieldTable::Absent => None,
@@ -505,6 +517,96 @@ fn field_table(
             None => FieldTable::Malformed,
         },
     }
+}
+
+/// The source-AST shape of an optional `receipt.closed_tables` member
+/// (L-P11): an array of tables with a string `path` and an array of string
+/// `keys`. `true` when absent, or present and well shaped.
+fn closed_tables_shape_ir(
+    module: &Module,
+    receipt_fields: &indexmap::IndexMap<String, crate::ir::NodeId>,
+) -> bool {
+    let Some(node) = receipt_fields.get("closed_tables") else {
+        return true;
+    };
+    let Some(Node::Array { elements }) = module.get(*node) else {
+        return false;
+    };
+    elements.iter().all(|element| match module.get(*element) {
+        Some(Node::Table { fields }) => {
+            // Exactly `{ path, keys }`: an extra member would let a sender
+            // persist arbitrary text in a receipt a receiver may log.
+            fields.len() == 2
+                && fields.contains_key("path")
+                && fields.contains_key("keys")
+                && matches!(field_text(module, fields, "path"), FieldText::Text(_))
+                && match fields.get("keys").and_then(|id| module.get(*id)) {
+                    Some(Node::Array { elements }) => elements.iter().all(|key| {
+                        matches!(module.get(*key), Some(Node::Literal(Value::String(_))))
+                    }),
+                    _ => false,
+                }
+        }
+        _ => false,
+    })
+}
+
+/// Whether a `closed_tables` member echoes text the receiver knows is
+/// material (L-P11). A sender-side secret the receiver never saw cannot
+/// be detected; this is the receiver's available defense in depth.
+fn closed_tables_echo_material(
+    receipt: &indexmap::IndexMap<String, Value>,
+    profile: &crate::secret::SecretProfile,
+) -> bool {
+    let Some(Value::Array(items)) = receipt.get("closed_tables") else {
+        return false;
+    };
+    fn material(text: &str, profile: &crate::secret::SecretProfile) -> bool {
+        profile.is_material_text(text) || profile.redact_text(text).is_some()
+    }
+    items.iter().any(|item| {
+        let Value::Table(map) = item else {
+            return false;
+        };
+        let path_material = match map.get("path") {
+            Some(Value::String(text)) => material(text, profile),
+            _ => false,
+        };
+        let keys_material = match map.get("keys") {
+            Some(Value::Array(keys)) => keys.iter().any(|key| match key {
+                Value::String(text) => material(text, profile),
+                _ => false,
+            }),
+            _ => false,
+        };
+        path_material || keys_material
+    })
+}
+
+/// The evaluated shape of an optional `receipt.closed_tables` member
+/// (L-P11). See [`closed_tables_shape_ir`].
+fn closed_tables_shape_value(receipt: &indexmap::IndexMap<String, Value>) -> bool {
+    let Some(value) = receipt.get("closed_tables") else {
+        return true;
+    };
+    let Value::Array(items) = value else {
+        return false;
+    };
+    items.iter().all(|item| match item {
+        Value::Table(map) => {
+            // Exactly `{ path, keys }` (see the IR twin).
+            map.len() == 2
+                && map.contains_key("path")
+                && map.contains_key("keys")
+                && matches!(map.get("path"), Some(Value::String(_)))
+                && matches!(
+                    map.get("keys"),
+                    Some(Value::Array(keys))
+                        if keys.iter().all(|key| matches!(key, Value::String(_)))
+                )
+        }
+        _ => false,
+    })
 }
 
 fn is_closed_capability(text: &str) -> bool {
@@ -750,6 +852,27 @@ fn check_v2_value(
             "envelope.receipt.budget",
             "envelope.receipt.budget must be a table",
         ));
+    }
+    // L-P11: the closed-table audit is a sender claim bound by the
+    // receipt digest; its shape is still gated.
+    if !closed_tables_shape_value(receipt) {
+        return Err(validation_error(
+            "E042",
+            "envelope.receipt.closed_tables",
+            "envelope.receipt.closed_tables must be an array of `{ path, keys }` tables with string names",
+        ));
+    }
+    // A forged audit could copy material into a field a receiver may log.
+    // The producer redacts; the receiver refuses text it knows is
+    // material (it cannot detect a secret only the sender knew).
+    if let Some(profile) = material {
+        if closed_tables_echo_material(receipt, profile) {
+            return Err(validation_error(
+                "E042",
+                "envelope.receipt.closed_tables",
+                "a closed-table audit entry would echo material",
+            ));
+        }
     }
     if let Some(Value::Table(sender)) = fields.get("sender") {
         match value_text(sender, "id") {
@@ -1070,6 +1193,227 @@ pub fn document_schema_version(module: &Module) -> Option<String> {
 /// emitter writes).
 pub fn payload_tainted(value: &Value) -> bool {
     crate::eval::value_has_secret(value)
+}
+
+/// One audited closed table (L-P11): the document path of the table
+/// instance and the key names present at it. Structural only - names,
+/// never values, so a receipt can never echo material.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ClosedTable {
+    pub path: String,
+    pub keys: Vec<String>,
+}
+
+/// Every closed schema table instance in an evaluated, redacted document,
+/// with the key names present at each (L-P11). A closed table is a
+/// promise ("no more keys"); this is the audit record of that promise.
+///
+/// The walk follows the schema tree over the value tree. Disjunction
+/// branches participate only when their shape accepts the value
+/// (structural acceptance: types, enum membership, required fields,
+/// closedness, nested tables and arrays); constraint arguments are not
+/// evaluated, because the entry audits the key set of a closed shape, not
+/// which validation branch produced a pass. A branch that cannot be
+/// proven to match contributes no fact. Paths are dotted
+/// (`a.b[0].c`); `"."` is the document root. Entries and key lists are
+/// sorted, and identical entries (several structurally matching branches
+/// at one path) are deduplicated.
+pub fn closed_tables(module: &Module, value: &Value) -> Vec<ClosedTable> {
+    let Some(root) = module.schema else {
+        return Vec::new();
+    };
+    let mut facts = Vec::new();
+    collect_closed_tables(module, root, value, value, "", &mut facts);
+    facts.sort_by(|left, right| {
+        left.path
+            .cmp(&right.path)
+            .then_with(|| left.keys.cmp(&right.keys))
+    });
+    facts.dedup();
+    facts
+}
+
+fn collect_closed_tables(
+    module: &Module,
+    schema_id: crate::ir::NodeId,
+    value: &Value,
+    root: &Value,
+    path: &str,
+    out: &mut Vec<ClosedTable>,
+) {
+    match module.get(schema_id) {
+        Some(Node::SchemaTable { fields, closed, .. }) => {
+            let Value::Table(map) = value else {
+                return;
+            };
+            if *closed {
+                // Only declared keys belong to this closed shape. A
+                // matching value declares them all; filtering keeps an
+                // unexpected key (already T005) out of the audit rather
+                // than attributing it to a promise it violates.
+                let mut keys: Vec<String> = map
+                    .keys()
+                    .filter(|key| fields.contains_key(*key))
+                    .cloned()
+                    .collect();
+                keys.sort();
+                out.push(ClosedTable {
+                    path: if path.is_empty() {
+                        ".".to_string()
+                    } else {
+                        path.to_string()
+                    },
+                    keys,
+                });
+            }
+            for (name, child) in fields {
+                if let Some(child_value) = map.get(name) {
+                    let child_path = if path.is_empty() {
+                        name.clone()
+                    } else {
+                        format!("{path}.{name}")
+                    };
+                    collect_closed_tables(module, *child, child_value, root, &child_path, out);
+                }
+            }
+        }
+        Some(Node::SchemaField { field }) => {
+            // A disjunction has no single nested table: descend into the
+            // branches whose shape the value satisfies.
+            for branch in &field.one_of {
+                if node_accepts(module, *branch, value, root) {
+                    collect_closed_tables(module, *branch, value, root, path, out);
+                }
+            }
+        }
+        Some(Node::SchemaArray { element }) => {
+            let Value::Array(items) = value else {
+                return;
+            };
+            for (index, item) in items.iter().enumerate() {
+                collect_closed_tables(
+                    module,
+                    *element,
+                    item,
+                    root,
+                    &format!("{path}[{index}]"),
+                    out,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Structural acceptance for the receipt walk: does this schema shape
+/// accept this value? Constraint arguments are deliberately not
+/// evaluated (see [`closed_tables`]).
+fn node_accepts(
+    module: &Module,
+    schema_id: crate::ir::NodeId,
+    value: &Value,
+    root: &Value,
+) -> bool {
+    match module.get(schema_id) {
+        Some(Node::SchemaTable { fields, closed, .. }) => {
+            let Value::Table(map) = value else {
+                return false;
+            };
+            if *closed && map.keys().any(|key| !fields.contains_key(key)) {
+                return false;
+            }
+            for (name, child) in fields {
+                match map.get(name) {
+                    Some(child_value) => {
+                        if !node_accepts(module, *child, child_value, root) {
+                            return false;
+                        }
+                    }
+                    None => {
+                        if field_required(module, *child, map, root) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            true
+        }
+        Some(Node::SchemaField { field }) => {
+            if field.one_of.is_empty() {
+                leaf_accepts(&field.typ, value)
+            } else {
+                field
+                    .one_of
+                    .iter()
+                    .any(|branch| node_accepts(module, *branch, value, root))
+            }
+        }
+        Some(Node::SchemaArray { element }) => match value {
+            Value::Array(items) => items
+                .iter()
+                .all(|item| node_accepts(module, *element, item, root)),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// A table entry is required unless it is Null-typed, a deprecated field
+/// with a default (omission is the migration path), or a field whose
+/// `requires` trigger is disabled (absence is its contract, L-P10 row 3).
+/// Structural nodes (nested tables and arrays) are always required.
+fn field_required(
+    module: &Module,
+    field_id: crate::ir::NodeId,
+    table: &indexmap::IndexMap<String, Value>,
+    root: &Value,
+) -> bool {
+    let Some(Node::SchemaField { field }) = module.get(field_id) else {
+        return true;
+    };
+    if matches!(field.typ, crate::types::ActiveType::Null) {
+        return false;
+    }
+    if field.deprecated.is_some() && field.default.is_some() {
+        return false;
+    }
+    if let Some(target) = literal_requires_target(module, field.requires) {
+        if crate::convert::requires_target_exists(module, field_id, &target) {
+            let sibling = crate::validate::table_has(table, &target);
+            let absolute = matches!(root, Value::Table(root_map)
+                if crate::validate::table_has(root_map, &target));
+            if !sibling && !absolute {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// The authored text of a `requires` target, for the excuse rule. A
+/// literal or a reference to a literal is the documented form; a computed
+/// target stays required (fail closed, as validation does).
+fn literal_requires_target(module: &Module, slot: Option<crate::ir::NodeId>) -> Option<String> {
+    match slot.and_then(|id| module.get(id)) {
+        Some(Node::Literal(Value::String(text))) => Some(text.clone()),
+        Some(Node::Ref(to)) => match module.get(*to) {
+            Some(Node::Literal(Value::String(text))) => Some(text.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Leaf type acceptance, with the enum member check done here (validation
+/// reports a wrong member as T003, so `type_accepts` alone would accept
+/// any string).
+fn leaf_accepts(typ: &crate::types::ActiveType, value: &Value) -> bool {
+    match typ {
+        crate::types::ActiveType::Enum(members) => {
+            matches!(value, Value::String(text) if members.iter().any(|member| member == text))
+        }
+        _ => crate::validate::type_accepts(typ, value),
+    }
 }
 
 /// Why a Data Mode document that carries an `envelope` table is not

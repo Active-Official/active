@@ -244,6 +244,15 @@ as the key in practice), falling back to the schema table span when
 unresolvable. Open tables (the default) keep ignoring extra keys.
 Nesting composes: each table enforces its own flag.
 
+Closing is auditable (L-P11). A clean evaluation that binds an L-T06
+receipt records every closed table instance in `receipt.closed_tables`:
+its dotted document path (`"."` for the root) and the key names present
+at it, sorted. The entry is structural — key names only, never values or
+material — and it is the receipt's "these keys were present when I
+closed it". Opening or closing the flag later is a breaking change the
+compatibility check reports (C046, `spec/schema-evolution.md` §2); the
+promise is about keys, so closing never changes the evaluated value.
+
 ### 10.1 Key repair (C-016 phase 2, wired here)
 
 An unexpected key is scored against the schema field names with the

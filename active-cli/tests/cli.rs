@@ -1871,6 +1871,43 @@ fn compatibility_json_reports_compatible_schemas() {
 }
 
 #[test]
+fn compatibility_reports_closed_table_changes_as_c046() {
+    // L-P11: closing and opening are both first-class breaking changes,
+    // through the shipped command (not only the library).
+    let open = fixture(
+        "compat_open.active",
+        "schema = { t = Table { a = Int } }\nt = { a = 1 }\n",
+    );
+    let closed = fixture(
+        "compat_closed.active",
+        "schema = { t = Table { closed = true, a = Int } }\nt = { a = 1 }\n",
+    );
+    for (old, new, label) in [(&open, &closed, "closing"), (&closed, &open, "opening")] {
+        let out = active()
+            .args(["compatibility", "--format", "json"])
+            .arg(old)
+            .arg(new)
+            .output()
+            .expect("run active");
+        assert!(!out.status.success(), "{label} must fail closed");
+        let findings: serde_json::Value =
+            serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).expect("JSON array");
+        assert!(
+            findings
+                .as_array()
+                .is_some_and(|items| items.iter().any(|finding| {
+                    finding["code"] == "C046"
+                        && finding["severity"] == "error"
+                        && finding["path"] == "t"
+                })),
+            "{label}: {findings}"
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("E040"), "{label}: {stderr}");
+    }
+}
+
+#[test]
 fn repair_reaches_clean_and_writes_output() {
     let f = fixture(
         "repair_clean.active",
@@ -8790,6 +8827,63 @@ fn serve_round_trips_a_document_and_matches_eval() {
 }
 
 #[test]
+fn serve_receipt_audits_closed_tables() {
+    // L-P11: the receipt records every closed table with the keys present
+    // at it; key names only, root named ".".
+    let mut child = serve_spawn(&[]);
+    let request = serde_json::json!({
+        "id": 9,
+        "source": "schema = { closed = true, server = Table { closed = true, host = String } }\n\
+                   server = { host = \"x\" }\n",
+    });
+    write_serve_frame(&mut child, request.to_string().as_bytes());
+    let response = read_serve_frame(&mut child).expect("response");
+    child.stdin.take();
+    let _ = child.wait();
+    let receipt = &response["envelope"]["receipt"];
+    assert_eq!(receipt["outcome"], "clean", "{response}");
+    assert_eq!(
+        receipt["closed_tables"],
+        serde_json::json!([
+            { "path": ".", "keys": ["server"] },
+            { "path": "server", "keys": ["host"] },
+        ]),
+        "{response}"
+    );
+}
+
+#[test]
+fn eval_envelope_audits_closed_tables() {
+    // The second receipt builder (`eval --envelope`) carries the same
+    // audit, computed over the full document even when a cone is demanded.
+    let source = "active_mode = \"data\"\n\
+                  schema = { server = Table { closed = true, host = String } }\n\
+                  server = { host = \"x\" }\n";
+    let file = lp62_fixture("envelope_closed.active", source);
+    let envelope_path = std::env::temp_dir().join("active-cli-lp62/envelope_closed.json");
+    let _ = std::fs::remove_file(&envelope_path);
+    let out = active()
+        .args(["eval", "--envelope"])
+        .arg(&envelope_path)
+        .arg(&file)
+        .output()
+        .expect("eval");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&envelope_path).expect("envelope"))
+            .expect("json");
+    assert_eq!(
+        envelope["receipt"]["closed_tables"],
+        serde_json::json!([{ "path": "server", "keys": ["host"] }]),
+        "{envelope}"
+    );
+}
+
+#[test]
 fn serve_rejects_a_schema_failure_with_codes() {
     let mut child = serve_spawn(&[]);
     let request = serde_json::json!({
@@ -8809,6 +8903,10 @@ fn serve_rejects_a_schema_failure_with_codes() {
     );
     assert_eq!(envelope["receipt"]["diagnostics"][0], "T002", "{response}");
     assert!(envelope["payload"].is_null(), "{response}");
+    assert!(
+        envelope["receipt"].get("closed_tables").is_none(),
+        "a failed attempt has no promise to audit: {response}"
+    );
 }
 
 #[test]

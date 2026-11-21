@@ -523,3 +523,183 @@ fn a_v1_envelope_cannot_smuggle_v2_fields() {
     let err = refusal(src);
     assert!(codes(&err).iter().any(|code| code == "E033"), "{err:?}");
 }
+
+#[test]
+fn a_malformed_closed_tables_audit_is_e042() {
+    // L-P11: the optional audit is a sender claim, but its shape is gated.
+    let src = "active_mode = \"data\"\nenvelope = { version = \"2.0.0\", tainted = false, payload = { ok = true }, receipt = { outcome = \"clean\", mode = \"data\", closed_tables = \"nope\" } }\n";
+    let module = parse(src, "gate").expect("parse");
+    let error = EnvelopeGate::shipped()
+        .check(&module)
+        .expect_err("a malformed audit must be refused");
+    assert!(codes(&error).contains(&"E042".to_string()), "{error:?}");
+}
+
+#[test]
+fn the_value_side_gate_refuses_a_malformed_closed_tables_audit() {
+    use active_core::Value;
+    use indexmap::IndexMap;
+
+    let module = parse("active_mode = \"data\"\n", "gate").expect("parse");
+    let table = |pairs: Vec<(&str, Value)>| {
+        Value::Table(
+            pairs
+                .into_iter()
+                .map(|(key, value)| (key.to_string(), value))
+                .collect::<IndexMap<String, Value>>(),
+        )
+    };
+    let value = table(vec![(
+        "envelope",
+        table(vec![
+            ("version", Value::String("2.0.0".into())),
+            ("tainted", Value::Bool(false)),
+            ("payload", table(vec![("ok", Value::Bool(true))])),
+            (
+                "receipt",
+                table(vec![
+                    ("outcome", Value::String("clean".into())),
+                    ("mode", Value::String("data".into())),
+                    // Missing `keys`: shape-invalid.
+                    (
+                        "closed_tables",
+                        Value::Array(vec![table(vec![("path", Value::String(".".into()))])]),
+                    ),
+                ]),
+            ),
+        ]),
+    )]);
+    let error = active_core::envelope::check_evaluated(
+        &value,
+        &module,
+        &EnvelopeGate::shipped(),
+        &active_core::eval::Budget::default(),
+        None,
+        None,
+        None,
+    )
+    .expect_err("the value-side gate must refuse a missing keys array");
+    assert!(codes(&error).contains(&"E042".to_string()), "{error:?}");
+}
+
+#[test]
+fn a_closed_tables_entry_with_an_extra_member_is_e042() {
+    // L-P11 review round 2: exactly `{ path, keys }`, so a sender cannot
+    // persist arbitrary text in a field a receiver may log.
+    let src = "active_mode = \"data\"\nenvelope = { version = \"2.0.0\", tainted = false, payload = { ok = true }, receipt = { outcome = \"clean\", mode = \"data\", closed_tables = [{ path = \".\", keys = [], exfil = \"extra\" }] } }\n";
+    let module = parse(src, "gate").expect("parse");
+    let error = EnvelopeGate::shipped()
+        .check(&module)
+        .expect_err("an extra member must be refused");
+    assert!(codes(&error).contains(&"E042".to_string()), "{error:?}");
+}
+
+#[test]
+fn a_closed_tables_entry_echoing_material_is_refused() {
+    // The producer redacts; a forged audit that copies a secret the
+    // receiver knows is refused before it can reach a log.
+    let module = parse(
+        "active_mode = \"data\"\ntoken = secret(\"hunter2\")\n",
+        "gate",
+    )
+    .expect("parse");
+    let (_, _, seeds) = Engine::new()
+        .evaluate_with_seeds(&module)
+        .expect("evaluate to collect runtime secrets");
+    let profile =
+        active_core::secret::SecretProfile::with_context(&module, None, None, Some(&seeds));
+
+    use active_core::Value;
+    use indexmap::IndexMap;
+    let table = |pairs: Vec<(&str, Value)>| {
+        Value::Table(
+            pairs
+                .into_iter()
+                .map(|(key, value)| (key.to_string(), value))
+                .collect::<IndexMap<String, Value>>(),
+        )
+    };
+    let value = table(vec![(
+        "envelope",
+        table(vec![
+            ("version", Value::String("2.0.0".into())),
+            ("tainted", Value::Bool(false)),
+            ("payload", table(vec![("ok", Value::Bool(true))])),
+            (
+                "receipt",
+                table(vec![
+                    ("outcome", Value::String("clean".into())),
+                    ("mode", Value::String("data".into())),
+                    (
+                        "closed_tables",
+                        Value::Array(vec![table(vec![
+                            ("path", Value::String(".".into())),
+                            ("keys", Value::Array(vec![Value::String("hunter2".into())])),
+                        ])]),
+                    ),
+                ]),
+            ),
+        ]),
+    )]);
+    let error = active_core::envelope::check_evaluated(
+        &value,
+        &module,
+        &EnvelopeGate::shipped(),
+        &active_core::eval::Budget::default(),
+        None,
+        Some(&profile),
+        None,
+    )
+    .expect_err("an audit that echoes material must be refused");
+    assert!(codes(&error).contains(&"E042".to_string()), "{error:?}");
+}
+
+#[test]
+fn the_value_side_gate_refuses_an_extra_closed_tables_member() {
+    use active_core::Value;
+    use indexmap::IndexMap;
+
+    let module = parse("active_mode = \"data\"\n", "gate").expect("parse");
+    let table = |pairs: Vec<(&str, Value)>| {
+        Value::Table(
+            pairs
+                .into_iter()
+                .map(|(key, value)| (key.to_string(), value))
+                .collect::<IndexMap<String, Value>>(),
+        )
+    };
+    let entry = {
+        let mut map = IndexMap::new();
+        map.insert("path".to_string(), Value::String(".".into()));
+        map.insert("keys".to_string(), Value::Array(Vec::new()));
+        map.insert("exfil".to_string(), Value::String("extra".into()));
+        Value::Table(map)
+    };
+    let value = table(vec![(
+        "envelope",
+        table(vec![
+            ("version", Value::String("2.0.0".into())),
+            ("tainted", Value::Bool(false)),
+            ("payload", table(vec![("ok", Value::Bool(true))])),
+            (
+                "receipt",
+                table(vec![
+                    ("outcome", Value::String("clean".into())),
+                    ("mode", Value::String("data".into())),
+                    ("closed_tables", Value::Array(vec![entry])),
+                ]),
+            ),
+        ]),
+    )]);
+    let error = active_core::envelope::check_evaluated(
+        &value,
+        &module,
+        &EnvelopeGate::shipped(),
+        &active_core::eval::Budget::default(),
+        None,
+        None,
+        None,
+    )
+    .expect_err("an extra member must be refused");
+    assert!(codes(&error).contains(&"E042".to_string()), "{error:?}");
+}

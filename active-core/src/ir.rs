@@ -343,6 +343,15 @@ impl SchemaField {
     /// expression is opaque.
     pub fn branch_key(&self, module: &Module) -> String {
         let mut key = self.type_label(module);
+        key.push_str(&self.arguments_key(module));
+        key
+    }
+
+    /// The constraint-argument part of [`SchemaField::branch_key`], without
+    /// the type label. A disjunction's open key rebuilds its type label
+    /// from its branches (L-P11), so it needs the arguments separately.
+    pub(crate) fn arguments_key(&self, module: &Module) -> String {
+        let mut key = String::new();
         for (name, slot) in [
             ("min", self.min),
             ("max", self.max),
@@ -494,6 +503,130 @@ pub fn schema_node_key(module: &Module, id: NodeId) -> String {
             format!("Array<{}>", schema_node_key(module, *element))
         }
         _ => "schema".to_string(),
+    }
+}
+
+/// The structural key of a schema node with every table's `closed` flag
+/// ignored (L-P11). Two disjunction branches with equal open keys differ
+/// only in closedness, so the compatibility check can pair them and
+/// report one close/open change (C046) instead of a removed branch.
+pub(crate) fn schema_node_key_open(module: &Module, id: NodeId) -> String {
+    match module.get(id) {
+        Some(Node::SchemaField { field }) if field.one_of.is_empty() => field.branch_key(module),
+        Some(Node::SchemaField { field }) => {
+            // Rebuild the type label from the branches with their closed
+            // flags normalized, and keep the field's own arguments. A pure
+            // nested close/open therefore compares equal.
+            let mut parts: Vec<String> = field
+                .one_of
+                .iter()
+                .map(|branch| schema_node_key_open(module, *branch))
+                .collect();
+            parts.sort();
+            format!("OneOf({}){}", parts.join(","), field.arguments_key(module))
+        }
+        Some(Node::SchemaTable { fields, .. }) => {
+            let mut parts: Vec<String> = fields
+                .iter()
+                .map(|(name, child)| format!("{name}:{}", schema_node_key_open(module, *child)))
+                .collect();
+            parts.sort();
+            format!("Table{{{}}}", parts.join(","))
+        }
+        Some(Node::SchemaArray { element }) => {
+            format!("Array<{}>", schema_node_key_open(module, *element))
+        }
+        _ => "schema".to_string(),
+    }
+}
+
+/// Every table's `closed` flag inside a schema node, keyed by its
+/// position path (field names, `[]` array indices, `#shape` disjunction
+/// alternatives). Paths make the comparison order-independent: branches
+/// with equal shapes keep the same keys whichever order the document
+/// lists them in, and a per-path count reports the direction precisely.
+pub(crate) fn schema_node_closed_flags(module: &Module, id: NodeId) -> Vec<(String, bool)> {
+    fn collect(module: &Module, id: NodeId, prefix: &str, out: &mut Vec<(String, bool)>) {
+        match module.get(id) {
+            Some(Node::SchemaTable { fields, closed, .. }) => {
+                out.push((prefix.to_string(), *closed));
+                let mut names: Vec<&String> = fields.keys().collect();
+                names.sort();
+                for name in names {
+                    let child = if prefix.is_empty() {
+                        name.clone()
+                    } else {
+                        format!("{prefix}.{name}")
+                    };
+                    collect(module, fields[name], &child, out);
+                }
+            }
+            Some(Node::SchemaArray { element }) => {
+                collect(module, *element, &format!("{prefix}[]"), out);
+            }
+            Some(Node::SchemaField { field }) if !field.one_of.is_empty() => {
+                // Alternatives are a set: the branch's shape is its
+                // identity, so the same shape has the same path in both
+                // documents.
+                for branch in &field.one_of {
+                    let shape = schema_node_key_shape(module, *branch);
+                    let child = format!("{prefix}#{shape}");
+                    collect(module, *branch, &child, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    collect(module, id, "", &mut out);
+    out.sort();
+    out
+}
+
+/// The type skeleton of a schema node (L-P11): like [`schema_node_key_open`]
+/// but with constraint arguments and enum members ignored too. Two
+/// branches with equal skeletons describe the same shape, so a compat
+/// check can pair them, report a closedness change (C046), and still let
+/// the branch-set comparison report a simultaneous constraint tightening
+/// (C042) independently.
+pub(crate) fn schema_node_key_shape(module: &Module, id: NodeId) -> String {
+    match module.get(id) {
+        Some(Node::SchemaField { field }) if field.one_of.is_empty() => field_shape(&field.typ),
+        Some(Node::SchemaField { field }) => {
+            // A nested disjunction is flattened by the parser; this is
+            // defensive. Branches are a sorted set (order is not a
+            // change).
+            let mut parts: Vec<String> = field
+                .one_of
+                .iter()
+                .map(|branch| schema_node_key_shape(module, *branch))
+                .collect();
+            parts.sort();
+            format!("OneOf({})", parts.join(","))
+        }
+        Some(Node::SchemaTable { fields, .. }) => {
+            let mut parts: Vec<String> = fields
+                .iter()
+                .map(|(name, child)| format!("{name}:{}", schema_node_key_shape(module, *child)))
+                .collect();
+            parts.sort();
+            format!("Table{{{}}}", parts.join(","))
+        }
+        Some(Node::SchemaArray { element }) => {
+            format!("Array<{}>", schema_node_key_shape(module, *element))
+        }
+        _ => "schema".to_string(),
+    }
+}
+
+/// The kind of a leaf field, with members, bounds, and the closed marker
+/// removed: the part of a shape that cannot change without making it a
+/// different branch.
+fn field_shape(typ: &crate::types::ActiveType) -> String {
+    match typ {
+        crate::types::ActiveType::Enum(_) => "Enum".to_string(),
+        crate::types::ActiveType::Table { .. } => "Table".to_string(),
+        other => other.name(),
     }
 }
 

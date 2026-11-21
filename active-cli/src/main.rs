@@ -2485,6 +2485,7 @@ fn serve_evaluate(source: &str, name: &str, engine: &Engine) -> serde_json::Valu
             effective_profile.as_deref(),
             &engine.budget,
             &payload,
+            Some(&payload),
             "agent",
             &codes,
             failed,
@@ -3473,6 +3474,7 @@ fn outcome_receipt(
     profile: Option<&str>,
     budget: &active_core::eval::Budget,
     value: &active_core::Value,
+    document: Option<&active_core::Value>,
     capability: &str,
     codes: &[String],
     failed: bool,
@@ -3525,7 +3527,38 @@ fn outcome_receipt(
         }),
     );
     receipt.insert("diagnostics".into(), serde_json::json!(codes));
+    // L-P11: a clean evaluation records every closed table instance with
+    // the key names present at it ("these keys were present when I closed
+    // it"). Key names only; the walk runs over the redacted document, so a
+    // material key renders as the marker exactly like the payload. A
+    // failed attempt has no promise to audit.
+    if !failed {
+        if let Some(document) = document {
+            if let Some(member) = closed_tables_member(module, document) {
+                receipt.insert("closed_tables".into(), member);
+            }
+        }
+    }
     serde_json::Value::Object(receipt)
+}
+
+/// The receipt's closed-table audit member (L-P11), or `None` when the
+/// document declares no closed table. One builder for every receipt site
+/// (`outcome_receipt` and the inline `eval --envelope` receipt).
+fn closed_tables_member(
+    module: &active_core::Module,
+    document: &active_core::Value,
+) -> Option<serde_json::Value> {
+    let closed = active_core::envelope::closed_tables(module, document);
+    if closed.is_empty() {
+        return None;
+    }
+    Some(serde_json::Value::Array(
+        closed
+            .into_iter()
+            .map(|fact| serde_json::json!({ "path": fact.path, "keys": fact.keys }))
+            .collect(),
+    ))
 }
 
 /// The evidence behind a gate verdict (L-P62): the redacted payload an
@@ -3629,6 +3662,7 @@ fn gate_evidence(
         effective_profile.as_deref(),
         &verdict.budget,
         &payload,
+        Some(&payload),
         capability,
         &codes,
         !accept,
@@ -5083,13 +5117,22 @@ fn main() -> anyhow::Result<()> {
                 // Strict-mode warnings already make the process exit 1;
                 // the envelope must agree with the audit/exit verdict
                 // (review M2).
-                if had_failure(&diags, resilient) {
+                let envelope_failed = had_failure(&diags, resilient);
+                if envelope_failed {
                     payload_json = serde_json::Value::Null;
                     tainted = false;
                     result = None;
                     receipt.insert("outcome".into(), serde_json::json!("failed"));
                     receipt.insert("failure_class".into(), serde_json::json!("other"));
                     receipt.remove("result");
+                }
+                // L-P11: audit every closed table against the full document
+                // (never the demand cone): the promise is a property of the
+                // document, and a projected root has no schema root to walk.
+                if !envelope_failed {
+                    if let Some(member) = closed_tables_member(&module, &full_value) {
+                        receipt.insert("closed_tables".into(), member);
+                    }
                 }
                 write_envelope_v2(
                     envelope_path,
@@ -5193,6 +5236,7 @@ fn main() -> anyhow::Result<()> {
                         effective_profile.as_deref(),
                         &engine.budget,
                         &value,
+                        Some(&full_value),
                         sandbox.as_deref().unwrap_or("agent"),
                         &diag_codes,
                         had_failure(&diags, resilient),

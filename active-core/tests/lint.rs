@@ -774,3 +774,33 @@ fn l010_ignores_evolution_metadata() {
         );
     }
 }
+
+#[test]
+fn closed_tables_are_validation_not_lint() {
+    // L-P11 surface agreement: T005 owns the closed-table contract in
+    // both modes, at the value span, with key repair. Lint stays silent
+    // on the same document: duplicating the defect would double-report
+    // and lint runs before evaluation by design.
+    let src = "schema = { closed = true, host = String }\nhost = \"x\"\nzzzz = 1\n";
+    let module = parse_ok(src);
+    assert!(
+        lint(&module)
+            .iter()
+            .all(|diagnostic| diagnostic.code != "T005"),
+        "lint must not validate closed tables"
+    );
+    match Engine::new().evaluate(&module) {
+        // Strict schema violations surface as Ok plus diagnostics at the
+        // embedding layer (the conformance convention); the T005 is an
+        // error severity the CLI fails on.
+        Ok((_, diagnostics)) => {
+            assert!(
+                diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code == "T005" && diagnostic.severity == active_core::Severity::Error
+                }),
+                "{diagnostics:?}"
+            );
+        }
+        Err(error) => panic!("expected the diagnostic on the Ok path, got {error:?}"),
+    }
+}

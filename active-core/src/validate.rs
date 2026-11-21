@@ -2917,7 +2917,7 @@ fn branch_reason(message: &str) -> String {
 /// nested tables, then apply truthiness. Present-but-disabled
 /// (`false`, `""`, `0`, empty table/array, null) does not trigger;
 /// a provided secret always counts as enabled.
-fn table_has(table: &indexmap::IndexMap<String, Value>, dotted: &str) -> bool {
+pub(crate) fn table_has(table: &indexmap::IndexMap<String, Value>, dotted: &str) -> bool {
     let mut current = table;
     let mut parts = dotted.split('.');
     let mut last = match parts.next() {
@@ -3031,7 +3031,7 @@ fn insert_at(result: &mut Value, segments: &[PathSeg], value: Value) -> bool {
 /// widens to `Float`; every other pair is exact. Bytes arrive as
 /// integers (evaluation erases byte-ness); non-string Enums fail here
 /// while wrong-member strings fail as T003.
-fn type_accepts(typ: &ActiveType, value: &Value) -> bool {
+pub(crate) fn type_accepts(typ: &ActiveType, value: &Value) -> bool {
     use ActiveType::*;
     use Value::Table as Tab;
     matches!(

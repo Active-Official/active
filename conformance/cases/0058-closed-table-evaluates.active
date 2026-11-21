@@ -1,0 +1,2 @@
+schema = { server = Table { closed = true, host = String, port = Int } }
+server = { host = "db", port = 5432 }

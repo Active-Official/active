@@ -120,6 +120,7 @@ parses leave it unset and tools fall back to the input filename.
 | C043 | `version regressed from <old> to <new>` | schema.version | The new schema version is older than the old one |
 | C044 | `min_reader <floor> exceeds old version <old>: old readers are dropped` / `min_writer … : old writers are dropped` | schema.min_reader / schema.min_writer | The reader or writer floor leapfrogs the old version |
 | C045 | a root-schema `check` rule was added, removed, or changed | `check.<name>` | Cross-field behavior changed (L-P19); documents that passed may now fail. Treat as breaking and version the schema deliberately |
+| C046 | `table '<name>' closed (was open): ...` / `table '<name>' opened (was closed): ...` / `a disjunction branch table at '<name>' ...` / `the document's root table ...` (path `<root>`) | compatibility report path | A table's `closed` flag changed (L-P11). Both directions are breaking: closing rejects keys that were addable; opening withdraws the no-extra-keys promise readers may rely on. Version the schema and tell consumers, or restore the flag |
 | E040 | `E040: breaking schema changes detected` | none (report summary) | The compatibility report contains error-severity findings; the CLI exits nonzero |
 
 ### L0xx — Lint (linter, severity Warning, C-042)

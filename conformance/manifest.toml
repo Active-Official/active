@@ -388,3 +388,10 @@ reason = "pure mode is not exposed by the shim harness yet (L-P05 native only)"
 [[pins]]
 id = "0056-pure-profile-override"
 reason = "pure mode is not exposed by the shim harness yet (L-P05 native only)"
+
+# L-P11: closing a table is a promise about keys, never a change to the
+# evaluated value; the closed document evaluates to the same payload.
+[[cases]]
+id = "0058-closed-table-evaluates"
+file = "cases/0058-closed-table-evaluates.active"
+kind = "clean"

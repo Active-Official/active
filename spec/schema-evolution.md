@@ -85,7 +85,28 @@ schema = {
 | New `min_reader` > old `version` | C044 | error | Old readers are dropped |
 | New `min_writer` > old `version` | C044 | error | Old writers are dropped |
 | Root-schema `check` rule added, removed, or changed (compared as authored text; whitespace-only edits also report) | C045 | error | Cross-field behavior changes; documents that passed may now fail |
+| Table `closed` flag: open → closed | C046 | error | Keys outside the declared set now fail T005; documents that added them fail the new schema (L-P11) |
+| Table `closed` flag: closed → open | C046 | error | The "no extra keys" promise is withdrawn; readers that relied on the closed key set can be misled even though the accepted value set grows (L-P11) |
+| Root-schema `closed` flag changed (either direction) | C046 | error | The same promise change applies to the document's top-level keys; the finding path is `<root>` |
+| Disjunction branch table `closed` flag changed (either direction), including tables nested inside a branch | C046 | error | The same promise change inside a `OneOf` branch; the branch is paired with its counterpart (closedness is not a branch removal), and the message names the branch by an order-independent type descriptor |
 
+
+**Closing and opening are both breaking (L-P11).** Preference for closing is
+straightforward: the new schema rejects keys the old one accepted. Opening
+is the recorded trap: the accepted value set grows, so it looks like a
+loosening, but `closed = true` is a promise consumers may switch on. A
+reader that assumed the key set was exhaustive becomes unsound when the
+promise is withdrawn. Compatibility therefore reports both directions as
+error severity and never as silent, and the disjunction widening rule
+(a removed branch is compatible when a new branch strictly widens it)
+requires the closed flag to be equal: a widening that adds or withdraws a
+promise is not a widening.
+
+The scope is every table reachable as a schema row, the document root, an
+array element table, or a disjunction branch (including tables nested
+inside a branch, even under a nested disjunction) - at any depth. A branch
+that also changes a constraint reports C046 and C042 independently, so a
+simultaneous tightening never hides the promise change.
 
 Findings are deterministic (source order; numeric version compare) and value-free (type names and versions only). Any error-severity finding fails the command closed with E040.
 
@@ -110,6 +131,6 @@ CLI and output-schema coverage rather than a cross-embedding vector.
 
 ## 3. Diagnostic family (SC.007)
 
-C040–C045 findings plus the E040 breaking-change summary. Canned guidance lives in `explain_code`; the codes are pinned in `docs/diagnostics.md` and the assist coverage test. Unknown-reader situations (unparseable versions) fail safe: scheduled-removal requires both sides to parse, otherwise the removal is breaking.
+C040–C046 findings plus the E040 breaking-change summary. Canned guidance lives in `explain_code`; the codes are pinned in `docs/diagnostics.md` and the assist coverage test. Unknown-reader situations (unparseable versions) fail safe: scheduled-removal requires both sides to parse, otherwise the removal is breaking.
 
 **End of schema-evolution.md — SC.005/SC.006/SC.007 complete.**

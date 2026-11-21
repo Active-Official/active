@@ -28,6 +28,10 @@ pub mod code {
     /// A root-schema cross-field `check` rule was added, removed, or
     /// changed (L-P19): the document's behavior changes.
     pub const CHECK_CHANGED: &str = "C045";
+    /// A table's `closed` flag changed in either direction (L-P11).
+    /// Closing rejects keys that were addable; opening withdraws the
+    /// "no extra keys" promise readers may rely on.
+    pub const CLOSED_CHANGED: &str = "C046";
     /// Breaking-change summary for a non-empty error set.
     pub const BREAKING_SUMMARY: &str = "E040";
 }
@@ -181,9 +185,26 @@ struct Constraints {
 /// compatible only when some new branch is a strict widening of it.
 #[derive(Clone, PartialEq)]
 struct BranchFact {
-    /// Full structural key (nested table fields and constraints are part
-    /// of it).
+    /// Full structural key (nested table fields, closed flags, and
+    /// constraints are part of it).
     key: String,
+    /// The same key with every table's closed flag ignored (L-P11): two
+    /// branches with equal open keys differ only in closedness, so the
+    /// compat check reports one close/open change instead of a removal.
+    key_open: String,
+    /// The type skeleton with closed flags and every constraint argument
+    /// ignored (L-P11). Two branches with equal skeletons describe the
+    /// same shape, so a close/open inside them is paired even when the
+    /// same edit also tightens a bound (C046 plus C042).
+    key_shape: String,
+    /// Every table's closed flag in the branch, keyed by position path
+    /// (field names, array indices, disjunction shapes). The path makes
+    /// the comparison order-independent, so nested changes in a nested
+    /// disjunction are reported too.
+    closed_flags: Vec<(String, bool)>,
+    /// The nested branches of a field-level disjunction, for messages and
+    /// structural recursion; `None` for an ordinary node.
+    nested: Option<Vec<BranchFact>>,
     /// Base type name, for the widening check.
     base: String,
     /// Leaf constraints, when the branch is a leaf field.
@@ -268,6 +289,9 @@ fn branch_blob_max(module: &Module, slot: Option<crate::ir::NodeId>) -> (Option<
 
 fn branch_fact(module: &Module, id: crate::ir::NodeId) -> BranchFact {
     let key = crate::ir::schema_node_key(module, id);
+    let key_open = crate::ir::schema_node_key_open(module, id);
+    let key_shape = crate::ir::schema_node_key_shape(module, id);
+    let closed_flags = crate::ir::schema_node_closed_flags(module, id);
     match module.get(id) {
         Some(Node::SchemaField { field }) if field.one_of.is_empty() => {
             let (min, c_min) = branch_number(module, field.min);
@@ -295,6 +319,10 @@ fn branch_fact(module: &Module, id: crate::ir::NodeId) -> BranchFact {
             };
             BranchFact {
                 key,
+                key_open,
+                key_shape,
+                closed_flags,
+                nested: None,
                 base: field.typ.name(),
                 leaf: Some(leaf),
                 computed: c_min
@@ -326,6 +354,10 @@ fn branch_fact(module: &Module, id: crate::ir::NodeId) -> BranchFact {
             };
             BranchFact {
                 key,
+                key_open,
+                key_shape,
+                closed_flags,
+                nested: None,
                 base: "Table".to_string(),
                 leaf: None,
                 computed: shape.fields.iter().any(|(_, _, fact)| fact.computed),
@@ -336,6 +368,10 @@ fn branch_fact(module: &Module, id: crate::ir::NodeId) -> BranchFact {
         }
         Some(Node::SchemaArray { element }) => BranchFact {
             key,
+            key_open,
+            key_shape,
+            closed_flags,
+            nested: None,
             base: "Array".to_string(),
             leaf: None,
             computed: false,
@@ -345,8 +381,19 @@ fn branch_fact(module: &Module, id: crate::ir::NodeId) -> BranchFact {
         },
         Some(Node::SchemaField { field }) => BranchFact {
             // A nested disjunction is flattened by the parser; this is
-            // defensive only.
+            // defensive only. The nested facts let messages describe the
+            // alternative that changed.
             key: field.branch_key(module),
+            key_open,
+            key_shape,
+            closed_flags,
+            nested: Some(
+                field
+                    .one_of
+                    .iter()
+                    .map(|branch| branch_fact(module, *branch))
+                    .collect(),
+            ),
             base: "OneOf".to_string(),
             leaf: None,
             computed: false,
@@ -356,6 +403,10 @@ fn branch_fact(module: &Module, id: crate::ir::NodeId) -> BranchFact {
         },
         _ => BranchFact {
             key: "schema".to_string(),
+            key_open,
+            key_shape,
+            closed_flags,
+            nested: None,
             base: "schema".to_string(),
             leaf: None,
             computed: false,
@@ -379,7 +430,11 @@ fn widens(old: &BranchFact, new: &BranchFact) -> bool {
     }
     match (&old.table, &new.table) {
         (Some(o), Some(n)) => {
-            if !o.closed && n.closed {
+            // L-P11: a widening must preserve the promise. Opening a
+            // closed table grows the accepted set but withdraws
+            // "no extra keys", so it cannot excuse a removed branch;
+            // closing one adds a promise that did not hold before.
+            if o.closed != n.closed {
                 return false;
             }
             for (name, o_required, o_fact) in &o.fields {
@@ -557,7 +612,12 @@ fn tightened(old: &Constraints, new: &Constraints) -> bool {
         (Some(o), Some(n)) => {
             // An opaque branch cannot be identified across documents, so
             // it can never be treated as unchanged.
-            let same = |a: &BranchFact, b: &BranchFact| !a.opaque && !b.opaque && a.key == b.key;
+            // A branch whose open key matches but whose full key differs
+            // changed only in closedness: that close/open is reported as
+            // C046 by the caller, not as a removed branch.
+            let same = |a: &BranchFact, b: &BranchFact| {
+                !a.opaque && !b.opaque && (a.key == b.key || a.key_open == b.key_open)
+            };
             for branch in o {
                 if n.iter().any(|candidate| same(branch, candidate)) {
                     continue;
@@ -589,11 +649,9 @@ fn tightened(old: &Constraints, new: &Constraints) -> bool {
         (None, Some(_)) => true,
         _ => false,
     }
-    .then_some(true)
-    .unwrap_or(matches!(
-        (old.closed, new.closed),
-        (Some(false), Some(true)) | (None, Some(true))
-    ))
+    // The closed flag is deliberately not compared here: L-P11 reports
+    // every close/open transition on its own C046 finding because the
+    // opening direction is breaking and has no tightening message.
 }
 
 /// Render the constraints that are set, for the finding message.
@@ -726,7 +784,24 @@ fn collect_element_rows(
     out: &mut Vec<Row>,
 ) {
     match module.get(element) {
-        Some(Node::SchemaTable { .. }) => collect_rows(module, element, prefix, out),
+        Some(Node::SchemaTable { closed, .. }) => {
+            // L-P11: the element table's own row carries its closed flag;
+            // without it, `Array<Table{closed}>` -> open (or the reverse)
+            // was invisible.
+            out.push(Row {
+                path: prefix.to_string(),
+                signature: "Table".to_string(),
+                constraints: Constraints {
+                    closed: Some(*closed),
+                    ..Constraints::default()
+                },
+                required: true,
+                removed_in: None,
+                blob: None,
+                blob_dynamic: false,
+            });
+            collect_rows(module, element, prefix, out);
+        }
         Some(Node::SchemaArray { element: inner }) => {
             out.push(Row {
                 path: prefix.to_string(),
@@ -765,9 +840,162 @@ fn literal_string(module: &Module, id: Option<crate::ir::NodeId>) -> Option<Stri
     }
 }
 
+/// The C046 message for one close/open transition (L-P11). `branch`
+/// carries the changed branch's type descriptor (an order-independent
+/// identity: `Table{closed=true, a:Int}`), so a wide disjunction stays
+/// auditable.
+fn closed_message(path: &str, now_closed: bool, branch: Option<&str>) -> String {
+    let subject = if let Some(descriptor) = branch {
+        format!("disjunction branch {descriptor} at '{path}'")
+    } else if path == "<root>" {
+        "the document's root table".to_string()
+    } else {
+        format!("table '{path}'")
+    };
+    if now_closed {
+        format!(
+            "{subject} closed (was open): keys outside the declared set now fail T005; \
+             old documents that added keys fail the new schema"
+        )
+    } else {
+        format!(
+            "{subject} opened (was closed): the no-extra-keys promise is withdrawn; \
+             readers that relied on the closed key set may misread documents"
+        )
+    }
+}
+
+/// A short, order-independent identity for a branch (L-P11 messages):
+/// the table/array/disjunction structure with field types and leaf
+/// bounds, so a reader can find the branch without relying on position
+/// (branch order is not a change). Field names, enum members, and
+/// alternative branches are sorted.
+fn branch_descriptor(fact: &BranchFact) -> String {
+    if let Some(shape) = &fact.table {
+        let mut fields: Vec<String> = shape
+            .fields
+            .iter()
+            .map(|(name, required, child)| {
+                format!(
+                    "{name}{}:{}",
+                    if *required { "" } else { "?" },
+                    branch_descriptor(child)
+                )
+            })
+            .collect();
+        fields.sort();
+        let closed = if shape.closed { "closed=true, " } else { "" };
+        return format!("Table{{{closed}{}}}", fields.join(", "));
+    }
+    if let Some(element) = &fact.element {
+        return format!("Array<{}>", branch_descriptor(element));
+    }
+    if let Some(nested) = &fact.nested {
+        let mut parts: Vec<String> = nested.iter().map(branch_descriptor).collect();
+        parts.sort();
+        return format!("OneOf({})", parts.join(", "));
+    }
+    let Some(leaf) = &fact.leaf else {
+        return fact.base.clone();
+    };
+    let mut args: Vec<String> = Vec::new();
+    if let Some(value) = &leaf.min {
+        args.push(format!("min={value}"));
+    }
+    if let Some(value) = &leaf.max {
+        args.push(format!("max={value}"));
+    }
+    if let Some(value) = &leaf.min_len {
+        args.push(format!("min_len={value}"));
+    }
+    if let Some(value) = &leaf.max_len {
+        args.push(format!("max_len={value}"));
+    }
+    if let Some(members) = &leaf.members {
+        let mut members = members.clone();
+        members.sort();
+        args.push(format!("members={}", members.join("|")));
+    }
+    if let Some(value) = &leaf.blob_max {
+        args.push(format!("max_size={value}"));
+    }
+    if args.is_empty() {
+        fact.base.clone()
+    } else {
+        format!("{}({})", fact.base, args.join(", "))
+    }
+}
+
+/// Per-path closed/open counts for one branch's table flags (L-P11).
+/// The number of tables at a path is structural, so a count difference
+/// is exactly the number of tables that changed direction - even when
+/// several disjunction alternatives share a shape.
+fn closed_flag_counts(flags: &[(String, bool)]) -> std::collections::HashMap<&str, (usize, usize)> {
+    let mut counts: std::collections::HashMap<&str, (usize, usize)> =
+        std::collections::HashMap::new();
+    for (path, closed) in flags {
+        let entry = counts.entry(path.as_str()).or_insert((0, 0));
+        if *closed {
+            entry.1 += 1;
+        } else {
+            entry.0 += 1;
+        }
+    }
+    counts
+}
+
+/// Close/open transitions between two disjunction branch sets (L-P11).
+/// Branches are paired by their skeleton (the same shape with closed flags
+/// and constraints ignored) and the closed flags are compared per
+/// position path, so a nested change - including one inside a nested
+/// disjunction - is reported with the direction it happened in. Each
+/// entry is `(branch descriptor, now closed)`, deduplicated; a branch
+/// that both closes one nested table and opens another yields two.
+fn one_of_closed_changes(old: &[BranchFact], new: &[BranchFact]) -> Vec<(String, bool)> {
+    let mut changes: Vec<(String, bool)> = Vec::new();
+    for o in old {
+        if o.opaque {
+            continue;
+        }
+        for n in new {
+            if n.opaque || o.key_shape != n.key_shape || o.key == n.key {
+                continue;
+            }
+            let old_counts = closed_flag_counts(&o.closed_flags);
+            let new_counts = closed_flag_counts(&n.closed_flags);
+            let mut closed = false;
+            let mut opened = false;
+            for (path, &(_, old_closed)) in &old_counts {
+                let new_closed = new_counts.get(path).map(|(_, closed)| *closed).unwrap_or(0);
+                if new_closed > old_closed {
+                    closed = true;
+                } else if old_closed > new_closed {
+                    opened = true;
+                }
+            }
+            let descriptor = branch_descriptor(n);
+            if closed
+                && !changes
+                    .iter()
+                    .any(|(text, now)| text == &descriptor && *now)
+            {
+                changes.push((descriptor.clone(), true));
+            }
+            if opened
+                && !changes
+                    .iter()
+                    .any(|(text, now)| text == &descriptor && !*now)
+            {
+                changes.push((descriptor, false));
+            }
+        }
+    }
+    changes
+}
+
 /// Compare two documents' schema blocks. Deterministic: fields walk in
 /// source order, versions compare numerically, findings emit in a
-/// fixed order (removed, added, changed, version gates).
+/// fixed order (root closed, removed, added, changed, version gates).
 pub fn compare(old: &Module, new: &Module) -> Result<Vec<CompatFinding>, String> {
     let old_root = old
         .schema
@@ -788,6 +1016,26 @@ pub fn compare(old: &Module, new: &Module) -> Result<Vec<CompatFinding>, String>
         .collect();
 
     let mut findings = Vec::new();
+
+    // L-P11: the schema root is a table too. Its closed flag governs the
+    // document's top-level keys, and close/open is the same promise
+    // change there as on any nested table. The root has no row (rows
+    // describe fields), so it is compared here.
+    let old_root_closed = matches!(
+        old.get(old_root),
+        Some(Node::SchemaTable { closed: true, .. })
+    );
+    let new_root_closed = matches!(
+        new.get(new_root),
+        Some(Node::SchemaTable { closed: true, .. })
+    );
+    if old_root_closed != new_root_closed {
+        findings.push(CompatFinding::error(
+            code::CLOSED_CHANGED,
+            "<root>",
+            closed_message("<root>", new_root_closed, None),
+        ));
+    }
 
     // Removed fields: breaking unless the removal was scheduled at or
     // before the new version (removed_in <= new version).
@@ -876,16 +1124,49 @@ pub fn compare(old: &Module, new: &Module) -> Result<Vec<CompatFinding>, String>
                 // else-if chain reported only the first change and hid
                 // the rest (a simultaneous requiredness + blob change
                 // dropped the blob finding entirely).
+                // L-P11: a table's closed flag is its own contract. Both
+                // directions are breaking: closing rejects keys that were
+                // addable, opening withdraws the "no extra keys" promise.
+                if let (Some(old_closed), Some(new_closed)) =
+                    (old_field.constraints.closed, new_field.constraints.closed)
+                {
+                    if old_closed != new_closed {
+                        findings.push(CompatFinding::error(
+                            code::CLOSED_CHANGED,
+                            path,
+                            closed_message(path, new_closed, None),
+                        ));
+                    }
+                }
+                if let (Some(old_branches), Some(new_branches)) = (
+                    old_field.constraints.one_of.as_ref(),
+                    new_field.constraints.one_of.as_ref(),
+                ) {
+                    let changes = one_of_closed_changes(old_branches, new_branches);
+                    for (descriptor, now_closed) in changes {
+                        findings.push(CompatFinding::error(
+                            code::CLOSED_CHANGED,
+                            path,
+                            closed_message(path, now_closed, Some(&descriptor)),
+                        ));
+                    }
+                }
                 if tightened(&old_field.constraints, &new_field.constraints) {
-                    findings.push(CompatFinding::error(
-                        code::TYPE_CHANGED,
-                        path,
+                    // A disjunction change is a branch contract change; the
+                    // leaf-constraint wording would read "(none -> none)".
+                    let message = if old_field.constraints.one_of != new_field.constraints.one_of {
                         format!(
-                            "field '{path}' constraints tightened ({} -> {}): documents that validated before may fail now",
-                            describe_constraints(&old_field.constraints),
-                            describe_constraints(&new_field.constraints)
-                        ),
-                    ));
+                            "field '{path}' disjunction changed: a branch was removed or \
+                                 narrowed; documents that validated before may fail now"
+                        )
+                    } else {
+                        format!(
+                                "field '{path}' constraints tightened ({} -> {}): documents that validated before may fail now",
+                                describe_constraints(&old_field.constraints),
+                                describe_constraints(&new_field.constraints)
+                            )
+                    };
+                    findings.push(CompatFinding::error(code::TYPE_CHANGED, path, message));
                 }
                 if old_field.required != new_field.required && new_field.required {
                     // Removing a default makes the field required

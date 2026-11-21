@@ -38,10 +38,20 @@ payload:
 | `budget` | optional object | The **resolved limits** used for evaluation (the envelope's top-level `budget` is observed usage/headroom). **Required for a clean outcome**, with all seven fields: `nodes`, `depth`, `array_len`, `keys`, `wall_ms`, `value_size`, `total_size`, each a positive integer |
 | `diagnostics` | optional array of strings | Stable diagnostic codes (the audit file carries the full objects); never values |
 | `include_resolutions` | optional array | `{path, resolved, sha256, source}` when includes were resolved |
+| `closed_tables` | optional array | L-P11 audit of every closed schema table instance in a **clean** run: `{path, keys}` and exactly those two members. `path` is the dotted document path (`"."` is the root); `keys` are the key names present at that instance, sorted. Key names only — values and material never appear. Several structurally matching disjunction branches at one path record once. Absent when the schema declares no closed table or the outcome is failed |
 
 A v2 envelope without `receipt` is refused with **E042**. A malformed
-receipt (non-table, unknown `outcome`, unknown `failure_class`, or a
-non-`sha256:` result) is E042.
+receipt (non-table, unknown `outcome`, unknown `failure_class`, a
+non-`sha256:` result, or a malformed `closed_tables` member — not an array
+of exactly `{path, keys}` tables with string names) is E042.
+`closed_tables` is a sender claim bound by `receipt_digest` (and therefore
+by a sender signature when one is present); the receiver gates its shape
+and does not recompute it, because the envelope does not carry the schema
+the claim was derived from. Because the claim is untrusted text, the
+receiver refuses an audit entry that echoes text it already knows is
+material (a producer redacts; a sender-side secret the receiver never saw
+cannot be detected). Tools that log an envelope must treat every receipt
+string as untrusted data, never as verified provenance.
 
 ### 1.2 Sender identity (v2)
 
@@ -56,7 +66,8 @@ non-`sha256:` result) is E042.
   length-prefixed fields. `key` and `signature` are given together, and
   `receipt_digest` is the canonical digest of the full receipt
   (`envelope::receipt_digest`), so outcome, failure class, mode, profile,
-  schema version, and budget cannot change after signing.
+  schema version, budget, and the closed-table audit cannot change after
+  signing.
 
 The signature is verified by the receiver policy step
 (`envelope::verify_sender(public_hex, id, key, version, result,

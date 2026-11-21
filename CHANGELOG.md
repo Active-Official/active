@@ -739,6 +739,25 @@ reference for any behavior. `release.yml` now runs a provenance gate
 the tag, or whose workspace version differs from the tag, so this cannot
 recur.
 
+### L-P11: closing a table is an auditable promise
+
+`active compatibility` now reports every `closed` flag change as C046 at
+error severity, in both directions: closing rejects keys that were
+addable, and opening withdraws the "no extra keys" promise readers may
+rely on (a widening that adds or withdraws a promise is no longer treated
+as a compatible branch relaxation). The schema root and disjunction
+branches are covered; a close/open inside a `OneOf` is one C046, not a
+removed branch. A clean L-T06 receipt gains `closed_tables`: every closed
+schema table instance with its dotted document path and the key names
+present at it (sorted, names only — never values or material, and the
+walk runs over the redacted document). The member binds through
+`receipt_digest`. Closing never changes the evaluated value. Surfaces
+agree: the formatter renders and round-trips the flag, the validator owns
+T005, codegen emits `additionalProperties: false`, and lint stays silent
+(T005 is total; a lint duplicate would double-report). Spec validation
+§10, schema-evolution §2, tool-result-envelope §1.1, diagnostics/explain,
+conformance vector 0058.
+
 ### L-P10: schema disjunctions and the `requires` biconditional
 
 Schema fields gain `OneOf(A, B, ...)`: a disjunction whose branches are

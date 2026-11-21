@@ -84,6 +84,7 @@ pub fn explain_code(code: &str) -> &'static str {
         "C043" => "Compatibility: the schema version regressed — the new version is older than the old one. Versions only move forward.",
         "C044" => "Compatibility: min_reader or min_writer was raised above the old version — old readers or writers are dropped. Lower the floor or accept the break explicitly.",
         "C045" => "Compatibility: a root-schema check rule was added, removed, or changed - documents that passed may now fail (or the reverse). Review the rule and version the schema deliberately.",
+        "C046" => "Compatibility: a table's closed flag changed (closed or opened). Closing rejects keys that were addable; opening withdraws the no-extra-keys promise readers may rely on. Version the schema and tell consumers, or restore the flag.",
         "E040" => "Breaking schema changes detected: the compatibility report lists error-severity findings that must be resolved or explicitly accepted.",
         "E041" => "Include content pin mismatch: the include's bytes are not the ones the document or lockfile pinned. Review the bytes, then update the refusing pin: an inline `sha256:` in the importing document, or re-run `active lock` for a lockfile pin. Never edit an include merely to make its pin match.",
         "E042" => "Envelope v2 receipt missing or malformed: a v2 result must ship an audit receipt (outcome, failure class, diagnostics, result) even when the attempt failed. Add a `receipt` table with `outcome = \"clean\"` or `\"failed\"` and a `sha256:` result.",

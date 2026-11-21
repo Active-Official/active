@@ -14,7 +14,14 @@ fn root() -> PathBuf {
 }
 
 fn hermetic_engine() -> Engine {
-    Engine::new().with_env(HashMap::new())
+    // This suite is a correctness gate, not the performance gate: a
+    // loaded macOS runner tripped the shipped 100 ms wall budget on its
+    // first evaluation (a false E029, seen as "0001-service-happy: No
+    // such file or directory" because the fatal path looked for a codes
+    // file). The budget itself is exercised by the budget suites.
+    let mut engine = Engine::new().with_env(HashMap::new());
+    engine.budget.max_wall_ms = 60_000;
+    engine
 }
 
 fn codes_of(diags: &[active_core::Diagnostic]) -> Vec<String> {
@@ -161,6 +168,15 @@ fn conformance_manifest_is_green() {
                 assert_eq!(case.kind, "refused", "{}: kind", case.id);
             }
             Err(e) => {
+                // A clean case that fails fatally is a test failure with
+                // its own name, not a missing-codes-file mystery.
+                assert_ne!(
+                    case.kind,
+                    "clean",
+                    "{}: a clean case failed fatally ({})",
+                    case.id,
+                    e.code()
+                );
                 assert_eq!(
                     vec![e.code().to_string()],
                     expected_codes(&case.id),

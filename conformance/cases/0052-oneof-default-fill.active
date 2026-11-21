@@ -1,0 +1,1 @@
+schema = { port = OneOf(Int(min = 1), String, default = 8080) }

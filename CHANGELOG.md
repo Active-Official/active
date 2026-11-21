@@ -738,3 +738,20 @@ reference for any behavior. `release.yml` now runs a provenance gate
 (LANG-J-001) that fails a release whose tree is dirty, whose commit is not
 the tag, or whose workspace version differs from the tag, so this cannot
 recur.
+
+### L-P10: schema disjunctions and the `requires` biconditional
+
+Schema fields gain `OneOf(A, B, ...)`: a disjunction whose branches are
+full schema types. A value is accepted when any branch accepts it (each
+branch's constraints apply, and branch trials are transactional); a value
+failing every branch is one T002 naming the branch list and up to four
+branch reasons. Coercion needs exactly one coercible branch; two are
+ambiguous. A default is the weakest disjunct, fills only when no source
+provides the key, and must satisfy a branch — checked on every evaluation
+in both modes. `requires` is now a biconditional: a present field with a
+disabled trigger is the new T010, while B-001's absent-field excuse is
+unchanged. JSON Schema and OpenAPI render `oneOf` with per-branch
+constraints and the default; TypeScript, Zod, and Python render unions;
+Go and Rust refuse instead of widening the field. `explain` gains T006 (a
+pre-existing gap) and T010. Spec validation §3/§5/§9, grammar §2.10,
+schema-evolution, converters; conformance vectors 0049–0053.

@@ -1,0 +1,3 @@
+schema = { on = Bool, replicas = Int(requires = "on") }
+on = false
+replicas = 2

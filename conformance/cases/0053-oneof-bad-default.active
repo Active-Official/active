@@ -1,0 +1,2 @@
+schema = { port = OneOf(Int(min = 10), String, default = 5) }
+port = 10

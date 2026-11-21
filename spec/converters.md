@@ -219,6 +219,17 @@ Type mapping (SS = ACTIVE schema type):
 | Secret | `string` (+redaction note) | `string` | `string` | `String` |
 | Any | `true` | `unknown` | `interface{}` | `serde_json::Value` |
 | Array\<T\> | `array` + items | `T[]` | `[]T` | `Vec<T>` |
+| OneOf(A, B) | `oneOf: [...]` (no `type`; each branch is a full schema) | `A \| B` | refused | refused |
+
+- **Disjunctions (L-P10).** JSON Schema and OpenAPI render each branch
+  with its full schema (bounds, patterns, nested tables), plus the
+  entry's static default. TypeScript renders a union; Python renders
+  `Union[...]` (with `Union` added to the typing import); Zod renders
+  `z.union([...])`. Go and Rust **refuse** (`Err`, not a lossy
+  `interface{}`/`serde_json::Value`): neither renderer emits an
+  untagged union, and a generated contract that silently widened the
+  field would be a lie. Regenerate JSON Schema or TypeScript for a
+  schema that contains a disjunction.
 
 - `required`: fields without a static-literal default, except
   Null-typed fields (absent Null keys validate clean — C-032).

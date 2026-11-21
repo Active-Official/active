@@ -270,6 +270,10 @@ pub struct SchemaField {
     pub blob_media_type: Option<NodeId>,
     pub blob_max_size: Option<NodeId>,
     pub deprecated: Option<String>,
+    /// Disjunction branches (L-P10), in source order: schema nodes
+    /// (`SchemaField`, `SchemaTable`, or `SchemaArray`). Empty for an
+    /// ordinary field; non-empty iff `typ == ActiveType::OneOf`.
+    pub one_of: Vec<NodeId>,
     pub span: Option<crate::diag::Span>,
 }
 
@@ -292,8 +296,204 @@ impl SchemaField {
             blob_media_type: None,
             blob_max_size: None,
             deprecated: None,
+            one_of: Vec::new(),
             span,
         }
+    }
+
+    /// Human-readable type for diagnostics and generated docs: the full
+    /// disjunction when one is present, else the leaf name with its
+    /// literal constraints (`Int(min = 1)`), so a branch list explains
+    /// itself. The canonical source form stays the formatter's job.
+    pub fn type_label(&self, module: &Module) -> String {
+        if !self.one_of.is_empty() {
+            let branches: Vec<String> = self
+                .one_of
+                .iter()
+                .map(|id| schema_node_label(module, *id))
+                .collect();
+            return format!("OneOf({})", branches.join(", "));
+        }
+        let mut label = self.typ.name();
+        let mut args: Vec<String> = Vec::new();
+        for (name, slot) in [
+            ("min", self.min),
+            ("max", self.max),
+            ("min_len", self.min_len),
+            ("max_len", self.max_len),
+            ("pattern", self.pattern),
+            ("format", self.format),
+        ] {
+            if let Some(text) = slot.and_then(|id| literal_label(module, id)) {
+                args.push(format!("{name} = {text}"));
+            }
+        }
+        if !args.is_empty() {
+            label.push('(');
+            label.push_str(&args.join(", "));
+            label.push(')');
+        }
+        label
+    }
+
+    /// A structural key for a leaf schema branch (L-P10 dedup): the type
+    /// label plus every constraint argument. A computed argument is keyed
+    /// by its *expression signature* (so two documents with the same
+    /// expression compare equal), falling back to the node id when the
+    /// expression is opaque.
+    pub fn branch_key(&self, module: &Module) -> String {
+        let mut key = self.type_label(module);
+        for (name, slot) in [
+            ("min", self.min),
+            ("max", self.max),
+            ("min_len", self.min_len),
+            ("max_len", self.max_len),
+            ("pattern", self.pattern),
+            ("format", self.format),
+            ("descriptions", self.enum_descriptions),
+            ("media_type", self.blob_media_type),
+            ("max_size", self.blob_max_size),
+            ("requires", self.requires),
+            ("default", self.default),
+            ("description", self.description),
+        ] {
+            let Some(id) = slot else { continue };
+            match literal_label(module, id) {
+                Some(text) => {
+                    key.push('|');
+                    key.push_str(name);
+                    key.push('=');
+                    key.push_str(&text);
+                }
+                None => {
+                    key.push('|');
+                    key.push_str(name);
+                    match expr_signature(module, id) {
+                        Some(text) => {
+                            key.push_str("=@");
+                            key.push_str(&text);
+                        }
+                        None => {
+                            key.push_str("=?#");
+                            key.push_str(&format!("{id:?}"));
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(removed) = &self.removed_in {
+            key.push_str(&format!("|removed_in={removed}"));
+        }
+        if let Some(deprecated) = &self.deprecated {
+            key.push_str(&format!("|deprecated={deprecated}"));
+        }
+        key
+    }
+
+    /// Whether any constraint argument is computed in a way the key
+    /// cannot render (a material literal or an opaque expression).
+    pub fn branch_opaque(&self, module: &Module) -> bool {
+        [
+            self.min,
+            self.max,
+            self.min_len,
+            self.max_len,
+            self.pattern,
+            self.format,
+            self.enum_descriptions,
+            self.blob_media_type,
+            self.blob_max_size,
+            self.requires,
+            self.default,
+            self.description,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|id| literal_label(module, id).is_none() && expr_signature(module, id).is_none())
+    }
+}
+
+/// A stable structural signature for an expression node: literals,
+/// env/ident reads, refs, and binary/unary arithmetic. Material literals
+/// and opaque nodes return `None` (their content must not be rendered,
+/// and two of them cannot be compared).
+pub fn expr_signature(module: &Module, id: NodeId) -> Option<String> {
+    match module.get(id) {
+        Some(Node::Literal(_)) => literal_label(module, id),
+        Some(Node::Env { name, default }) => match default {
+            Some(default) => Some(format!(
+                "env.{name} ?? {}",
+                expr_signature(module, *default)?
+            )),
+            None => Some(format!("env.{name}")),
+        },
+        Some(Node::Ident(name)) => Some(name.clone()),
+        Some(Node::Ref(to)) => expr_signature(module, *to),
+        Some(Node::Binary { op, lhs, rhs }) => Some(format!(
+            "({} {:?} {})",
+            expr_signature(module, *lhs)?,
+            op,
+            expr_signature(module, *rhs)?
+        )),
+        Some(Node::Unary { op, expr }) => {
+            Some(format!("{:?}({})", op, expr_signature(module, *expr)?))
+        }
+        _ => None,
+    }
+}
+
+/// A literal node rendered for a type label: numbers, booleans, and
+/// quotes strings; anything computed is omitted (a label is not an
+/// evaluation).
+fn literal_label(module: &Module, id: NodeId) -> Option<String> {
+    match module.get(id) {
+        Some(Node::Literal(Value::Int(n))) => Some(n.to_string()),
+        Some(Node::Literal(Value::Float(f))) => Some(f.to_string()),
+        Some(Node::Literal(Value::String(text))) => Some(format!("{text:?}")),
+        Some(Node::Literal(Value::Bool(flag))) => Some(flag.to_string()),
+        _ => None,
+    }
+}
+
+/// The label of one schema node inside a disjunction: a leaf type, a
+/// nested table, or an array of an element label.
+pub fn schema_node_label(module: &Module, id: NodeId) -> String {
+    match module.get(id) {
+        Some(Node::SchemaField { field }) => field.type_label(module),
+        Some(Node::SchemaTable { closed, .. }) => {
+            if *closed {
+                "Table(closed)".to_string()
+            } else {
+                "Table".to_string()
+            }
+        }
+        Some(Node::SchemaArray { element }) => {
+            format!("Array<{}>", schema_node_label(module, *element))
+        }
+        _ => "schema".to_string(),
+    }
+}
+
+/// A structural key for a schema node: leaf branches include every
+/// constraint (computed slots by node id), tables include their fields,
+/// arrays include their element. Two nodes with equal keys accept the
+/// same values, so a disjunction can deduplicate them without collapsing
+/// structurally different branches.
+pub fn schema_node_key(module: &Module, id: NodeId) -> String {
+    match module.get(id) {
+        Some(Node::SchemaField { field }) => field.branch_key(module),
+        Some(Node::SchemaTable { fields, closed, .. }) => {
+            let mut parts: Vec<String> = fields
+                .iter()
+                .map(|(name, child)| format!("{name}:{}", schema_node_key(module, *child)))
+                .collect();
+            parts.sort();
+            format!("Table({closed}){{{}}}", parts.join(","))
+        }
+        Some(Node::SchemaArray { element }) => {
+            format!("Array<{}>", schema_node_key(module, *element))
+        }
+        _ => "schema".to_string(),
     }
 }
 

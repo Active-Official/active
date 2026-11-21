@@ -381,10 +381,13 @@ fn a_defaulted_addition_qualifies_the_strict_mode_caveat() {
 #[test]
 fn simultaneous_required_and_blob_tightening_report_both() {
     // LANG-B-029: the old else-if chain reported only the first change, so
-    // a field that both lost its default and tightened its blob bound
-    // reported the requiredness change alone.
-    let old = "schema = { f = Blob(max_size = 100, default = blob(\"text/plain\", \"x\")) }\nf = blob(\"text/plain\", \"hi\")\n";
-    let new = "schema = { f = Blob(max_size = 2) }\nf = blob(\"text/plain\", \"hi\")\n";
+    // a field that both lost its default and tightened its bound reported
+    // the requiredness change alone. A *static* default is used here: a
+    // call-form default (e.g. `blob(...)`) is dynamic and counts as
+    // required on every surface (L-P10 unification), so it would not
+    // report a requiredness change at all.
+    let old = "schema = { f = String(max_len = 100, default = \"x\") }\nf = \"hi\"\n";
+    let new = "schema = { f = String(max_len = 2) }\nf = \"hi\"\n";
     let findings = compare_docs(old, new);
     let messages: Vec<&str> = findings.iter().map(|f| f.message.as_str()).collect();
     assert_eq!(findings.len(), 2, "{messages:?}");
@@ -395,7 +398,7 @@ fn simultaneous_required_and_blob_tightening_report_both() {
         "{messages:?}"
     );
     assert!(
-        findings.iter().any(|f| f.message.contains("max_size")),
+        findings.iter().any(|f| f.message.contains("max_len")),
         "{messages:?}"
     );
 }
@@ -454,5 +457,154 @@ fn integer_bounds_above_two_to_the_53_compare_exactly() {
     assert!(
         !widened.iter().any(|f| f.path == "n" && f.is_breaking()),
         "lowering it again is widening: {widened:?}"
+    );
+}
+
+#[test]
+fn disjunction_branch_removal_is_breaking_c042() {
+    // Removing a branch narrows the accepted set: an old document using
+    // it fails the new schema. Adding a branch only widens.
+    let findings = compare_docs(
+        "schema = { v = OneOf(Int, String, Bool) }\nv = true\n",
+        "schema = { v = OneOf(Int, String) }\nv = true\n",
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.code == code::TYPE_CHANGED && f.severity == "error"),
+        "removing a branch is C042: {findings:?}"
+    );
+    let findings = compare_docs(
+        "schema = { v = OneOf(Int, String) }\nv = 1\n",
+        "schema = { v = OneOf(Int, String, Bool) }\nv = 1\n",
+    );
+    assert!(
+        findings.iter().all(|f| f.code != code::TYPE_CHANGED),
+        "adding a branch widens: {findings:?}"
+    );
+}
+
+#[test]
+fn disjunction_default_change_is_breaking_c042() {
+    let findings = compare_docs(
+        "schema = { v = OneOf(Int, String, default = 1) }\nv = 1\n",
+        "schema = { v = OneOf(Int, String, default = 2) }\nv = 1\n",
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.code == code::TYPE_CHANGED && f.severity == "error"),
+        "changing a disjunction default is C042: {findings:?}"
+    );
+}
+
+#[test]
+fn disjunction_branch_order_is_not_a_change() {
+    let findings = compare_docs(
+        "schema = { v = OneOf(Int, String) }\nv = 1\n",
+        "schema = { v = OneOf(String, Int) }\nv = 1\n",
+    );
+    assert!(
+        findings.is_empty(),
+        "branch order is not a change: {findings:?}"
+    );
+}
+
+#[test]
+fn disjunction_table_branch_removal_is_breaking_c042() {
+    // Round-2 high: structural branches must be compared by content, not
+    // by the "Table" label.
+    let findings = compare_docs(
+        "schema = { v = OneOf(Table { a = Int }, Table { b = Int }) }\nv = { b = 1 }\n",
+        "schema = { v = OneOf(Table { a = Int }, String) }\nv = { b = 1 }\n",
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.code == code::TYPE_CHANGED && f.severity == "error"),
+        "removing a table branch is C042: {findings:?}"
+    );
+}
+
+#[test]
+fn disjunction_branch_relaxation_is_not_breaking() {
+    // Round-2 medium: a branch whose constraints only loosen remains
+    // compatible (the removed narrow signature is widened by the new one).
+    let findings = compare_docs(
+        "schema = { v = OneOf(Int(min = 0), String) }\nv = 1\n",
+        "schema = { v = OneOf(Int, String) }\nv = 1\n",
+    );
+    assert!(
+        findings.iter().all(|f| f.code != code::TYPE_CHANGED),
+        "loosening a branch widens: {findings:?}"
+    );
+    // The reverse direction is a real narrowing.
+    let findings = compare_docs(
+        "schema = { v = OneOf(Int, String) }\nv = 1\n",
+        "schema = { v = OneOf(Int(min = 0), String) }\nv = 1\n",
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.code == code::TYPE_CHANGED && f.severity == "error"),
+        "adding a bound to a branch is C042: {findings:?}"
+    );
+}
+
+#[test]
+fn computed_or_duration_branch_tightening_is_c042() {
+    // Round-3 medium: a computed bound cannot be proven to widen, and a
+    // Duration bound is a real numeric bound.
+    let findings = compare_docs(
+        "schema = { v = OneOf(Int(min = env.A), String) }\nv = 1\n",
+        "schema = { v = OneOf(Int(min = env.B), String) }\nv = 1\n",
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.code == code::TYPE_CHANGED && f.severity == "error"),
+        "computed branch change is C042: {findings:?}"
+    );
+    let findings = compare_docs(
+        "schema = { v = OneOf(Duration(min = 1s), String) }\nv = 1s\n",
+        "schema = { v = OneOf(Duration(min = 2s), String) }\nv = 1s\n",
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.code == code::TYPE_CHANGED && f.severity == "error"),
+        "Duration branch tightening is C042: {findings:?}"
+    );
+}
+
+#[test]
+fn a_table_branch_relaxation_is_not_breaking() {
+    // Round-3 medium: structural widening recurses into fields and the
+    // closed flag instead of demanding an exact match.
+    let findings = compare_docs(
+        "schema = { v = OneOf(Table { a = Int(min = 0) }, String) }\nv = { a = 1 }\n",
+        "schema = { v = OneOf(Table { a = Int }, String) }\nv = { a = 1 }\n",
+    );
+    assert!(
+        findings.iter().all(|f| f.code != code::TYPE_CHANGED),
+        "an interior relaxation widens: {findings:?}"
+    );
+    let findings = compare_docs(
+        "schema = { v = OneOf(Table { closed = true, a = Int }, String) }\nv = { a = 1 }\n",
+        "schema = { v = OneOf(Table { a = Int }, String) }\nv = { a = 1 }\n",
+    );
+    assert!(
+        findings.iter().all(|f| f.code != code::TYPE_CHANGED),
+        "closed to open widens: {findings:?}"
+    );
+    let findings = compare_docs(
+        "schema = { v = OneOf(Table { a = Int }, String) }\nv = { a = 1 }\n",
+        "schema = { v = OneOf(Table { closed = true, a = Int }, String) }\nv = { a = 1 }\n",
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.code == code::TYPE_CHANGED && f.severity == "error"),
+        "open to closed narrows: {findings:?}"
     );
 }

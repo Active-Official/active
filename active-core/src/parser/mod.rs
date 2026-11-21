@@ -109,6 +109,12 @@ const MAX_TABLE_PATH_SEGMENTS: usize = 256;
 /// input; exceeding it is E004 (see C-037).
 const MAX_SCHEMA_DEPTH: usize = 64;
 
+/// Maximum branches in one schema disjunction (L-P10). A disjunction is
+/// a human/agent contract, not a generated lookup table; the bound keeps
+/// per-value validation (which trials every branch) and the parsed node
+/// count finite. Exceeding it is E020.
+const MAX_ONE_OF_BRANCHES: usize = 32;
+
 /// Maximum diagnostics retained per parse. Bounds output (not input):
 /// a kilobytes-long adversarial file can otherwise emit thousands of
 /// identical errors (megabytes of stderr, an LSP publish storm per
@@ -7209,6 +7215,7 @@ impl Parser {
                 blob_max_size: None,
                 removed_in: None,
                 deprecated: None,
+                one_of: Vec::new(),
                 span: Some(span_of(&tok)),
             };
             let proxy = ActiveType::Enum(Vec::new());
@@ -7316,6 +7323,239 @@ impl Parser {
                 },
                 &open,
             );
+        }
+        // OneOf(...): a schema disjunction (L-P10). Branches are full
+        // schema types, so nested tables and per-branch constraints
+        // survive; the entry field owns the named arguments.
+        if type_name == "OneOf" && matches!(self.peek_kind_at(1), TokenKind::LParen) {
+            self.bump(); // OneOf
+            let open = self
+                .expect(TokenKind::LParen)
+                .unwrap_or_else(|| tok.clone());
+            if self.enter_schema_depth(&tok) {
+                return self.fallback_schema_field(&tok);
+            }
+            let mut field = SchemaField::bare(ActiveType::OneOf, Some(span_of(&tok)));
+            let mut branches: Vec<NodeId> = Vec::new();
+            loop {
+                self.skip_newlines();
+                // A disjunction with thousands of branches is not a
+                // schema a human or an agent can act on; bound the work
+                // and the node count, refuse the schema, and skip the
+                // rest of the list so recovery stays clean.
+                if branches.len() >= MAX_ONE_OF_BRANCHES {
+                    self.error_at(
+                        "E020",
+                        format!("OneOf supports at most {MAX_ONE_OF_BRANCHES} branches"),
+                        &open,
+                    );
+                    let mut depth = 1usize;
+                    while depth > 0 {
+                        match self.peek_kind() {
+                            TokenKind::LParen => {
+                                self.bump();
+                                depth += 1;
+                            }
+                            TokenKind::RParen => {
+                                self.bump();
+                                depth -= 1;
+                            }
+                            TokenKind::Eof => break,
+                            _ => {
+                                self.bump();
+                            }
+                        }
+                    }
+                    self.exit_schema_depth();
+                    return self.fallback_schema_field(&tok);
+                }
+                match self.peek_kind() {
+                    TokenKind::RParen | TokenKind::Eof => break,
+                    TokenKind::Comma => {
+                        self.bump();
+                        continue;
+                    }
+                    TokenKind::Ident if matches!(self.peek_kind_at(1), TokenKind::Assign) => {
+                        let arg_tok = self.bump();
+                        let arg = arg_tok.text.clone();
+                        if self.expect(TokenKind::Assign).is_none() {
+                            continue;
+                        }
+                        if arg == "deprecated" {
+                            let value = self.parse_expression();
+                            if field.deprecated.is_none() {
+                                match self.module.get(value) {
+                                    Some(Node::Literal(Value::Bool(true))) => {
+                                        field.deprecated = Some(String::new());
+                                    }
+                                    Some(Node::Literal(Value::String(msg))) => {
+                                        field.deprecated = Some(msg.clone());
+                                    }
+                                    _ => {
+                                        self.error_at(
+                                            "E020",
+                                            "deprecated takes `true` or a string message",
+                                            &arg_tok,
+                                        );
+                                    }
+                                }
+                            }
+                        } else if arg == "removed_in" {
+                            let value = self.parse_expression();
+                            if field.removed_in.is_none() {
+                                match self.module.get(value) {
+                                    Some(Node::Literal(Value::String(v)))
+                                        if Self::is_schema_version(v) =>
+                                    {
+                                        field.removed_in = Some(v.clone());
+                                    }
+                                    _ => {
+                                        self.error_at(
+                                            "E020",
+                                            "removed_in takes a version string (major.minor.patch)",
+                                            &arg_tok,
+                                        );
+                                    }
+                                }
+                            }
+                        } else if matches!(
+                            arg.as_str(),
+                            "min"
+                                | "max"
+                                | "min_len"
+                                | "max_len"
+                                | "pattern"
+                                | "format"
+                                | "descriptions"
+                                | "media_type"
+                                | "max_size"
+                        ) {
+                            // Leaf-only constraints have no branch to
+                            // attach to; they belong on a branch.
+                            let value = self.parse_expression();
+                            let _ = value;
+                            self.error_at(
+                                "E020",
+                                format!(
+                                    "argument `{arg}` belongs on a branch of OneOf, not on the disjunction"
+                                ),
+                                &arg_tok,
+                            );
+                        } else {
+                            let value = self.parse_expression();
+                            if !Self::store_schema_arg(&mut field, &ActiveType::OneOf, &arg, value)
+                            {
+                                self.error_at(
+                                    "E020",
+                                    format!("unknown argument `{arg}` for OneOf"),
+                                    &arg_tok,
+                                );
+                            }
+                        }
+                        continue;
+                    }
+                    _ => {
+                        let branch_tok = self.peek().clone();
+                        let branch = self.parse_schema_type(&branch_tok);
+                        // A branch's own default/requires has no entry
+                        // to apply to (fills and conditionals are decided
+                        // by the field the disjunction belongs to), so
+                        // accepting it would silently ignore it.
+                        let branch_flags = match self.module.get(branch) {
+                            Some(Node::SchemaField { field }) => {
+                                (field.default.is_some(), field.requires.is_some())
+                            }
+                            _ => (false, false),
+                        };
+                        if branch_flags.0 {
+                            self.error_at(
+                                "E020",
+                                "a OneOf branch cannot declare its own default; put the default on the entry",
+                                &branch_tok,
+                            );
+                        }
+                        if branch_flags.1 {
+                            self.error_at(
+                                "E020",
+                                "a OneOf branch cannot declare its own requires; put it on the entry",
+                                &branch_tok,
+                            );
+                        }
+                        branches.push(branch);
+                    }
+                }
+                self.skip_newlines();
+                if matches!(self.peek_kind(), TokenKind::Comma) {
+                    self.bump();
+                }
+            }
+            self.expect(TokenKind::RParen);
+            self.exit_schema_depth();
+            if self.check_parse_budget() {
+                return self.fallback_schema_field(&tok);
+            }
+            if branches.len() < 2 {
+                self.error_at("E020", "OneOf needs at least two branches", &open);
+                // Never install a degenerate disjunction: a single branch
+                // would silently behave like that type, and zero branches
+                // would validate as an always-failing union. The E020 has
+                // already refused the schema; recovery uses the neutral
+                // fallback field.
+                return self.fallback_schema_field(&tok);
+            }
+            // A nested OneOf is flattened into this branch list; a nested
+            // one that carries its own default is E020 (the default
+            // belongs to the entry).
+            let mut flattened: Vec<NodeId> = Vec::new();
+            for branch in branches {
+                let nested = match self.module.get(branch) {
+                    Some(Node::SchemaField { field }) if !field.one_of.is_empty() => {
+                        Some((field.default.is_some(), field.one_of.clone()))
+                    }
+                    _ => None,
+                };
+                match nested {
+                    Some((has_default, inner)) => {
+                        if has_default {
+                            self.error_at(
+                                "E020",
+                                "a nested OneOf cannot carry its own default; put the default on the outer OneOf",
+                                &tok,
+                            );
+                        }
+                        flattened.extend(inner);
+                    }
+                    None => flattened.push(branch),
+                }
+            }
+            // Flattening can exceed the pre-flatten bound
+            // (`OneOf(OneOf(32), OneOf(32))`); the installed branch list
+            // is what validation trials, so bound it again.
+            if flattened.len() > MAX_ONE_OF_BRANCHES {
+                self.error_at(
+                    "E020",
+                    format!("OneOf supports at most {MAX_ONE_OF_BRANCHES} branches"),
+                    &open,
+                );
+                return self.fallback_schema_field(&tok);
+            }
+            // Identical branches are one branch: duplicating a schema
+            // must not turn a coercible value into "ambiguous" at
+            // validation. The structural key includes table fields and
+            // constraint arguments, so only genuinely identical branches
+            // collapse.
+            let mut deduped: Vec<NodeId> = Vec::new();
+            let mut seen: Vec<String> = Vec::new();
+            for branch in flattened {
+                let key = crate::ir::schema_node_key(&self.module, branch);
+                if seen.iter().any(|seen| seen == &key) {
+                    continue;
+                }
+                seen.push(key);
+                deduped.push(branch);
+            }
+            field.one_of = deduped;
+            return self.add_spanned(Node::SchemaField { field }, &tok);
         }
         // Bare or call-form type.
         let Some(typ) = ActiveType::bare(&type_name) else {

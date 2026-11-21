@@ -422,6 +422,12 @@ pub enum ActiveType {
     /// `Blob` or `Blob(media_type = "...", max_size = N)`.
     Blob,
     Any,
+    /// A schema disjunction (L-P10): the entry's branches live on
+    /// `SchemaField.one_of` as schema nodes, so per-branch constraints
+    /// and nested tables survive; this variant only marks the entry and
+    /// names it. The full branch list renders through
+    /// `SchemaField::type_label`.
+    OneOf,
 }
 
 impl ActiveType {
@@ -468,6 +474,7 @@ impl ActiveType {
             ActiveType::Secret => "Secret".into(),
             ActiveType::Blob => "Blob".into(),
             ActiveType::Any => "Any".into(),
+            ActiveType::OneOf => "OneOf".into(),
         }
     }
 }

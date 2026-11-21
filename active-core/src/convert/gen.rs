@@ -289,6 +289,17 @@ fn redact_prose(profile: &crate::secret::SecretProfile, text: String) -> String 
     profile.redact_authored_text(&text).unwrap_or(text)
 }
 
+/// Whether any schema field is a disjunction (L-P10): used by targets
+/// that cannot represent one honestly and must refuse.
+fn module_has_disjunction(module: &Module) -> bool {
+    module.arena.iter().any(|node| {
+        matches!(
+            node,
+            Node::SchemaField { field } if !field.one_of.is_empty()
+        )
+    })
+}
+
 fn json_schema_node(
     module: &Module,
     profile: &crate::secret::SecretProfile,
@@ -576,6 +587,23 @@ fn json_schema_field(
                 obj.insert("x-active-max-size".to_string(), JsonValue::from(max));
             }
         }
+        ActiveType::OneOf => {
+            // A disjunction (L-P10): no `type` at this level; each
+            // branch renders as a full schema node, so per-branch bounds,
+            // patterns, and nested tables survive into the contract.
+            // The parser refuses a degenerate disjunction, so the empty
+            // case is defensive only (an always-true schema, never an
+            // empty `oneOf` that rejects everything).
+            if field.one_of.is_empty() {
+                return JsonValue::Bool(true);
+            }
+            let branches: Vec<JsonValue> = field
+                .one_of
+                .iter()
+                .map(|branch| json_schema_node(module, profile, *branch))
+                .collect();
+            obj.insert("oneOf".to_string(), JsonValue::Array(branches));
+        }
         ActiveType::Any => return JsonValue::Bool(true),
     }
     if let Some(default) = literal_default(module, field) {
@@ -779,6 +807,17 @@ impl TsGen<'_> {
         match &field.typ {
             ActiveType::Null => "null".to_string(),
             ActiveType::Bool => "boolean".to_string(),
+            ActiveType::OneOf => {
+                if field.one_of.is_empty() {
+                    return "unknown".to_string();
+                }
+                let branches: Vec<String> = field
+                    .one_of
+                    .iter()
+                    .map(|branch| self.ts_node(*branch))
+                    .collect();
+                branches.join(" | ")
+            }
             ActiveType::Int | ActiveType::Float | ActiveType::Duration | ActiveType::Bytes => {
                 "number".to_string()
             }
@@ -801,6 +840,18 @@ impl TsGen<'_> {
                 }
             }
             ActiveType::Any => "unknown".to_string(),
+        }
+    }
+
+    /// One schema node as a TypeScript type, for disjunction branches.
+    fn ts_node(&self, id: NodeId) -> String {
+        match self.module.get(id) {
+            Some(Node::SchemaField { field }) => self.ts_field(field),
+            Some(Node::SchemaArray { element }) => {
+                format!("Array<{}>", self.ts_node(*element))
+            }
+            Some(Node::SchemaTable { .. }) => "Record<string, unknown>".to_string(),
+            _ => "unknown".to_string(),
         }
     }
 
@@ -893,6 +944,18 @@ impl TsGen<'_> {
     /// Leaf zod expression with static checks. `required` is false for
     /// defaulted/Null fields (`.optional()`/`.default()`); array
     /// elements always pass true (element position has no optionality).
+    /// One schema node as a zod expression, for disjunction branches.
+    fn zod_node(&self, id: NodeId) -> String {
+        match self.module.get(id) {
+            Some(Node::SchemaField { field }) => self.zod_leaf(field, true),
+            Some(Node::SchemaArray { element }) => {
+                format!("z.array({})", self.zod_node(*element))
+            }
+            Some(Node::SchemaTable { .. }) => "z.record(z.string(), z.unknown())".to_string(),
+            _ => "z.unknown()".to_string(),
+        }
+    }
+
     fn zod_leaf(&self, field: &SchemaField, required: bool) -> String {
         let mut out = match &field.typ {
             ActiveType::Null => "z.null()".to_string(),
@@ -903,6 +966,17 @@ impl TsGen<'_> {
             ActiveType::Secret => "z.string()".to_string(),
             ActiveType::Blob => "z.object({ \"$active.blob\": z.object({ hash: z.string(), size: z.number(), media_type: z.string(), tainted: z.boolean(), payload_b64: z.string().optional() }) })".to_string(),
             ActiveType::Table { .. } => "z.record(z.string(), z.unknown())".to_string(),
+            ActiveType::OneOf => {
+                if field.one_of.is_empty() {
+                    return "z.unknown()".to_string();
+                }
+                let branches: Vec<String> = field
+                    .one_of
+                    .iter()
+                    .map(|branch| self.zod_node(*branch))
+                    .collect();
+                format!("z.union([{}])", branches.join(", "))
+            }
             ActiveType::Any => "z.unknown()".to_string(),
             ActiveType::Enum(members) => {
                 // A material member cannot be redacted into a valid
@@ -1041,6 +1115,17 @@ pub fn schema_to_go_with_profile(
             }
         )
     });
+    // Go has no union type: a schema disjunction cannot be represented
+    // without inventing an interface convention the consumer does not
+    // share. Refuse instead of emitting a lossy `interface{}` contract
+    // (L-P10). JSON Schema, OpenAPI, TypeScript, and Zod carry it.
+    if module_has_disjunction(module) {
+        return Err(
+            "the Go target cannot represent a schema disjunction (OneOf); generate JSON Schema \
+             or TypeScript instead"
+                .to_string(),
+        );
+    }
     let mut gen = GoGen {
         module,
         profile,
@@ -1328,6 +1413,9 @@ impl GoGen<'_> {
             ActiveType::String | ActiveType::Secret | ActiveType::Enum(_) => "string".to_string(),
             ActiveType::Blob => "ActiveBlob".to_string(),
             ActiveType::Table { .. } => "map[string]interface{}".to_string(),
+            // Unreachable: `schema_to_go` refuses a disjunction before
+            // generation (Go has no union type).
+            ActiveType::OneOf => "interface{}".to_string(),
         }
     }
 
@@ -1435,6 +1523,17 @@ pub fn schema_to_rust_with_profile(
             }
         )
     });
+    // Rust targets generate named structs, not enums per disjunction;
+    // an untagged union would need a generated enum plus serde
+    // annotations that the current renderer does not model. Refuse
+    // rather than emit a field typed `serde_json::Value` (L-P10).
+    if module_has_disjunction(module) {
+        return Err(
+            "the Rust target cannot represent a schema disjunction (OneOf); generate JSON \
+             Schema or TypeScript instead"
+                .to_string(),
+        );
+    }
     let mut gen = RustGen {
         module,
         profile,
@@ -1611,6 +1710,9 @@ impl RustGen<'_> {
                 }
                 ActiveType::Enum(_) => hint.to_string(),
                 ActiveType::Any => "serde_json::Value".to_string(),
+                // Unreachable: `schema_to_rust` refuses a disjunction
+                // before generation (no generated untagged enum yet).
+                ActiveType::OneOf => "serde_json::Value".to_string(),
             },
             _ => "serde_json::Value".to_string(),
         }
@@ -1684,9 +1786,14 @@ pub fn schema_to_python_with_profile(
         module,
         profile,
         out: format!(
-            "{}{}from typing import Any, Literal, NotRequired, TypedDict\n\n\n",
+            "{}{}from typing import {}\n\n\n",
             version_header("#"),
-            check_notice_line("#", module)
+            check_notice_line("#", module),
+            if module_has_disjunction(module) {
+                "Any, Literal, NotRequired, TypedDict, Union"
+            } else {
+                "Any, Literal, NotRequired, TypedDict"
+            }
         ),
         names: HashMap::new(),
         taken: reserved_blob_names(has_blob),
@@ -1887,6 +1994,18 @@ impl PythonGen<'_> {
         }
     }
 
+    /// One schema node as a Python type, for disjunction branches.
+    fn py_node(&self, id: NodeId) -> String {
+        match self.module.get(id) {
+            Some(Node::SchemaField { field }) => self.py_field(field),
+            Some(Node::SchemaArray { element }) => {
+                format!("list[{}]", self.py_node(*element))
+            }
+            Some(Node::SchemaTable { .. }) => "dict[str, Any]".to_string(),
+            _ => "Any".to_string(),
+        }
+    }
+
     fn py_field(&self, field: &SchemaField) -> String {
         match &field.typ {
             ActiveType::Null => "None".to_string(),
@@ -1911,6 +2030,17 @@ impl PythonGen<'_> {
                 }
             }
             ActiveType::Table { .. } => "dict[str, Any]".to_string(),
+            ActiveType::OneOf => {
+                if field.one_of.is_empty() {
+                    return "Any".to_string();
+                }
+                let branches: Vec<String> = field
+                    .one_of
+                    .iter()
+                    .map(|branch| self.py_node(*branch))
+                    .collect();
+                format!("Union[{}]", branches.join(", "))
+            }
             ActiveType::Any => "Any".to_string(),
         }
     }

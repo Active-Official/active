@@ -80,9 +80,14 @@ fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
     Some((major, minor, patch))
 }
 
-/// A field is required when it is neither Null-typed nor defaulted.
-fn field_required(field: &SchemaField) -> bool {
-    !matches!(field.typ, crate::types::ActiveType::Null) && field.default.is_none()
+/// A field is required when it is neither Null-typed nor has a *static*
+/// default. The static rule is shared with the generators
+/// (`convert::static_default`): a computed default counts as required on
+/// every surface, so the compatibility report and the generated JSON
+/// Schema cannot disagree about `required`.
+fn field_required(module: &Module, field: &SchemaField) -> bool {
+    !matches!(field.typ, crate::types::ActiveType::Null)
+        && crate::convert::static_default(module, field).is_none()
 }
 
 /// One comparable schema entry: a scalar field, a table, or an array.
@@ -164,6 +169,294 @@ struct Constraints {
     members: Option<Vec<String>>,
     closed: Option<bool>,
     has_computed: bool,
+    /// Disjunction branches (L-P10) as structural facts, sorted by key
+    /// so branch order is not a change; `None` for an ordinary field.
+    one_of: Option<Vec<BranchFact>>,
+    /// The declared default's canonical literal text (L-P10): part of the
+    /// contract, so any add/remove/change is reported.
+    default: Option<String>,
+}
+
+/// One disjunction branch, compared direction-aware: a removed branch is
+/// compatible only when some new branch is a strict widening of it.
+#[derive(Clone, PartialEq)]
+struct BranchFact {
+    /// Full structural key (nested table fields and constraints are part
+    /// of it).
+    key: String,
+    /// Base type name, for the widening check.
+    base: String,
+    /// Leaf constraints, when the branch is a leaf field.
+    leaf: Option<LeafBounds>,
+    /// A constraint argument is computed: it cannot be compared, so the
+    /// branch can never be proven to widen (conservative).
+    computed: bool,
+    /// A constraint is opaque (material or an unrenderable expression):
+    /// two such branches are never considered equal.
+    opaque: bool,
+    /// Table shape, when the branch is a nested table.
+    table: Option<TableShape>,
+    /// Element fact, when the branch is an array.
+    element: Option<Box<BranchFact>>,
+}
+
+/// One table branch: its closed flag and fields with requiredness.
+#[derive(Clone, PartialEq)]
+struct TableShape {
+    closed: bool,
+    fields: Vec<(String, bool, BranchFact)>,
+}
+
+/// The comparable leaf constraints of one branch. Computed constraints
+/// are folded into `key` instead (two branches with different computed
+/// constraints never compare equal).
+#[derive(Clone, PartialEq)]
+struct LeafBounds {
+    min: Option<Bound>,
+    max: Option<Bound>,
+    min_len: Option<Bound>,
+    max_len: Option<Bound>,
+    pattern: Option<String>,
+    format: Option<String>,
+    members: Option<Vec<String>>,
+    blob_max: Option<i64>,
+    blob_media: Option<String>,
+}
+
+/// Whether a schema node is required in a table: fields follow the
+/// static-default rule, structural nodes are always required.
+fn branch_required(module: &Module, id: crate::ir::NodeId) -> bool {
+    match module.get(id) {
+        Some(Node::SchemaField { field }) => {
+            !matches!(field.typ, crate::types::ActiveType::Null)
+                && crate::convert::static_default(module, field).is_none()
+        }
+        _ => true,
+    }
+}
+
+/// Read one branch bound; the bool marks a computed (uncomparable) node.
+fn branch_number(module: &Module, slot: Option<crate::ir::NodeId>) -> (Option<Bound>, bool) {
+    match slot.and_then(|n| module.get(n)) {
+        Some(Node::Literal(crate::ir::Value::Int(n))) => (Some(Bound::Int(*n)), false),
+        Some(Node::Literal(crate::ir::Value::Float(f))) => (Some(Bound::Float(*f)), false),
+        Some(Node::Literal(crate::ir::Value::DurationMs(ms))) => {
+            (Some(Bound::Int(*ms as i64)), false)
+        }
+        Some(_) => (None, true),
+        None => (None, false),
+    }
+}
+
+/// Read one branch text constraint; the bool marks a computed node.
+fn branch_text(module: &Module, slot: Option<crate::ir::NodeId>) -> (Option<String>, bool) {
+    match slot.and_then(|n| module.get(n)) {
+        Some(Node::Literal(crate::ir::Value::String(text))) => (Some(text.clone()), false),
+        Some(_) => (None, true),
+        None => (None, false),
+    }
+}
+
+/// Read a branch blob bound; the bool marks a computed node.
+fn branch_blob_max(module: &Module, slot: Option<crate::ir::NodeId>) -> (Option<i64>, bool) {
+    match slot.and_then(|n| module.get(n)) {
+        Some(Node::Literal(crate::ir::Value::Int(n))) => (Some(*n), false),
+        Some(_) => (None, true),
+        None => (None, false),
+    }
+}
+
+fn branch_fact(module: &Module, id: crate::ir::NodeId) -> BranchFact {
+    let key = crate::ir::schema_node_key(module, id);
+    match module.get(id) {
+        Some(Node::SchemaField { field }) if field.one_of.is_empty() => {
+            let (min, c_min) = branch_number(module, field.min);
+            let (max, c_max) = branch_number(module, field.max);
+            let (min_len, c_min_len) = branch_number(module, field.min_len);
+            let (max_len, c_max_len) = branch_number(module, field.max_len);
+            let (pattern, c_pattern) = branch_text(module, field.pattern);
+            let (format, c_format) = branch_text(module, field.format);
+            let (blob_media, c_media) = branch_text(module, field.blob_media_type);
+            let (blob_max, c_blob_max) = branch_blob_max(module, field.blob_max_size);
+            let members = match &field.typ {
+                crate::types::ActiveType::Enum(members) => Some(members.clone()),
+                _ => None,
+            };
+            let leaf = LeafBounds {
+                min,
+                max,
+                min_len,
+                max_len,
+                pattern,
+                format,
+                members,
+                blob_max,
+                blob_media,
+            };
+            BranchFact {
+                key,
+                base: field.typ.name(),
+                leaf: Some(leaf),
+                computed: c_min
+                    || c_max
+                    || c_min_len
+                    || c_max_len
+                    || c_pattern
+                    || c_format
+                    || c_media
+                    || c_blob_max,
+                opaque: field.branch_opaque(module),
+                table: None,
+                element: None,
+            }
+        }
+        Some(Node::SchemaTable { fields, closed, .. }) => {
+            let shape = TableShape {
+                closed: *closed,
+                fields: fields
+                    .iter()
+                    .map(|(name, child)| {
+                        (
+                            name.clone(),
+                            branch_required(module, *child),
+                            branch_fact(module, *child),
+                        )
+                    })
+                    .collect(),
+            };
+            BranchFact {
+                key,
+                base: "Table".to_string(),
+                leaf: None,
+                computed: shape.fields.iter().any(|(_, _, fact)| fact.computed),
+                opaque: shape.fields.iter().any(|(_, _, fact)| fact.opaque),
+                table: Some(shape),
+                element: None,
+            }
+        }
+        Some(Node::SchemaArray { element }) => BranchFact {
+            key,
+            base: "Array".to_string(),
+            leaf: None,
+            computed: false,
+            opaque: branch_fact(module, *element).opaque,
+            table: None,
+            element: Some(Box::new(branch_fact(module, *element))),
+        },
+        Some(Node::SchemaField { field }) => BranchFact {
+            // A nested disjunction is flattened by the parser; this is
+            // defensive only.
+            key: field.branch_key(module),
+            base: "OneOf".to_string(),
+            leaf: None,
+            computed: false,
+            opaque: field.branch_opaque(module),
+            table: None,
+            element: None,
+        },
+        _ => BranchFact {
+            key: "schema".to_string(),
+            base: "schema".to_string(),
+            leaf: None,
+            computed: false,
+            opaque: true,
+            table: None,
+            element: None,
+        },
+    }
+}
+
+/// Does `new` accept every value `old` accepts? Used to treat a removed
+/// branch as compatible only when it was genuinely relaxed.
+fn widens(old: &BranchFact, new: &BranchFact) -> bool {
+    if old.base != new.base {
+        return false;
+    }
+    // A computed constraint cannot be compared: never claim a widening.
+    // An opaque constraint cannot even be identified across documents.
+    if old.computed || new.computed || old.opaque || new.opaque {
+        return false;
+    }
+    match (&old.table, &new.table) {
+        (Some(o), Some(n)) => {
+            if !o.closed && n.closed {
+                return false;
+            }
+            for (name, o_required, o_fact) in &o.fields {
+                match n.fields.iter().find(|(n_name, ..)| n_name == name) {
+                    Some((_, n_required, n_fact)) => {
+                        if !o_required && *n_required {
+                            return false;
+                        }
+                        if !widens(o_fact, n_fact) {
+                            return false;
+                        }
+                    }
+                    None => {
+                        if n.closed {
+                            return false;
+                        }
+                    }
+                }
+            }
+            for (n_name, n_required, _) in &n.fields {
+                if *n_required && !o.fields.iter().any(|(o_name, ..)| o_name == n_name) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        (None, None) => {}
+        _ => return false,
+    }
+    match (&old.element, &new.element) {
+        (Some(o), Some(n)) => return widens(o, n),
+        (None, None) => {}
+        _ => return false,
+    }
+    let (Some(o), Some(n)) = (&old.leaf, &new.leaf) else {
+        // Two opaque nodes widen only by exact equality.
+        return old.key == new.key;
+    };
+    let lower_ok = |o: Option<Bound>, n: Option<Bound>| match (o, n) {
+        (None, None) => true,
+        (None, Some(_)) => false,
+        (Some(_), None) => true,
+        (Some(a), Some(b)) => b.order(a) != Some(std::cmp::Ordering::Greater),
+    };
+    let upper_ok = |o: Option<Bound>, n: Option<Bound>| match (o, n) {
+        (None, None) => true,
+        (None, Some(_)) => false,
+        (Some(_), None) => true,
+        (Some(a), Some(b)) => b.order(a) != Some(std::cmp::Ordering::Less),
+    };
+    let opt_text_ok = |o: &Option<String>, n: &Option<String>| match (o, n) {
+        (None, None) => true,
+        (None, Some(_)) => false,
+        (Some(_), None) => true,
+        (Some(a), Some(b)) => a == b,
+    };
+    let members_ok = match (&o.members, &n.members) {
+        (None, None) => true,
+        (None, Some(_)) => false,
+        (Some(_), None) => true,
+        (Some(old), Some(new)) => old.iter().all(|member| new.contains(member)),
+    };
+    let blob_max_ok = match (o.blob_max, n.blob_max) {
+        (None, None) => true,
+        (None, Some(_)) => false,
+        (Some(_), None) => true,
+        (Some(a), Some(b)) => b >= a,
+    };
+    lower_ok(o.min, n.min)
+        && upper_ok(o.max, n.max)
+        && lower_ok(o.min_len, n.min_len)
+        && upper_ok(o.max_len, n.max_len)
+        && opt_text_ok(&o.pattern, &n.pattern)
+        && opt_text_ok(&o.format, &n.format)
+        && members_ok
+        && blob_max_ok
+        && opt_text_ok(&o.blob_media, &n.blob_media)
 }
 
 fn constraints_of(module: &Module, field: &SchemaField) -> Constraints {
@@ -193,6 +486,27 @@ fn constraints_of(module: &Module, field: &SchemaField) -> Constraints {
         crate::types::ActiveType::Table { closed } => (None, Some(*closed)),
         _ => (None, None),
     };
+    let one_of = if field.one_of.is_empty() {
+        None
+    } else {
+        let mut branches: Vec<BranchFact> = field
+            .one_of
+            .iter()
+            .map(|branch| branch_fact(module, *branch))
+            .collect();
+        branches.sort_by(|a, b| a.key.cmp(&b.key));
+        branches.dedup_by(|a, b| a == b);
+        Some(branches)
+    };
+    let default = match field.default.and_then(|id| module.get(id)) {
+        Some(Node::Literal(value)) => Some(crate::convert::value_to_pretty_json(value)),
+        // A computed default cannot be compared statically; the marker
+        // keeps "present but dynamic" distinct from absent without
+        // double-reporting it through `has_computed` (the required/default
+        // findings already describe it).
+        Some(_) => Some("<computed>".to_string()),
+        None => None,
+    };
     Constraints {
         min,
         max,
@@ -203,6 +517,8 @@ fn constraints_of(module: &Module, field: &SchemaField) -> Constraints {
         members,
         closed,
         has_computed: c1 || c2 || c3 || c4 || c5 || c6,
+        one_of,
+        default,
     }
 }
 
@@ -233,6 +549,37 @@ fn tightened(old: &Constraints, new: &Constraints) -> bool {
     if old.pattern != new.pattern || old.format != new.format {
         // Any edit can narrow the accepted set; report rather than guess.
         return old.pattern != new.pattern || old.format != new.format;
+    }
+    // L-P10: the disjunction and the default are part of the contract.
+    // A removed branch narrows the accepted set unless a new branch is a
+    // genuine widening of it; branch order is not a change (sorted sets).
+    match (&old.one_of, &new.one_of) {
+        (Some(o), Some(n)) => {
+            // An opaque branch cannot be identified across documents, so
+            // it can never be treated as unchanged.
+            let same = |a: &BranchFact, b: &BranchFact| !a.opaque && !b.opaque && a.key == b.key;
+            for branch in o {
+                if n.iter().any(|candidate| same(branch, candidate)) {
+                    continue;
+                }
+                if n.iter().any(|candidate| widens(branch, candidate)) {
+                    continue;
+                }
+                return true;
+            }
+        }
+        (None, Some(_)) | (Some(_), None) => {
+            // The type signature changes with it; the row signature
+            // reports the break.
+        }
+        (None, None) => {}
+    }
+    // A default on a disjunction entry is part of the branch contract
+    // (it must satisfy a branch), so any change is reported. Ordinary
+    // fields keep their existing required/default finding instead of a
+    // duplicate.
+    if (old.one_of.is_some() || new.one_of.is_some()) && old.default != new.default {
+        return true;
     }
     match (&old.members, &new.members) {
         // Removing a member narrows the accepted set: an old document using
@@ -303,7 +650,7 @@ fn row_for_field(module: &Module, path: &str, field: &SchemaField) -> Row {
         path: path.to_string(),
         signature: field.typ.name(),
         constraints: constraints_of(module, field),
-        required: field_required(field),
+        required: field_required(module, field),
         removed_in: field.removed_in.clone(),
         blob,
         blob_dynamic,

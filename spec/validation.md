@@ -54,6 +54,7 @@ Validation pairs each schema node with its value by key, recursively:
 | `Table` (open) | tables; nested entries recurse when the schema table has them |
 | `Enum(…)` | strings are checked for membership in §4 (T003), non-strings fail here |
 | `Array<T>` | arrays; every element recurses into `T` |
+| `OneOf(A, B, ...)` | a value satisfying any branch (L-P10). Every branch is tried with its full constraints; a branch trial is transactional, so a failing branch leaves no diagnostic, fill, rename, or coercion behind. A side-effect-free branch win takes precedence over a branch that would need a resilient repair. No branch accepts produces one T002 naming the branch list and up to four branch reasons in source order (`(+N more branches)` beyond four); two branches that would each need a repair make the value ambiguous (T002) instead of letting branch order decide |
 
 Anything else is T002: `schema violation at '<path>': expected <type>,
 got <kind>`, where `<kind>` is the coarse kind name (`null`, `boolean`,
@@ -136,8 +137,24 @@ required key`) unless:
   requires target)` and is never echoed. A resilient default fill
   satisfies presence (spec/schema-extensions.md section 4).
 
-The span is the schema field's own span (there is no value to point
-at).
+`requires` is a biconditional (L-P10): **field present iff trigger
+enabled**. The excuse above covers the absent-field direction; the
+reverse direction is T010 (`conditional field present while its
+`requires` trigger is disabled`). A present field whose trigger is
+absent, `false`, `""`, `0`, `null`, or an empty table/array is a
+violation naming the field and, when the target is a real schema path,
+the target. The four-row truth table:
+
+| trigger | field | result |
+|---|---|---|
+| enabled | present | valid |
+| enabled | absent | T004 (a resilient default fill still satisfies presence) |
+| disabled/absent | absent | valid (B-001) |
+| disabled/absent | present | T010 |
+
+The span is the schema field's own span for a missing key (there is no
+value to point at). T010 is about a *present* field, so it uses the
+field's value span when resolvable and the schema field span otherwise.
 
 ## 6. Modes
 
@@ -207,6 +224,15 @@ entries) is T004 in both modes, and array positions are never
 synthesized. Defaults are ordinary evaluated expressions, so they can
 use literals, env refs, and arithmetic — and the usual secret rules
 apply (a filled secret redacts on export; W005 never names values).
+
+A default on a disjunction is the weakest disjunct (L-P10): it fills
+only when no source provides the key (the L-P09 schema-default
+priority), never participates in a merge conflict, and must satisfy at
+least one branch of its own disjunction. That check runs on every
+evaluation, in both modes (a bad default is a schema defect, not a
+mode-dependent surprise), and reports one T002 naming the field, the
+default, and the branch list. The check also covers computed defaults,
+using the evaluated value.
 
 ## 10. Closed tables (C-032)
 

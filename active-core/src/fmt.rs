@@ -878,6 +878,35 @@ impl<'a> Formatter<'a> {
     /// Absent arguments are omitted (never `None` placeholders).
     fn render_schema_field(&self, field: &crate::ir::SchemaField) -> String {
         use crate::types::ActiveType::*;
+        // A schema disjunction (L-P10): branches in source order, then the
+        // entry's named arguments in the same canonical order leaves use.
+        if !field.one_of.is_empty() {
+            let branches: Vec<std::string::String> = field
+                .one_of
+                .iter()
+                .map(|branch| self.render_schema_type(*branch))
+                .collect();
+            let mut out = format!("OneOf({}", branches.join(", "));
+            for (name, slot) in [
+                ("description", field.description),
+                ("requires", field.requires),
+                ("default", field.default),
+            ] {
+                if let Some(arg) = slot {
+                    out.push_str(&format!(", {name} = {}", self.render_expr(arg)));
+                }
+            }
+            if let Some(removed) = &field.removed_in {
+                out.push_str(&format!(", removed_in = \"{}\"", escape(removed)));
+            }
+            match &field.deprecated {
+                None => {}
+                Some(reason) if reason.is_empty() => out.push_str(", deprecated = true"),
+                Some(reason) => out.push_str(&format!(", deprecated = \"{}\"", escape(reason))),
+            }
+            out.push(')');
+            return out;
+        }
         // `deprecated` renders inside the parens for every leaf type
         // (spec/linter.md §3), including Enum's positional list.
         let deprecated = match &field.deprecated {

@@ -436,6 +436,8 @@ schema-type   = bare-type [ "(" [ schema-arg { "," schema-arg } ] ")" ]
               | "Array" "<" schema-type ">"
               | "Table" [ "{" [ schema-entry { "," schema-entry } ] "}" ]
               | "Enum" "(" string { "," string } [ "," named-args ] ")"
+              | "OneOf" "(" schema-type { "," schema-type }
+                        [ "," schema-arg { "," schema-arg } ] ")"
 bare-type     = "Int" | "Float" | "String" | "Bool" | "Null"
               | "Duration" | "Bytes" | "Secret" | "Blob" | "Any" | "Table" | "Array"
 schema-arg    = identifier "=" expression
@@ -452,6 +454,17 @@ is E020.
 `Blob` fields additionally accept `media_type = "<mime>"` and
 `max_size = <int>` (spec/blob.md); evolution metadata accepts
 `removed_in = "<major.minor.patch>"` (spec/schema-evolution.md).
+
+`OneOf` (L-P10) is a schema disjunction: at least two branches, each a
+full `schema-type` (leaves, `Array<T>`, `Table { ... }`, or a nested
+`OneOf`, which is flattened into the outer list). The entry accepts the
+same named arguments as a leaf (`default`, `requires`, `description`,
+`deprecated`, `removed_in`). Leaf-only constraint arguments (`min`,
+`max`, `min_len`, `max_len`, `pattern`, `format`, `descriptions`,
+`media_type`, `max_size`) belong on a branch and are E020 on the
+disjunction. Fewer than two branches is E020; a nested `OneOf` with its
+own `default` is E020 (the default belongs to the outer entry). The
+formatter renders branches in source order.
 
 - `schema` is contextual: a `schema` key with a **table value** parses
   as a schema block; a `schema` key with any other value stays ordinary

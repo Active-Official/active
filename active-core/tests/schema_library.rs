@@ -217,12 +217,20 @@ fn tls_terminator_schema() {
             (String::from("T004"), Some(String::from("key"))),
         ]
     );
-    // TLS off: requires does not trigger; resilient fills the defaults.
+    // TLS off: requires does not trigger, and the biconditional forbids
+    // filling a field whose trigger is disabled (L-P10 row 3): the field
+    // stays absent, with no fill and no diagnostic. (Before L-P10,
+    // resilient mode filled the default here and recorded W005; that
+    // created a present-while-disabled tree the conditional forbids.)
     let (v, diags) = resilient_issues("good_tls_off.active");
     assert_eq!(v["tls"], false);
-    assert_eq!(v["cert"], "");
-    assert!(diags.iter().any(|d| d.0 == "W005"), "{diags:?}");
-    assert!(!diags.iter().any(|d| d.0 == "T004"), "{diags:?}");
+    assert!(v.get("cert").is_none(), "{v}");
+    assert!(
+        diags
+            .iter()
+            .all(|d| d.0 != "W005" && d.0 != "T004" && d.0 != "T010"),
+        "{diags:?}"
+    );
 }
 
 #[test]

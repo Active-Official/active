@@ -315,3 +315,34 @@ kind = "clean"
 id = "0046-profile-table-union"
 file = "cases/0046-profile-table-union.active"
 kind = "clean"
+
+# L-P10: requires is a biconditional; a present field with a disabled
+# trigger is T010 (the reverse direction of the B-001 excuse).
+[[cases]]
+id = "0049-requires-disabled-present"
+file = "cases/0049-requires-disabled-present.active"
+kind = "refused"
+
+# L-P10: a disjunction accepts a value satisfying either branch.
+[[cases]]
+id = "0050-oneof-string-branch"
+file = "cases/0050-oneof-string-branch.active"
+kind = "clean"
+
+# L-P10: a value satisfying no branch is T002 and names every branch.
+[[cases]]
+id = "0051-oneof-reject-all"
+file = "cases/0051-oneof-reject-all.active"
+kind = "refused"
+
+# L-P10: the default is the weakest disjunct; resilient fills it (W005).
+[[cases]]
+id = "0052-oneof-default-fill"
+file = "cases/0052-oneof-default-fill.active"
+kind = "diagnosed"
+
+# L-P10: a default that satisfies no branch is a schema defect (T002).
+[[cases]]
+id = "0053-oneof-bad-default"
+file = "cases/0053-oneof-bad-default.active"
+kind = "refused"

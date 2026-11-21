@@ -602,3 +602,60 @@ fn enum_type_and_default_survive_the_real_gen_import_round_trip() {
         .evaluate(&back)
         .expect("evaluate");
 }
+
+const DISJUNCTION_DOC: &str = r#"schema = {
+  service = OneOf(Int(min = 1, max = 3), String(min_len = 2), Table { host = String }, default = 1)
+}
+service = 1
+"#;
+
+fn disjunction_module() -> active_core::Module {
+    parse(DISJUNCTION_DOC, "generate-disjunction").expect("schema must parse")
+}
+
+#[test]
+fn json_schema_renders_a_disjunction_and_its_default() {
+    // L-P10: no lossy `type` at the disjunction level; every branch is a
+    // full schema (bounds and nested tables survive), and the default is
+    // part of the contract.
+    let schema = schema_to_json_schema(&disjunction_module()).expect("generate");
+    let prop = &schema["properties"]["service"];
+    assert!(prop.get("type").is_none(), "{prop}");
+    let branches = prop["oneOf"].as_array().expect("oneOf");
+    assert_eq!(branches.len(), 3, "{prop}");
+    assert_eq!(branches[0]["type"], "integer");
+    assert_eq!(branches[0]["minimum"], 1);
+    assert_eq!(branches[0]["maximum"], 3);
+    assert_eq!(branches[1]["type"], "string");
+    assert_eq!(branches[1]["minLength"], 2);
+    assert_eq!(branches[2]["type"], "object");
+    assert_eq!(branches[2]["properties"]["host"]["type"], "string");
+    assert_eq!(prop["default"], 1, "{prop}");
+}
+
+#[test]
+fn typescript_and_python_render_disjunctions_as_unions() {
+    let module = disjunction_module();
+    let ts = schema_to_typescript(&module, "Root").expect("ts");
+    assert!(
+        ts.contains("number | string | Record<string, unknown>"),
+        "{ts}"
+    );
+    let py = schema_to_python(&module, "Root").expect("py");
+    assert!(py.contains("Union[int, str, dict[str, Any]]"), "{py}");
+    assert!(
+        py.contains("Union"),
+        "the typing import must include it: {py}"
+    );
+}
+
+#[test]
+fn go_and_rust_refuse_a_disjunction_instead_of_lying() {
+    // Neither target can express a union with the current renderer; a
+    // generated contract that silently widened the field would be a lie.
+    let module = disjunction_module();
+    let go = schema_to_go(&module, "Root").expect_err("Go must refuse");
+    assert!(go.contains("Go target"), "{go}");
+    let rust = schema_to_rust(&module, "Root").expect_err("Rust must refuse");
+    assert!(rust.contains("Rust target"), "{rust}");
+}

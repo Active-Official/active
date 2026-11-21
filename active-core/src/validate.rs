@@ -843,7 +843,7 @@ impl<'a> Validator<'a> {
         self.tick(schema_id)?;
         match self.module.get(schema_id).cloned() {
             Some(Node::SchemaField { field }) => {
-                self.validate_field(schema_id, &field, value_id, value, segments);
+                self.validate_field(schema_id, &field, value_id, value, segments)?;
             }
             Some(Node::SchemaTable { fields, closed, .. }) => {
                 self.validate_table(schema_id, &fields, closed, value_id, value, segments)?;
@@ -875,6 +875,43 @@ impl<'a> Validator<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Whether a `requires` target is enabled from this table: the
+    /// sibling-relative spelling first (B-001), then the document-root
+    /// absolute path (B-002). `table_has` owns the enablement rule
+    /// (absent/false/empty/zero/null are disabled; secrets count).
+    fn requires_enabled(&self, table: &indexmap::IndexMap<String, Value>, target: &str) -> bool {
+        if table_has(table, target) {
+            return true;
+        }
+        match self.module.root.and_then(|id| self.values.get(&id)) {
+            Some(Value::Table(root)) => table_has(root, target),
+            _ => false,
+        }
+    }
+
+    /// A literal `requires` target that names no schema path is a schema
+    /// typo; report it once per field (T003) instead of silently
+    /// disabling the conditional.
+    fn report_dangling_requires(&mut self, field_id: NodeId, target: &str, segments: &[PathSeg]) {
+        if self
+            .schema_bugs
+            .insert((field_id, "requires-target".to_string()))
+        {
+            let path = render_path(segments);
+            self.push(
+                "T003",
+                format!(
+                    "schema violation at '{}': requires target '{}' does not name a \
+                     schema path",
+                    display_path(&path),
+                    target
+                ),
+                &path,
+                self.spans(None, field_id),
+            );
+        }
     }
 
     fn validate_table(
@@ -909,9 +946,82 @@ impl<'a> Validator<'a> {
         };
         for (name, field_id) in fields {
             segments.push(PathSeg::Key(name.clone()));
+            // L-P10: a schema default is the weakest disjunct, and it
+            // must satisfy a branch. Check it eagerly and once per field
+            // even when array elements re-walk the same node. When the
+            // key is missing under resilient mode, the fill's own
+            // validation reports a bad default, so skipping the eager
+            // check there keeps one diagnostic per defect.
+            let root_metadata = segments.len() == 1
+                && matches!(&segments[0], PathSeg::Key(key) if crate::eval::is_document_metadata(key));
+            let will_fill = self.resilient && !map.contains_key(name) && !root_metadata;
+            // A field whose `requires` trigger is disabled is excused
+            // entirely (L-P10 row 3): its never-used default is not a
+            // defect the document should fail on.
+            let excused = match self.module.get(*field_id) {
+                Some(Node::SchemaField { field }) => {
+                    field
+                        .requires
+                        .is_some_and(|requires_id| match self.values.get(&requires_id) {
+                            Some(Value::String(target))
+                                if crate::convert::requires_target_exists(
+                                    self.module,
+                                    *field_id,
+                                    target,
+                                ) =>
+                            {
+                                !self.requires_enabled(map, target)
+                            }
+                            _ => false,
+                        })
+                }
+                _ => false,
+            };
+            let disjunction = match self.module.get(*field_id) {
+                Some(Node::SchemaField { field })
+                    if !field.one_of.is_empty() && !will_fill && !excused =>
+                {
+                    Some((field.clone(), field.type_label(self.module)))
+                }
+                _ => None,
+            };
+            if let Some((field, label)) = disjunction {
+                if let Some((default_id, default_value)) = field
+                    .default
+                    .and_then(|id| self.values.get(&id).cloned().map(|value| (id, value)))
+                {
+                    let first_check = self
+                        .schema_bugs
+                        .insert((*field_id, "oneof-default".to_string()));
+                    if first_check
+                        && !self.branches_accept(
+                            &field,
+                            Some(default_id),
+                            &default_value,
+                            segments,
+                        )?
+                    {
+                        let path = render_path(segments);
+                        self.push(
+                            "T002",
+                            format!(
+                                "schema violation at '{}': schema default does not \
+                                 satisfy any branch of {}; fix the default or a branch",
+                                display_path(&path),
+                                label
+                            ),
+                            &path,
+                            self.spans(Some(default_id), *field_id),
+                        );
+                    }
+                }
+            }
             match map.get(name) {
                 None => self.check_missing(*field_id, segments, map),
                 Some(v) => {
+                    let child_id = arena_children
+                        .as_ref()
+                        .and_then(|children| children.get(name).copied());
                     // LANG-F-008: a field whose `removed_in` version is at
                     // or below the document schema's own version must not
                     // still be on the wire. Strict fails with T008; the
@@ -938,10 +1048,86 @@ impl<'a> Validator<'a> {
                                 );
                             }
                         }
+                        // L-P10: `requires` is a biconditional. A present
+                        // field whose trigger is absent/disabled is the
+                        // reverse direction of the T004 rule (B-001).
+                        if let Some(requires_id) = field.requires {
+                            // The target is the *evaluated* requires
+                            // argument (T004 uses the same source), so a
+                            // computed target (`requires = env("T")`)
+                            // enforces this direction too.
+                            let resolved = match self.values.get(&requires_id) {
+                                Some(Value::String(text)) => Some(text.clone()),
+                                _ => match self.module.get(requires_id) {
+                                    Some(Node::Literal(Value::String(text))) => Some(text.clone()),
+                                    Some(Node::Ref(to)) => match self.module.get(*to) {
+                                        Some(Node::Literal(Value::String(text))) => {
+                                            Some(text.clone())
+                                        }
+                                        _ => None,
+                                    },
+                                    _ => None,
+                                },
+                            };
+                            if let Some(target) = resolved {
+                                let display = match self.module.get(requires_id) {
+                                    Some(Node::Literal(Value::String(text))) => Some(text.clone()),
+                                    Some(Node::Ref(to)) => match self.module.get(*to) {
+                                        Some(Node::Literal(Value::String(text))) => {
+                                            Some(text.clone())
+                                        }
+                                        _ => None,
+                                    },
+                                    _ => None,
+                                };
+                                let named = crate::convert::requires_target_exists(
+                                    self.module,
+                                    *field_id,
+                                    &target,
+                                );
+                                if !named {
+                                    // A literal target that names no
+                                    // path is a schema typo (once per
+                                    // field); a computed unknown target
+                                    // is assumed enabled (fail closed:
+                                    // absence is still T004).
+                                    if let Some(text) = &display {
+                                        let text = text.clone();
+                                        self.report_dangling_requires(*field_id, &text, segments);
+                                    }
+                                } else if !self.requires_enabled(map, &target) {
+                                    let path = render_path(segments);
+                                    // Only authored text is echoed: an
+                                    // evaluated target can be arbitrary
+                                    // host content (the same rule T004
+                                    // follows).
+                                    let message = match display {
+                                        Some(text) => format!(
+                                            "schema violation at '{}': field is present but \
+                                             its requires trigger '{}' is disabled (absent, \
+                                             false, empty, or zero); remove the field or enable \
+                                             the trigger",
+                                            display_path(&path),
+                                            text
+                                        ),
+                                        None => format!(
+                                            "schema violation at '{}': field is present but \
+                                             its computed requires trigger is disabled (absent, \
+                                             false, empty, or zero); remove the field or enable \
+                                             the trigger",
+                                            display_path(&path)
+                                        ),
+                                    };
+                                    self.push(
+                                        "T010",
+                                        message,
+                                        &path,
+                                        self.spans(child_id, *field_id),
+                                    );
+                                }
+                            }
+                        }
                     }
-                    let child_id = arena_children
-                        .as_ref()
-                        .and_then(|children| children.get(name).copied());
                     self.validate_node(*field_id, child_id, v, segments)?;
                 }
             }
@@ -1141,9 +1327,15 @@ impl<'a> Validator<'a> {
         field: &SchemaField,
         value_id: Option<NodeId>,
         value: &Value,
-        segments: &mut [PathSeg],
-    ) {
+        segments: &mut Vec<PathSeg>,
+    ) -> Result<(), EvalError> {
         let path = render_path(segments);
+        // A disjunction is validated branch by branch (L-P10); the
+        // entry-level type is the marker, not a type to compare against.
+        if !field.one_of.is_empty() {
+            self.validate_one_of(schema_id, field, value_id, value, segments)?;
+            return Ok(());
+        }
         if !type_accepts(&field.typ, value) {
             // Phase-3 wiring (C-016): a string that parses as the
             // target type is coercible. Strict reports the mismatch
@@ -1177,7 +1369,7 @@ impl<'a> Validator<'a> {
                             spans,
                         );
                     }
-                    return;
+                    return Ok(());
                 }
                 if let Some(intent) = sentinel_meaning(text) {
                     // Echoing the word is safe: `sentinel_meaning`
@@ -1196,7 +1388,7 @@ impl<'a> Validator<'a> {
                         &path,
                         self.spans(value_id, schema_id),
                     );
-                    return;
+                    return Ok(());
                 }
             }
             self.push(
@@ -1210,10 +1402,174 @@ impl<'a> Validator<'a> {
                 &path,
                 self.spans(value_id, schema_id),
             );
-            return;
+            return Ok(());
         }
         self.check_constraints(schema_id, field, value, &path, value_id);
+        Ok(())
     }
+
+    /// Validate a value against a schema disjunction (L-P10). A value is
+    /// accepted when **any** branch accepts it; every branch is tried
+    /// and a branch trial is transactional (diagnostics, default fills,
+    /// renames, and coercion requests are rolled back on failure).
+    ///
+    /// Wins are classified: a "direct" win needs no side effect and takes
+    /// precedence, so a value a plain branch accepts is never coerced or
+    /// filled by another branch. A branch that would only accept through
+    /// a side effect (a resilient coercion or a default fill) wins only
+    /// when it is the sole such branch; two are ambiguous and reported as
+    /// T002, never resolved by branch order.
+    fn validate_one_of(
+        &mut self,
+        schema_id: NodeId,
+        field: &SchemaField,
+        value_id: Option<NodeId>,
+        value: &Value,
+        segments: &mut Vec<PathSeg>,
+    ) -> Result<(), EvalError> {
+        let path = render_path(segments);
+        let mut direct: Option<NodeId> = None;
+        let mut indirect: Vec<NodeId> = Vec::new();
+        // At most four reasons are shown; the count still drives the
+        // "(+N more branches)" suffix, so a wide disjunction cannot grow
+        // the message (or the collected strings) without bound.
+        let mut reasons: Vec<String> = Vec::with_capacity(4);
+        let mut failures = 0usize;
+        for branch in &field.one_of {
+            // Each trial is real work; charge the node budget like any
+            // other validation step.
+            self.tick(*branch)?;
+            let (accepts, side_effects, reason) =
+                self.trial_branch(*branch, value_id, value, segments)?;
+            if accepts {
+                if side_effects {
+                    indirect.push(*branch);
+                } else {
+                    direct = Some(*branch);
+                    break;
+                }
+            } else {
+                failures += 1;
+                if reasons.len() < 4 {
+                    if let Some(reason) = reason {
+                        reasons.push(reason);
+                    }
+                }
+            }
+        }
+        let winner = direct.or_else(|| {
+            if indirect.len() == 1 {
+                indirect.first().copied()
+            } else {
+                None
+            }
+        });
+        if let Some(branch) = winner {
+            self.validate_node(branch, value_id, value, segments)?;
+            return Ok(());
+        }
+        let detail = if indirect.len() > 1 {
+            let labels: Vec<String> = indirect
+                .iter()
+                .map(|branch| crate::ir::schema_node_label(self.module, *branch))
+                .collect();
+            format!(
+                "more than one branch would apply a repair ({})",
+                labels.join(", ")
+            )
+        } else {
+            let shown: Vec<String> = reasons
+                .iter()
+                .enumerate()
+                .map(|(index, reason)| format!("branch {}: {reason}", index + 1))
+                .collect();
+            let more = if failures > shown.len() {
+                format!(" (+{} more branches)", failures - shown.len())
+            } else {
+                String::new()
+            };
+            format!("{}{more}", shown.join("; "))
+        };
+        self.push(
+            "T002",
+            format!(
+                "schema violation at '{}': value does not satisfy any branch of {} ({detail})",
+                display_path(&path),
+                field.type_label(self.module)
+            ),
+            &path,
+            self.spans(value_id, schema_id),
+        );
+        Ok(())
+    }
+
+    /// Run one disjunction branch, then roll every side effect back.
+    /// Returns `(accepted, needed_a_side_effect, first_reason)`.
+    fn trial_branch(
+        &mut self,
+        branch: NodeId,
+        value_id: Option<NodeId>,
+        value: &Value,
+        segments: &mut Vec<PathSeg>,
+    ) -> Result<(bool, bool, Option<String>), EvalError> {
+        let diagnostics = self.diagnostics.len();
+        let fills = self.fills.len();
+        let renames = self.renames.len();
+        let coercions = self.coercions.len();
+        // `schema_bugs` is a "report once" set: a losing branch's bug must
+        // not poison the winner's report (or the winner's replay), so the
+        // set is restored with the rest of the state. `regexes` is a pure
+        // compile cache and stays.
+        let schema_bugs = self.schema_bugs.clone();
+        let result = self.validate_node(branch, value_id, value, segments);
+        let accepted = result.is_ok() && self.diagnostics.len() == diagnostics;
+        let side_effects = self.fills.len() > fills
+            || self.renames.len() > renames
+            || self.coercions.len() > coercions;
+        let reason = if accepted {
+            None
+        } else {
+            self.diagnostics
+                .get(diagnostics)
+                .map(|diagnostic| branch_reason(&diagnostic.message))
+        };
+        self.diagnostics.truncate(diagnostics);
+        self.fills.truncate(fills);
+        self.renames.truncate(renames);
+        self.coercions.truncate(coercions);
+        self.schema_bugs = schema_bugs;
+        match result {
+            Ok(()) => Ok((accepted, side_effects, reason)),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Does a disjunction accept `value` for the eager default check?
+    /// Mirrors `validate_one_of`: a side-effect-free branch wins; a
+    /// side-effect win counts only when it is unique (two would be
+    /// ambiguous, and a default must not pick one by branch order).
+    fn branches_accept(
+        &mut self,
+        field: &SchemaField,
+        value_id: Option<NodeId>,
+        value: &Value,
+        segments: &mut Vec<PathSeg>,
+    ) -> Result<bool, EvalError> {
+        let mut indirect = 0usize;
+        for branch in &field.one_of {
+            let (accepts, side_effects, _) =
+                self.trial_branch(*branch, value_id, value, segments)?;
+            if accepts {
+                if side_effects {
+                    indirect += 1;
+                } else {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(indirect == 1)
+    }
+
     /// The `version` metadata of the document's root schema, when declared
     /// (LANG-F-008). Used to decide whether a field's removal schedule has
     /// expired; a schema without a version never expires a field.
@@ -1267,58 +1623,52 @@ impl<'a> Validator<'a> {
                 _ => None,
             };
             if let Some(target) = target {
-                // `requires` makes the field required only while its
-                // trigger is present AND enabled (spec/validation.md
-                // section 5). An absent, empty, false, or zero trigger
-                // excuses the field completely: no T004 and no fill
-                // (LANG-B-001).
-                if !table_has(table, &target) {
-                    // Not required. Resilient mode still fills a
-                    // declared default (pinned by
-                    // schema_library::tls_terminator_schema); strict
-                    // mode reports nothing because the field is not
-                    // required (LANG-B-001).
-                    if let Some(default_id) = default_arg {
-                        if self.resilient && !root_metadata {
-                            self.fills.push(FillRequest {
-                                segments: segments.to_vec(),
-                                field_id,
-                                default_id,
-                                span,
-                                file,
-                            });
-                        }
+                // Only authored text is echoed; a computed target is
+                // arbitrary host content.
+                let display = match self.module.get(requires_id) {
+                    Some(Node::Literal(Value::String(text))) => Some(text.clone()),
+                    Some(Node::Ref(to)) => match self.module.get(*to) {
+                        Some(Node::Literal(Value::String(text))) => Some(text.clone()),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let named = crate::convert::requires_target_exists(self.module, field_id, &target);
+                let enabled = if named {
+                    self.requires_enabled(table, &target)
+                } else if display.is_none() {
+                    // A computed target that resolves to no known path:
+                    // fail closed (treat it as enabled), so absence is
+                    // still required rather than silently excused.
+                    true
+                } else {
+                    // A literal target that names no path is a schema
+                    // typo; report it once and stop treating the field
+                    // as conditional.
+                    if let Some(text) = &display {
+                        let text = text.clone();
+                        self.report_dangling_requires(field_id, &text, segments);
                     }
+                    false
+                };
+                if !enabled {
+                    // Row 3 of the biconditional (L-P10): the trigger is
+                    // disabled, so the field must stay absent. A default
+                    // must not fill it: inserting a value here would
+                    // create the row-4 violation (present while
+                    // disabled) without ever being checked. B-001's
+                    // "excused" verdict is unchanged; the fill is not.
                     return;
                 }
                 let filled = default_arg.is_some() && self.resilient;
                 if !filled {
-                    // A requires target is a real reference only when it
-                    // resolves to a schema path; otherwise the text is
-                    // data and must not be echoed.
-                    // A `let`-bound literal resolves to its text, so
-                    // `let t = "mode"` + `requires = t` still names
-                    // the target in the message (LANG-B-025).
-                    let resolved = match self.module.get(requires_id) {
-                        Some(Node::Literal(Value::String(text))) => Some(text.clone()),
-                        Some(Node::Ref(to)) => match self.module.get(*to) {
-                            Some(Node::Literal(Value::String(text))) => Some(text.clone()),
-                            _ => None,
-                        },
-                        _ => None,
-                    };
-                    let named = resolved
-                        .as_deref()
-                        .is_some_and(|text| crate::convert::schema_path_exists(self.module, text));
-                    let rendered_target = resolved.clone().unwrap_or_else(|| target.clone());
-                    let message = if named {
-                        format!(
+                    let message = match (&display, named) {
+                        (Some(text), true) => format!(
                             "schema violation at '{}': missing required key (required by present '{}')",
                             display_path(&path),
-                            rendered_target,
-                        )
-                    } else {
-                        format!(
+                            text,
+                        ),
+                        _ => format!(
                             "schema violation at '{}': missing required key (required by a computed requires target)",
                             display_path(&path),
                         )
@@ -2549,6 +2899,17 @@ fn truncate_120(text: &str) -> String {
     } else {
         text.to_string()
     }
+}
+
+/// One branch's first failure for a disjunction message: the diagnostic
+/// text without its path prefix, trimmed and capped at 120 characters.
+fn branch_reason(message: &str) -> String {
+    let text = message
+        .split_once(": ")
+        .map(|(_, rest)| rest)
+        .unwrap_or(message)
+        .trim();
+    truncate_120(text)
 }
 
 /// Presence-plus-enablement test for `requires` targets

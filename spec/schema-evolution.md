@@ -78,6 +78,9 @@ schema = {
 | Blob `max_size` lowered or newly pinned | C042 | error | Existing payloads may fail |
 | Blob `media_type` changed or newly pinned | C042 | error | Existing payloads mismatch |
 | Array element type/field/bounds changed | C041/C042 | error | Compared at `path[]` (nested arrays at `path[][]`) |
+| Disjunction branch removed | C042 | error | Narrows the accepted set: an old value that used the branch fails (L-P10) |
+| Disjunction branch added | - | - | Widens the accepted set; branch order is not a change (branches compare as a sorted set) |
+| Disjunction or leaf default changed (L-P10 entries) | C042 | error | The default is part of the contract; ordinary-field defaults keep their existing required/default finding instead of a duplicate |
 | New `version` < old `version` | C043 | error | Versions only move forward |
 | New `min_reader` > old `version` | C044 | error | Old readers are dropped |
 | New `min_writer` > old `version` | C044 | error | Old writers are dropped |

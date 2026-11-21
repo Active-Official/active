@@ -28,13 +28,19 @@ fn lint_still_flags_a_dangling_target() {
 }
 
 #[test]
-fn codegen_emits_dependent_required_in_the_right_table() {
+fn codegen_emits_the_requires_biconditional_in_the_right_table() {
     let module = parse(SRC, "requires").expect("parse");
     let json = active_core::convert::gen::schema_to_json_schema(&module).expect("generate");
-    let dep = &json["properties"]["server"]["dependentRequired"];
-    assert_eq!(dep["tls"][0], "cert", "{json}");
+    let server = &json["properties"]["server"];
+    let all_of = server["allOf"].as_array().expect("requires conditionals");
+    assert_eq!(all_of.len(), 2, "{json}");
+    // Forward: trigger enabled -> cert required.
+    assert_eq!(all_of[0]["then"]["required"][0], "cert", "{json}");
+    // Reverse (T010): cert present -> the trigger must be present/enabled.
+    assert_eq!(all_of[1]["if"]["required"][0], "cert", "{json}");
+    assert!(server.get("dependentRequired").is_none(), "{json}");
     assert!(
-        json["dependentRequired"]["tls"].is_null(),
+        json["allOf"].is_null(),
         "the dependency belongs to the nested table, not the root: {json}"
     );
 }

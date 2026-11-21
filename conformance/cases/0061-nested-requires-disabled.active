@@ -1,0 +1,2 @@
+schema = { server = Table { closed = true, tls = Bool, cert = String(requires = "tls") } }
+server = { tls = false, cert = "c" }

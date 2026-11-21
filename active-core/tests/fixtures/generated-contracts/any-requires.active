@@ -1,0 +1,3 @@
+schema = { mode = Any, cert = String(requires = "mode") }
+mode = true
+cert = "c"

@@ -1,0 +1,13 @@
+# L-P25 (R2/F4): statically known bounds the engine cannot compare with
+# the field type. Every present value is T003, so the generated contract
+# is unsatisfiable for those fields (`not: {}`), never a loosened bound.
+schema = {
+  n = Int(min = 50%),
+  bytes = Bytes(max = 1.5),
+  dur = Duration(min = 1.5),
+  s = String(min_len = 1s),
+}
+n = 50
+bytes = 0
+dur = 0ms
+s = "x"

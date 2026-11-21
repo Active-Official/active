@@ -1,0 +1,2 @@
+schema = { b = Bytes(min = 1KiB) }
+b = 0

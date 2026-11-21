@@ -1,0 +1,2 @@
+schema = { server = Table { a = Table { x = Bool }, cert = String(requires = "a.x") } }
+server = { a = { x = true }, cert = "c" }

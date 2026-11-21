@@ -1,0 +1,7 @@
+# L-P25: a `requires` target spelled through a `let` binding. Evaluation
+# resolves the chain, and the generated contract must too (R2/F1).
+let t = "mode"
+
+schema = { mode = Bool, cert = String(requires = t) }
+mode = true
+cert = "c"

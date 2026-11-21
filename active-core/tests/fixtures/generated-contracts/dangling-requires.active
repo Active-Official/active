@@ -1,0 +1,6 @@
+# L-P25 (review 3): a dangling literal `requires` target is a schema
+# typo. Evaluation reports T003 for every document, so the table's
+# contract is unsatisfiable - never a silently optional field.
+schema = { mode = Bool, cert = String(requires = "nope") }
+mode = true
+cert = "c"

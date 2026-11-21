@@ -212,28 +212,108 @@ Type mapping (SS = ACTIVE schema type):
 | String | `string` (+minLength/maxLength/pattern) | `string` | `string` | `String` |
 | Bool | `boolean` | `boolean` | `bool` | `bool` |
 | Null | `null` | `null` | `interface{}` | `()` |
-| Duration | `object{ms: integer}` (matches §1 export) | `number` (ms) | `int64` (ms) | `u64` (ms) |
+| Duration | `object` `{"$active.duration": {"ms": integer}}` (matches §1 export; `minimum: 0` always, bounds in canonical ms) | `number` (ms) | `int64` (ms) | `u64` (ms) |
 | Bytes | `integer` (normalizes to Int) | `number` | `int64` | `u64` |
+| Blob | `object` `{"$active.blob": {hash, size, media_type, tainted, payload_b64?}}` (+ size bound; media is an `enum` of the authored type and the tainted marker) | `string` (identity) | `string` | `String` |
 | Table | `object` + properties | `interface` | `struct` | `struct` |
 | Enum(m) | `enum: [...]` | `"a" \| "b"` | `string` | real `enum` |
 | Secret | `string` (+redaction note) | `string` | `string` | `String` |
 | Any | `true` | `unknown` | `interface{}` | `serde_json::Value` |
 | Array\<T\> | `array` + items | `T[]` | `[]T` | `Vec<T>` |
-| OneOf(A, B) | `oneOf: [...]` (no `type`; each branch is a full schema) | `A \| B` | refused | refused |
+| OneOf(A, B) | `anyOf: [...]` (no `type`; each branch is a full schema) | `A \| B` | refused | refused |
 
+- **Dialect.** `active generate --to json-schema` emits
+  `$schema: "http://json-schema.org/draft-07/schema#"`: the contract
+  declares the dialect it is written in, so `format`/`if`/`then`/`anyOf`
+  are interpreted consistently. The differential test pins the dialect.
 - **Disjunctions (L-P10).** JSON Schema and OpenAPI render each branch
   with its full schema (bounds, patterns, nested tables), plus the
-  entry's static default. TypeScript renders a union; Python renders
-  `Union[...]` (with `Union` added to the typing import); Zod renders
-  `z.union([...])`. Go and Rust **refuse** (`Err`, not a lossy
-  `interface{}`/`serde_json::Value`): neither renderer emits an
-  untagged union, and a generated contract that silently widened the
-  field would be a lie. Regenerate JSON Schema or TypeScript for a
-  schema that contains a disjunction.
+  entry's static default. The keyword is **`anyOf`**: Active accepts a
+  value when *any* branch accepts it, and `oneOf` (exactly one) would
+  reject an `Int` value of an `Int | Float` disjunction. TypeScript
+  renders a union; Python renders `Union[...]` (with `Union` added to the
+  typing import); Zod renders `z.union([...])`. Go and Rust **refuse**
+  (`Err`, not a lossy `interface{}`/`serde_json::Value`): neither
+  renderer emits an untagged union, and a generated contract that
+  silently widened the field would be a lie. Regenerate JSON Schema or
+  TypeScript for a schema that contains a disjunction.
 
 - `required`: fields without a static-literal default, except
   Null-typed fields (absent Null keys validate clean — C-032).
-  Dynamic defaults count as required (not statically known).
+  Dynamic defaults count as required (not statically known). A field
+  with `requires` is conditional and never unconditional `required`
+  (the conditionals below enforce the enabled case).
+- **Conditional presence (`requires`).** The table gets two `allOf`
+  conditionals for each direct-sibling target: the forward rule (trigger
+  present and enabled → a required field is present) and the reverse
+  T010 rule (field present → trigger present and enabled). Enablement is
+  the L-P10 truthiness (`false`, `0`, `""`, `[]`, `{}`, `null`, `0ms`,
+  and any zero quantity are disabled; a secret is enabled; a Null-typed
+  trigger is always disabled). For an `Any`/`OneOf` trigger the disabled
+  shape is the literal set plus the wire shape of a zero quantity
+  (`$active.quantity.value: 0`), so a `0%`/`0Hz` trigger is not mistaken
+  for enabled. A target spelled through a `let` binding resolves to the
+  literal it names and gets the same conditionals. Dotted or
+  root-absolute targets cross objects and are annotated
+  `x-active-requires` instead; a target computed at evaluation time is
+  listed under `x-active-requires-computed` and the field stays
+  optional (no static JSON Schema form). Both limitations are counted by
+  the differential test.
+- **Formats.** A named format (`email`, `uri`, `uuid`, `semver`) emits
+  `format` plus Active's own regex as `pattern` (ANDed with an authored
+  pattern through `allOf`), so the contract enforces the format even
+  where a consumer treats `format` as annotation-only.
+- **Blob bounds.** `max_size`/`media_type` are validating keywords on
+  the wire wrapper (`size.maximum`; `media_type` is an `enum` of the
+  authored type and the shared redaction marker, because a tainted
+  identity exports the marker — spec/blob.md §5). The `x-active-*`
+  annotations stay for tools.
+- **Duration floor.** The wire `ms` magnitude is a non-negative integer
+  (LANG-B-001/B-005), so the generated schema carries `minimum: 0` even
+  when the field states no lower bound; an authored bound raises it.
+  Without the floor a negative `ms` validated as a well-formed duration
+  that the engine rejects.
+- **Incomparable bounds.** A statically known bound the field type
+  cannot order (an `Int` min written `50%`, a `Float` `Bytes` max, a
+  float `Duration` bound, a unit `min_len`, a negative or non-integer
+  blob `max_size`) makes every present value T003. The generated JSON
+  Schema for that field is `not: {}` with a `$comment` naming the cause:
+  it rejects every present value exactly as evaluation does, instead of
+  emitting a bound Active never enforces. The same happens for an
+  unknown `format` name (the vocabulary is closed), a static non-string
+  `pattern`/`format`/`media_type`, and a dangling literal `requires`
+  target (its containing table is unsatisfiable: evaluation reports T003
+  for every document). TypeScript/Zod, Go, Rust, and Python **refuse**
+  such a schema with a named reason: a type cannot spell "no value"
+  uniformly, and a binding that accepted everything would be a lie.
+- **Binding-spelled bounds and defaults.** A bound or default written
+  through a `let` binding resolves to the same literal evaluation sees,
+  so `Int(max = cap)` and `Blob(max_size = 1KiB)` carry their real
+  constraint on every target. Unit-spelled static defaults (`30s`,
+  `1KiB`) render as the wire value and the field is not `required`.
+- **Binding bounds reach validator tags.** Go carries
+  `min=`/`max=` for `Duration` and `Bytes` (canonical milliseconds /
+  bytes) as well as `Int`/`Float`/`String`; zod carries the blob
+  `max_size` and media spellings. Neither reaches inside the Go blob
+  wrapper, which the generated comment states.
+- **The differential test (L-P25).** `active-core/tests/
+  generated_contracts.rs` walks the repository's schema-bearing
+  `.active` files, generates boundary/omission/extra/`requires`
+  candidates, evaluates them through the shipped engine, and validates
+  the wire JSON against the generated schema with the pinned Python
+  `jsonschema==4.26.0` (CI-installed; the emitted `pattern` enforces
+  formats). Enablement candidates for an `Any`/`OneOf` trigger are the
+  union of every disabled literal plus the zero-quantity wire shape, so
+  a fail-open trigger shows up as a divergence; blob candidates include
+  a tainted identity (the redacted-media wire form) and oversize/wrong
+  media. A verdict disagreement is a generator bug; the Active schema is
+  never loosened to match a generator. Corpus files the harness cannot
+  parse or render, schemas whose own static defaults do not validate (a
+  documented defect in that corpus file), and schemas with cross-object
+  or computed `requires` are skipped and printed as counts. A coverage
+  gate requires the exercised schemas to stay the majority of the
+  schema-bearing corpus, so a growing pile of skips fails the test
+  instead of silently shrinking the proof.
 - Closed tables → `additionalProperties: false`; open tables omit
   it. Static literal defaults render as JSON Schema `default`.
 - Deprecated fields: JSON Schema `"deprecated": true`, TS

@@ -22,19 +22,20 @@ fn schema_root(module: &Module) -> Result<NodeId, String> {
 // Shared shape helpers.
 // ------------------------------------------------------------------
 
-/// Static literal integer bound (dynamic expressions skipped).
+/// Static integer bound (plain integers only; units and floats are not
+/// integer bounds). A `let` binding resolves through its chain.
 fn literal_int(module: &Module, id: Option<NodeId>) -> Option<i64> {
-    match id.and_then(|node| module.get(node)) {
-        Some(Node::Literal(crate::ir::Value::Int(i))) => Some(*i),
+    match static_bound(module, id)? {
+        StaticBound::Int(n) => Some(n),
         _ => None,
     }
 }
 
 /// Static literal float bound (plain integers widen).
 fn literal_float(module: &Module, id: Option<NodeId>) -> Option<f64> {
-    match id.and_then(|node| module.get(node)) {
-        Some(Node::Literal(crate::ir::Value::Float(f))) => Some(*f),
-        Some(Node::Literal(crate::ir::Value::Int(i))) => Some(*i as f64),
+    match static_bound(module, id)? {
+        StaticBound::Int(n) => Some(n as f64),
+        StaticBound::Float(f) => Some(f),
         _ => None,
     }
 }
@@ -108,6 +109,22 @@ fn is_required(module: &Module, id: NodeId) -> bool {
         }
         _ => true,
     }
+}
+
+/// Whether the field's presence is conditional (`requires`): a binding
+/// target must mark it optional, because the trigger being disabled makes
+/// absence valid (the L-P10 T004 excuse / T010 converse).
+fn has_requires(module: &Module, id: NodeId) -> bool {
+    matches!(
+        module.get(id),
+        Some(Node::SchemaField { field }) if field.requires.is_some()
+    )
+}
+
+/// The binding-target optionality: absent is valid for a defaulted, Null,
+/// or conditionally-present field.
+fn is_optional(module: &Module, id: NodeId) -> bool {
+    !is_required(module, id) || has_requires(module, id)
 }
 
 fn pascal_case(s: &str) -> String {
@@ -237,6 +254,28 @@ pub fn schema_to_json_schema_with_profile(
     let root = schema_root(module)?;
     let mut node = json_schema_node(module, profile, root);
     if let JsonValue::Object(ref mut map) = node {
+        // L-P25: declare the dialect the contract is written in. Without
+        // it, a draft-07 consumer silently ignores `dependentRequired`
+        // (2019-09+) while the pinned validator assumes a newer default.
+        map.insert(
+            "$schema".to_string(),
+            JsonValue::String("http://json-schema.org/draft-07/schema#".to_string()),
+        );
+        // The validator exempts the document metadata keys at the root of
+        // a closed table (T005); a faithful contract allows them too.
+        if matches!(
+            module.get(root),
+            Some(Node::SchemaTable { closed: true, .. })
+        ) {
+            if let Some(JsonValue::Object(properties)) = map.get_mut("properties") {
+                properties
+                    .entry("active_mode".to_string())
+                    .or_insert_with(|| json!({"type": "string", "enum": ["data", "config"]}));
+                properties
+                    .entry("active_capabilities".to_string())
+                    .or_insert_with(|| json!({"type": "array", "items": {"type": "string"}}));
+            }
+        }
         map.insert(
             "$comment".to_string(),
             JsonValue::String(match check_notice(module) {
@@ -300,6 +339,65 @@ fn module_has_disjunction(module: &Module) -> bool {
     })
 }
 
+/// How a `requires` trigger can be expressed as a JSON Schema condition.
+enum TriggerCondition {
+    /// A schema matching every value that leaves the trigger disabled;
+    /// `None` means no value is disabled (a provided Secret/Blob).
+    Enabled(Option<JsonValue>),
+    /// A Null-typed trigger is never enabled (present counts as disabled).
+    Never,
+    /// The trigger's type has no static enabled set: annotate.
+    Unknown,
+}
+
+/// The condition under which a `requires` trigger is ENABLED
+/// (spec/schema-extensions.md §4: present and not false/0/""/empty/null;
+/// a provided secret or blob counts as enabled). `Never` and `Unknown` are
+/// surfaced so the caller annotates instead of claiming a contract it
+/// cannot express.
+fn trigger_condition(module: &Module, id: NodeId) -> TriggerCondition {
+    let disabled: Option<JsonValue> = match module.get(id) {
+        Some(Node::SchemaField { field }) => match &field.typ {
+            ActiveType::Null => return TriggerCondition::Never,
+            ActiveType::Secret | ActiveType::Blob => None,
+            ActiveType::Bool => Some(json!({"enum": [false]})),
+            ActiveType::Int | ActiveType::Bytes => Some(json!({"enum": [0]})),
+            ActiveType::Float => Some(json!({"enum": [0.0]})),
+            ActiveType::String | ActiveType::Enum(_) => Some(json!({"enum": [""]})),
+            ActiveType::Duration => Some(json!({"enum": [{ "$active.duration": { "ms": 0 } }]})),
+            ActiveType::Table { .. } => Some(json!({"enum": [{}]})),
+            // L-P25: enablement is a runtime-type rule, so an Any (or
+            // disjunction) trigger is disabled by any zero magnitude. A
+            // zero quantity is disabled for every unit, and the unit is a
+            // runtime property, so the wire shape (not a per-unit enum)
+            // carries that rule. R2/F3: the enum alone missed `0%`.
+            ActiveType::Any | ActiveType::OneOf => Some(json!({
+                "anyOf": [
+                    {"enum": [
+                        false, 0, "", [], {}, null,
+                        { "$active.duration": { "ms": 0 } },
+                    ]},
+                    {
+                        "type": "object",
+                        "required": ["$active.quantity"],
+                        "properties": {
+                            "$active.quantity": {
+                                "type": "object",
+                                "required": ["value"],
+                                "properties": { "value": { "const": 0 } },
+                            },
+                        },
+                    },
+                ],
+            })),
+        },
+        Some(Node::SchemaArray { .. }) => Some(json!({"enum": [[]]})),
+        Some(Node::SchemaTable { .. }) => Some(json!({"enum": [{}]})),
+        _ => return TriggerCondition::Unknown,
+    };
+    TriggerCondition::Enabled(disabled)
+}
+
 fn json_schema_node(
     module: &Module,
     profile: &crate::secret::SecretProfile,
@@ -307,11 +405,39 @@ fn json_schema_node(
 ) -> JsonValue {
     match module.get(id) {
         Some(Node::SchemaTable { fields, closed, .. }) => {
+            // A literal `requires` target that names no schema path is a
+            // schema typo (T003): evaluation reports it for every document
+            // that reaches this table, so the table's contract is
+            // unsatisfiable. The comment names the field and target; the
+            // root wrapper replaces the comment with the version notice,
+            // and the engine's diagnostic carries the detail.
+            for (name, field_id) in fields {
+                if let Some(Node::SchemaField { field }) = module.get(*field_id) {
+                    if let Some(target) = crate::convert::requires_target(module, field) {
+                        if !crate::convert::requires_target_exists(module, *field_id, &target) {
+                            return json!({
+                                "not": {},
+                                "$comment": format!(
+                                    "unsatisfiable: field '{name}' requires '{target}', which names no schema path"
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
             let mut properties = serde_json::Map::new();
             let mut required = Vec::new();
             for (name, field) in fields {
                 properties.insert(name.clone(), json_schema_node(module, profile, *field));
-                if is_required(module, *field) {
+                // L-P25: a `requires` field's presence is conditional. The
+                // unconditional `required` array would demand it even when
+                // the trigger is disabled (the L-P10 T004 excuse); the
+                // forward conditional below enforces the enabled case.
+                let conditional = matches!(
+                    module.get(*field),
+                    Some(Node::SchemaField { field }) if field.requires.is_some()
+                );
+                if is_required(module, *field) && !conditional {
                     required.push(JsonValue::String(name.clone()));
                 }
             }
@@ -321,29 +447,86 @@ fn json_schema_node(
             if !required.is_empty() {
                 obj.insert("required".to_string(), JsonValue::Array(required));
             }
-            let mut dependent: serde_json::Map<String, JsonValue> = serde_json::Map::new();
+            let mut conditionals: Vec<JsonValue> = Vec::new();
+            let mut annotations = serde_json::Map::new();
+            let mut computed: Vec<JsonValue> = Vec::new();
             for (name, field_id) in fields {
-                if let Some(crate::ir::Node::SchemaField { field }) = module.get(*field_id) {
-                    if let Some(target) = literal_string(module, field.requires) {
-                        // A real field reference stays raw so the
-                        // generated contract resolves; dangling text is
-                        // data and is withheld.
-                        if !crate::convert::requires_target_exists(module, *field_id, &target) {
-                            continue;
-                        }
-                        dependent
-                            .entry(target)
-                            .or_insert_with(|| JsonValue::Array(Vec::new()))
-                            .as_array_mut()
-                            .expect("dependentRequired arrays only")
-                            .push(JsonValue::String(name.clone()));
-                    }
+                let Some(Node::SchemaField { field }) = module.get(*field_id) else {
+                    continue;
+                };
+                if field.requires.is_none() {
+                    continue;
                 }
+                let Some(target) = crate::convert::requires_target(module, field) else {
+                    // A target computed at evaluation time (an env read,
+                    // a dynamic interpolation) has no static spelling, so
+                    // no conditional can be emitted. Annotate the field as
+                    // conditional - absent is valid when the trigger is
+                    // disabled - and let consumers see the limitation.
+                    computed.push(JsonValue::String(name.clone()));
+                    continue;
+                };
+                if !crate::convert::requires_target_exists(module, *field_id, &target) {
+                    continue;
+                }
+                // A direct sibling key is expressible in this object; a
+                // dotted or root-absolute target crosses objects and has
+                // no static JSON Schema form. Annotate, never lie.
+                let Some(target_id) = fields.get(&target).copied() else {
+                    annotations.insert(name.clone(), JsonValue::String(target.clone()));
+                    continue;
+                };
+                let enabled = match trigger_condition(module, target_id) {
+                    TriggerCondition::Enabled(disabled) => match disabled {
+                        Some(disabled) => json!({
+                            "required": [target],
+                            "properties": { target: { "not": disabled } },
+                        }),
+                        None => json!({"required": [target]}),
+                    },
+                    TriggerCondition::Never => {
+                        // A Null-typed trigger is always disabled, so a
+                        // present dependent field is the T010 violation.
+                        conditionals.push(json!({
+                            "if": {"required": [name]},
+                            "then": false,
+                        }));
+                        continue;
+                    }
+                    TriggerCondition::Unknown => {
+                        annotations.insert(name.clone(), JsonValue::String(target.clone()));
+                        continue;
+                    }
+                };
+                // Forward: trigger present and enabled -> a REQUIRED field
+                // is present. A defaulted/Null field stays optional (the
+                // generated `required` set and resilient fills agree).
+                if is_required(module, *field_id) {
+                    conditionals.push(json!({
+                        "if": enabled.clone(),
+                        "then": {"required": [name]},
+                    }));
+                }
+                // Reverse (T010): a present field requires the trigger
+                // present and enabled.
+                conditionals.push(json!({
+                    "if": {"required": [name]},
+                    "then": enabled,
+                }));
             }
-            if !dependent.is_empty() {
+            if !conditionals.is_empty() {
+                obj.insert("allOf".to_string(), JsonValue::Array(conditionals));
+            }
+            if !annotations.is_empty() {
                 obj.insert(
-                    "dependentRequired".to_string(),
-                    JsonValue::Object(dependent),
+                    "x-active-requires".to_string(),
+                    JsonValue::Object(annotations),
+                );
+            }
+            if !computed.is_empty() {
+                obj.insert(
+                    "x-active-requires-computed".to_string(),
+                    JsonValue::Array(computed),
                 );
             }
             if *closed {
@@ -355,40 +538,262 @@ fn json_schema_node(
             json!({"type": "array", "items": json_schema_node(module, profile, *element)})
         }
         Some(Node::SchemaField { field }) => json_schema_field(module, profile, field),
-        _ => JsonValue::Bool(true),
+        // A non-schema node in a schema position is not an always-true
+        // contract: fail closed (the parser never produces one).
+        _ => JsonValue::Bool(false),
     }
 }
 
-/// Any numeric bound literal as a JSON number, preserving the value
-/// validation compares against (integers stay integers, a duration
-/// bound is its canonical millisecond count). LANG-B-005.
+/// Any static bound argument as the JSON number validation compares
+/// against (integers stay integers, a duration bound is its canonical
+/// millisecond count). A dynamic bound has no static number; neither
+/// does a value the field type cannot order. LANG-B-005.
 fn literal_number(module: &Module, id: Option<NodeId>) -> Option<JsonValue> {
-    match id.and_then(|node| module.get(node)) {
-        Some(Node::Literal(crate::ir::Value::Int(n))) => Some(JsonValue::from(*n)),
-        Some(Node::Literal(crate::ir::Value::Float(f))) if f.is_finite() => {
-            Some(JsonValue::from(*f))
+    match static_bound(module, id)? {
+        StaticBound::Int(n) => Some(JsonValue::from(n)),
+        StaticBound::Float(f) => Some(JsonValue::from(f)),
+        StaticBound::DurationMs(ms) => Some(JsonValue::from(ms)),
+        StaticBound::Incomparable => None,
+    }
+}
+
+/// A statically known bound argument, classified by the value evaluation
+/// produces for it (LANG-B-005). Whether the field's comparison can order
+/// it is decided per field type below.
+enum StaticBound {
+    Int(i64),
+    Float(f64),
+    DurationMs(u64),
+    /// A static value the field type cannot compare (a percent quantity,
+    /// a string, a bool, ...). The engine reports T003 for every present
+    /// value, so the field's contract is unsatisfiable.
+    Incomparable,
+}
+
+/// The bound an argument evaluates to, when that is statically known.
+/// `None` is an absent or computed bound: codegen cannot see a runtime
+/// value, and the schema simply carries no constraint (a documented
+/// limitation, not a value verdict). A `let` binding resolves through
+/// its `Ref` chain, exactly as evaluation does.
+fn static_bound(module: &Module, slot: Option<NodeId>) -> Option<StaticBound> {
+    static_bound_depth(module, slot, 0)
+}
+
+fn static_bound_depth(module: &Module, slot: Option<NodeId>, depth: usize) -> Option<StaticBound> {
+    // Bound a malformed reference cycle; a real binding chain is short.
+    if depth > 32 {
+        return None;
+    }
+    Some(match module.get(slot?)? {
+        Node::Ref(to) => return static_bound_depth(module, Some(*to), depth + 1),
+        Node::Literal(crate::ir::Value::Int(n)) => StaticBound::Int(*n),
+        Node::Literal(crate::ir::Value::Float(f)) if f.is_finite() => StaticBound::Float(*f),
+        Node::Literal(crate::ir::Value::Float(_)) => StaticBound::Incomparable,
+        Node::Literal(crate::ir::Value::DurationMs(ms)) => StaticBound::DurationMs(*ms),
+        // Evaluation canonicalizes a unit literal: time units become
+        // DurationMs, byte units become Int bytes. Any other unit keeps
+        // its Quantity shape, which no numeric bound accepts.
+        Node::Quantity { value, unit } => {
+            let raw = match module.get(*value)? {
+                Node::Literal(crate::ir::Value::Int(n)) => *n as f64,
+                Node::Literal(crate::ir::Value::Float(f)) => *f,
+                Node::Ref(to) => match module.get(*to)? {
+                    Node::Literal(crate::ir::Value::Int(n)) => *n as f64,
+                    Node::Literal(crate::ir::Value::Float(f)) => *f,
+                    _ => return None,
+                },
+                _ => return None,
+            };
+            if let Some(ms) = unit.normalize_time_to_ms(raw) {
+                StaticBound::DurationMs(ms)
+            } else if let Some(bytes) = unit.normalize_to_bytes(raw) {
+                StaticBound::Int(i64::try_from(bytes).unwrap_or(i64::MAX))
+            } else {
+                StaticBound::Incomparable
+            }
         }
-        Some(Node::Literal(crate::ir::Value::DurationMs(ms))) => Some(JsonValue::from(*ms)),
-        // A bound written with a unit (1s, 500ms) parses as a Quantity
-        // node; render its canonical milliseconds, or canonical bytes for
-        // a byte unit (1KiB) - both are what validation compares against.
-        Some(Node::Quantity { value, unit }) => match module.get(*value) {
-            Some(Node::Literal(crate::ir::Value::Int(n))) => unit
-                .normalize_time_to_ms(*n as f64)
-                .map(JsonValue::from)
-                .or_else(|| unit.normalize_to_bytes(*n as f64).map(JsonValue::from)),
-            Some(Node::Literal(crate::ir::Value::Float(f))) => unit
-                .normalize_time_to_ms(*f)
-                .map(JsonValue::from)
-                .or_else(|| unit.normalize_to_bytes(*f).map(JsonValue::from)),
-            _ => None,
-        },
-        Some(Node::Literal(crate::ir::Value::Quantity(n, unit))) => unit
-            .normalize_time_to_ms(*n)
-            .map(JsonValue::from)
-            .or_else(|| unit.normalize_to_bytes(*n).map(JsonValue::from)),
+        Node::Literal(_) => StaticBound::Incomparable,
+        _ => return None,
+    })
+}
+
+/// Which comparison family a field uses (validate.rs `check_*_bounds`).
+#[derive(Clone, Copy)]
+enum BoundClass {
+    Int,
+    Float,
+    Bytes,
+    Duration,
+    /// `min_len`/`max_len`: integers only, and the engine clamps a
+    /// negative limit to zero rather than calling it incomparable.
+    Length,
+    /// Blob `max_size`: a non-negative integer only; any other static
+    /// bound is an invalid schema, so every document fails.
+    Size,
+}
+
+/// The JSON Schema keyword value for one bound, mirroring exactly what
+/// the engine compares. `Err` is a static bound the field type cannot
+/// order: every present value is rejected (T003), so the whole field
+/// contract is unsatisfiable.
+fn comparable_bound(
+    module: &Module,
+    slot: Option<NodeId>,
+    class: BoundClass,
+) -> Result<Option<JsonValue>, ()> {
+    let Some(bound) = static_bound(module, slot) else {
+        return Ok(None);
+    };
+    match (class, bound) {
+        (BoundClass::Int, StaticBound::Int(n)) => Ok(Some(JsonValue::from(n))),
+        (BoundClass::Int, StaticBound::Float(f)) => Ok(Some(JsonValue::from(f))),
+        (BoundClass::Float, StaticBound::Int(n)) => Ok(Some(JsonValue::from(n))),
+        (BoundClass::Float, StaticBound::Float(f)) => Ok(Some(JsonValue::from(f))),
+        (BoundClass::Bytes, StaticBound::Int(n)) => Ok(Some(JsonValue::from(n))),
+        (BoundClass::Duration, StaticBound::DurationMs(ms)) => Ok(Some(JsonValue::from(ms))),
+        // A plain non-negative integer reads as milliseconds.
+        (BoundClass::Duration, StaticBound::Int(n)) => Ok(Some(JsonValue::from(n.max(0) as u64))),
+        (BoundClass::Length, StaticBound::Int(n)) => Ok(Some(JsonValue::from(n.max(0) as u64))),
+        (BoundClass::Size, StaticBound::Int(n)) if n >= 0 => Ok(Some(JsonValue::from(n))),
+        _ => Err(()),
+    }
+}
+
+/// The first static bound in the schema tree that no value of its field
+/// can satisfy, with a dotted field path. Binding targets refuse such a
+/// schema: a generated type that accepts values the Active schema rejects
+/// is a lie, and no target can spell "no value" for every consumer.
+fn unsatisfiable_bound(module: &Module, field: &SchemaField) -> Option<&'static str> {
+    let check = |slot, class, name: &'static str| {
+        comparable_bound(module, slot, class)
+            .is_err()
+            .then_some(name)
+    };
+    match &field.typ {
+        ActiveType::Int => check(field.min, BoundClass::Int, "min")
+            .or_else(|| check(field.max, BoundClass::Int, "max")),
+        ActiveType::Float => check(field.min, BoundClass::Float, "min")
+            .or_else(|| check(field.max, BoundClass::Float, "max")),
+        ActiveType::Bytes => check(field.min, BoundClass::Bytes, "min")
+            .or_else(|| check(field.max, BoundClass::Bytes, "max")),
+        ActiveType::Duration => check(field.min, BoundClass::Duration, "min")
+            .or_else(|| check(field.max, BoundClass::Duration, "max")),
+        ActiveType::String => check(field.min_len, BoundClass::Length, "min_len")
+            .or_else(|| check(field.max_len, BoundClass::Length, "max_len")),
+        ActiveType::Blob => check(field.blob_max_size, BoundClass::Size, "max_size"),
         _ => None,
     }
+}
+
+fn unsatisfiable_in_tree(
+    module: &Module,
+    id: NodeId,
+    path: &str,
+    profile: &crate::secret::SecretProfile,
+) -> Option<String> {
+    match module.get(id)? {
+        Node::SchemaTable { fields, .. } => {
+            for (name, child) in fields {
+                let child_path = if path.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{path}.{name}")
+                };
+                if let Some(found) = unsatisfiable_in_tree(module, *child, &child_path, profile) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        Node::SchemaArray { element } => unsatisfiable_in_tree(module, *element, path, profile),
+        Node::SchemaField { field } => {
+            if let Some(bound) = unsatisfiable_bound(module, field) {
+                return Some(format!(
+                    "schema field '{path}' has an incomparable {bound} bound, which the Active schema rejects for every value"
+                ));
+            }
+            // Static pattern/format/media constraints the engine cannot
+            // satisfy are unsatisfiable too. A material value is withheld
+            // by the JSON Schema target, so it is not refused here.
+            if matches!(field.typ, ActiveType::String) {
+                if field.pattern.is_some()
+                    && literal_string(module, field.pattern).is_none()
+                    && static_bound(module, field.pattern).is_some()
+                {
+                    return Some(format!(
+                        "schema field '{path}' has a non-string pattern, which the Active schema rejects for every value"
+                    ));
+                }
+                match literal_string(module, field.format) {
+                    Some(format) if !profile.blob_identity_is_material(&format) => {
+                        if format_pattern(&format).is_none() {
+                            return Some(format!(
+                                "schema field '{path}' names an unknown format, which the Active schema rejects for every value"
+                            ));
+                        }
+                    }
+                    None if field.format.is_some()
+                        && static_bound(module, field.format).is_some() =>
+                    {
+                        return Some(format!(
+                            "schema field '{path}' has a non-string format, which the Active schema rejects for every value"
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            if matches!(field.typ, ActiveType::Blob) {
+                match literal_string(module, field.blob_media_type) {
+                    Some(media) if !profile.blob_identity_is_material(&media) => {}
+                    None if field.blob_media_type.is_some()
+                        && static_bound(module, field.blob_media_type).is_some() =>
+                    {
+                        return Some(format!(
+                            "schema field '{path}' has a non-string media_type, which the Active schema rejects for every value"
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            for branch in &field.one_of {
+                if let Some(found) = unsatisfiable_in_tree(module, *branch, path, profile) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Binding targets (TypeScript/Zod, Go, Rust, Python) refuse a schema
+/// containing an unsatisfiable field. The JSON Schema target stays
+/// available: it can express the constraint exactly (`not: {}`).
+fn refuse_unsatisfiable_binding(module: &Module) -> Result<(), String> {
+    let profile = crate::secret::SecretProfile::analyze(module);
+    match module
+        .schema
+        .and_then(|root| unsatisfiable_in_tree(module, root, "", &profile))
+    {
+        Some(reason) => Err(format!(
+            "{reason}; no binding target can express a field with no valid value (use the JSON Schema target, which renders it as unsatisfiable)"
+        )),
+        None => Ok(()),
+    }
+}
+
+/// A field whose static constraint the engine cannot satisfy with any
+/// value it could hold: the generated contract must reject every present
+/// value, exactly as evaluation does. `not: {}` is the draft-07 spelling
+/// of an unsatisfiable schema; the comment names the cause.
+fn unsatisfiable_field(field: &SchemaField, cause: &str) -> JsonValue {
+    json!({
+        "not": {},
+        "$comment": format!(
+            "unsatisfiable: {cause} for {} fields (the Active schema rejects every present value)",
+            field.typ.name()
+        ),
+    })
 }
 
 /// Add prose to a generated `description` instead of overwriting it.
@@ -410,6 +815,23 @@ fn append_description(obj: &mut serde_json::Map<String, JsonValue>, text: String
     }
 }
 
+/// The regex Active enforces for a named `format` (validate.rs). Emitting
+/// it as `pattern` makes the contract enforce the format even where a
+/// consumer (or the pinned validator) treats `format` as annotation-only.
+fn format_pattern(format: &str) -> Option<&'static str> {
+    match format {
+        "email" => Some(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*$"),
+        "uri" => Some(r"^[a-zA-Z][a-zA-Z0-9+.-]*:[^\s]+$"),
+        "uuid" => {
+            Some(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+        }
+        "semver" => Some(
+            r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$",
+        ),
+        _ => None,
+    }
+}
+
 fn json_schema_field(
     module: &Module,
     profile: &crate::secret::SecretProfile,
@@ -424,49 +846,104 @@ fn json_schema_field(
             obj.insert("type".to_string(), JsonValue::String("boolean".to_string()));
         }
         ActiveType::Int => {
+            let min = comparable_bound(module, field.min, BoundClass::Int);
+            let max = comparable_bound(module, field.max, BoundClass::Int);
+            if min.is_err() {
+                return unsatisfiable_field(field, "incomparable min bound");
+            }
+            if max.is_err() {
+                return unsatisfiable_field(field, "incomparable max bound");
+            }
             obj.insert("type".to_string(), JsonValue::String("integer".to_string()));
             // A bound spelled as a float (min = 1.0) is still a bound;
             // `literal_int` alone dropped it (LANG-B-005).
-            if let Some(min) = literal_number(module, field.min) {
+            if let Ok(Some(min)) = min {
                 obj.insert("minimum".to_string(), min);
             }
-            if let Some(max) = literal_number(module, field.max) {
+            if let Ok(Some(max)) = max {
                 obj.insert("maximum".to_string(), max);
             }
         }
         ActiveType::Float => {
-            obj.insert("type".to_string(), JsonValue::String("number".to_string()));
-            if let Some(min) = literal_float(module, field.min) {
-                obj.insert("minimum".to_string(), JsonValue::from(min));
+            let min = comparable_bound(module, field.min, BoundClass::Float);
+            let max = comparable_bound(module, field.max, BoundClass::Float);
+            if min.is_err() {
+                return unsatisfiable_field(field, "incomparable min bound");
             }
-            if let Some(max) = literal_float(module, field.max) {
-                obj.insert("maximum".to_string(), JsonValue::from(max));
+            if max.is_err() {
+                return unsatisfiable_field(field, "incomparable max bound");
+            }
+            obj.insert("type".to_string(), JsonValue::String("number".to_string()));
+            if let Ok(Some(min)) = min {
+                obj.insert("minimum".to_string(), min);
+            }
+            if let Ok(Some(max)) = max {
+                obj.insert("maximum".to_string(), max);
             }
         }
         ActiveType::String => {
+            let min = comparable_bound(module, field.min_len, BoundClass::Length);
+            let max = comparable_bound(module, field.max_len, BoundClass::Length);
+            if min.is_err() {
+                return unsatisfiable_field(field, "incomparable min_len bound");
+            }
+            if max.is_err() {
+                return unsatisfiable_field(field, "incomparable max_len bound");
+            }
             obj.insert("type".to_string(), JsonValue::String("string".to_string()));
-            if let Some(min) = literal_int(module, field.min_len) {
-                obj.insert("minLength".to_string(), JsonValue::from(min));
+            if let Ok(Some(min)) = min {
+                obj.insert("minLength".to_string(), min);
             }
-            if let Some(max) = literal_int(module, field.max_len) {
-                obj.insert("maxLength".to_string(), JsonValue::from(max));
+            if let Ok(Some(max)) = max {
+                obj.insert("maxLength".to_string(), max);
             }
-            if let Some(pattern) = literal_string(module, field.pattern) {
+            let pattern = literal_string(module, field.pattern);
+            if let Some(pattern) = &pattern {
                 // A material pattern cannot be redacted into valid regex
                 // syntax; withhold the constraint entirely.
-                if !profile.blob_identity_is_material(&pattern) {
+                if !profile.blob_identity_is_material(pattern) {
                     obj.insert(
                         "pattern".to_string(),
-                        JsonValue::String(redact_prose(profile, pattern)),
+                        JsonValue::String(redact_prose(profile, pattern.clone())),
                     );
                 }
+            } else if field.pattern.is_some() && static_bound(module, field.pattern).is_some() {
+                // A static non-string pattern is an invalid schema: every
+                // present value is T003.
+                return unsatisfiable_field(field, "incomparable pattern bound");
             }
-            if let Some(format) = literal_string(module, field.format) {
+            let format = literal_string(module, field.format);
+            if let Some(format) = &format {
                 // A format is a closed vocabulary; withhold a material
                 // value instead of emitting a marker.
-                if !profile.blob_identity_is_material(&format) {
-                    obj.insert("format".to_string(), JsonValue::String(format));
+                if !profile.blob_identity_is_material(format) {
+                    match format_pattern(format) {
+                        Some(pattern) => {
+                            // Keep an authored pattern too: AND the two.
+                            if let Some(existing) = obj.remove("pattern") {
+                                obj.insert(
+                                    "allOf".to_string(),
+                                    json!([
+                                        { "pattern": existing },
+                                        { "pattern": pattern },
+                                    ]),
+                                );
+                            } else {
+                                obj.insert(
+                                    "pattern".to_string(),
+                                    JsonValue::String(pattern.to_string()),
+                                );
+                            }
+                        }
+                        // The format vocabulary is closed (validate.rs):
+                        // a name outside it makes every present string a
+                        // T003, so the field is unsatisfiable.
+                        None => return unsatisfiable_field(field, "unknown format name"),
+                    }
+                    obj.insert("format".to_string(), JsonValue::String(format.clone()));
                 }
+            } else if field.format.is_some() && static_bound(module, field.format).is_some() {
+                return unsatisfiable_field(field, "incomparable format bound");
             }
         }
         // Matches the §1 export shape: durations serialize as
@@ -475,15 +952,26 @@ fn json_schema_field(
         // form the exporter produces - the bare `{"ms": n}` shape is also a
         // plain table and is no longer the duration contract.
         ActiveType::Duration => {
+            let min = comparable_bound(module, field.min, BoundClass::Duration);
+            let max = comparable_bound(module, field.max, BoundClass::Duration);
+            if min.is_err() {
+                return unsatisfiable_field(field, "incomparable min bound");
+            }
+            if max.is_err() {
+                return unsatisfiable_field(field, "incomparable max bound");
+            }
             // Bounds live on the exported `ms` integer, in canonical
             // milliseconds (LANG-B-005): a bare object accepted
             // durations the Active schema rejects.
             let mut ms = serde_json::Map::new();
             ms.insert("type".to_string(), JsonValue::String("integer".to_string()));
-            if let Some(min) = literal_number(module, field.min) {
-                ms.insert("minimum".to_string(), min);
-            }
-            if let Some(max) = literal_number(module, field.max) {
+            // A duration magnitude is a non-negative integer on the wire
+            // (LANG-B-001/B-005), so `minimum: 0` is part of the contract
+            // even when the schema states no lower bound. Without it a
+            // negative `ms` validated as a well-formed duration.
+            let floor = min.ok().flatten().unwrap_or_else(|| JsonValue::from(0u64));
+            ms.insert("minimum".to_string(), floor);
+            if let Ok(Some(max)) = max {
                 ms.insert("maximum".to_string(), max);
             }
             let inner = json!({
@@ -502,11 +990,19 @@ fn json_schema_field(
         }
         // Bytes normalize to integers on export.
         ActiveType::Bytes => {
+            let min = comparable_bound(module, field.min, BoundClass::Bytes);
+            let max = comparable_bound(module, field.max, BoundClass::Bytes);
+            if min.is_err() {
+                return unsatisfiable_field(field, "incomparable min bound");
+            }
+            if max.is_err() {
+                return unsatisfiable_field(field, "incomparable max bound");
+            }
             obj.insert("type".to_string(), JsonValue::String("integer".to_string()));
-            if let Some(min) = literal_number(module, field.min) {
+            if let Ok(Some(min)) = min {
                 obj.insert("minimum".to_string(), min);
             }
-            if let Some(max) = literal_number(module, field.max) {
+            if let Ok(Some(max)) = max {
                 obj.insert("maximum".to_string(), max);
             }
         }
@@ -551,18 +1047,44 @@ fn json_schema_field(
         // the inner identity is closed, and the materialised payload is
         // the only optional key.
         ActiveType::Blob => {
+            let max = comparable_bound(module, field.blob_max_size, BoundClass::Size);
+            if max.is_err() {
+                return unsatisfiable_field(field, "invalid max_size bound");
+            }
+            // A static non-string media expectation is an invalid schema:
+            // validation reports it and every document fails.
+            let media = literal_string(module, field.blob_media_type);
+            if field.blob_media_type.is_some()
+                && media.is_none()
+                && static_bound(module, field.blob_media_type).is_some()
+            {
+                return unsatisfiable_field(field, "invalid media_type bound");
+            }
             let mut inner = serde_json::Map::new();
             inner.insert("type".to_string(), JsonValue::String("object".to_string()));
-            inner.insert(
-                "properties".to_string(),
-                serde_json::json!({
-                    "hash": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" },
-                    "size": { "type": "integer", "minimum": 0 },
-                    "media_type": { "type": "string" },
-                    "tainted": { "type": "boolean" },
-                    "payload_b64": { "type": "string" },
-                }),
-            );
+            let mut inner_properties = serde_json::json!({
+                "hash": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" },
+                "size": { "type": "integer", "minimum": 0 },
+                "media_type": { "type": "string" },
+                "tainted": { "type": "boolean" },
+                "payload_b64": { "type": "string" },
+            });
+            // L-P25: the blob's declared bounds are part of the contract;
+            // x-active-* alone is an annotation a validator ignores.
+            if let Ok(Some(max)) = &max {
+                inner_properties["size"]["maximum"] = max.clone();
+            }
+            if let Some(media) = &media {
+                if !profile.blob_identity_is_material(media) {
+                    // A tainted identity redacts its media type on the
+                    // wire to the shared marker (spec/blob.md §5), so a
+                    // document exported from a valid config can carry
+                    // either spelling. Pinning `const` to the authored
+                    // type rejected the engine's own output (F2).
+                    inner_properties["media_type"]["enum"] = json!([media, crate::secret::MARKER]);
+                }
+            }
+            inner.insert("properties".to_string(), inner_properties);
             inner.insert(
                 "required".to_string(),
                 serde_json::json!(["hash", "size", "media_type", "tainted"]),
@@ -576,15 +1098,15 @@ fn json_schema_field(
             obj.insert("required".to_string(), serde_json::json!(["$active.blob"]));
             obj.insert("additionalProperties".to_string(), JsonValue::Bool(false));
             obj.insert("x-active-blob".to_string(), JsonValue::Bool(true));
-            if let Some(media) = literal_string(module, field.blob_media_type) {
+            if let Some(media) = media {
                 // Withhold a material media type: a marker would be an
                 // invalid contract value.
                 if !profile.blob_identity_is_material(&media) {
                     obj.insert("x-active-media-type".to_string(), JsonValue::String(media));
                 }
             }
-            if let Some(max) = literal_int(module, field.blob_max_size) {
-                obj.insert("x-active-max-size".to_string(), JsonValue::from(max));
+            if let Ok(Some(max)) = max {
+                obj.insert("x-active-max-size".to_string(), max);
             }
         }
         ActiveType::OneOf => {
@@ -595,14 +1117,19 @@ fn json_schema_field(
             // case is defensive only (an always-true schema, never an
             // empty `oneOf` that rejects everything).
             if field.one_of.is_empty() {
-                return JsonValue::Bool(true);
+                // An empty disjunction accepts nothing; the parser refuses
+                // it (E020), so this is defensive and fail-closed.
+                return JsonValue::Bool(false);
             }
             let branches: Vec<JsonValue> = field
                 .one_of
                 .iter()
                 .map(|branch| json_schema_node(module, profile, *branch))
                 .collect();
-            obj.insert("oneOf".to_string(), JsonValue::Array(branches));
+            // Active accepts a value when ANY branch accepts it (L-P10);
+            // `oneOf` would demand exactly one, rejecting an Int value from
+            // an Int|Float disjunction. `anyOf` is the faithful keyword.
+            obj.insert("anyOf".to_string(), JsonValue::Array(branches));
         }
         ActiveType::Any => return JsonValue::Bool(true),
     }
@@ -682,6 +1209,7 @@ pub fn schema_to_typescript_with_profile(
     root_name: &str,
     profile: &crate::secret::SecretProfile,
 ) -> Result<String, String> {
+    refuse_unsatisfiable_binding(module)?;
     let root = schema_root(module)?;
     if !matches!(module.get(root), Some(Node::SchemaTable { .. })) {
         return Err("schema block must be a table for code generation".to_string());
@@ -739,7 +1267,7 @@ impl TsGen<'_> {
         let fields: Vec<(String, NodeId)> = fields.iter().map(|(k, v)| (k.clone(), *v)).collect();
         self.out.push_str(&format!("export interface {name} {{\n"));
         for (key, field) in &fields {
-            let optional = !is_required(self.module, *field);
+            let optional = is_optional(self.module, *field);
             let nominal = nominal_id(self.module, *field);
             let tname = self.type_name(nominal, format!("{name}{}", pascal_case(key)));
             let typ = self.ts_type(&tname, *field);
@@ -921,7 +1449,7 @@ impl TsGen<'_> {
                 format!("z.array({})", self.zod_inline(hint, *element))
             }
             Some(Node::SchemaField { field }) => {
-                let required = is_required(self.module, id);
+                let required = is_required(self.module, id) && !has_requires(self.module, id);
                 self.zod_leaf(field, required)
             }
             _ => "z.unknown()".to_string(),
@@ -964,7 +1492,29 @@ impl TsGen<'_> {
             ActiveType::Float => "z.number()".to_string(),
             ActiveType::Duration | ActiveType::Bytes => "z.number().int()".to_string(),
             ActiveType::Secret => "z.string()".to_string(),
-            ActiveType::Blob => "z.object({ \"$active.blob\": z.object({ hash: z.string(), size: z.number(), media_type: z.string(), tainted: z.boolean(), payload_b64: z.string().optional() }) })".to_string(),
+            ActiveType::Blob => {
+                // The wire wrapper (spec/blob.md §5). Carry what a zod
+                // schema can enforce: the size bound and the accepted
+                // media spellings (the authored type and the tainted
+                // marker). A struct tag cannot reach inside a Go wrapper,
+                // which is why the Go target documents these as
+                // JSON-Schema-only.
+                let mut size = "z.number().int().min(0)".to_string();
+                if let Some(max) = literal_int(self.module, field.blob_max_size) {
+                    if max >= 0 {
+                        size.push_str(&format!(".max({max})"));
+                    }
+                }
+                let media = match literal_string(self.module, field.blob_media_type) {
+                    Some(media) if !self.profile.blob_identity_is_material(&media) => {
+                        format!("z.enum([{media:?}, {:?}])", crate::secret::MARKER)
+                    }
+                    _ => "z.string()".to_string(),
+                };
+                format!(
+                    "z.object({{ \"$active.blob\": z.object({{ hash: z.string(), size: {size}, media_type: {media}, tainted: z.boolean(), payload_b64: z.string().optional() }}) }})"
+                )
+            }
             ActiveType::Table { .. } => "z.record(z.string(), z.unknown())".to_string(),
             ActiveType::OneOf => {
                 if field.one_of.is_empty() {
@@ -1100,6 +1650,7 @@ pub fn schema_to_go_with_profile(
     root_name: &str,
     profile: &crate::secret::SecretProfile,
 ) -> Result<String, String> {
+    refuse_unsatisfiable_binding(module)?;
     let root = schema_root(module)?;
     if !matches!(module.get(root), Some(Node::SchemaTable { .. })) {
         return Err("schema block must be a table for code generation".to_string());
@@ -1341,7 +1892,7 @@ impl GoGen<'_> {
     /// tags are a best-effort hint for the validator library.
     fn go_tag(&self, key: &str, id: NodeId) -> String {
         let mut rules: Vec<String> = Vec::new();
-        if is_required(self.module, id) {
+        if is_required(self.module, id) && !has_requires(self.module, id) {
             let is_bool = matches!(
                 self.module.get(id),
                 Some(Node::SchemaField { field }) if matches!(field.typ, ActiveType::Bool)
@@ -1380,6 +1931,17 @@ impl GoGen<'_> {
                         Some("uri") => rules.push("url".to_string()),
                         Some("uuid") => rules.push("uuid".to_string()),
                         _ => {}
+                    }
+                }
+                ActiveType::Duration | ActiveType::Bytes => {
+                    // Canonical milliseconds / bytes (LANG-B-005): the
+                    // same integer the Engine compares, so unit bounds
+                    // and binding-spelled bounds reach the validator tag.
+                    if let Some(min) = literal_int(self.module, field.min) {
+                        rules.push(format!("min={min}"));
+                    }
+                    if let Some(max) = literal_int(self.module, field.max) {
+                        rules.push(format!("max={max}"));
                     }
                 }
                 // Spaces, commas, or struct-tag delimiters in a member
@@ -1442,6 +2004,16 @@ impl GoGen<'_> {
                     }
                     ActiveType::Secret => {
                         notes.push("secret value, redacted as ***SECRET*** on export".to_string())
+                    }
+                    ActiveType::Blob => {
+                        // Validator tags cannot reach inside the wrapper
+                        // struct; the JSON Schema and zod targets enforce
+                        // these, so say so instead of implying parity.
+                        if let Some(max) = literal_int(self.module, field.blob_max_size) {
+                            notes.push(format!(
+                                "blob max_size {max} (enforced by JSON Schema/zod, not this tag)"
+                            ));
+                        }
                     }
                     _ => {}
                 }
@@ -1508,6 +2080,7 @@ pub fn schema_to_rust_with_profile(
     root_name: &str,
     profile: &crate::secret::SecretProfile,
 ) -> Result<String, String> {
+    refuse_unsatisfiable_binding(module)?;
     let root = schema_root(module)?;
     if !matches!(module.get(root), Some(Node::SchemaTable { .. })) {
         return Err("schema block must be a table for code generation".to_string());
@@ -1592,7 +2165,7 @@ impl RustGen<'_> {
         self.out.push_str(" {\n");
         let mut taken = HashSet::new();
         for (key, field) in &fields {
-            let optional = !is_required(self.module, *field);
+            let optional = is_optional(self.module, *field);
             let raw = sanitize_ident(key, "field");
             let (field_name, mut renamed) = if RUST_KEYWORDS.contains(&raw.as_str()) {
                 (format!("r#{raw}"), true)
@@ -1767,6 +2340,7 @@ pub fn schema_to_python_with_profile(
     root_name: &str,
     profile: &crate::secret::SecretProfile,
 ) -> Result<String, String> {
+    refuse_unsatisfiable_binding(module)?;
     let root = schema_root(module)?;
     if !matches!(module.get(root), Some(Node::SchemaTable { .. })) {
         return Err("schema block must be a table for code generation".to_string());
@@ -1951,7 +2525,7 @@ impl PythonGen<'_> {
             let nominal = nominal_id(self.module, *field);
             let tname = self.type_name(nominal, format!("{name}{}", pascal_case(key)));
             let mut typ = self.py_type(&tname, *field);
-            if !is_required(self.module, *field) {
+            if is_optional(self.module, *field) {
                 typ = format!("NotRequired[{typ}]");
             }
             self.out.push_str(&format!("    {field_name}: {typ}\n"));

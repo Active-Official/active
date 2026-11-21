@@ -739,6 +739,73 @@ reference for any behavior. `release.yml` now runs a provenance gate
 the tag, or whose workspace version differs from the tag, so this cannot
 recur.
 
+### L-P25: generated contracts proven by differential test
+
+The JSON Schema generator is now proven to be the contract, not a sketch.
+`active-core/tests/generated_contracts.rs` walks every schema-bearing
+`.active` file in the repository corpus (conformance cases, examples, the
+standard schema library, docs-site, tests, agent-kit vectors, fixtures),
+renders each schema back to Active source, generates boundary/omission/
+extra-key/`requires` candidates from the schema tree (the deterministic
+L-P66 family discipline), evaluates each through the shipped resilient
+engine, and validates the wire JSON against the generated schema with the
+pinned Python `jsonschema==4.26.0` already used by the codegen and
+output-schema gates (an external batch check; the Rust dependency graph is
+unchanged, and no network crates enter it). A verdict disagreement fails
+the test; the Active schema is never loosened. 91 schemas and 1843
+candidates pass with zero divergences; a coverage gate requires the
+exercised schemas to remain the majority of the schema-bearing corpus,
+so a growing pile of skips fails the test.
+
+The differential test exposed and this change fixes the live contract
+gaps: the schema now declares its dialect (`$schema: draft-07`);
+disjunctions emit `anyOf` (Active accepts any branch; `oneOf` rejected an
+`Int` of an `Int|Float`); `requires` emits the full biconditional as
+`allOf` conditionals (forward enablement + the reverse T010 rule) instead
+of a forward-only `dependentRequired` that ignored disabled triggers;
+conditional fields are no longer in the unconditional `required` array
+(the trigger-disabled T004 excuse) and every binding target (TypeScript,
+Zod, Go, Rust, Python) types them optional; named formats emit Active's
+own regex as `pattern` so `uuid`/`semver` are enforced where `format` is
+annotation-only; blob `max_size` is a validating keyword and the wire
+`media_type` accepts both the authored type and the redaction marker a
+tainted identity exports; and a duration's `ms` magnitude carries
+`minimum: 0`, so a negative duration no longer validates. Enablement
+candidates for an `Any`/`OneOf` trigger cover every disabled literal
+plus the zero-quantity wire shape (`0%`/`0Hz`), closing a fail-open
+case. A closed root contract allows the document metadata keys the
+validator exempts.
+
+Review round two closed five more: a `requires` target spelled through a
+`let` binding now resolves to the same conditionals as a literal, and a
+target computed at evaluation time is listed under
+`x-active-requires-computed` and counted instead of silently accepted;
+the blob media `enum` accepts the tainted marker; the `Any` trigger's
+zero-quantity shape; a statically known bound the engine cannot order
+(`Int` min `50%`, float `Bytes`/`Duration` bounds, unit `min_len`)
+renders an unsatisfiable field (`not: {}` with a `$comment`) instead of
+a bound Active never enforces; and a unit-spelled static default
+(`30s`, `1KiB`) renders its wire value and no longer makes the field
+`required`.
+
+Review round three closed the remaining boundary gaps: `let`-spelled
+numeric bounds and unit blob `max_size` now reach every target (Go tags,
+zod, JSON Schema) instead of being treated as dynamic; a dangling
+literal `requires` target makes its table unsatisfiable (`not: {}`),
+matching the T003 evaluation reports for every document; TypeScript/Zod,
+Go, Rust, and Python refuse a schema with an unsatisfiable field (the
+JSON Schema target states it exactly, including an unknown format name,
+a static non-string pattern/format/media_type, and a negative or
+non-integer blob `max_size`); Go carries Duration/Bytes bounds as
+validator tags and zod carries the blob size/media constraints; the
+harness walks `OneOf` branch tables for `requires` and bounds, includes
+dangling-target and binding-bound fixtures, and its coverage commentary
+records why parse-negative fixtures stay outside the ratio. Dotted or
+root-absolute `requires` targets stay annotated `x-active-requires` and
+counted as known limitations. Spec `spec/converters.md`,
+`spec/schema-extensions.md` §4; conformance vectors 0059–0061 (Bytes
+bound, Duration bound, nested requires-disabled T010).
+
 ### L-P41: patch and repair commits are atomic, with receipts
 
 Patching is now validate-then-commit. The engine's `apply_patches` applies

@@ -395,3 +395,19 @@ reason = "pure mode is not exposed by the shim harness yet (L-P05 native only)"
 id = "0058-closed-table-evaluates"
 file = "cases/0058-closed-table-evaluates.active"
 kind = "clean"
+
+# L-P25: the evaluation semantics the generated JSON Schema mirrors.
+[[cases]]
+id = "0059-bytes-bound"
+file = "cases/0059-bytes-bound.active"
+kind = "refused"
+
+[[cases]]
+id = "0060-duration-bound"
+file = "cases/0060-duration-bound.active"
+kind = "refused"
+
+[[cases]]
+id = "0061-nested-requires-disabled"
+file = "cases/0061-nested-requires-disabled.active"
+kind = "refused"

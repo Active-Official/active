@@ -1,0 +1,10 @@
+# L-P25 (review 3): bounds spelled through a `let` binding and a unit
+# blob bound. Evaluation resolves both; the generated contract must.
+let cap = 10
+
+schema = {
+  n = Int(max = cap),
+  payload = Blob(media_type = "text/plain", max_size = 1KiB),
+}
+n = 10
+payload = blob("text/plain", "hi")

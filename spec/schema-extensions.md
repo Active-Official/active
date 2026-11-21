@@ -56,11 +56,34 @@ sibling path is present *and enabled* (true, non-empty, non-zero;
 a provided secret counts as enabled; `false`, `""`, `0`, empties, and
 null do not trigger). Violation is T004 naming both paths for a
 literal target; a computed target renders `(required by a computed
-requires target)` and is never echoed. Rationale:
+requires target)` and is never echoed. The converse is also enforced
+(L-P10): a present field whose trigger is disabled is T010. Rationale:
 the smallest conditional that covers real contracts (TLS cert required
 when TLS is on, replicas required when prod mode is on) without an
 expression language in the schema. Full `when`/`then` expressions are
 Deferred.
+
+**Generated contracts.** The JSON Schema target expresses the
+biconditional with two `allOf` conditionals for a direct sibling target
+(forward: trigger present and enabled → a required field is present;
+reverse: field present → trigger present and enabled). A field with
+`requires` is never listed in the unconditional `required` array. A
+dotted or root-absolute target crosses objects, which JSON Schema
+cannot express; the generator annotates those fields with
+`x-active-requires` and the differential test counts them as known
+limitations rather than claiming a contract it cannot state. A target
+computed at evaluation time (an environment read or a dynamic
+interpolation) has no static spelling at all: the generator lists the
+field under `x-active-requires-computed`, keeps it optional, and the
+differential counts the limitation. A target spelled through a `let`
+binding is static and resolves to the same conditionals as a literal
+(spelling an argument through a binding never changes the contract).
+
+For an `Any`/`OneOf` trigger, enablement is a runtime truthiness rule:
+the disabled shape is `anyOf` of the literal disabled set and the wire
+shape of a zero quantity (`{"$active.quantity": {"value": 0}}`), because
+the unit is a runtime property. A zero duration (`0ms`), false, zero,
+empty string/list/table, and null are the other disabled forms.
 
 ## Deferred with reason
 

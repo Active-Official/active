@@ -1,0 +1,2 @@
+schema = { v = OneOf(Int, Float) }
+v = 1

@@ -195,14 +195,24 @@ fn generation_fails_without_a_schema() {
 
 #[test]
 fn dynamic_bounds_skip_without_diagnostics() {
-    // A computed bound has no static form: skipped, still valid.
+    // A bound read from the environment has no static form: skipped,
+    // still valid. (A `let` binding, by contrast, is static and now
+    // resolves - review 3/F2.)
+    let module = parse(
+        "schema = { port = Int(max = env.ACTIVE_MAX) }\nport = 1\n",
+        "generate",
+    )
+    .expect("must parse");
+    let schema = schema_to_json_schema(&module).expect("generate");
+    assert!(schema["properties"]["port"].get("maximum").is_none());
+
     let module = parse(
         "let cap = 10\nschema = { port = Int(max = cap) }\nport = 1\n",
         "generate",
     )
     .expect("must parse");
     let schema = schema_to_json_schema(&module).expect("generate");
-    assert!(schema["properties"]["port"].get("maximum").is_none());
+    assert_eq!(schema["properties"]["port"]["maximum"], 10);
 }
 
 #[test]
@@ -240,10 +250,17 @@ fn codegen_carries_new_schema_metadata() {
     assert_eq!(props["contact"]["format"], "email");
     assert_eq!(props["contact"]["description"], "Team inbox.");
     assert_eq!(props["color"]["description"], "red: stop; green: go");
-    assert_eq!(
-        schema["dependentRequired"],
-        serde_json::json!({"tls": ["cert"]})
-    );
+    // L-P25: the generated contract declares its dialect and expresses the
+    // requires biconditional precisely: the forward condition (trigger
+    // present and enabled -> the required field is present) and the
+    // reverse (field present -> trigger present and enabled, the T010
+    // rule). `dependentRequired` alone cannot see enablement.
+    assert_eq!(schema["$schema"], "http://json-schema.org/draft-07/schema#");
+    assert!(schema.get("dependentRequired").is_none(), "{schema}");
+    let all_of = schema["allOf"].as_array().expect("allOf");
+    assert_eq!(all_of.len(), 2, "{schema}");
+    assert_eq!(all_of[0]["then"]["required"][0], "cert", "{schema}");
+    assert_eq!(all_of[1]["if"]["required"][0], "cert", "{schema}");
     let ts = schema_to_typescript(&module, "Config").expect("ts");
     assert!(ts.contains("/** Team inbox. */"), "{ts}");
     let go = schema_to_go(&module, "Config").expect("go");
@@ -264,11 +281,14 @@ fn python_target_escapes_and_dedupes() {
 
 #[test]
 fn codegen_comments_cannot_inject_lines() {
-    // A newline inside a description must fold to a space (never an
+    // A newline inside authored prose must fold to a space (never an
     // uncommented line), and `*/` must not close a TS block comment.
-    // Mirrors the python_target_escapes_and_dedupes precedent for Go/TS.
+    // `pattern` is the arbitrary-text schema facet: `format` is a closed
+    // vocabulary and a `requires` target must name a path, so an
+    // arbitrary string in either is an unsatisfiable field (review 3)
+    // and the binding targets refuse it.
     let module = parse(
-        "schema = { hook = String(description = \"a\\nb */ c\", deprecated = \"x\\ny\", format = \"f\\ng\", requires = \"r\\ns\") }\n",
+        "schema = { hook = String(description = \"a\\nb */ c\", deprecated = \"x\\ny\", pattern = \"p\\nq */ r\") }\n",
         "generate",
     )
     .expect("must parse");
@@ -281,6 +301,10 @@ fn codegen_comments_cannot_inject_lines() {
         "go emits no bare injected line:\n{go}"
     );
     assert!(go.contains("// Deprecated: x y"), "go folds reason:\n{go}");
+    assert!(
+        go.contains("// pattern p q */ r"),
+        "go folds pattern:\n{go}"
+    );
     let ts = schema_to_typescript(&module, "Config").expect("ts");
     assert!(
         ts.contains("/** a b * / c */"),
@@ -289,13 +313,12 @@ fn codegen_comments_cannot_inject_lines() {
     assert!(ts.contains("@deprecated x y"), "ts folds reason:\n{ts}");
     let py = schema_to_python(&module, "Config").expect("python");
     assert!(py.contains("# a b */ c"), "python folds comment:\n{py}");
-    assert!(py.contains("# format: f g"), "python folds format:\n{py}");
     assert!(
-        py.contains("# requires: r s"),
-        "python folds requires:\n{py}"
+        py.contains("# pattern: p q */ r"),
+        "python folds pattern:\n{py}"
     );
     assert!(
-        !py.lines().any(|l| l == "b */ c" || l == "g" || l == "s"),
+        !py.lines().any(|l| l == "b */ c" || l == "q */ r"),
         "python emits no bare injected line:\n{py}"
     );
 }
@@ -311,7 +334,9 @@ fn python_target_emits_typed_dicts() {
         "# format: email",
         "# Team inbox.",
         "color: Literal[\"red\", \"green\"]",
-        "cert: str",
+        // L-P25/F1: a `requires` field is conditionally present, so
+        // every binding target types it as optional.
+        "cert: NotRequired[str]",
         "# requires: tls",
     ] {
         assert!(py.contains(probe), "missing {probe}:\n{py}");
@@ -621,7 +646,7 @@ fn json_schema_renders_a_disjunction_and_its_default() {
     let schema = schema_to_json_schema(&disjunction_module()).expect("generate");
     let prop = &schema["properties"]["service"];
     assert!(prop.get("type").is_none(), "{prop}");
-    let branches = prop["oneOf"].as_array().expect("oneOf");
+    let branches = prop["anyOf"].as_array().expect("anyOf");
     assert_eq!(branches.len(), 3, "{prop}");
     assert_eq!(branches[0]["type"], "integer");
     assert_eq!(branches[0]["minimum"], 1);
@@ -658,4 +683,364 @@ fn go_and_rust_refuse_a_disjunction_instead_of_lying() {
     assert!(go.contains("Go target"), "{go}");
     let rust = schema_to_rust(&module, "Root").expect_err("Rust must refuse");
     assert!(rust.contains("Rust target"), "{rust}");
+}
+
+#[test]
+fn json_schema_declares_its_dialect() {
+    let schema = schema_to_json_schema(&module()).expect("jsonschema");
+    assert_eq!(
+        schema["$schema"], "http://json-schema.org/draft-07/schema#",
+        "{schema}"
+    );
+}
+
+#[test]
+fn json_schema_blob_bounds_are_validating_keywords() {
+    // L-P25: x-active-* is an annotation a validator ignores; the inner
+    // size/media_type carry the real constraints.
+    let module = parse(
+        "schema = { b = Blob(media_type = \"text/plain\", max_size = 4) }\nb = blob(\"text/plain\", \"hi\")\n",
+        "blob-bounds",
+    )
+    .expect("parse");
+    let schema = schema_to_json_schema(&module).expect("generate");
+    let inner = &schema["properties"]["b"]["properties"]["$active.blob"]["properties"];
+    assert_eq!(inner["size"]["maximum"], 4, "{schema}");
+    // The authored type and, for a tainted identity, the shared marker
+    // (R2/F2); `const` rejected the engine's own output.
+    let media = inner["media_type"]["enum"].as_array().expect("enum");
+    assert!(media.iter().any(|value| value == "text/plain"), "{schema}");
+    assert!(
+        media.iter().any(|value| value == "***SECRET***"),
+        "{schema}"
+    );
+}
+
+#[test]
+fn json_schema_durations_are_floored_at_zero() {
+    // L-P25/F10: a duration magnitude is written as canonical,
+    // non-negative milliseconds (LANG-B-001/B-005). With no authored
+    // lower bound the schema used to accept `ms: -1` as a duration that
+    // Active rejects; the floor is unconditional.
+    let module = parse(
+        "schema = { d = Duration, bounded = Duration(min = 1s) }\nd = 0ms\nbounded = 1s\n",
+        "duration-floor",
+    )
+    .expect("parse");
+    let schema = schema_to_json_schema(&module).expect("generate");
+    let unbounded =
+        &schema["properties"]["d"]["properties"]["$active.duration"]["properties"]["ms"];
+    assert_eq!(unbounded["minimum"], 0, "{schema}");
+    assert_eq!(unbounded["type"], "integer", "{schema}");
+    let bounded =
+        &schema["properties"]["bounded"]["properties"]["$active.duration"]["properties"]["ms"];
+    assert_eq!(bounded["minimum"], 1000, "{schema}");
+}
+
+#[test]
+fn json_schema_formats_also_emit_the_active_pattern() {
+    // uuid and semver are not assertion formats in every validator; the
+    // generated pattern enforces Active's exact regex.
+    let module = parse(
+        "schema = { u = String(format = \"uuid\"), s = String(format = \"semver\") }\nu = \"00000000-0000-4000-8000-000000000000\"\ns = \"1.0.0\"\n",
+        "format-patterns",
+    )
+    .expect("parse");
+    let schema = schema_to_json_schema(&module).expect("generate");
+    let uuid = schema["properties"]["u"]["pattern"].as_str().expect("uuid");
+    assert!(uuid.contains("[0-9a-fA-F]{8}"), "{schema}");
+    let semver = schema["properties"]["s"]["pattern"]
+        .as_str()
+        .expect("semver");
+    assert!(semver.contains("(0|[1-9]"), "{schema}");
+}
+
+#[test]
+fn a_closed_root_contract_allows_document_metadata() {
+    let module = parse(
+        "schema = { closed = true, a = Int }\na = 1\n",
+        "closed-root",
+    )
+    .expect("parse");
+    let schema = schema_to_json_schema(&module).expect("generate");
+    assert_eq!(
+        schema["properties"]["active_mode"]["type"], "string",
+        "{schema}"
+    );
+    assert_eq!(
+        schema["properties"]["active_capabilities"]["type"], "array",
+        "{schema}"
+    );
+    assert_eq!(schema["additionalProperties"], false, "{schema}");
+}
+
+#[test]
+fn a_cross_object_requires_target_is_annotated_not_faked() {
+    // A root-absolute target inside a nested table crosses objects: JSON
+    // Schema cannot express it, so the generator annotates instead of
+    // emitting an ineffective dependency.
+    let module = parse(
+        "schema = { mode = String, server = Table { cert = String(requires = \"mode\") } }\nmode = \"x\"\nserver = { cert = \"c\" }\n",
+        "cross-requires",
+    )
+    .expect("parse");
+    let schema = schema_to_json_schema(&module).expect("generate");
+    assert_eq!(
+        schema["properties"]["server"]["x-active-requires"]["cert"], "mode",
+        "{schema}"
+    );
+    assert!(
+        schema["properties"]["server"]
+            .get("dependentRequired")
+            .is_none(),
+        "{schema}"
+    );
+
+    // A dotted sibling path also crosses nested objects: annotate it.
+    let module = parse(
+        "schema = { server = Table { a = Table { x = Bool }, cert = String(requires = \"a.x\") } }\nserver = { a = { x = true }, cert = \"c\" }\n",
+        "dotted-requires",
+    )
+    .expect("parse");
+    let schema = schema_to_json_schema(&module).expect("generate");
+    assert_eq!(
+        schema["properties"]["server"]["x-active-requires"]["cert"], "a.x",
+        "{schema}"
+    );
+
+    // A direct sibling target gets the conditionals, not an annotation.
+    let module = parse(
+        "schema = { tls = Bool, cert = String(requires = \"tls\") }\ntls = true\ncert = \"c\"\n",
+        "sibling",
+    )
+    .expect("parse");
+    let schema = schema_to_json_schema(&module).expect("generate");
+    assert!(schema.get("x-active-requires").is_none(), "{schema}");
+    assert!(schema["allOf"].as_array().is_some(), "{schema}");
+}
+
+#[test]
+fn a_let_bound_requires_target_is_resolved() {
+    // R2/F1: a `requires` target spelled through a binding is static.
+    // Evaluation resolves the chain, so the contract must too; the old
+    // generator emitted neither a conditional nor an annotation and
+    // silently accepted a missing dependent field.
+    let module = parse(
+        "let t = \"mode\"\nschema = { mode = Bool, cert = String(requires = t) }\nmode = true\ncert = \"c\"\n",
+        "let-requires",
+    )
+    .expect("parse");
+    let schema = schema_to_json_schema(&module).expect("generate");
+    assert!(schema.get("x-active-requires").is_none(), "{schema}");
+    assert!(
+        schema.get("x-active-requires-computed").is_none(),
+        "{schema}"
+    );
+    let all_of = schema["allOf"].as_array().expect("conditionals");
+    assert_eq!(all_of.len(), 2, "{schema}");
+    assert_eq!(
+        all_of[0]["then"]["required"][0], "cert",
+        "forward rule: {schema}"
+    );
+}
+
+#[test]
+fn a_computed_requires_target_is_annotated() {
+    // A target read from the environment has no static spelling. The
+    // field stays optional (the trigger may be disabled) and the
+    // limitation is machine-readable, never a silent fail-open.
+    let module = parse(
+        "schema = { mode = Bool, cert = String(requires = env.ACTIVE_TARGET) }\nmode = true\ncert = \"c\"\n",
+        "computed-requires",
+    )
+    .expect("parse");
+    let schema = schema_to_json_schema(&module).expect("generate");
+    assert_eq!(schema["x-active-requires-computed"][0], "cert", "{schema}");
+    assert!(schema.get("allOf").is_none(), "{schema}");
+    let required = schema["required"].as_array().expect("required");
+    assert!(
+        !required.iter().any(|name| name == "cert"),
+        "a conditional field is never unconditionally required: {schema}"
+    );
+}
+
+#[test]
+fn a_tainted_blob_media_type_is_accepted() {
+    // R2/F2: a tainted identity exports the shared redaction marker in
+    // place of its media type (spec/blob.md §5). `const` pinned to the
+    // authored type rejected the engine's own output; both wire
+    // spellings are valid for the field.
+    let module = parse(
+        "schema = { b = Blob(media_type = \"text/plain\") }\nb = blob(\"text/plain\", secret(\"payload\"))\n",
+        "tainted-blob",
+    )
+    .expect("parse");
+    let schema = schema_to_json_schema(&module).expect("generate");
+    let media =
+        &schema["properties"]["b"]["properties"]["$active.blob"]["properties"]["media_type"];
+    let members = media["enum"].as_array().expect("enum");
+    assert!(
+        members.iter().any(|value| value == "text/plain"),
+        "{schema}"
+    );
+    assert!(
+        members.iter().any(|value| value == "***SECRET***"),
+        "{schema}"
+    );
+}
+
+#[test]
+fn unit_spelled_defaults_are_static_and_never_required() {
+    // L-P25 (review 2): a default written with a unit parses as a
+    // Quantity node. The generator treated it as dynamic, so the field
+    // stayed in `required` and the default was dropped - a schema that
+    // rejected its own defaulted document.
+    let module = parse(
+        "schema = { timeout = Duration(min = 1ms, max = 5m, default = 30s), size = Bytes(default = 1KiB) }\ntimeout = 30s\nsize = 1KiB\n",
+        "unit-defaults",
+    )
+    .expect("parse");
+    let schema = schema_to_json_schema(&module).expect("generate");
+    assert_eq!(
+        schema["properties"]["timeout"]["default"]["$active.duration"]["ms"], 30000,
+        "{schema}"
+    );
+    assert_eq!(schema["properties"]["size"]["default"], 1024, "{schema}");
+    assert!(schema.get("required").is_none(), "{schema}");
+}
+
+#[test]
+fn incomparable_bounds_render_unsatisfiable_fields() {
+    // R2/F4: a statically known bound the engine cannot order rejects
+    // every present value (T003). The generated contract must do the
+    // same, never emit a bound Active does not enforce.
+    let module = parse(
+        "schema = { n = Int(min = 50%), bytes = Bytes(max = 1.5), dur = Duration(min = 1.5), s = String(min_len = 1s) }\nn = 50\nbytes = 0\ndur = 0ms\ns = \"x\"\n",
+        "incomparable-bounds",
+    )
+    .expect("parse");
+    let schema = schema_to_json_schema(&module).expect("generate");
+    for (field, cause) in [
+        ("n", "incomparable min bound"),
+        ("bytes", "incomparable max bound"),
+        ("dur", "incomparable min bound"),
+        ("s", "incomparable min_len bound"),
+    ] {
+        let contract = &schema["properties"][field];
+        assert_eq!(contract["not"], serde_json::json!({}), "{field}: {schema}");
+        let comment = contract["$comment"].as_str().expect("comment");
+        assert!(comment.contains(cause), "{field}: {comment}");
+    }
+}
+
+#[test]
+fn bound_bindings_and_unit_blob_size_reach_the_contract() {
+    // Review 3: a bound spelled through a `let` binding and a unit blob
+    // bound both evaluate to integers; the generator used to drop both,
+    // leaving the JSON Schema fail-open.
+    let module = parse(
+        "let cap = 10\nschema = { n = Int(max = cap), payload = Blob(media_type = \"text/plain\", max_size = 1KiB) }\nn = 10\npayload = blob(\"text/plain\", \"hi\")\n",
+        "bound-bindings",
+    )
+    .expect("parse");
+    let schema = schema_to_json_schema(&module).expect("generate");
+    assert_eq!(schema["properties"]["n"]["maximum"], 10, "{schema}");
+    assert_eq!(
+        schema["properties"]["payload"]["properties"]["$active.blob"]["properties"]["size"]
+            ["maximum"],
+        1024,
+        "{schema}"
+    );
+}
+
+#[test]
+fn a_dangling_requires_target_makes_the_table_unsatisfiable() {
+    // Review 3: a literal target that names no schema path is T003 for
+    // every document. The table contract is unsatisfiable, never a
+    // silently optional dependent field.
+    let module = parse(
+        "schema = { mode = Bool, cert = String(requires = \"nope\") }\nmode = true\ncert = \"c\"\n",
+        "dangling-requires",
+    )
+    .expect("parse");
+    let schema = schema_to_json_schema(&module).expect("generate");
+    assert_eq!(schema["not"], serde_json::json!({}), "{schema}");
+}
+
+#[test]
+fn binding_targets_refuse_an_unsatisfiable_field() {
+    // Review 3: a binding that accepts every value for a field the
+    // engine rejects for every value is a lie. Only the JSON Schema
+    // target can express the constraint (`not: {}`), so the others
+    // refuse with a reason.
+    let module = parse(
+        "schema = { n = Int(min = 50%) }\nn = 0\n",
+        "unsatisfiable-binding",
+    )
+    .expect("parse");
+    assert!(schema_to_json_schema(&module).is_ok());
+    for (target, result) in [
+        ("typescript", schema_to_typescript(&module, "Config")),
+        ("go", schema_to_go(&module, "Config")),
+        ("rust", schema_to_rust(&module, "Config")),
+        ("python", schema_to_python(&module, "Config")),
+    ] {
+        let error = result.expect_err(target);
+        assert!(
+            error.contains("incomparable min bound"),
+            "{target}: {error}"
+        );
+    }
+}
+
+#[test]
+fn conditional_fields_are_optional_in_every_binding_target() {
+    // L-P25/F1: a `requires` field is absent-valid when its trigger is
+    // disabled, so every binding type marks it optional; the JSON Schema
+    // enforces the conditional presence precisely.
+    let module = parse(EXT_SCHEMA_DOC, "generate").expect("schema must parse");
+    let ts = schema_to_typescript(&module, "Config").expect("ts");
+    assert!(ts.contains("cert?: string"), "{ts}");
+    assert!(ts.contains("cert: z.string().optional()"), "{ts}");
+    let go = schema_to_go(&module, "Config").expect("go");
+    let cert_line = go
+        .lines()
+        .find(|line| line.contains("Cert "))
+        .expect("cert field");
+    assert!(!cert_line.contains("required"), "{go}");
+    let rust = schema_to_rust(&module, "Config").expect("rust");
+    assert!(rust.contains("pub cert: Option<String>"), "{rust}");
+    let python = schema_to_python(&module, "Config").expect("python");
+    assert!(python.contains("NotRequired[str]"), "{python}");
+}
+
+#[test]
+fn an_any_trigger_uses_the_disabled_union() {
+    // L-P25/F5: an Any/OneOf trigger is not "unexpressible": enablement
+    // is the runtime truthiness rule, so the union of every disabled
+    // literal expresses it exactly (quantity-valued triggers excepted).
+    let module = parse(
+        "schema = { mode = Any, cert = String(requires = \"mode\") }\nmode = true\ncert = \"c\"\n",
+        "any-requires",
+    )
+    .expect("parse");
+    let schema = schema_to_json_schema(&module).expect("generate");
+    let all_of = schema["allOf"].as_array().expect("conditionals");
+    assert_eq!(all_of.len(), 2, "{schema}");
+    assert!(schema.get("x-active-requires").is_none(), "{schema}");
+    let disabled = &all_of[0]["if"]["properties"]["mode"]["not"]["anyOf"];
+    assert!(
+        disabled[0]["enum"]
+            .as_array()
+            .is_some_and(|values| values.contains(&serde_json::json!(0))),
+        "{schema}"
+    );
+    // A zero quantity is disabled for every unit, so the rule is the wire
+    // shape (`value: 0`), not a per-unit enum (R2/F3: `0%` slipped past
+    // the enum alone).
+    assert_eq!(disabled[1]["required"][0], "$active.quantity", "{schema}");
+    assert_eq!(
+        disabled[1]["properties"]["$active.quantity"]["properties"]["value"]["const"], 0,
+        "{schema}"
+    );
 }

@@ -277,50 +277,98 @@ pub(crate) fn blob_payload_is_material(
 
 /// Static text of a literal, or of an interpolation whose parts are
 /// all literals (`"a${}b"` cannot occur: a literal part is plain text).
-/// Anything that needs evaluation returns `None`, so callers never call
-/// a dynamic value "static".
+/// A `let` binding resolves through its `Ref` chain to the authored
+/// literal, exactly as evaluation does; anything that needs runtime
+/// input returns `None`, so callers never call a dynamic value "static".
 pub(crate) fn static_string(
     module: &crate::ir::Module,
     id: Option<crate::ir::NodeId>,
 ) -> Option<String> {
-    match module.get(id?) {
-        Some(crate::ir::Node::Literal(crate::ir::Value::String(text))) => Some(text.clone()),
-        Some(crate::ir::Node::Interpolate { parts }) => {
-            let mut out = String::new();
-            for part in parts {
-                match part {
-                    crate::ir::InterpPart::Literal(text) => out.push_str(text),
-                    crate::ir::InterpPart::Expr(_) => return None,
-                }
+    let mut current = id?;
+    // The cap bounds a malformed or hostile reference cycle; a real
+    // binding chain is one or two hops.
+    for _ in 0..32 {
+        match module.get(current) {
+            Some(crate::ir::Node::Literal(crate::ir::Value::String(text))) => {
+                return Some(text.clone());
             }
-            Some(out)
+            Some(crate::ir::Node::Interpolate { parts }) => {
+                let mut out = String::new();
+                for part in parts {
+                    match part {
+                        crate::ir::InterpPart::Literal(text) => out.push_str(text),
+                        crate::ir::InterpPart::Expr(_) => return None,
+                    }
+                }
+                return Some(out);
+            }
+            Some(crate::ir::Node::Ref(next)) => current = *next,
+            _ => return None,
         }
-        _ => None,
     }
+    None
 }
 
-/// Static default value: a scalar/array/table literal, or an
-/// all-literal interpolation (a string). Dynamic defaults (env reads,
-/// refs, arithmetic) return `None` and count as required, matching the
-/// generators and the schema view.
+/// The statically known `requires` target of a field: a string literal,
+/// an all-literal interpolation, or a `let` binding chain to one.
+/// `None` means the target is computed at evaluation time, which no
+/// generated contract can express (the generator annotates it instead).
+pub fn requires_target(
+    module: &crate::ir::Module,
+    field: &crate::ir::SchemaField,
+) -> Option<String> {
+    static_string(module, field.requires)
+}
+
+/// The statically known value an expression evaluates to: a literal, a
+/// unit literal in its canonical form (time becomes `DurationMs`, bytes
+/// become `Int`, any other unit stays a `Quantity`), or a `let` binding
+/// chain to one. Anything needing runtime input returns `None`.
+pub(crate) fn static_value(
+    module: &crate::ir::Module,
+    id: crate::ir::NodeId,
+) -> Option<crate::ir::Value> {
+    let mut current = id;
+    for _ in 0..32 {
+        match module.get(current)? {
+            crate::ir::Node::Literal(value) => return Some(value.clone()),
+            crate::ir::Node::Ref(next) => current = *next,
+            crate::ir::Node::Quantity { value, unit } => {
+                let raw = match module.get(*value)? {
+                    crate::ir::Node::Literal(crate::ir::Value::Int(n)) => *n as f64,
+                    crate::ir::Node::Literal(crate::ir::Value::Float(f)) => *f,
+                    _ => return None,
+                };
+                if let Some(ms) = unit.normalize_time_to_ms(raw) {
+                    return Some(crate::ir::Value::DurationMs(ms));
+                }
+                if let Some(bytes) = unit.normalize_to_bytes(raw) {
+                    return Some(crate::ir::Value::Int(
+                        i64::try_from(bytes).unwrap_or(i64::MAX),
+                    ));
+                }
+                return Some(crate::ir::Value::Quantity(raw, unit.clone()));
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// Static default value: a scalar/array/table literal, a unit literal, or
+/// an all-literal interpolation (a string). Dynamic defaults (env reads,
+/// arithmetic) return `None` and count as required, matching the
+/// generators and the schema view. A unit-spelled default (`30s`, `1KiB`)
+/// is static; missing it made the field unconditionally required.
 pub(crate) fn static_default(
     module: &crate::ir::Module,
     field: &crate::ir::SchemaField,
 ) -> Option<JsonValue> {
-    match module.get(field.default?) {
-        Some(crate::ir::Node::Literal(value)) => Some(value_to_json(value)),
-        Some(crate::ir::Node::Interpolate { parts }) => {
-            let mut out = String::new();
-            for part in parts {
-                match part {
-                    crate::ir::InterpPart::Literal(text) => out.push_str(text),
-                    crate::ir::InterpPart::Expr(_) => return None,
-                }
-            }
-            Some(JsonValue::String(out))
-        }
-        _ => None,
+    let id = field.default?;
+    if let Some(text) = static_string(module, Some(id)) {
+        return Some(JsonValue::String(text));
     }
+    Some(value_to_json(&static_value(module, id)?))
 }
 
 /// True when a dotted path resolves to a schema node. Used to tell a
@@ -352,7 +400,7 @@ pub(crate) fn schema_path_exists(module: &crate::ir::Module, path: &str) -> bool
 /// root-absolute path. One rule for validation, lint (L011), and codegen
 /// (`dependentRequired`), so the surfaces cannot contradict each other
 /// (LANG-B-002).
-pub(crate) fn requires_target_exists(
+pub fn requires_target_exists(
     module: &crate::ir::Module,
     field_id: crate::ir::NodeId,
     target: &str,

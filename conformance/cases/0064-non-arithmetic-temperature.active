@@ -1,0 +1,2 @@
+# L-P44: absolute temperature is affine; it compares but does not add.
+v = 20Cel + 20Cel

@@ -739,6 +739,49 @@ reference for any behavior. `release.yml` now runs a provenance gate
 the tag, or whose workspace version differs from the tag, so this cannot
 recur.
 
+### L-P44: units as types (dimensional analysis)
+
+Dimensional safety is a named diagnostic on every arithmetic operation.
+The evaluator's type step now reports `dimension mismatch: Add combines
+quantity:V and quantity:A` (both dimensions named) instead of a generic
+"unsupported binary op", and absolute temperature or decibels refuse
+arithmetic with the rule named (`affine quantities have no arithmetic`)
+while equality and ordering still work through the canonical form.
+
+Negative duration results are T001, never clamped: `1s - 2s`,
+`1s * -1`, and `1s / -2` used to silently produce `0ms` — the B-011
+failure on the arithmetic surface, where an authoring mistake became
+"expires immediately". The B-011 pin (negative durations are rejected,
+`heal.rs:258-263`) now governs results as well as coercions; zero stays a
+valid duration and addition overflow keeps its documented saturation
+policy.
+
+A scalar divided by a duration is the per-second rate (`1024B / 1s` →
+`1024.0`; bytes are `Int` at evaluation, so this is the bytes/duration
+rule). Division by zero names itself for durations, quantities, and a
+scalar over a zero duration; the affine rule wins where both apply
+(`20Cel / 0` is an affine-temperature error). Negating an absolute
+temperature below 0 K is T001, and `-0K` exports as canonical `0.0 K`;
+the parser's folding keeps valid negative Celsius/Fahrenheit readings.
+`-0s` is zero, and decibel negation (`-3dB`, attenuation) is preserved.
+A NaN factor is reported as NaN, never as a negative duration; duration
+scaling overflow keeps the documented saturation policy, and integral
+factors take an exact integer path. A folded `Cel`/`Fahr` literal below
+0 K (`-300Cel`) is T001 rather than clamped to absolute zero, matching
+the `-5K` rule. Negative zero is canonicalized to `0.0` in every numeric
+dimension (one zero, one content hash). T001 is reused — its published
+meaning already covers a dimension mismatch — so no diagnostic code is
+minted. The rules live in the type-checking step of evaluation, the only
+layer that sees operand dimensions (conflict note in
+`audit-pack/DESIGN-L-P44.md` for Bud); the schema layer keeps
+value-vs-bound dimension errors (T003).
+
+Spec `specification.md` §4.1/§4.3 and `validation.md` §10.2 record the
+table and the pin; tests in `active-core/tests/dimensions.rs` and the
+evaluator's own unit tests cover each operation, the named errors, the
+zero cases, and the unchanged values for dimension-correct documents;
+conformance vectors 0062–0069.
+
 ### L-P25: generated contracts proven by differential test
 
 The JSON Schema generator is now proven to be the contract, not a sketch.

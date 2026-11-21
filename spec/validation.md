@@ -318,6 +318,13 @@ spellings; anything else keeps the T002:
 | `Bool` | `true`/`yes`/`on`/`1` and `false`/`no`/`off`/`0`, case-insensitive |
 | `Duration` | a non-negative number followed by a known unit suffix (`"5s"`, `"1.5h"`, `"300ms"`) |
 
+A negative or non-finite duration is **rejected**, not clamped (the B-011
+pin, `heal.rs:258-263`): clamping `"-5s"` to `0ms` turned an authoring
+error (or a "no timeout" sentinel) into "expires immediately" behind a
+generic H007. The T002 stands and the author sees the real problem. The
+same rule governs arithmetic results (L-P44, `specification.md` §4.3): a
+negative duration result is T001, never `0ms`.
+
 Float coercion rejects exponent notation (`"1e3"`) and the `nan`/`inf`
 spellings: the grammar has no exponent notation and non-finite values are
 errors (LANG-B-009), so coercion never invents a spelling the language

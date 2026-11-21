@@ -411,3 +411,49 @@ kind = "refused"
 id = "0061-nested-requires-disabled"
 file = "cases/0061-nested-requires-disabled.active"
 kind = "refused"
+
+# L-P44: dimensional type rules (negative duration results rejected; both
+# dimensions named; affine temperature refuses arithmetic; scalar/time
+# rate is clean).
+[[cases]]
+id = "0062-negative-duration-subtraction"
+file = "cases/0062-negative-duration-subtraction.active"
+kind = "refused"
+
+[[cases]]
+id = "0063-cross-dimension-addition"
+file = "cases/0063-cross-dimension-addition.active"
+kind = "refused"
+
+[[cases]]
+id = "0064-non-arithmetic-temperature"
+file = "cases/0064-non-arithmetic-temperature.active"
+kind = "refused"
+
+[[cases]]
+id = "0065-bytes-per-second-rate"
+file = "cases/0065-bytes-per-second-rate.active"
+kind = "clean"
+
+# L-P44 review round 2: zero-divisor naming, absolute-zero negation, and
+# the result-based zero rule.
+[[cases]]
+id = "0066-scalar-over-zero-duration"
+file = "cases/0066-scalar-over-zero-duration.active"
+kind = "refused"
+
+[[cases]]
+id = "0067-negation-below-absolute-zero"
+file = "cases/0067-negation-below-absolute-zero.active"
+kind = "refused"
+
+[[cases]]
+id = "0068-zero-duration-scaled-by-negative"
+file = "cases/0068-zero-duration-scaled-by-negative.active"
+kind = "clean"
+
+# L-P44 review round 3: a below-absolute-zero folded temperature is T001.
+[[cases]]
+id = "0069-below-absolute-zero-celsius"
+file = "cases/0069-below-absolute-zero-celsius.active"
+kind = "refused"

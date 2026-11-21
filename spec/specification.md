@@ -281,9 +281,14 @@ evaluate(module):
   because a float has no honest clamp and would export as a different
   value.
 - `DurationMs` arithmetic: `+`/`-` with another duration, `*`/`÷` with an
-  `Int`/`Float` scalar, `÷` duration-by-duration ⇒ `Int` ratio; ordering
-  comparisons on two durations. Adding a duration to a non-duration is a
-  `TypeError` — dimensional safety is preserved.
+  `Int`/`Float` scalar, `÷` duration-by-duration ⇒ `Int` ratio, and
+  `Int`/`Float` ÷ duration ⇒ the per-second rate (`Float`; bytes are
+  `Int` at evaluation); ordering comparisons on two durations. Adding a
+  duration to a non-duration is a `TypeError` — dimensional safety is
+  preserved. A negative duration *result* is a `TypeError`, never
+  clamped (L-P44, inheriting the B-011 pin): subtraction underflow and a
+  negative scalar factor are rejected so an authoring mistake cannot
+  silently become "expires immediately".
 - Non-finite floats (`inf`, `-inf`, `nan`) are legitimate values; the JSON
   export tags them (`{"$active.float": "inf"}`) and never maps them to
   `null`; `content_hash` distinguishes them from `null` (LANG-F-003).
@@ -460,11 +465,12 @@ interpolation same; schema kinds `quantity:rad`, `quantity:rpm`,
 `quantity:meter`, `quantity:kg`.
 
 Temperature (`K Cel Fahr`) canonicalizes to f64 kelvin through affine
-transforms (`20Cel` → 293.15 K; `68Fahr` → 293.15 K); literal magnitudes
-clamp at 0 K (defensive: source literals are non-negative). Unary minus on
+transforms (`20Cel` → 293.15 K; `68Fahr` → 293.15 K). Unary minus on
 affine literals folds BEFORE the transform (`-40Fahr` → 233.15 K, so the
-famous -40 crossover holds; `-300Cel` → 0 K by the clamp) — affine
-transforms do not commute with negation, and the parser honors that order.
+famous -40 crossover holds) — affine transforms do not commute with
+negation, and the parser honors that order. A fold whose canonical value
+is below 0 K (`-300Cel` = -26.85 K, `-1000Fahr`) is a T001, not a clamp:
+it is not a temperature (L-P44, inheriting B-011's no-silent-clamp rule).
 On linear dimensions explicit negation is preserved as written (`-5Hz` →
 -5.0), consistent with `-5` ints. Decibels (`dB`, logarithmic) are retained with no
 conversion. Both are equality-and-ordering-only specials: `== != < <= > >=`
@@ -503,3 +509,61 @@ Operations that would mix dimensions are `TypeError`s, not silent coercions:
 implicit coercion anywhere in the evaluator. Strings that *look* like numbers
 stay strings — safe, explicit coercion is a C-016 healing concern, applied only
 under a schema.
+
+**The operation table (L-P44).** The type step of evaluation enforces:
+
+| Operation | Rule |
+|---|---|
+| `time + time`, `time - time` | time; a negative result is T001 |
+| `time * scalar`, `scalar * time` | time; a negative result is T001 (a zero duration scaled by a negative factor is still zero) |
+| `time / scalar` (scalar ≠ 0) | time; a negative result is T001 |
+| `time / time` (≠ 0) | scalar ratio (`Int`) |
+| `scalar / time` (≠ 0) | per-second rate (`Float`) |
+| `q(u) + - q(u)` | q(u); same suffix only |
+| `q(u) * / scalar` | q(u) |
+| `q(u) / q(u)` (≠ 0) | scalar ratio |
+| ordering / equality | same dimension only; equality across dimensions is `false`, never an error |
+| any other pairing | T001 naming both dimensions |
+
+A division by zero is T001 `division by zero` for every numeric dimension
+(including a scalar or byte magnitude divided by a zero duration). The
+affine rule wins when both apply: `20Cel / 0` is T001 for the affine
+quantity, because arithmetic on a temperature is undefined regardless of
+the divisor. Absolute temperature (`K Cel Fahr`, affine) and decibels
+(`dB`, logarithmic) are equality-and-ordering-only: arithmetic on them
+is T001 naming the rule (`affine quantities have no arithmetic`). An
+explicit unary negation that would put an absolute temperature below 0 K
+is T001 `negation produced a value below absolute zero`; a folded
+`Cel`/`Fahr` literal whose canonical value is below 0 K (`-300Cel`) is
+T001 for the same reason; `-40Fahr` still folds before the affine
+transform and stays the valid 233.15 K. Negating zero kelvin is zero (the
+export normalizes the sign of zero). Decibel negation is preserved —
+`-3dB` is attenuation — even though decibel arithmetic is refused.
+
+A unary negation of a zero duration is zero (`-0s`); any other negated
+duration is T001, since a duration is non-negative. Duration scaling
+overflow saturates at `u64::MAX`, the same documented policy as duration
+addition; a NaN factor is reported as NaN, never as a negative result.
+
+**Bytes are integers at evaluation.** A byte magnitude canonicalizes to
+`Int` (LANG-B-005), so `bytes / duration` is the `scalar / time` rule and
+its result is a bare per-second number; the schema's `Bytes` type supplies
+the byte meaning. Similarly, `time / <byte magnitude>` is treated as
+`time / scalar`; the runtime representation cannot distinguish the two
+without a dedicated byte value. This is a representation limit, recorded
+in `audit-pack/L-P44-LOWS.md`, not a semantic choice.
+
+**Negative durations.** A duration is a non-negative magnitude. A negative
+*result* — subtraction underflow or a negative scalar factor — is T001
+with a named cause; it is never clamped to `0ms` (the B-011 pin: clamping
+turned an authoring error or a "no timeout" sentinel into "expires
+immediately"). The literal-magnitude clamp in §4.1 canonicalizes a
+non-negative source amount and is a different rule: `-5s` is unary
+negation of a duration and is T001.
+
+**Where the check runs.** The operation table lives in the evaluator's
+binary/unary type step: that is the only layer that sees an operand's
+dimension. Schema-level dimension mistakes (a value compared against a
+bound of another dimension) are the schema layer's `T003`
+"incomparable ... bound". Both name dimensions; neither re-implements the
+other.

@@ -4451,19 +4451,51 @@ fn normalize_quantity(v: &Value, unit: &Unit) -> Result<Value, String> {
     if let Some((factor, canonical)) = mech_factor {
         return quantity_result((num * factor).max(0.0), canonical);
     }
-    // Temperature canonicalizes to kelvin through affine transforms;
-    // below-absolute-zero literals clamp at 0 K. Decibels are retained
-    // (log scale, no conversion). Both are ordering-only (spec Ch. 4 §4.1).
+    // Temperature canonicalizes to kelvin through affine transforms.
+    // A value below absolute zero is not a temperature: reject it rather
+    // than clamping to 0 K, which would make `-500Cel` silently equal
+    // absolute zero while `-5K` is refused (L-P44, inheriting B-011's
+    // no-silent-clamp rule). Decibels are retained (log scale, no
+    // conversion). Both are ordering-only (spec Ch. 4 §4.1).
     match unit {
-        Unit::Kelvin => return quantity_result(num.max(0.0), Unit::Kelvin),
-        Unit::Celsius => return quantity_result((num + 273.15).max(0.0), Unit::Kelvin),
+        Unit::Kelvin => {
+            if num < 0.0 {
+                return Err(BELOW_ABSOLUTE_ZERO.to_string());
+            }
+            return quantity_result(num, Unit::Kelvin);
+        }
+        Unit::Celsius => {
+            let kelvin = num + 273.15;
+            if kelvin < 0.0 {
+                return Err(BELOW_ABSOLUTE_ZERO.to_string());
+            }
+            return quantity_result(kelvin, Unit::Kelvin);
+        }
         Unit::Fahrenheit => {
-            return quantity_result(((num - 32.0) * 5.0 / 9.0 + 273.15).max(0.0), Unit::Kelvin)
+            let kelvin = (num - 32.0) * 5.0 / 9.0 + 273.15;
+            if kelvin < 0.0 {
+                return Err(BELOW_ABSOLUTE_ZERO.to_string());
+            }
+            return quantity_result(kelvin, Unit::Kelvin);
         }
         Unit::Decibel => return quantity_result(num, Unit::Decibel),
         _ => {}
     }
     quantity_result(num, unit.clone())
+}
+
+/// A temperature below 0 K is not a temperature (the B-011 rule applied
+/// to the absolute-temperature floor).
+const BELOW_ABSOLUTE_ZERO: &str = "absolute temperature below 0 K is not a temperature";
+
+/// IEEE has two zeros; the language has one. Normalize the sign so the
+/// canonical JSON export and content hash agree (0.0 == -0.0).
+fn canonical_zero(v: f64) -> f64 {
+    if v == 0.0 {
+        0.0
+    } else {
+        v
+    }
 }
 
 pub(crate) fn eval_binary(op: BinOp, lhs: &Value, rhs: &Value) -> Result<Value, String> {
@@ -4553,33 +4585,63 @@ pub(crate) fn eval_binary(op: BinOp, lhs: &Value, rhs: &Value) -> Result<Value, 
 
         // Duration arithmetic (time is the only dimension with a dedicated
         // Value; bytes normalize to Int). Scalar mul/div, same-dimension
-        // add/sub and ordering. Mismatched dimensions (e.g. DurationMs + Int)
-        // fall through to the type error below.
+        // add/sub and ordering. A negative RESULT is not a duration
+        // (L-P44, inheriting the B-011 pin: clamping it to 0ms turns an
+        // authoring error into "expires immediately"), so it is T001.
+        // Dimension mismatches fall through to the named error below.
         (Add, Value::DurationMs(a), Value::DurationMs(b)) => {
+            // Overflow saturates at the representable maximum; that is a
+            // deliberate overflow policy, not a sign clamp.
             Ok(Value::DurationMs(a.saturating_add(*b)))
         }
-        (Sub, Value::DurationMs(a), Value::DurationMs(b)) => {
-            Ok(Value::DurationMs(a.saturating_sub(*b)))
-        }
+        (Sub, Value::DurationMs(a), Value::DurationMs(b)) => match a.checked_sub(*b) {
+            Some(ms) => Ok(Value::DurationMs(ms)),
+            None => Err(NEGATIVE_DURATION_SUBTRACTION.to_string()),
+        },
         (Mul, Value::DurationMs(a), Value::Int(b)) => {
-            Ok(Value::DurationMs(scale_dur(*a, *b as f64)))
+            duration_scaled(*a, *b as f64, NEGATIVE_DURATION_SCALE)
         }
         (Mul, Value::Int(a), Value::DurationMs(b)) => {
-            Ok(Value::DurationMs(scale_dur(*b, *a as f64)))
+            duration_scaled(*b, *a as f64, NEGATIVE_DURATION_SCALE)
         }
-        (Mul, Value::DurationMs(a), Value::Float(b)) => Ok(Value::DurationMs(scale_dur(*a, *b))),
-        (Mul, Value::Float(a), Value::DurationMs(b)) => Ok(Value::DurationMs(scale_dur(*b, *a))),
+        (Mul, Value::DurationMs(a), Value::Float(b)) => {
+            duration_scaled(*a, *b, NEGATIVE_DURATION_SCALE)
+        }
+        (Mul, Value::Float(a), Value::DurationMs(b)) => {
+            duration_scaled(*b, *a, NEGATIVE_DURATION_SCALE)
+        }
         (Div, Value::DurationMs(a), Value::Int(b)) if *b != 0 => {
-            Ok(Value::DurationMs(scale_dur(*a, 1.0 / *b as f64)))
+            duration_scaled(*a, 1.0 / *b as f64, NEGATIVE_DURATION_DIVISION)
         }
         (Div, Value::DurationMs(a), Value::Float(b)) if *b != 0.0 => {
-            Ok(Value::DurationMs(scale_dur(*a, 1.0 / *b)))
+            duration_scaled(*a, 1.0 / *b, NEGATIVE_DURATION_DIVISION)
         }
         (Div, Value::DurationMs(a), Value::DurationMs(b)) if *b != 0 => {
             // A ratio can exceed i64::MAX (both operands saturate at
             // u64::MAX); saturate the result rather than wrapping.
             Ok(Value::Int(i64::try_from(*a / *b).unwrap_or(i64::MAX)))
         }
+        // A scalar divided by time is the per-second rate. Bytes are Int
+        // at evaluation, so this is the bytes/duration case; the schema
+        // type supplies the byte meaning. The result is Float because a
+        // rate can be fractional (spec Ch. 4 §4.3, L-P44).
+        (Div, Value::Int(a), Value::DurationMs(b)) if *b != 0 => {
+            float_result(*a as f64 * 1000.0 / *b as f64)
+        }
+        (Div, Value::Float(a), Value::DurationMs(b)) if *b != 0 => {
+            float_result(a * 1000.0 / *b as f64)
+        }
+        // A zero time divisor names the divisor, not a dimension: the
+        // operands are scalar and time, and the operation is defined
+        // except at zero (review F1).
+        (Div, Value::Int(_), Value::DurationMs(0))
+        | (Div, Value::Float(_), Value::DurationMs(0)) => Err("division by zero".to_string()),
+        // Division by zero names itself, like the scalar arms above.
+        (Div, Value::DurationMs(_), Value::Int(0)) => Err("division by zero".to_string()),
+        (Div, Value::DurationMs(_), Value::Float(b)) if *b == 0.0 => {
+            Err("division by zero".to_string())
+        }
+        (Div, Value::DurationMs(_), Value::DurationMs(0)) => Err("division by zero".to_string()),
         (Lt, Value::DurationMs(a), Value::DurationMs(b)) => Ok(Value::Bool(a < b)),
         (Le, Value::DurationMs(a), Value::DurationMs(b)) => Ok(Value::Bool(a <= b)),
         (Gt, Value::DurationMs(a), Value::DurationMs(b)) => Ok(Value::Bool(a > b)),
@@ -4619,37 +4681,203 @@ pub(crate) fn eval_binary(op: BinOp, lhs: &Value, rhs: &Value) -> Result<Value, 
         {
             float_result(a / b)
         }
+        // Division by zero names itself for quantities too. The affine
+        // guard runs first: arithmetic on a temperature is undefined
+        // regardless of the divisor, so that rule wins (review F5).
+        (Div, Value::Quantity(_, u), Value::Int(0)) if !u.is_non_arithmetic() => {
+            Err("division by zero".to_string())
+        }
+        (Div, Value::Quantity(_, u), Value::Float(f)) if *f == 0.0 && !u.is_non_arithmetic() => {
+            Err("division by zero".to_string())
+        }
+        (Div, Value::Quantity(_, u), Value::Quantity(b, _))
+            if *b == 0.0 && !u.is_non_arithmetic() =>
+        {
+            Err("division by zero".to_string())
+        }
         (Lt, Value::Quantity(a, ua), Value::Quantity(b, ub)) if ua == ub => Ok(Value::Bool(a < b)),
         (Le, Value::Quantity(a, ua), Value::Quantity(b, ub)) if ua == ub => Ok(Value::Bool(a <= b)),
         (Gt, Value::Quantity(a, ua), Value::Quantity(b, ub)) if ua == ub => Ok(Value::Bool(a > b)),
         (Ge, Value::Quantity(a, ua), Value::Quantity(b, ub)) if ua == ub => Ok(Value::Bool(a >= b)),
 
+        // Absolute temperature and decibels are equality/ordering-only:
+        // affine and logarithmic values do not compose (L-P44).
+        (Add | Sub | Mul | Div, Value::Quantity(_, u), _) if u.is_non_arithmetic() => {
+            Err(non_arithmetic_quantity_error(op, u))
+        }
+        (Add | Sub | Mul | Div, _, Value::Quantity(_, u)) if u.is_non_arithmetic() => {
+            Err(non_arithmetic_quantity_error(op, u))
+        }
+
         (And, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(*a && *b)),
         (Or, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(*a || *b)),
 
-        _ => Err(format!(
-            // Kind names only: the operands may be material assembled
-            // from a secret source, so the message must be value-free.
-            "unsupported binary op {op:?} on {} and {}",
-            value_kind_name(lhs),
-            value_kind_name(rhs)
-        )),
+        _ => {
+            // Dimension names only: the operands may be material assembled
+            // from a secret source, so the message must be value-free. A
+            // unit suffix is authored syntax, never a magnitude.
+            let dimensional = matches!(lhs, Value::DurationMs(_) | Value::Quantity(..))
+                || matches!(rhs, Value::DurationMs(_) | Value::Quantity(..));
+            if dimensional {
+                Err(format!(
+                    "dimension mismatch: {op:?} combines {} and {}",
+                    dimension_label(lhs),
+                    dimension_label(rhs)
+                ))
+            } else {
+                Err(format!(
+                    "unsupported binary op {op:?} on {} and {}",
+                    value_kind_name(lhs),
+                    value_kind_name(rhs)
+                ))
+            }
+        }
     }
 }
 
-/// Scale a duration in milliseconds by a factor, clamped at zero.
-fn scale_dur(ms: u64, factor: f64) -> u64 {
-    (ms as f64 * factor).round().max(0.0) as u64
+/// The B-011 pin on the arithmetic surface (L-P44): a negative duration
+/// result is rejected, never clamped to "expires immediately".
+const NEGATIVE_DURATION_SUBTRACTION: &str =
+    "duration subtraction produced a negative result (a duration is non-negative)";
+const NEGATIVE_DURATION_SCALE: &str =
+    "scaling a duration by a negative factor produced a negative duration";
+const NEGATIVE_DURATION_DIVISION: &str =
+    "dividing a duration by a negative factor produced a negative duration";
+
+/// Dimension label for a binary operand in a diagnostic. `Int`/`Float`
+/// are scalars (byte counts arrive here too), so the label never claims a
+/// byte dimension the runtime does not carry.
+fn dimension_label(v: &Value) -> String {
+    match v {
+        Value::DurationMs(_) => "time (duration)".to_string(),
+        Value::Quantity(_, unit) => format!("quantity:{}", unit.suffix()),
+        Value::Int(_) | Value::Float(_) => "scalar (number)".to_string(),
+        other => value_kind_name(other),
+    }
+}
+
+/// Arithmetic on an affine/logarithmic quantity names the rule that
+/// refuses it rather than the units twice.
+fn non_arithmetic_quantity_error(op: BinOp, unit: &Unit) -> String {
+    let kind = if matches!(unit, Unit::Decibel) {
+        "decibels (quantity:dB); logarithmic values have no arithmetic"
+    } else {
+        "absolute temperature (quantity:K); affine quantities have no arithmetic"
+    };
+    format!("{op:?} is not defined for {kind}")
+}
+
+/// Scale a duration in milliseconds by a factor. A negative result is
+/// not a duration (the B-011 pin): return `None` so the caller rejects
+/// it instead of clamping it to "expires immediately". Overflow still
+/// saturates at the representable maximum (the documented policy).
+enum ScaleError {
+    /// The mathematically negative result is not a duration.
+    Negative,
+    /// A NaN factor has no representable duration result.
+    Nan,
+}
+
+/// Scale a duration and map the failure to the operation's message.
+fn duration_scaled(ms: u64, factor: f64, negative: &'static str) -> Result<Value, String> {
+    match scale_dur(ms, factor) {
+        Ok(ms) => Ok(Value::DurationMs(ms)),
+        Err(ScaleError::Negative) => Err(negative.to_string()),
+        Err(ScaleError::Nan) => Err("float operation produced NaN".to_string()),
+    }
+}
+
+/// Scale a duration in milliseconds by a factor. A negative result is
+/// not a duration (the B-011 pin): return `Negative` so the caller
+/// rejects it instead of clamping it to "expires immediately". +inf
+/// saturates at the representable maximum (the documented duration
+/// overflow policy, the same as addition). A NaN factor is reported as
+/// NaN, never as a negative result.
+fn scale_dur(ms: u64, factor: f64) -> Result<u64, ScaleError> {
+    // An integral multiplier is exact: multiplying through f64 loses
+    // milliseconds beyond 2^53 (review round 3). A zero factor is
+    // covered here (0 ms, whatever the sign of zero).
+    if factor.fract() == 0.0 && factor >= 0.0 && factor <= u64::MAX as f64 {
+        return Ok(ms.saturating_mul(factor as u64));
+    }
+    let scaled = ms as f64 * factor;
+    // Test the unrounded product: a mathematically negative result stays
+    // negative even when it would round to zero milliseconds.
+    if scaled.is_nan() {
+        Err(ScaleError::Nan)
+    } else if scaled < 0.0 {
+        Err(ScaleError::Negative)
+    } else {
+        Ok(scaled.round() as u64)
+    }
+}
+
+#[cfg(test)]
+mod dimension_rule_tests {
+    use super::*;
+
+    #[test]
+    fn a_nan_scalar_is_reported_as_nan_not_a_negative_duration() {
+        // A NaN value cannot come from source (LANG-B-009), but the type
+        // step must not mislabel one as a sign error.
+        let error = eval_binary(
+            BinOp::Mul,
+            &Value::DurationMs(1000),
+            &Value::Float(f64::NAN),
+        )
+        .expect_err("NaN has no duration result");
+        assert_eq!(error, "float operation produced NaN");
+    }
+
+    #[test]
+    fn duration_scaling_saturates_on_overflow_like_addition() {
+        // The documented duration overflow policy: saturation at the
+        // representable maximum, never a wrap or a silent sign flip.
+        let value = eval_binary(BinOp::Mul, &Value::DurationMs(1000), &Value::Float(1e300))
+            .expect("overflow saturates");
+        assert!(matches!(value, Value::DurationMs(u64::MAX)), "{value:?}");
+    }
+
+    #[test]
+    fn negating_a_zero_duration_is_zero_but_a_nonzero_one_is_not_a_duration() {
+        assert!(matches!(
+            eval_unary(UnOp::Neg, &Value::DurationMs(0)),
+            Ok(Value::DurationMs(0))
+        ));
+        assert!(eval_unary(UnOp::Neg, &Value::DurationMs(1)).is_err());
+    }
 }
 
 pub(crate) fn eval_unary(op: UnOp, v: &Value) -> Result<Value, String> {
     match (op, v) {
         (UnOp::Neg, Value::Int(n)) => Ok(Value::Int(n.saturating_neg())),
-        (UnOp::Neg, Value::Float(f)) => Ok(Value::Float(-f)),
+        (UnOp::Neg, Value::Float(f)) => Ok(Value::Float(canonical_zero(-f))),
         // Quantities negate by amount, keeping the unit: discounts, deltas
         // and signed rates are meaningful, and nothing here clamps
         // (spec Ch. 4 §4.1). Durations intentionally do NOT get this arm.
-        (UnOp::Neg, Value::Quantity(a, u)) => Ok(Value::Quantity(-a, u.clone())),
+        (UnOp::Neg, Value::Quantity(a, u)) => {
+            let negated = -*a;
+            // Absolute temperature has a physical floor: the 0 K clamp on
+            // literals is defensive, and an explicit negation must not
+            // bypass it into a below-zero temperature (L-P44 review F3).
+            if matches!(u, Unit::Kelvin) {
+                if negated < 0.0 {
+                    return Err(
+                        "negation produced a value below absolute zero (quantity:K)".to_string()
+                    );
+                }
+                // -0 K is 0 K: normalize the sign of zero so the
+                // canonical export (and content hash) matches 0 K.
+                return Ok(Value::Quantity(
+                    if negated == 0.0 { 0.0 } else { negated },
+                    u.clone(),
+                ));
+            }
+            Ok(Value::Quantity(canonical_zero(negated), u.clone()))
+        }
+        // A zero duration negated is still zero; any other negation is
+        // not a duration (the B-011 pin).
+        (UnOp::Neg, Value::DurationMs(0)) => Ok(Value::DurationMs(0)),
         (UnOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
         _ => Err(format!(
             // Kind name only, for the same reason as binary errors.
@@ -4690,7 +4918,7 @@ pub(crate) fn cmp_int_float(i: i64, f: f64) -> Option<std::cmp::Ordering> {
 /// specifically.)
 fn float_result(v: f64) -> Result<Value, String> {
     if v.is_finite() {
-        Ok(Value::Float(v))
+        Ok(Value::Float(canonical_zero(v)))
     } else if v.is_nan() {
         Err("float operation produced NaN".to_string())
     } else {
@@ -4709,7 +4937,7 @@ fn quantity_result(v: f64, unit: Unit) -> Result<Value, String> {
             "float overflow: the result is not representable".to_string()
         });
     }
-    Ok(Value::Quantity(v, unit))
+    Ok(Value::Quantity(canonical_zero(v), unit))
 }
 /// The evaluated `envelope.payload` subtree, when the document has one.
 /// The taint claim describes this payload, not the whole document

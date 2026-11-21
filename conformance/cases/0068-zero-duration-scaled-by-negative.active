@@ -1,0 +1,3 @@
+# L-P44: the negative-result rule rejects negative RESULTS. Zero scaled
+# by a negative factor is still zero, a valid duration.
+d = 0s * -1

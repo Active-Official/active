@@ -59,13 +59,16 @@ fn temp_cross_spellings_agree() {
 #[test]
 fn temp_explicit_negation_preserved() {
     // `-300Cel` folds the minus into the literal BEFORE the affine
-    // transform, then clamps at 0 K: below-absolute-zero magnitudes never
-    // produce negative kelvin. Linear dims keep negate-preserved values.
-    assert_eq!(
-        eval_json("t = -300Cel\n")["t"],
-        serde_json::json!({"$active.quantity": {"unit": "K", "value": 0.0}})
-    );
-    assert!(codes_of("t = -300Cel\n").is_empty());
+    // transform: -26.85 K is below absolute zero, so it is rejected
+    // (B-011/L-P44), never clamped to 0 K. A negative reading that is
+    // physically valid (-40Fahr = 233.15 K) still folds and evaluates.
+    assert_eq!(codes_of("t = -300Cel\n"), vec!["T001"]);
+    assert_eq!(codes_of("t = -500Cel\n"), vec!["T001"]);
+    assert_eq!(codes_of("t = -1000Fahr\n"), vec!["T001"]);
+    let fahr = eval_json("t = -40Fahr\n")["t"]["$active.quantity"]["value"]
+        .as_f64()
+        .expect("value");
+    assert!((fahr - 233.15).abs() < 1e-9, "{fahr}");
 }
 
 #[test]

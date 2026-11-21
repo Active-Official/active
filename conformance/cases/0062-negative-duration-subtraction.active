@@ -1,0 +1,3 @@
+# L-P44: a negative duration result is not a duration (the B-011 pin on
+# the arithmetic surface). This used to clamp to 0ms.
+v = 1s - 2s

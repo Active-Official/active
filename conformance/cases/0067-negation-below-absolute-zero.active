@@ -1,0 +1,2 @@
+# L-P44: an absolute temperature cannot be negated below 0 K.
+t = -5K

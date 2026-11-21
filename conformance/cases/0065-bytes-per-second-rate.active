@@ -1,0 +1,3 @@
+# L-P44: bytes are Int at evaluation, so this is the scalar/time case:
+# a per-second rate as Float (2 KiB over one second = 2048/s).
+rate = 2KiB / 1s

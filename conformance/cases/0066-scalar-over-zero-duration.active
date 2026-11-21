@@ -1,0 +1,3 @@
+# L-P44: a scalar over a zero duration names the divisor, not a
+# dimension mismatch.
+rate = 1 / 0s

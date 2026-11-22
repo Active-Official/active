@@ -102,7 +102,11 @@
 				if (buf.length === 0) return null;
 				return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
 			}
-			var bin = atob(text.replace(/-/g, "+").replace(/_/g, "/"));
+			// `atob` requires a padded multiple of four; a 1- or 2-byte
+			// source encodes to an unpadded length of 2 or 3.
+			var padded = text.replace(/-/g, "+").replace(/_/g, "/");
+			while (padded.length % 4) padded += "=";
+			var bin = atob(padded);
 			var bytes = new Uint8Array(bin.length);
 			for (var j = 0; j < bin.length; j++) bytes[j] = bin.charCodeAt(j);
 			return bytes;
@@ -229,12 +233,17 @@
 			var key = storageKey(storage, i);
 			if (typeof key !== "string" || key.indexOf(CACHE_PREFIX) !== 0) continue;
 			if (key.slice(-3) === ".at") continue;
+			// Only a hash-keyed entry is ours; a devtools-planted
+			// `active.snippet.junk` must not inflate the count or the
+			// byte total and evict legitimate entries.
+			var hash = key.slice(CACHE_PREFIX.length);
+			if (!isHash(hash)) continue;
 			var source = storageGet(storage, key);
 			if (source === null) continue;
 			var stamp = Number(storageGet(storage, key + ".at"));
 			entries.push({
 				key: key,
-				hash: key.slice(CACHE_PREFIX.length),
+				hash: hash,
 				source: source,
 				at: Number.isFinite(stamp) ? stamp : 0,
 			});
@@ -282,6 +291,16 @@
 	/** In-memory result cache for the page session: hash -> evaluate result. */
 	function createResultCache() {
 		var map = new Map();
+		// Freeze a detached copy so no caller aliases the cached record
+		// (top-level or nested `items`). `Object.isFrozen` before the
+		// recursion bounds a self-referential object.
+		function freezeTree(value, depth) {
+			if (!value || typeof value !== "object" || depth > 8) return value;
+			if (Object.isFrozen(value)) return value;
+			Object.freeze(value);
+			Object.keys(value).forEach((key) => freezeTree(value[key], depth + 1));
+			return value;
+		}
 		function touch(hashHex) {
 			if (!map.has(hashHex)) return undefined;
 			var value = map.get(hashHex);
@@ -298,15 +317,18 @@
 			get: (hashHex) => touch(hashHex),
 			put: (hashHex, result) => {
 				if (!isHash(hashHex) || !result || typeof result !== "object") return;
-				var text =
-					String((result && result.json) || "") +
-					String((result && result.diagnostics) || "");
-				if (utf8(text).length > RESULT_BYTES_LIMIT) return;
-				// A cached result is shared by every hit; a caller that
-				// mutates the record must not poison later evaluations.
-				// The shim already deep-freezes engine results; this
-				// covers a hand-built or test result as well.
-				if (!Object.isFrozen(result)) Object.freeze(result);
+				// The cap covers the whole record, including `items`: a
+				// huge items array with a tiny `json` must not be cached.
+				// The stored value is a detached, deeply frozen copy, so
+				// no caller can poison a later hit through an alias.
+				var copy;
+				try {
+					copy = JSON.parse(JSON.stringify(result));
+				} catch (e) {
+					return;
+				}
+				if (utf8(JSON.stringify(copy)).length > RESULT_BYTES_LIMIT) return;
+				freezeTree(copy, 0);
 				if (map.has(hashHex)) {
 					map.delete(hashHex);
 				} else if (map.size >= RESULT_LIMIT) {
@@ -316,7 +338,7 @@
 					var oldest = map.keys().next();
 					if (!oldest.done) map.delete(oldest.value);
 				}
-				map.set(hashHex, result);
+				map.set(hashHex, copy);
 			},
 			size: () => map.size,
 		};

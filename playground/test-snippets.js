@@ -116,6 +116,19 @@ async function main() {
 		"an empty payload does not parse",
 	);
 
+	// Short sources encode to unpadded base64url lengths 2/3/4/6/7; the
+	// browser's `atob` needs the padding restored.
+	for (const short of ["a", "ab", "abc", "abcd", "abcde"]) {
+		const shortHash = hash(short);
+		const shortLink = snippets.buildSelfContained(short, shortHash);
+		const shortParsed = snippets.parse(shortLink);
+		ok(
+			shortParsed !== null &&
+				snippets.decodeSource(shortParsed.payload) === short,
+			"short source round-trips: " + short.length + " bytes",
+		);
+	}
+
 	// 3. A mismatch is a refusal, never a pass.
 	ok(
 		!snippets.verify(decoded + "x", parsed.hash, hash),
@@ -242,6 +255,21 @@ async function main() {
 	snippets.cacheClear(bounded);
 	ok(snippets.cacheCount(bounded) === 0, "clear removes every cached snippet");
 
+	// A devtools-planted key that is not hash-shaped must not inflate the
+	// count or the byte total and evict a legitimate entry.
+	const junk = fakeStorage();
+	junk.setItem("active.snippet.junk", "x".repeat(4096));
+	ok(snippets.cacheCount(junk) === 0, "a non-hash cache key is ignored");
+	ok(
+		snippets.cachePut(junk, digest, source, hash, 1),
+		"a real entry still caches beside junk",
+	);
+	ok(snippets.cacheCount(junk) === 1, "only the real entry counts");
+	ok(
+		junk.getItem("active.snippet.junk") !== null,
+		"the junk key is left alone, not counted",
+	);
+
 	// 8. Result cache: the hash is the key, so the same bytes hit and the
 	// bound evicts the oldest entry.
 	const results = snippets.createResultCache();
@@ -262,7 +290,44 @@ async function main() {
 		results.get(digest).ok === true,
 		"mutating a cached result does not poison the cache",
 	);
-	ok(results.size() === 1, "result cache size");
+	// The stored record is a detached copy, frozen at every level: a
+	// caller cannot poison a hit through a nested `items` alias either.
+	const itemsSource = "items\n";
+	const itemsKey = hash(itemsSource);
+	const original = {
+		ok: true,
+		json: "{}",
+		diagnostics: "",
+		items: [{ code: "T001" }],
+	};
+	results.put(itemsKey, original);
+	const hit = results.get(itemsKey);
+	ok(
+		Array.isArray(hit.items) && Object.isFrozen(hit.items),
+		"items are frozen",
+	);
+	try {
+		hit.items.push({ code: "E999" });
+	} catch (e) {
+		/* frozen array append throws */
+	}
+	original.items.push({ code: "E999" });
+	ok(
+		results.get(itemsKey).items.length === 1,
+		"nested items and the caller's object cannot poison the cache",
+	);
+	// The cap counts the whole record: huge `items` with a tiny `json`
+	// must not be cached.
+	const itemCap = snippets.createResultCache();
+	const hugeItemsKey = hash("huge-items\n");
+	itemCap.put(hugeItemsKey, {
+		ok: true,
+		json: "{}",
+		diagnostics: "",
+		items: [{ message: "x".repeat(snippets.RESULT_BYTES_LIMIT) }],
+	});
+	ok(!itemCap.has(hugeItemsKey), "a huge items array is not cached");
+	ok(results.size() === 2, "result cache size (digest + items)");
 	for (let i = 0; i < snippets.RESULT_LIMIT + 5; i += 1) {
 		results.put(hash("result " + i + "\n"), { ok: true, json: "{}" });
 	}

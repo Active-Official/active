@@ -46,7 +46,9 @@ and it has no page-side evaluation logic (the WIRING contract).
 - **Result cache:** an in-memory `Map` for the page session, keyed by the
   hash. Re-opening the same hash or re-evaluating the same bytes is a hit.
   It is not persisted, so a new engine build never serves a stale result
-  across sessions.
+  across sessions. A put stores a detached, deeply frozen copy and the
+  size bound measures the whole record (including `items`), so a caller
+  cannot poison a later hit and a large items array cannot pin the tab.
 - The hash is the cache key in both caches: identical bytes map to one
   entry, and different bytes cannot occupy an existing hash.
 

@@ -28,7 +28,13 @@
 							})
 						: source.ok === false
 							? Promise.reject(new Error("active-wasm: HTTP " + source.status))
-							: source.arrayBuffer());
+							: typeof source.arrayBuffer !== "function"
+								? Promise.reject(
+										new Error(
+											"active-wasm: source has no bytes (expected a URL, ArrayBuffer, or Response)",
+										),
+									)
+								: source.arrayBuffer());
 		const { instance } = await WebAssembly.instantiate(bytes, {});
 		const ex = instance.exports;
 		if (

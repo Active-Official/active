@@ -127,7 +127,13 @@
 		// picker value must not turn into a same-origin traversal.
 		if (EXAMPLES.indexOf(name) < 0) return;
 		fetch("examples/" + name + ".active")
-			.then((r) => r.text())
+			.then((r) => {
+				// A 404 body is HTML, not Active; place a placeholder
+				// instead of letting a static-server error page become
+				// something a visitor might Evaluate.
+				if (!r.ok) throw new Error("HTTP " + r.status);
+				return r.text();
+			})
 			.then((t) => {
 				source.value = t;
 			})
@@ -172,13 +178,14 @@
 				refuse("Share link refused: malformed compressed payload.");
 				return;
 			}
-			const ds = new DecompressionStream("deflate-raw");
-			const writer = ds.writable.getWriter();
-			await writer.write(bytes);
-			await writer.close();
-			// Stream with a hard output cap: a small compressed payload
-			// must not expand into an unbounded buffer.
-			const reader = ds.readable.getReader();
+			// Pipe the bytes through the decompressor and read with a hard
+			// output cap. A manual writer must not be closed before the
+			// readable is consumed: backpressure can stall it on a small
+			// payload, and the page would never see the source.
+			const stream = new Blob([bytes])
+				.stream()
+				.pipeThrough(new DecompressionStream("deflate-raw"));
+			const reader = stream.getReader();
 			const chunks = [];
 			let total = 0;
 			for (;;) {
@@ -221,7 +228,11 @@
 		if (typeof s !== "string" || s.length > LINK_LIMIT) return null;
 		if (!/^[A-Za-z0-9_-]+$/.test(s)) return null;
 		try {
-			const bin = atob(s.replace(/-/g, "+").replace(/_/g, "/"));
+			// `atob` requires a padded multiple of four; the producer
+			// strips padding, and short payloads are lengths 2/3.
+			var padded = s.replace(/-/g, "+").replace(/_/g, "/");
+			while (padded.length % 4) padded += "=";
+			const bin = atob(padded);
 			const bytes = new Uint8Array(bin.length);
 			for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
 			return bytes;
@@ -248,11 +259,13 @@
 		let best = raw;
 		if (typeof CompressionStream !== "undefined") {
 			try {
-				const cs = new CompressionStream("deflate-raw");
-				const writer = cs.writable.getWriter();
-				writer.write(new TextEncoder().encode(text));
-				writer.close();
-				const buf = await new Response(cs.readable).arrayBuffer();
+				// Pipe the bytes through the compressor and read the
+				// result; a manual writer must not be closed before the
+				// readable is consumed (backpressure can stall it).
+				const stream = new Blob([text])
+					.stream()
+					.pipeThrough(new CompressionStream("deflate-raw"));
+				const buf = await new Response(stream).arrayBuffer();
 				const compressed = "#c=" + toB64url(new Uint8Array(buf));
 				if (compressed.length < best.length) best = compressed;
 			} catch (e) {

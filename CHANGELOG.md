@@ -762,6 +762,14 @@ wasm in CI (round-trip, match, mismatch refusal, tampered-cache refusal,
 cache bound, result cache). This lands after G-023 (`4800d2f`), whose
 release-shaped playground bundle was served and exercised in a browser.
 
+Follow-up hardening after review: the result cache stores a detached,
+deeply frozen copy and caps the whole record (including `items`); both
+compression directions use `pipeThrough` (a manual writer awaited before
+the readable is consumed can deadlock on backpressure); a 404 example
+cannot become editor content; 1- and 2-byte snippet links round-trip
+(`atob` padding); cache enumeration ignores non-hash keys; and the
+loader reports an HTTP status before the byte-source check.
+
 ### L-P18: Pulumi, Terraform, and CDK generate targets (codegen half)
 
 `active generate` speaks to the three IaC consumer tools while Active

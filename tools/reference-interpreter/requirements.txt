@@ -1,0 +1,4 @@
+# L-P37 reference interpreter dependencies (pinned).
+# Python 3.12+ (CI installs these wheels; no network at test time).
+blake3==1.0.11
+regex==2026.9.29

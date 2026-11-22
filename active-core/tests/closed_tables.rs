@@ -111,3 +111,22 @@ fn the_audit_is_deterministic_and_sorted() {
         "entries sort by path and keys sort inside each entry: {first:?}"
     );
 }
+
+#[test]
+fn a_closed_root_exempts_active_profile() {
+    // G23 (Bud's adjudication): the root metadata exemption is three keys,
+    // including `active_profile`. Before the fix, a closed-root document
+    // that selected a profile failed T005 on its own metadata key.
+    let source = "schema = { closed = true, x = Int }\n\
+                  active_profile = \"prod\"\n\
+                  x = 1\n\
+                  profile \"prod\" { x = 2 }\n";
+    let module = parse(source, "closed-profile").expect("parse");
+    let (value, diags) = Engine::new().evaluate(&module).expect("evaluate");
+    assert!(
+        diags.iter().all(|d| d.code != "T005"),
+        "active_profile must not be an unexpected key: {diags:?}"
+    );
+    let json = active_core::convert::value_to_json(&value);
+    assert_eq!(json["x"], 2, "the selected profile must merge: {json}");
+}

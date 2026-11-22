@@ -5,6 +5,7 @@
 
 use active_core::{parse_file, Engine, EvalError, ParseOptions};
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::PathBuf;
 
 fn root() -> PathBuf {
@@ -95,6 +96,111 @@ fn expected_codes(id: &str) -> Vec<String> {
         .iter()
         .map(|c| c.as_str().expect("code string").to_string())
         .collect()
+}
+
+fn span_json(span: Option<&active_core::diag::Span>) -> serde_json::Value {
+    match span {
+        Some(s) => serde_json::json!({
+            "line": s.line,
+            "column": s.column,
+            "end_line": s.end_line,
+            "end_column": s.end_column,
+        }),
+        None => serde_json::Value::Null,
+    }
+}
+
+fn records_json(diags: &[active_core::Diagnostic]) -> serde_json::Value {
+    serde_json::json!(diags
+        .iter()
+        .map(|d| serde_json::json!({
+            "code": d.code,
+            "severity": format!("{:?}", d.severity).to_lowercase(),
+            "path": d.path,
+            "span": span_json(d.span.as_ref()),
+        }))
+        .collect::<Vec<_>>())
+}
+
+/// L-P37: the ordered corpus projection the reference differential uses
+/// instead of the deduplicated committed sidecars. Written only when
+/// `ACTIVE_CORPUS_DUMP` names a file; the gate's own assertions are
+/// unchanged.
+#[test]
+fn l37_corpus_dump() {
+    let Ok(path) = std::env::var("ACTIVE_CORPUS_DUMP") else {
+        return;
+    };
+    let mut file = std::fs::File::create(path).expect("corpus dump writable");
+    for case in load_manifest() {
+        let mut engine = hermetic_engine();
+        engine.profile_override = case.profile.clone();
+        engine.pure = case.pure;
+        let record = match parse_file(&root().join(&case.file), ParseOptions::default()) {
+            Err(diags) => corpus_record(&case.id, false, &diags, None),
+            Ok(module) => match engine.evaluate_with_seeds(&module) {
+                Ok((value, diags, seeds)) => {
+                    let profile =
+                        active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
+                    let redacted = active_core::convert::redact_value(&profile, &value);
+                    corpus_record(
+                        &case.id,
+                        true,
+                        &diags,
+                        Some((
+                            active_core::provenance::content_hash(&redacted),
+                            active_core::convert::value_to_json(&redacted),
+                        )),
+                    )
+                }
+                Err(EvalError::ValidationFailed { diagnostics }) => {
+                    corpus_record(&case.id, false, &diagnostics, None)
+                }
+                Err(error) => {
+                    let diag = active_core::Diagnostic {
+                        code: error.code().to_string(),
+                        severity: active_core::Severity::Error,
+                        message: String::new(),
+                        path: None,
+                        span: error.span().cloned(),
+                        repair: None,
+                        confidence: 1.0,
+                        file: None,
+                    };
+                    corpus_record(&case.id, false, std::slice::from_ref(&diag), None)
+                }
+            },
+        };
+        writeln!(file, "{record}").expect("corpus dump written");
+    }
+}
+
+fn corpus_record(
+    id: &str,
+    ok: bool,
+    diags: &[active_core::Diagnostic],
+    extra: Option<(String, serde_json::Value)>,
+) -> serde_json::Value {
+    let codes = diags.iter().map(|d| d.code.clone()).collect::<Vec<_>>();
+    let messages = diags.iter().map(|d| d.message.clone()).collect::<Vec<_>>();
+    let mut record = serde_json::json!({
+        "id": id,
+        "ok": ok,
+        "codes": codes,
+        "messages": messages,
+        "diag_records": records_json(diags),
+    });
+    match extra {
+        Some((hash, value)) => {
+            record["content_hash"] = serde_json::Value::String(hash);
+            record["value"] = value;
+        }
+        None => {
+            record["content_hash"] = serde_json::Value::Null;
+            record["value"] = serde_json::Value::Null;
+        }
+    }
+    record
 }
 
 #[test]

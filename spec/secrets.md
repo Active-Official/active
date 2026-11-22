@@ -35,6 +35,45 @@ error message, or an export** — only redaction markers do.
 | Schema `min`/`max`/bounds | Readable as values; never echoed (spec/validation.md §7) |
 | `Bytes` / units | Orthogonal: byte-ness is erased at evaluation and has no taint interaction |
 
+## 2.1 The redaction algorithm (G19)
+
+The properties above are produced by one deterministic, budgeted
+analysis followed by one structural export walk. A second implementation
+implements these passes in this order; the shape matrix in the
+conformance evidence pins the redacted bytes.
+
+1. **Seed collection.** Walk the module and the evaluated values:
+   every authored `secret(...)`/`secret.env(...)` source; every profile
+   override that replaces a material value (the override inherits the
+   value's materiality); every computed selector (the union of all
+   profiles it could select, so an unexpected profile cannot hide a
+   seed); every material table key and path segment. Exact-match seeds
+   are kept at any length; substring seeds only when they are at least
+   four bytes (`MIN_SUBSTRING_SEED = 4`). The walk follows `let` aliases
+   with cycle detection under fixed node, byte, and depth budgets.
+2. **Profile construction.** Classify each node/path: whole-value
+   material (any length), substring material (>= 4 bytes), material key,
+   or benign. A material value seeds copies elsewhere unless the same
+   node is still exported through a benign path after every profile and
+   patch transform; a computed selector drops every path an unselected
+   profile could override. Exceeding a budget fails closed: every
+   literal is treated as material.
+3. **Export walk.** Traverse the redacted tree once, in source order.
+   A `Secret` kind always renders `***SECRET***`; a material blob
+   identity redacts its media type; a table key whose text is material
+   renders the marker in the key slot; a path segment that is material
+   renders the marker in that segment; a string containing a substring
+   seed of >= 4 bytes is redacted in place; an exact-match value of any
+   kind is replaced by the marker. A retained blob payload that is
+   material under the profile is dropped.
+4. **Failure direction.** Any analysis error or budget trip yields the
+   conservative result (material), never a benign one. The pass is a
+   pure function of the value tree, the module, and the engine config.
+
+The vector matrix covers: scalar copy, substring copy, material table
+key, material path segment, profile override, computed selector, blob
+media/payload, and a budget trip.
+
 ## 3. Export: redact, never emit
 
 - JSON and TOML converters replace every secret, at any depth, with
@@ -47,6 +86,13 @@ error message, or an export** — only redaction markers do.
   Value paths are redacted segment by segment, so a short material key is
   hidden inside a dotted path too. Envelope taint verification counts a
   material key as payload material.
+- **Derived scalar material (P37-N2).** A value computed from secret
+  operands by equality or comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`)
+  is material for every export path even when the evaluated result is a
+  plain Bool/Int/Float. The export renders the marker at that path. The
+  anti-oracle rule already makes secret equality false; the conservative
+  export rule additionally prevents the presence of a scalar from
+  revealing that a comparison happened. Shipped behavior, now normative.
 - `ACTIVE graph` prints node ids and edges only — no values at all.
 - `Value`'s `Debug` and `serde::Serialize` impls redact by
   construction (`Secret(***)` / `"***SECRET***"` at every depth), so

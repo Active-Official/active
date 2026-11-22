@@ -1146,12 +1146,18 @@ impl<'a> Validator<'a> {
                 if fields.contains_key(key) {
                     continue;
                 }
-                // The mode and capability markers are metadata, not
-                // data (Phase M / CAP): at the document root they never
-                // count as unexpected keys. Nested tables keep the
-                // strict rule — a nested marker is an ordinary key.
+                // The mode, capability, and profile selectors are
+                // metadata, not data (Phase M / CAP / C-027): at the
+                // document root they never count as unexpected keys.
+                // Nested tables keep the strict rule — a nested marker is
+                // an ordinary key. G23: `active_profile` is the third
+                // root metadata key; omitting it made a closed-root
+                // document reject its own profile selection.
                 if segments.is_empty()
-                    && matches!(key.as_str(), "active_mode" | "active_capabilities")
+                    && matches!(
+                        key.as_str(),
+                        "active_mode" | "active_capabilities" | "active_profile"
+                    )
                 {
                     continue;
                 }

@@ -2414,13 +2414,17 @@ impl Engine {
         if let Some(gate) = &self.envelope_gate {
             gate.check(module)?;
         }
-        // Budgets first: fail fast on monsters before any real work.
-        check_static_budgets(module, &budget)?;
+        // G16 (spec/specification.md §3.4): a cycle is detected FIRST,
+        // before any value is produced and before the static shape
+        // budgets. The spec is normative; the pre-G16 order ran budgets
+        // first and reported X001 for a cyclic over-budget document.
         // `petgraph::is_cyclic_directed` walks the graph recursively and
         // overflows the stack on a long chain (a crafted document with
         // ~950 aliases killed the process). `toposort` is iterative and
         // reports the same cycle, so use it directly.
         let order = toposort(&module.graph, None).map_err(|_| EvalError::CycleDetected)?;
+        // Budgets next: fail fast on monsters before any real work.
+        check_static_budgets(module, &budget)?;
         // Reference-aware materialization bounds (size and depth): the
         // billion-laughs killer. Runs on the topological order so every
         // bound is final when read; saturating arithmetic keeps it

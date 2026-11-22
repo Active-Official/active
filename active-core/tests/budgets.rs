@@ -389,3 +389,18 @@ fn long_interpolation_chain_trips_depth_without_overflow() {
     let err = eval_limited(&src, active_core::Budget::default());
     assert_eq!(xcode(&err), "X003");
 }
+
+#[test]
+fn a_cycle_is_detected_before_static_budgets() {
+    // G16 (Bud's adjudication): the spec says cycle detection runs
+    // FIRST, before any value or static shape budget. A cyclic document
+    // that also exceeds every static budget must report S001, never X001.
+    // Negative control: before the fix, check_static_budgets ran first
+    // and this returned X001.
+    let module = parse("a = b\nb = a\n", "cycle-first").expect("parse");
+    let mut engine = Engine::new();
+    engine.budget = active_core::Budget::unlimited();
+    engine.budget.max_nodes = 1;
+    let err = engine.evaluate(&module).expect_err("a cycle is fatal");
+    assert_eq!(err.code(), "S001", "cycle must win over X001: {err:?}");
+}

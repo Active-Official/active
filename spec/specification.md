@@ -292,7 +292,7 @@ evaluate(module):
 - Non-finite floats (`inf`, `-inf`, `nan`) are legitimate values; the JSON
   export tags them (`{"$active.float": "inf"}`) and never maps them to
   `null`; `content_hash` distinguishes them from `null` (LANG-F-003).
-- `Quantity(f64, Unit)`: equality requires equal value **and** equal unit.
+- `Quantity(f64, Unit)`: equality requires equal canonical value **and** equal canonical unit (same-dimension literals normalize first: `1kHz == 1000Hz` and `20Cel == 293.15K` are true; cross-dimension equality is false, never an error).
 - Ordering (`<` `<=` `>` `>=`) compares numerically: `Float`/`Float`,
   `Int`/`Int`, and mixed `Int`/`Float` (promoted exactly, including
   values beyond 2^53). `Float` ordering follows IEEE 754, so a NaN —
@@ -525,6 +525,51 @@ under a schema.
 | ordering / equality | same dimension only; equality across dimensions is `false`, never an error |
 | any other pairing | T001 naming both dimensions |
 
+### 4.3.1 Complete operand matrix (G18)
+
+This matrix is exhaustive for the operand kinds; any pair not listed is
+T001 naming both kinds. "Canonical" means the value after unit
+normalization (Chapter 4).
+
+| Left | Op | Right | Result |
+|---|---|---|---|
+| Int | `+ - * /` | Int | Int; `+ - *` saturate at the i64 bounds; `/` truncates toward zero; `/ 0` is T001 |
+| Int | `+ - * /` | Float | Float (promoted); a non-finite result is T001 |
+| Float | `+ - * /` | Int | Float; a non-finite result is T001 |
+| Float | `+ - * /` | Float | Float; a non-finite result is T001 |
+| Int/Float | `< <= > >=` | Int/Float | Bool, numeric promotion; NaN compares false |
+| Int/Float | `== !=` | Int/Float | structural: Int and Float are different even when numerically equal; NaN != NaN |
+| Duration | `+ -` | Duration | Duration; a negative result is T001; addition saturates at u64::MAX |
+| Duration | `*` | Int/Float | Duration; negative factor/result is T001; zero factor is zero |
+| Int/Float | `*` | Duration | Duration (symmetric, unlike Quantity) |
+| Duration | `/` | Int/Float != 0 | Duration; negative result is T001 |
+| Duration | `/` | Duration != 0 | Int ratio |
+| Int/Float | `/` | Duration != 0 | Float per-second rate |
+| Duration | `< <= > >= == !=` | Duration | Bool |
+| Quantity | `+ -` | Quantity, same canonical dimension | Quantity in the canonical unit; `+`/`-` across dimensions is T001 |
+| Quantity | `*` | Int/Float | Quantity (unit kept) |
+| Int/Float | `*` | Quantity | **T001** (asymmetric; use `q * scalar`) |
+| Quantity | `/` | Int/Float != 0 | Quantity |
+| Int/Float | `/` | Quantity | **T001** |
+| Quantity | `/` | Quantity, same dimension and != 0 | Float ratio |
+| Quantity | `== !=` | Quantity, same dimension | Bool after canonicalization (`1kHz == 1000Hz` is true; `20Cel == 293.15K` is true) |
+| Quantity | `== !=` | Quantity, different dimension | Bool false (equality never errors across dimensions) |
+| Quantity | `< <= > >=` | Quantity, same dimension | Bool after canonicalization |
+| Quantity (percent) | `+ -`, `* / scalar`, `/ percent` | as above | Percent is an ordinary ratio unit; percent/percent is a Float ratio |
+| Bytes | any arithmetic/equality | Int/quantity | Bytes are Int at evaluation (LANG-B-005): `1KiB + 1B` is Int 1025; `1B == 1` is true |
+| Null | `== !=` | Null | Bool (`null == null` true) |
+| Bool | `== !=` | Bool | Bool |
+| String | `== !=` | String | Bool (exact bytes) |
+| String | `+` or ordering | any | T001 (no concatenation) |
+| Array/Table | `== !=` | any | **Currently false in the shipped engine** (open gap P37-N1); ordering is T001 |
+| Secret | any operator | any | Arithmetic/ordering T001; `==`/`!=` produce a material boolean that the export redacts (open observation P37-N2) |
+| Blob | any operator | any | T001 |
+| Mismatched kinds | any | any | T001 naming both kinds |
+
+`Int` division by zero, quantity division by zero, and duration division
+by zero are T001. Affine temperatures (`K Cel Fahr`) and decibels (`dB`)
+are equality/ordering-only; arithmetic on them is T001 (the affine rule
+wins over division by zero).
 A division by zero is T001 `division by zero` for every numeric dimension
 (including a scalar or byte magnitude divided by a zero duration). The
 affine rule wins when both apply: `20Cel / 0` is T001 for the affine

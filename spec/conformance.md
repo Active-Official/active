@@ -22,16 +22,19 @@ Two suites serve different jobs and must both stay green:
   dual-syntax brace/indent equivalence (10–11), and multi-line
   strings (13). Each pair asserts an ACCEPTED document's evaluated
   value tree, byte for byte.
-- `conformance/manifest.toml` is the **cross-embedding suite**
-  (21 cases today, including negative and host-feature pins)
-  driven by `conformance/harness/run.py` across the reference,
-  C ABI, WASM, and binding paths. Its normalization contract is
+- `conformance/manifest.toml` is the **normative cross-embedding input
+  set**: every `[[cases]]` entry is a case; every `[[pins]]` entry is an
+  exclusion of a case from the shim embeddings, not an additional case.
+  The counts are derived from the file, not copied here (69 cases and 9
+  pin entries at the L-P37 baseline; G22). The suite is driven by
+  `conformance/harness/run.py` across the reference, C ABI, WASM, and
+  binding paths. Its normalization contract is
   `conformance/NORMALIZATION.md`; the differential gate
   (`conformance/harness/diff_vectors.py`) is the strictest proof and
-  runs 19 of the 21 (cases 0008 and 0011 are pinned because their
-  include/profile host paths are not portable). Blob (0017-0018),
-  mode (0019-0020), and capability-shape (0021) vectors carry the
-  newer surfaces through the same gate.
+  runs every case not pinned for a host surface (the include loader,
+  CLI profile override, and pure mode are the L-P37 pin reasons). Blob
+  (0017-0018), mode (0019-0020), and capability-shape (0021) vectors
+  carry the newer surfaces through the same gate.
 
 ### 2.1 Harness contract (what "passing" means)
 

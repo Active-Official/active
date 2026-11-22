@@ -46,6 +46,34 @@ Reference pseudo-code:
 digest = BLAKE3("active-blob/v1" || 0x00 || le64(len(media)) || media || le64(len(payload)) || payload)
 ```
 
+### 1.1 Document salt (v2, G20)
+
+The per-document salt is itself a BLAKE3 hash over a fixed, versioned
+byte layout, so every embedding derives the same value for the same
+document:
+
+1. Domain `active-doc-salt/v1` (no trailing separator byte; the shipped salt hashes the domain text directly, verified against the 0018 vector).
+2. The arena in node order. For each node, its index as `u64`
+   little-endian, then one tag byte:
+   `L` literal, `T` table, `A` array, `S` secret presence,
+   `B` content-addressed presence, `I` ident, `R` ref, `E` env,
+   `P` interpolate.
+3. Per-tag payloads, all length-prefixed or fixed-width as stated:
+   - Int, Float (raw IEEE-754 bits), and DurationMs: `u64` little-endian;
+   - String and Secret: UTF-8 byte length only (no bytes);
+   - Quantity: the unit suffix bytes;
+   - Blob: the media-type bytes and one taint flag byte;
+   - tables and arrays: their child count;
+   - idents/env names/refs: the referenced index or name length, never
+     secret material.
+4. No host path, timestamp, process id, or environment value enters the
+   salt; secret and blob payload bytes are represented by presence only.
+
+The salt feeds the `active-blob/v2` domain for tainted identities; an
+untainted blob keeps the v1 identity and never uses it. A host-supplied
+`Engine::blob_salt` replaces the derived value and is a documented
+non-reproducible choice. Tainted-identity vectors pin the layout.
+
 ## 2. Hash function selection (CA.002)
 
 **Selected: BLAKE3-256** (`blake3` crate 1.x). Rationale, recorded:

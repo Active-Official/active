@@ -94,6 +94,13 @@ Checked only after the type accepts the value:
   crate (JSON-Schema-style: authors anchor with `^…$` for a full
   match). A pattern that fails to compile is a schema bug: T003
   `invalid pattern in schema`.
+- **Pattern dialect (G24)**: the accepted language is the Rust `regex`
+  crate's default syntax: character classes, anchors, Unicode classes,
+  alternation, and repetition are in; backreferences and look-around are
+  not (the crate rejects them). The dialect is closed: a second
+  implementation must use a Rust-compatible engine (or prove the same
+  language) and accept exactly this set. A conformance vector set covers
+  character classes, anchors, Unicode, and invalid patterns.
 - **Format**: `format = "email" | "uri" | "uuid" | "semver"` is an
   anchored full match checked after `pattern`. Mismatch is T003
   `does not match format '<name>'`. An unknown name or a non-string
@@ -243,6 +250,14 @@ value nodes, so this is the token that produced the value — same line
 as the key in practice), falling back to the schema table span when
 unresolvable. Open tables (the default) keep ignoring extra keys.
 Nesting composes: each table enforces its own flag.
+
+**Root metadata exemption (G23).** At the document root only, the
+closed-table check exempts three document metadata keys:
+`active_mode`, `active_capabilities`, and `active_profile`. They
+describe the document, not its data; a closed root must not reject its
+own mode or the profile it selects. Nested tables keep the strict rule
+(a nested `active_mode` is an ordinary key), and `envelope` is not
+exempt unless a profile says otherwise.
 
 Closing is auditable (L-P11). A clean evaluation that binds an L-T06
 receipt records every closed table instance in `receipt.closed_tables`:

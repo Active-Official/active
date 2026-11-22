@@ -1,0 +1,3 @@
+# L-P37 gap-blocked cases. Every entry needs a gap id (see
+# audit-pack/L-P37-DIVERGENCES.md and audit-pack/L-P37-NEW-GAPS.md).
+# Empty means every case is expected to agree.

@@ -19,7 +19,8 @@
 //! arrays/inline tables, profiles/schemas/duplicate keys, arithmetic, and
 //! a kitchen sink.
 
-use active_core::secret::SecretRedactor;
+use active_core::convert::{redact_value, value_to_json};
+use active_core::secret::{SecretProfile, SecretRedactor};
 use active_core::{parse, Budget, Engine, Module, Style, Value};
 
 /// Tiny deterministic xorshift64* PRNG (test scaffolding only).
@@ -358,6 +359,93 @@ fn check_document(family: usize, case: usize, src: &str) {
     }
 }
 
+fn span_json(span: Option<&active_core::diag::Span>) -> serde_json::Value {
+    match span {
+        Some(s) => serde_json::json!({
+            "line": s.line,
+            "column": s.column,
+            "end_line": s.end_line,
+            "end_column": s.end_column,
+        }),
+        None => serde_json::Value::Null,
+    }
+}
+
+/// L-P37: the deterministic dump consumed by the reference differential.
+/// One JSONL object per generated document with the shipped projection:
+/// source, outcome, ordered diagnostics (code, severity, path, and span),
+/// redacted JSON value, content hash, and the one env probe the secrets
+/// family reads (so the oracle uses the same snapshot).
+fn dump_line(family: usize, case: usize, src: &str) -> serde_json::Value {
+    let env_probe = std::env::var("ACTIVE_MC_PROBE").ok();
+    let payload = serde_json::json!({
+        "family": family,
+        "case": case,
+        "source": src,
+        "env_probe": env_probe,
+    });
+    let module = match parse(src, "mc-dump") {
+        Ok(module) => module,
+        Err(diags) => {
+            let mut out = payload;
+            out["ok"] = serde_json::Value::Bool(false);
+            out["codes"] =
+                serde_json::json!(diags.iter().map(|d| d.code.clone()).collect::<Vec<_>>());
+            out["messages"] =
+                serde_json::json!(diags.iter().map(|d| d.message.clone()).collect::<Vec<_>>());
+            out["diag_records"] = serde_json::json!(diags
+                .iter()
+                .map(|d| serde_json::json!({
+                    "code": d.code,
+                    "severity": format!("{:?}", d.severity).to_lowercase(),
+                    "path": d.path,
+                    "span": span_json(d.span.as_ref()),
+                }))
+                .collect::<Vec<_>>());
+            out["value"] = serde_json::Value::Null;
+            return out;
+        }
+    };
+    let engine = engine();
+    let mut out = payload;
+    match engine.evaluate_with_seeds(&module) {
+        Ok((value, diags, seeds)) => {
+            let profile = SecretProfile::for_engine(&module, &engine, &seeds);
+            let redacted = redact_value(&profile, &value);
+            out["ok"] = serde_json::Value::Bool(true);
+            out["codes"] =
+                serde_json::json!(diags.iter().map(|d| d.code.clone()).collect::<Vec<_>>());
+            out["messages"] =
+                serde_json::json!(diags.iter().map(|d| d.message.clone()).collect::<Vec<_>>());
+            out["diag_records"] = serde_json::json!(diags
+                .iter()
+                .map(|d| serde_json::json!({
+                    "code": d.code,
+                    "severity": format!("{:?}", d.severity).to_lowercase(),
+                    "path": d.path,
+                    "span": span_json(d.span.as_ref()),
+                }))
+                .collect::<Vec<_>>());
+            out["content_hash"] =
+                serde_json::Value::String(active_core::provenance::content_hash(&redacted));
+            out["value"] = value_to_json(&redacted);
+        }
+        Err(error) => {
+            out["ok"] = serde_json::Value::Bool(false);
+            out["codes"] = serde_json::json!([error.code()]);
+            out["messages"] = serde_json::json!([error.to_string()]);
+            out["diag_records"] = serde_json::json!([{
+                "code": error.code(),
+                "severity": "error",
+                "path": serde_json::Value::Null,
+                "span": span_json(error.span()),
+            }]);
+            out["value"] = serde_json::Value::Null;
+        }
+    }
+    out
+}
+
 #[test]
 fn monte_carlo_grammar_sweep() {
     let seed = std::env::var("ACTIVE_MC_SEED")
@@ -370,9 +458,19 @@ fn monte_carlo_grammar_sweep() {
         .unwrap_or(300);
     let mut rng = Rng(seed | 1);
     println!("monte carlo: seed={seed} cases={cases}");
+    let dump_path = std::env::var("ACTIVE_MC_DUMP").ok();
+    let mut dump = dump_path
+        .as_ref()
+        .map(|path| std::fs::File::create(path).unwrap_or_else(|e| panic!("MC dump: {e}")));
     for case in 0..cases {
         let family = case % 10;
         let src = document(family, &mut rng);
+        if let Some(file) = dump.as_mut() {
+            use std::io::Write;
+            let line = dump_line(family, case, &src);
+            writeln!(file, "{}", serde_json::to_string(&line).expect("dump json"))
+                .expect("write MC dump");
+        }
         check_document(family, case, &src);
     }
 }

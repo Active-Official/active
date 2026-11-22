@@ -123,6 +123,42 @@ jobs:
         # test workflow; the suite must run on the declared toolchain.
         run: cargo test --workspace --locked
 
+  reference-differential:
+    name: Reference interpreter differential (L-P37)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the oracle dependencies
+        run: python -m pip install -r tools/reference-interpreter/requirements.txt
+      - name: Oracle unit tests
+        run: python -m unittest discover -s tools/reference-interpreter/tests
+      - name: Dump the corpus and 300 Monte Carlo documents
+        run: |
+          ACTIVE_CORPUS_DUMP="$RUNNER_TEMP/corpus.jsonl" cargo test -p active-core --test conformance l37_corpus_dump -- --nocapture
+          ACTIVE_MC_CASES=300 ACTIVE_MC_DUMP="$RUNNER_TEMP/mc-a.jsonl" cargo test -p active-core --test mc_grammar monte_carlo_grammar_sweep -- --nocapture
+          ACTIVE_MC_CASES=300 ACTIVE_MC_DUMP="$RUNNER_TEMP/mc-b.jsonl" cargo test -p active-core --test mc_grammar monte_carlo_grammar_sweep -- --nocapture
+          cmp "$RUNNER_TEMP/mc-a.jsonl" "$RUNNER_TEMP/mc-b.jsonl"
+      - name: Run the differential twice and require identical reports
+        run: |
+          CORPUS=$(python -c "import tomllib;print(len(tomllib.load(open('conformance/manifest.toml','rb'))['cases']))")
+          MC=$(wc -l < "$RUNNER_TEMP/mc-a.jsonl")
+          test "$(wc -l < "$RUNNER_TEMP/corpus.jsonl")" -eq "$CORPUS"
+          python tools/reference-interpreter/diff.py --corpus-dump "$RUNNER_TEMP/corpus.jsonl" --mc-dump "$RUNNER_TEMP/mc-a.jsonl" --expect-corpus "$CORPUS" --expect-mc "$MC" --report "$RUNNER_TEMP/report.json"
+          python tools/reference-interpreter/diff.py --corpus-dump "$RUNNER_TEMP/corpus.jsonl" --mc-dump "$RUNNER_TEMP/mc-a.jsonl" --expect-corpus "$CORPUS" --expect-mc "$MC" --report "$RUNNER_TEMP/report2.json"
+          cmp "$RUNNER_TEMP/report.json" "$RUNNER_TEMP/report2.json"
+      - name: Upload the differential report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reference-differential
+          path: ${{ runner.temp }}/report.json
+
   package:
     name: Packaging gate (C-056)
     runs-on: ubuntu-latest

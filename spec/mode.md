@@ -38,10 +38,13 @@ by the full pre-existing suite plus an explicit equality test).
 
 - **Progressive warnings:** at 80% of any nonzero budget limit, Data
   Mode evaluation emits a **W013** warning naming the budget, usage,
-  and limit. Informational only — evaluation continues. The wall-clock
-  limit is excluded: it is a host-time backstop sampled mid-walk, not a
-  deterministic structural budget, so an 80% warning would be
-  nondeterministic.
+  and limit. Informational only — evaluation continues. The threshold
+  is inclusive (`used * 5 >= limit * 4`), one warning per budget per
+  evaluation, `span = null`, `path = null`. Warnings are emitted in this
+  fixed order: Nodes, ValueSize, Depth, TotalSize, ArrayLength, Keys
+  (G21). The wall-clock limit is excluded: it is a host-time backstop
+  sampled mid-walk, not a deterministic structural budget, so an 80%
+  warning would be nondeterministic.
 - **Hard ceilings unchanged:** every X00x trip behaves identically in
   both modes. Data Mode never raises, disables, or softens a limit.
 - **Audited raise:** raising a limit is an explicit operator act

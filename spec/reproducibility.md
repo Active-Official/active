@@ -68,11 +68,31 @@ Given the same tuple, two runs produce:
 
 - byte-identical canonical JSON for the value (`value_to_pretty_json`,
   and the redacted form when a secret profile applies);
-- identical diagnostics: the same codes, messages, paths, spans,
-  severities, and order;
+- identical diagnostics: the same codes, severities, paths, spans, and
+  order (G01). Message text is human-facing and may differ between
+  implementations unless this spec defines a template; the differential
+  and the conformance harness compare the structured record, never the
+  prose;
 - the same `content_hash` over the redacted value (the §3 canonical form,
   keys sorted), and the same `bound_content_hash` for the same schema
   version, profile, resolved budget, mode, and capability.
+
+**Diagnostic order (G02).** Diagnostics are emitted in this phase order:
+parse (emission order, which is span order for the left-to-right parser)
+-> evaluation (topological walk order) -> profile/patch (source order)
+-> validation (schema field order, then T010 at the field, then T009 in
+declaration order) -> post-evaluation envelope checks. Within a phase,
+ties break by `(path, code, span)`. One condition produces one
+diagnostic. The conformance engines compare the ordered list.
+
+**Diagnostic spans (G03).** Parse diagnostics carry the producing token
+or statement span. Validation follows `spec/validation.md` §8. T001 and
+T006 use the operator or predicate span; W001 the identifier token; W005
+the schema field; X-codes the offending node when attributable and the
+document root otherwise; E029 the file; W013 has `span = null`; S004
+carries no span by design. When a value's own span is unavailable (a
+patched or profile-merged value), the schema field or the patch
+instruction span is used.
 
 Wall-clock time may **refuse** a run (a budget trip, X00x) but never
 changes a value it produces. Time, randomness, locale, host paths, and
@@ -160,6 +180,27 @@ keeps lockfiles publishable and makes the identity independent of
 canonicaliser, so `debug --replay --expect` reproduces an audit
 `result`. Same tree → same hash on every platform (tested
 cross-fixture; CI runs both).
+
+**Canonical scalar spelling (G13).** Floats use the shipped writer's
+shortest round-trip form, exactly: a positive exponent carries a plus
+sign (`1e+21`); a negative exponent does not (`1e-7`); integral values
+in ordinary range keep `.0`; `-0.0` is rendered `0.0` (the sign of zero
+is not part of the canonical text); the digits are the shortest sequence
+that round-trips. Non-finite values never come from source (B-009); a
+host-held one exports as exactly `{"$active.float":"inf"}`,
+`{"$active.float":"-inf"}`, or `{"$active.float":"nan"}` and hashes in
+that tagged form. The `(f64 bits -> text)` vector file in the
+conformance evidence pins the boundaries.
+
+**Canonical hash tuple (G14).** The hash covers the full redacted root,
+including document metadata keys (`active_mode`, `active_capabilities`,
+`active_profile`) because they are document values. Object keys sort
+recursively by UTF-8 bytes (which preserves code-point order); secrets
+are the literal `***SECRET***`; blobs are identity-only (`hash`, `size`,
+`media_type`, `tainted`) with retained payloads stripped; floats follow
+G13. The v2 `bound_content_hash` is length-prefixed over the fixed tuple
+`(payload, schema_version, profile, resolved budget, mode, capability)`
+in that order, matching `envelope::bound_content_hash`.
 
 ## 4. Lockfile format (`ACTIVE lock`)
 

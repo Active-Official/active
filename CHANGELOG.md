@@ -10,6 +10,51 @@ standalone Infinity codec).
 
 ## [Unreleased]
 
+### L-P37: reference interpreter and differential testing
+
+A second, independent implementation of Active's core semantics in
+Python 3.12 (`tools/reference-interpreter/`, a test oracle outside the
+workspace and never imported by a shipped crate) now agrees with the
+shipped engine on **all 69 conformance cases and all 300 Monte Carlo
+documents, with zero divergences**. The runner compares redacted JSON
+values, ordered diagnostic records (code, severity, path, and span),
+duplicate counts, and `content_hash`; a leak scan rejects any known raw
+fixture secret and every runtime seed; two runs produce byte-identical
+reports. A new required CI job (`reference-differential`) dumps the
+deterministic MC corpus twice from the existing sweep
+(`ACTIVE_MC_DUMP`), requires the dumps to match, and runs the
+differential with the 69/300 count gate.
+
+The implementation carries Bud's 21-gap adjudication into the spec:
+normative recovery (H001-H004/W015, G05/G04), E002 for an unknown unit
+run and integer-only underscores (G06), the shipped float spelling
+(`1e+21`, `-0.0` -> `0.0`, G13), the canonical hash tuple (G14), the
+complete operand matrix including same-dimension equality and the
+quantity-scalar asymmetry (G18), the redaction passes (G19), the
+document-salt layout (G20), the W013 order (G21), manifest-derived
+conformance counts (G22), the three-key root closed-table exemption
+(G23), the pattern dialect (G24), the structured diagnostic record/order/
+spans (G01-G03), env snapshot semantics (G08), profile replacement (G10),
+include post-order (G11), and the schema-parse table (G17). The G20 note
+is corrected by evidence: the shipped salt domain hashes
+`active-doc-salt/v1` with no trailing `0x00`, and the tainted 0018
+identity reproduces byte-exactly.
+
+Two code fixes land with tests and negative controls: cycle detection now
+precedes the static shape budgets (G16; a cyclic over-budget document
+reports S001, not X001), and `active_profile` joins the root
+closed-table exemption (G23; a closed-root document that selects a
+profile no longer fails T005). Composite equality stays shipped-false
+(P37-N1, later candidate); secret-derived scalars redact by path
+(P37-N2, now normative in `spec/secrets.md`).
+
+The oracle also mirrors the envelope v2 receipt/sender/result shape and
+bound-result check, final-tree schema checks and `@constraint` T006,
+all-profile evaluation, included immutables/metadata/patch ordering,
+UTF-8 byte secret thresholds, and the schema/profile/include document
+salt projection; 62 oracle unit tests and 69/69 corpus plus 300/300 MC
+records/spans/hashes are green.
+
 ### L-T05: `active serve` (stdio document transport)
 
 A long-lived stdio server for Active documents: `u32` little-endian

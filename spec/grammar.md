@@ -192,9 +192,14 @@ and `%` (percent is the only symbolic suffix; case-SENSITIVE always):
 | `PiB EiB` | binary bytes (saturating u64) | | | |
 | `K Cel Fahr` | temperature (kelvin canonical, affine) | | `dB` | decibels (log special, ordering only) |
 
-Any other suffix rolls the lexer back (the characters are re-lexed as
-separate tokens). **[impl note]** The lexer's rollback means `5x` lexes as
-`integer(5)` followed by `identifier(x)`, which then fails at parse with E001.
+An unknown unit suffix is **E002 naming the suffix** (G06). The lexer
+performs maximal munch over the number, then takes the longest *known*
+unit suffix; an unknown unit-character run is not rolled back to an
+identifier — it is a hard parse error (`5x`, `5msfoo`, `5seconds` all
+fail naming the suffix). Underscores are legal only in the integer part
+(`1_0.5` is `10.5`); the fractional digits are plain digits; a `.` not
+followed by a digit is the operator; there is no exponent notation. The
+token-level vector table in the conformance evidence pins the boundary.
 
 ### 1.7 Operators and delimiters
 
@@ -247,18 +252,21 @@ key-value     = identifier ( "=" | ":" ) expression
 ### 2.1 Document
 
 
-A statement ends at the newline. A token that follows a complete value on the same line is announced as **W015** (the documented value is kept): two statements must not share a line, and a trailing token such as `1 2 3` or `1.2.3` is not silently dropped. The two intentional quirks in §4.1 (`x = 5 5` and `d = 1.`) are the only exception. A comma between entries inside a block or inline table is a separator, not a stray. A missing operand after a binary or unary operator is **E001** at parse time.
+A statement ends at the newline. A token that follows a complete value on the same line is announced as **W015** (the documented value is kept): two statements must not share a line, and a trailing token such as `1 2 3` or `1.2.3` is not silently dropped. W015 is emitted once per statement, with the span of the first trailing token; the two intentional quirks in §4.1 (`x = 5 5` and `d = 1.`) are the only silent exceptions. A comma between entries inside a block or inline table is a separator, not a stray. A missing operand after a binary or unary operator is **E001** at parse time.
 ```
 document     = { newline } { statement { newline } } { newline } EOF
 statement    = let-decl | table-header | key-value | skip
-skip         = any-token                     — silently consumed, no node
+skip         = any-token     — statement-position only, before any statement:
+                             silently consumed with no node (G04/G05)
 ```
 
-**[impl note]** The alpha parser is deliberately forgiving: an unexpected token
-at statement position is skipped (no diagnostic) so that parsing can continue.
-This is resilience, not conformance — a stricter second implementation may
-reject. The test corpus's negative cases pin the diagnostics that ARE emitted
-(E001/E002/E004).
+**Recovery is normative (G05).** The alpha recovery below is the
+conformance contract, not an implementation note. An unexpected token
+*before* any statement in a statement position is skipped silently (the
+`skip` form); a token after a completed statement is W015 and the value
+is kept. A stricter parser is a different syntax profile, not a
+conforming alpha implementation. The recovery table in §4.2 gives the
+H-code conditions, severities, spans, and consumed tokens.
 
 ### 2.2 Statements
 
@@ -342,7 +350,10 @@ string-literal = String | SingleString | MlString | MlSingleString
   disagreement at a path is **E046 merge conflict**, naming the path and
   both sources. E046 is an error in strict and resilient modes; resilient
   evaluation keeps the first source in source order, so the exported tree
-  is deterministic. Included includes compose by the same rule (each
+  is deterministic. Traversal is depth-first in include-statement order:
+  an included file's own includes merge before its root, and "first" is
+  the earliest source in that post-order; E046 names both sources by
+  their include path (G11). Included includes compose by the same rule (each
   included file's local keys win inside that file before it participates
   as one included value). Secrets never compare equal, so a path both
   includes fill with material is E046 rather than an equality oracle. Deep
@@ -381,7 +392,11 @@ profile-block = "profile" string-literal "{" [ newline { statement } ] "}"
   recursively and a profile scalar replaces a base scalar of any type.
   A profile value whose type differs from
   the base value still wins, with no warning (L-P09; provenance records
-  the winner). A profile's own `active_profile` never reselects and is
+  the winner). The rule is wholesale replacement whenever either side is
+  not a table: a table replaces a scalar/array, a scalar/array replaces a
+  table, and arrays are values (replaced, never merged). Validation runs
+  after the merge, so a closed base table's extra profile key is T005.
+  A profile's own `active_profile` never reselects and is
   not exported over the base selector. Profile blocks never
   appear in the exported tree; `active_profile` itself stays visible.
 
@@ -510,6 +525,23 @@ formatter renders branches in source order.
   closing `}` is E001. A call-form `Table(…)` is E020 — nested schemas
   use `Table { … }` only. The canonical empty schema is `schema = {}`.
 
+**Schema-parse decision table (G17).**
+
+| Form | Outcome |
+|---|---|
+| `schema` with any table value | schema block; invalid entries are E020, never data |
+| `schema = {}` | the canonical empty schema |
+| `schema` with a non-table value | ordinary data (the contextual rule above) |
+| duplicate `Enum(...)` members | allowed; `descriptions` must still match the member count |
+| `OneOf` with fewer than two branches | E020 |
+| a `OneOf` branch declaring `default` | E020 (the default belongs to the outer entry) |
+| `closed` with a non-boolean value | E020 |
+| `descriptions` on a non-`Enum` type | E020 (unknown argument) |
+| `descriptions` whose value is not a string list | T003 at validation (its length must match the members) |
+| a field named `check = Type` | ordinary field (only `check {` / `check:` are blocks) |
+| a schema inside an array element | E020 (use `Array<T>`) |
+| `requires` with a non-literal target | accepted as a computed target; a non-string result never triggers |
+
 ### 2.11 Dependency declarations (C-042)
 
 ```
@@ -563,6 +595,14 @@ secret-ref    = "secret" [ "." "env" ] "(" expression ")"
   `?:` default when present). The default is optional. NAME is
   case-insensitive on every platform: names fold to uppercase at snapshot
   time, so `env.Path` and `env.PATH` are the same variable (LANG-H-003).
+- **Snapshot semantics (G08).** A variable is set iff its name is
+  present in the snapshot, including an empty string (`env.X` yields
+  `""`); `?:` applies only when the name is absent. Names that are not
+  valid Unicode are skipped from the snapshot (they cannot be referenced
+  by an identifier). If two spellings collide after folding (possible on
+  Unix), the lexicographically last `(name, value)` pair wins, so every
+  host resolves the same variable the same way. The name is an
+  identifier, folded to uppercase.
 - `secret(expr)` takes any expression as locator (usually a string literal).
   `secret.env(NAME)` requires a **string literal** argument naming the env var
   whose value becomes the secret (E003 otherwise). **[impl note]** implemented
@@ -688,7 +728,42 @@ confidence and is governed by the mode policy (see `docs/diagnostics.md`):
 | Trailing comma before a closer | H002 | 0.98 | healed (Info) | healed (Info) |
 | Missing comma between elements/entries | H003 | 0.90 | healed (Warning) | healed (Warning) |
 | Mismatched `]` / `}` closer | H004 | 0.82 | **error E001** | healed (Warning) |
+| Completed statement followed by a non-separator token on the same line | W015 | — | warning, value kept | warning, value kept |
 | Character no rule accepts | E005 | — | **error** | **error** |
+
+**Normative recovery (G05).** This table and the rules below are the
+conformance contract for the alpha surface; a stricter parser is a
+different syntax profile, not a conforming alpha implementation.
+
+- **H001 (unclosed string at EOF):** the lexer closes the string at EOF;
+  it consumes no extra token; the span runs from the string's opening
+  quote to EOF; Info in both modes.
+- **H002 (trailing comma before a closer):** the parser consumes the
+  comma; the span is the comma; Info in both modes.
+- **H003 (missing comma between elements or entries):** the parser
+  inserts a separator without consuming a token; the span is the first
+  token of the following element/entry; Warning (0.90) in both modes.
+- **H004 (mismatched closer):** the parser consumes the mismatched
+  closer; the span is that closer; strict mode reports E001, resilient
+  mode heals with Warning (0.82).
+- **One root cause:** recovery consumes the offending balanced
+  construct once; an over-deep or malformed construct produces one
+  diagnostic, not one per enclosing level.
+
+**W015 (G04).** A completed statement followed by a non-separator token
+on the same physical line emits one W015 at the first trailing token and
+keeps the documented value. Tokens before any statement at statement
+position are silent skips. A comma between entries is a separator, not
+a stray. The two pinned quirks are silent.
+
+| Source | Result | Diagnostic |
+|---|---|---|
+| `x = 5 5` | `x = 5` | none (pinned quirk) |
+| `x = 1.` | `x = 1` | none (pinned quirk) |
+| `x = 5 y = 2` | `x = 5`, `y = 2` | one W015 at `y` |
+| `x = 1 2 3` | `x = 1` | one W015 at `2` |
+| `x = [1 2]` | `x = [1, 2]` | H003 at `2`, not W015 |
+| `x = 1, y = 2` | `x = 1`, `y = 2` | none (comma separator) |
 
 `--resilient` relaxes strict mode in two ways: it allows the resilient-only
 0.70–0.84 band to apply, and it exits zero despite Warning-severity repairs.

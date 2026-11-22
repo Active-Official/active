@@ -10,6 +10,18 @@ standalone Infinity codec).
 
 ## [Unreleased]
 
+### L-P38: property tests as the spec
+
+Adds generated property tests (`active-core/tests/properties.rs`) for
+determinism, formatter idempotency, formatting semantic preservation,
+the JSON wire fixed point, budget monotonicity, and secret
+non-leakage. The wire property found and this change fixes three
+spelling defects: quantities now import with a float spelling
+(`5.0MiB`), zero renders signless for Float/Quantity (`-0.0` -> `0.0`,
+G13), and an `ms`-suffixed duration literal accepts the full u64 range
+while plain integers stay i64 with E023. `spec/converters.md` now
+states that blob identities are export-only (P38-F1).
+
 ### L-P37: reference interpreter and differential testing
 
 A second, independent implementation of Active's core semantics in

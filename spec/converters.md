@@ -98,7 +98,7 @@ guess.
 
 **Non-finite floats never cross a converter.** `inf`, `-inf`, and `NaN` are rejected at parse (E023 for an overflowing literal), at arithmetic (T001), and at resilient coercion (the T002 stands). No exporter maps a number to `null`; the JSON model's inf→null behaviour is never used (LANG-B-009). Should a host ever hold one (the exporter arm is defense in depth), the JSON export tags it as `{"$active.float": "inf"|"-inf"|"nan"}` - an object, so it cannot collide with `null` or with the string `"inf"` - and `content_hash` hashes that tagged form (LANG-F-003). Import recognises the tag and records W010 (no Active literal exists).
 
-Typed values (durations, quantities, blobs) are exported with `$active.*` wrappers and recognised on import; a bare `{"ms": N}`-shaped object imported as a table emits a loud diagnostic (W016) naming the ambiguity (LANG-F-001/F-002).
+Typed values (durations and quantities) are exported with `$active.*` wrappers and recognised on import. A blob identity (`$active.blob`) is export-only: an identity-only blob has no Active source spelling, so the importer treats the wrapper as an ordinary table (with W007 key sanitization) rather than claiming a lossless round-trip (P38-F1). A bare `{"ms": N}`-shaped object imported as a table emits a loud diagnostic (W016) naming the ambiguity (LANG-F-001/F-002).
 
 **Duplicate keys on import.** YAML rejects duplicate mapping keys (the YAML specification makes them an error); the failure names the rule. JSON keeps the last value, because the JSON document model has no duplicate concept to report (LANG-B-012). Neither format silently drops data in the other's way.
 
@@ -161,7 +161,8 @@ to the same IR).
 
 Round-trip contract (tested): JSON → ACTIVE → evaluate → JSON is
 fixed-point for the canonical mapping, except datetimes, secret
-markers, and non-string YAML keys (all diagnosed).
+markers, blob identities, and non-string YAML keys (all diagnosed or
+export-only).
 
 ## 5. CLI
 

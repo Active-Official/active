@@ -5982,6 +5982,20 @@ impl Parser {
                 // i64::MAX (spec/specification.md §1.3). A leading `-`
                 // is a separate unary operator, so `-9223372036854775808`
                 // evaluates to `i64::MIN + 1`, still with E023.
+                // P38-F2: an `ms` duration literal is a u64 and stays
+                // exact (never routed through f64 like a quantity).
+                if let TokenKind::Unit(unit) = self.peek_kind() {
+                    if unit == "ms" {
+                        if let Ok(ms) = tok.text.parse::<u64>() {
+                            let unit_tok = self.bump();
+                            let mut covered = tok.clone();
+                            covered.end_line = unit_tok.end_line;
+                            covered.end_col = unit_tok.end_col;
+                            return self
+                                .add_spanned(Node::Literal(Value::DurationMs(ms)), &covered);
+                        }
+                    }
+                }
                 let n: i64 = match tok.text.parse() {
                     Ok(n) => n,
                     Err(_) => {

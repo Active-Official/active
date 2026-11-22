@@ -1,0 +1,12 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 93e55d209ecc7be0b207048ca541bc6e0bc5d215cb338230ea4fe161d6b7dc2d # shrinks to value = Array []
+cc c477635315ff1478b00d9ccf4229ac690db36d0245cfd88be57110ae955bfd53 # shrinks to value = Object {"a": Array [Number(-0.0)]}
+cc dddc61787beb3fbf22529dfec87c4d1b8552aa0a0ca8599280bf8fb3bd9d88b7 # shrinks to value = Object {"a": Object {"a": Array [Object {"$active.quantity": Object {"unit": String("Hz"), "value": Number(-8.315270672737859e+213)}}]}}
+cc 751346ed990390ee2ab0db93c9a4831033b1a5c2ac6d58440d54b27d5ae8dc73 # shrinks to value = Object {"a": Array [Array [Object {"$active.quantity": Object {"unit": String("MiB"), "value": Number(0.0)}}]]}
+cc 26f4e9dfdd3ec8d4526c3da8cd118dd3ad52def46deed3abf995cc8b8c0a823d # shrinks to value = Object {"a": Object {"a": Object {"$active.quantity": Object {"unit": String("%"), "value": Number(1.9278869632969256e+70)}}}}
+cc 06d5e874ecb40d48732af8d0ea389016c2bba75f15b66512cea83c47cc55156e # shrinks to value = Object {"a": Array [Array [Object {"$active.quantity": Object {"unit": String("Hz"), "value": Number(-0.0)}}]]}

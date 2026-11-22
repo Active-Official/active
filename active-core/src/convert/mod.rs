@@ -91,7 +91,15 @@ fn json_of(v: &Value, include_payloads: bool) -> JsonValue {
         // (what serde would produce) collides with null - either way the
         // export would stop being injective. `content_hash` hashes this
         // tagged form, so an inf and a null can never share an identity.
-        Value::Float(f) if f.is_finite() => json!(f),
+        // `-0.0` renders as `0.0`: the canonical scalar spelling (G13)
+        // and the wire fixed point (P3b) agree that zero has one sign.
+        Value::Float(f) if f.is_finite() => {
+            if *f == 0.0 {
+                json!(0.0)
+            } else {
+                json!(f)
+            }
+        }
         Value::Float(f) => json!({
             "$active.float": if f.is_nan() {
                 "nan"
@@ -111,9 +119,13 @@ fn json_of(v: &Value, include_payloads: bool) -> JsonValue {
         // a fixed point: the bare `{ "%": n }` / `{ "MiB": n }` forms
         // were table-shaped, and `%` is not even an identifier, so
         // import mangled the unit and lost the type (LANG-B-019).
-        Value::Quantity(n, unit) => json!({
-            "$active.quantity": { "unit": unit.suffix(), "value": n }
-        }),
+        Value::Quantity(n, unit) => {
+            // Zero is signless in the canonical spelling (G13/P3b).
+            let value = if *n == 0.0 { 0.0 } else { *n };
+            json!({
+                "$active.quantity": { "unit": unit.suffix(), "value": value }
+            })
+        }
         Value::Array(arr) => JsonValue::Array(
             arr.iter()
                 .map(|item| json_of(item, include_payloads))

@@ -110,7 +110,7 @@ fn quantity_values_emit_typed_wrappers() {
     assert!(toml.contains("value = 5.0"), "{toml}");
     // And it comes back as a quantity, not a table or a string.
     let (source, _) = active_core::convert::toml_text_to_active(&toml).expect("import");
-    assert!(source.contains("5MiB"), "{source}");
+    assert!(source.contains("5.0MiB"), "{source}");
 }
 
 // ------------------------------------------------------------------

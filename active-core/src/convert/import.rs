@@ -593,7 +593,15 @@ fn quantity_literal(val: &JsonValue) -> Option<String> {
     // the pre-normalisation percentage (0.25 -> `25%`); every other unit
     // is linear (LANG-B-019).
     let amount = if unit == "%" { value * 100.0 } else { value };
-    Some(format!("{amount}{unit}"))
+    // A quantity's amount is a Float: an integer spelling would lex as an
+    // Int and can overflow i64 on the wire round trip (P38-F3).
+    let text = format!("{amount}");
+    let text = if text.contains('.') {
+        text
+    } else {
+        format!("{text}.0")
+    };
+    Some(format!("{text}{unit}"))
 }
 
 /// Contextual renames, applied after `sanitize_key` wherever a value

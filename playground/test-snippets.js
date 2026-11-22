@@ -13,6 +13,7 @@
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
+const vm = require("vm");
 const shim = require(
 	path.join(__dirname, "..", "active-wasm", "js", "active-shim.js"),
 );
@@ -70,6 +71,27 @@ async function main() {
 		httpRefused = /404/.test(String(e && e.message));
 	}
 	ok(httpRefused, "an HTTP error refuses the load");
+	// A falsy non-boolean `ok` is still an HTTP failure, named as such.
+	let zeroRefused = false;
+	try {
+		await shim.load({ ok: 0, status: 500 });
+	} catch (e) {
+		zeroRefused = /HTTP 500/.test(String(e && e.message));
+	}
+	ok(zeroRefused, "a falsy ok is reported as HTTP");
+	// A cross-realm ArrayBuffer fails `instanceof`; it must still be read
+	// as bytes (and here fail as an invalid module, not "no bytes").
+	const foreign = vm.runInNewContext("new Uint8Array(8).buffer");
+	let crossError = "";
+	try {
+		await shim.load(foreign);
+	} catch (e) {
+		crossError = String(e && e.message);
+	}
+	ok(
+		crossError !== "" && !/no bytes/.test(crossError),
+		"a cross-realm ArrayBuffer is accepted as bytes",
+	);
 
 	// 1. The engine hash is the shape the URL carries.
 	const source = 'server = { port = 8080, host = "localhost" }\n';
@@ -115,6 +137,10 @@ async function main() {
 		snippets.parse("#blake3:" + emptyHash + ":") === null,
 		"an empty payload does not parse",
 	);
+	// Base64 never has length % 4 == 1; both hosts must call it malformed
+	// (Node's Buffer would otherwise trim it silently).
+	ok(snippets.decodeSource("AAAAA") === null, "len 5 base64 is refused");
+	ok(snippets.decodeSource("AAAAAAAAA") === null, "len 9 base64 is refused");
 
 	// Short sources encode to unpadded base64url lengths 2/3/4/6/7; the
 	// browser's `atob` needs the padding restored.
@@ -269,6 +295,12 @@ async function main() {
 		junk.getItem("active.snippet.junk") !== null,
 		"the junk key is left alone, not counted",
 	);
+	snippets.cacheClear(junk);
+	ok(
+		junk.getItem("active.snippet.junk") !== null,
+		"cacheClear leaves a non-hash key alone",
+	);
+	ok(snippets.cacheCount(junk) === 0, "cacheClear removes the real entry");
 
 	// 8. Result cache: the hash is the key, so the same bytes hit and the
 	// bound evicts the oldest entry.
@@ -327,6 +359,29 @@ async function main() {
 		items: [{ message: "x".repeat(snippets.RESULT_BYTES_LIMIT) }],
 	});
 	ok(!itemCap.has(hugeItemsKey), "a huge items array is not cached");
+	// Freezing has no depth cap: a deep items chain must be frozen to its
+	// leaf, or a nested mutation poisons a later hit.
+	const deep = snippets.createResultCache();
+	let chain = { m: "x" };
+	for (let i = 0; i < 12; i += 1) chain = { child: chain };
+	const deepKey = hash("deep-items\n");
+	deep.put(deepKey, {
+		ok: true,
+		json: "{}",
+		diagnostics: "",
+		items: [chain],
+	});
+	let leaf = deep.get(deepKey).items[0];
+	for (let i = 0; i < 12; i += 1) leaf = leaf.child;
+	ok(Object.isFrozen(leaf), "a deep items leaf is frozen");
+	try {
+		leaf.m = "poison";
+	} catch (e) {
+		/* frozen assignment throws in strict mode only */
+	}
+	let check = deep.get(deepKey).items[0];
+	for (let i = 0; i < 12; i += 1) check = check.child;
+	ok(check.m === "x", "a deep nested mutation does not reach the cache");
 	ok(results.size() === 2, "result cache size (digest + items)");
 	for (let i = 0; i < snippets.RESULT_LIMIT + 5; i += 1) {
 		results.put(hash("result " + i + "\n"), { ok: true, json: "{}" });

@@ -96,6 +96,10 @@
 		// Canonical alphabet only; Node's Buffer.from is otherwise lax
 		// (`+`, `/`, `=`, whitespace) and would accept a non-canonical link.
 		if (!/^[A-Za-z0-9_-]+$/.test(text)) return null;
+		// Base64 never has length % 4 == 1. Node's Buffer silently trims
+		// such a string while the browser's atob throws; refuse it here so
+		// both hosts agree it is malformed.
+		if (text.length % 4 === 1) return null;
 		try {
 			if (typeof Buffer !== "undefined") {
 				var buf = Buffer.from(text, "base64url");
@@ -276,8 +280,12 @@
 		var count = storageLength(storage);
 		for (var i = 0; i < count; i++) {
 			var key = storageKey(storage, i);
-			if (typeof key === "string" && key.indexOf(CACHE_PREFIX) === 0)
-				doomed.push(key);
+			if (typeof key !== "string" || key.indexOf(CACHE_PREFIX) !== 0) continue;
+			var rest = key.slice(CACHE_PREFIX.length);
+			// Remove `active.snippet.<hash>` and `<hash>.at` only. A
+			// devtools-planted non-hash key is not ours to delete.
+			if (rest.length > 3 && rest.slice(-3) === ".at") rest = rest.slice(0, -3);
+			if (isHash(rest)) doomed.push(key);
 		}
 		doomed.forEach((key) => {
 			storageRemove(storage, key);
@@ -292,13 +300,16 @@
 	function createResultCache() {
 		var map = new Map();
 		// Freeze a detached copy so no caller aliases the cached record
-		// (top-level or nested `items`). `Object.isFrozen` before the
-		// recursion bounds a self-referential object.
-		function freezeTree(value, depth) {
-			if (!value || typeof value !== "object" || depth > 8) return value;
-			if (Object.isFrozen(value)) return value;
+		// (top-level or nested `items`). The copy comes from JSON, so a
+		// cycle cannot occur; the WeakSet keeps a hostile hand-built value
+		// finite anyway. No depth cap: a deep `items` chain must freeze to
+		// its leaves, or a nested mutation would poison a later hit.
+		function freezeTree(value, seen) {
+			if (!value || typeof value !== "object") return value;
+			if (seen.has(value) || Object.isFrozen(value)) return value;
+			seen.add(value);
 			Object.freeze(value);
-			Object.keys(value).forEach((key) => freezeTree(value[key], depth + 1));
+			Object.keys(value).forEach((key) => freezeTree(value[key], seen));
 			return value;
 		}
 		function touch(hashHex) {
@@ -321,14 +332,16 @@
 				// huge items array with a tiny `json` must not be cached.
 				// The stored value is a detached, deeply frozen copy, so
 				// no caller can poison a later hit through an alias.
+				var text;
 				var copy;
 				try {
-					copy = JSON.parse(JSON.stringify(result));
+					text = JSON.stringify(result);
+					copy = JSON.parse(text);
 				} catch (e) {
 					return;
 				}
-				if (utf8(JSON.stringify(copy)).length > RESULT_BYTES_LIMIT) return;
-				freezeTree(copy, 0);
+				if (utf8(text).length > RESULT_BYTES_LIMIT) return;
+				freezeTree(copy, new WeakSet());
 				if (map.has(hashHex)) {
 					map.delete(hashHex);
 				} else if (map.size >= RESULT_LIMIT) {

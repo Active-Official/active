@@ -768,7 +768,11 @@ compression directions use `pipeThrough` (a manual writer awaited before
 the readable is consumed can deadlock on backpressure); a 404 example
 cannot become editor content; 1- and 2-byte snippet links round-trip
 (`atob` padding); cache enumeration ignores non-hash keys; and the
-loader reports an HTTP status before the byte-source check.
+loader reports an HTTP status before the byte-source check. The freeze
+is depth-unbounded (a 12-deep items chain is frozen), both decoders
+refuse a base64 length `% 4 == 1`, `cacheClear` keeps non-hash keys, the
+decompression reader is released on every exit, and the loader accepts
+cross-realm buffers and views.
 
 ### L-P18: Pulumi, Terraform, and CDK generate targets (codegen half)
 

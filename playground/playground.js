@@ -188,20 +188,32 @@
 			const reader = stream.getReader();
 			const chunks = [];
 			let total = 0;
-			for (;;) {
-				const { done, value } = await reader.read();
-				if (done) break;
-				total += value.length;
-				if (total > SOURCE_LIMIT) {
-					try {
-						await reader.cancel();
-					} catch (e) {
-						/* already closed */
+			try {
+				for (;;) {
+					const { done, value } = await reader.read();
+					if (done) break;
+					total += value.length;
+					if (total > SOURCE_LIMIT) {
+						try {
+							await reader.cancel();
+						} catch (e) {
+							/* already closed */
+						}
+						refuse(
+							"Share link refused: the decompressed snippet exceeds 8 KiB.",
+						);
+						return;
 					}
-					refuse("Share link refused: the decompressed snippet exceeds 8 KiB.");
-					return;
+					chunks.push(value);
 				}
-				chunks.push(value);
+			} finally {
+				// Every exit (done, cap, decode error) releases the lock;
+				// a rapid hashchange must not accumulate locked streams.
+				try {
+					reader.releaseLock();
+				} catch (e) {
+					/* already released */
+				}
 			}
 			const out = new Uint8Array(total);
 			let at = 0;
@@ -227,6 +239,9 @@
 	function fromB64url(s) {
 		if (typeof s !== "string" || s.length > LINK_LIMIT) return null;
 		if (!/^[A-Za-z0-9_-]+$/.test(s)) return null;
+		// Base64 never has length % 4 == 1; atob would throw on the
+		// padding, name the malformed shape here.
+		if (s.length % 4 === 1) return null;
 		try {
 			// `atob` requires a padded multiple of four; the producer
 			// strips padding, and short payloads are lengths 2/3.

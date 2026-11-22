@@ -11,30 +11,42 @@
  */
 (() => {
 	async function load(source) {
-		// `source` is a Response, URL string, or ArrayBuffer with the .wasm bytes.
-		const bytes =
-			source instanceof ArrayBuffer
-				? source
-				: await (typeof source === "string"
-						? fetch(source).then((r) => {
-								// A 404 page is HTML, not a module; without this
-								// check the fallback source never fires and the
-								// failure reads as a WebAssembly parse error.
-								if (!r.ok)
-									throw new Error(
-										"active-wasm: HTTP " + r.status + " for " + source,
-									);
-								return r.arrayBuffer();
-							})
-						: source.ok === false
-							? Promise.reject(new Error("active-wasm: HTTP " + source.status))
-							: typeof source.arrayBuffer !== "function"
-								? Promise.reject(
-										new Error(
-											"active-wasm: source has no bytes (expected a URL, ArrayBuffer, or Response)",
-										),
-									)
-								: source.arrayBuffer());
+		// `source` is a Response, URL string, ArrayBuffer, or a view of
+		// one with the .wasm bytes.
+		let bytes;
+		const isArrayBuffer =
+			source instanceof ArrayBuffer ||
+			Object.prototype.toString.call(source) === "[object ArrayBuffer]";
+		if (isArrayBuffer) {
+			bytes = source;
+		} else if (
+			typeof ArrayBuffer !== "undefined" &&
+			ArrayBuffer.isView(source)
+		) {
+			bytes = source.buffer.slice(
+				source.byteOffset,
+				source.byteOffset + source.byteLength,
+			);
+		} else if (typeof source === "string") {
+			bytes = await fetch(source).then((r) => {
+				// A 404 page is HTML, not a module; without this check the
+				// fallback source never fires and the failure reads as a
+				// WebAssembly parse error.
+				if (!r.ok)
+					throw new Error("active-wasm: HTTP " + r.status + " for " + source);
+				return r.arrayBuffer();
+			});
+		} else if (source && "ok" in source && !source.ok) {
+			// A falsy `ok` (false or a hostile 0) is an HTTP failure, named
+			// before the byte-source check.
+			throw new Error("active-wasm: HTTP " + source.status);
+		} else if (source && typeof source.arrayBuffer === "function") {
+			bytes = await source.arrayBuffer();
+		} else {
+			throw new Error(
+				"active-wasm: source has no bytes (expected a URL, ArrayBuffer, Response, or view)",
+			);
+		}
 		const { instance } = await WebAssembly.instantiate(bytes, {});
 		const ex = instance.exports;
 		if (

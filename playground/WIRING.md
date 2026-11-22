@@ -34,7 +34,7 @@ window.ActiveAPI = {
 - `diagnostics` is one `file:line:col: [CODE] message` line per diagnostic, same order as CLI stderr.
 - Secrets: the shim must never log source or values; redaction happens inside the WASM module.
 
-## Local-dev loop (until B-001 wires the released artifact)
+## Local-dev loop (the release also ships a runnable bundle; G-023)
 
 1. Build the workspace WASM module (W-001) for `wasm32-unknown-unknown`,
    then stage it next to the page:
@@ -46,6 +46,16 @@ window.ActiveAPI = {
    verifies the release checksum.
 2. Serve this directory statically (`python -m http.server`); `fetch()` needs http, not `file://`.
 3. Load `index.html`; without the engine the page says "Engine not loaded" (honest empty state, never faked output).
+
+## Release bundle (G-023)
+
+The release wasm job stages `playground/active_wasm.wasm` from the same
+`dist-wasm/` bundle and publishes `active-playground.tar.gz`. Extract the
+archive, serve its root statically (`python -m http.server`), and open
+`/playground/index.html`: the page finds its engine, the shim, and
+`playground.js` with no local build. The archive is checksummed in
+`SHA256SUMS` like every other release file; its engine bytes are the
+same `active_wasm.wasm` the release publishes.
 
 ## Share links (G-019 decision)
 

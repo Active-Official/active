@@ -127,6 +127,23 @@ jobs:
           cp active-wasm/js/active-shim.js active-wasm/js/active-shim.d.ts dist-wasm/
           tar czf dist-wasm/active-conformance.tar.gz conformance
           ls dist-wasm
+      - name: Stage the playground engine
+        # LANG-G-023: the published playground must ship with its engine.
+        # Copy from the SAME dist-wasm bundle (one wasm build path; no
+        # second artifact), verify byte equality, then package the page
+        # with the shim and the verified engine so a release download is
+        # runnable as extracted.
+        shell: bash
+        run: |
+          cp dist-wasm/active_wasm.wasm playground/active_wasm.wasm
+          cmp dist-wasm/active_wasm.wasm playground/active_wasm.wasm
+          rm -rf playground-bundle
+          mkdir -p playground-bundle/playground playground-bundle/active-wasm/js
+          cp -R playground/. playground-bundle/playground/
+          cp active-wasm/js/active-shim.js playground-bundle/active-wasm/js/
+          tar czf dist-wasm/active-playground.tar.gz -C playground-bundle playground active-wasm
+          tar tzf dist-wasm/active-playground.tar.gz
+          ls dist-wasm
       - name: Upload wasm bundle
         uses: actions/upload-artifact@v4
         with:
@@ -260,7 +277,7 @@ jobs:
         run: |
           cd dist
           shopt -s nullglob
-          files=(active-*.tar.gz active-*.zip active-lang-*.vsix active_wasm.wasm active-shim.js active-shim.d.ts active-conformance.tar.gz active-docs.tar.gz active-sbom-*.cdx.json *.sig)
+          files=(active-*.tar.gz active-*.zip active-lang-*.vsix active_wasm.wasm active-shim.js active-shim.d.ts active-conformance.tar.gz active-playground.tar.gz active-docs.tar.gz active-sbom-*.cdx.json *.sig)
           sha256sum "${files[@]}" > SHA256SUMS
           cat SHA256SUMS
       - name: Attest build provenance

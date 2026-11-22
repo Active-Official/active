@@ -463,6 +463,9 @@ import importlib.util as _importlib_util
 _spec = _importlib_util.spec_from_file_location(
     "gen_blob_types", WORK / "gen_blob_types.py"
 )
+assert _spec is not None and _spec.loader is not None, (
+    "import spec for generated module"
+)
 _mod = _importlib_util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 assert set(_mod.ActiveBlob.__annotations__) == set(blob_doc["logo"]), (
@@ -475,5 +478,384 @@ results.append(
     "blob: evaluated document decodes in jsonschema/ts/go/rust/python (wire wrapper)"
 )
 
+
+# ---------------------------------------------------------------
+# L-P18: Pulumi / Terraform / CDK targets
+# ---------------------------------------------------------------
+import os as _os
+
+IAC_SCHEMA = """\
+schema = {
+  host = String(default = "localhost", description = "bind \\${host} and %{ if }"),
+  port = Int(min = 1, max = 65535, default = 8080),
+  ratio = Float(min = 0.0, max = 1.0, default = 0.5),
+  tls = Bool(default = false),
+  timeout = Duration(min = 1ms, max = 5m, default = 30s),
+  limit = Bytes(min = 1KiB, max = 2MiB, default = 1MiB),
+  color = Enum("red", "green", default = "red"),
+  email = String(format = "email", default = "a@b.c"),
+  code = String(pattern = "^[a-z]+$", min_len = 2, max_len = 8, default = "ab"),
+  tags = Array<String>,
+  token = Secret,
+  note = Null,
+  anything = Any(default = null),
+  empty = Table,
+  closed_empty = Table { closed = true },
+  meta = Any(default = { flag = true }),
+}
+"""
+(WORK / "iac-schema.active").write_text(IAC_SCHEMA, encoding="utf-8", newline="\n")
+
+tf_text = gen_from(WORK / "iac-schema.active", "terraform", WORK / "variables.tf")
+for probe in [
+    'variable "port" {',
+    "type     = number",
+    "floor(var.port) == var.port",
+    "var.port >= 1",
+    "var.port <= 65535",
+    'contains(["red", "green"], var.color)',
+    'can(regex("^[A-Za-z0-9._%+-]+@',
+    "default  = 30000",
+    "sensitive = true",
+    "length(var.closed_empty) == 0",
+    "a canonical millisecond magnitude must be a whole number",
+    # HCL template sequences in authored prose are doubled, not executed.
+    'description = "bind $${host} and %%{ if }"',
+]:
+    assert probe in tf_text, f"terraform artifact missing {probe!r}"
+
+# A structured table is refused: Terraform object conversion discards
+# attributes outside the type, so the binding would silently drop keys.
+(WORK / "iac-table.active").write_text(
+    'schema = { server = Table { host = String } }\nserver = { host = "h" }\n',
+    encoding="utf-8",
+    newline="\n",
+)
+refused = run(
+    [
+        "cargo",
+        "run",
+        "-q",
+        "-p",
+        "active-cli",
+        "--",
+        "generate",
+        "--from",
+        str(WORK / "iac-table.active"),
+        "--to",
+        "terraform",
+    ]
+)
+assert refused.returncode != 0, "structured table must be refused"
+assert "structured table" in (refused.stderr + refused.stdout), refused.stderr[-1000:]
+
+
+def expect_terraform_refusal(name, source, needle):
+    path = WORK / name
+    path.write_text(source, encoding="utf-8", newline="\n")
+    result = run(
+        [
+            "cargo",
+            "run",
+            "-q",
+            "-p",
+            "active-cli",
+            "--",
+            "generate",
+            "--from",
+            str(path),
+            "--to",
+            "terraform",
+        ]
+    )
+    assert result.returncode != 0, f"{name}: expected a refusal"
+    assert needle in (result.stderr + result.stdout), (
+        f"{name}: {needle!r} not in {result.stderr[-1000:]}"
+    )
+
+
+# Round-1 fixes are pinned at the supply-chain layer too: a regression in
+# a material/computed refusal must fail this gate, not only the unit tests.
+expect_terraform_refusal(
+    "iac-material.active",
+    'schema = { s = Secret, c = Enum("red", "hunter2") }\n'
+    's = secret("hunter2")\nc = "red"\n',
+    "material enum member",
+)
+expect_terraform_refusal(
+    "iac-material-pattern.active",
+    'schema = { s = Secret, p = String(pattern = "hunter2") }\n'
+    's = secret("hunter2")\np = "x"\n',
+    "material pattern",
+)
+expect_terraform_refusal(
+    "iac-dynamic-bound.active",
+    "schema = { port = Int(max = env.MAX_PORT) }\nport = 1\n",
+    "computed maximum bound",
+)
+# The full refusal surface is pinned here, not only in the unit tests: a
+# regression in any target-specific refusal must fail this gate.
+for name, source, needle in [
+    (
+        "iac-material-format.active",
+        'schema = { s = Secret, f = String(format = "email") }\n'
+        's = secret("email")\nf = "a@b.c"\n',
+        "material format",
+    ),
+    (
+        "iac-material-default.active",
+        'schema = { s = Secret, d = String(default = "hunter2") }\n'
+        's = secret("hunter2")\nd = "x"\n',
+        "material default",
+    ),
+    (
+        "iac-computed-default.active",
+        "schema = { p = Int(default = env.P) }\np = 1\n",
+        "computed default",
+    ),
+    (
+        "iac-computed-pattern.active",
+        'schema = { p = String(pattern = env.P) }\np = "x"\n',
+        "computed pattern",
+    ),
+    (
+        "iac-computed-format.active",
+        'schema = { p = String(format = env.F) }\np = "x"\n',
+        "computed format",
+    ),
+    (
+        "iac-computed-minlen.active",
+        'schema = { p = String(min_len = env.M) }\np = "x"\n',
+        "computed minimum length",
+    ),
+    (
+        "iac-computed-maxlen.active",
+        'schema = { p = String(max_len = env.M) }\np = "x"\n',
+        "computed maximum length",
+    ),
+    (
+        "iac-blob.active",
+        'schema = { b = Blob }\nb = blob("text/plain", "x")\n',
+        "Blob",
+    ),
+    (
+        "iac-oneof.active",
+        "schema = { v = OneOf(Int, String) }\nv = 1\n",
+        "OneOf",
+    ),
+    (
+        "iac-requires.active",
+        'schema = { t = Bool, c = String(requires = "t") }\nt = true\nc = "x"\n',
+        "requires",
+    ),
+    (
+        "iac-array-nested.active",
+        "schema = { xs = Array<Array<Int>> }\nxs = []\n",
+        "nested array",
+    ),
+    (
+        "iac-array-blob.active",
+        "schema = { xs = Array<Blob> }\nxs = []\n",
+        "array of Blobs",
+    ),
+    (
+        "iac-array-oneof.active",
+        "schema = { xs = Array<OneOf(Int, String)> }\nxs = []\n",
+        "array of unions",
+    ),
+    (
+        "iac-unknown-format.active",
+        'schema = { p = String(format = "date") }\np = "2026-01-01"\n',
+        "unknown format",
+    ),
+]:
+    expect_terraform_refusal(name, source, needle)
+
+# Deprecated prose is redacted, not refused.
+(WORK / "iac-deprecated.active").write_text(
+    'schema = { s = Secret, old = String(deprecated = "hunter2") }\n'
+    's = secret("hunter2")\nold = "x"\n',
+    encoding="utf-8",
+    newline="\n",
+)
+deprecated_tf = gen_from(
+    WORK / "iac-deprecated.active", "terraform", WORK / "variables-deprecated.tf"
+)
+assert "hunter2" not in deprecated_tf, deprecated_tf[-500:]
+assert "***SECRET***" in deprecated_tf, deprecated_tf[-500:]
+
+# An array of empty closed tables validates every element's emptiness.
+(WORK / "iac-array-closed.active").write_text(
+    "schema = { xs = Array<Table { closed = true }> }\nxs = []\n",
+    encoding="utf-8",
+    newline="\n",
+)
+array_tf = gen_from(
+    WORK / "iac-array-closed.active", "terraform", WORK / "variables-array.tf"
+)
+assert "alltrue([for v in var.xs : length(v) == 0])" in array_tf, array_tf
+
+pulumi_ts = gen_from(WORK / "iac-schema.active", "pulumi", WORK / "gen-pulumi.ts")
+cdk_ts = gen_from(WORK / "iac-schema.active", "cdk", WORK / "gen-cdk.ts")
+assert "readPulumiConfig" in pulumi_ts and 'getObject("active")' in pulumi_ts
+assert "readCdkContext" in cdk_ts and 'tryGetContext("active")' in cdk_ts
+# Active's exact format regex, not zod's narrower .email()/.url().
+assert ".email()" not in pulumi_ts and ".url()" not in pulumi_ts
+assert "new RegExp" in pulumi_ts
+
+iac_out = WORK / "iacout"
+p = run(
+    [
+        "node",
+        str(tsc_js),
+        "--noEmit",
+        "--strict",
+        "--target",
+        "es2020",
+        "--module",
+        "commonjs",
+        str(WORK / "gen-pulumi.ts"),
+        str(WORK / "gen-cdk.ts"),
+    ],
+    cwd=WORK,
+)
+assert p.returncode == 0, f"iac tsc failed:\n{p.stdout[-2000:]}\n{p.stderr[-2000:]}"
+p = run(
+    [
+        "node",
+        str(tsc_js),
+        "--target",
+        "es2020",
+        "--module",
+        "commonjs",
+        "--outDir",
+        str(iac_out),
+        str(WORK / "gen-pulumi.ts"),
+        str(WORK / "gen-cdk.ts"),
+    ],
+    cwd=WORK,
+)
+assert p.returncode == 0, (
+    f"iac tsc emit failed ({p.returncode}):\n{p.stdout[-2000:]}\n{p.stderr[-2000:]}"
+)
+(WORK / "iac-check.js").write_text(
+    "const { readPulumiConfig } = require('./iacout/gen-pulumi.js');\n"
+    "const { readCdkContext } = require('./iacout/gen-cdk.js');\n"
+    "const good = { tags: [], token: 'x', empty: {}, closed_empty: {}, email: 'a@b.c' };\n"
+    "readPulumiConfig({ getObject: () => good });\n"
+    "readCdkContext({ tryGetContext: () => good });\n"
+    "for (const bad of [{ ...good, port: 0 }, { ...good, color: 'blue' },\n"
+    "  { ...good, email: 'nope' }, { ...good, code: 'AB' },\n"
+    "  { ...good, closed_empty: { x: 1 } }, { ...good, timeout: 1.5 },\n"
+    "  { ...good, note: 1 }]) {\n"
+    "  let threw = false;\n"
+    "  try { readPulumiConfig({ getObject: () => bad }); } catch { threw = true; }\n"
+    "  if (!threw) { console.error('pulumi accepted', bad); process.exit(1); }\n"
+    "  threw = false;\n"
+    "  try { readCdkContext({ tryGetContext: () => bad }); } catch { threw = true; }\n"
+    "  if (!threw) { console.error('cdk accepted', bad); process.exit(1); }\n"
+    "}\n"
+    "console.log('iac bindings ok');\n",
+    encoding="utf-8",
+    newline="\n",
+)
+p = run(["node", str(WORK / "iac-check.js")], cwd=WORK)
+assert p.returncode == 0, (
+    f"iac binding runtime failed:\n{p.stdout[-2000:]}\n{p.stderr[-2000:]}"
+)
+assert "iac bindings ok" in p.stdout, p.stdout
+
+tf = _os.environ.get("TERRAFORM") or shutil.which("terraform")
+if tf:
+    ver = run([tf, "version", "-json"], cwd=ROOT)
+    assert ver.returncode == 0, f"terraform version failed:\n{ver.stderr[-1000:]}"
+    version = json.loads(ver.stdout)["terraform_version"]
+    assert version == "1.9.8", (
+        f"terraform {version}: the IaC gate is pinned to 1.9.8 (the object-"
+        "conversion semantics the structured-table refusal is based on)"
+    )
+    tfd = WORK / "tfmod"
+    tfd.mkdir()
+    (tfd / "variables.tf").write_text(
+        tf_text.replace("\r\n", "\n"), encoding="utf-8", newline="\n"
+    )
+    p = run([tf, "fmt", "-check", "-diff"], cwd=tfd)
+    assert p.returncode == 0, f"terraform fmt:\n{p.stdout[-2000:]}\n{p.stderr[-2000:]}"
+    p = run([tf, "init", "-backend=false", "-input=false"], cwd=tfd, timeout=300)
+    assert p.returncode == 0, f"terraform init:\n{p.stdout[-2000:]}\n{p.stderr[-2000:]}"
+    p = run([tf, "validate", "-no-color"], cwd=tfd)
+    assert p.returncode == 0, (
+        f"terraform validate:\n{p.stdout[-2000:]}\n{p.stderr[-2000:]}"
+    )
+    # The array-of-empty-closed-tables artifact is valid HCL too.
+    arrd = WORK / "tfarray"
+    arrd.mkdir()
+    (arrd / "variables.tf").write_text(
+        array_tf.replace("\r\n", "\n"), encoding="utf-8", newline="\n"
+    )
+    p = run([tf, "fmt", "-check", "-diff"], cwd=arrd)
+    assert p.returncode == 0, f"terraform array fmt:\n{p.stdout[-2000:]}"
+    p = run([tf, "init", "-backend=false", "-input=false"], cwd=arrd, timeout=300)
+    assert p.returncode == 0, f"terraform array init:\n{p.stderr[-2000:]}"
+    p = run([tf, "validate", "-no-color"], cwd=arrd)
+    assert p.returncode == 0, f"terraform array validate:\n{p.stderr[-2000:]}"
+    common = [
+        "-var",
+        "port=8080",
+        "-var",
+        "color=red",
+        "-var",
+        "email=a@b.c",
+        "-var",
+        "code=ab",
+        "-var",
+        "timeout=1",
+        "-var",
+        "limit=1024",
+        "-var",
+        "token=x",
+        "-var",
+        "tags=[]",
+        "-var",
+        "empty={}",
+        "-var",
+        "closed_empty={}",
+    ]
+    p = run([tf, "plan", "-no-color", "-input=false", *common], cwd=tfd)
+    assert p.returncode == 0, (
+        f"terraform good plan:\n{p.stdout[-2000:]}\n{p.stderr[-2000:]}"
+    )
+    for extra, needle in [
+        ("port=0", "below the schema minimum"),
+        ("port=70000", "above the schema maximum"),
+        ("color=blue", "not a member of the schema enum"),
+        ("email=nope", "does not match the schema format"),
+        ("code=AB", "does not match the schema pattern"),
+        ("timeout=1.5", "must be a whole number"),
+        ("closed_empty={x=1}", "closed table has no keys"),
+    ]:
+        bad = list(common) + ["-var", extra]
+        p = run([tf, "plan", "-no-color", "-input=false", *bad], cwd=tfd)
+        assert p.returncode != 0, f"terraform accepted {extra}"
+        assert needle in (p.stdout + p.stderr), (
+            f"{extra}: {p.stdout[-1000:]}{p.stderr[-1000:]}"
+        )
+    results.append("terraform: fmt/validate and plan-time validations pass")
+else:
+    # Fail closed by default: the IaC gate's whole point is exercising the
+    # generated HCL with the real Terraform. The explicit opt-out exists
+    # for documented structural-only runs and prints a visible SKIP.
+    assert _os.environ.get("ACTIVE_ALLOW_NO_TERRAFORM") == "1", (
+        "terraform not found: the IaC codegen gate requires it (L-P18). "
+        "Set ACTIVE_ALLOW_NO_TERRAFORM=1 only for a documented "
+        "structural-only run."
+    )
+    results.append(
+        "terraform: SKIPPED by ACTIVE_ALLOW_NO_TERRAFORM (fmt/validate/plan not run)"
+    )
+
+results.append(
+    "iac: pulumi/cdk bindings compile and validate; terraform variables generated"
+)
 print("\n".join("CODEGEN: " + r for r in results))
 print("CODEGEN: ALL PASS")

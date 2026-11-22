@@ -35,10 +35,12 @@ pub use export::{
     value_to_yaml_string_materialised,
 };
 pub use gen::{
-    schema_to_go, schema_to_go_with_profile, schema_to_json_schema,
-    schema_to_json_schema_with_profile, schema_to_openapi, schema_to_openapi_with_profile,
+    schema_to_cdk, schema_to_cdk_with_profile, schema_to_go, schema_to_go_with_profile,
+    schema_to_json_schema, schema_to_json_schema_with_profile, schema_to_openapi,
+    schema_to_openapi_with_profile, schema_to_pulumi, schema_to_pulumi_with_profile,
     schema_to_python, schema_to_python_with_profile, schema_to_rust, schema_to_rust_with_profile,
-    schema_to_typescript, schema_to_typescript_with_profile, CODEGEN_VERSION,
+    schema_to_terraform, schema_to_terraform_with_profile, schema_to_typescript,
+    schema_to_typescript_with_profile, CODEGEN_VERSION,
 };
 pub use import::{
     json_text_to_active, json_value_to_active, jsonschema_to_active, toml_text_to_active,
@@ -333,6 +335,24 @@ pub(crate) fn static_value(
         match module.get(current)? {
             crate::ir::Node::Literal(value) => return Some(value.clone()),
             crate::ir::Node::Ref(next) => current = *next,
+            // A table/array default is a value expression, not a Literal
+            // node; every element must be static for the whole default to
+            // be static. Without this arm a `{ flag = true }` default was
+            // treated as dynamic and the field as required.
+            crate::ir::Node::Table { fields } => {
+                let mut map = indexmap::IndexMap::new();
+                for (key, child) in fields {
+                    map.insert(key.clone(), static_value(module, *child)?);
+                }
+                return Some(crate::ir::Value::Table(map));
+            }
+            crate::ir::Node::Array { elements } => {
+                let mut items = Vec::with_capacity(elements.len());
+                for element in elements {
+                    items.push(static_value(module, *element)?);
+                }
+                return Some(crate::ir::Value::Array(items));
+            }
             crate::ir::Node::Quantity { value, unit } => {
                 let raw = match module.get(*value)? {
                     crate::ir::Node::Literal(crate::ir::Value::Int(n)) => *n as f64,

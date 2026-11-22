@@ -739,6 +739,64 @@ reference for any behavior. `release.yml` now runs a provenance gate
 the tag, or whose workspace version differs from the tag, so this cannot
 recur.
 
+### L-P18: Pulumi, Terraform, and CDK generate targets (codegen half)
+
+`active generate` speaks to the three IaC consumer tools while Active
+stays the source of truth:
+
+- `--to terraform|tf` emits an HCL `variables.tf`: one variable per root
+  field with its native type, description, static default, `sensitive`
+  for secrets, and validation blocks for integer-ness, bounds, string
+  lengths, patterns, formats, enums, null-only fields, closed empty
+  tables, and scalar-array element constraints. Duration and Bytes are
+  canonical integer milliseconds/bytes, with an integrality check. The
+  output is `terraform fmt`-canonical and `terraform validate`-clean; the
+  gate also proves plan-time acceptance of valid values and rejection of
+  out-of-range, wrong-enum, bad-format, fractional-duration, and
+  extra-key values.
+- Terraform refuses what it cannot state faithfully: a **structured
+  table** (a `terraform plan` probe on 1.9.8 shows object conversion
+  silently discards attributes outside the type, so the binding would
+  drop keys), a `Blob`, a `OneOf`, a `requires`, an array of structured
+  tables, a nested array, an array of Blobs or unions, a computed
+  bound/length/pattern/format/default, and anything material (enum
+  member, pattern, format, or default). HCL template sequences in
+  authored prose or defaults (`${`, `%{`) are doubled (`$${`, `%%{`) so
+  they render literally instead of interpolating; multi-line
+  descriptions keep their line breaks. An array of empty closed tables
+  validates every element. Refusals are hard errors naming the field —
+  never silent drops. The codegen gate pins the whole refusal surface
+  and verifies Terraform 1.9.8; it fails closed when Terraform is absent
+  (an explicit `ACTIVE_ALLOW_NO_TERRAFORM=1` opt-out prints a visible
+  SKIP for a documented structural run).
+- `--to pulumi` and `--to cdk` emit the proven TypeScript interfaces +
+  zod schema plus a native reader (`readPulumiConfig` on
+  `pulumi.Config.getObject`, `readCdkContext` on
+  `construct.node.tryGetContext`) that validates the `"active"` object
+  before the program sees it. They inherit the TypeScript refusals.
+- The zod target now uses Active's own anchored regex for every named
+  format instead of zod's `.email()`/`.url()`/`.uuid()`: those are
+  narrower (zod's email TLD rule rejects `a@b.c`, which Active accepts),
+  so a binding built on them rejected valid documents. One regex source
+  now drives JSON Schema, Terraform, and Zod.
+- Two generator gaps surfaced while proving the targets: a table/array
+  default (`Any(default = { flag = true })`) is a value expression, not a
+  literal node, so it was treated as dynamic and its field as required;
+  `static_value` now builds the static aggregate, the JSON Schema and Zod
+  targets emit it, and the field is optional. `Any` fields also returned
+  early with `true`, silently dropping their default/description/
+  deprecated annotations; they now emit an empty schema object plus the
+  shared annotations. Zod defaults are type-directed (a Duration default
+  uses its canonical `ms` number, not the wire wrapper).
+- No diagnostic code is minted: codegen refusals are hard `Err`s naming
+  the field/feature, matching the existing Go/Rust refusal surface.
+- The codegen gate grows: generated Pulumi/CDK modules are compiled with
+  `tsc --strict` and run against the same valid/invalid values as the
+  zod target; Terraform is `fmt`/`validate`/plan-tested; CI installs
+  Terraform 1.9.8 for the gate. Spec `spec/converters.md` §7 records the
+  mappings, refusals, and the regenerate-never-commit workflow.
+
+
 ### L-P44: units as types (dimensional analysis)
 
 Dimensional safety is a named diagnostic on every arithmetic operation.

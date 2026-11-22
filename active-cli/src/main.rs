@@ -540,8 +540,9 @@ enum Commands {
         #[arg(short, long)]
         from: PathBuf,
         /// Output target: `jsonschema` (alias `json-schema`), `openapi`,
-        /// `typescript` (alias `ts`), `go`, `rust` (alias `serde`), or
-        /// `python` (alias `py`)
+        /// `typescript` (alias `ts`), `go`, `rust` (alias `serde`),
+        /// `python` (alias `py`), `terraform` (alias `tf`), `pulumi`, or
+        /// `cdk`
         #[arg(short, long)]
         to: String,
         /// Root type name
@@ -5976,9 +5977,19 @@ fn main() -> anyhow::Result<()> {
                 "python" | "py" => {
                     active_core::convert::schema_to_python_with_profile(&module, &name, &profile)
                 }
+                "terraform" | "tf" => active_core::convert::schema_to_terraform_with_profile(
+                    &module, &name, &profile,
+                ),
+                "pulumi" => active_core::convert::schema_to_pulumi_with_profile(
+                    &module, &name, &profile,
+                ),
+                "cdk" => active_core::convert::schema_to_cdk_with_profile(
+                    &module, &name, &profile,
+                ),
                 other => anyhow::bail!(
                     "unsupported target: {other} (want jsonschema|json-schema, \
-                     openapi, typescript|ts, go, rust|serde, python|py)"
+                     openapi, typescript|ts, go, rust|serde, python|py, \
+                     terraform|tf, pulumi, cdk)"
                 ),
             }
             .map_err(|e| anyhow::anyhow!("{e}"))?;

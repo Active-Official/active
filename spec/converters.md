@@ -262,7 +262,11 @@ Type mapping (SS = ACTIVE schema type):
 - **Formats.** A named format (`email`, `uri`, `uuid`, `semver`) emits
   `format` plus Active's own regex as `pattern` (ANDed with an authored
   pattern through `allOf`), so the contract enforces the format even
-  where a consumer treats `format` as annotation-only.
+  where a consumer treats `format` as annotation-only. The zod target
+  uses the same regex for every named format: zod's `.email()`/`.url()`/
+  `.uuid()` are narrower than Active's definitions (its email TLD rule
+  rejects `a@b.c`, which Active accepts), so a binding built on them
+  would reject valid documents.
 - **Blob bounds.** `max_size`/`media_type` are validating keywords on
   the wire wrapper (`size.maximum`; `media_type` is an `enum` of the
   authored type and the shared redaction marker, because a tainted
@@ -296,6 +300,39 @@ Type mapping (SS = ACTIVE schema type):
   bytes) as well as `Int`/`Float`/`String`; zod carries the blob
   `max_size` and media spellings. Neither reaches inside the Go blob
   wrapper, which the generated comment states.
+- **IaC consumer targets (L-P18).** `active generate --to terraform|tf`
+  emits an HCL `variables.tf` (one variable per root field).
+  `--to pulumi` and `--to cdk` emit the TypeScript interfaces + zod
+  schema plus a native reader: `readPulumiConfig(config)` validates the
+  `"active"` object from `pulumi.Config.getObject`, and
+  `readCdkContext(context)` validates it from
+  `construct.node.tryGetContext`. These are consumer bindings: Active
+  stays the source of truth, and nothing authors config in the tool's
+  language (the rejected direction).
+
+  Terraform maps strings, secrets (`sensitive = true`), enums, Int/
+  Float/Duration/Bytes bounds, string lengths, patterns, formats,
+  static defaults, scalar arrays, bare/open `Table` (`map(any)`), and an
+  empty closed table (`map(any)` + `length == 0`). It **refuses** a
+  structured table (Terraform's object conversion silently discards
+  attributes outside the type — verified with Terraform 1.9.8), a
+  `Blob`, a `OneOf`, a `requires`, an array of structured tables, a
+  nested array, an array of Blobs or unions, a computed bound, length,
+  pattern, format, or default, and anything material (an enum member,
+  pattern, format, or default is never emitted). Root keys must be HCL
+  identifiers (letters, digits, underscore; no hyphen, which HCL reads
+  as subtraction). HCL template sequences in authored prose or defaults
+  (`${`, `%{`) are doubled (`$${`, `%%{`) so they render literally
+  instead of interpolating; multi-line descriptions keep their line
+  breaks as HCL string escapes. The generated HCL is `terraform
+  fmt`-canonical and `terraform validate`-clean; the codegen gate also
+  runs plan-time accept/reject probes and verifies the pinned Terraform
+  1.9.8. Pulumi/CDK inherit the TypeScript refusals.
+
+  Generated artifacts are never committed and never the source of truth:
+  regenerate after a schema change. The codegen gate proves determinism
+  (same schema = same bytes) and validates every target; a team that
+  vendors an artifact compares it in its own CI.
 - **The differential test (L-P25).** `active-core/tests/
   generated_contracts.rs` walks the repository's schema-bearing
   `.active` files, generates boundary/omission/extra/`requires`

@@ -437,12 +437,15 @@ fn zod_schemas_mirror_constraints() {
     let module = parse(EXT_SCHEMA_DOC, "generate").expect("schema must parse");
     let ts = schema_to_typescript(&module, "Config").expect("ts");
     for probe in [
-        "contact: z.string().email()",
+        // Active's exact anchored email regex, not zod's narrower
+        // `.email()` (which rejects `a@b.c`, a valid Active address).
+        "contact: z.string().regex(new RegExp(\"^[A-Za-z0-9._%+-]+@",
         "color: z.enum([\"red\", \"green\"])",
-        "cert: z.string()",
+        "cert: z.string().optional()",
     ] {
         assert!(ts.contains(probe), "missing {probe}:\n{ts}");
     }
+    assert!(!ts.contains(".email()"), "zod's narrower email used:\n{ts}");
 }
 
 #[test]
@@ -1043,4 +1046,26 @@ fn an_any_trigger_uses_the_disabled_union() {
         disabled[1]["properties"]["$active.quantity"]["properties"]["value"]["const"], 0,
         "{schema}"
     );
+}
+
+#[test]
+fn table_and_array_defaults_are_static() {
+    // A `{ ... }` / `[ ... ]` default is a value expression, not a
+    // Literal node. Treating it as dynamic made the field required and
+    // dropped the default; both are static when every element is.
+    let module = parse(
+        "schema = { meta = Any(default = { flag = true }), xs = Any(default = [1, 2]) }\nmeta = { flag = true }\nxs = [1, 2]\n",
+        "static-aggregate-defaults",
+    )
+    .expect("parse");
+    let schema = schema_to_json_schema(&module).expect("generate");
+    assert_eq!(
+        schema["properties"]["meta"]["default"],
+        serde_json::json!({"flag": true})
+    );
+    assert_eq!(
+        schema["properties"]["xs"]["default"],
+        serde_json::json!([1, 2])
+    );
+    assert!(schema.get("required").is_none(), "{schema}");
 }

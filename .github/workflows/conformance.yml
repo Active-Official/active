@@ -262,6 +262,15 @@ jobs:
         run: python conformance/harness/run.py --out harness.json
       - name: Install codegen validator deps
         run: pip install jsonschema==4.26.0
+      - name: Install Terraform (IaC codegen targets)
+        # The codegen gate runs `terraform fmt -check`, `terraform validate`,
+        # and plan-time validation probes against the generated HCL. Pin the
+        # version the generator was designed against (L-P18); the wrapper is
+        # disabled so exit codes are Terraform's own.
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
       - name: Run codegen equivalence check
         # Per-target validation-equivalence (jsonschema accept/reject,
         # tsc --strict + zod runtime accept/reject, gofmt + go vet +

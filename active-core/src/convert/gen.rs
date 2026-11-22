@@ -324,6 +324,31 @@ fn redact_default_value(profile: &crate::secret::SecretProfile, value: JsonValue
     }
 }
 
+/// The JS expression for a static default on this field's zod type. A
+/// duration's wire default is the `$active.duration` wrapper; the zod
+/// type is a number, so the canonical `ms` magnitude is the default.
+/// `None` means the target cannot apply this default (it stays optional).
+fn zod_default_expr(field: &SchemaField, value: &JsonValue) -> Option<String> {
+    match &field.typ {
+        ActiveType::Duration => value
+            .get("$active.duration")
+            .and_then(|inner| inner.get("ms"))
+            .map(|ms| ms.to_string()),
+        ActiveType::Bytes | ActiveType::Int | ActiveType::Float => {
+            value.as_f64().map(|_| value.to_string())
+        }
+        ActiveType::String | ActiveType::Enum(_) => value
+            .as_str()
+            .map(|s| JsonValue::String(s.to_string()).to_string()),
+        ActiveType::Bool => value.as_bool().map(|b| b.to_string()),
+        ActiveType::Null => Some("null".to_string()),
+        ActiveType::Any => Some(value.to_string()),
+        ActiveType::Secret | ActiveType::Blob | ActiveType::OneOf | ActiveType::Table { .. } => {
+            None
+        }
+    }
+}
+
 fn redact_prose(profile: &crate::secret::SecretProfile, text: String) -> String {
     profile.redact_authored_text(&text).unwrap_or(text)
 }
@@ -1131,7 +1156,10 @@ fn json_schema_field(
             // an Int|Float disjunction. `anyOf` is the faithful keyword.
             obj.insert("anyOf".to_string(), JsonValue::Array(branches));
         }
-        ActiveType::Any => return JsonValue::Bool(true),
+        // Any imposes no type keyword, so the object stays empty and the
+        // shared tail still emits its default/description/deprecated
+        // annotations (returning `true` here dropped all three).
+        ActiveType::Any => {}
     }
     if let Some(default) = literal_default(module, field) {
         // A material default is not a usable contract value; omit it
@@ -1209,6 +1237,57 @@ pub fn schema_to_typescript_with_profile(
     root_name: &str,
     profile: &crate::secret::SecretProfile,
 ) -> Result<String, String> {
+    typescript_with_profile(module, root_name, profile, TsBinding::None)
+}
+
+/// Pulumi binding (L-P18): the TypeScript interfaces + zod schema plus a
+/// native adapter that reads the Active-exported document from a stack's
+/// configuration (`pulumi.Config.getObject`) and validates it.
+pub fn schema_to_pulumi(module: &Module, root_name: &str) -> Result<String, String> {
+    let profile = crate::secret::SecretProfile::analyze(module);
+    schema_to_pulumi_with_profile(module, root_name, &profile)
+}
+
+pub fn schema_to_pulumi_with_profile(
+    module: &Module,
+    root_name: &str,
+    profile: &crate::secret::SecretProfile,
+) -> Result<String, String> {
+    typescript_with_profile(module, root_name, profile, TsBinding::Pulumi)
+}
+
+/// CDK binding (L-P18): the TypeScript interfaces + zod schema plus an
+/// adapter that reads the Active-exported document from a construct's
+/// context (`node.tryGetContext`) and validates it.
+pub fn schema_to_cdk(module: &Module, root_name: &str) -> Result<String, String> {
+    let profile = crate::secret::SecretProfile::analyze(module);
+    schema_to_cdk_with_profile(module, root_name, &profile)
+}
+
+pub fn schema_to_cdk_with_profile(
+    module: &Module,
+    root_name: &str,
+    profile: &crate::secret::SecretProfile,
+) -> Result<String, String> {
+    typescript_with_profile(module, root_name, profile, TsBinding::Cdk)
+}
+
+/// Which tool-specific adapter the TypeScript output carries after the
+/// interfaces and the zod schema. The adapter is a consumer binding, not
+/// an authored-config surface (the rejected L-P18 direction).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TsBinding {
+    None,
+    Pulumi,
+    Cdk,
+}
+
+fn typescript_with_profile(
+    module: &Module,
+    root_name: &str,
+    profile: &crate::secret::SecretProfile,
+    binding: TsBinding,
+) -> Result<String, String> {
     refuse_unsatisfiable_binding(module)?;
     let root = schema_root(module)?;
     if !matches!(module.get(root), Some(Node::SchemaTable { .. })) {
@@ -1230,7 +1309,36 @@ pub fn schema_to_typescript_with_profile(
     gen.out
         .push_str("\n// Runtime validation schemas (zod) mirroring the interfaces above.\n");
     gen.emit_zod_table(&root_name, root);
+    append_binding_adapter(&mut gen.out, &root_name, binding);
     Ok(gen.out)
+}
+
+fn append_binding_adapter(out: &mut String, root: &str, binding: TsBinding) {
+    match binding {
+        TsBinding::None => {}
+        TsBinding::Pulumi => out.push_str(&format!(
+            "\n// Pulumi binding: Active is the source of truth. The exported document\n\
+             // lives under the \"active\" object key; the zod schema above validates it\n\
+             // before the program sees it. This reads config; it does not author it.\n\
+             export interface PulumiConfigLike {{\n  getObject(key: string): unknown;\n}}\n\n\
+             export function readPulumiConfig(config: PulumiConfigLike): {root} {{\n  \
+             // zod's inferred output can mark required keys optional (its typing\n  \
+             // differs across major versions); parse() enforces them at runtime,\n  \
+             // so the assertion states the actual post-parse shape.\n  \
+             return {root}Schema.parse(config.getObject(\"active\")) as {root};\n}}\n"
+        )),
+        TsBinding::Cdk => out.push_str(&format!(
+            "\n// CDK binding: Active is the source of truth. The exported document lives\n\
+             // under the \"active\" context key; the zod schema above validates it before\n\
+             // the construct sees it. This reads context; it does not author it.\n\
+             export interface CdkContextLike {{\n  tryGetContext(key: string): unknown;\n}}\n\n\
+             export function readCdkContext(context: CdkContextLike): {root} {{\n  \
+             // zod's inferred output can mark required keys optional (its typing\n  \
+             // differs across major versions); parse() enforces them at runtime,\n  \
+             // so the assertion states the actual post-parse shape.\n  \
+             return {root}Schema.parse(context.tryGetContext(\"active\")) as {root};\n}}\n"
+        )),
+    }
 }
 
 struct TsGen<'a> {
@@ -1560,18 +1668,18 @@ impl TsGen<'_> {
                         expr.push_str(&format!(".regex(new RegExp({quoted}))"));
                     }
                 }
-                match literal_string(self.module, field.format).as_deref() {
-                    // zod's email/url/uuid definitions are its own (close
-                    // to but not identical with Active's anchored
-                    // patterns); strict format equality lives in Active
-                    // and JSON Schema, runtime convenience here.
-                    Some("email") => expr.push_str(".email()"),
-                    Some("uri") => expr.push_str(".url()"),
-                    Some("uuid") => expr.push_str(".uuid()"),
-                    Some("semver") => expr.push_str(
-                        ".regex(/^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$/)",
-                    ),
-                    _ => {}
+                // Use Active's own anchored regex for every named format.
+                // zod's `.email()`/`.url()`/`.uuid()` are close to, but
+                // narrower than, Active's definitions (its email TLD rule
+                // rejects `a@b.c`, which Active accepts), so a binding
+                // built on them rejects valid documents. One regex source
+                // (the same table the JSON Schema pattern uses) keeps the
+                // contract exact.
+                if let Some(name) = literal_string(self.module, field.format) {
+                    if let Some(pattern) = format_pattern(&name) {
+                        let quoted = JsonValue::String(pattern.to_string()).to_string();
+                        expr.push_str(&format!(".regex(new RegExp({quoted}))"));
+                    }
                 }
                 expr
             }
@@ -1615,11 +1723,9 @@ impl TsGen<'_> {
                     out.push_str(".optional()");
                 } else {
                     let default = redact_default_value(self.profile, default);
-                    match default {
-                        JsonValue::String(_) | JsonValue::Number(_) | JsonValue::Bool(_) => {
-                            out.push_str(&format!(".default({default})"));
-                        }
-                        _ => out.push_str(".optional()"),
+                    match zod_default_expr(field, &default) {
+                        Some(expr) => out.push_str(&format!(".default({expr})")),
+                        None => out.push_str(".optional()"),
                     }
                 }
             } else {
@@ -2616,6 +2722,594 @@ impl PythonGen<'_> {
                 format!("Union[{}]", branches.join(", "))
             }
             ActiveType::Any => "Any".to_string(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Terraform (HCL) bindings (L-P18)
+//
+// One variable per root field. The HCL type system cannot preserve extra
+// object attributes (verified against Terraform 1.9.8: object conversion
+// discards them), so a structured table is refused rather than silently
+// truncated. Scalars, scalar arrays, bare/empty tables, bounds,
+// descriptions, enums, formats, defaults, and sensitivity are represented
+// exactly; everything else is a hard error naming the field.
+// ---------------------------------------------------------------------------
+
+/// Terraform `variables.tf` from the schema.
+pub fn schema_to_terraform(module: &Module, root_name: &str) -> Result<String, String> {
+    let profile = crate::secret::SecretProfile::analyze(module);
+    schema_to_terraform_with_profile(module, root_name, &profile)
+}
+
+pub fn schema_to_terraform_with_profile(
+    module: &Module,
+    root_name: &str,
+    profile: &crate::secret::SecretProfile,
+) -> Result<String, String> {
+    refuse_unsatisfiable_binding(module)?;
+    let root = schema_root(module)?;
+    let Some(Node::SchemaTable { fields, closed, .. }) = module.get(root) else {
+        return Err("schema block must be a table for code generation".to_string());
+    };
+    let mut out = version_header("#");
+    out.push_str(&check_notice_line("#", module));
+    out.push_str(&format!(
+        "# Terraform variables for the Active schema `{}`. Regenerate from the\n# schema; the schema is the source of truth.\n# Duration values are canonical milliseconds; byte values are canonical bytes.\n",
+        comment_line(&sanitize_ident(root_name, "Config"))
+    ));
+    if *closed {
+        out.push_str("# The root table is closed in Active, but Terraform does not reject\n# undeclared variables in a tfvars file; extra root keys are not enforceable here.\n");
+    }
+    out.push('\n');
+    for (name, id) in fields {
+        tf_variable(&mut out, module, profile, name, *id, name)?;
+    }
+    Ok(out)
+}
+
+fn hcl_ident(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) if first.is_ascii_alphabetic() || first == '_' => {}
+        _ => return false,
+    }
+    // A hyphen is subtraction in HCL (`var.my-var` reads as an
+    // expression), so only letters, digits, and underscore.
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// HCL quoted-string escaping. HCL supports `\\ \" \n \r \t` and `\uNNNN`
+/// and treats `${`/`%{` as template interpolation/directives, so those
+/// sequences are doubled (`$${`/`%%{`), which HCL renders as the literal
+/// text. Other control characters become `\u00NN`, never a raw byte.
+fn hcl_string(text: &str) -> String {
+    let mut out = String::from("\"");
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            // Double the sigil only when it starts a template sequence;
+            // `$${` and `%%{` are HCL's literal escapes.
+            '$' if chars.peek() == Some(&'{') => out.push_str("$$"),
+            '%' if chars.peek() == Some(&'{') => out.push_str("%%"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Canonical attribute alignment inside an HCL block (terraform fmt).
+fn tf_attrs(out: &mut String, indent: &str, attrs: &[(&str, String)]) {
+    let width = attrs.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
+    for (name, value) in attrs {
+        out.push_str(indent);
+        out.push_str(name);
+        out.push_str(&" ".repeat(width - name.len()));
+        out.push_str(" = ");
+        out.push_str(value);
+        out.push('\n');
+    }
+}
+
+fn tf_variable(
+    out: &mut String,
+    module: &Module,
+    profile: &crate::secret::SecretProfile,
+    name: &str,
+    id: NodeId,
+    path: &str,
+) -> Result<(), String> {
+    if !hcl_ident(name) {
+        return Err(format!(
+            "field '{path}' is not a valid Terraform variable name (letters, digits, and '_', not starting with a digit)"
+        ));
+    }
+    if tf_requires_any(module, id) {
+        return Err(format!(
+            "field '{path}' uses `requires`; Terraform variables cannot express conditional presence (validation sees one variable at a time)"
+        ));
+    }
+    let typ = tf_type(module, id, path)?;
+    let mut attrs: Vec<(&str, String)> = vec![("type", typ)];
+    let field = match module.get(id) {
+        Some(Node::SchemaField { field }) => Some(field),
+        _ => None,
+    };
+    if let Some(field) = field {
+        if let Some(doc) = field_description(module, id)
+            .map(|doc| profile.redact_authored_text(&doc).unwrap_or(doc))
+        {
+            attrs.push(("description", hcl_string(&doc)));
+        }
+        if let Some(reason) = &field.deprecated {
+            let reason = profile
+                .redact_authored_text(reason)
+                .unwrap_or_else(|| reason.clone());
+            out.push_str(&format!("# Deprecated: {}\n", comment_line(&reason)));
+        }
+        if let Some(default) = tf_default(module, profile, id, path)? {
+            attrs.push(("default", default));
+        } else if matches!(field.typ, ActiveType::Null) {
+            // A Null-typed field is optional in Active (absent validates
+            // clean); a Terraform variable without a default is required.
+            attrs.push(("default", "null".to_string()));
+        }
+    }
+    let nullable = matches!(
+        module.get(id),
+        Some(Node::SchemaField { field })
+            if matches!(field.typ, ActiveType::Null | ActiveType::Any)
+    );
+    attrs.push(("nullable", nullable.to_string()));
+    if tf_contains_secret(module, id) {
+        attrs.push(("sensitive", "true".to_string()));
+    }
+    out.push_str(&format!("variable \"{name}\" {{\n"));
+    tf_attrs(out, "  ", &attrs);
+    for (condition, message) in tf_conditions(module, profile, id, &format!("var.{name}"), path)? {
+        out.push_str("\n  validation {\n");
+        tf_attrs(
+            out,
+            "    ",
+            &[
+                ("condition", condition),
+                ("error_message", hcl_string(&message)),
+            ],
+        );
+        out.push_str("  }\n");
+    }
+    out.push_str("}\n\n");
+    Ok(())
+}
+
+fn tf_type(module: &Module, id: NodeId, path: &str) -> Result<String, String> {
+    match module.get(id) {
+        Some(Node::SchemaTable { fields, .. }) => {
+            if fields.is_empty() {
+                // An empty table is any table; a closed empty table is an
+                // empty map (validated separately).
+                Ok("map(any)".to_string())
+            } else {
+                Err(format!(
+                    "field '{path}' is a structured table; Terraform object conversion discards attributes outside the type, so the binding would silently drop keys (close and flatten, or use JSON Schema)"
+                ))
+            }
+        }
+        Some(Node::SchemaArray { element }) => {
+            let element_type = tf_element_type(module, *element, path)?;
+            Ok(format!("list({element_type})"))
+        }
+        Some(Node::SchemaField { field }) => match &field.typ {
+            ActiveType::Null | ActiveType::Any => Ok("any".to_string()),
+            ActiveType::Bool => Ok("bool".to_string()),
+            ActiveType::Int | ActiveType::Float | ActiveType::Duration | ActiveType::Bytes => {
+                Ok("number".to_string())
+            }
+            ActiveType::String | ActiveType::Secret | ActiveType::Enum(_) => {
+                Ok("string".to_string())
+            }
+            ActiveType::Blob => Err(format!(
+                "field '{path}' is a Blob; Terraform has no representation for the wire identity wrapper"
+            )),
+            ActiveType::Table { .. } => Ok("map(any)".to_string()),
+            ActiveType::OneOf => Err(format!(
+                "field '{path}' uses OneOf; Terraform variables cannot express a union"
+            )),
+        },
+        _ => Err(format!("field '{path}' is not a schema node")),
+    }
+}
+
+fn tf_element_type(module: &Module, id: NodeId, path: &str) -> Result<String, String> {
+    match module.get(id) {
+        Some(Node::SchemaTable { fields, .. }) if fields.is_empty() => Ok("map(any)".to_string()),
+        Some(Node::SchemaTable { .. }) => Err(format!(
+            "field '{path}' is an array of structured tables; Terraform object conversion drops extra attributes and cannot validate element fields"
+        )),
+        Some(Node::SchemaArray { .. }) => Err(format!(
+            "field '{path}' is a nested array; Terraform element constraints cannot be expressed faithfully here"
+        )),
+        Some(Node::SchemaField { field }) => match &field.typ {
+            ActiveType::Blob => Err(format!(
+                "field '{path}' is an array of Blobs; Terraform has no representation for the wire identity wrapper"
+            )),
+            ActiveType::OneOf => Err(format!(
+                "field '{path}' is an array of unions; Terraform variables cannot express a union"
+            )),
+            ActiveType::Table { .. } => Ok("map(any)".to_string()),
+            _ => tf_type(module, id, path),
+        },
+        _ => Err(format!("field '{path}' is not a schema element")),
+    }
+}
+
+fn tf_requires_any(module: &Module, id: NodeId) -> bool {
+    match module.get(id) {
+        Some(Node::SchemaTable { fields, .. }) => {
+            fields.values().any(|child| tf_requires_any(module, *child))
+        }
+        Some(Node::SchemaArray { element }) => tf_requires_any(module, *element),
+        Some(Node::SchemaField { field }) => {
+            field.requires.is_some() || field.one_of.iter().any(|b| tf_requires_any(module, *b))
+        }
+        _ => false,
+    }
+}
+
+fn tf_contains_secret(module: &Module, id: NodeId) -> bool {
+    match module.get(id) {
+        Some(Node::SchemaTable { fields, .. }) => fields
+            .values()
+            .any(|child| tf_contains_secret(module, *child)),
+        Some(Node::SchemaArray { element }) => tf_contains_secret(module, *element),
+        Some(Node::SchemaField { field }) => {
+            matches!(field.typ, ActiveType::Secret)
+                || field.one_of.iter().any(|b| tf_contains_secret(module, *b))
+        }
+        _ => false,
+    }
+}
+
+/// A static JSON number bound, or a refusal for a computed one. An
+/// absent slot is fine; a present slot that is not statically known is
+/// not (the generated contract would silently drop the constraint).
+fn tf_number_bound(
+    module: &Module,
+    slot: Option<NodeId>,
+    path: &str,
+    which: &str,
+) -> Result<Option<JsonValue>, String> {
+    let Some(id) = slot else {
+        return Ok(None);
+    };
+    literal_number(module, Some(id)).map(Some).ok_or_else(|| {
+        format!("field '{path}' has a computed {which} bound; Terraform needs a static bound")
+    })
+}
+
+fn tf_int_bound(
+    module: &Module,
+    slot: Option<NodeId>,
+    path: &str,
+    which: &str,
+) -> Result<Option<i64>, String> {
+    let Some(id) = slot else {
+        return Ok(None);
+    };
+    literal_int(module, Some(id)).map(Some).ok_or_else(|| {
+        format!("field '{path}' has a computed {which} bound; Terraform needs a static bound")
+    })
+}
+
+/// Validation (condition, message) pairs for one root variable. Element
+/// constraints become `alltrue([for v in var.x : ...])`.
+fn tf_conditions(
+    module: &Module,
+    profile: &crate::secret::SecretProfile,
+    id: NodeId,
+    expr: &str,
+    path: &str,
+) -> Result<Vec<(String, String)>, String> {
+    match module.get(id) {
+        Some(Node::SchemaArray { element }) => {
+            // An array of empty closed tables: every element must be an
+            // empty map. Other table elements are refused by the type.
+            if let Some(Node::SchemaTable { fields, closed, .. }) = module.get(*element) {
+                if fields.is_empty() && *closed {
+                    return Ok(vec![(
+                        format!("alltrue([for v in {expr} : length(v) == 0])"),
+                        format!("{path}: a closed table element has no keys"),
+                    )]);
+                }
+                return Ok(Vec::new());
+            }
+            let inner =
+                tf_scalar_conditions(module, profile, *element, "v", &format!("{path} element"))?;
+            if inner.is_empty() {
+                return Ok(Vec::new());
+            }
+            let joined = inner
+                .iter()
+                .map(|(condition, _)| condition.clone())
+                .collect::<Vec<_>>()
+                .join(" && ");
+            Ok(vec![(
+                format!("alltrue([for v in {expr} : {joined}])"),
+                format!("{path}: an element violates the schema constraints"),
+            )])
+        }
+        Some(Node::SchemaField { field }) => match &field.typ {
+            ActiveType::Table { closed } if *closed => Ok(vec![(
+                format!("length({expr}) == 0"),
+                format!("{path}: a closed table has no keys"),
+            )]),
+            _ => tf_scalar_conditions(module, profile, id, expr, path),
+        },
+        Some(Node::SchemaTable { fields, closed, .. }) => {
+            if fields.is_empty() && *closed {
+                Ok(vec![(
+                    format!("length({expr}) == 0"),
+                    format!("{path}: a closed table has no keys"),
+                )])
+            } else {
+                Ok(Vec::new())
+            }
+        }
+        _ => Err(format!("field '{path}' is not a schema node")),
+    }
+}
+
+fn tf_scalar_conditions(
+    module: &Module,
+    profile: &crate::secret::SecretProfile,
+    id: NodeId,
+    expr: &str,
+    path: &str,
+) -> Result<Vec<(String, String)>, String> {
+    let Some(Node::SchemaField { field }) = module.get(id) else {
+        return Ok(Vec::new());
+    };
+    let mut out: Vec<(String, String)> = Vec::new();
+    let push_range = |out: &mut Vec<(String, String)>,
+                      expr: &str,
+                      path: &str,
+                      min: Option<JsonValue>,
+                      max: Option<JsonValue>| {
+        if let Some(value) = min {
+            out.push((
+                format!("{expr} >= {value}"),
+                format!("{path}: below the schema minimum"),
+            ));
+        }
+        if let Some(value) = max {
+            out.push((
+                format!("{expr} <= {value}"),
+                format!("{path}: above the schema maximum"),
+            ));
+        }
+    };
+    match &field.typ {
+        ActiveType::Int => {
+            out.push((
+                format!("floor({expr}) == {expr}"),
+                format!("{path}: an Int field must be a whole number"),
+            ));
+            push_range(
+                &mut out,
+                expr,
+                path,
+                tf_number_bound(module, field.min, path, "minimum")?,
+                tf_number_bound(module, field.max, path, "maximum")?,
+            );
+        }
+        ActiveType::Float => {
+            push_range(
+                &mut out,
+                expr,
+                path,
+                tf_number_bound(module, field.min, path, "minimum")?,
+                tf_number_bound(module, field.max, path, "maximum")?,
+            );
+        }
+        ActiveType::Duration | ActiveType::Bytes => {
+            // Canonical milliseconds / bytes are integers on the wire.
+            out.push((
+                format!("floor({expr}) == {expr}"),
+                format!(
+                    "{path}: a canonical {} magnitude must be a whole number",
+                    if matches!(field.typ, ActiveType::Duration) {
+                        "millisecond"
+                    } else {
+                        "byte"
+                    }
+                ),
+            ));
+            push_range(
+                &mut out,
+                expr,
+                path,
+                tf_number_bound(module, field.min, path, "minimum")?,
+                tf_number_bound(module, field.max, path, "maximum")?,
+            );
+        }
+        ActiveType::String => {
+            if let Some(min) = tf_int_bound(module, field.min_len, path, "minimum length")? {
+                out.push((
+                    format!("length({expr}) >= {min}"),
+                    format!("{path}: shorter than the schema minimum length"),
+                ));
+            }
+            if let Some(max) = tf_int_bound(module, field.max_len, path, "maximum length")? {
+                out.push((
+                    format!("length({expr}) <= {max}"),
+                    format!("{path}: longer than the schema maximum length"),
+                ));
+            }
+            if field.pattern.is_some() {
+                let Some(pattern) = literal_string(module, field.pattern) else {
+                    return Err(format!(
+                        "field '{path}' has a computed pattern; Terraform needs a static pattern"
+                    ));
+                };
+                if profile.blob_identity_is_material(&pattern) {
+                    return Err(format!(
+                        "field '{path}' has a material pattern; it cannot be emitted"
+                    ));
+                }
+                out.push((
+                    format!("can(regex({}, {expr}))", hcl_string(&pattern)),
+                    format!("{path}: does not match the schema pattern"),
+                ));
+            }
+            if field.format.is_some() {
+                let Some(format) = literal_string(module, field.format) else {
+                    return Err(format!(
+                        "field '{path}' has a computed format; Terraform needs a static format"
+                    ));
+                };
+                if profile.blob_identity_is_material(&format) {
+                    return Err(format!(
+                        "field '{path}' has a material format; it cannot be emitted"
+                    ));
+                }
+                match format_pattern(&format) {
+                    Some(pattern) => out.push((
+                        format!("can(regex({}, {expr}))", hcl_string(pattern)),
+                        format!("{path}: does not match the schema format"),
+                    )),
+                    None => {
+                        return Err(format!(
+                            "field '{path}' names an unknown format; Terraform cannot express it"
+                        ))
+                    }
+                }
+            }
+        }
+        ActiveType::Enum(members) => {
+            let mut rendered = Vec::new();
+            for member in members {
+                if profile.blob_identity_is_material(member) {
+                    return Err(format!(
+                        "field '{path}' has a material enum member; it cannot be emitted"
+                    ));
+                }
+                rendered.push(hcl_string(member));
+            }
+            out.push((
+                format!("contains([{}], {expr})", rendered.join(", ")),
+                format!("{path}: not a member of the schema enum"),
+            ));
+        }
+        ActiveType::Null => {
+            out.push((
+                format!("{expr} == null"),
+                format!("{path}: a Null field accepts only null"),
+            ));
+        }
+        _ => {}
+    }
+    Ok(out)
+}
+
+fn tf_default(
+    module: &Module,
+    profile: &crate::secret::SecretProfile,
+    id: NodeId,
+    path: &str,
+) -> Result<Option<String>, String> {
+    let Some(Node::SchemaField { field }) = module.get(id) else {
+        return Ok(None);
+    };
+    if field.default.is_none() {
+        return Ok(None);
+    }
+    let Some(value) = literal_default(module, field) else {
+        return Err(format!(
+            "field '{path}' has a computed default; Terraform needs a static default"
+        ));
+    };
+    if default_is_material(profile, &value) {
+        return Err(format!(
+            "field '{path}' has a material default; it cannot be emitted"
+        ));
+    }
+    tf_default_value(module, id, &value, path).map(Some)
+}
+
+fn tf_default_value(
+    module: &Module,
+    id: NodeId,
+    value: &JsonValue,
+    path: &str,
+) -> Result<String, String> {
+    match module.get(id) {
+        Some(Node::SchemaField { field }) => match &field.typ {
+            ActiveType::Duration => value
+                .get("$active.duration")
+                .and_then(|inner| inner.get("ms"))
+                .map(|ms| ms.to_string())
+                .ok_or_else(|| format!("field '{path}' default is not a duration")),
+            ActiveType::Bytes | ActiveType::Int | ActiveType::Float => value
+                .as_f64()
+                .map(|_| value.to_string())
+                .ok_or_else(|| format!("field '{path}' default is not a number")),
+            ActiveType::String | ActiveType::Enum(_) => value
+                .as_str()
+                .map(hcl_string)
+                .ok_or_else(|| format!("field '{path}' default is not a string")),
+            ActiveType::Bool => value
+                .as_bool()
+                .map(|b| b.to_string())
+                .ok_or_else(|| format!("field '{path}' default is not a boolean")),
+            ActiveType::Null => Ok("null".to_string()),
+            ActiveType::Secret => Err(format!(
+                "field '{path}' is a Secret; a secret default is never emitted"
+            )),
+            ActiveType::Any | ActiveType::Table { .. } => Ok(json_to_hcl(value)),
+            ActiveType::Blob | ActiveType::OneOf => {
+                Err(format!("field '{path}' cannot carry a Terraform default"))
+            }
+        },
+        Some(Node::SchemaArray { element }) => {
+            let Some(items) = value.as_array() else {
+                return Err(format!("field '{path}' default is not an array"));
+            };
+            let mut rendered = Vec::new();
+            for item in items {
+                rendered.push(tf_default_value(module, *element, item, path)?);
+            }
+            Ok(format!("[{}]", rendered.join(", ")))
+        }
+        Some(Node::SchemaTable { .. }) => Ok(json_to_hcl(value)),
+        _ => Err(format!("field '{path}' default cannot be rendered")),
+    }
+}
+
+/// Generic JSON-to-HCL value rendering for `Any` and bare-table defaults.
+fn json_to_hcl(value: &JsonValue) -> String {
+    match value {
+        JsonValue::Null => "null".to_string(),
+        JsonValue::Bool(b) => b.to_string(),
+        JsonValue::Number(n) => n.to_string(),
+        JsonValue::String(s) => hcl_string(s),
+        JsonValue::Array(items) => {
+            let rendered: Vec<String> = items.iter().map(json_to_hcl).collect();
+            format!("[{}]", rendered.join(", "))
+        }
+        JsonValue::Object(map) => {
+            let rendered: Vec<String> = map
+                .iter()
+                .map(|(key, item)| format!("{} = {}", hcl_string(key), json_to_hcl(item)))
+                .collect();
+            format!("{{ {} }}", rendered.join(", "))
         }
     }
 }

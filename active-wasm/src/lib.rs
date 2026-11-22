@@ -61,6 +61,27 @@ fn release(ptr: *mut u8) -> bool {
     LIVE.with(|live| live.borrow_mut().remove(&(ptr as usize)).is_some())
 }
 
+/// Length of the live allocation starting at `ptr`, when the host owns one.
+/// Used by byte-taking exports to reject an out-of-bounds read instead of
+/// constructing a slice past its allocation.
+fn live_len(ptr: *const u8) -> Option<usize> {
+    LIVE.with(|live| live.borrow().get(&(ptr as usize)).map(Vec::len))
+}
+
+/// Why a host-provided source slice must be refused, if it must be. A
+/// length beyond the live allocation is UB in `from_raw_parts`, not a
+/// catchable panic, so every byte-taking export checks it first. A null
+/// pointer is the caller's separate error.
+fn source_bounds_error(src_ptr: *const u8, src_len: usize) -> Option<&'static str> {
+    if src_len > MAX_ALLOC_BYTES {
+        return Some("source length exceeds the transport cap");
+    }
+    match live_len(src_ptr) {
+        Some(allocated) if src_len <= allocated => None,
+        _ => Some("source length exceeds the live allocation"),
+    }
+}
+
 /// Largest single allocation the transport accepts (LANG-C-018): 64 MiB,
 /// four times the default parse input cap and far above any legitimate
 /// source buffer. `active_alloc(size)` is capped at 67108864 bytes; larger
@@ -80,7 +101,15 @@ pub extern "C" fn active_alloc(size: usize) -> *mut u8 {
     if size > MAX_ALLOC_BYTES {
         return std::ptr::null_mut();
     }
-    let (ptr, _) = retain(vec![0u8; size.max(1)]);
+    let len = size.max(1);
+    // `try_reserve_exact` reports allocation failure instead of aborting
+    // the instance; the resize below uses the reserved capacity.
+    let mut bytes: Vec<u8> = Vec::new();
+    if bytes.try_reserve_exact(len).is_err() {
+        return std::ptr::null_mut();
+    }
+    bytes.resize(len, 0);
+    let (ptr, _) = retain(bytes);
     ptr
 }
 
@@ -300,7 +329,10 @@ pub unsafe extern "C" fn active_eval_json(
         if src_ptr.is_null() {
             return envelope_err("ABI", "null pointer argument", "null");
         }
-        // SAFETY: host guarantees readable bytes per WIRING.md.
+        if let Some(message) = source_bounds_error(src_ptr, src_len) {
+            return envelope_err("ABI", message, "null");
+        }
+        // SAFETY: the registry proves `src_len` bytes are live at `src_ptr`.
         let bytes = unsafe { slice::from_raw_parts(src_ptr, src_len) };
         match str::from_utf8(bytes) {
             Ok(text) => eval_inner(text, false),
@@ -342,7 +374,10 @@ pub unsafe extern "C" fn active_eval_json_pure(
         if src_ptr.is_null() {
             return envelope_err("ABI", "null pointer argument", "null");
         }
-        // SAFETY: host guarantees readable bytes per WIRING.md.
+        if let Some(message) = source_bounds_error(src_ptr, src_len) {
+            return envelope_err("ABI", message, "null");
+        }
+        // SAFETY: the registry proves `src_len` bytes are live at `src_ptr`.
         let bytes = unsafe { slice::from_raw_parts(src_ptr, src_len) };
         match str::from_utf8(bytes) {
             Ok(text) => eval_inner(text, true),
@@ -366,6 +401,45 @@ pub unsafe extern "C" fn active_eval_json_pure(
 #[no_mangle]
 pub extern "C" fn active_abi_version() -> u32 {
     1
+}
+
+/// BLAKE3 hex digest of arbitrary bytes (L-P47 playground snippet
+/// identity). The host allocates the source with `active_alloc`, fills it,
+/// then passes the pointer and length; the return is a 64-byte ASCII hex
+/// allocation, freed with `active_free(ptr, 64)`. A null source pointer or
+/// allocation failure returns null; the digest itself never fails.
+///
+/// # Safety
+///
+/// `src_ptr` must point to `src_len` readable bytes in this instance's
+/// linear memory (the WIRING contract, same as `active_eval_json`).
+#[no_mangle]
+pub unsafe extern "C" fn active_blake3(src_ptr: *const u8, src_len: usize) -> *mut u8 {
+    if src_ptr.is_null() || src_len > MAX_ALLOC_BYTES {
+        return std::ptr::null_mut();
+    }
+    // Reject a length past the host's live allocation: `from_raw_parts`
+    // with an out-of-bounds length is UB, not a catchable panic. The host
+    // normally passes the exact allocation length; a shorter sub-slice is
+    // still inside it.
+    let Some(allocated) = live_len(src_ptr) else {
+        return std::ptr::null_mut();
+    };
+    if src_len > allocated {
+        return std::ptr::null_mut();
+    }
+    let hashed = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: the registry proves `src_len` bytes are live at `src_ptr`.
+        let bytes = unsafe { slice::from_raw_parts(src_ptr, src_len) };
+        active_core::blob::blake3_hex(bytes)
+    }));
+    match hashed {
+        Ok(hex) => {
+            let (ptr, _) = retain(hex.into_bytes());
+            ptr
+        }
+        Err(_) => std::ptr::null_mut(),
+    }
 }
 
 #[cfg(test)]
@@ -411,10 +485,15 @@ mod tests {
     #[test]
     fn pure_export_symbol_refuses_through_the_abi() {
         // F5: the exported symbol itself (not just eval_inner) refuses,
-        // and a null out_len stays the documented null.
-        let src = b"v = env.PURITY_ABI ?: 1\n";
+        // and a null out_len stays the documented null. The source must
+        // come from `active_alloc` (the ABI contract): the bounds guard
+        // now validates it against the live allocation.
+        let bytes = b"v = env.PURITY_ABI ?: 1\n";
+        let src = active_alloc(bytes.len());
+        assert!(!src.is_null());
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), src, bytes.len()) };
         let mut len = 0usize;
-        let ptr = unsafe { active_eval_json_pure(src.as_ptr(), src.len(), &mut len) };
+        let ptr = unsafe { active_eval_json_pure(src, bytes.len(), &mut len) };
         assert!(!ptr.is_null());
         let text = unsafe { std::slice::from_raw_parts(ptr, len) };
         let env: serde_json::Value = serde_json::from_slice(text).expect("envelope");
@@ -424,8 +503,9 @@ mod tests {
             "{env}"
         );
         active_free(ptr, len);
-        let null = unsafe { active_eval_json_pure(src.as_ptr(), src.len(), std::ptr::null_mut()) };
+        let null = unsafe { active_eval_json_pure(src, bytes.len(), std::ptr::null_mut()) };
         assert!(null.is_null());
+        active_free(src, bytes.len());
     }
 
     #[test]
@@ -553,17 +633,21 @@ mod tests {
         // LANG-G-021: without the length slot the host cannot read the
         // envelope, so the call fails closed. With a real slot the same
         // source returns a readable envelope.
-        let src = b"port = 8080\n";
-        let ptr = unsafe { active_eval_json(src.as_ptr(), src.len(), std::ptr::null_mut()) };
+        let bytes = b"port = 8080\n";
+        let src = active_alloc(bytes.len());
+        assert!(!src.is_null());
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), src, bytes.len()) };
+        let ptr = unsafe { active_eval_json(src, bytes.len(), std::ptr::null_mut()) };
         assert!(ptr.is_null(), "null out_len must not produce an envelope");
         let mut len = 0usize;
-        let ptr = unsafe { active_eval_json(src.as_ptr(), src.len(), &mut len) };
+        let ptr = unsafe { active_eval_json(src, bytes.len(), &mut len) };
         assert!(!ptr.is_null());
         assert!(len > 0);
         let envelope = unsafe { slice::from_raw_parts(ptr, len) };
         let parsed: serde_json::Value = serde_json::from_slice(envelope).expect("json");
         assert_eq!(parsed["ok"], serde_json::json!(true));
         active_free(ptr, len);
+        active_free(src, bytes.len());
     }
 
     #[test]
@@ -617,5 +701,58 @@ mod tests {
             parsed["diagnostics"].as_str().unwrap_or("").contains("X0"),
             "a budget trip is coded: {envelope}"
         );
+    }
+}
+
+#[cfg(test)]
+mod abi_guard_tests {
+    use super::*;
+
+    fn read_envelope(out: *mut u8, len: usize) -> String {
+        let bytes = unsafe { slice::from_raw_parts(out, len).to_vec() };
+        String::from_utf8(bytes).expect("envelope is UTF-8")
+    }
+
+    #[test]
+    fn an_oversized_source_length_is_refused_without_reading_out_of_bounds() {
+        let src = active_alloc(16);
+        assert!(!src.is_null());
+        let mut len = 0usize;
+        let out = unsafe { active_eval_json(src, 64 * 1024 * 1024, &mut len) };
+        assert!(!out.is_null(), "an ABI error is an envelope, not a trap");
+        let text = read_envelope(out, len);
+        assert!(
+            text.contains("ABI") && text.contains("live allocation"),
+            "{text}"
+        );
+        active_free(out, len);
+
+        // One byte past the allocation is refused by the hash export too.
+        let hashed = unsafe { active_blake3(src, 17) };
+        assert!(hashed.is_null(), "out-of-bounds hash length must be null");
+
+        let digest = unsafe { active_blake3(src, 16) };
+        assert!(!digest.is_null());
+        let hex = read_envelope(digest, 64);
+        assert!(
+            hex.len() == 64
+                && hex
+                    .chars()
+                    .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            "{hex}"
+        );
+        active_free(digest, 64);
+        active_free(src, 16);
+    }
+
+    #[test]
+    fn a_null_source_pointer_is_refused() {
+        let mut len = 0usize;
+        let out = unsafe { active_eval_json(std::ptr::null(), 0, &mut len) };
+        assert!(!out.is_null());
+        let text = read_envelope(out, len);
+        assert!(text.contains("null pointer"), "{text}");
+        active_free(out, len);
+        assert!(unsafe { active_blake3(std::ptr::null(), 0) }.is_null());
     }
 }

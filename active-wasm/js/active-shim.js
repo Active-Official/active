@@ -16,8 +16,19 @@
 			source instanceof ArrayBuffer
 				? source
 				: await (typeof source === "string"
-						? fetch(source).then((r) => r.arrayBuffer())
-						: source.arrayBuffer());
+						? fetch(source).then((r) => {
+								// A 404 page is HTML, not a module; without this
+								// check the fallback source never fires and the
+								// failure reads as a WebAssembly parse error.
+								if (!r.ok)
+									throw new Error(
+										"active-wasm: HTTP " + r.status + " for " + source,
+									);
+								return r.arrayBuffer();
+							})
+						: source.ok === false
+							? Promise.reject(new Error("active-wasm: HTTP " + source.status))
+							: source.arrayBuffer());
 		const { instance } = await WebAssembly.instantiate(bytes, {});
 		const ex = instance.exports;
 		if (
@@ -49,8 +60,21 @@
 			return value;
 		}
 
+		// Bound before allocating the UTF-8 copy: a huge host string must
+		// not OOM the tab before the wasm transport cap can reject it.
+		// The allocator still enforces the exact 64 MiB byte cap.
+		function encodeInput(input) {
+			if (typeof input !== "string") {
+				throw new Error("active-wasm: input must be a string");
+			}
+			if (input.length > 16 * 1024 * 1024) {
+				throw new Error("active-wasm: input exceeds the transport cap");
+			}
+			return new TextEncoder().encode(input);
+		}
+
 		function evaluateWith(input, pure) {
-			const src = new TextEncoder().encode(input);
+			const src = encodeInput(input);
 			const sp = ex.active_alloc(src.length);
 			// A request over the 64 MiB transport cap returns null; without
 			// this check `mem().set` would clobber the zero page and the
@@ -58,39 +82,47 @@
 			if (!sp) {
 				throw new Error("active-wasm: input allocation failed (64 MiB cap)");
 			}
-			mem().set(src, sp);
-			const slot = ex.active_alloc(4);
-			if (!slot) {
-				ex.active_free(sp, src.length);
-				throw new Error("active-wasm: envelope length allocation failed");
-			}
-			const out = pure
-				? ex.active_eval_json_pure(sp, src.length, slot)
-				: ex.active_eval_json(sp, src.length, slot);
-			if (!out) {
-				ex.active_free(sp, src.length);
-				ex.active_free(slot, 4);
-				throw new Error("active-wasm: evaluation returned no envelope");
-			}
-			const n = new DataView(ex.memory.buffer, slot, 4).getUint32(0, true);
-			let env;
+			let slot = 0;
+			let out = 0;
+			let n = 0;
 			try {
-				env = JSON.parse(read(out, n));
+				// A growth between calls can detach the old view; `set`
+				// throws then, and the finally below still frees both
+				// transient allocations.
+				mem().set(src, sp);
+				slot = ex.active_alloc(4);
+				if (!slot) {
+					throw new Error("active-wasm: envelope length allocation failed");
+				}
+				out = pure
+					? ex.active_eval_json_pure(sp, src.length, slot)
+					: ex.active_eval_json(sp, src.length, slot);
+				if (!out) {
+					throw new Error("active-wasm: evaluation returned no envelope");
+				}
+				n = new DataView(ex.memory.buffer, slot, 4).getUint32(0, true);
+				// The length is host-readable memory, so a buggy or hostile
+				// module could hand back a huge value; never slice past the
+				// transport cap or allocate a string that large.
+				if (!Number.isInteger(n) || n > 67108864) {
+					throw new Error("active-wasm: envelope length out of bounds");
+				}
+				const env = JSON.parse(read(out, n));
+				return deepFreeze({
+					ok: env.ok === true,
+					json: JSON.stringify(env.json),
+					diagnostics: String(env.diagnostics || ""),
+					// Passed through verbatim when present, ABSENT otherwise:
+					// the bindings fail closed on a missing items array, so the
+					// shim must never substitute a default here (a stale module
+					// would otherwise read as a false clean).
+					...(env.items !== undefined ? { items: env.items } : {}),
+				});
 			} finally {
+				if (out) ex.active_free(out, n);
+				if (slot) ex.active_free(slot, 4);
 				ex.active_free(sp, src.length);
-				ex.active_free(out, n);
-				ex.active_free(slot, 4);
 			}
-			return deepFreeze({
-				ok: env.ok === true,
-				json: JSON.stringify(env.json),
-				diagnostics: String(env.diagnostics || ""),
-				// Passed through verbatim when present, ABSENT otherwise:
-				// the bindings fail closed on a missing items array, so the
-				// shim must never substitute a default here (a stale module
-				// would otherwise read as a false clean).
-				...(env.items !== undefined ? { items: env.items } : {}),
-			});
 		}
 
 		function evaluate(input) {
@@ -109,7 +141,49 @@
 			return evaluateWith(input, true);
 		}
 
-		const api = Object.freeze({ evaluate, evaluatePure, abiVersion: 1 });
+		// L-P47: BLAKE3 hex digest of the source bytes, so the playground
+		// can verify a hash-addressed snippet before evaluating it. A
+		// module without the export is stale; fail loudly.
+		function hash(input) {
+			if (typeof ex.active_blake3 !== "function") {
+				throw new Error(
+					"active-wasm: hashing requires a module built with L-P47 (active_blake3)",
+				);
+			}
+			const src = encodeInput(input);
+			const sp = ex.active_alloc(src.length);
+			if (!sp) {
+				throw new Error("active-wasm: input allocation failed (64 MiB cap)");
+			}
+			let out = 0;
+			try {
+				// A detached view after a growth makes `set` throw; the
+				// finally still frees the input allocation.
+				mem().set(src, sp);
+				out = ex.active_blake3(sp, src.length);
+				if (!out) {
+					throw new Error("active-wasm: hash returned no digest");
+				}
+				let hex;
+				try {
+					hex = read(out, 64);
+				} finally {
+					ex.active_free(out, 64);
+					out = 0;
+				}
+				if (!/^[0-9a-f]{64}$/.test(hex)) {
+					throw new Error(
+						"active-wasm: hash was not a 64-character hex digest",
+					);
+				}
+				return hex;
+			} finally {
+				ex.active_free(sp, src.length);
+				if (out) ex.active_free(out, 64);
+			}
+		}
+
+		const api = Object.freeze({ evaluate, evaluatePure, hash, abiVersion: 1 });
 		if (typeof window !== "undefined") window.ActiveAPI = api;
 		return api;
 	}

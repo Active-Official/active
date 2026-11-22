@@ -739,6 +739,29 @@ reference for any behavior. `release.yml` now runs a provenance gate
 the tag, or whose workspace version differs from the tag, so this cannot
 recur.
 
+### L-P47: hash-addressed playground snippets
+
+A playground snippet can be shared as `#blake3:<hash>:<base64url source>`
+so the link is its content: the page hashes the bytes and refuses on any
+mismatch before showing or evaluating anything. A hash-only
+`#blake3:<hash>` link resolves from a bounded local cache and is
+re-verified on every read; a miss is a visible refusal, never a network
+fetch. The self-contained form is the portable share; the cache (64
+entries / 1 MiB, user-clearable) is per browser. Evaluation results are
+cached in memory per session keyed by the hash, so re-opening the same
+snippet does not re-evaluate it. There is no server storage, no upload
+endpoint, and no pastebin: the URL carries the content, or the visitor's
+own cache does.
+
+The engine gained a BLAKE3 export (`active_blake3`), the shim a
+`hash(source)` method (a stale module fails loudly), and the page a
+"Share by hash" and "Clear cached snippets" control. The full scheme,
+verification order, retention, and abuse rules are in `spec/playground.md`;
+`playground/test-snippets.js` gates the logic against the real release
+wasm in CI (round-trip, match, mismatch refusal, tampered-cache refusal,
+cache bound, result cache). This lands after G-023 (`4800d2f`), whose
+release-shaped playground bundle was served and exercised in a browser.
+
 ### L-P18: Pulumi, Terraform, and CDK generate targets (codegen half)
 
 `active generate` speaks to the three IaC consumer tools while Active

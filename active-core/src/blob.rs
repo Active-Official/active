@@ -205,11 +205,29 @@ pub fn hash_hex(hash: &[u8; 32]) -> String {
     hash.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Hex BLAKE3 digest of arbitrary bytes (L-P47). This is the project's
+/// hasher, exposed so a host (the playground) can verify a hash-addressed
+/// snippet before evaluating it; it is not a value identity (no domain
+/// salt or media type).
+pub fn blake3_hex(bytes: &[u8]) -> String {
+    hash_hex(blake3::hash(bytes).as_bytes())
+}
+
 /// The identity to publish for a value. A retained payload on an
 /// untainted blob verifies (and replaces) a caller-supplied hash, so two
 /// different retained payloads cannot share a wire form. A tainted blob
 /// carries no payload to verify; its hash is the evaluation's salted
 /// identity.
+///
+/// An untainted blob WITHOUT a payload is engine output too: the
+/// evaluator computes its v1 identity from the media type and bytes and
+/// retains the payload only for materialisation. Active source cannot
+/// spell an identity-only blob (`blob(media, data)` always carries data),
+/// so there is no untrusted path that supplies a bare claimed hash. A
+/// host that synthesises `Value::Blob` from untrusted input must mark it
+/// tainted or verify it before calling an export path; redacting here
+/// would collapse every identity-only export to one constant and break
+/// content addressing (audit-pack/L-P47-LOWS.md L1).
 pub fn verified_identity(
     claimed: &[u8; 32],
     tainted: bool,

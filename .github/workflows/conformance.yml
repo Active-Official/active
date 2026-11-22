@@ -277,6 +277,11 @@ jobs:
         # validate tags, python import) plus byte-stability (determinism)
         # and version stamps on every generation.
         run: python conformance/evidence/codegen_check.py
+      - name: Hash-addressed snippet gate (L-P47)
+        # Exercises the page's snippet module against the real release
+        # wasm: fragment round-trip, verification, mismatch refusal,
+        # tampered-cache refusal, the cache bound, and the result cache.
+        run: node playground/test-snippets.js target/wasm32-unknown-unknown/release/active_wasm.wasm
       - name: Build CLI for output-schema checks
         run: cargo build -p active-cli --locked
       - name: Score the repair fixtures

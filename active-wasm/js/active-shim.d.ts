@@ -40,6 +40,12 @@ export interface ActiveAPI {
 	 * impurely by accident).
 	 */
 	evaluatePure(source: string): ActiveEvaluateResult;
+	/**
+	 * L-P47: BLAKE3 hex digest of the exact UTF-8 source bytes. Throws when
+	 * the loaded module predates the export (fail loud, never guess a
+	 * hash).
+	 */
+	hash(source: string): string;
 	abiVersion: 1;
 }
 

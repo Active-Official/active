@@ -19,9 +19,12 @@ Everything runs locally in WebAssembly; nothing leaves your browser.</p>
 <label for="examples">Example:</label>
 <select id="examples"></select>
 <button id="eval">Evaluate</button>
+<button id="share-hash">Share by hash</button>
+<button id="clear-snippets">Clear cached snippets</button>
 <button id="download">Download .active</button>
 <label for="dropfile">Open file:</label>
 <input id="dropfile" type="file" accept=".active,.txt" />
+<div id="sharelink"></div>
 <h2>Source</h2>
 <textarea id="source" spellcheck="false"></textarea>
 <h2>Value tree</h2>
@@ -44,12 +47,15 @@ window.addEventListener("DOMContentLoaded", function () {
   }
   tryLoad(0).then(function (api) {
     window.ActiveAPI = api;
-    document.getElementById("value").textContent = "(engine ready: pick an example, then Evaluate)";
+    // L-P47: the page decides what to show now that the engine exists
+    // (a hash link verifies itself; a refusal must not be overwritten).
+    window.dispatchEvent(new Event("active-engine-ready"));
   }).catch(function (e) {
     document.getElementById("value").textContent = "Engine failed to load: " + e.message;
   });
 });
 </script>
+<script src="snippets.js"></script>
 <script src="playground.js"></script>
 </body>
 </html>

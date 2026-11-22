@@ -27,6 +27,9 @@ window.ActiveAPI = {
       } | null;
     }>;
   };
+  // L-P47: BLAKE3 hex digest of the exact UTF-8 source bytes. A module
+  // without `active_blake3` throws (fail loud, never guess a hash).
+  hash(source: string): string;
 }
 ```
 
@@ -56,6 +59,18 @@ archive, serve its root statically (`python -m http.server`), and open
 `playground.js` with no local build. The archive is checksummed in
 `SHA256SUMS` like every other release file; its engine bytes are the
 same `active_wasm.wasm` the release publishes.
+
+## Hash-addressed snippets (L-P47)
+
+The page shares a snippet as `#blake3:<64 hex>:<base64url source>` and
+verifies the hash before showing or evaluating anything; a mismatch is a
+refusal (the editor is cleared, nothing runs, nothing is cached). A
+hash-only `#blake3:<hash>` resolves from the bounded local cache
+(`active.snippet.<hash>`, 64 entries / 1 MiB, re-verified on read); a
+miss refuses visibly and never fetches from the network. Self-contained
+links are the portable share; the cache is per browser. `snippets.js`
+holds the fragment/cache logic and `test-snippets.js` gates it against
+the release wasm. The full rules are in `spec/playground.md`.
 
 ## Share links (G-019 decision)
 

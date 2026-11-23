@@ -66,6 +66,15 @@ pub enum EvalError {
         span: Option<Span>,
         file: Option<String>,
     },
+    /// L-P28: a sandboxed evaluation refused an input outside its
+    /// InputClosure (E048). The message names the input family, never a
+    /// value.
+    #[error("{message}")]
+    SandboxRefused {
+        message: String,
+        span: Option<Span>,
+        file: Option<String>,
+    },
     /// L-P05: a pure evaluation refused an ambient input (E047). The
     /// message names the input (env variable, include spelling, or
     /// profile) and the refusal family.
@@ -326,6 +335,7 @@ impl EvalError {
             EvalError::TypeError { .. } => "T001",
             EvalError::PatchError { .. } => "E019",
             EvalError::ProfileError { .. } => "E027",
+            EvalError::SandboxRefused { .. } => "E048",
             EvalError::PureRefused { .. } => "E047",
             EvalError::SecretLeak { .. } => "S004",
             EvalError::BlobError { code, .. } => code,
@@ -356,7 +366,9 @@ impl EvalError {
             EvalError::TypeError { span, .. }
             | EvalError::PatchError { span, .. }
             | EvalError::ProfileError { span, .. } => span.as_ref(),
-            EvalError::PureRefused { span, .. } => span.as_ref(),
+            EvalError::PureRefused { span, .. } | EvalError::SandboxRefused { span, .. } => {
+                span.as_ref()
+            }
             EvalError::BlobError { span, .. } => span.as_ref(),
             EvalError::BudgetExceeded { span, .. } => span.as_ref(),
             EvalError::ValidationFailed { diagnostics } => {
@@ -375,6 +387,7 @@ impl EvalError {
             | EvalError::ProfileError { file, .. } => file.as_deref(),
             EvalError::BlobError { file, .. } => file.as_deref(),
             EvalError::PureRefused { file, .. } => file.as_deref(),
+            EvalError::SandboxRefused { file, .. } => file.as_deref(),
             EvalError::SecretLeak { file } => file.as_deref(),
             EvalError::BudgetExceeded { file, .. } => file.as_deref(),
             EvalError::ValidationFailed { diagnostics } => {
@@ -501,6 +514,9 @@ pub struct Engine {
     /// sender carries a key/signature and this is `None`, evaluation
     /// refuses (E045): an unverifiable signature is never accepted.
     pub envelope_trust: Option<crate::sign::TrustedKeys>,
+    /// L-P28: a closure guard set only by `Sandbox`; external code cannot
+    /// construct a guarded engine.
+    pub(crate) sandbox_guard: Option<crate::sandbox::SandboxGuard>,
 }
 
 impl Default for Engine {
@@ -2111,6 +2127,7 @@ impl Engine {
             blob_salt: None,
             envelope_gate: Some(crate::envelope::EnvelopeGate::shipped()),
             envelope_trust: None,
+            sandbox_guard: None,
         }
     }
 
@@ -2383,6 +2400,49 @@ impl Engine {
         if self.pure {
             if let Some(refusal) = self.pure_refusal(module) {
                 return Err(refusal);
+            }
+        }
+        if let Some(guard) = &self.sandbox_guard {
+            if self.env_fallback.is_some() {
+                return Err(EvalError::SandboxRefused {
+                    message: "sandbox refused an environment fallback".into(),
+                    span: None,
+                    file: None,
+                });
+            }
+            if self.env.len() != guard.env_values.len()
+                || self
+                    .env
+                    .iter()
+                    .any(|(name, value)| guard.env_values.get(name) != Some(value))
+            {
+                return Err(EvalError::SandboxRefused {
+                    message: "sandbox refused an env value outside the closure".into(),
+                    span: None,
+                    file: None,
+                });
+            }
+            if self.profile_override != guard.profile {
+                return Err(EvalError::SandboxRefused {
+                    message: "sandbox refused a profile outside the closure".into(),
+                    span: None,
+                    file: None,
+                });
+            }
+            for (index, node) in module.arena.iter().enumerate() {
+                if let Node::Env { name, .. } = node {
+                    if !guard.env_names.contains(&canonical_env_name(name)) {
+                        let id = crate::ir::NodeId(index as u32);
+                        let escaped: String = name.chars().flat_map(char::escape_default).collect();
+                        return Err(EvalError::SandboxRefused {
+                            message: format!(
+                                "sandbox refused an undeclared environment read `{escaped}`"
+                            ),
+                            span: module.node_spans.get(&id).cloned(),
+                            file: module.node_files.get(&id).cloned(),
+                        });
+                    }
+                }
             }
         }
         // One meaning for a zero field on every surface (LANG-C-015): zero

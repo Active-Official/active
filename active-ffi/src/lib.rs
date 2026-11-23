@@ -36,6 +36,8 @@ pub const ACTIVE_ERR_UTF8: i32 = 13;
 pub const ACTIVE_ERR_BAD_ARGUMENT: i32 = 14;
 /// L-P05: a pure evaluation refused an ambient input (E047).
 pub const ACTIVE_ERR_PURE_REFUSED: i32 = 15;
+/// L-P28: an evaluation input was outside its sandbox closure (E048).
+pub const ACTIVE_ERR_SANDBOX_REFUSED: i32 = 16;
 
 thread_local! {
     static LAST_ERROR: Cell<i32> = const { Cell::new(ACTIVE_ERR_OK) };
@@ -188,7 +190,9 @@ fn is_include_code(code: &str) -> bool {
 
 /// ABI class for a parse failure seen through a handle.
 fn parse_failure_code(items: &[DiagSnapshot]) -> i32 {
-    if items
+    if items.iter().any(|d| d.code.to_string_lossy() == "E048") {
+        ACTIVE_ERR_SANDBOX_REFUSED
+    } else if items
         .iter()
         .any(|d| is_include_code(&d.code.to_string_lossy()))
     {
@@ -822,6 +826,7 @@ fn error_code_for(code: &str) -> i32 {
         // L-P05: a pure refusal keeps its own class through check and
         // validate too (eval maps the error variant directly).
         "E047" => ACTIVE_ERR_PURE_REFUSED,
+        "E048" => ACTIVE_ERR_SANDBOX_REFUSED,
         _ if code.starts_with('X') => ACTIVE_ERR_BUDGET_EXCEEDED,
         _ if code.starts_with('S') => ACTIVE_ERR_UNIT_MISMATCH,
         _ => ACTIVE_ERR_SCHEMA_FAIL,
@@ -1284,6 +1289,248 @@ pub unsafe extern "C" fn active_string_free(s: *mut std::os::raw::c_char) {
         unsafe {
             drop(std::ffi::CString::from_raw(s));
         }
+    })
+}
+
+/// L-P28: evaluate a §7.2a closure envelope. The envelope is host data
+/// (it may hold env secrets) and is never logged. A malformed envelope,
+/// duplicate env name after folding, or digest mismatch is a host-side
+/// refusal (ACTIVE_ERR_PARSE), before any document is parsed.
+///
+/// # Safety
+///
+/// `closure_json` must be a NUL-terminated UTF-8 string. The returned
+/// value follows the normal `active_value_*` ownership rules.
+#[no_mangle]
+pub unsafe extern "C" fn active_eval_sandboxed(
+    closure_json: *const std::ffi::c_char,
+    budget: *const ActiveBudget,
+) -> *mut ActiveValue {
+    guard(std::ptr::null_mut(), || {
+        if closure_json.is_null() {
+            set_last(ACTIVE_ERR_NULL_HANDLE);
+            return std::ptr::null_mut();
+        }
+        let json = match unsafe { std::ffi::CStr::from_ptr(closure_json) }.to_str() {
+            Ok(text) => text,
+            Err(_) => {
+                set_last(ACTIVE_ERR_PARSE);
+                return std::ptr::null_mut();
+            }
+        };
+        let closure = match active_core::InputClosure::from_manifest(json, None, |path| {
+            Err(format!("FFI closures must embed include `{path}` bytes"))
+        }) {
+            Ok(closure) => closure,
+            Err(error) => {
+                set_last(if matches!(error, active_core::ClosureError::Manifest(_)) {
+                    ACTIVE_ERR_PARSE
+                } else {
+                    ACTIVE_ERR_SANDBOX_REFUSED
+                });
+                return std::ptr::null_mut();
+            }
+        };
+        let sandbox = match active_core::Sandbox::new(closure) {
+            Ok(sandbox) => sandbox,
+            Err(_) => {
+                set_last(ACTIVE_ERR_PARSE);
+                return std::ptr::null_mut();
+            }
+        };
+        let module = match sandbox.parse(active_core::ParseOptions::default()) {
+            Ok(module) => module,
+            Err(diagnostics) => {
+                set_last(
+                    diagnostics
+                        .iter()
+                        .find(|d| d.severity == active_core::Severity::Error)
+                        .map(|d| error_code_for(&d.code))
+                        .unwrap_or(ACTIVE_ERR_PARSE),
+                );
+                return std::ptr::null_mut();
+            }
+        };
+        let mut engine = Engine::hermetic();
+        if apply_budget(&mut engine, budget, false).is_err() {
+            return std::ptr::null_mut();
+        }
+        match sandbox.evaluate_redacted(&engine, &module) {
+            Ok((value, diagnostics)) => {
+                if let Some(diagnostic) = diagnostics
+                    .iter()
+                    .find(|d| d.severity == active_core::Severity::Error)
+                {
+                    set_last(error_code_for(&diagnostic.code));
+                    return std::ptr::null_mut();
+                }
+                set_last(ACTIVE_ERR_OK);
+                Box::into_raw(Box::new(ActiveValue { value }))
+            }
+            Err(active_core::EvalError::SandboxRefused { .. }) => {
+                set_last(ACTIVE_ERR_SANDBOX_REFUSED);
+                std::ptr::null_mut()
+            }
+            Err(active_core::EvalError::ValidationFailed { .. }) => {
+                set_last(ACTIVE_ERR_SCHEMA_FAIL);
+                std::ptr::null_mut()
+            }
+            Err(active_core::EvalError::BudgetExceeded { .. }) => {
+                set_last(ACTIVE_ERR_BUDGET_EXCEEDED);
+                std::ptr::null_mut()
+            }
+            Err(active_core::EvalError::CycleDetected) => {
+                set_last(ACTIVE_ERR_CYCLE);
+                std::ptr::null_mut()
+            }
+            Err(active_core::EvalError::TypeError { .. }) => {
+                set_last(ACTIVE_ERR_UNIT_MISMATCH);
+                std::ptr::null_mut()
+            }
+            Err(active_core::EvalError::SecretLeak { .. }) => {
+                set_last(ACTIVE_ERR_SECRET_REFUSAL);
+                std::ptr::null_mut()
+            }
+            Err(active_core::EvalError::PureRefused { .. }) => {
+                set_last(ACTIVE_ERR_PURE_REFUSED);
+                std::ptr::null_mut()
+            }
+            Err(_) => {
+                set_last(ACTIVE_ERR_PARSE);
+                std::ptr::null_mut()
+            }
+        }
+    })
+}
+
+/// L-P28: length-bounded sandbox evaluation. Rejects embedded NUL and
+/// non-UTF-8; trailing non-whitespace is rejected by the JSON parser, so
+/// an approver hashing the exact `(ptr, len)` buffer and the engine see
+/// the same bytes.
+///
+/// # Safety
+///
+/// `closure_json` must point to `len` live bytes.
+#[no_mangle]
+pub unsafe extern "C" fn active_eval_sandboxed_len(
+    closure_json: *const u8,
+    len: usize,
+    budget: *const ActiveBudget,
+) -> *mut ActiveValue {
+    if closure_json.is_null() {
+        set_last(ACTIVE_ERR_NULL_HANDLE);
+        return std::ptr::null_mut();
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(closure_json, len) };
+    if bytes.contains(&0) {
+        set_last(ACTIVE_ERR_PARSE);
+        return std::ptr::null_mut();
+    }
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        set_last(ACTIVE_ERR_UTF8);
+        return std::ptr::null_mut();
+    };
+    let Ok(c_string) = std::ffi::CString::new(text) else {
+        set_last(ACTIVE_ERR_PARSE);
+        return std::ptr::null_mut();
+    };
+    unsafe { active_eval_sandboxed(c_string.as_ptr(), budget) }
+}
+
+/// L-P28: length-bounded sandbox check.
+///
+/// # Safety
+///
+/// `closure_json` must point to `len` live bytes.
+#[no_mangle]
+pub unsafe extern "C" fn active_check_sandboxed_len(
+    closure_json: *const u8,
+    len: usize,
+    budget: *const ActiveBudget,
+) -> *mut ActiveDiagnosticSet {
+    if closure_json.is_null() {
+        set_last(ACTIVE_ERR_NULL_HANDLE);
+        return std::ptr::null_mut();
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(closure_json, len) };
+    if bytes.contains(&0) {
+        set_last(ACTIVE_ERR_PARSE);
+        return std::ptr::null_mut();
+    }
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        set_last(ACTIVE_ERR_UTF8);
+        return std::ptr::null_mut();
+    };
+    let Ok(c_string) = std::ffi::CString::new(text) else {
+        set_last(ACTIVE_ERR_PARSE);
+        return std::ptr::null_mut();
+    };
+    unsafe { active_check_sandboxed(c_string.as_ptr(), budget) }
+}
+
+/// L-P28: check a §7.2a closure envelope without producing values.
+///
+/// # Safety
+///
+/// `closure_json` must be a NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn active_check_sandboxed(
+    closure_json: *const std::ffi::c_char,
+    budget: *const ActiveBudget,
+) -> *mut ActiveDiagnosticSet {
+    guard(std::ptr::null_mut(), || {
+        if closure_json.is_null() {
+            set_last(ACTIVE_ERR_NULL_HANDLE);
+            return std::ptr::null_mut();
+        }
+        let json = match unsafe { std::ffi::CStr::from_ptr(closure_json) }.to_str() {
+            Ok(text) => text,
+            Err(_) => {
+                set_last(ACTIVE_ERR_PARSE);
+                return std::ptr::null_mut();
+            }
+        };
+        let closure = match active_core::InputClosure::from_manifest(json, None, |path| {
+            Err(format!("FFI closures must embed include `{path}` bytes"))
+        }) {
+            Ok(closure) => closure,
+            Err(error) => {
+                set_last(if matches!(error, active_core::ClosureError::Manifest(_)) {
+                    ACTIVE_ERR_PARSE
+                } else {
+                    ACTIVE_ERR_SANDBOX_REFUSED
+                });
+                return std::ptr::null_mut();
+            }
+        };
+        let sandbox = match active_core::Sandbox::new(closure) {
+            Ok(sandbox) => sandbox,
+            Err(_) => {
+                set_last(ACTIVE_ERR_PARSE);
+                return std::ptr::null_mut();
+            }
+        };
+        let module = match sandbox.parse(active_core::ParseOptions::default()) {
+            Ok(module) => module,
+            Err(diagnostics) => {
+                let items = diagnostics.iter().map(snapshot).collect::<Vec<_>>();
+                set_last(parse_failure_code(&items));
+                return Box::into_raw(Box::new(ActiveDiagnosticSet { items }));
+            }
+        };
+        let mut engine = Engine::hermetic();
+        if apply_budget(&mut engine, budget, false).is_err() {
+            return std::ptr::null_mut();
+        }
+        let items = match sandbox.evaluate(&engine, &module) {
+            Ok((_, diagnostics)) => diagnostics.iter().map(snapshot).collect::<Vec<_>>(),
+            Err(active_core::EvalError::ValidationFailed { diagnostics }) => {
+                diagnostics.iter().map(snapshot).collect()
+            }
+            Err(error) => vec![snapshot_error(&error)],
+        };
+        set_last(classify_check(&items));
+        Box::into_raw(Box::new(ActiveDiagnosticSet { items }))
     })
 }
 

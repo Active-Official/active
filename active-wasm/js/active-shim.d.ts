@@ -41,6 +41,12 @@ export interface ActiveAPI {
 	 */
 	evaluatePure(source: string): ActiveEvaluateResult;
 	/**
+	 * L-P28: evaluate a §7.2a closure manifest (UTF-8 JSON text). The
+	 * module reads no filesystem or ambient environment; an
+	 * out-of-closure env/include/profile read is E048 in the envelope.
+	 */
+	evaluateSandboxed(manifest: string): ActiveEvaluateResult;
+	/**
 	 * L-P47: BLAKE3 hex digest of the exact UTF-8 source bytes. Throws when
 	 * the loaded module predates the export (fail loud, never guess a
 	 * hash).

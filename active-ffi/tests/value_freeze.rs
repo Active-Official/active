@@ -18,6 +18,8 @@ fn header() -> String {
 /// mutable because ownership transfers); no reader accepts a mutable one.
 const ALLOWED: &[&str] = &[
     "struct ActiveValue *active_eval(",
+    "struct ActiveValue *active_eval_sandboxed(",
+    "struct ActiveValue *active_eval_sandboxed_len(",
     "void active_value_free(struct ActiveValue *value);",
     "char *active_value_to_json(const struct ActiveValue *value);",
     "bool active_value_is_secret(const struct ActiveValue *value);",

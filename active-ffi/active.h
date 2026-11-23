@@ -61,6 +61,11 @@ extern "C" {
 #define ACTIVE_ERR_PURE_REFUSED 15
 
 /**
+ * L-P28: an evaluation input was outside its sandbox closure (E048).
+ */
+#define ACTIVE_ERR_SANDBOX_REFUSED 16
+
+/**
  * Owned diagnostic set from check/eval (F-013). Empty means clean.
  */
 typedef struct ActiveDiagnosticSet ActiveDiagnosticSet;
@@ -404,6 +409,55 @@ char *active_format(const struct ActiveModule *module, uint32_t style);
  * and must not have been freed before; null is accepted.
  */
 void active_string_free(char *s);
+
+/**
+ * L-P28: evaluate a §7.2a closure envelope. The envelope is host data
+ * (it may hold env secrets) and is never logged. A malformed envelope,
+ * duplicate env name after folding, or digest mismatch is a host-side
+ * refusal (ACTIVE_ERR_PARSE), before any document is parsed.
+ *
+ * # Safety
+ *
+ * `closure_json` must be a NUL-terminated UTF-8 string. The returned
+ * value follows the normal `active_value_*` ownership rules.
+ */
+struct ActiveValue *active_eval_sandboxed(const char *closure_json,
+                                          const struct ActiveBudget *budget);
+
+/**
+ * L-P28: length-bounded sandbox evaluation. Rejects embedded NUL and
+ * non-UTF-8; trailing non-whitespace is rejected by the JSON parser, so
+ * an approver hashing the exact `(ptr, len)` buffer and the engine see
+ * the same bytes.
+ *
+ * # Safety
+ *
+ * `closure_json` must point to `len` live bytes.
+ */
+struct ActiveValue *active_eval_sandboxed_len(const uint8_t *closure_json,
+                                              uintptr_t len,
+                                              const struct ActiveBudget *budget);
+
+/**
+ * L-P28: length-bounded sandbox check.
+ *
+ * # Safety
+ *
+ * `closure_json` must point to `len` live bytes.
+ */
+struct ActiveDiagnosticSet *active_check_sandboxed_len(const uint8_t *closure_json,
+                                                       uintptr_t len,
+                                                       const struct ActiveBudget *budget);
+
+/**
+ * L-P28: check a §7.2a closure envelope without producing values.
+ *
+ * # Safety
+ *
+ * `closure_json` must be a NUL-terminated UTF-8 string.
+ */
+struct ActiveDiagnosticSet *active_check_sandboxed(const char *closure_json,
+                                                   const struct ActiveBudget *budget);
 
 #endif  /* ACTIVE_H */
 

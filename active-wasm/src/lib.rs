@@ -236,6 +236,59 @@ fn escape_json(text: &str) -> String {
     out
 }
 
+fn eval_manifest_inner(manifest: &str) -> String {
+    let closure = match active_core::InputClosure::from_manifest(manifest, None, |path| {
+        Err(format!("WASM closures must embed include `{path}` bytes"))
+    }) {
+        Ok(closure) => closure,
+        Err(error) => {
+            let code = if matches!(error, active_core::ClosureError::Manifest(_)) {
+                "PARSE"
+            } else {
+                "E048"
+            };
+            return envelope_err(code, &error.to_string(), "null");
+        }
+    };
+    let sandbox = match active_core::Sandbox::new(closure) {
+        Ok(sandbox) => sandbox,
+        Err(error) => return envelope_err("E048", &error.to_string(), "null"),
+    };
+    let module = match sandbox.parse(active_core::ParseOptions::default()) {
+        Ok(module) => module,
+        Err(diags) => {
+            let lines: Vec<String> = diags
+                .iter()
+                .map(|d| format!("[{}] {}", d.code, d.message))
+                .collect();
+            return envelope_err_diagnostics(&lines.join("\n"), &diag_items(&diags));
+        }
+    };
+    let engine = Engine::hermetic();
+    match sandbox.evaluate_redacted(&engine, &module) {
+        Ok((value, diags)) => {
+            let json = active_core::convert::value_to_pretty_json(&value);
+            let lines: Vec<String> = diags
+                .iter()
+                .map(|d| format!("[{}] {}", d.code, d.message))
+                .collect();
+            let diagnosed_error = diags
+                .iter()
+                .any(|d| d.severity == active_core::Severity::Error);
+            let envelope = envelope_ok(
+                &json,
+                &serde_json::json!(lines.join("\n")).to_string(),
+                &diag_items(&diags),
+            );
+            if diagnosed_error {
+                return envelope_err_diagnostics(&lines.join("\n"), &diag_items(&diags));
+            }
+            envelope
+        }
+        Err(error) => envelope_err(error.code(), &format!("{error}"), "null"),
+    }
+}
+
 fn eval_inner(source: &str, pure: bool) -> String {
     let module = match parse(source, "wasm") {
         Ok(m) => m,
@@ -755,4 +808,41 @@ mod abi_guard_tests {
         active_free(out, len);
         assert!(unsafe { active_blake3(std::ptr::null(), 0) }.is_null());
     }
+}
+
+/// L-P28: evaluate a §7.2a closure manifest passed as UTF-8 bytes.
+///
+/// # Safety
+///
+/// `manifest_ptr` must point to `manifest_len` live bytes.
+#[no_mangle]
+pub unsafe extern "C" fn active_eval_sandboxed_json(
+    manifest_ptr: *const u8,
+    manifest_len: usize,
+    out_len: *mut usize,
+) -> *mut u8 {
+    if out_len.is_null() {
+        return std::ptr::null_mut();
+    }
+    let envelope = match catch_unwind(AssertUnwindSafe(|| {
+        if manifest_ptr.is_null() {
+            return envelope_err("ABI", "null pointer argument", "null");
+        }
+        if let Some(message) = source_bounds_error(manifest_ptr, manifest_len) {
+            return envelope_err("ABI", message, "null");
+        }
+        let bytes = unsafe { slice::from_raw_parts(manifest_ptr, manifest_len) };
+        match str::from_utf8(bytes) {
+            Ok(text) => eval_manifest_inner(text),
+            Err(_) => envelope_err("UTF8", "manifest is not valid UTF-8", "null"),
+        }
+    })) {
+        Ok(envelope) => envelope,
+        Err(_) => envelope_err("PANIC", "evaluation panicked; input rejected", "null"),
+    };
+    let bytes = envelope.into_bytes();
+    let len = bytes.len();
+    let (ptr, _) = retain(bytes);
+    unsafe { *out_len = len };
+    ptr
 }

@@ -14,7 +14,7 @@ keywords = ["configuration", "config", "wasm", "embedding"]
 categories = ["config", "development-tools", "wasm"]
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 active-core = { workspace = true }

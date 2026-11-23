@@ -91,7 +91,7 @@
 			return new TextEncoder().encode(input);
 		}
 
-		function evaluateWith(input, pure) {
+		function evaluateWith(input, exportName) {
 			const src = encodeInput(input);
 			const sp = ex.active_alloc(src.length);
 			// A request over the 64 MiB transport cap returns null; without
@@ -112,9 +112,13 @@
 				if (!slot) {
 					throw new Error("active-wasm: envelope length allocation failed");
 				}
-				out = pure
-					? ex.active_eval_json_pure(sp, src.length, slot)
-					: ex.active_eval_json(sp, src.length, slot);
+				const run = ex[exportName];
+				if (typeof run !== "function") {
+					throw new Error(
+						`active-wasm: module does not export ${exportName}`,
+					);
+				}
+				out = run(sp, src.length, slot);
 				if (!out) {
 					throw new Error("active-wasm: evaluation returned no envelope");
 				}
@@ -144,7 +148,7 @@
 		}
 
 		function evaluate(input) {
-			return evaluateWith(input, false);
+			return evaluateWith(input, "active_eval_json");
 		}
 
 		// L-P05: refuse env reads, unpinned includes, and profile overrides
@@ -156,7 +160,16 @@
 					"active-wasm: pure mode requires a module built with L-P05 (active_eval_json_pure)",
 				);
 			}
-			return evaluateWith(input, true);
+			return evaluateWith(input, "active_eval_json_pure");
+		}
+
+		/**
+		 * L-P28: evaluate a §7.2a closure manifest (UTF-8 JSON text).
+		 * The module reads no filesystem or ambient environment; an
+		 * out-of-closure input is E048 in the envelope.
+		 */
+		function evaluateSandboxed(input) {
+			return evaluateWith(input, "active_eval_sandboxed_json");
 		}
 
 		// L-P47: BLAKE3 hex digest of the source bytes, so the playground
@@ -201,7 +214,13 @@
 			}
 		}
 
-		const api = Object.freeze({ evaluate, evaluatePure, hash, abiVersion: 1 });
+		const api = Object.freeze({
+			evaluate,
+			evaluatePure,
+			evaluateSandboxed,
+			hash,
+			abiVersion: 1,
+		});
 		if (typeof window !== "undefined") window.ActiveAPI = api;
 		return api;
 	}

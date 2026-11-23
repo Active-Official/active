@@ -613,3 +613,7 @@ inputs were evaluated before.
   preserves its permissions, and writes a deterministic receipt whose
   hash covers the receipt without `receipt_hash`.
 - CLI tests for `ACTIVE lock` incl. exit codes and `-o`.
+
+## Sandbox closure (L-P28)
+
+An evaluation whose inputs come from an `InputClosure` is reproducible across hosts: the closure carries the document, exact include bytes with digests, declared env names/values (or declared absence), and the host profile. The engine reads no filesystem, network, clock, or ambient environment; a read outside the closure is E048. See `spec/sandbox.md` for the closure shape, id, and per-surface checklist.

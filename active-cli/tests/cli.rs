@@ -9815,3 +9815,224 @@ fn a_budget_trip_repair_receipt_names_the_budget_class() {
     assert_eq!(envelope["receipt"]["failure_class"], "budget", "{text}");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+// ------------------------------------------------------------------
+// L-P28: `--sandbox-closure` manifest (spec/sandbox.md).
+// ------------------------------------------------------------------
+
+#[test]
+fn sandboxed_eval_uses_the_manifest_closure() {
+    let document = fixture_in("sandbox-cli", "main.active", "p = env.P ?: \"default\"\n");
+    let manifest = fixture_in(
+        "sandbox-cli",
+        "closure.json",
+        r#"{"version":1,"source_name":"main.active","includes":[],"env":[{"name":"P","set":true,"value":"closed"}]}"#,
+    );
+    let out = active()
+        .args(["eval", "--format", "json", "--sandbox-closure"])
+        .arg(&manifest)
+        .arg(&document)
+        .output()
+        .expect("run active");
+    assert!(out.status.success(), "{out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("\"closed\""), "{stdout}");
+
+    let undeclared = fixture_in(
+        "sandbox-cli",
+        "undeclared.json",
+        r#"{"version":1,"source_name":"main.active","includes":[],"env":[]}"#,
+    );
+    let refused = active()
+        .args(["eval", "--format", "json", "--sandbox-closure"])
+        .arg(&undeclared)
+        .arg(&document)
+        .output()
+        .expect("run active");
+    assert!(!refused.status.success(), "{refused:?}");
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("E048"));
+
+    // The closure-backed test runner is not shipped yet: the command must
+    // refuse loudly instead of returning a false green.
+    let tested = active()
+        .args(["test", "--sandbox-closure"])
+        .arg(&manifest)
+        .arg(&document)
+        .output()
+        .expect("run active test");
+    assert!(!tested.status.success(), "{tested:?}");
+    assert!(String::from_utf8_lossy(&tested.stderr).contains("closure-backed test runner"));
+}
+
+#[test]
+fn check_accepts_the_sandbox_closure_flag() {
+    let document = fixture_in("sandbox-check", "main.active", "p = env.P ?: \"default\"\n");
+    let manifest = fixture_in(
+        "sandbox-check",
+        "closure.json",
+        r#"{"version":1,"source_name":"main.active","includes":[],"env":[{"name":"P","set":true,"value":"closed"}]}"#,
+    );
+    let out = active()
+        .args(["check", "--sandbox-closure"])
+        .arg(&manifest)
+        .arg(&document)
+        .output()
+        .expect("run active check");
+    assert!(out.status.success(), "{out:?}");
+}
+
+#[test]
+fn pure_wins_over_sandbox_for_an_undeclared_env() {
+    let document = fixture_in("sandbox-pure", "main.active", "p = env.PORT\n");
+    let manifest = fixture_in(
+        "sandbox-pure",
+        "closure.json",
+        r#"{"version":1,"source_name":"main.active","includes":[],"env":[]}"#,
+    );
+    let out = active()
+        .args(["eval", "--format", "json", "--pure", "--sandbox-closure"])
+        .arg(&manifest)
+        .arg(&document)
+        .output()
+        .expect("run active eval");
+    assert!(!out.status.success(), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("--pure"),
+        "the adapter must refuse --pure rather than drop it: {out:?}"
+    );
+}
+
+#[test]
+fn portability_two_ambient_environments_and_working_directories() {
+    use std::fs;
+    let root = std::env::temp_dir().join("active-sandbox-portability");
+    let _ = fs::remove_dir_all(&root);
+    let a = root.join("a");
+    let b = root.join("b");
+    fs::create_dir_all(&a).expect("a");
+    fs::create_dir_all(&b).expect("b");
+    let doc = "include \"lib.active\"\np = env.PORT\n";
+    fs::write(a.join("main.active"), doc).expect("doc a");
+    fs::write(b.join("main.active"), doc).expect("doc b");
+    fs::write(a.join("lib.active"), "q = 1\n").expect("lib a");
+    fs::write(b.join("lib.active"), "q = 1\n").expect("lib b");
+    let sha = "81d1abb45f0660cfdfe35a0a3c8d404f153235b01d1d709aa5f67d3f22e36ed5";
+    let manifest = root.join("closure.json");
+    fs::write(
+        &manifest,
+        format!(
+            r#"{{"version":1,"source_name":"main.active","includes":[{{"path":"lib.active","sha256":"{sha}"}}],"env":[{{"name":"PORT","set":true,"value":"8080"}}]}}"#
+        ),
+    )
+    .expect("manifest");
+
+    let sandboxed = |dir: &std::path::Path, ambient: &str| {
+        let out = active()
+            .current_dir(dir)
+            .env("PORT", ambient)
+            .args(["eval", "--format", "json", "--sandbox-closure"])
+            .arg(&manifest)
+            .arg(dir.join("main.active"))
+            .output()
+            .expect("sandboxed");
+        assert!(out.status.success(), "{out:?}");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    assert_eq!(
+        sandboxed(&a, "1111"),
+        sandboxed(&b, "2222"),
+        "the closure must make environment and cwd irrelevant"
+    );
+
+    let plain = |dir: &std::path::Path, ambient: &str| {
+        let out = active()
+            .current_dir(dir)
+            .env("PORT", ambient)
+            .args(["eval", "--format", "json"])
+            .arg(dir.join("main.active"))
+            .output()
+            .expect("plain");
+        assert!(out.status.success(), "{out:?}");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    assert_ne!(
+        plain(&a, "1111"),
+        plain(&b, "2222"),
+        "the unsandboxed control must see the ambient value"
+    );
+}
+
+#[test]
+fn sandboxed_allowlisted_document_commands_work() {
+    let document = fixture_in(
+        "sandbox-allowlist",
+        "main.active",
+        "base = 1\nb = base + 1\n",
+    );
+    let manifest = fixture_in(
+        "sandbox-allowlist",
+        "closure.json",
+        r#"{"version":1,"source_name":"main.active","includes":[],"env":[]}"#,
+    );
+    let run = |args: &[&str]| {
+        let mut cmd = active();
+        cmd.args(args)
+            .arg("--sandbox-closure")
+            .arg(&manifest)
+            .arg(&document);
+        cmd.output().expect("run active")
+    };
+    let convert = run(&["convert", "--to", "json"]);
+    assert!(convert.status.success(), "{convert:?}");
+    assert!(String::from_utf8_lossy(&convert.stdout).contains("\"b\""));
+    let graph = run(&["graph", "--format", "json"]);
+    assert!(graph.status.success(), "{graph:?}");
+    let impact = run(&["impact", "base", "--format", "json"]);
+    assert!(impact.status.success(), "{impact:?}");
+    let why = run(&["why", "b", "--format", "json"]);
+    assert!(why.status.success(), "{why:?}");
+    let inspect = active()
+        .args(["inspect", "--from"])
+        .arg(&document)
+        .args(["--path", "b", "--format", "json", "--sandbox-closure"])
+        .arg(&manifest)
+        .output()
+        .expect("run active inspect");
+    assert!(inspect.status.success(), "{inspect:?}");
+    assert!(String::from_utf8_lossy(&inspect.stdout).contains('2'));
+}
+
+#[test]
+fn evaluating_allowlisted_commands_refuse_an_out_of_closure_env() {
+    // Graph/Impact/Why are parse-only graph queries: they never read env,
+    // so only the evaluating surfaces can prove the guard here.
+    let document = fixture_in("sandbox-refuse", "main.active", "p = env.OTHER\n");
+    let manifest = fixture_in(
+        "sandbox-refuse",
+        "closure.json",
+        r#"{"version":1,"source_name":"main.active","includes":[],"env":[]}"#,
+    );
+    let mut commands: Vec<Vec<String>> = vec![
+        vec!["convert".into(), "--to".into(), "json".into()],
+        vec![
+            "inspect".into(),
+            "--from".into(),
+            document.display().to_string(),
+            "--path".into(),
+            "p".into(),
+        ],
+    ];
+    for args in commands.drain(..) {
+        let mut cmd = active();
+        cmd.args(&args).arg("--sandbox-closure").arg(&manifest);
+        if args[0] != "inspect" {
+            cmd.arg(&document);
+        }
+        let out = cmd.output().expect("run active");
+        assert!(!out.status.success(), "{args:?}: {out:?}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("E048"),
+            "{args:?}: {out:?}"
+        );
+    }
+}

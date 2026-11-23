@@ -223,6 +223,10 @@ pub struct ParseOptions {
     /// parsed bytes are stored by SHA-256. A store failure is W018 and
     /// never changes the evaluated tree.
     pub include_store: Option<std::path::PathBuf>,
+    /// Diagnostic code for an include-loader failure (L-P28). `None` keeps
+    /// E017; the sandbox sets E048 so an out-of-closure read is a sandbox
+    /// refusal.
+    pub include_error_code: Option<&'static str>,
 }
 
 /// Default parse input cap: 4 MiB (LANG-C-003). Above any real
@@ -286,6 +290,7 @@ impl Default for ParseOptions {
             include_lock: None,
             root_dir: None,
             include_store: None,
+            include_error_code: None,
         }
     }
 }
@@ -305,6 +310,7 @@ impl ParseOptions {
             include_lock: None,
             root_dir: None,
             include_store: None,
+            include_error_code: None,
         }
     }
 
@@ -322,6 +328,7 @@ impl ParseOptions {
             include_lock: None,
             root_dir: None,
             include_store: None,
+            include_error_code: None,
         }
     }
 }
@@ -2981,12 +2988,42 @@ impl Parser {
                     .map(|p| p.to_string_lossy().into_owned())
                     .unwrap_or_else(|| canonical.to_string_lossy().into_owned());
                 match loader(&callback_path) {
-                    Ok(s) => std::sync::Arc::new(s),
+                    Ok(s) => {
+                        let remaining =
+                            Self::MAX_INCLUDED_BYTES.saturating_sub(self.included_bytes);
+                        if s.len() > remaining {
+                            return fail(
+                                self,
+                                "E028",
+                                format!(
+                                    "include size budget exceeded ({} bytes read); a document may include at most {} bytes",
+                                    self.included_bytes,
+                                    Self::MAX_INCLUDED_BYTES
+                                ),
+                            );
+                        }
+                        if self.options.max_input_bytes != 0
+                            && s.len() > self.options.max_input_bytes
+                        {
+                            self.budget_violation =
+                                Some("include exceeds max_input_bytes".to_string());
+                            return fail(
+                                self,
+                                "E029",
+                                format!(
+                                    "parse budget exceeded: input is {} bytes; the limit is {}",
+                                    s.len(),
+                                    self.options.max_input_bytes
+                                ),
+                            );
+                        }
+                        std::sync::Arc::new(s)
+                    }
                     Err(e) => {
                         return fail(
                             self,
-                            "E017",
-                            format!("include loader refused `{}`: {e}", canonical.display()),
+                            self.options.include_error_code.unwrap_or("E017"),
+                            format!("include loader refused `{raw:?}`: {e}"),
                         );
                     }
                 }

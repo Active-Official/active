@@ -112,7 +112,10 @@ CYCLE(3), UNIT_MISMATCH(4), SECRET_REFUSAL(5), BUDGET_EXCEEDED(6),
 INCLUDE_FAIL(7), SCHEMA_FAIL(8), NULL_HANDLE(9), PANIC_CAUGHT(10),
 ABI_MISMATCH(11), BAD_BUDGET(12), UTF8(13), BAD_ARGUMENT(14),
 PURE_REFUSED(15) (L-P05: `active_set_pure`; eval, check, and validate all
-report it for an ambient input). Codes map from internal
+report it for an ambient input), SANDBOX_REFUSED(16) (L-P28: E048 from
+`active_eval_sandboxed`/`active_check_sandboxed`; an include-path escape
+E015/E016 still maps to INCLUDE_FAIL, so a host detecting "outside the
+closure" handles both). Codes map from internal
 diagnostic classes (E/W/H/T/S/X plus budgets); codes are never reused and
 change only additively within 1.x. Diagnostics export stable code, span
 (path or index, line, column, end line, end column), severity, and optional
@@ -223,3 +226,17 @@ reviewed together.
 input is returned verbatim, exactly as the file holds it. That is not a
 leak (the output's exposure equals the input file's), but a host must not
 log formatted output (LANG-I-011); every JSON exporter redacts.
+
+
+## Sandboxed entry points (L-P28)
+
+`active_eval_sandboxed(const char *closure_json, const ActiveBudget *)`
+and `active_check_sandboxed(const char *closure_json, const ActiveBudget *)`
+take the §7.2a closure envelope (base64 document/includes, sorted env,
+optional profile) and evaluate only inside it. The envelope is host
+data and may contain secrets: the library never logs or caches it.
+A malformed envelope, a digest mismatch, a duplicate env name after
+folding, an undeclared env/include/profile, or a fallback-bearing
+configuration is a host-side refusal mapped to the E048 class, never a
+document diagnostic. The parser never sees an include path from these
+calls. Full contract: `spec/sandbox.md`.

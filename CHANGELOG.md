@@ -10,6 +10,22 @@ standalone Infinity codec).
 
 ## [Unreleased]
 
+### L-P28: hermetic evaluation sandbox
+
+Adds `InputClosure`/`Sandbox`/`SandboxedModule` to active-core: a host
+supplies the document, exact include bytes with SHA-256, declared env
+names/values (or declared absence), and an optional profile; the engine
+reads nothing else. Includes come from a closure loader, the closure env
+replaces the ambient snapshot, and a guarded `evaluate_walk` refuses an
+undeclared env/include/profile or a fallback with the new stable code
+**E048**. The §7.2a JSON manifest is shared by the CLI
+(`--sandbox-closure` on eval, check, convert, graph, impact, why, inspect;
+other commands fail loudly until wired), FFI
+(`active_eval_sandboxed`/`active_check_sandboxed`), WASM
+(`active_eval_sandboxed_json`), and the LSP
+(`analysis_with_closure`/`steps_snapshot_with_closure`). `spec/sandbox.md`
+is normative; surface docs and the new-surface checklist are updated.
+
 ### L-P38: property tests as the spec
 
 Adds generated property tests (`active-core/tests/properties.rs`) for

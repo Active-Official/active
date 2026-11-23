@@ -368,3 +368,18 @@ Rules:
 
 Hover appends the same per-code guidance to lint findings it shows
 (`_fix_: ...`), so the explainer is available where the finding is.
+
+
+## Sandboxed analysis (L-P28)
+
+`analysis_with_closure` and `steps_snapshot_with_closure` are embedding
+APIs: a host that embeds `active-lsp` builds the `InputClosure` and calls
+them directly (the editor's include provider is the only source of
+include bytes). They run the same guarded engine as `Sandbox`; an
+out-of-closure env/include/profile read is E048. The text must equal the
+closure document; a dirty buffer rebuilds the closure rather than mixing
+text and module. The plain `analysis`/`steps_snapshot` entries remain the
+unsandboxed legacy paths. The shipped `active-lsp` binary has no closure
+request or initialization option yet, so it does not advertise a protocol
+entry it does not implement; a client opts in through the embedding API.
+Full contract: `spec/sandbox.md`.

@@ -83,3 +83,14 @@ def evaluate(source: str) -> dict:
 Memory slices are `[start:stop]` in this API generation; results are bare
 values, not lists. Proven against the shipped module (clean value, T001
 refusal, secret redaction) before this recipe was written.
+
+
+## Sandboxed WASM/native entry (L-P28)
+
+A binding that exposes the sandbox gets the envelope entry described in
+`spec/sandbox.md` §7.2a (`active_eval_sandboxed`/`active_check_sandboxed`
+over FFI; the WASM build mirrors the eval call with the same JSON
+envelope). The host builds the closure, including env values (treated
+as secrets), and the engine reads no filesystem or ambient environment.
+A binding that does not expose the new symbol is the old, unsandboxed
+surface and must say so; it cannot claim L-P28 support.

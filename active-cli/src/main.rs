@@ -5,7 +5,9 @@ use active_core::convert::{
     value_to_yaml_string, value_to_yaml_string_materialised, yaml_text_to_active,
 };
 use active_core::diag::{Diagnostic, Severity};
-use active_core::{parse_file, Budget, Engine, EvalError, ParseOptions, Style};
+use active_core::{
+    parse_file, Budget, Engine, EvalError, InputClosure, ParseOptions, Sandbox, Style,
+};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -71,6 +73,11 @@ struct Cli {
     /// spec/budgets.md §1b.
     #[arg(long, global = true, value_name = "MS")]
     parse_wall_ms: Option<u64>,
+    /// Evaluate through an L-P28 input-closure manifest (§7.2a). The
+    /// positional document is used when `document_b64` is absent; include
+    /// bytes are read and digested by this host before the closure exists.
+    #[arg(long, global = true, value_name = "MANIFEST")]
+    sandbox_closure: Option<PathBuf>,
     #[command(subcommand)]
     command: Commands,
 }
@@ -79,6 +86,89 @@ struct Cli {
 /// parser is constructed in several command paths, and the limits are a
 /// property of the process invocation, so they are resolved once here.
 static PARSE_LIMITS: std::sync::OnceLock<(usize, u64)> = std::sync::OnceLock::new();
+
+thread_local! {
+    /// L-P28 CLI adapter: the closure manifest for this invocation and
+    /// the sandbox built for the most recent parsed document.
+    static SANDBOX: std::cell::RefCell<Option<(std::path::PathBuf, Option<Sandbox>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn install_sandbox_manifest(path: &std::path::Path) {
+    SANDBOX.with(|slot| {
+        *slot.borrow_mut() = Some((path.to_path_buf(), None));
+    });
+}
+
+fn set_profile_override(engine: &mut Engine, profile: Option<String>) {
+    // A closure profile is part of the sandbox tuple; a later CLI
+    // assignment of None must not erase it (M-4).
+    if active_sandbox().is_some() {
+        return;
+    }
+    engine.profile_override = profile;
+}
+
+fn sandboxed_engine(mut engine: Engine) -> Engine {
+    if let Some(sandbox) = active_sandbox() {
+        // Engine::new snapshots the process ambient. A sandboxed command
+        // must not retain it even if configure_engine later fails.
+        engine.env.clear();
+        engine.env_fallback = None;
+        let _ = sandbox.configure_engine(&mut engine);
+    }
+    engine
+}
+
+fn active_sandbox() -> Option<Sandbox> {
+    SANDBOX.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .and_then(|(_, sandbox)| sandbox.clone())
+    })
+}
+
+fn parse_maybe_sandboxed(
+    file: &std::path::Path,
+    options: ParseOptions,
+) -> Result<active_core::Module, Vec<active_core::Diagnostic>> {
+    let manifest = SANDBOX.with(|slot| slot.borrow().as_ref().map(|(path, _)| path.clone()));
+    let Some(manifest) = manifest else {
+        return parse_file(file, options);
+    };
+    let closure = build_closure(&manifest, file).map_err(|error| {
+        vec![active_core::Diagnostic {
+            severity: active_core::Severity::Error,
+            code: "E048".into(),
+            message: error.to_string(),
+            path: None,
+            span: None,
+            repair: None,
+            confidence: 1.0,
+            file: None,
+        }]
+    })?;
+    let sandbox = Sandbox::new(closure).map_err(|error| {
+        vec![active_core::Diagnostic {
+            severity: active_core::Severity::Error,
+            code: "E048".into(),
+            message: error.to_string(),
+            path: None,
+            span: None,
+            repair: None,
+            confidence: 1.0,
+            file: None,
+        }]
+    })?;
+    let module = sandbox.parse(options)?;
+    let parsed = module.module().clone();
+    SANDBOX.with(|slot| {
+        if let Some((_, current)) = slot.borrow_mut().as_mut() {
+            *current = Some(sandbox);
+        }
+    });
+    Ok(parsed)
+}
 
 /// Apply the process-wide parse limits (LANG-C-003) to a constructed
 /// option set. Absent flags leave the library defaults intact.
@@ -1447,7 +1537,7 @@ fn run_doctor(root: &Path, explicit_path: bool, format: &str) -> anyhow::Result<
     let self_eval = active_core::parse("a = 1\nb = a + 1\n", "doctor");
     match self_eval {
         Ok(module) => {
-            let engine = Engine::new();
+            let engine = sandboxed_engine(Engine::new());
             match engine.evaluate(&module) {
                 Ok((value, _)) => {
                     let json = active_core::convert::value_to_json(&value);
@@ -1482,7 +1572,7 @@ fn run_doctor(root: &Path, explicit_path: bool, format: &str) -> anyhow::Result<
         "doctor-refusal",
     ) {
         Ok(module) => {
-            let engine = Engine::new();
+            let engine = sandboxed_engine(Engine::new());
             let refused = match engine.evaluate(&module) {
                 Ok((_, diags)) => diags
                     .iter()
@@ -1507,7 +1597,7 @@ fn run_doctor(root: &Path, explicit_path: bool, format: &str) -> anyhow::Result<
     // Budgets fail closed: one node under a one-node cap is refused.
     match active_core::parse("a = 1\nb = 2\nc = 3\n", "doctor-budget") {
         Ok(module) => {
-            let mut engine = Engine::new();
+            let mut engine = sandboxed_engine(Engine::new());
             engine.budget.max_nodes = 1;
             match engine.evaluate(&module) {
                 Err(EvalError::BudgetExceeded { .. }) => checks.push(DoctorCheck::pass(
@@ -1685,6 +1775,12 @@ fn run_inspect(
 ) -> anyhow::Result<()> {
     let trust = load_trust(trust_keys)?;
     let module = parse_input(from, false, false, &trust)?;
+    // Report/material profiles must use the closure's host profile; the
+    // CLI --profile is refused under the flag, so it cannot supply it.
+    let profile = profile.clone().or_else(|| {
+        active_sandbox().and_then(|sandbox| sandbox.profile_override().map(str::to_string))
+    });
+    let profile = &profile;
     match path {
         None => {
             if format != "json" {
@@ -1702,8 +1798,8 @@ fn run_inspect(
             );
         }
         Some(path) => {
-            let mut evaluation_engine = Engine::new();
-            evaluation_engine.profile_override = profile.clone();
+            let mut evaluation_engine = sandboxed_engine(Engine::new());
+            set_profile_override(&mut evaluation_engine, profile.clone());
             // Retain payloads so a payload-resident secret is visible to
             // the taint check; the report strips payloads before output.
             evaluation_engine.materialise_blobs = true;
@@ -1713,7 +1809,9 @@ fn run_inspect(
             // the wall cost and could diverge on a marginal budget.
             let (value, _, layers, merges, seeds) = evaluation_engine
                 .evaluate_with_layers_merges_and_seeds(&module)
-                .map_err(|e| anyhow::anyhow!("cannot evaluate for inspection: {e}"))?;
+                .map_err(|e| {
+                    anyhow::anyhow!("cannot evaluate for inspection: {}: {e}", e.code())
+                })?;
             let report = active_core::convert::inspect_path_with_layers_and_merges(
                 &module,
                 &value,
@@ -1857,9 +1955,13 @@ fn parse_input(
         None => None,
     };
     let options = options_with_lock(resilient, allow_parent_escapes, lock, None);
-    let result = match trust {
-        Some(keys) => active_core::parse_file_with_trust(file, options, keys),
-        None => parse_file(file, options),
+    let result = if SANDBOX.with(|slot| slot.borrow().is_some()) {
+        parse_maybe_sandboxed(file, options)
+    } else {
+        match trust {
+            Some(keys) => active_core::parse_file_with_trust(file, options, keys),
+            None => parse_file(file, options),
+        }
     };
     result.map_err(|diags| {
         for d in &diags {
@@ -1884,9 +1986,13 @@ fn parse_input_unpinned(
     let name = file.to_string_lossy().to_string();
     let mut options = options(resilient, allow_parent_escapes);
     options.include_store = store;
-    let result = match trust {
-        Some(keys) => active_core::parse_file_with_trust(file, options, keys),
-        None => parse_file(file, options),
+    let result = if SANDBOX.with(|slot| slot.borrow().is_some()) {
+        parse_maybe_sandboxed(file, options)
+    } else {
+        match trust {
+            Some(keys) => active_core::parse_file_with_trust(file, options, keys),
+            None => parse_file(file, options),
+        }
     };
     result.map_err(|diags| {
         for d in &diags {
@@ -1910,6 +2016,9 @@ fn parse_input_or_diags_locked(
     store: Option<PathBuf>,
 ) -> Result<active_core::Module, Vec<active_core::Diagnostic>> {
     let options = options_with_lock(resilient, allow_parent_escapes, lock, store);
+    if SANDBOX.with(|slot| slot.borrow().is_some()) {
+        return parse_maybe_sandboxed(file, options);
+    }
     match trust {
         Some(keys) => active_core::parse_file_with_trust(file, options, keys),
         None => parse_file(file, options),
@@ -2328,7 +2437,7 @@ fn serve_request(
     }
     let mut engine = Engine::hermetic();
     engine.resilient = false;
-    engine.profile_override = profile.clone();
+    set_profile_override(&mut engine, profile.clone());
     engine.budget = budget;
     let engine = engine.with_env(env);
     let envelope = serve_evaluate(source, &name, &engine);
@@ -3219,12 +3328,15 @@ fn engine(
     budget: Budget,
     reader_version: Option<&str>,
 ) -> Engine {
-    let mut engine = Engine::new(); // The CLI is strict by default: only --resilient tolerates
-                                    // violations. Engine::new stays resilient for library use.
+    let mut engine = sandboxed_engine(Engine::new()); // The CLI is strict by default: only --resilient tolerates
+                                                      // violations. Engine::new stays resilient for library use.
     engine.resilient = resilient;
-    engine.profile_override = profile.clone();
+    set_profile_override(&mut engine, profile.clone());
     engine.budget = budget;
     engine.reader_version = reader_version.map(str::to_string);
+    if let Some(sandbox) = active_sandbox() {
+        let _ = sandbox.configure_engine(&mut engine);
+    }
     engine
 }
 
@@ -3315,14 +3427,30 @@ fn material_profile_with(
     let mut profile =
         active_core::secret::SecretProfile::analyze_with_profile(module, override_profile);
     let mut env = std::collections::HashMap::new();
+    let sandbox = active_sandbox();
     for node in &module.arena {
         if let active_core::ir::Node::Env { name, .. } = node {
             if profile.env_is_material(name) {
                 // LANG-H-003: the engine folds env names to uppercase at
-                // snapshot time; the tool profile reads the same spelling
-                // so a mixed-case reference absorbs the right value.
-                if let Ok(value) = std::env::var(active_core::eval::canonical_env_name(name)) {
-                    env.insert(name.clone(), value);
+                // snapshot time. Under a closure the only value is the
+                // declared one; a declared-absent name never falls back to
+                // the process environment (H-1).
+                match sandbox.as_ref() {
+                    Some(sandbox) => {
+                        if let Some(Some(value)) = sandbox.env_value(name) {
+                            env.insert(
+                                active_core::eval::canonical_env_name(name),
+                                value.to_string(),
+                            );
+                        }
+                    }
+                    None => {
+                        if let Ok(value) =
+                            std::env::var(active_core::eval::canonical_env_name(name))
+                        {
+                            env.insert(active_core::eval::canonical_env_name(name), value);
+                        }
+                    }
                 }
             }
         }
@@ -4198,7 +4326,7 @@ fn build_semantic_diff(
         .map(|pin| PathBuf::from(&pin.stamp))
         .collect();
     let mut engine = Engine::strict();
-    engine.profile_override = profile.clone();
+    set_profile_override(&mut engine, profile.clone());
     engine.budget = budget;
     let old_name = old.to_string_lossy().to_string();
     let new_name = new.to_string_lossy().to_string();
@@ -4862,6 +4990,154 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     publish(&mut prepared, path)
 }
 
+fn build_closure(
+    manifest: &std::path::Path,
+    document: &std::path::Path,
+) -> anyhow::Result<InputClosure> {
+    if let Ok(metadata) = std::fs::metadata(manifest) {
+        if metadata.len() > 24 * 1024 * 1024 {
+            anyhow::bail!("closure manifest exceeds the 24 MiB transport cap");
+        }
+    }
+    let manifest_text = std::fs::read_to_string(manifest)?;
+    let manifest_json: serde_json::Value = serde_json::from_str(&manifest_text)
+        .map_err(|error| anyhow::anyhow!("invalid closure manifest: {error}"))?;
+    // Only read the positional document when the closure does not carry
+    // its own bytes; a self-contained manifest plus a nonexistent path
+    // must still work and must not touch the host file (M-5).
+    let document_text = if manifest_json.get("document_b64").is_some() {
+        None
+    } else {
+        Some(std::fs::read_to_string(document)?)
+    };
+    let base = document
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    InputClosure::from_manifest(&manifest_text, document_text.as_deref(), |include| {
+        std::fs::read_to_string(base.join(include))
+            .map_err(|error| format!("cannot read include `{include}`: {error}"))
+    })
+    .map_err(|error| anyhow::anyhow!("{error}"))
+}
+
+fn sandboxed_outcome(
+    manifest: &std::path::Path,
+    document: &std::path::Path,
+    resilient: bool,
+    pure: bool,
+    redact: bool,
+) -> anyhow::Result<(active_core::Value, Vec<active_core::Diagnostic>)> {
+    let closure =
+        build_closure(manifest, document).map_err(|error| anyhow::anyhow!("E048: {error}"))?;
+    let sandbox = Sandbox::new(closure).map_err(|error| anyhow::anyhow!("E048: {error}"))?;
+    let options = with_parse_limits(ParseOptions {
+        resilient,
+        ..Default::default()
+    });
+    let module = sandbox
+        .parse(options)
+        .map_err(|diagnostics| anyhow::anyhow!("{diagnostics:?}"))?;
+    let mut engine = Engine::hermetic();
+    engine.resilient = resilient;
+    engine.pure = pure;
+    let outcome = if redact {
+        sandbox.evaluate_redacted(&engine, &module)
+    } else {
+        sandbox.evaluate(&engine, &module)
+    };
+    outcome.map_err(|error| anyhow::anyhow!("{}: {error}", error.code()))
+}
+
+fn run_sandboxed_command(command: &Commands, manifest: &std::path::Path) -> anyhow::Result<()> {
+    match command {
+        Commands::Eval {
+            file,
+            format,
+            resilient,
+            pure,
+            ..
+        } => {
+            if format != "json" {
+                anyhow::bail!("--sandbox-closure supports `eval --format json`");
+            }
+            let (value, diagnostics) = sandboxed_outcome(manifest, file, *resilient, *pure, true)?;
+            for diagnostic in &diagnostics {
+                eprintln!(
+                    "[{:?}] {}: {}",
+                    diagnostic.severity, diagnostic.code, diagnostic.message
+                );
+            }
+            println!("{}", active_core::convert::value_to_pretty_json(&value));
+            if diagnostics
+                .iter()
+                .any(|d| d.severity == active_core::Severity::Error)
+            {
+                anyhow::bail!("sandboxed evaluation reported errors");
+            }
+            Ok(())
+        }
+        Commands::Check {
+            file,
+            resilient,
+            pure,
+            ..
+        } => {
+            let (_, diagnostics) = sandboxed_outcome(manifest, file, *resilient, *pure, false)?;
+            for diagnostic in &diagnostics {
+                eprintln!(
+                    "[{:?}] {}: {}",
+                    diagnostic.severity, diagnostic.code, diagnostic.message
+                );
+            }
+            if diagnostics
+                .iter()
+                .any(|d| d.severity == active_core::Severity::Error)
+            {
+                anyhow::bail!("sandboxed check reported errors");
+            }
+            Ok(())
+        }
+        Commands::Test { paths, strict, .. } => {
+            let mut failed = false;
+            for path in paths {
+                let files = if path.is_dir() {
+                    std::fs::read_dir(path)?
+                        .filter_map(Result::ok)
+                        .map(|entry| entry.path())
+                        .filter(|path| path.extension().is_some_and(|ext| ext == "active"))
+                        .collect::<Vec<_>>()
+                } else {
+                    vec![path.clone()]
+                };
+                for file in files {
+                    let (_, diagnostics) = sandboxed_outcome(manifest, &file, true, false, false)?;
+                    let bad = diagnostics.iter().any(|d| {
+                        d.severity == active_core::Severity::Error
+                            || (*strict && d.severity == active_core::Severity::Warning)
+                    });
+                    if bad {
+                        failed = true;
+                        for diagnostic in &diagnostics {
+                            eprintln!(
+                                "{}: [{:?}] {}: {}",
+                                file.display(),
+                                diagnostic.severity,
+                                diagnostic.code,
+                                diagnostic.message
+                            );
+                        }
+                    }
+                }
+            }
+            if failed {
+                anyhow::bail!("sandboxed test reported failures");
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     // Before any output: the first write after an early reader close must
     // kill the filter, not panic.
@@ -4900,6 +5176,70 @@ fn main() -> anyhow::Result<()> {
     let worker = std::thread::Builder::new()
         .stack_size(32 * 1024 * 1024)
         .spawn(move || -> anyhow::Result<()> {
+    if let Some(manifest) = cli.sandbox_closure.clone() {
+        install_sandbox_manifest(&manifest);
+        let inspect_command = matches!(cli.command, Commands::Inspect { .. });
+        for arg in std::env::args_os().skip(1) {
+            let arg = arg.to_string_lossy();
+            let flag = arg.split('=').next().unwrap_or(&arg);
+            if flag == "--path" && inspect_command {
+                continue;
+            }
+            if matches!(
+                flag,
+                "--profile"
+                    | "--trust-keys"
+                    | "--lockfile"
+                    | "--store"
+                    | "--cache"
+                    | "--trace"
+                    | "--materialise-blobs"
+                    | "--path"
+                    | "--peer"
+                    | "--audit-trail"
+                    | "--envelope"
+                    | "--envelope-trust"
+                    | "--sandbox"
+                    | "--reader-version"
+                    | "--pure"
+                    | "--budget-profile"
+                    | "--allow-parent-escapes"
+                    | "--max-nodes"
+                    | "--max-depth"
+                    | "--max-array-len"
+                    | "--max-keys"
+                    | "--max-wall-ms"
+                    | "--max-value-size"
+                    | "--max-total-value-size"
+            ) {
+                anyhow::bail!(
+                    "--sandbox-closure does not silently drop `{flag}`; configure it in the closure/engine or remove it"
+                );
+            }
+        }
+        match &cli.command {
+            Commands::Eval { .. } | Commands::Check { .. } => {
+                return run_sandboxed_command(&cli.command, &manifest);
+            }
+            Commands::Test { .. } => {
+                anyhow::bail!(
+                    "test --sandbox-closure needs the closure-backed test runner; use eval/check or drop the flag"
+                );
+            }
+            // Commands whose whole evaluation goes through the shared
+            // parse/engine adapters. Provenance-rebuilding commands
+            // (lock/audit/repair/plan/diff/...) still read host paths and
+            // fail loudly until their closure wiring lands (BLOCKS B2).
+            Commands::Convert { .. }
+            | Commands::Graph { .. }
+            | Commands::Impact { .. }
+            | Commands::Why { .. }
+            | Commands::Inspect { .. } => {}
+            _ => anyhow::bail!(
+                "--sandbox-closure is not closure-wired for this command yet; use eval, check, convert, graph, impact, why, or inspect"
+            ),
+        }
+    }
     match cli.command {
         Commands::Eval {
             file,
@@ -6053,8 +6393,8 @@ fn main() -> anyhow::Result<()> {
                 profile,
             } = action;
             let module = parse_input(&from, false, false, &None)?;
-            let mut evaluation_engine = Engine::new();
-            evaluation_engine.profile_override = profile.clone();
+            let mut evaluation_engine = sandboxed_engine(Engine::new());
+            set_profile_override(&mut evaluation_engine, profile.clone());
             let (value, diagnostics, seeds) = evaluation_engine
                 .evaluate_with_seeds(&module)
                 .map_err(|e| anyhow::anyhow!("cannot evaluate: {e}"))?;
@@ -6195,8 +6535,8 @@ fn main() -> anyhow::Result<()> {
                 }
                 return Ok(());
             }
-            let mut step_engine = Engine::new();
-            step_engine.profile_override = profile.clone();
+            let mut step_engine = sandboxed_engine(Engine::new());
+            set_profile_override(&mut step_engine, profile.clone());
             step_engine.resilient = resilient;
             step_engine.budget = budget.resolve()?;
             let (_, _, steps) = step_engine
@@ -6288,7 +6628,7 @@ fn main() -> anyhow::Result<()> {
                 }
                 let source = std::fs::read_to_string(&from)
                     .map_err(|e| anyhow::anyhow!("cannot read source: {e}"))?;
-                let mut engine = Engine::new();
+                let mut engine = sandboxed_engine(Engine::new());
                 engine.resilient = false;
                 let outcome = active_core::convert::repair::repair_with_engine_and_options(
                     &source,
@@ -6330,8 +6670,8 @@ fn main() -> anyhow::Result<()> {
                     }
                 },
                 "taint" => {
-                    let mut evaluation_engine = Engine::new();
-                    evaluation_engine.profile_override = profile.clone();
+                    let mut evaluation_engine = sandboxed_engine(Engine::new());
+                    set_profile_override(&mut evaluation_engine, profile.clone());
                     // Taint queries need payload bytes to see a
                     // payload-resident secret; only paths are emitted.
                     evaluation_engine.materialise_blobs = true;
@@ -6352,8 +6692,8 @@ fn main() -> anyhow::Result<()> {
                     );
                 }
                 "budget" => {
-                    let mut evaluation_engine = Engine::new();
-                    evaluation_engine.profile_override = profile.clone();
+                    let mut evaluation_engine = sandboxed_engine(Engine::new());
+                    set_profile_override(&mut evaluation_engine, profile.clone());
                     let (value, diagnostics, seeds) = evaluation_engine
                         .evaluate_with_seeds(&module)
                         .map_err(|e| anyhow::anyhow!("cannot evaluate: {e}"))?;
@@ -6878,7 +7218,7 @@ fn main() -> anyhow::Result<()> {
             let baseline_module = parse_input(&old_path, false, allow_parent_escapes, &trust)
                 .map_err(|e| anyhow::anyhow!("apply refused [baseline]: {e}"))?;
             let mut baseline_engine = Engine::strict();
-            baseline_engine.profile_override = profile.clone();
+            set_profile_override(&mut baseline_engine, profile.clone());
             baseline_engine.budget = budget;
             match baseline_engine.evaluate_with_seeds(&baseline_module) {
                 Ok((_, diagnostics, _)) => {

@@ -60,6 +60,12 @@ int active_ffi_call_every_export(void) {
 
   /* Values: evaluate, then every value surface. */
   struct ActiveValue *value = active_eval(module, budget);
+  /* L-P28: sandboxed entries take a §7.2a closure envelope. */
+  struct ActiveValue *sandboxed = active_eval_sandboxed((const char *)0, budget);
+  struct ActiveDiagnosticSet *sandboxed_diags =
+      active_check_sandboxed((const char *)0, budget);
+  (void)sandboxed;
+  (void)sandboxed_diags;
   (void)active_value_type(value);
   (void)active_value_is_secret(value);
   (void)active_value_is_tainted(value);

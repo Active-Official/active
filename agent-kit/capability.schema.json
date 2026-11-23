@@ -6,7 +6,7 @@
   "tools": [
     {
       "name": "check",
-      "entry": "active check <file> [--resilient] [--allow-parent-escapes --trust-keys <toml>] [--profile NAME] [--trace] [--budget-profile strict|interactive|trusted]",
+      "entry": "active check <file> [--sandbox-closure MANIFEST] [--resilient] [--allow-parent-escapes --trust-keys <toml>] [--profile NAME] [--trace] [--budget-profile strict|interactive|trusted]",
       "description": "Parse a file and report errors, cycles, and unresolved names with stable diagnostic codes and spans. Zero exit means clean; --budget-profile selects a named budget preset and --trace emits the same value-free trace as eval.",
       "input": {
         "file": "path to a .active source file"
@@ -30,7 +30,7 @@
     },
     {
       "name": "eval",
-      "entry": "active eval <file> [--format json|yaml|toml] [--path a.b[0]] [--materialise-blobs] [--audit-trail FILE] [--cache DIR] [--resilient] [--profile NAME] [--trace] [--sandbox strict|data|agent|trusted]",
+      "entry": "active eval <file> [--sandbox-closure MANIFEST] [--format json|yaml|toml] [--path a.b[0]] [--materialise-blobs] [--audit-trail FILE] [--cache DIR] [--resilient] [--profile NAME] [--trace] [--sandbox strict|data|agent|trusted]",
       "description": "Evaluate a file and print a redacted document (JSON, YAML, or TOML per --format). Secrets always render as ***SECRET***; a raw secret in output is a defect, never data. --path emits only the demanded cone, --materialise-blobs includes blob payloads (refused for tainted blobs), --audit-trail writes a re-validatable redacted audit document, and --cache reuses a content-keyed local result.",
       "input": {
         "file": "path to a .active source file"

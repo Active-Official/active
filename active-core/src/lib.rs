@@ -19,6 +19,7 @@ pub mod layers;
 pub mod lint;
 pub mod parser;
 pub mod provenance;
+pub mod sandbox;
 pub mod secret;
 pub mod sign;
 pub mod store;
@@ -42,6 +43,7 @@ pub use parser::{
     parse_text_with_file, parse_text_with_trust, parse_with, validate_patch_path, IncludeLoader,
     Lexed, ParseOptions, PathSeg,
 };
+pub use sandbox::{ClosureError, IncludeFile, InputClosure, Sandbox, SandboxedModule};
 pub use types::{Constraint, Unit};
 
 /// Library version

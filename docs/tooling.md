@@ -379,3 +379,31 @@ execute it; `transcript.txt` is a captured run of the shipped binary;
 `cargo test -p active-cli --test loop_demo` asserts the same pipeline so
 the transcript stays honest.
 
+
+
+## Sandbox manifest (`--sandbox-closure`)
+
+`active eval`, `active check`, `active convert`, `active graph`,
+`active impact`, `active why`, and `active inspect` accept
+`--sandbox-closure <manifest.json>` (each has a smoke test in the CLI
+suite). Every other document command bails loudly under the flag until
+its closure wiring lands; provenance-rebuilding commands (`lock`,
+`repair`, `plan`, `compatibility`, `diff`, `apply`, `gate`, `propose`)
+need a closure-aware provenance or two-closure model and are filed
+follow-ups. `active test --sandbox-closure` also refuses loudly because
+the closure-backed test runner is not shipped. Flags the adapter cannot
+honour (`--profile`, `--trust-keys`, `--lockfile`, `--store`, `--cache`,
+`--trace`, `--materialise-blobs`, `--path` outside inspect, `--peer`,
+`--audit-trail`, `--envelope`, `--envelope-trust`, `--sandbox`,
+`--reader-version`, `--pure`, budget flags) are rejected by name. The
+manifest is the §7.2a envelope; `document_b64` may be
+omitted, in which case the positional file is the document, and include
+`bytes_b64` may be omitted when the manifest lists host-readable paths
+(the CLI reads and digests them before building the closure — host I/O,
+not engine I/O). The closure parse and guard are installed by the CLI
+session; each evaluating command configures its engine through the
+closure (ambient env cleared, closure env/profile and guard applied) and
+an out-of-closure env/include/profile read is E048. Graph/impact/why are
+parse-only and never evaluate. The
+closure may carry secrets and is never logged or written to a
+world-readable temp file. Full contract: `spec/sandbox.md`.

@@ -70,3 +70,7 @@ marker visibility in output, Config/Data tree identity, W013 at
 inspector exposes the mode (`"mode": "config" | "data"`).
 
 **End of mode.md — M.001–M.007 complete.**
+
+## Sandbox and mode (L-P28)
+
+Mode is a document/host decision; the sandbox does not change it. A sandboxed Data-mode document still needs its envelope and capabilities inside the closure, and an unsandboxed Config document keeps the default. The sandbox's only mode interaction is that its closure is the single env/include/profile source; see `spec/sandbox.md`.

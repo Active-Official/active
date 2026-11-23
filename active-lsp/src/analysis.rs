@@ -3617,9 +3617,17 @@ pub fn steps_snapshot(doc: &Doc, selector: Option<&str>) -> JsonValue {
         Ok((_, _, steps)) => steps,
         Err(error) => return serde_json::json!({"error": format!("{error}")}),
     };
+    render_steps(steps, selector, engine.budget.max_nodes)
+}
+
+fn render_steps(
+    steps: Vec<active_core::StepEvent>,
+    selector: Option<&str>,
+    max_nodes: u64,
+) -> JsonValue {
     let total = steps.len();
     let matched = selector.and_then(|selector| {
-        active_core::debug::breakpoint_index_with_budget(&steps, selector, engine.budget.max_nodes)
+        active_core::debug::breakpoint_index_with_budget(&steps, selector, max_nodes)
     });
     let mut shown = steps;
     if let Some(index) = matched {
@@ -3742,5 +3750,134 @@ mod blob_identity_tests {
             "the marker label should still complete: {:?}",
             items.iter().map(|item| &item.label).collect::<Vec<_>>()
         );
+    }
+}
+
+// ------------------------------------------------------------------
+// L-P28 sandboxed analysis (spec/sandbox.md, spec/lsp.md).
+// ------------------------------------------------------------------
+
+/// Analyze an editor buffer whose inputs come from an `InputClosure`
+/// built by the LSP host. Include bytes come from the closure only; env
+/// is the closure's declared set; the closure profile is checked against
+/// the document. Evaluation runs through `Sandbox`, so an out-of-closure
+/// read is E048 and surfaces as a diagnostic.
+pub fn analysis_with_closure(
+    uri: Url,
+    text: String,
+    version: i32,
+    closure: active_core::InputClosure,
+) -> Result<Doc, Vec<Diagnostic>> {
+    if text != closure.document.as_ref() {
+        return Err(vec![Diagnostic {
+            severity: Severity::Error,
+            code: "E048".into(),
+            message:
+                "sandboxed analysis text differs from the closure document; rebuild the closure"
+                    .into(),
+            path: None,
+            span: None,
+            repair: None,
+            confidence: 1.0,
+            file: None,
+        }]);
+    }
+    let mut closure = closure;
+    // Diagnostic file stamps must match the Doc URI, not the closure's
+    // host-chosen source name, or diag_in_doc drops them at line 0.
+    closure.source_name = uri
+        .to_file_path()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| uri.as_str().to_string());
+    let sandbox = active_core::Sandbox::new(closure).map_err(|error| {
+        vec![Diagnostic {
+            severity: Severity::Error,
+            code: "E048".into(),
+            message: error.to_string(),
+            path: None,
+            span: None,
+            repair: None,
+            confidence: 1.0,
+            file: None,
+        }]
+    })?;
+    let module = sandbox.parse(ParseOptions::default())?;
+    let mut engine = Engine::hermetic();
+    engine.budget = active_core::Budget::strict();
+    let (value, eval_diags, value_seeds) = match sandbox.evaluate_with_seeds(&engine, &module) {
+        Ok((value, diagnostics, seeds)) => (Some(value), diagnostics, seeds),
+        Err(error) => {
+            let mut diagnostics = vec![Diagnostic {
+                severity: Severity::Error,
+                code: error.code().to_string(),
+                message: error.to_string(),
+                path: None,
+                span: error.span().cloned(),
+                repair: None,
+                confidence: 1.0,
+                file: error.file().map(str::to_string),
+            }];
+            diagnostics.extend(module.module().diagnostics.iter().cloned());
+            (
+                None,
+                diagnostics,
+                active_core::secret::SecretRedactor::new(),
+            )
+        }
+    };
+    let lint_diags = lint(module.module());
+    let parse_diags = module.diagnostics().to_vec();
+    let mut healing = module.healing().to_vec();
+    Ok(Doc {
+        uri,
+        text,
+        version,
+        module: module.module().clone(),
+        parse_diags,
+        value,
+        value_seeds,
+        eval_diags: {
+            let mut diags = eval_diags;
+            diags.append(&mut healing);
+            diags
+        },
+        lint_diags,
+        memo: active_core::IncrementalMemo::default(),
+    })
+}
+
+/// Debugger bridge for a closure-backed document: parse under the
+/// closure, evaluate through the guarded engine, then render the same
+/// step snapshot shape.
+pub fn steps_snapshot_with_closure(
+    closure: active_core::InputClosure,
+    selector: Option<&str>,
+) -> JsonValue {
+    let sandbox = match active_core::Sandbox::new(closure) {
+        Ok(sandbox) => sandbox,
+        Err(error) => return serde_json::json!({"error": error.to_string()}),
+    };
+    let module = match sandbox.parse(ParseOptions::default()) {
+        Ok(module) => module,
+        Err(diagnostics) => {
+            return serde_json::json!({
+                "error": diagnostics
+                    .first()
+                    .map(|d| d.message.clone())
+                    .unwrap_or_else(|| "sandbox refusal".to_string()),
+                "code": diagnostics.first().map(|d| d.code.clone()),
+            });
+        }
+    };
+    let mut engine = Engine::hermetic();
+    engine.budget = active_core::eval::canonical_budget(&engine.budget);
+    match sandbox.evaluate_with_steps(&engine, &module) {
+        Ok((_, diagnostics, steps)) => {
+            if let Some(error) = diagnostics.iter().find(|d| d.severity == Severity::Error) {
+                return serde_json::json!({"error": error.message, "code": error.code});
+            }
+            render_steps(steps, selector, engine.budget.max_nodes)
+        }
+        Err(error) => serde_json::json!({"error": error.to_string(), "code": error.code()}),
     }
 }

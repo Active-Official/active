@@ -35,6 +35,12 @@ fn cdylib_path() -> Option<PathBuf> {
 
 #[test]
 fn sandboxed_entry_loads_and_evaluates_a_closure() {
+    // Miri executes inside the test sandbox and cannot dlopen a host
+    // cdylib; that is the one environment where this native smoke is
+    // skipped. Every real build must have the artifact (no skip).
+    if cfg!(miri) {
+        return;
+    }
     let path = cdylib_path()
         .expect("cdylib absent: build active-ffi before the native smoke (release gate builds it)");
     unsafe {

@@ -378,7 +378,21 @@ them directly (the editor's include provider is the only source of
 include bytes). They run the same guarded engine as `Sandbox`; an
 out-of-closure env/include/profile read is E048. The text must equal the
 closure document; a dirty buffer rebuilds the closure rather than mixing
-text and module. The plain `analysis`/`steps_snapshot` entries remain the
+text and module. A parse-time refusal is a `Doc` with the sandbox
+diagnostics in `parse_diags` and a recovery tree parsed without include
+resolution or host-path canonicalization; the Doc is marked sandboxed so
+all code actions are empty (some would re-parse with a file context).
+Include-content diagnostics publish on
+`active-sandbox://include/<encoded-parent-uri>/<encoded-key>` with a zero
+range, never on the parent and never through a host disk lookup; the
+explain bridge reports no span for those include diagnostics. Encoding
+is UTF-8 byte-wise percent-encoding of every byte outside
+`[A-Za-z0-9/._-]`, parent first, then the key, so two documents that
+include the same key never share a group. `rename_at` refuses a
+closure-backed Doc (a rename cannot edit the include's own buffer
+atomically), and `references_at` reports only nodes in the open
+document. `steps_snapshot_with_closure` returns an `{error, code?}`
+object on a closure refusal, not a Doc-shaped snapshot. The plain `analysis`/`steps_snapshot` entries remain the
 unsandboxed legacy paths. The shipped `active-lsp` binary has no closure
 request or initialization option yet, so it does not advertise a protocol
 entry it does not implement; a client opts in through the embedding API.

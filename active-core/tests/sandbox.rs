@@ -373,3 +373,17 @@ fn pure_beats_fallback_and_profile_refusals() {
         "E047"
     );
 }
+
+#[test]
+fn a_path_aliasing_the_synthetic_root_is_refused() {
+    let document = "include \".active-root\"\n";
+    let sandbox = Sandbox::new(closure(document, &[(".active-root", "x = 1\n")], &[], None))
+        .expect("closure");
+    let diagnostics = sandbox
+        .parse(ParseOptions::default())
+        .expect_err("root alias must refuse");
+    assert!(
+        diagnostics.iter().any(|d| d.code == "E048"),
+        "{diagnostics:?}"
+    );
+}

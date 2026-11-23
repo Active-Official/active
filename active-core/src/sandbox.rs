@@ -468,6 +468,7 @@ fn normalize_include_key(key: &str) -> Result<String, ClosureError> {
         || key.starts_with('/')
         || key.starts_with("//")
         || key.contains(':')
+        || key.len() > 1024
         || key.chars().any(|ch| ch.is_control())
     {
         return Err(ClosureError::IncludeKey(key.to_string()));
@@ -549,7 +550,10 @@ impl fmt::Debug for SandboxedModule {
     }
 }
 
-const SYNTHETIC_ROOT: &str = "/__active_sandbox__/main.active";
+// The root filename must not be expressible as an include key (a dot
+// segment normalizes away), or an include literally named `main.active`
+// would alias the document identity (Part 0 review F2).
+const SYNTHETIC_ROOT: &str = "/__active_sandbox__/.active-root";
 
 impl Sandbox {
     pub fn new(mut closure: InputClosure) -> Result<Self, ClosureError> {
@@ -639,6 +643,12 @@ impl Sandbox {
         let includes = self.closure.includes.clone();
         options.include_loader = Some(Arc::new(move |path: &str| {
             let key = include_key_from_callback(path);
+            // The synthetic root is not an include. A path resolving to
+            // it would alias the document identity; refuse before bytes
+            // are read.
+            if key == ".active-root" {
+                return Err("include path aliases the sandbox root".to_string());
+            }
             let file = includes
                 .get(&key)
                 .ok_or_else(|| format!("include `{key}` is outside the input closure"))?;
@@ -671,7 +681,7 @@ impl Sandbox {
                     severity: crate::diag::Severity::Error,
                     code: "E048".into(),
                     message: format!("sandbox profile `{profile}` is not declared by the document"),
-                    path: None,
+                    path: Some("active_profile".into()),
                     span: None,
                     repair: None,
                     confidence: 1.0,
@@ -705,12 +715,12 @@ impl Sandbox {
         let marker = "/__active_sandbox__/";
         if let Some(index) = normalized.find(marker) {
             let tail = &normalized[index + marker.len()..];
-            if tail == "main.active" {
+            if tail == ".active-root" {
                 return self.closure.source_name.clone();
             }
-            return tail.to_string();
+            return format!("include:{tail}");
         }
-        if normalized.starts_with("/__active_sandbox__") {
+        if normalized == SYNTHETIC_ROOT {
             return self.closure.source_name.clone();
         }
         path.to_string()

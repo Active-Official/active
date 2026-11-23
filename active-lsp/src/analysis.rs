@@ -45,6 +45,10 @@ pub struct Doc {
     #[allow(dead_code)]
     pub eval_diags: Vec<Diagnostic>,
     pub lint_diags: Vec<Diagnostic>,
+    /// L-P28 B4: this Doc came from an `InputClosure`. Handlers that
+    /// would re-parse with a host file context or look up relative
+    /// include stamps must not touch the disk.
+    pub sandboxed: bool,
     /// Incremental memo (PROPOSAL §2.3, PE.003): reuses the evaluated
     /// tree when the fingerprint is unchanged. The token covers
     /// (resilient, profile, budget, materialise, mode) plus per-node
@@ -132,6 +136,7 @@ pub fn open_doc(
         value_seeds,
         eval_diags,
         lint_diags,
+        sandboxed: false,
         memo,
     }
 }
@@ -506,7 +511,7 @@ fn node_in_doc(doc: &Doc, id: NodeId) -> bool {
     match (doc.uri.to_file_path().ok(), doc.module.node_files.get(&id)) {
         (_, None) => true,
         (Some(main), Some(stamped)) => stamped == &main.to_string_lossy().into_owned(),
-        (None, Some(_)) => false,
+        (None, Some(stamped)) => stamped == doc.uri.as_str(),
     }
 }
 
@@ -998,6 +1003,11 @@ pub fn uri_for_node(doc: &Doc, node: NodeId) -> Url {
         if let Ok(uri) = Url::from_file_path(file) {
             return uri;
         }
+        if doc.sandboxed {
+            // A closure include identity is not a host path. Never fall
+            // back to the parent URI for an include node (rename safety).
+            return sandbox_include_uri(file, &doc.uri);
+        }
     }
     doc.uri.clone()
 }
@@ -1403,6 +1413,9 @@ fn reference_ranges(
     let mut out: Vec<(Url, Range)> = Vec::new();
     for (i, node) in doc.module.arena.iter().enumerate() {
         let id = NodeId(i as u32);
+        if doc.sandboxed && !node_in_doc(doc, id) {
+            continue;
+        }
         match node {
             Node::Ref(t) if *t == target => {
                 if let Some(span) = doc.module.node_spans.get(&id) {
@@ -1736,6 +1749,9 @@ pub fn rename_at(
     character: u32,
     new_name: &str,
 ) -> Result<WorkspaceEdit, String> {
+    if doc.sandboxed {
+        return Err("rename is unavailable for closure-backed documents".into());
+    }
     if !is_valid_ident(new_name) {
         return Err(format!("`{new_name}` is not a valid identifier"));
     }
@@ -2634,7 +2650,9 @@ fn diag_in_doc(doc: &Doc, diag: &Diagnostic) -> bool {
     match (&doc.uri.to_file_path().ok(), &diag.file) {
         (_, None) => true,
         (Some(main), Some(stamped)) => stamped == &main.to_string_lossy().into_owned(),
-        (None, Some(_)) => false,
+        // A non-file buffer's sandbox diagnostics are stamped with the
+        // URI spelling; publish those, not foreign-file records.
+        (None, Some(stamped)) => stamped == doc.uri.as_str(),
     }
 }
 
@@ -2660,6 +2678,58 @@ fn zero_range() -> Range {
 /// buffers, then disk); unreadable files fall back to zero ranges
 /// on their own URI — never mis-ranged against the parent
 /// (spec/lsp.md §4). Files sort by URI for determinism.
+/// Stamp lint diagnostics that carry no file but belong to an included
+/// node. Lint runs on the merged module; its L012/L014/L016/L017 records
+/// omit the file, which would otherwise publish include-local spans on
+/// the parent buffer.
+fn stamp_included_lint(doc: &Module, diagnostics: &mut [Diagnostic]) {
+    for diagnostic in diagnostics {
+        if diagnostic.file.is_some() {
+            continue;
+        }
+        let Some(span) = diagnostic.span.as_ref() else {
+            continue;
+        };
+        let hit = doc
+            .node_spans
+            .iter()
+            .find(|(_, node_span)| node_span.line == span.line && node_span.column == span.column)
+            .and_then(|(node, _)| doc.node_files.get(node))
+            .filter(|stamp| stamp.starts_with("include:"))
+            .cloned();
+        if let Some(file) = hit {
+            diagnostic.file = Some(file);
+        }
+    }
+}
+
+fn sandbox_include_uri(stamped: &str, parent: &Url) -> Url {
+    let parent_path = parent
+        .to_file_path()
+        .ok()
+        .map(|path| path.to_string_lossy().into_owned());
+    if stamped == parent.as_str() || parent_path.as_deref() == Some(stamped) {
+        return parent.clone();
+    }
+    fn encode(text: &str, out: &mut String) {
+        for byte in text.bytes() {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'.' | b'-' | b'_') {
+                out.push(byte as char);
+            } else {
+                use std::fmt::Write as _;
+                let _ = write!(out, "%{byte:02X}");
+            }
+        }
+    }
+    let mut uri = String::from("active-sandbox://include/");
+    encode(parent.as_str(), &mut uri);
+    uri.push('/');
+    encode(stamped, &mut uri);
+    Url::parse(&uri).unwrap_or_else(|_| {
+        Url::parse("active-sandbox://include/invalid").expect("static fallback uri")
+    })
+}
+
 pub fn diagnostics_by_file(
     doc: &Doc,
     lookup: &impl Fn(&str) -> Option<String>,
@@ -2689,6 +2759,20 @@ pub fn diagnostics_by_file(
                 .1
                 .push(to_lsp_diagnostic_indexed(&doc.text, &doc_index, diag));
         } else if let Some(stamped) = diag.file.as_deref() {
+            if doc.sandboxed {
+                // Closure identities are root-relative keys, not host
+                // paths. Publish them on a synthetic include URI with a
+                // zero range; never disk-resolve or mis-range the parent.
+                let uri = sandbox_include_uri(stamped, &doc.uri);
+                let mut fallback = to_lsp_diagnostic("", diag);
+                fallback.range = zero_range();
+                groups
+                    .entry(uri.to_string())
+                    .or_insert_with(|| (uri, Vec::new()))
+                    .1
+                    .push(fallback);
+                continue;
+            }
             let uri = Url::from_file_path(stamped).unwrap_or_else(|_| doc.uri.clone());
             let converted = match lookup(stamped) {
                 Some(text) => {
@@ -2874,6 +2958,12 @@ fn action_diags(doc: &Doc) -> impl Iterator<Item = &Diagnostic> {
 /// let, style conversions, missing depends_on entries — sorted by
 /// title for determinism (spec/lsp.md §5).
 pub fn code_actions(doc: &Doc, range: Range) -> Vec<CodeAction> {
+    // A closure-backed Doc has no host file context: repair/depends_on
+    // actions re-parse with a path, and include diagnostics are not
+    // host files. Offer no disk-influenced actions.
+    if doc.sandboxed {
+        return Vec::new();
+    }
     let mut out = Vec::new();
     out.extend(heal_actions(doc, range));
     out.extend(extract_action(doc, range));
@@ -2997,6 +3087,11 @@ fn annotation_action(doc: &Doc, range: Range) -> Vec<CodeAction> {
 /// bounded steps), so the action and `active repair` agree by
 /// construction (LSP.007, REPAIR-UI semantics).
 fn repair_plan_action(doc: &Doc) -> Vec<CodeAction> {
+    // A closure-backed Doc has no host file context: repair re-parses
+    // with a path and would read outside the closure. Offer no plan.
+    if doc.sandboxed {
+        return Vec::new();
+    }
     // Same engine contract as the rest of the server: hermetic (no
     // ambient environment), strict budget, and the buffer's own
     // include context so an included schema plans the same repair the
@@ -3588,12 +3683,22 @@ pub fn explain_snapshot(doc: &Doc) -> JsonValue {
         .chain(doc.eval_diags.iter())
         .chain(doc.lint_diags.iter())
     {
-        let span = diagnostic.span.as_ref().map(|span| {
-            format!(
-                "{}:{}-{}:{}",
-                span.line, span.column, span.end_line, span.end_column
-            )
-        });
+        let span = diagnostic
+            .span
+            .as_ref()
+            .filter(|_| {
+                !(doc.sandboxed
+                    && diagnostic
+                        .file
+                        .as_deref()
+                        .is_some_and(|file| file.starts_with("include:")))
+            })
+            .map(|span| {
+                format!(
+                    "{}:{}-{}:{}",
+                    span.line, span.column, span.end_line, span.end_column
+                )
+            });
         items.push((diagnostic.code.clone(), diagnostic.path.clone(), span));
     }
     serde_json::to_value(active_core::convert::explain::explain_structured(&items))
@@ -3762,6 +3867,14 @@ mod blob_identity_tests {
 /// is the closure's declared set; the closure profile is checked against
 /// the document. Evaluation runs through `Sandbox`, so an out-of-closure
 /// read is E048 and surfaces as a diagnostic.
+///
+/// A parse-time refusal returns `Ok(Doc)` with the sandbox diagnostics in
+/// `parse_diags` and a recovery tree parsed without any include
+/// resolution or host path canonicalization. The Doc is marked
+/// `sandboxed`, so code actions (which would re-parse with a file
+/// context) are empty; include-content diagnostics publish on
+/// `active-sandbox://include/<key>`, never on the parent and never via a
+/// host disk lookup.
 pub fn analysis_with_closure(
     uri: Url,
     text: String,
@@ -3801,7 +3914,49 @@ pub fn analysis_with_closure(
             file: None,
         }]
     })?;
-    let module = sandbox.parse(ParseOptions::default())?;
+    let module = match sandbox.parse(ParseOptions::default()) {
+        Ok(module) => module,
+        Err(parse_diags) => {
+            // A non-parse closure refusal (undeclared profile, E029
+            // budget) stays Err: there is no validated module to publish,
+            // and treating it as a recovery Doc would hide the refusal.
+            if parse_diags.iter().any(|diag| {
+                matches!(diag.code.as_str(), "E029" | "E042")
+                    || diag.path.as_deref() == Some("active_profile")
+            }) {
+                return Err(parse_diags);
+            }
+            // B4: a parse-time closure failure (E048 include, syntax) is
+            // published, not hidden behind Err. Recover the healed tree
+            // without any include resolution so no host read happens; the
+            // sandbox diagnostics stay authoritative.
+            let base_options = ParseOptions {
+                enable_includes: false,
+                resolve_includes: false,
+                ..Default::default()
+            };
+            // No file context: `parse_text_recovering_with_file`
+            // canonicalizes the client path even with includes off, which
+            // can block on a UNC path. Sandbox diagnostics are
+            // authoritative; recovery must not touch host IO.
+            let (recovered, _local) = parse_recovering(&text, uri.as_str(), base_options);
+            let mut lint_diags = lint(&recovered);
+            stamp_included_lint(&recovered, &mut lint_diags);
+            return Ok(Doc {
+                uri,
+                text,
+                version,
+                module: recovered,
+                parse_diags,
+                value: None,
+                value_seeds: active_core::secret::SecretRedactor::new(),
+                eval_diags: Vec::new(),
+                lint_diags,
+                sandboxed: true,
+                memo: active_core::IncrementalMemo::default(),
+            });
+        }
+    };
     let mut engine = Engine::hermetic();
     engine.budget = active_core::Budget::strict();
     let (value, eval_diags, value_seeds) = match sandbox.evaluate_with_seeds(&engine, &module) {
@@ -3825,7 +3980,8 @@ pub fn analysis_with_closure(
             )
         }
     };
-    let lint_diags = lint(module.module());
+    let mut lint_diags = lint(module.module());
+    stamp_included_lint(module.module(), &mut lint_diags);
     let parse_diags = module.diagnostics().to_vec();
     let mut healing = module.healing().to_vec();
     Ok(Doc {
@@ -3842,6 +3998,7 @@ pub fn analysis_with_closure(
             diags
         },
         lint_diags,
+        sandboxed: true,
         memo: active_core::IncrementalMemo::default(),
     })
 }

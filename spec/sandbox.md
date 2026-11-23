@@ -16,9 +16,16 @@ InputClosure {
 ```
 
 - Include keys are root-relative with `/` separators. Absolute keys, a
-  backslash, a drive prefix, or a `..` segment are construction errors.
+  backslash, a drive prefix, a `..` segment, an empty key, a control
+  character, or a raw spelling longer than 1024 bytes are construction
+  errors (the cap is on the raw spelling; a shorter normalized form does
+  not rescue it). The synthetic root filename `.active-root` is not an
+  include: a path resolving to it is refused, so it can never alias the
+  document identity.
 - The digest is verified at construction and again by the loader before
-  bytes are parsed; a mismatch is E048. An inline `sha256:` pin, when
+  bytes are parsed; a mismatch is E048. Include keys are echoed in
+  diagnostics as `include:<key>`; the document itself uses
+  `source_name`. An inline `sha256:` pin, when
   present, remains E041.
 - Env names fold to uppercase. A duplicate after folding is a
   construction error; the explicit closure never silently picks one.
@@ -94,9 +101,10 @@ Rules: base64 is standard with padding; unknown fields are rejected;
 a present field of the wrong type is an error (never a fallback);
 duplicate JSON/array keys are rejected; `sha256` must be ASCII 64-hex
 and a non-ASCII digest is a construction error. Include keys reject
-backslash, absolute/UNC/drive/ADS spellings, `..`, empty segments and
-control characters before the host reader is called; `.` segments
-normalize away. Duplicate normalized include keys or exact env names are
+backslash, absolute/UNC/drive/ADS spellings, `..`, empty keys, control
+characters, and raw spellings over 1024 bytes before the host reader is
+called; `.` segments normalize away. The synthetic root basename is a
+reserved identity, never an include. Duplicate normalized include keys or exact env names are
 errors. The document and the sum of include bytes are capped at 16 MiB
 each; a loader result over the remaining include budget is E028 before
 lexing. A manifest that reaches the constructor with a wrong digest is

@@ -14,6 +14,7 @@ fn wasm_sandboxed_export_uses_the_closure() {
     assert!(!input.is_null());
     unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), input, bytes.len()) };
     let ptr = unsafe { active_wasm::active_eval_sandboxed_json(input, bytes.len(), &mut out_len) };
+    active_wasm::active_free(input, bytes.len());
     assert!(!ptr.is_null());
     let envelope = unsafe { std::slice::from_raw_parts(ptr, out_len) };
     let text = String::from_utf8_lossy(envelope);
@@ -29,6 +30,7 @@ fn wasm_sandboxed_export_uses_the_closure() {
     assert!(!input.is_null());
     unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), input, bytes.len()) };
     let ptr = unsafe { active_wasm::active_eval_sandboxed_json(input, bytes.len(), &mut out_len) };
+    active_wasm::active_free(input, bytes.len());
     assert!(!ptr.is_null());
     let envelope = unsafe { std::slice::from_raw_parts(ptr, out_len) };
     let text = String::from_utf8_lossy(envelope);
@@ -53,6 +55,7 @@ fn wasm_sandboxed_export_trips_a_count_budget_with_an_x_code() {
     unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), input, bytes.len()) };
     let mut out_len = 0usize;
     let ptr = unsafe { active_wasm::active_eval_sandboxed_json(input, bytes.len(), &mut out_len) };
+    active_wasm::active_free(input, bytes.len());
     assert!(!ptr.is_null());
     let envelope = unsafe { std::slice::from_raw_parts(ptr, out_len) };
     let text = String::from_utf8_lossy(envelope);

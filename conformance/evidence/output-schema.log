@@ -9,6 +9,9 @@ OUTPUT-SCHEMA repair-plan ok
 OUTPUT-SCHEMA debug-steps ok
 OUTPUT-SCHEMA diff ok
 OUTPUT-SCHEMA plan ok
+OUTPUT-SCHEMA repair-receipt ok
+OUTPUT-SCHEMA repair-receipt refusal ok
 OUTPUT-SCHEMA plan-receipt ok
+OUTPUT-SCHEMA plan-receipt refusal ok
 OUTPUT-SCHEMA lint-broken ok (parse errors on stderr, empty lint array)
 OUTPUT-SCHEMA: OK (11 outputs + broken lint file)

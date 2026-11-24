@@ -1,13 +1,26 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Active repair receipt (L-T06 envelope v2)",
-  "description": "Output of `active repair --from <doc> --output <path> --receipt <path>` (L-P41). The payload is present only for a committed run; a refusal is a failed envelope with a null payload and the attempted set.",
+  "description": "Output of `active repair --from <doc> --output <path> --receipt <path>` (L-P41). The payload is present only for a committed run; a refusal is a failed envelope with a null payload and the attempted set. L-P35 adds the top-level `profile`/`capabilities` grant, and `receipt.attenuation` records the grant transition (absent on a failed receipt).",
   "type": "object",
-  "required": ["version", "capability", "tainted", "payload", "receipt"],
+  "required": [
+    "version",
+    "profile",
+    "capability",
+    "capabilities",
+    "tainted",
+    "payload",
+    "receipt"
+  ],
   "additionalProperties": false,
   "properties": {
     "version": { "const": "2.0.0" },
+    "profile": { "type": "string" },
     "capability": { "type": "string" },
+    "capabilities": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
     "tainted": { "type": "boolean" },
     "payload": {
       "oneOf": [
@@ -78,7 +91,8 @@
           "type": "array",
           "items": { "$ref": "#/definitions/step" }
         },
-        "document_clean": { "type": "boolean" }
+        "document_clean": { "type": "boolean" },
+        "attenuation": { "$ref": "#/definitions/attenuation" }
       }
     },
     "result": {
@@ -87,6 +101,16 @@
     }
   },
   "definitions": {
+    "attenuation": {
+      "type": "object",
+      "required": ["from", "to", "by"],
+      "additionalProperties": false,
+      "properties": {
+        "from": { "type": "array", "items": { "type": "string" } },
+        "to": { "type": "array", "items": { "type": "string" } },
+        "by": { "type": "string" }
+      }
+    },
     "step": {
       "type": "object",
       "required": ["kind", "path", "status", "side_effects"],

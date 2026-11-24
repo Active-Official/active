@@ -37,3 +37,11 @@ The agent-kit evaluation snapshot now records its provenance: `head`
 agreement true. The deterministic fields are unchanged from the previous
 capture; the timestamp intentionally varies per run, so byte-identity
 checks compare the report body, not `ran_at`.
+
+## Evidence refresh 2026-11-24 (L-P35 envelope schema)
+The L-P35 repair envelope gained the top-level `profile`/`capabilities`
+grant and `receipt.attenuation`; `docs/schemas/repair-receipt.json` was
+updated to match. `output-schema.log` was regenerated so the L-P41
+repair-receipt checks, which are in the script but predated the last
+capture, now appear: `python conformance/evidence/output_schema_check.py`
+-> SHA-256 `3A0E25B011274F1E`, `OUTPUT-SCHEMA: OK (11 outputs + broken lint file)`.

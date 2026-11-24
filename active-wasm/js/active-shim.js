@@ -114,9 +114,7 @@
 				}
 				const run = ex[exportName];
 				if (typeof run !== "function") {
-					throw new Error(
-						`active-wasm: module does not export ${exportName}`,
-					);
+					throw new Error(`active-wasm: module does not export ${exportName}`);
 				}
 				out = run(sp, src.length, slot);
 				if (!out) {
@@ -161,6 +159,61 @@
 				);
 			}
 			return evaluateWith(input, "active_eval_json_pure");
+		}
+
+		/**
+		 * L-P35: evaluate with a narrowed held-authority set. `caps` is a
+		 * comma-separated list of evaluate, read-secrets, inspect, apply,
+		 * sign; empty means none. `pure` (L-P05) composes with the set.
+		 */
+		function evaluateWithCapabilities(input, caps, pure = false) {
+			const name = pure
+				? "active_eval_json_caps_pure"
+				: "active_eval_json_caps";
+			const run = ex[name];
+			if (typeof run !== "function") {
+				throw new Error(`active-wasm: module does not export ${name}`);
+			}
+			const src = encodeInput(input);
+			const capBytes = new TextEncoder().encode(String(caps || ""));
+			// Allocate inside the try: a failure on the second allocation
+			// must still free the first (review L6).
+			let sp = 0;
+			let cp = 0;
+			let slot = 0;
+			let out = 0;
+			let n = 0;
+			try {
+				sp = ex.active_alloc(src.length);
+				cp = ex.active_alloc(capBytes.length);
+				if (!sp || !cp) {
+					throw new Error("active-wasm: input allocation failed (64 MiB cap)");
+				}
+				mem().set(src, sp);
+				if (capBytes.length) mem().set(capBytes, cp);
+				slot = ex.active_alloc(4);
+				if (!slot)
+					throw new Error("active-wasm: envelope length allocation failed");
+				out = run(sp, src.length, cp, capBytes.length, slot);
+				if (!out)
+					throw new Error("active-wasm: evaluation returned no envelope");
+				n = new DataView(ex.memory.buffer, slot, 4).getUint32(0, true);
+				if (!Number.isInteger(n) || n > 67108864) {
+					throw new Error("active-wasm: envelope length out of bounds");
+				}
+				const env = JSON.parse(read(out, n));
+				return deepFreeze({
+					ok: env.ok === true,
+					json: JSON.stringify(env.json),
+					diagnostics: String(env.diagnostics || ""),
+					...(env.items !== undefined ? { items: env.items } : {}),
+				});
+			} finally {
+				if (out) ex.active_free(out, n);
+				if (slot) ex.active_free(slot, 4);
+				if (sp) ex.active_free(sp, src.length);
+				if (cp) ex.active_free(cp, capBytes.length);
+			}
 		}
 
 		/**
@@ -218,6 +271,7 @@
 			evaluate,
 			evaluatePure,
 			evaluateSandboxed,
+			evaluateWithCapabilities,
 			hash,
 			abiVersion: 1,
 		});

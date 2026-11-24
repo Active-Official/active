@@ -12,6 +12,16 @@ use active_core::diag::Severity;
 use active_core::lint;
 use active_core::{fmt, Engine, ParseOptions, Style};
 
+/// The authority this process holds (`--capability`), so `active test`
+/// evaluates with the same narrow set as every other surface instead of
+/// always holding all five authorities (L-P35 review H2).
+fn held_authority() -> active_core::CapabilitySet {
+    crate::HELD_CAPABILITIES
+        .get()
+        .copied()
+        .unwrap_or_else(active_core::CapabilitySet::all)
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct Report {
     pub files: usize,
@@ -488,7 +498,8 @@ pub(crate) fn render(path: &Path, finding: &Finding) -> String {
 }
 
 fn check_file(path: &Path, strict: bool, env: &HashMap<String, String>, report: &mut Report) {
-    let engine = Engine::strict().with_env(env.clone());
+    let mut engine = Engine::strict().with_env(env.clone());
+    engine.capabilities = held_authority();
     let verdict = verdict(path, strict, &engine, None, false, None);
     for finding in verdict.findings {
         let text = render(path, &finding);
@@ -632,6 +643,7 @@ fn check_case(
         }
     };
     let mut engine = Engine::new().with_env(HashMap::new());
+    engine.capabilities = held_authority();
     engine.profile_override = case
         .get("profile")
         .and_then(|v| v.as_str())

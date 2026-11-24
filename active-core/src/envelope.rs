@@ -21,6 +21,112 @@ use crate::eval::EvalError;
 use crate::ir::{Mode, Module, Node, Value};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 
+/// L-P35: the authority set declared by a Data-mode envelope, or `None`
+/// when the envelope omits it (the v1/local bridge: held set applies).
+/// Unknown names, duplicates, a non-array, or a v1 field are refusals.
+pub fn declared_capabilities(
+    module: &Module,
+) -> Result<Option<crate::authority::CapabilitySet>, EvalError> {
+    if module.mode != Mode::Data {
+        return Ok(None);
+    }
+    let refs = match envelope_fields(module) {
+        EnvelopeLookup::Absent => return Ok(None),
+        EnvelopeLookup::Unresolvable(node) => {
+            // Same class and wording as the post-eval gate: a non-table
+            // envelope is E033 whether it is caught before or after the
+            // walk (review M3), and the reference interpreter agrees.
+            return Err(EvalError::ValidationFailed {
+                diagnostics: vec![Diagnostic {
+                    severity: Severity::Error,
+                    code: "E033".into(),
+                    message: "envelope must be a table".into(),
+                    path: Some("envelope".into()),
+                    span: module.node_spans.get(&node).cloned(),
+                    repair: None,
+                    confidence: 1.0,
+                    file: module.node_files.get(&node).cloned(),
+                }],
+            });
+        }
+        EnvelopeLookup::Found(refs) => refs,
+    };
+    let Some(table) = deref_table(module, refs.envelope) else {
+        return Ok(None);
+    };
+    let Some(Node::Table { fields }) = module.get(table) else {
+        return Ok(None);
+    };
+    let Some(capabilities) = fields.get("capabilities").copied() else {
+        return Ok(None);
+    };
+    if matches!(version_major(module, refs.version), VersionCheck::Major(1)) {
+        return Err(validation_error(
+            "E042",
+            "envelope.capabilities",
+            "a v1 envelope cannot carry capabilities",
+        ));
+    }
+    let Some(Node::Array { elements, .. }) = deref_value(module, capabilities) else {
+        return Err(validation_error(
+            "E042",
+            "envelope.capabilities",
+            "capabilities must be an array of authority names",
+        ));
+    };
+    let mut names = Vec::new();
+    for child in elements {
+        let Some(Node::Literal(Value::String(text))) = deref_value(module, *child) else {
+            return Err(validation_error(
+                "E042",
+                "envelope.capabilities",
+                "capabilities must be literal strings",
+            ));
+        };
+        names.push(text.as_str());
+    }
+    crate::authority::CapabilitySet::parse_list(names)
+        .map(Some)
+        .map_err(|_| {
+            validation_error(
+                "E042",
+                "envelope.capabilities",
+                "capabilities contain an unknown or duplicate name",
+            )
+        })
+}
+
+/// The effective authority set for this document and host: the declared
+/// set when present, else the host's held set (the v1/local bridge).
+/// Relays use this to re-emit the correct attenuation after evaluating.
+///
+/// Refuses a declared set the host does not hold: a relay that returned it
+/// would advertise authority it never had (review M5), and re-emitting the
+/// field directly would widen the chain.
+pub fn effective_granted(
+    module: &Module,
+    held: crate::authority::CapabilitySet,
+) -> Result<crate::authority::CapabilitySet, EvalError> {
+    let granted = declared_capabilities(module)?.unwrap_or(held);
+    if let Some(missing) = granted.first_missing(held) {
+        return Err(EvalError::CapabilityDenied {
+            capability: missing.as_str(),
+            span: None,
+        });
+    }
+    Ok(granted)
+}
+
+fn deref_value(module: &Module, mut id: crate::ir::NodeId) -> Option<&Node> {
+    for _ in 0..64 {
+        match module.get(id)? {
+            Node::Ref(next) => id = *next,
+            node => return Some(node),
+        }
+    }
+    None
+}
+
 /// Envelope major versions this library implements. The 1.x line
 /// implements major 1; v2 adds receipts, sender identity, and the bound
 /// result hash (L-T06). A receiver refuses any other major before
@@ -29,6 +135,7 @@ pub const SUPPORTED_ENVELOPE_MAJORS: &[u64] = &[1, 2];
 
 /// The receiver policy the gate enforces.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct EnvelopeGate {
     /// Envelope majors this receiver implements. Empty refuses every
     /// envelope, which is what a receiver that implements none should say.
@@ -36,6 +143,11 @@ pub struct EnvelopeGate {
     /// Tool names this receiver offers (the capability handshake set).
     /// Declared capabilities outside it are refused.
     pub host_tools: Vec<String>,
+    /// L-P35 review M7: refuse a v2 envelope that omits `capabilities`.
+    /// Off by default so the v1/local bridge keeps working; a relay or a
+    /// strict receiver turns it on to make omission indistinguishable
+    /// from stripping (both are refused).
+    pub require_capabilities: bool,
 }
 
 impl Default for EnvelopeGate {
@@ -55,7 +167,14 @@ impl EnvelopeGate {
                 .into_iter()
                 .map(str::to_string)
                 .collect(),
+            require_capabilities: false,
         }
+    }
+
+    /// Require every v2 envelope to carry `capabilities` (M7).
+    pub fn with_required_capabilities(mut self) -> Self {
+        self.require_capabilities = true;
+        self
     }
 
     /// The shipped policy with a different offered-tool set: a host that
@@ -69,6 +188,7 @@ impl EnvelopeGate {
         Self {
             majors: SUPPORTED_ENVELOPE_MAJORS.to_vec(),
             host_tools: tools.into_iter().map(Into::into).collect(),
+            require_capabilities: false,
         }
     }
 
@@ -467,14 +587,36 @@ impl EnvelopeGate {
                 );
             }
         }
-        match field_text(module, fields, "capability") {
+        let capability_field = field_text(module, fields, "capability");
+        let profile_field = field_text(module, fields, "profile");
+        match &capability_field {
             FieldText::Absent => {}
-            FieldText::Text(capability) if is_closed_capability(&capability) => {}
+            FieldText::Text(capability) if is_closed_budget_profile(capability) => {}
             _ => push(
                 "E043",
                 "envelope.capability",
                 "envelope.capability must be strict, data, agent, or trusted",
             ),
+        }
+        match &profile_field {
+            FieldText::Absent => {}
+            FieldText::Text(profile) if is_closed_budget_profile(profile) => {}
+            _ => push(
+                "E043",
+                "envelope.profile",
+                "envelope.profile must be strict, data, agent, or trusted",
+            ),
+        }
+        if let (FieldText::Text(capability), FieldText::Text(profile)) =
+            (&capability_field, &profile_field)
+        {
+            if capability != profile {
+                push(
+                    "E043",
+                    "envelope.profile",
+                    "envelope.profile and legacy capability disagree",
+                );
+            }
         }
     }
 }
@@ -609,7 +751,7 @@ fn closed_tables_shape_value(receipt: &indexmap::IndexMap<String, Value>) -> boo
     })
 }
 
-fn is_closed_capability(text: &str) -> bool {
+fn is_closed_budget_profile(text: &str) -> bool {
     matches!(text, "strict" | "data" | "agent" | "trusted")
 }
 
@@ -626,18 +768,25 @@ fn is_closed_capability(text: &str) -> bool {
 ///
 /// Any failure is fatal in strict and resilient modes: a receiver must
 /// not act on an envelope it cannot verify.
+pub struct CheckContext<'a> {
+    pub held: crate::authority::CapabilitySet,
+    pub granted: crate::authority::CapabilitySet,
+    pub budget: &'a crate::eval::Budget,
+    pub profile: Option<&'a str>,
+    pub material: Option<&'a crate::secret::SecretProfile>,
+    pub trust: Option<&'a crate::sign::TrustedKeys>,
+}
+
 pub fn check_evaluated(
     value: &Value,
     module: &Module,
     gate: &EnvelopeGate,
-    budget: &crate::eval::Budget,
-    profile: Option<&str>,
-    material: Option<&crate::secret::SecretProfile>,
-    trust: Option<&crate::sign::TrustedKeys>,
+    context: &CheckContext<'_>,
 ) -> Result<(), EvalError> {
     if module.mode != Mode::Data {
         return Ok(());
     }
+    let material = context.material;
     let Value::Table(root) = value else {
         return Ok(());
     };
@@ -673,6 +822,13 @@ pub fn check_evaluated(
             "E033",
             "envelope.version",
             "envelope major is not supported by this receiver",
+        ));
+    }
+    if major == 2 && gate.require_capabilities && !fields.contains_key("capabilities") {
+        return Err(validation_error(
+            "E042",
+            "envelope.capabilities",
+            "a v2 envelope must declare its capabilities",
         ));
     }
     let host: Vec<&str> = gate.host_tools.iter().map(String::as_str).collect();
@@ -734,16 +890,301 @@ pub fn check_evaluated(
         ));
     }
     if major != 2 {
-        if major == 1 && (fields.contains_key("receipt") || fields.contains_key("sender")) {
+        // v2 added receipts, sender identity, and the granted authority
+        // set (L-P35). A v1 envelope carrying any of them is shape-wrong,
+        // so a patch that rewrites the version cannot shed the v2 rules
+        // (review M1).
+        if major == 1
+            && (fields.contains_key("receipt")
+                || fields.contains_key("sender")
+                || fields.contains_key("capabilities"))
+        {
             return Err(validation_error(
                 "E033",
                 "envelope",
-                "a v1 envelope cannot carry v2 receipt/sender fields",
+                "a v1 envelope cannot carry v2 receipt/sender/capabilities fields",
             ));
         }
         return Ok(());
     }
-    check_v2_value(fields, module, budget, profile, material, trust)
+    check_v2_value(fields, module, context)
+}
+
+#[cfg(test)]
+fn check_ctx(
+    value: &Value,
+    module: &Module,
+    gate: &EnvelopeGate,
+    budget: &crate::eval::Budget,
+    profile: Option<&str>,
+    material: Option<&crate::secret::SecretProfile>,
+    trust: Option<&crate::sign::TrustedKeys>,
+) -> Result<(), EvalError> {
+    let context = CheckContext {
+        held: crate::authority::CapabilitySet::all(),
+        granted: crate::authority::CapabilitySet::all(),
+        budget,
+        profile,
+        material,
+        trust,
+    };
+    check_evaluated(value, module, gate, &context)
+}
+
+/// L-P35 producer side: build the receipt attenuation link. Refuses a
+/// grant the producer does not hold (never widen), naming the capability.
+pub fn attenuation_value(
+    held: crate::authority::CapabilitySet,
+    granted: crate::authority::CapabilitySet,
+    by: &str,
+) -> Result<Value, EvalError> {
+    if let Some(missing) = granted.first_missing(held) {
+        return Err(EvalError::CapabilityDenied {
+            capability: missing.as_str(),
+            span: None,
+        });
+    }
+    // A producer must not write a link the receiver will refuse.
+    if by.is_empty() || by.chars().any(char::is_control) {
+        return Err(validation_error(
+            "E042",
+            "envelope.receipt.attenuation.by",
+            "attenuation.by must be non-empty and control-free",
+        ));
+    }
+    let names = |set: crate::authority::CapabilitySet| {
+        Value::Array(
+            set.wire_names()
+                .into_iter()
+                .map(|name| Value::String(name.into()))
+                .collect(),
+        )
+    };
+    let mut record = indexmap::IndexMap::new();
+    record.insert("from".into(), names(held));
+    record.insert("to".into(), names(granted));
+    record.insert("by".into(), Value::String(by.into()));
+    Ok(Value::Table(record))
+}
+
+/// L-P35 rename: `profile` in v2, `capability` accepted as the legacy
+/// alias; both present must agree. Unknown/malformed is E043.
+fn v2_budget_profile(fields: &indexmap::IndexMap<String, Value>) -> Result<String, EvalError> {
+    let profile = value_text(fields, "profile");
+    let capability = value_text(fields, "capability");
+    let text = |value: &FieldText| match value {
+        FieldText::Text(text) if is_closed_budget_profile(text) => Ok(text.clone()),
+        _ => Err(validation_error(
+            "E043",
+            "envelope.profile",
+            "envelope.profile must be strict, data, agent, or trusted",
+        )),
+    };
+    match (profile, capability) {
+        (FieldText::Absent, FieldText::Absent) => Err(validation_error(
+            "E043",
+            "envelope.profile",
+            "envelope.profile is required",
+        )),
+        (FieldText::Absent, capability) => text(&capability),
+        (profile, FieldText::Absent) => text(&profile),
+        (profile, capability) => {
+            let left = text(&profile)?;
+            let right = text(&capability)?;
+            if left == right {
+                Ok(left)
+            } else {
+                Err(validation_error(
+                    "E043",
+                    "envelope.profile",
+                    "envelope.profile and legacy capability disagree",
+                ))
+            }
+        }
+    }
+}
+
+pub fn check_attenuation(
+    fields: &indexmap::IndexMap<String, Value>,
+    receipt: &indexmap::IndexMap<String, Value>,
+    outcome: &str,
+    context: &CheckContext<'_>,
+) -> Result<(), EvalError> {
+    let held = context.held;
+    let granted = context.granted;
+    let material = context.material;
+    let declared = match fields.get("capabilities") {
+        None => None,
+        Some(Value::Array(items)) => {
+            let names: Vec<&str> = items
+                .iter()
+                .filter_map(|item| match item {
+                    Value::String(text) => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect();
+            // Shape defects are E042 on both sides of the walk
+            // (review M4); E049 is reserved for authority denial.
+            if names.len() != items.len() {
+                return Err(validation_error(
+                    "E042",
+                    "envelope.capabilities",
+                    "capabilities must be strings",
+                ));
+            }
+            match crate::authority::CapabilitySet::parse_list(names) {
+                Ok(set) => Some(set),
+                Err(_) => {
+                    return Err(validation_error(
+                        "E042",
+                        "envelope.capabilities",
+                        "capabilities contain an unknown or duplicate name",
+                    ))
+                }
+            }
+        }
+        Some(_) => {
+            return Err(validation_error(
+                "E042",
+                "envelope.capabilities",
+                "capabilities must be an array",
+            ))
+        }
+    };
+    if let Some(declared) = declared {
+        if !declared.is_subset(held) {
+            return Err(validation_error(
+                "E049",
+                "envelope.capabilities",
+                "capabilities are not held by this receiver",
+            ));
+        }
+        if declared != granted {
+            return Err(validation_error(
+                "E049",
+                "envelope.capabilities",
+                "capabilities changed after evaluation",
+            ));
+        }
+    }
+    let attenuation = match receipt.get("attenuation") {
+        None => None,
+        Some(Value::Table(table)) => {
+            let allowed = ["from", "to", "by"];
+            if table.keys().any(|key| !allowed.contains(&key.as_str())) {
+                return Err(validation_error(
+                    "E042",
+                    "envelope.receipt.attenuation",
+                    "attenuation accepts exactly from, to, by",
+                ));
+            }
+            Some(table)
+        }
+        Some(_) => {
+            return Err(validation_error(
+                "E042",
+                "envelope.receipt.attenuation",
+                "attenuation must be a table",
+            ))
+        }
+    };
+    match (declared, attenuation) {
+        (None, None) => {
+            // The evaluated envelope advertises no grant. That is the
+            // v1/local bridge only when the source declared nothing; if
+            // the source narrowed the set, dropping `capabilities` is
+            // stripping it, and the next hop would re-grant its full held
+            // set (review M1: a transform may not widen a chain).
+            if granted != held {
+                return Err(validation_error(
+                    "E049",
+                    "envelope.capabilities",
+                    "capabilities were removed after evaluation",
+                ));
+            }
+            Ok(())
+        }
+        (None, Some(_)) => Err(validation_error(
+            "E042",
+            "envelope.receipt.attenuation",
+            "an attenuation record requires envelope.capabilities",
+        )),
+        // The spec requires the link for a clean outcome only
+        // (spec/tool-result-envelope.md receipt table); a failed receipt
+        // may carry capabilities without one.
+        (Some(_declared), None) if outcome == "clean" => Err(validation_error(
+            "E042",
+            "envelope.receipt.attenuation",
+            "a clean v2 envelope with capabilities requires its attenuation record",
+        )),
+        (Some(_declared), None) => Ok(()),
+        (Some(declared), Some(record)) => {
+            let parse_set = |key: &'static str, path: &'static str| {
+                let Some(Value::Array(items)) = record.get(key) else {
+                    return Err(validation_error(
+                        "E042",
+                        path,
+                        "attenuation sets must be arrays",
+                    ));
+                };
+                let names: Vec<&str> = items
+                    .iter()
+                    .filter_map(|item| match item {
+                        Value::String(text) => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                if names.len() != items.len() {
+                    return Err(validation_error("E042", path, "sets must be strings"));
+                }
+                crate::authority::CapabilitySet::parse_list(names).map_err(|_| {
+                    validation_error("E042", path, "sets contain unknown or duplicate names")
+                })
+            };
+            let from = parse_set("from", "envelope.receipt.attenuation.from")?;
+            let to = parse_set("to", "envelope.receipt.attenuation.to")?;
+            if to != declared || !declared.is_subset(from) {
+                return Err(validation_error(
+                    "E042",
+                    "envelope.receipt.attenuation",
+                    "attenuation must narrow: from superset of to == envelope.capabilities",
+                ));
+            }
+            let expected_by = match fields.get("sender") {
+                Some(Value::Table(sender)) => match sender.get("id") {
+                    Some(Value::String(id)) => Some(id.as_str()),
+                    _ => None,
+                },
+                _ => None,
+            };
+            // One refusal for every `by` failure (review H7): reporting
+            // "material" separately turns this attacker-controlled field
+            // into a equality oracle against the receiver's secret set.
+            let by_is_clean = match record.get("by") {
+                Some(Value::String(by)) => {
+                    !by.chars().any(char::is_control)
+                        && !material.is_some_and(|profile| {
+                            profile.redact_text(by).is_some() || profile.is_material_text(by)
+                        })
+                }
+                _ => false,
+            };
+            let by_matches = match (record.get("by"), expected_by) {
+                (Some(Value::String(by)), Some(id)) => by == id,
+                (Some(Value::String(by)), None) => by == "local",
+                _ => false,
+            };
+            if by_is_clean && by_matches {
+                Ok(())
+            } else {
+                Err(validation_error(
+                    "E042",
+                    "envelope.receipt.attenuation.by",
+                    "attenuation.by must equal sender.id, or `local` without a sender",
+                ))
+            }
+        }
+    }
 }
 
 fn validation_error(code: &'static str, path: &'static str, message: &'static str) -> EvalError {
@@ -783,11 +1224,12 @@ fn value_table<'a>(
 fn check_v2_value(
     fields: &indexmap::IndexMap<String, Value>,
     module: &Module,
-    budget: &crate::eval::Budget,
-    profile: Option<&str>,
-    material: Option<&crate::secret::SecretProfile>,
-    trust: Option<&crate::sign::TrustedKeys>,
+    context: &CheckContext<'_>,
 ) -> Result<(), EvalError> {
+    let budget = context.budget;
+    let profile = context.profile;
+    let material = context.material;
+    let trust = context.trust;
     let receipt = match value_table(fields, "receipt") {
         Ok(Some(table)) => table,
         Ok(None) => {
@@ -926,6 +1368,7 @@ fn check_v2_value(
             "envelope.sender must be a table",
         ));
     }
+    check_attenuation(fields, receipt, &outcome, context)?;
     let envelope_result = value_text(fields, "result");
     let receipt_result = value_text(receipt, "result");
     for (value, path) in [
@@ -951,16 +1394,7 @@ fn check_v2_value(
             "a failed receipt cannot carry a sender signature",
         ));
     }
-    match value_text(fields, "capability") {
-        FieldText::Text(capability) if is_closed_capability(&capability) => {}
-        _ => {
-            return Err(validation_error(
-                "E043",
-                "envelope.capability",
-                "envelope.capability must be strict, data, agent, or trusted",
-            ))
-        }
-    }
+    let _profile = v2_budget_profile(fields)?;
     if outcome == "clean" {
         // Receipt metadata is authoritative for reconstruction and must
         // match the local context (review H1). Cross-host budgets are
@@ -1149,17 +1583,7 @@ fn check_v2_value(
             Some(profile) => crate::convert::redact_value(profile, &payload),
             None => payload,
         };
-        let capability = match value_text(fields, "capability") {
-            FieldText::Text(capability) if is_closed_capability(&capability) => Some(capability),
-            FieldText::Absent => None,
-            _ => {
-                return Err(validation_error(
-                    "E043",
-                    "envelope.capability",
-                    "envelope.capability must be strict, data, agent, or trusted",
-                ))
-            }
-        };
+        let capability = Some(v2_budget_profile(fields)?);
         let computed = bound_content_hash(
             &payload,
             document_schema_version(module).as_deref(),
@@ -1697,8 +2121,11 @@ fn sender_signature_present(fields: &indexmap::IndexMap<String, Value>) -> bool 
     }
 }
 
-/// v2 result identity (L-T06): the payload plus the schema version,
-/// profile, resolved budget, mode, and capability that produced it.
+/// v2 result identity (L-T06): the payload plus the schema version, the
+/// document profile selector, the resolved budget, the mode, and the
+/// budget profile that produced it. The document selector is the
+/// `profile` slot; the budget profile is the `capability` slot. They are
+/// different domains and are never interchangeable.
 /// Redact plain locator copies before calling; blob payloads are stripped
 /// exactly as [`crate::provenance::content_hash`] strips them. The JSON is
 /// key-sorted recursively, so source table order cannot change identity
@@ -1709,7 +2136,7 @@ pub fn bound_content_hash(
     profile: Option<&str>,
     budget: &crate::eval::Budget,
     mode: Mode,
-    capability: Option<&str>,
+    budget_profile: Option<&str>,
     tainted: bool,
 ) -> String {
     let budget = budget.resolve();
@@ -1741,8 +2168,8 @@ pub fn bound_content_hash(
     if let Some(profile) = profile {
         object.insert("profile".into(), serde_json::json!(profile));
     }
-    if let Some(capability) = capability {
-        object.insert("capability".into(), serde_json::json!(capability));
+    if let Some(budget_profile) = budget_profile {
+        object.insert("capability".into(), serde_json::json!(budget_profile));
     }
     object.insert(
         "value".into(),
@@ -2045,6 +2472,54 @@ envelope = {
             gate.check(&module(V2_OK)).is_ok(),
             "v2 envelope must pass: {:?}",
             codes(gate.check(&module(V2_OK)))
+        );
+    }
+
+    #[test]
+    fn attenuation_rule_is_reached_for_the_conformance_vectors() {
+        // Review M3: the 0070/0071 vectors must trip the attenuation
+        // rule, not the pre-gate's clean-result requirement. With a valid
+        // `result`/`receipt.result` pair evaluation proceeds and the
+        // post-evaluation attenuation rule is the refusal.
+        let clean = |attenuation: &str| {
+            format!(
+                "active_mode = \"data\"\nenvelope = {{ version = \"2.0.0\", \
+                 profile = \"agent\", capabilities = [\"evaluate\"], tainted = false, \
+                 payload = {{ ok = true }}, result = \"{RECEIPT}\", receipt = {{ \
+                 outcome = \"clean\", mode = \"data\", result = \"{RECEIPT}\", budget = {{ \
+                 nodes = 100000, depth = 256, array_len = 100000, keys = 100000, wall_ms = 100, \
+                 value_size = 10000000, total_size = 100000000 }}{attenuation} }} }}\n"
+            )
+        };
+        let refusal = |src: &str| match crate::eval::Engine::new().evaluate(&module(src)) {
+            Err(EvalError::ValidationFailed { diagnostics }) => diagnostics,
+            Err(other) => panic!("unexpected error: {}", other.code()),
+            Ok((value, _)) => panic!("expected refusal, evaluated {value:?}"),
+        };
+
+        let widening =
+            clean(", attenuation = { from = [\"apply\"], to = [\"evaluate\"], by = \"local\" }");
+        let diags = refusal(&widening);
+        assert_eq!(
+            diags.iter().map(|d| d.code.as_str()).collect::<Vec<_>>(),
+            vec!["E042"]
+        );
+        assert!(
+            diags[0].message.contains("attenuation must narrow"),
+            "{:?}",
+            diags[0].message
+        );
+
+        let missing = clean("");
+        let diags = refusal(&missing);
+        assert_eq!(
+            diags.iter().map(|d| d.code.as_str()).collect::<Vec<_>>(),
+            vec!["E042"]
+        );
+        assert!(
+            diags[0].message.contains("requires its attenuation record"),
+            "{:?}",
+            diags[0].message
         );
     }
 
@@ -2400,10 +2875,10 @@ mod trust_tests {
         let value = table(vec![("envelope", envelope)]);
         let module = crate::parser::parse("active_mode = \"data\"\nx = 1\n", "e").expect("parse");
         let gate = EnvelopeGate::shipped();
-        check_evaluated(&value, &module, &gate, &budget, None, None, Some(&trust))
+        check_ctx(&value, &module, &gate, &budget, None, None, Some(&trust))
             .expect("a valid signature with trust passes");
         // No trust set: an unverifiable signature is refused.
-        let err = check_evaluated(&value, &module, &gate, &budget, None, None, None)
+        let err = check_ctx(&value, &module, &gate, &budget, None, None, None)
             .expect_err("no trust must refuse a signature");
         assert_eq!(codes(err), vec!["E045"]);
         // A tampered payload no longer matches the bound result.
@@ -2417,7 +2892,7 @@ mod trust_tests {
                 table(vec![("ok", Value::Bool(true)), ("port", Value::Int(9090))]),
             );
         }
-        let err = check_evaluated(
+        let err = check_ctx(
             &Value::Table(fields),
             &module,
             &gate,
@@ -2535,7 +3010,7 @@ mod regression_tests {
             Value::Table(fields),
         )]));
         let module = crate::parser::parse("active_mode = \"data\"\nx = 1\n", "e").expect("parse");
-        let err = check_evaluated(
+        let err = check_ctx(
             &value,
             &module,
             &EnvelopeGate::shipped(),

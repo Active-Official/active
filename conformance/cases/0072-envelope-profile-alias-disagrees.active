@@ -1,0 +1,9 @@
+active_mode = "data"
+envelope = {
+  version = "2.0.0",
+  profile = "agent",
+  capability = "trusted",
+  tainted = false,
+  payload = null,
+  receipt = { outcome = "failed", failure_class = "other" },
+}

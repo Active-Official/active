@@ -457,3 +457,32 @@ kind = "clean"
 id = "0069-below-absolute-zero-celsius"
 file = "cases/0069-below-absolute-zero-celsius.active"
 kind = "refused"
+
+# L-P35: authority vocabulary and attenuation. The Python reference
+# carries the same authority gate (default held set of all five, E049 for
+# a declaration that omits `evaluate` or `read-secrets`) and the same
+# attenuation `by` rule, including its material check.
+[[cases]]
+id = "0070-envelope-attenuation-widening"
+file = "cases/0070-envelope-attenuation-widening.active"
+kind = "refused"
+
+[[cases]]
+id = "0071-envelope-capabilities-missing-attenuation"
+file = "cases/0071-envelope-capabilities-missing-attenuation.active"
+kind = "refused"
+
+[[cases]]
+id = "0072-envelope-profile-alias-disagrees"
+file = "cases/0072-envelope-profile-alias-disagrees.active"
+kind = "refused"
+
+[[cases]]
+id = "0073-envelope-authority-not-granted"
+file = "cases/0073-envelope-authority-not-granted.active"
+kind = "refused"
+
+[[cases]]
+id = "0074-envelope-attenuation-material-by"
+file = "cases/0074-envelope-attenuation-material-by.active"
+kind = "refused"

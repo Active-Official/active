@@ -395,7 +395,10 @@ the closure-backed test runner is not shipped. Flags the adapter cannot
 honour (`--profile`, `--trust-keys`, `--lockfile`, `--store`, `--cache`,
 `--trace`, `--materialise-blobs`, `--path` outside inspect, `--peer`,
 `--audit-trail`, `--envelope`, `--envelope-trust`, `--sandbox`,
-`--reader-version`, `--pure`, budget flags) are rejected by name. The
+`--reader-version`, `--pure`, budget flags) are rejected by name.
+`--capability` is honoured: it narrows the held authority set inside the
+closure exactly as it does outside, and an out-of-set env/secret read is
+E049. The
 manifest is the §7.2a envelope; `document_b64` may be
 omitted, in which case the positional file is the document, and include
 `bytes_b64` may be omitted when the manifest lists host-readable paths

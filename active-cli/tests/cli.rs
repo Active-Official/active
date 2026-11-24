@@ -6486,7 +6486,10 @@ fn eval_cache_replays_clean_results_and_misses_on_change() {
         serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json");
     assert_eq!(entry["receipt"]["outcome"], "clean");
     assert_eq!(entry["receipt"]["mode"], "config");
-    assert_eq!(entry["receipt"]["capability"], "agent");
+    // L-P35 review M2: with no --sandbox/--budget-profile the run resolves
+    // the shipped defaults, which are strict's limits, so the receipt says
+    // `strict` (it used to hardcode `agent`).
+    assert_eq!(entry["receipt"]["capability"], "strict");
     assert!(entry["receipt"]["result"]
         .as_str()
         .is_some_and(|r| r.starts_with("sha256:")));
@@ -6633,7 +6636,7 @@ fn eval_cache_ignores_a_corrupt_entry() {
         .to_string_lossy()
         .to_string();
     let incomplete = serde_json::json!({
-        "version": 3,
+        "version": active_core::cache::CACHE_VERSION,
         "key": key,
         "json": "",
         "yaml": null,
@@ -10035,4 +10038,261 @@ fn evaluating_allowlisted_commands_refuse_an_out_of_closure_env() {
             "{args:?}: {out:?}"
         );
     }
+}
+
+#[test]
+fn capability_flag_narrows_the_host_held_set() {
+    let document = fixture_in("authority-cli", "main.active", "p = env.SECRET\n");
+    let out = active()
+        .env("SECRET", "x")
+        .args(["eval", "--format", "json", "--capability", "evaluate"])
+        .arg(&document)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success(), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("E049"),
+        "{out:?}"
+    );
+    let allowed = active()
+        .env("SECRET", "x")
+        .args([
+            "eval",
+            "--format",
+            "json",
+            "--capability",
+            "evaluate",
+            "--capability",
+            "read-secrets",
+        ])
+        .arg(&document)
+        .output()
+        .expect("run active");
+    assert!(allowed.status.success(), "{allowed:?}");
+    // Producer side: an envelope is a workspace write (the apply row in
+    // spec/tool-result-envelope.md §51), so `--capability evaluate` alone
+    // must refuse it (review H1) rather than write a file with only
+    // evaluate authority.
+    let data = fixture_in(
+        "authority-cli",
+        "data.active",
+        "active_mode = \"data\"\nport = 8080\n",
+    );
+    let out_path = data.with_file_name("declared.json");
+    // `fixture_in` reuses its directory across runs, so clear any envelope a
+    // previous run left behind before asserting the refusal writes none.
+    let _ = std::fs::remove_file(&out_path);
+    let refused = active()
+        .args(["eval", "--envelope"])
+        .arg(&out_path)
+        .args(["--capability", "evaluate"])
+        .arg(&data)
+        .output()
+        .expect("run active");
+    assert!(!refused.status.success(), "{refused:?}");
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("E049"),
+        "{refused:?}"
+    );
+    assert!(
+        !out_path.exists(),
+        "no envelope may be written without apply authority"
+    );
+    // With apply granted the run writes the envelope, and a narrowed host
+    // must not claim wider authority in the envelope or its attenuation.
+    let narrowed = active()
+        .args(["eval", "--envelope"])
+        .arg(&out_path)
+        .args(["--capability", "evaluate", "--capability", "apply"])
+        .arg(&data)
+        .output()
+        .expect("run active");
+    assert!(narrowed.status.success(), "{narrowed:?}");
+    let envelope: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&out_path).expect("read")).expect("json");
+    assert_eq!(
+        envelope["capabilities"],
+        serde_json::json!(["apply", "evaluate"])
+    );
+    assert_eq!(
+        envelope["receipt"]["attenuation"],
+        serde_json::json!({
+            "from": ["apply", "evaluate"],
+            "to": ["apply", "evaluate"],
+            "by": "local",
+        })
+    );
+}
+
+#[test]
+fn the_eval_cache_is_keyed_by_held_authority() {
+    // Review H1: a narrowed run must not read an entry the
+    // full-authority run filled (the cache is consulted before eval).
+    let dir = pin_dir("cache-authority");
+    let doc = dir.join("main.active");
+    std::fs::write(&doc, "p = env.SECRET\n").expect("write");
+    let cache = dir.join("cache");
+    std::fs::create_dir_all(&cache).expect("cache dir");
+    let full = cached(&dir)
+        .env("SECRET", "x")
+        .args(["eval", "--cache"])
+        .arg(&cache)
+        .arg(&doc)
+        .output()
+        .expect("run active");
+    assert!(full.status.success(), "{full:?}");
+    let narrowed = cached(&dir)
+        .env("SECRET", "x")
+        .args(["eval", "--cache"])
+        .arg(&cache)
+        .args(["--capability", "evaluate"])
+        .arg(&doc)
+        .output()
+        .expect("run active");
+    assert!(!narrowed.status.success(), "{narrowed:?}");
+    assert!(
+        String::from_utf8_lossy(&narrowed.stderr).contains("E049"),
+        "{narrowed:?}"
+    );
+}
+
+#[test]
+fn workspace_writes_need_apply_and_tree_reads_need_inspect() {
+    // Review M5: the mapping is one table, not ad-hoc arms.
+    let doc = fixture_in("authority-surfaces", "main.active", "p = 1\n");
+    let write = active()
+        .args(["fmt", "--write"])
+        .arg(&doc)
+        .args(["--capability", "inspect"])
+        .output()
+        .expect("run active");
+    assert!(!write.status.success(), "{write:?}");
+    assert!(
+        String::from_utf8_lossy(&write.stderr).contains("E049"),
+        "{write:?}"
+    );
+    let graph = active()
+        .arg("graph")
+        .arg(&doc)
+        .args(["--capability", "evaluate"])
+        .output()
+        .expect("run active");
+    assert!(!graph.status.success(), "{graph:?}");
+    assert!(
+        String::from_utf8_lossy(&graph.stderr).contains("E049"),
+        "{graph:?}"
+    );
+    // Review H1: a proposal's receipt and a lock's store are workspace
+    // writes, so a held set that suffices to read the document must still
+    // refuse to write them without `apply`.
+    let receipt = doc.with_file_name("receipt.json");
+    let _ = std::fs::remove_file(&receipt);
+    let propose = active()
+        .args(["propose", "--request", "p", "--candidate"])
+        .arg(&doc)
+        .arg("--receipt")
+        .arg(&receipt)
+        .args(["--capability", "evaluate", "--capability", "inspect"])
+        .output()
+        .expect("run active");
+    assert!(!propose.status.success(), "{propose:?}");
+    assert!(
+        String::from_utf8_lossy(&propose.stderr).contains("E049"),
+        "{propose:?}"
+    );
+    assert!(
+        !receipt.exists(),
+        "no receipt may be written without apply authority"
+    );
+    let store = doc.with_file_name("store");
+    let _ = std::fs::remove_file(&store);
+    let lock = active()
+        .arg("lock")
+        .arg(&doc)
+        .arg("--store")
+        .arg(&store)
+        .args(["--capability", "evaluate", "--capability", "inspect"])
+        .output()
+        .expect("run active");
+    assert!(!lock.status.success(), "{lock:?}");
+    assert!(
+        String::from_utf8_lossy(&lock.stderr).contains("E049"),
+        "{lock:?}"
+    );
+    assert!(
+        !store.exists(),
+        "no store may be written without apply authority"
+    );
+}
+
+#[test]
+fn sandboxed_eval_honours_the_held_authority_set() {
+    // Review H5: the closure path must not silently widen `--capability`.
+    let document = fixture_in("sandbox-authority", "main.active", "p = env.P\n");
+    let manifest = fixture_in(
+        "sandbox-authority",
+        "closure.json",
+        r#"{"version":1,"source_name":"main.active","includes":[],"env":[{"name":"P","set":true,"value":"closed"}]}"#,
+    );
+    let out = active()
+        .args(["eval", "--format", "json", "--sandbox-closure"])
+        .arg(&manifest)
+        .args(["--capability", "evaluate"])
+        .arg(&document)
+        .output()
+        .expect("run active");
+    assert!(!out.status.success(), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("E049"),
+        "{out:?}"
+    );
+}
+
+#[test]
+fn active_test_honours_the_held_authority_set() {
+    // Review H2: `active test` evaluates every file it walks, so a
+    // narrowed `--capability` set must gate secret reads there too.
+    let doc = fixture_in("test-authority", "main.active", "p = env.SECRET\n");
+    let full = active()
+        .args(["test", "--env", "SECRET=x"])
+        .arg(&doc)
+        .output()
+        .expect("run active");
+    assert!(full.status.success(), "{full:?}");
+    let narrow = active()
+        .args(["test", "--env", "SECRET=x", "--capability", "evaluate"])
+        .arg(&doc)
+        .output()
+        .expect("run active");
+    assert!(!narrow.status.success(), "{narrow:?}");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&narrow.stdout),
+        String::from_utf8_lossy(&narrow.stderr)
+    );
+    assert!(combined.contains("E049"), "{narrow:?}");
+}
+
+#[test]
+fn serve_honours_the_held_authority_set() {
+    // Review H6: `serve --capability` narrows remote-supplied documents.
+    let mut child = serve_spawn(&["--capability", "evaluate"]);
+    let request = serde_json::json!({
+        "id": 7,
+        "source": "p = env.SECRET\n",
+        "name": "remote",
+        "env": { "SECRET": "x" },
+    });
+    write_serve_frame(&mut child, request.to_string().as_bytes());
+    let response = read_serve_frame(&mut child).expect("response");
+    child.stdin.take();
+    let status = child.wait().expect("wait");
+    assert!(status.success(), "serve must exit cleanly on EOF");
+    assert_eq!(response["id"], 7, "{response}");
+    let envelope = &response["envelope"];
+    assert_eq!(envelope["receipt"]["outcome"], "failed", "{response}");
+    let diagnostics = envelope["receipt"]["diagnostics"]
+        .as_array()
+        .expect("diagnostics array");
+    assert!(diagnostics.iter().any(|code| code == "E049"), "{response}");
 }

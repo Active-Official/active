@@ -1,0 +1,22 @@
+# L-P35: `by` equals the sender id, so the equality rule passes and only
+# the material rule can refuse. The `by` value is a locator copy of a
+# secret literal, and a clean v2 envelope may not carry material in its
+# receipt attenuation link.
+active_mode = "data"
+relay_secret = secret("relay-by-literal")
+envelope = {
+  version = "2.0.0",
+  profile = "agent",
+  capabilities = ["evaluate", "read-secrets"],
+  tainted = false,
+  payload = { ok = true },
+  result = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  sender = { id = "relay-by-literal" },
+  receipt = {
+    outcome = "clean",
+    mode = "data",
+    budget = { nodes = 100000, depth = 256, array_len = 100000, keys = 100000, wall_ms = 100, value_size = 10000000, total_size = 100000000 },
+    result = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    attenuation = { from = ["evaluate", "read-secrets"], to = ["evaluate", "read-secrets"], by = "relay-by-literal" },
+  },
+}

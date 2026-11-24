@@ -34,6 +34,7 @@ use crate::unify::{MergeBudgetKind, MergeError, MergeProvenance};
 pub type EnvLookup = std::sync::Arc<dyn Fn(&str) -> Option<String>>;
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum EvalError {
     #[error("cycle detected in dependency graph")]
     CycleDetected,
@@ -65,6 +66,12 @@ pub enum EvalError {
         message: String,
         span: Option<Span>,
         file: Option<String>,
+    },
+    /// L-P35: a content authority was not granted for this document.
+    #[error("capability '{capability}' is not granted for this document")]
+    CapabilityDenied {
+        capability: &'static str,
+        span: Option<Span>,
     },
     /// L-P28: a sandboxed evaluation refused an input outside its
     /// InputClosure (E048). The message names the input family, never a
@@ -335,6 +342,7 @@ impl EvalError {
             EvalError::TypeError { .. } => "T001",
             EvalError::PatchError { .. } => "E019",
             EvalError::ProfileError { .. } => "E027",
+            EvalError::CapabilityDenied { .. } => "E049",
             EvalError::SandboxRefused { .. } => "E048",
             EvalError::PureRefused { .. } => "E047",
             EvalError::SecretLeak { .. } => "S004",
@@ -366,9 +374,9 @@ impl EvalError {
             EvalError::TypeError { span, .. }
             | EvalError::PatchError { span, .. }
             | EvalError::ProfileError { span, .. } => span.as_ref(),
-            EvalError::PureRefused { span, .. } | EvalError::SandboxRefused { span, .. } => {
-                span.as_ref()
-            }
+            EvalError::PureRefused { span, .. }
+            | EvalError::SandboxRefused { span, .. }
+            | EvalError::CapabilityDenied { span, .. } => span.as_ref(),
             EvalError::BlobError { span, .. } => span.as_ref(),
             EvalError::BudgetExceeded { span, .. } => span.as_ref(),
             EvalError::ValidationFailed { diagnostics } => {
@@ -462,6 +470,10 @@ pub struct Engine {
     /// CLI `--profile` override: when set, selects this profile instead
     /// of the document's `active_profile` key (spec §3.5).
     pub profile_override: Option<String>,
+    /// L-P35: the authorities this host holds. Default all five for
+    /// local compatibility; a host narrows explicitly. Profiles never
+    /// imply authorities.
+    pub capabilities: crate::authority::CapabilitySet,
     /// Runtime resource limits (spec/budgets.md, C-037). Violations
     /// are always fatal, in both modes.
     pub budget: Budget,
@@ -1443,7 +1455,17 @@ fn check_dp_bounds(
     Ok((total, size, max_depth_seen))
 }
 
-type MemoConfig = (bool, Option<String>, Budget, bool, bool, Mode, bool, bool);
+type MemoConfig = (
+    bool,
+    Option<String>,
+    Budget,
+    bool,
+    bool,
+    Mode,
+    bool,
+    bool,
+    crate::authority::CapabilitySet,
+);
 
 /// Memo store for incremental evaluation (C-055, spec/performance.md
 /// §2): fingerprint → evaluated value plus the diagnostics produced
@@ -2127,6 +2149,7 @@ impl Engine {
             blob_salt: None,
             envelope_gate: Some(crate::envelope::EnvelopeGate::shipped()),
             envelope_trust: None,
+            capabilities: crate::authority::CapabilitySet::all(),
             sandbox_guard: None,
         }
     }
@@ -2136,6 +2159,23 @@ impl Engine {
     pub fn with_env(mut self, env: std::collections::HashMap<String, String>) -> Self {
         self.env = canonical_env_map(env.into_iter());
         self
+    }
+
+    /// Refuse a surface operation whose authority this host does not hold.
+    /// Embedded hosts call this before a tool operation; the evaluator's
+    /// own `evaluate`/`read-secrets` gates do not depend on it.
+    pub fn require_capability(
+        &self,
+        capability: crate::authority::Capability,
+    ) -> Result<(), EvalError> {
+        if self.capabilities.contains(capability) {
+            Ok(())
+        } else {
+            Err(EvalError::CapabilityDenied {
+                capability: capability.as_str(),
+                span: None,
+            })
+        }
     }
 
     /// Lazy host lookup consulted on snapshot miss (F-016).
@@ -2280,6 +2320,8 @@ impl Engine {
             // L-P05: a pure run refuses before the walk; a cached tree
             // from a default run must not satisfy it.
             self.pure,
+            // L-P35: a different authority set may refuse the document.
+            self.capabilities,
         );
         if memo.config.as_ref() != Some(&token) {
             memo.map.clear();
@@ -2400,6 +2442,44 @@ impl Engine {
         if self.pure {
             if let Some(refusal) = self.pure_refusal(module) {
                 return Err(refusal);
+            }
+        }
+        // L-P35: content authority. The capability-subset check runs before
+        // the sandbox guard, so E049 precedes E048 when both apply; the
+        // documented gate order is E047 > E049 > E048 > E033/E042.
+        let granted = if module.mode == crate::ir::Mode::Data {
+            match crate::envelope::declared_capabilities(module)? {
+                Some(declared) => {
+                    if let Some(missing) = declared.first_missing(self.capabilities) {
+                        return Err(EvalError::CapabilityDenied {
+                            capability: missing.as_str(),
+                            span: None,
+                        });
+                    }
+                    declared
+                }
+                None => self.capabilities,
+            }
+        } else {
+            self.capabilities
+        };
+        if !granted.contains(crate::authority::Capability::Evaluate) {
+            return Err(EvalError::CapabilityDenied {
+                capability: crate::authority::Capability::Evaluate.as_str(),
+                span: None,
+            });
+        }
+        if !granted.contains(crate::authority::Capability::ReadSecrets) {
+            for (index, node) in module.arena.iter().enumerate() {
+                if matches!(node, Node::Env { .. } | Node::Secret { .. }) {
+                    return Err(EvalError::CapabilityDenied {
+                        capability: crate::authority::Capability::ReadSecrets.as_str(),
+                        span: module
+                            .node_spans
+                            .get(&crate::ir::NodeId(index as u32))
+                            .cloned(),
+                    });
+                }
             }
         }
         if let Some(guard) = &self.sandbox_guard {
@@ -3460,15 +3540,15 @@ impl Engine {
                 },
                 _ => None,
             });
-            crate::envelope::check_evaluated(
-                &result,
-                module,
-                gate,
-                &budget,
-                effective_profile.as_deref(),
-                material_profile.as_ref(),
-                self.envelope_trust.as_ref(),
-            )?;
+            let context = crate::envelope::CheckContext {
+                held: self.capabilities,
+                granted,
+                budget: &budget,
+                profile: effective_profile.as_deref(),
+                material: material_profile.as_ref(),
+                trust: self.envelope_trust.as_ref(),
+            };
+            crate::envelope::check_evaluated(&result, module, gate, &context)?;
         }
         // Closing wall-clock sample: small documents take zero walk
         // samples, so the deadline is checked once more at the end.

@@ -43,6 +43,9 @@ int active_ffi_call_every_export(void) {
   active_set_env_lookup(module, lookup_cb, (void *)0);
   active_set_include_loader(module, (ActiveLookupFn)0, (void *)0);
   active_set_env_lookup(module, (ActiveLookupFn)0, (void *)0);
+  /* L-P35: per-handle and process-wide authority setters. */
+  (void)active_set_capabilities(module, (const char *)0);
+  (void)active_set_sandbox_capabilities((const char *)0);
 
   /* Diagnostics: every accessor through a real set. */
   struct ActiveDiagnosticSet *checked = active_check(module, budget);
@@ -61,7 +64,8 @@ int active_ffi_call_every_export(void) {
   /* Values: evaluate, then every value surface. */
   struct ActiveValue *value = active_eval(module, budget);
   /* L-P28: sandboxed entries take a §7.2a closure envelope. */
-  struct ActiveValue *sandboxed = active_eval_sandboxed((const char *)0, budget);
+  struct ActiveValue *sandboxed =
+      active_eval_sandboxed((const char *)0, budget);
   struct ActiveDiagnosticSet *sandboxed_diags =
       active_check_sandboxed((const char *)0, budget);
   (void)sandboxed;

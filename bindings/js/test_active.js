@@ -106,6 +106,43 @@ const { load } = require("./active.js");
 	} else {
 		console.log("js-note: release wasm not built, skipping release-path phase");
 	}
+
+	// L-P35: the capability-gated evaluate path through the shipped shim
+	// against the release module. Empty held authority must refuse with
+	// E049; a granting set must evaluate. The loop also watches process
+	// RSS: every transient allocation a call takes is released in its
+	// finally, so a long run must not grow without bound (a shim that
+	// drops those frees grows by hundreds of MiB over the same loop).
+	if (require("fs").existsSync(releaseWasm)) {
+		const shim = require("../../active-wasm/js/active-shim.js");
+		const api = await shim.load(require("fs").readFileSync(releaseWasm));
+		const denied = api.evaluateWithCapabilities("p = env.SECRET\n", "");
+		assert.strictEqual(denied.ok, false, "empty authority must refuse");
+		assert.ok(
+			denied.diagnostics.includes("E049"),
+			"empty authority must report E049",
+		);
+		const allowed = api.evaluateWithCapabilities(
+			"p = env.SECRET\n",
+			"evaluate,read-secrets",
+		);
+		assert.strictEqual(allowed.ok, true, "granting authority must evaluate");
+		assert.deepStrictEqual(JSON.parse(allowed.json), { p: null });
+		// A ~30 KB source makes a single leaked buffer per call plain.
+		const big = 'v = "' + "a".repeat(30000) + '"\n';
+		const caps = "evaluate,read-secrets";
+		for (let i = 0; i < 200; i++) api.evaluateWithCapabilities(big, caps);
+		const before = process.memoryUsage().external;
+		for (let i = 0; i < 2000; i++) api.evaluateWithCapabilities(big, caps);
+		const grew = process.memoryUsage().external - before;
+		assert.ok(
+			grew < 48 * 1024 * 1024,
+			`transient allocations must be freed (external grew ${(grew / 1048576).toFixed(1)} MiB)`,
+		);
+	} else {
+		console.log("js-note: release wasm not built, skipping capability phase");
+	}
+
 	await assert.rejects(
 		load("/nonexistent/active_wasm.wasm"),
 		/ACTIVE_WASM_PATH/,

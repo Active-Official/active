@@ -278,12 +278,15 @@ class EnvelopeModeTests(unittest.TestCase):
             'envelope = { version = "2.0.0", tainted = false, payload = { ok = true }, '
             f'receipt = {{ outcome = "clean", mode = "data", {budget} }} }}\n'
         )
+        # The source gate refuses a clean v2 envelope with no `result` before
+        # evaluation runs (E042), matching the shipped engine; the coalesced
+        # post-evaluation E044 bound check covers a present-but-wrong digest.
         outcome = evaluate_source(missing, "missing-result")
-        self.assertEqual(records(outcome), [("E044", "envelope.result")])
+        self.assertEqual(records(outcome), [("E042", "envelope.result")])
         wrong = (
             'active_mode = "data"\n'
-            'envelope = { version = "2.0.0", tainted = false, payload = { ok = true }, '
-            'result = "sha256:' + "0" * 64 + '", '
+            'envelope = { version = "2.0.0", profile = "data", tainted = false, '
+            'payload = { ok = true }, result = "sha256:' + "0" * 64 + '", '
             f'receipt = {{ outcome = "clean", result = "sha256:{"0" * 64}", '
             f'mode = "data", {budget} }} }}\n'
         )

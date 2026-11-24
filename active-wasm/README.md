@@ -12,6 +12,19 @@ envelope the host cannot measure (LANG-G-021).
 write is what runs. Units have dimensions; secrets have taint; budgets
 always hold.
 
+## Authorities and pure mode (L-P35)
+
+`active_eval_json_caps(src, src_len, caps, caps_len, out_len)` evaluates
+with a narrowed held-authority set: a comma-separated list of `evaluate`,
+`read-secrets`, `inspect`, `apply`, `sign`; empty means none. A document
+that needs a missing authority returns an E049 envelope. `active_eval_json_caps_pure`
+applies the L-P05 pure rule on top (env reads, unpinned includes, and
+profile overrides are E047). The JS shim exposes both as
+`evaluateWithCapabilities(input, caps, pure?)`. The committed
+`pkg-*/active_wasm_bg.wasm` artifacts are rebuilt at release; a shim
+built against them before that rebuild throws a named error rather than
+silently ignoring the set.
+
 ## Wall clock: the host owns the timeout
 
 On wasm32 there is no monotonic clock, so `active_eval_json` runs without a

@@ -3881,6 +3881,24 @@ pub fn analysis_with_closure(
     version: i32,
     closure: active_core::InputClosure,
 ) -> Result<Doc, Vec<Diagnostic>> {
+    analysis_with_closure_capabilities(
+        uri,
+        text,
+        version,
+        closure,
+        active_core::CapabilitySet::all(),
+    )
+}
+
+/// L-P35: sandboxed analysis with the editor host's held authority set.
+/// A document needing an authority outside `capabilities` is E049.
+pub fn analysis_with_closure_capabilities(
+    uri: Url,
+    text: String,
+    version: i32,
+    closure: active_core::InputClosure,
+    capabilities: active_core::CapabilitySet,
+) -> Result<Doc, Vec<Diagnostic>> {
     if text != closure.document.as_ref() {
         return Err(vec![Diagnostic {
             severity: Severity::Error,
@@ -3958,6 +3976,7 @@ pub fn analysis_with_closure(
         }
     };
     let mut engine = Engine::hermetic();
+    engine.capabilities = capabilities;
     engine.budget = active_core::Budget::strict();
     let (value, eval_diags, value_seeds) = match sandbox.evaluate_with_seeds(&engine, &module) {
         Ok((value, diagnostics, seeds)) => (Some(value), diagnostics, seeds),
@@ -4010,6 +4029,16 @@ pub fn steps_snapshot_with_closure(
     closure: active_core::InputClosure,
     selector: Option<&str>,
 ) -> JsonValue {
+    steps_snapshot_with_closure_capabilities(closure, selector, active_core::CapabilitySet::all())
+}
+
+/// L-P35: the closure-backed stepper with an explicit held authority set,
+/// mirroring [`analysis_with_closure_capabilities`].
+pub fn steps_snapshot_with_closure_capabilities(
+    closure: active_core::InputClosure,
+    selector: Option<&str>,
+    capabilities: active_core::CapabilitySet,
+) -> JsonValue {
     let sandbox = match active_core::Sandbox::new(closure) {
         Ok(sandbox) => sandbox,
         Err(error) => return serde_json::json!({"error": error.to_string()}),
@@ -4027,6 +4056,7 @@ pub fn steps_snapshot_with_closure(
         }
     };
     let mut engine = Engine::hermetic();
+    engine.capabilities = capabilities;
     engine.budget = active_core::eval::canonical_budget(&engine.budget);
     match sandbox.evaluate_with_steps(&engine, &module) {
         Ok((_, diagnostics, steps)) => {

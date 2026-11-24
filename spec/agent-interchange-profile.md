@@ -113,6 +113,17 @@ the gate only for documents it already trusts.
 1. Reject unknown envelope majors and unknown capabilities.
 2. Honor taint: never render a payload containing secrets without
    redaction, and never copy secret material into logs.
+2b. **Authorities (L-P35).** A v2 envelope's `capabilities` is the
+   authority set it grants the receiver: `evaluate`, `read-secrets`,
+   `inspect`, `apply`, `sign`. A receiver evaluates under the intersection
+   of the declared set and its own held set, and refuses a declared set it
+   does not hold (E049). The declared set must not exceed the sender's
+   held set; the receipt's `attenuation {from, to, by}` must narrow
+   (`to == capabilities`, `capabilities ⊆ from`) and is required for a
+   clean outcome. Shape defects are E042; authority denials are E049. A
+   receiver that must not accept the v1/local bridge enables
+   `EnvelopeGate::with_required_capabilities` and refuses an envelope that
+   omits the field.
 3. Budgets are LOCAL. The envelope's `budget` field is a REPORT only
    (usage and headroom for audit/replay diagnostics); a receiver's ceilings
    always come from its own sandbox profile and are never read from the
@@ -136,11 +147,14 @@ fetch. Budget for it: a 100k-node document costs its full walk on every cone
 request, and an undemanded pathological subtree can deny service to a
 demanded cone (the static budgets still run first and fail closed).
 
-Demand-driven evaluation (walk only what the cone needs, with per-cone
-budgets) is the long-term fix; it lives on the `active-infinity` surface and
-is tracked as a follow-up, not a 1.x promise. Until then, fetch the cones you
-need from one evaluation (`--path` per call, or project the exported document
-locally) rather than in a hot loop.
+Demand-driven evaluation (walk only what the cone needs; whole-document
+static budgets still apply, the dynamic accountant charges the demanded
+closure) is the long-term fix. The engine capability lives in
+`active-core` and is consumed by the RPC/Infinity layer; its design is
+`audit-pack/L-P40-DESIGN.md`, tracked as a follow-up, not a 1.x promise.
+Until it lands, fetch the cones you need from one evaluation (`--path`
+per call, or project the exported document locally) rather than in a hot
+loop.
 
 ## 5. Non-goals
 

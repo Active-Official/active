@@ -1,0 +1,15 @@
+active_mode = "data"
+envelope = {
+  version = "2.0.0",
+  profile = "agent",
+  capabilities = ["evaluate"],
+  tainted = false,
+  payload = { ok = true },
+  result = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  receipt = {
+    outcome = "clean",
+    mode = "data",
+    budget = { nodes = 100000, depth = 256, array_len = 100000, keys = 100000, wall_ms = 100, value_size = 10000000, total_size = 100000000 },
+    result = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  },
+}

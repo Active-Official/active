@@ -450,3 +450,56 @@ fn f4_profile_refusal_stays_err() {
     };
     assert!(error.iter().any(|d| d.code == "E048"));
 }
+
+#[test]
+fn lsp_capabilities_narrow_the_held_set() {
+    let document = "p = env.SECRET\n";
+    let doc = analysis::analysis_with_closure_capabilities(
+        Url::parse("untitled:lsp-caps").unwrap(),
+        document.to_string(),
+        1,
+        closure(document, BTreeMap::new()),
+        active_core::CapabilitySet::parse_list(["evaluate"]).unwrap(),
+    )
+    .expect("analysis");
+    assert!(
+        doc.eval_diags.iter().any(|d| d.code == "E049"),
+        "{:?}",
+        doc.eval_diags
+    );
+}
+
+#[test]
+fn lsp_steps_narrow_the_held_set() {
+    // L-P35: the debugger stepper carries the same held-authority set as
+    // the analyzer. `env.SECRET` needs read-secrets, so an evaluate-only
+    // set must surface E049 instead of a snapshot. The env var is declared
+    // so the two cases differ only by the held authority (an undeclared
+    // read is E048 for either set).
+    let document = "p = env.SECRET\n";
+    let declared = || {
+        let mut env = BTreeMap::new();
+        env.insert("SECRET".to_string(), Some("s3cr3t".to_string()));
+        env
+    };
+    let denied = analysis::steps_snapshot_with_closure_capabilities(
+        closure(document, declared()),
+        None,
+        active_core::CapabilitySet::parse_list(["evaluate"]).unwrap(),
+    );
+    assert_eq!(denied["code"], "E049", "{denied}");
+    assert!(denied["error"].is_string(), "{denied}");
+
+    let allowed = analysis::steps_snapshot_with_closure_capabilities(
+        closure(document, declared()),
+        None,
+        active_core::CapabilitySet::parse_list(["evaluate", "read-secrets"]).unwrap(),
+    );
+    assert!(allowed.get("error").is_none(), "{allowed}");
+    assert!(allowed["steps"].is_array(), "{allowed}");
+
+    // The convenience wrapper holds the full authority set: it agrees with
+    // the granting set above.
+    let wide = analysis::steps_snapshot_with_closure(closure(document, declared()), None);
+    assert!(wide.get("error").is_none(), "{wide}");
+}

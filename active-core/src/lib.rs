@@ -3,6 +3,7 @@
 //! This is the alpha production foundation of the Active language.
 
 pub mod ast;
+pub mod authority;
 pub mod blob;
 pub mod cache;
 pub mod convert;
@@ -29,6 +30,7 @@ pub mod unify;
 pub mod validate;
 pub mod viz;
 
+pub use authority::{Capability, CapabilitySet};
 pub use diag::{Diagnostic, Repair, RepairKind, Severity};
 pub use envelope::{EnvelopeGate, SUPPORTED_ENVELOPE_MAJORS};
 pub use eval::{Budget, BudgetKind, Engine, EnvLookup, EvalError, IncrementalMemo, StepEvent};
@@ -43,6 +45,7 @@ pub use parser::{
     parse_text_with_file, parse_text_with_trust, parse_with, validate_patch_path, IncludeLoader,
     Lexed, ParseOptions, PathSeg,
 };
+
 pub use sandbox::{ClosureError, IncludeFile, InputClosure, Sandbox, SandboxedModule};
 pub use types::{Constraint, Unit};
 

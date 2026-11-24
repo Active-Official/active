@@ -10,7 +10,9 @@ identity, or content-addressed identity.
 | Field | Kind | Meaning |
 |---|---|---|
 | `version` | string `major.minor.patch` | Envelope schema version. Majors 1 and 2 are implemented; unknown majors are rejected |
-| `capability` | string | Sandbox profile used for evaluation (`strict`/`data`/`agent`/`trusted`) |
+| `profile` | string | Budget profile used for evaluation (`strict`/`data`/`agent`/`trusted`). v2 spelling; the legacy `capability` key is accepted as an alias and both must agree when present. A profile is a budget preset, never an authority (L-P35) |
+| `capability` | string | Legacy alias for `profile` (v2 writes `profile`; v1 uses this key). Never an authority |
+| `capabilities` | array of strings | v2 content authorities granted to the receiver: `evaluate`, `read-secrets`, `inspect`, `apply`, `sign`. Omission is the v1/local bridge (held set applies); transport hops must set it. The receiver refuses a set it does not hold, and evaluation uses only this set (L-P35) |
 | `tainted` | boolean | The payload structurally contains a secret |
 | `payload` | value or blob reference | The result itself |
 | `budget` | optional object | `{nodes, depth, keys, value_size, total_size, headroom}` as observed |
@@ -19,6 +21,51 @@ identity, or content-addressed identity.
 | `receipt` | **v2 required** object | Audit record for this result, including adversarial outcomes |
 | `sender` | optional v2 object | `{ id, key?, signature? }` sender identity |
 | `result` | optional string | Content hash. v1 binds the payload value tree only; v2 binds payload + schema version + profile + resolved budget + mode + capability. **Required for a clean v2 outcome** and must equal `receipt.result` |
+
+**Two different `profile` fields.** `envelope.profile` (and its legacy
+alias `envelope.capability`) is the **budget profile** that selected the
+evaluation limits. `receipt.profile` is the **document profile
+selector** (`--profile` or `active_profile`) that selected the document
+profile block. They are different domains, may differ, and are bound in
+different slots of the v2 result hash: the budget profile is the
+`capability` slot, the document selector is the `profile` slot
+(`envelope::bound_content_hash`). A writer must not feed one into the
+other's slot.
+
+**Capabilities are a set, never a grant that widens.** `capabilities`
+is what the sender grants the receiver for this document. A sender can
+emit only a subset of what it holds; a receiver accepts only a subset of
+what it holds. Shape defects (non-array, non-string, unknown name,
+duplicate) are **E042** both before and after the walk; authority
+denials (not held by the receiver, changed after evaluation, widening
+attenuation) are **E049**. A non-table envelope is **E033** at the gate,
+before or after evaluation.
+
+### 1.1a Authority vocabulary and operations
+
+| Authority | Operations |
+|---|---|
+| `evaluate` | Any evaluation of a document (`eval`, `check`, `convert`, `audit`, `lock`, FFI/WASM/LSP/server evaluation). The evaluator refuses with E049 when absent |
+| `read-secrets` | Any evaluation of a document that can read an environment value or construct a secret. The evaluator pre-scans the arena and refuses with E049 when absent |
+| `inspect` | Tree- and document-reading surfaces: `graph`, `impact`, `why`, `inspect`, `explain`, `schema`, `debug`, `viz`, `capability`, `compatibility`, `diff`, `plan` (without `--output`), `doc`, `budget`, `mode`, `doctor`, `gate` (without `--receipt`) |
+| `apply` | Workspace mutation: `apply`, `repair`, `store`, writes to source/plan/lock/receipt/output paths (`fmt --write`, `plan --output`, `lock --output`, `propose --output`, `gate --receipt`, `eval --envelope/--audit-trail/--store`) |
+| `sign` | `sign`, `keygen`. Verification is public and needs no authority |
+
+The tool handshake names in `active_capabilities` (`check`, `eval`,
+`convert`, ...) are a separate namespace: they are tools this host
+offers (E034 when refused), not content authorities (E049). A document
+may carry both.
+
+### 1.1b Requiring capabilities on receive
+
+Omission of `capabilities` is the v1/local bridge: the receiver applies
+its held set. A relay or strict receiver that must distinguish omission
+from stripping enables `EnvelopeGate::with_required_capabilities`, which
+refuses a v2 envelope without the field (E042). Unsigned attenuation
+links are assertions; only `sender.signature` over `receipt_digest`
+binds them. A receiver that needs a chain verifies each link's `from`
+against the prior hop's `to`; the shipped gate enforces the local link
+(`to == capabilities` and `capabilities ⊆ from`).
 
 ### 1.1 Receipt (v2)
 
@@ -33,13 +80,14 @@ payload:
 | `diagnostics` | optional array | Codes and paths; never values |
 | `result` | optional string | The v2 bound content hash; required for a clean outcome and equal to `envelope.result` |
 | `schema_version` | optional string | The schema version that validated the payload |
-| `profile` | optional string | The effective profile selector |
+| `profile` | optional string | The effective **document** profile selector (a different domain from `envelope.profile`, the budget profile; see §1) |
 | `mode` | optional `"config"` or `"data"` | The evaluated mode (closed set). **Required for a clean outcome** |
 | `budget` | optional object | The **resolved limits** used for evaluation (the envelope's top-level `budget` is observed usage/headroom). **Required for a clean outcome**, with all seven fields: `nodes`, `depth`, `array_len`, `keys`, `wall_ms`, `value_size`, `total_size`, each a positive integer |
 | `diagnostics` | optional array of strings | Stable diagnostic codes (the audit file carries the full objects); never values |
 | `include_resolutions` | optional array | `{path, resolved, sha256, source}` when includes were resolved |
 | `applied` | optional array | L-P41: the commit set a repair receipt describes: `{kind, path, status, side_effects?, proof?}` entries. Paths, kinds, statuses, and proof codes/paths only — a repair directive can carry a value, so the directive text and every value are omitted. On a failed repair receipt it records the refused/attempted set |
 | `document_clean` | optional boolean | L-P41: a repair receipt's verdict on the resulting document (independent of the tool outcome: a committed partial repair can be clean=false) |
+| `attenuation` | optional object | L-P35 link: `{from, to, by}`; `to` equals `envelope.capabilities`, `from ⊇ to`, `by` equals `sender.id` or `local`. Required for a clean v2 outcome when `capabilities` is present. The sequence of receipts is the auditable chain; unsigned links are assertions |
 | `closed_tables` | optional array | L-P11 audit of every closed schema table instance in a **clean** run: `{path, keys}` and exactly those two members. `path` is the dotted document path (`"."` is the root); `keys` are the key names present at that instance, sorted. Key names only — values and material never appear. Several structurally matching disjunction branches at one path record once. Absent when the schema declares no closed table or the outcome is failed |
 
 A v2 envelope without `receipt` is refused with **E042**. A malformed

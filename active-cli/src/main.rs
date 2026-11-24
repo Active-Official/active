@@ -78,6 +78,10 @@ struct Cli {
     /// bytes are read and digested by this host before the closure exists.
     #[arg(long, global = true, value_name = "MANIFEST")]
     sandbox_closure: Option<PathBuf>,
+    /// L-P35: narrow the authorities this host holds (repeatable). The
+    /// default is all five; a profile never grants authority.
+    #[arg(long, global = true, value_name = "NAME")]
+    capability: Vec<String>,
     #[command(subcommand)]
     command: Commands,
 }
@@ -86,6 +90,8 @@ struct Cli {
 /// parser is constructed in several command paths, and the limits are a
 /// property of the process invocation, so they are resolved once here.
 static PARSE_LIMITS: std::sync::OnceLock<(usize, u64)> = std::sync::OnceLock::new();
+static HELD_CAPABILITIES: std::sync::OnceLock<active_core::CapabilitySet> =
+    std::sync::OnceLock::new();
 
 thread_local! {
     /// L-P28 CLI adapter: the closure manifest for this invocation and
@@ -110,6 +116,9 @@ fn set_profile_override(engine: &mut Engine, profile: Option<String>) {
 }
 
 fn sandboxed_engine(mut engine: Engine) -> Engine {
+    if let Some(held) = HELD_CAPABILITIES.get() {
+        engine.capabilities = *held;
+    }
     if let Some(sandbox) = active_sandbox() {
         // Engine::new snapshots the process ambient. A sandboxed command
         // must not retain it even if configure_engine later fails.
@@ -2287,6 +2296,7 @@ fn serve_stdio(
     profile: &Option<String>,
     budget: active_core::eval::Budget,
     max_frame: usize,
+    budget_label: &str,
 ) -> anyhow::Result<()> {
     use std::io::{Read, Write};
     let stdin = std::io::stdin();
@@ -2329,7 +2339,7 @@ fn serve_stdio(
         reader
             .read_exact(&mut payload)
             .map_err(|e| anyhow::anyhow!("cannot read a frame payload: {e}"))?;
-        let response = serve_request(&payload, profile, budget, max_frame);
+        let response = serve_request(&payload, profile, budget, max_frame, budget_label);
         write_frame(&mut writer, &response)?;
         writer.flush()?;
     }
@@ -2378,6 +2388,7 @@ fn serve_request(
     profile: &Option<String>,
     budget: active_core::eval::Budget,
     max_frame: usize,
+    budget_label: &str,
 ) -> Vec<u8> {
     let request: serde_json::Value = match serde_json::from_slice(payload) {
         Ok(value) => value,
@@ -2439,8 +2450,11 @@ fn serve_request(
     engine.resilient = false;
     set_profile_override(&mut engine, profile.clone());
     engine.budget = budget;
+    // L-P35 review H6: `serve --capability` narrows every request, not
+    // just the local command surfaces.
+    engine.capabilities = held_authority();
     let engine = engine.with_env(env);
-    let envelope = serve_evaluate(source, &name, &engine);
+    let envelope = serve_evaluate(source, &name, &engine, budget_label);
     if envelope.is_null() {
         return serve_error_frame(id, "E029", "cannot render the response envelope", max_frame);
     }
@@ -2454,7 +2468,12 @@ fn serve_request(
 
 /// Evaluate one document and produce the shared L-T06 envelope: the same
 /// shape, hash binding, and redaction every other transport uses.
-fn serve_evaluate(source: &str, name: &str, engine: &Engine) -> serde_json::Value {
+fn serve_evaluate(
+    source: &str,
+    name: &str,
+    engine: &Engine,
+    budget_label: &str,
+) -> serde_json::Value {
     // The process-wide parse limits (`--max-input-bytes`,
     // `--parse-wall-ms`) apply here like every other parse path.
     let options = crate::with_parse_limits(ParseOptions::default());
@@ -2462,11 +2481,20 @@ fn serve_evaluate(source: &str, name: &str, engine: &Engine) -> serde_json::Valu
     // shipped parse diagnostic, without tokenizing a byte.
     if options.max_input_bytes != 0 && source.len() > options.max_input_bytes {
         let codes = vec!["E029".to_string()];
-        let receipt = serve_failure_receipt(None, &engine.budget, codes, "parse");
-        return render_envelope_v2("agent", false, serde_json::Value::Null, None, receipt, None)
-            .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or(serde_json::Value::Null);
+        let receipt = serve_failure_receipt(None, &engine.budget, codes, "parse", budget_label);
+        // No module parsed, so the producer can only claim what it holds.
+        return render_envelope_v2(EnvelopeV2 {
+            budget_profile: budget_label,
+            granted: held_authority(),
+            tainted: false,
+            payload: serde_json::Value::Null,
+            result: None,
+            receipt,
+            sender: None,
+        })
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or(serde_json::Value::Null);
     }
     // Hermetic: no include reads (an `include` is E015, not a file read)
     // and no ambient environment (only the request's explicit `env`).
@@ -2479,15 +2507,16 @@ fn serve_evaluate(source: &str, name: &str, engine: &Engine) -> serde_json::Valu
         Ok(module) => module,
         Err(diagnostics) => {
             let codes: Vec<String> = diagnostics.iter().map(|d| d.code.clone()).collect();
-            let receipt = serve_failure_receipt(None, &engine.budget, codes, "parse");
-            return render_envelope_v2(
-                "agent",
-                false,
-                serde_json::Value::Null,
-                None,
+            let receipt = serve_failure_receipt(None, &engine.budget, codes, "parse", budget_label);
+            return render_envelope_v2(EnvelopeV2 {
+                budget_profile: budget_label,
+                granted: held_authority(),
+                tainted: false,
+                payload: serde_json::Value::Null,
+                result: None,
                 receipt,
-                None,
-            )
+                sender: None,
+            })
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or(serde_json::Value::Null);
@@ -2592,7 +2621,13 @@ fn serve_evaluate(source: &str, name: &str, engine: &Engine) -> serde_json::Valu
         if !refusal_codes.iter().any(|existing| existing == code) {
             refusal_codes.push(code.to_string());
         }
-        serve_failure_receipt(Some(&module), &engine.budget, refusal_codes, class)
+        serve_failure_receipt(
+            Some(&module),
+            &engine.budget,
+            refusal_codes,
+            class,
+            budget_label,
+        )
     } else {
         outcome_receipt(
             &module,
@@ -2600,7 +2635,7 @@ fn serve_evaluate(source: &str, name: &str, engine: &Engine) -> serde_json::Valu
             &engine.budget,
             &payload,
             Some(&payload),
-            "agent",
+            budget_label,
             &codes,
             failed,
             failure.unwrap_or("other"),
@@ -2620,14 +2655,15 @@ fn serve_evaluate(source: &str, name: &str, engine: &Engine) -> serde_json::Valu
         payload_json = serde_json::Value::Null;
         tainted = false;
     }
-    render_envelope_v2(
-        "agent",
+    render_envelope_v2(EnvelopeV2 {
+        budget_profile: budget_label,
+        granted: producer_granted(&module),
         tainted,
-        payload_json,
-        result.as_deref(),
+        payload: payload_json,
+        result: result.as_deref(),
         receipt,
-        None,
-    )
+        sender: None,
+    })
     .ok()
     .and_then(|text| serde_json::from_str(&text).ok())
     .unwrap_or(serde_json::Value::Null)
@@ -2642,11 +2678,12 @@ fn serve_failure_receipt(
     budget: &active_core::eval::Budget,
     codes: Vec<String>,
     failure_class: &str,
+    budget_label: &str,
 ) -> serde_json::Value {
     let mut map = serde_json::Map::new();
     map.insert("outcome".into(), serde_json::json!("failed"));
     map.insert("failure_class".into(), serde_json::json!(failure_class));
-    map.insert("capability".into(), serde_json::json!("agent"));
+    map.insert("capability".into(), serde_json::json!(budget_label));
     if let Some(module) = module {
         map.insert(
             "mode".into(),
@@ -2935,20 +2972,101 @@ fn write_checked(path: &std::path::Path, force: bool, bytes: &[u8]) -> anyhow::R
     })
 }
 
+/// The authority this process holds: the `--capability` set when given,
+/// else all five (an unconstrained local run). L-P35 review M2/M5.
+fn held_authority() -> active_core::CapabilitySet {
+    HELD_CAPABILITIES
+        .get()
+        .copied()
+        .unwrap_or_else(active_core::CapabilitySet::all)
+}
+
+/// The authority a producer may claim for `module`: the document's declared
+/// set when present (it may only narrow), else what the process holds. A
+/// declared set the process does not hold falls back to the held set: a
+/// relay that advertised a grant it never had would widen the chain
+/// (L-P35 review M5).
+fn producer_granted(module: &active_core::Module) -> active_core::CapabilitySet {
+    active_core::envelope::effective_granted(module, held_authority())
+        .unwrap_or_else(|_| held_authority())
+}
+
+/// The truthful budget-profile label for a run (L-P35 review M2). A
+/// `--sandbox` name is itself in the closed set (`strict|data|agent|
+/// trusted`) and wins; a stray value reads as `agent`. Otherwise the
+/// `--budget-profile` preset maps to its label, and no flag at all reads
+/// as `strict`, because the shipped defaults are strict's limits
+/// (`Budget::default() == Budget::strict()`). The label is what the run
+/// actually resolved, never a hardcoded constant.
+fn budget_profile_label(sandbox: Option<&str>, profile: Option<BudgetProfile>) -> &'static str {
+    if let Some(name) = sandbox {
+        return match name {
+            "strict" => "strict",
+            "data" => "data",
+            "agent" => "agent",
+            "trusted" => "trusted",
+            _ => "agent",
+        };
+    }
+    match profile {
+        Some(BudgetProfile::Strict) => "strict",
+        Some(BudgetProfile::Interactive) => "agent",
+        Some(BudgetProfile::Trusted) => "trusted",
+        None => "strict",
+    }
+}
+
+/// The v2 tool-result envelope body (L-T06/L-P35): the fields shared by
+/// the renderer and the atomic writer, so neither takes a long argument
+/// list. `sender` names the attenuation author; `None` means a local hop.
+struct EnvelopeV2<'a> {
+    budget_profile: &'a str,
+    granted: active_core::CapabilitySet,
+    tainted: bool,
+    payload: serde_json::Value,
+    result: Option<&'a str>,
+    receipt: serde_json::Value,
+    sender: Option<&'a str>,
+}
+
 /// Render a v2 tool-result envelope (L-T06): success and adversarial
 /// outcomes share the shape; a failed attempt carries `payload = null`
 /// and a receipt with its failure class.
-fn render_envelope_v2(
-    capability: &str,
-    tainted: bool,
-    payload: serde_json::Value,
-    result: Option<&str>,
-    receipt: serde_json::Value,
-    sender: Option<&str>,
-) -> anyhow::Result<String> {
+fn render_envelope_v2(body: EnvelopeV2<'_>) -> anyhow::Result<String> {
+    let EnvelopeV2 {
+        budget_profile,
+        granted,
+        tainted,
+        payload,
+        result,
+        receipt,
+        sender,
+    } = body;
     let mut envelope = serde_json::Map::new();
     envelope.insert("version".into(), serde_json::json!("2.0.0"));
-    envelope.insert("capability".into(), serde_json::json!(capability));
+    // L-P35: v2 names the budget profile `profile`; the legacy key stays
+    // for receivers that have not migrated, and both must agree.
+    envelope.insert("profile".into(), serde_json::json!(budget_profile));
+    envelope.insert("capability".into(), serde_json::json!(budget_profile));
+    // The claim is exactly the authority this producer grants for the
+    // document: a narrowed `--capability` is never widened, and a document
+    // that declares a narrower set is recorded as such.
+    let held = held_authority();
+    envelope.insert(
+        "capabilities".into(),
+        serde_json::json!(granted.wire_names()),
+    );
+    let by = sender.unwrap_or("local");
+    // `attenuation_value` refuses a grant the producer does not hold, so a
+    // widened `granted` cannot reach the wire.
+    let attenuation = active_core::convert::value_to_json(
+        &active_core::envelope::attenuation_value(held, granted, by)
+            .map_err(|error| anyhow::anyhow!("{error}"))?,
+    );
+    let mut receipt = receipt;
+    if let Some(record) = receipt.as_object_mut() {
+        record.entry("attenuation").or_insert(attenuation);
+    }
     envelope.insert("tainted".into(), serde_json::json!(tainted));
     envelope.insert("payload".into(), payload);
     envelope.insert("receipt".into(), receipt);
@@ -2962,16 +3080,8 @@ fn render_envelope_v2(
         .map_err(|e| anyhow::anyhow!("cannot render envelope: {e}"))
 }
 
-fn write_envelope_v2(
-    path: &std::path::Path,
-    capability: &str,
-    tainted: bool,
-    payload: serde_json::Value,
-    result: Option<&str>,
-    receipt: serde_json::Value,
-    sender: Option<&str>,
-) -> anyhow::Result<()> {
-    let text = render_envelope_v2(capability, tainted, payload, result, receipt, sender)?;
+fn write_envelope_v2(path: &std::path::Path, body: EnvelopeV2<'_>) -> anyhow::Result<()> {
+    let text = render_envelope_v2(body)?;
     // L-P41: a receipt is a committed artifact too. A plain truncating
     // write can leave half a receipt after a crash; publish it through
     // the same atomic path the plan receipts use.
@@ -3122,7 +3232,11 @@ fn write_audit_trail(
         result,
         if failed { "failed" } else { "clean" },
     );
-    std::fs::write(path, doc).map_err(|e| anyhow::anyhow!("cannot write {}: {e}", path.display()))
+    // L-P35 review H1: an audit trail is a report artifact like the plan
+    // and envelope receipts. Publish it through the same atomic path so a
+    // crash cannot leave half a document and a symlink planted at the
+    // target is replaced as a link, never followed.
+    atomic_write(path, doc.as_bytes())
 }
 
 /// LANG-F-010: a parse failure that was asked for an audit writes one. No
@@ -3184,7 +3298,8 @@ fn write_failed_parse_audit(
         peer_line,
         codes_list,
     );
-    std::fs::write(path, doc).map_err(|e| anyhow::anyhow!("cannot write {}: {e}", path.display()))
+    // L-P35 review H1: the failed-parse audit publishes atomically too.
+    atomic_write(path, doc.as_bytes())
 }
 
 /// Decidable graph query entry point (PROPOSAL §2.6, CHECKLIST
@@ -3334,6 +3449,9 @@ fn engine(
     set_profile_override(&mut engine, profile.clone());
     engine.budget = budget;
     engine.reader_version = reader_version.map(str::to_string);
+    if let Some(held) = HELD_CAPABILITIES.get() {
+        engine.capabilities = *held;
+    }
     if let Some(sandbox) = active_sandbox() {
         let _ = sandbox.configure_engine(&mut engine);
     }
@@ -3774,6 +3892,7 @@ fn write_repair_receipt(
     path: &std::path::Path,
     engine: &active_core::Engine,
     profile_flag: Option<&str>,
+    budget_label: &str,
     outcome: &active_core::convert::repair::RepairOutcome,
     applied: &[usize],
     source: &str,
@@ -3854,7 +3973,7 @@ fn write_repair_receipt(
             effective_profile.as_deref(),
             &engine.budget,
             mode.unwrap_or(active_core::Mode::Config),
-            Some("agent"),
+            Some(budget_label),
             tainted,
         );
         receipt.insert("result".into(), serde_json::json!(bound));
@@ -3866,7 +3985,7 @@ fn write_repair_receipt(
         );
         None
     };
-    receipt.insert("capability".into(), serde_json::json!("agent"));
+    receipt.insert("capability".into(), serde_json::json!(budget_label));
     if let Some(mode) = mode {
         receipt.insert(
             "mode".into(),
@@ -3909,12 +4028,15 @@ fn write_repair_receipt(
     };
     write_envelope_v2(
         path,
-        "agent",
-        tainted && committed,
-        payload_out,
-        bound.as_deref(),
-        serde_json::Value::Object(receipt),
-        None,
+        EnvelopeV2 {
+            budget_profile: budget_label,
+            granted: producer_granted(context.unwrap_or(&source_module)),
+            tainted: tainted && committed,
+            payload: payload_out,
+            result: bound.as_deref(),
+            receipt: serde_json::Value::Object(receipt),
+            sender: None,
+        },
     )
 }
 
@@ -3927,6 +4049,9 @@ struct GateEvidence {
     tainted: bool,
     result: Option<String>,
     receipt: serde_json::Value,
+    /// The authority the producer claims for the verified document: its
+    /// declared set when present, else what the process holds (L-P35 M5).
+    granted: active_core::CapabilitySet,
 }
 
 fn gate_evidence(
@@ -3967,6 +4092,7 @@ fn gate_evidence(
             payload: serde_json::Value::Null,
             tainted: false,
             result: None,
+            granted: held_authority(),
             receipt: serde_json::json!({
                 "outcome": if accept { "clean" } else { "failed" },
                 "failure_class": failure_class,
@@ -4040,6 +4166,7 @@ fn gate_evidence(
         payload: payload_json,
         tainted,
         result,
+        granted: producer_granted(module),
         receipt,
     }
 }
@@ -4328,6 +4455,9 @@ fn build_semantic_diff(
     let mut engine = Engine::strict();
     set_profile_override(&mut engine, profile.clone());
     engine.budget = budget;
+    if let Some(held) = HELD_CAPABILITIES.get() {
+        engine.capabilities = *held;
+    }
     let old_name = old.to_string_lossy().to_string();
     let new_name = new.to_string_lossy().to_string();
     let (old_value, old_diags, old_seeds) = match engine.evaluate_with_seeds(&old_module) {
@@ -5040,6 +5170,11 @@ fn sandboxed_outcome(
     let mut engine = Engine::hermetic();
     engine.resilient = resilient;
     engine.pure = pure;
+    // L-P35 review H5: the closure path honours the host's held set;
+    // otherwise `--sandbox-closure --capability` would silently widen.
+    if let Some(held) = HELD_CAPABILITIES.get() {
+        engine.capabilities = *held;
+    }
     let outcome = if redact {
         sandbox.evaluate_redacted(&engine, &module)
     } else {
@@ -5138,6 +5273,83 @@ fn run_sandboxed_command(command: &Commands, manifest: &std::path::Path) -> anyh
     }
 }
 
+/// L-P35 review M5: the one mapping from a command to the authority it
+/// needs. `evaluate` and `read-secrets` are enforced inside the engine;
+/// this covers the workspace-mutating (`apply`) and tree-reading
+/// (`inspect`) surfaces, plus `sign`. `spec/tool-result-envelope.md`
+/// carries the normative table.
+fn required_authority(command: &Commands) -> Option<active_core::Capability> {
+    use active_core::Capability;
+    match command {
+        // Workspace mutation: writing source, plans, lockfiles, stores,
+        // receipts, audit trails, or generated output paths.
+        Commands::Apply { .. } | Commands::Repair { .. } | Commands::Store { .. } => {
+            Some(Capability::Apply)
+        }
+        Commands::Plan { output, .. } => output
+            .as_ref()
+            .map(|_| Capability::Apply)
+            .or(Some(Capability::Inspect)),
+        // L-P35 review H1: a proposal's receipt is a workspace write like
+        // its output (`spec/tool-result-envelope.md` §51, the apply row).
+        Commands::Propose {
+            output, receipt, ..
+        } => (output.is_some() || receipt.is_some())
+            .then_some(Capability::Apply)
+            .or(Some(Capability::Inspect)),
+        // L-P35 review H1: `lock --store` writes the include store.
+        Commands::Lock { output, store, .. } => (output.is_some() || store.is_some())
+            .then_some(Capability::Apply)
+            .or(Some(Capability::Inspect)),
+        Commands::Gate { receipt, .. } => receipt
+            .as_ref()
+            .map(|_| Capability::Apply)
+            .or(Some(Capability::Inspect)),
+        Commands::Fmt { write: true, .. } => Some(Capability::Apply),
+        // L-P35 review H1: an envelope, an audit trail, and the include
+        // store are workspace writes (the apply row), so `--capability`
+        // that lacks `apply` must refuse them rather than produce them
+        // with only evaluate's authority. A plain eval needs only the
+        // engine's evaluate/read-secrets gates.
+        Commands::Eval {
+            store,
+            envelope,
+            audit_trail,
+            ..
+        } => (store.is_some() || envelope.is_some() || audit_trail.is_some())
+            .then_some(Capability::Apply),
+        // Tree- and document-reading surfaces.
+        Commands::Graph { .. }
+        | Commands::Impact { .. }
+        | Commands::Why { .. }
+        | Commands::Inspect { .. }
+        | Commands::Explain { .. }
+        | Commands::Schema { .. }
+        | Commands::Debug { .. }
+        | Commands::Viz { .. }
+        | Commands::Capability { .. }
+        | Commands::Compatibility { .. }
+        | Commands::Diff { .. }
+        | Commands::Doc { .. }
+        | Commands::Budget { .. }
+        | Commands::Mode { .. }
+        | Commands::Doctor { .. } => Some(Capability::Inspect),
+        Commands::Sign { .. } | Commands::Keygen { .. } => Some(Capability::Sign),
+        // Evaluation-only surfaces: the engine enforces evaluate and
+        // read-secrets; no additional authority is required.
+        Commands::Check { .. }
+        | Commands::Convert { .. }
+        | Commands::Import { .. }
+        | Commands::Generate { .. }
+        | Commands::Patch { .. }
+        | Commands::Test { .. }
+        | Commands::Serve { .. }
+        | Commands::Verify { .. }
+        | Commands::Lint { .. }
+        | Commands::Fmt { write: false, .. } => None,
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     // Before any output: the first write after an early reader close must
     // kill the filter, not panic.
@@ -5176,6 +5388,25 @@ fn main() -> anyhow::Result<()> {
     let worker = std::thread::Builder::new()
         .stack_size(32 * 1024 * 1024)
         .spawn(move || -> anyhow::Result<()> {
+    let held = if cli.capability.is_empty() {
+        active_core::CapabilitySet::all()
+    } else {
+        match active_core::CapabilitySet::parse_list(
+            cli.capability.iter().map(String::as_str),
+        ) {
+            Ok(set) => set,
+            Err(error) => anyhow::bail!("invalid --capability: {error}"),
+        }
+    };
+    HELD_CAPABILITIES.set(held).ok();
+    if let Some(required) = required_authority(&cli.command) {
+        if !held.contains(required) {
+            anyhow::bail!(
+                "E049: capability '{}' is not granted",
+                required.as_str()
+            );
+        }
+    }
     if let Some(manifest) = cli.sandbox_closure.clone() {
         install_sandbox_manifest(&manifest);
         let inspect_command = matches!(cli.command, Commands::Inspect { .. });
@@ -5302,6 +5533,11 @@ fn main() -> anyhow::Result<()> {
             {
                 anyhow::bail!("--cache requires a directory path");
             }
+            // M2: the budget-profile label every emitter in this arm
+            // records, resolved from the flags actually given. Computed
+            // before `budget` is shadowed below and before any parse, so
+            // the parse-failure receipt is labelled truthfully too.
+            let budget_label = budget_profile_label(sandbox.as_deref(), budget.budget_profile);
             let module = match parse_input_or_diags_locked(
                 &file,
                 resilient,
@@ -5332,16 +5568,19 @@ fn main() -> anyhow::Result<()> {
                             diags.iter().map(|d| d.code.clone()).collect();
                         write_envelope_v2(
                             envelope_path,
-                            "agent",
-                            false,
-                            serde_json::Value::Null,
-                            None,
-                            serde_json::json!({
-                                "outcome": "failed",
-                                "failure_class": "parse",
-                                "diagnostics": codes,
-                            }),
-                            peer.as_deref(),
+                            EnvelopeV2 {
+                                budget_profile: budget_label,
+                                granted: held_authority(),
+                                tainted: false,
+                                payload: serde_json::Value::Null,
+                                result: None,
+                                receipt: serde_json::json!({
+                                    "outcome": "failed",
+                                    "failure_class": "parse",
+                                    "diagnostics": codes,
+                                }),
+                                sender: peer.as_deref(),
+                            },
                         )?;
                     }
                     return Err(anyhow::anyhow!("parse failed"));
@@ -5381,16 +5620,19 @@ fn main() -> anyhow::Result<()> {
                     if let Some(path) = envelope.as_ref() {
                         write_envelope_v2(
                             path,
-                            "agent",
-                            false,
-                            serde_json::Value::Null,
-                            None,
-                            serde_json::json!({
-                                "outcome": "failed",
-                                "failure_class": "validation",
-                                "diagnostics": ["E034"],
-                            }),
-                            peer.as_deref(),
+                            EnvelopeV2 {
+                                budget_profile: budget_label,
+                                granted: producer_granted(&module),
+                                tainted: false,
+                                payload: serde_json::Value::Null,
+                                result: None,
+                                receipt: serde_json::json!({
+                                    "outcome": "failed",
+                                    "failure_class": "validation",
+                                    "diagnostics": ["E034"],
+                                }),
+                                sender: peer.as_deref(),
+                            },
                         )?;
                     }
                     // Names are document data and may be secret-derived;
@@ -5424,12 +5666,19 @@ fn main() -> anyhow::Result<()> {
             // admission adds side effects outside the key, was already
             // reported as uncached before parsing.
             let cache_dir = cache.filter(|_| cache_compatible);
+            // L-P35 review H1: authority is part of the key. A narrowed
+            // run must never read the entry a full-authority run filled
+            // (the cache is consulted before evaluation).
+            let held = HELD_CAPABILITIES
+                .get()
+                .copied()
+                .unwrap_or_else(active_core::CapabilitySet::all);
             let cache_variant = format!(
-                "source={:?};path={:?};materialise={materialise_blobs};reader={:?};resilient={resilient};capability={}",
+                "source={:?};path={:?};materialise={materialise_blobs};reader={:?};resilient={resilient};capability={budget_label};caps={}",
                 file.as_path(),
                 path.as_deref(),
                 reader_version.as_deref(),
-                sandbox.as_deref().unwrap_or("agent"),
+                held.wire_names().join(","),
             );
             // The MAC key lives outside the cache directory: a listing
             // cannot reproduce a key or confirm a guessed environment
@@ -5577,16 +5826,19 @@ fn main() -> anyhow::Result<()> {
                         };
                         write_envelope_v2(
                             envelope_path,
-                            "agent",
-                            false,
-                            serde_json::Value::Null,
-                            None,
-                            serde_json::json!({
-                                "outcome": "failed",
-                                "failure_class": class,
-                                "diagnostics": codes,
-                            }),
-                            peer.as_deref(),
+                            EnvelopeV2 {
+                                budget_profile: budget_label,
+                                granted: producer_granted(&module),
+                                tainted: false,
+                                payload: serde_json::Value::Null,
+                                result: None,
+                                receipt: serde_json::json!({
+                                    "outcome": "failed",
+                                    "failure_class": class,
+                                    "diagnostics": codes,
+                                }),
+                                sender: peer.as_deref(),
+                            },
                         )?;
                     }
                     report_eval_error(&e, &name);
@@ -5624,16 +5876,19 @@ fn main() -> anyhow::Result<()> {
                     if let Some(path) = envelope.as_ref() {
                         write_envelope_v2(
                             path,
-                            "agent",
-                            false,
-                            serde_json::Value::Null,
-                            None,
-                            serde_json::json!({
-                                "outcome": "failed",
-                                "failure_class": "validation",
-                                "diagnostics": ["B003"],
-                            }),
-                            peer.as_deref(),
+                            EnvelopeV2 {
+                                budget_profile: budget_label,
+                                granted: producer_granted(&module),
+                                tainted: false,
+                                payload: serde_json::Value::Null,
+                                result: None,
+                                receipt: serde_json::json!({
+                                    "outcome": "failed",
+                                    "failure_class": "validation",
+                                    "diagnostics": ["B003"],
+                                }),
+                                sender: peer.as_deref(),
+                            },
                         )?;
                     }
                     report_eval_error(&e, &name);
@@ -5717,9 +5972,6 @@ fn main() -> anyhow::Result<()> {
                     }
                 };
                 let mut tainted = claimed_tainted || computed_taint;
-                let capability_used = sandbox
-                    .clone()
-                    .unwrap_or_else(|| "agent".to_string());
                 let _ = capability;
                 let bound = active_core::envelope::bound_content_hash(
                     &payload,
@@ -5727,7 +5979,7 @@ fn main() -> anyhow::Result<()> {
                     effective_profile.as_deref(),
                     &engine.budget,
                     module.mode,
-                    Some(&capability_used),
+                    Some(budget_label),
                     tainted,
                 );
                 let resolved = engine.budget.resolve();
@@ -5796,12 +6048,15 @@ fn main() -> anyhow::Result<()> {
                 }
                 write_envelope_v2(
                     envelope_path,
-                    &capability_used,
-                    tainted,
-                    payload_json,
-                    result.as_deref(),
-                    serde_json::Value::Object(receipt),
-                    peer.as_deref(),
+                    EnvelopeV2 {
+                        budget_profile: budget_label,
+                        granted: producer_granted(&module),
+                        tainted,
+                        payload: payload_json,
+                        result: result.as_deref(),
+                        receipt: serde_json::Value::Object(receipt),
+                        sender: peer.as_deref(),
+                    },
                 )?;
             }
 
@@ -5897,7 +6152,7 @@ fn main() -> anyhow::Result<()> {
                         &engine.budget,
                         &value,
                         Some(&full_value),
-                        sandbox.as_deref().unwrap_or("agent"),
+                        budget_label,
                         &diag_codes,
                         had_failure(&diags, resilient),
                         "other",
@@ -6478,6 +6733,7 @@ fn main() -> anyhow::Result<()> {
                         allow_parent_escapes,
                         profile: profile.as_deref(),
                         budget: Some(&resolved_budget),
+                        capabilities: HELD_CAPABILITIES.get().copied(),
                     },
                 );
                 if format == "text" {
@@ -6503,12 +6759,16 @@ fn main() -> anyhow::Result<()> {
             }
             let module = parse_input(&from, resilient, allow_parent_escapes, &trust)?;
             if replay {
-                let report = active_core::debug::replay_with_budget(
+                let report = active_core::debug::replay_with_budget_and_capabilities(
                     &module,
                     expect.as_deref(),
                     profile.as_deref(),
                     &budget.resolve()?,
                     resilient,
+                    HELD_CAPABILITIES
+                        .get()
+                        .copied()
+                        .unwrap_or_else(active_core::CapabilitySet::all),
                 )
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
                 if format == "text" {
@@ -7220,6 +7480,9 @@ fn main() -> anyhow::Result<()> {
             let mut baseline_engine = Engine::strict();
             set_profile_override(&mut baseline_engine, profile.clone());
             baseline_engine.budget = budget;
+            if let Some(held) = HELD_CAPABILITIES.get() {
+                baseline_engine.capabilities = *held;
+            }
             match baseline_engine.evaluate_with_seeds(&baseline_module) {
                 Ok((_, diagnostics, _)) => {
                     if had_failure(&diagnostics, false) {
@@ -7725,6 +7988,7 @@ fn main() -> anyhow::Result<()> {
                     &path,
                     &eng,
                     profile.as_deref(),
+                    budget_profile_label(None, budget.budget_profile),
                     &display,
                     &applied_indexes,
                     &source,
@@ -8033,7 +8297,7 @@ fn main() -> anyhow::Result<()> {
             if current.len() > MAX_CANDIDATE_BYTES {
                 anyhow::bail!("candidate exceeds {MAX_CANDIDATE_BYTES} bytes");
             }
-            let capability = sandbox.unwrap_or_else(|| "agent".to_string());
+            let capability = budget_profile_label(sandbox.as_deref(), budget.budget_profile);
             // A hidden, exclusively-created directory holds the candidate
             // copy: `active test` walks skip hidden directories (so a
             // concurrent run cannot see it), the file is created
@@ -8175,13 +8439,14 @@ fn main() -> anyhow::Result<()> {
             }
             let evidence = final_verdict
                 .as_ref()
-                .map(|verdict| gate_evidence(verdict, accepted, profile.as_deref(), &capability));
+                .map(|verdict| gate_evidence(verdict, accepted, profile.as_deref(), capability));
             let propose_result = evidence.as_ref().and_then(|e| e.result.clone());
             if let Some(path) = receipt {
                 let evidence = evidence.unwrap_or(GateEvidence {
                     payload: serde_json::Value::Null,
                     tainted: false,
                     result: None,
+                    granted: held_authority(),
                     receipt: serde_json::json!({
                         "outcome": if accepted { "clean" } else { "failed" },
                         "failure_class": "other",
@@ -8189,14 +8454,15 @@ fn main() -> anyhow::Result<()> {
                         "diagnostics": [],
                     }),
                 });
-                let text = render_envelope_v2(
-                    &capability,
-                    evidence.tainted,
-                    evidence.payload,
-                    evidence.result.as_deref(),
-                    evidence.receipt,
-                    None,
-                )?;
+                let text = render_envelope_v2(EnvelopeV2 {
+                    budget_profile: capability,
+                    granted: evidence.granted,
+                    tainted: evidence.tainted,
+                    payload: evidence.payload,
+                    result: evidence.result.as_deref(),
+                    receipt: evidence.receipt,
+                    sender: None,
+                })?;
                 write_checked(&path, force, text.as_bytes())?;
             }
             match format.as_str() {
@@ -8302,18 +8568,19 @@ fn main() -> anyhow::Result<()> {
                 lock.as_ref(),
             );
             let accept = verdict.clean();
-            let capability = sandbox.unwrap_or_else(|| "agent".to_string());
-            let evidence = gate_evidence(&verdict, accept, profile.as_deref(), &capability);
+            let capability = budget_profile_label(sandbox.as_deref(), budget.budget_profile);
+            let evidence = gate_evidence(&verdict, accept, profile.as_deref(), capability);
             let result_hash = evidence.result.clone();
             if let Some(path) = receipt {
-                let text = render_envelope_v2(
-                    &capability,
-                    evidence.tainted,
-                    evidence.payload,
-                    result_hash.as_deref(),
-                    evidence.receipt,
-                    None,
-                )?;
+                let text = render_envelope_v2(EnvelopeV2 {
+                    budget_profile: capability,
+                    granted: evidence.granted,
+                    tainted: evidence.tainted,
+                    payload: evidence.payload,
+                    result: result_hash.as_deref(),
+                    receipt: evidence.receipt,
+                    sender: None,
+                })?;
                 write_checked(&path, force, text.as_bytes())?;
             }
             match format.as_str() {
@@ -8355,7 +8622,8 @@ fn main() -> anyhow::Result<()> {
                     u32::MAX
                 );
             }
-            serve_stdio(&profile, budget.resolve()?, max_frame)?;
+            let label = budget_profile_label(None, budget.budget_profile);
+            serve_stdio(&profile, budget.resolve()?, max_frame, label)?;
         }
         Commands::Store { action } => {            let resolve_root = |explicit: Option<PathBuf>| -> anyhow::Result<PathBuf> {
                 explicit

@@ -168,6 +168,10 @@ pub const MAX_REPAIR_STEPS: usize = 64;
 /// * Directives apply by prepending to the source and re-parsing, so
 ///   the shipped `@patch`/`@rename` machinery is the application
 ///   engine — never a parallel re-implementation.
+///
+/// This convenience form evaluates with the full authority set. An
+/// embedder that holds a narrowed set must call [`repair_with_engine`]
+/// with an engine configured from it (the CLI does).
 pub fn repair(
     source: &str,
     goal: RepairGoal,

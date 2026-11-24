@@ -33,6 +33,23 @@ pub fn inspect_path_with_profile(
     path: &str,
     override_profile: Option<&str>,
 ) -> Result<JsonValue, String> {
+    inspect_path_with_profile_capabilities(
+        module,
+        root,
+        path,
+        override_profile,
+        crate::CapabilitySet::all(),
+    )
+}
+
+/// L-P35 review M6: inspection under an explicit held authority set.
+pub fn inspect_path_with_profile_capabilities(
+    module: &Module,
+    root: &Value,
+    path: &str,
+    override_profile: Option<&str>,
+    capabilities: crate::CapabilitySet,
+) -> Result<JsonValue, String> {
     // Only a `secret(...)` node can bind a value outside the tree; a
     // document without one needs no seed pass. When one exists, recover
     // the seeds hermetically under the shipped default budget (a
@@ -45,6 +62,7 @@ pub fn inspect_path_with_profile(
         .any(|node| matches!(node, crate::ir::Node::Secret { .. }));
     let seeds = if has_secret {
         let mut engine = crate::eval::Engine::hermetic();
+        engine.capabilities = capabilities;
         engine.profile_override = override_profile.map(str::to_string);
         engine
             .evaluate_with_seeds(module)

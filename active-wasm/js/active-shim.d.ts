@@ -47,6 +47,15 @@ export interface ActiveAPI {
 	 */
 	evaluateSandboxed(manifest: string): ActiveEvaluateResult;
 	/**
+	 * L-P35: evaluate with a narrowed held-authority set (comma-separated
+	 * names). A document needing a missing authority returns E049.
+	 */
+	evaluateWithCapabilities(
+		source: string,
+		capabilities: string,
+		pure?: boolean,
+	): ActiveEvaluateResult;
+	/**
 	 * L-P47: BLAKE3 hex digest of the exact UTF-8 source bytes. Throws when
 	 * the loaded module predates the export (fail loud, never guess a
 	 * hash).

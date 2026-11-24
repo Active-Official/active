@@ -573,10 +573,14 @@ fn the_value_side_gate_refuses_a_malformed_closed_tables_audit() {
         &value,
         &module,
         &EnvelopeGate::shipped(),
-        &active_core::eval::Budget::default(),
-        None,
-        None,
-        None,
+        &active_core::envelope::CheckContext {
+            held: active_core::CapabilitySet::all(),
+            granted: active_core::CapabilitySet::all(),
+            budget: &active_core::eval::Budget::default(),
+            profile: None,
+            material: None,
+            trust: None,
+        },
     )
     .expect_err("the value-side gate must refuse a missing keys array");
     assert!(codes(&error).contains(&"E042".to_string()), "{error:?}");
@@ -645,10 +649,14 @@ fn a_closed_tables_entry_echoing_material_is_refused() {
         &value,
         &module,
         &EnvelopeGate::shipped(),
-        &active_core::eval::Budget::default(),
-        None,
-        Some(&profile),
-        None,
+        &active_core::envelope::CheckContext {
+            held: active_core::CapabilitySet::all(),
+            granted: active_core::CapabilitySet::all(),
+            budget: &active_core::eval::Budget::default(),
+            profile: None,
+            material: Some(&profile),
+            trust: None,
+        },
     )
     .expect_err("an audit that echoes material must be refused");
     assert!(codes(&error).contains(&"E042".to_string()), "{error:?}");
@@ -695,10 +703,14 @@ fn the_value_side_gate_refuses_an_extra_closed_tables_member() {
         &value,
         &module,
         &EnvelopeGate::shipped(),
-        &active_core::eval::Budget::default(),
-        None,
-        None,
-        None,
+        &active_core::envelope::CheckContext {
+            held: active_core::CapabilitySet::all(),
+            granted: active_core::CapabilitySet::all(),
+            budget: &active_core::eval::Budget::default(),
+            profile: None,
+            material: None,
+            trust: None,
+        },
     )
     .expect_err("an extra member must be refused");
     assert!(codes(&error).contains(&"E042".to_string()), "{error:?}");

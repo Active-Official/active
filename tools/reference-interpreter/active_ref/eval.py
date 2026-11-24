@@ -153,6 +153,12 @@ class Evaluator:
         self.nodes_visited = 0
         self.total_size = 0
         self.constants: dict[str, Value] = {}
+        # L-P35 authority gate: the set this receiver granted for the
+        # document. It defaults to the held set (all five) and is replaced
+        # by `_authority_gate` on the pre-transform root when the envelope
+        # declares a narrower set. `_envelope_check` compares the evaluated
+        # declaration against it (the "changed after evaluation" rule).
+        self.granted: frozenset[str] = _HELD_AUTHORITIES
 
     # -- entry ------------------------------------------------------------
     def run(self) -> Outcome:
@@ -172,6 +178,14 @@ class Evaluator:
         self._mode(value)
         if self.module.mode == "data":
             self._progressive_warnings()
+            # L-P35: the shipped engine runs the authority gate before the
+            # walk, reading the source envelope. The oracle has no separate
+            # source pass, so it runs the gate on the pre-transform root:
+            # a profile or patch that rewrites `envelope.capabilities` is
+            # then caught by the "changed after evaluation" rule in
+            # `_envelope_check`, exactly as the shipped post-eval check
+            # catches it.
+            self.granted = self._authority_gate(value)
         value = self._apply_profile(value)
         value = self._apply_patches(value)
         value = self._validate(value)
@@ -387,6 +401,74 @@ class Evaluator:
         )
         return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
+    def _authority_gate(self, value: Value) -> frozenset[str]:
+        """L-P35 review M4: the pre-walk authority gate.
+
+        Mirrors `active-core::eval::evaluate_walk`: the evaluated envelope
+        of a Data document may declare a `capabilities` subset of the held
+        set. The declaration shape is refused E042 before the authority
+        checks (the shipped gate calls `declared_capabilities` first), the
+        declaration must be a subset of the held set and include
+        `evaluate`, and a document that reads the environment or a secret
+        literal must include `read-secrets`. Returns the granted set (the
+        declared set, or the held set when the envelope declares none).
+        """
+        held = _HELD_AUTHORITIES
+        if value.kind != "table":
+            return held
+        envelope = value.data.get("envelope")
+        if envelope is None or envelope.kind != "table":
+            return held
+        declared = envelope.data.get("capabilities")
+        if declared is None:
+            return held
+        version = envelope.data.get("version")
+        if version is not None and version.kind == "string":
+            major = version.data.split(".")[0]
+            if major == "1":
+                raise EvalError(
+                    "E042",
+                    "a v1 envelope cannot carry capabilities",
+                    path="envelope.capabilities",
+                )
+        if declared.kind != "array" or any(
+            item.kind != "string" for item in declared.data
+        ):
+            raise EvalError(
+                "E042",
+                "capabilities must be an array of strings",
+                path="envelope.capabilities",
+            )
+        names = [item.data for item in declared.data]
+        if len(names) != len(set(names)) or any(
+            name not in _AUTHORITIES for name in names
+        ):
+            raise EvalError(
+                "E042",
+                "capabilities contain an unknown or duplicate name",
+                path="envelope.capabilities",
+            )
+        granted = frozenset(names)
+        missing = granted - held
+        if missing:
+            raise EvalError(
+                "E049",
+                f"capability '{sorted(missing)[0]}' is not held by this receiver",
+            )
+        if "evaluate" not in granted:
+            raise EvalError(
+                "E049", "capability 'evaluate' is not granted for this document"
+            )
+        if "read-secrets" not in granted:
+            for node in self.module.nodes:
+                if node.kind in ("env", "secret"):
+                    raise EvalError(
+                        "E049",
+                        "capability 'read-secrets' is not granted for this document",
+                        span=node.span,
+                    )
+        return granted
+
     def _envelope_check(self, value: Value) -> None:
         # The envelope contract is a Data-mode surface (spec/mode.md), and
         # every refusal is fatal in the shipped engine (a failed envelope
@@ -442,7 +524,82 @@ class Evaluator:
                 self._span("envelope.version"),
                 path="envelope.version",
             )
+        resolved_profile = None
+        declared_caps = None
         if major == "2":
+            # L-P35: `profile` is the wire name, `capability` the legacy
+            # alias; both present must agree (E043).
+            profile_node = envelope.data.get("profile")
+            capability_node = envelope.data.get("capability")
+            if (
+                profile_node is not None
+                and (
+                    profile_node.kind != "string" or profile_node.data not in _PROFILES
+                )
+            ) or (
+                capability_node is not None
+                and (
+                    capability_node.kind != "string"
+                    or capability_node.data not in _PROFILES
+                )
+            ):
+                raise EvalError(
+                    "E043",
+                    "envelope.profile must be strict, data, agent, or trusted",
+                    path="envelope.profile",
+                )
+            if profile_node is not None and capability_node is not None:
+                if profile_node.data != capability_node.data:
+                    raise EvalError(
+                        "E043",
+                        "envelope.profile and legacy capability disagree",
+                        path="envelope.profile",
+                    )
+            resolved = profile_node if profile_node is not None else capability_node
+            # The `profile is required` refusal is deferred past the
+            # attenuation block: the shipped engine only reaches it in its
+            # post-evaluation `v2_budget_profile`, which runs after
+            # `check_attenuation` and the result checks. So a v2 envelope
+            # that omits `profile` *and* carries a bad attenuation is E042,
+            # not E043 (review M4, ordering alignment).
+            resolved_profile = resolved.data if resolved is not None else None
+            caps_node = envelope.data.get("capabilities")
+            if caps_node is not None:
+                if caps_node.kind != "array" or any(
+                    item.kind != "string" for item in caps_node.data
+                ):
+                    raise EvalError(
+                        "E042",
+                        "capabilities must be an array of strings",
+                        path="envelope.capabilities",
+                    )
+                names = [item.data for item in caps_node.data]
+                if len(names) != len(set(names)) or any(
+                    name not in _AUTHORITIES for name in names
+                ):
+                    raise EvalError(
+                        "E042",
+                        "capabilities contain an unknown or duplicate name",
+                        path="envelope.capabilities",
+                    )
+                declared_caps = names
+                # L-P35 review M4: post-evaluation authority checks. Rust's
+                # `check_attenuation` re-reads the evaluated `capabilities`
+                # and refuses a set the receiver does not hold or one that
+                # differs from the set the gate granted on the source
+                # envelope (a profile or patch widened or rewrote it).
+                if not set(declared_caps).issubset(_HELD_AUTHORITIES):
+                    raise EvalError(
+                        "E049",
+                        "capabilities are not held by this receiver",
+                        path="envelope.capabilities",
+                    )
+                if frozenset(declared_caps) != self.granted:
+                    raise EvalError(
+                        "E049",
+                        "capabilities changed after evaluation",
+                        path="envelope.capabilities",
+                    )
             receipt = envelope.data.get("receipt")
             if receipt is None or receipt.kind != "table":
                 raise EvalError(
@@ -557,6 +714,177 @@ class Evaluator:
                         "sender signature must be 128 hex characters",
                         path="envelope.sender.signature",
                     )
+        # Rust's source gate (`check_v2`) requires a clean v2 envelope to
+        # carry a well-formed `result` and a matching `receipt.result`
+        # before evaluation runs at all: a missing pair is E042, a
+        # malformed envelope result is E043, a malformed receipt result is
+        # E042 (review M4 ordering alignment). The post-evaluation E044
+        # bound check below then compares the digest.
+        if major == "2" and outcome.data == "clean":
+            gate_result = envelope.data.get("result")
+            gate_receipt_result = receipt.data.get("result")
+            if gate_result is not None and (
+                gate_result.kind != "string" or not _is_sha256(gate_result.data)
+            ):
+                raise EvalError(
+                    "E043",
+                    "envelope.result must be `sha256:<64 hex>`",
+                    path="envelope.result",
+                )
+            if gate_receipt_result is not None and (
+                gate_receipt_result.kind != "string"
+                or not _is_sha256(gate_receipt_result.data)
+            ):
+                raise EvalError(
+                    "E042",
+                    "envelope.receipt.result must be `sha256:<64 hex>`",
+                    path="envelope.receipt.result",
+                )
+            if gate_result is None or gate_receipt_result is None:
+                raise EvalError(
+                    "E042",
+                    "a clean v2 envelope must carry `result` and `receipt.result`",
+                    path="envelope.result",
+                )
+            if gate_result.data != gate_receipt_result.data:
+                raise EvalError(
+                    "E042",
+                    "envelope.result and envelope.receipt.result must be equal",
+                    path="envelope.result",
+                )
+        if major != "2":
+            if envelope.data.get("capabilities") is not None:
+                raise EvalError(
+                    "E042",
+                    "a v1 envelope cannot carry capabilities",
+                    path="envelope.capabilities",
+                )
+            if (
+                envelope.data.get("receipt") is not None
+                or envelope.data.get("sender") is not None
+            ):
+                raise EvalError(
+                    "E033",
+                    "a v1 envelope cannot carry v2 receipt/sender fields",
+                    path="envelope",
+                )
+        else:
+            receipt = envelope.data.get("receipt")
+            attenuation = (
+                receipt.data.get("attenuation")
+                if receipt is not None and receipt.kind == "table"
+                else None
+            )
+            if attenuation is not None:
+                if attenuation.kind != "table" or any(
+                    key not in ("from", "to", "by") for key in attenuation.data
+                ):
+                    raise EvalError(
+                        "E042",
+                        "attenuation accepts exactly from, to, by",
+                        path="envelope.receipt.attenuation",
+                    )
+            if declared_caps is None:
+                if attenuation is not None:
+                    raise EvalError(
+                        "E042",
+                        "an attenuation record requires envelope.capabilities",
+                        path="envelope.receipt.attenuation",
+                    )
+                # L-P35 review M4: a Data envelope that advertises no grant
+                # is the v1/local bridge only when the source declared
+                # nothing; if the source narrowed the set, dropping
+                # `capabilities` is stripping it, and the next hop would
+                # re-grant its full held set.
+                if self.granted != _HELD_AUTHORITIES:
+                    raise EvalError(
+                        "E049",
+                        "capabilities were removed after evaluation",
+                        path="envelope.capabilities",
+                    )
+            if declared_caps is not None:
+                if attenuation is None:
+                    if outcome.data == "clean":
+                        raise EvalError(
+                            "E042",
+                            "a clean v2 envelope with capabilities requires its attenuation record",
+                            path="envelope.receipt.attenuation",
+                        )
+                else:
+
+                    def _set(key):
+                        node = attenuation.data.get(key)
+                        if (
+                            node is None
+                            or node.kind != "array"
+                            or any(item.kind != "string" for item in node.data)
+                        ):
+                            raise EvalError(
+                                "E042",
+                                "attenuation sets must be arrays of strings",
+                                path=f"envelope.receipt.attenuation.{key}",
+                            )
+                        names = [item.data for item in node.data]
+                        if len(names) != len(set(names)) or any(
+                            name not in _AUTHORITIES for name in names
+                        ):
+                            raise EvalError(
+                                "E042",
+                                "attenuation sets contain unknown or duplicate names",
+                                path=f"envelope.receipt.attenuation.{key}",
+                            )
+                        return set(names)
+
+                    from_set = _set("from")
+                    to_set = _set("to")
+                    if to_set != set(declared_caps) or not set(declared_caps).issubset(
+                        from_set
+                    ):
+                        raise EvalError(
+                            "E042",
+                            "attenuation must narrow: from superset of to == envelope.capabilities",
+                            path="envelope.receipt.attenuation",
+                        )
+                    by = attenuation.data.get("by")
+                    sender = envelope.data.get("sender")
+                    sender_id = (
+                        sender.data.get("id")
+                        if sender is not None and sender.kind == "table"
+                        else None
+                    )
+                    expected_by = (
+                        sender_id.data
+                        if sender_id is not None and sender_id.kind == "string"
+                        else None
+                    )
+                    ok = (
+                        by is not None
+                        and by.kind == "string"
+                        and not any(ord(char) < 32 for char in by.data)
+                        # L-P35 review M4/H7: `by` must not carry a secret
+                        # literal or locator copy (one refusal for every
+                        # failure so the field is not an equality oracle).
+                        and not self._material_tainted(by.data, self._secret_literals())
+                        and (
+                            (expected_by is not None and by.data == expected_by)
+                            or (expected_by is None and by.data == "local")
+                        )
+                    )
+                    if not ok:
+                        raise EvalError(
+                            "E042",
+                            "attenuation.by must equal sender.id, or `local` without a sender",
+                            path="envelope.receipt.attenuation.by",
+                        )
+            # Deferred from the profile block above (review M4): the shipped
+            # engine reaches this refusal only after `check_attenuation` and
+            # the result checks.
+            if resolved is None:
+                raise EvalError(
+                    "E043",
+                    "envelope.profile is required",
+                    path="envelope.profile",
+                )
         tainted = envelope.data.get("tainted")
         if tainted is None:
             raise EvalError(
@@ -592,13 +920,7 @@ class Evaluator:
                     "a clean v2 envelope requires its bound result",
                     path="envelope.result",
                 )
-            capability = envelope.data.get("capability")
-            capability_text = (
-                capability.data
-                if capability is not None and capability.kind == "string"
-                else None
-            )
-            expected = self._bound_hash(payload, bool(tainted.data), capability_text)
+            expected = self._bound_hash(payload, bool(tainted.data), resolved_profile)
             if (
                 result.data != expected
                 or receipt_result is None
@@ -1743,6 +2065,25 @@ def _version_at_least(have: str, need: str) -> bool:
     n = _semver(need)
     return h is not None and n is not None and h >= n
 
+
+def _is_sha256(text: str) -> bool:
+    """`sha256:<64 hex>`, the envelope result wire shape (Rust `is_sha256`)."""
+    hex_digits = text[7:] if text.startswith("sha256:") else ""
+    return len(hex_digits) == 64 and all(
+        char in "0123456789abcdefABCDEF" for char in hex_digits
+    )
+
+
+# L-P35: envelope.profile is the sandbox/budget profile; the authority
+# vocabulary is separate from the tool handshake names above.
+_PROFILES = {"strict", "data", "agent", "trusted"}
+_AUTHORITIES = {"evaluate", "read-secrets", "inspect", "apply", "sign"}
+# The receiver's default held authority set (review M4). A Data envelope
+# may declare any subset; the declaration must be a subset of the held
+# set, include `evaluate`, and, when the document reads the environment or
+# a secret literal, include `read-secrets` (the shipped gate order is
+# E047 > E049 > E048 > E033/E042).
+_HELD_AUTHORITIES = frozenset(_AUTHORITIES)
 
 _KNOWN_CAPABILITIES = {
     "check",

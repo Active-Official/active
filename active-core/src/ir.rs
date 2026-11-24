@@ -1099,11 +1099,12 @@ impl Serialize for Value {
     /// on convert). Deserialization stays derived: the input direction
     /// cannot leak.
     ///
-    /// Blob payloads are the exception to "direct serialization is
-    /// profile-aware" (LANG-I-010): an untainted materialised payload
-    /// emits `payload_b64` here, because this impl cannot see the
-    /// `SecretProfile` that would redact a profile-selected path. Library
-    /// hosts must route exported values through
+    /// Blob payloads never cross this impl (LANG-I-010, `cb973208`):
+    /// the shape is the verified identity only, because a generic
+    /// serializer must not be a payload path. Explicit materialisation
+    /// has named `convert::*_materialised` forms. This impl is still
+    /// profile-unaware for profile-selected plain values and runtime
+    /// secret copies, so library hosts must route exported values through
     /// [`crate::convert::redact_value`] with the profile that produced the
     /// tree (the pattern every shipped exporter follows):
     ///

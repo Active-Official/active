@@ -115,16 +115,30 @@ PURE_REFUSED(15) (L-P05: `active_set_pure`; eval, check, and validate all
 report it for an ambient input), SANDBOX_REFUSED(16) (L-P28: E048 from
 `active_eval_sandboxed`/`active_check_sandboxed`; an include-path escape
 E015/E016 still maps to INCLUDE_FAIL, so a host detecting "outside the
-closure" handles both). Codes map from internal
-diagnostic classes (E/W/H/T/S/X plus budgets); codes are never reused and
-change only additively within 1.x. Diagnostics export stable code, span
-(path or index, line, column, end line, end column), severity, and optional
-UTF-8 message.
+closure" handles both), CAPABILITY_DENIED(17) (L-P35: E049 from every eval
+path - handle and sandboxed - and `active_check`/`active_validate`).
+Codes map from internal diagnostic classes (E/W/H/T/S/X plus budgets)
+through one table shared by eval, check, and validate: a post-evaluation
+`ValidationFailed` maps by its first error-severity code, so E049 -> 17,
+E044/E045 (bound result / signature) -> SCHEMA_FAIL, and a malformed
+capability/profile shape (E042/E043) -> SCHEMA_FAIL. Codes are never
+reused and change only additively within 1.x. Diagnostics export stable
+code, span (path or index, line, column, end line, end column), severity,
+and optional UTF-8 message.
 
 The receiver gate's refusals (`E033` envelope version, `E034` capability)
 surface numerically as `SCHEMA_FAIL` (8) from `active_eval`; the precise
 code and message arrive through `active_check`'s diagnostic set, which is
 how a host tells a negotiation refusal from a schema failure.
+
+`active_set_capabilities(module, csv)` narrows the authorities a module
+handle holds (comma-separated `evaluate, read-secrets, inspect, apply,
+sign`; empty or null means none; unknown/duplicate returns
+`BAD_ARGUMENT` and leaves the set unchanged). The sandboxed entry points
+have no handle, so `active_set_sandbox_capabilities(csv)` sets their
+authorities process-wide (same CSV contract; call once at startup).
+Both default to all five, and both refuse a document that needs a
+missing authority with E049/17.
 
 ## 4. Budget struct (F-014, G-016)
 

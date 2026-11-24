@@ -113,7 +113,27 @@ pub fn replay_with_budget(
     budget: &crate::Budget,
     resilient: bool,
 ) -> Result<JsonValue, String> {
+    replay_with_budget_and_capabilities(
+        module,
+        expected,
+        override_profile,
+        budget,
+        resilient,
+        crate::CapabilitySet::all(),
+    )
+}
+
+/// L-P35 review M6: replay under an explicit held authority set.
+pub fn replay_with_budget_and_capabilities(
+    module: &Module,
+    expected: Option<&str>,
+    override_profile: Option<&str>,
+    budget: &crate::Budget,
+    resilient: bool,
+    capabilities: crate::CapabilitySet,
+) -> Result<JsonValue, String> {
     let mut engine = Engine::new();
+    engine.capabilities = capabilities;
     engine.profile_override = override_profile.map(str::to_string);
     engine.resilient = resilient;
     engine.budget = *budget;
@@ -203,6 +223,10 @@ pub struct DebugOptions<'a> {
     pub allow_parent_escapes: bool,
     pub profile: Option<&'a str>,
     pub budget: Option<&'a crate::Budget>,
+    /// L-P35 review M6: the caller's held authorities. `None` keeps the
+    /// historical full-authority behavior for existing embedders; the
+    /// CLI passes its `--capability` set.
+    pub capabilities: Option<crate::CapabilitySet>,
 }
 
 /// Reduce a failing document by deleting lines while the target
@@ -333,6 +357,9 @@ fn still_fails(
     let mut engine = Engine::new();
     engine.resilient = options.resilient;
     engine.profile_override = options.profile.map(str::to_string);
+    if let Some(capabilities) = options.capabilities {
+        engine.capabilities = capabilities;
+    }
     if let Some(budget) = options.budget {
         engine.budget = *budget;
     }
@@ -514,6 +541,9 @@ fn bundle_seeds(
     // error keeps what was discovered.
     engine.resilient = true;
     engine.profile_override = options.profile.map(str::to_string);
+    if let Some(capabilities) = options.capabilities {
+        engine.capabilities = capabilities;
+    }
     if let Some(budget) = options.budget {
         engine.budget = *budget;
     }

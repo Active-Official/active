@@ -375,8 +375,10 @@ Hover appends the same per-code guidance to lint findings it shows
 `analysis_with_closure` and `steps_snapshot_with_closure` are embedding
 APIs: a host that embeds `active-lsp` builds the `InputClosure` and calls
 them directly (the editor's include provider is the only source of
-include bytes). They run the same guarded engine as `Sandbox`; an
-out-of-closure env/include/profile read is E048. The text must equal the
+include bytes). Their `*_capabilities` variants take an explicit
+`CapabilitySet` (L-P35); a missing authority is E049, reported through
+the same diagnostics pipeline. They run the same guarded engine as
+`Sandbox`; an out-of-closure env/include/profile read is E048. The text must equal the
 closure document; a dirty buffer rebuilds the closure rather than mixing
 text and module. A parse-time refusal is a `Doc` with the sandbox
 diagnostics in `parse_diags` and a recovery tree parsed without include

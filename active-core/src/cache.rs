@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 
 /// Bump when the entry shape or key derivation changes; older entries
 /// miss.
-pub const CACHE_VERSION: u32 = 3;
+pub const CACHE_VERSION: u32 = 4;
 /// Largest entry the cache will read or write.
 pub const MAX_ENTRY_BYTES: u64 = 32 * 1024 * 1024;
 /// Environment override for the per-user MAC key file.

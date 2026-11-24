@@ -38,6 +38,8 @@ pub const ACTIVE_ERR_BAD_ARGUMENT: i32 = 14;
 pub const ACTIVE_ERR_PURE_REFUSED: i32 = 15;
 /// L-P28: an evaluation input was outside its sandbox closure (E048).
 pub const ACTIVE_ERR_SANDBOX_REFUSED: i32 = 16;
+/// L-P35: content authority was not granted (E049).
+pub const ACTIVE_ERR_CAPABILITY_DENIED: i32 = 17;
 
 thread_local! {
     static LAST_ERROR: Cell<i32> = const { Cell::new(ACTIVE_ERR_OK) };
@@ -74,6 +76,9 @@ pub struct ActiveModule {
     /// L-P05: pure evaluation (refuse env reads, unpinned includes, and
     /// profile overrides). Off by default; `active_set_pure` turns it on.
     pure: bool,
+    /// L-P35: authorities this host holds (default all). `active_set_capabilities`
+    /// narrows them; a document needing a missing one is E049.
+    capabilities: active_core::CapabilitySet,
 }
 
 /// A registered host callback: C function plus userdata (F-016).
@@ -102,6 +107,20 @@ pub type ActiveLookupFn = Option<
         *mut std::ffi::c_void,
     ) -> *mut std::os::raw::c_char,
 >;
+
+/// L-P35: authorities the sandboxed entry points hold. The sandboxed ABI
+/// has no handle to carry them, so (like the parse limits) the host sets
+/// them once at startup; unset means all five.
+static SANDBOX_CAPABILITIES: std::sync::Mutex<Option<active_core::CapabilitySet>> =
+    std::sync::Mutex::new(None);
+
+fn sandbox_capabilities() -> active_core::CapabilitySet {
+    SANDBOX_CAPABILITIES
+        .lock()
+        .ok()
+        .and_then(|held| *held)
+        .unwrap_or_else(active_core::CapabilitySet::all)
+}
 
 /// Process-wide parse input cap override (LANG-C-003). `0` keeps the
 /// library default (4 MiB). Atomics because the C ABI is callable from
@@ -202,6 +221,29 @@ fn parse_failure_code(items: &[DiagSnapshot]) -> i32 {
     }
 }
 
+/// ABI class for a post-evaluation validation refusal (review H4).
+///
+/// `ValidationFailed` carries diagnostics, not an `EvalError` variant, so
+/// mapping it through `parse_failure_code` collapsed every envelope and
+/// authority refusal to PARSE(1). This maps by the first error-severity
+/// code, keeping the sandbox/include classes and using the same table as
+/// `check`/`validate` (E049 -> 17, E045/E044 -> SCHEMA_FAIL, ...).
+fn validation_failure_code(items: &[DiagSnapshot]) -> i32 {
+    if items.iter().any(|d| d.code.to_string_lossy() == "E048") {
+        return ACTIVE_ERR_SANDBOX_REFUSED;
+    }
+    if items
+        .iter()
+        .any(|d| is_include_code(&d.code.to_string_lossy()))
+    {
+        return ACTIVE_ERR_INCLUDE_FAIL;
+    }
+    match items.iter().find(|d| d.severity == 1) {
+        Some(d) => error_code_for(&d.code.to_string_lossy()),
+        None => ACTIVE_ERR_SCHEMA_FAIL,
+    }
+}
+
 /// Parse for `active_module_parse`, returning the numeric failure class so
 /// the ABI can distinguish an include failure (7) from any other parse
 /// failure (1) - both codes already existed in the header but only 1 was
@@ -279,6 +321,106 @@ pub unsafe extern "C" fn active_set_env_lookup(
         let handle = unsafe { &mut *module };
         handle.env_cb = cb.map(|f| ActiveCallback { f, userdata });
         set_last(ACTIVE_ERR_OK);
+    })
+}
+
+/// L-P35: set the authorities this handle holds. `csv` is a
+/// comma-separated list of evaluate, read-secrets, inspect, apply, sign;
+/// empty means none. Unknown or duplicate names fail closed with
+/// BAD_ARGUMENT and leave the previous set unchanged.
+///
+/// # Safety
+///
+/// `module` must be a live handle on the calling thread; `csv` must be a
+/// NUL-terminated UTF-8 string or null (null = none).
+#[no_mangle]
+pub unsafe extern "C" fn active_set_capabilities(
+    module: *mut ActiveModule,
+    csv: *const std::os::raw::c_char,
+) -> i32 {
+    guard(ACTIVE_ERR_PANIC_CAUGHT, || {
+        if module.is_null() {
+            set_last(ACTIVE_ERR_NULL_HANDLE);
+            return ACTIVE_ERR_NULL_HANDLE;
+        }
+        let text = if csv.is_null() {
+            String::new()
+        } else {
+            match unsafe { std::ffi::CStr::from_ptr(csv) }.to_str() {
+                Ok(text) => text.to_string(),
+                Err(_) => {
+                    set_last(ACTIVE_ERR_UTF8);
+                    return ACTIVE_ERR_UTF8;
+                }
+            }
+        };
+        let names: Vec<&str> = text
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .collect();
+        let set = match active_core::CapabilitySet::parse_list(names) {
+            Ok(set) => set,
+            Err(_) => {
+                set_last(ACTIVE_ERR_BAD_ARGUMENT);
+                return ACTIVE_ERR_BAD_ARGUMENT;
+            }
+        };
+        // SAFETY: live handle on this thread per the contract above.
+        let handle = unsafe { &mut *module };
+        handle.capabilities = set;
+        set_last(ACTIVE_ERR_OK);
+        ACTIVE_ERR_OK
+    })
+}
+
+/// L-P35: set the authorities the sandboxed entry points hold.
+///
+/// The sandboxed ABI (`active_eval_sandboxed`, `active_check_sandboxed`)
+/// has no handle, so the set is process-wide like the parse limits: call
+/// once at startup. `csv` is a comma-separated list of evaluate,
+/// read-secrets, inspect, apply, sign; empty means none; null means none.
+/// Unknown or duplicate names fail closed with BAD_ARGUMENT and leave the
+/// previous set unchanged.
+///
+/// # Safety
+///
+/// `csv` must be a NUL-terminated UTF-8 string or null.
+#[no_mangle]
+pub unsafe extern "C" fn active_set_sandbox_capabilities(csv: *const std::os::raw::c_char) -> i32 {
+    guard(ACTIVE_ERR_PANIC_CAUGHT, || {
+        let text = if csv.is_null() {
+            String::new()
+        } else {
+            match unsafe { std::ffi::CStr::from_ptr(csv) }.to_str() {
+                Ok(text) => text.to_string(),
+                Err(_) => {
+                    set_last(ACTIVE_ERR_UTF8);
+                    return ACTIVE_ERR_UTF8;
+                }
+            }
+        };
+        let names: Vec<&str> = text
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .collect();
+        let set = match active_core::CapabilitySet::parse_list(names) {
+            Ok(set) => set,
+            Err(_) => {
+                set_last(ACTIVE_ERR_BAD_ARGUMENT);
+                return ACTIVE_ERR_BAD_ARGUMENT;
+            }
+        };
+        match SANDBOX_CAPABILITIES.lock() {
+            Ok(mut held) => *held = Some(set),
+            Err(_) => {
+                set_last(ACTIVE_ERR_PANIC_CAUGHT);
+                return ACTIVE_ERR_PANIC_CAUGHT;
+            }
+        }
+        set_last(ACTIVE_ERR_OK);
+        ACTIVE_ERR_OK
     })
 }
 
@@ -362,6 +504,7 @@ pub unsafe extern "C" fn active_module_parse(
                     env_cb: None,
                     trusted,
                     pure: false,
+                    capabilities: active_core::CapabilitySet::all(),
                 }))
             }
             Err(code) => {
@@ -612,6 +755,7 @@ fn handle_engine(handle: &ActiveModule) -> Engine {
     // check, so the C boundary refuses the same ambient inputs as the
     // CLI (E047).
     engine.pure = handle.pure;
+    engine.capabilities = handle.capabilities;
     if let Some(cb) = handle.env_cb {
         // Same justification as above: thread-confined handle, Arc for
         // intra-thread cloning into the engine, never shared across threads.
@@ -759,8 +903,14 @@ pub unsafe extern "C" fn active_eval(
                 let value = active_core::convert::redact_value(&profile, &value);
                 Box::into_raw(Box::new(ActiveValue { value }))
             }
-            Err(EvalError::ValidationFailed { .. }) => {
-                set_last(ACTIVE_ERR_SCHEMA_FAIL);
+            Err(EvalError::CapabilityDenied { .. }) => {
+                set_last(ACTIVE_ERR_CAPABILITY_DENIED);
+                std::ptr::null_mut()
+            }
+            Err(EvalError::ValidationFailed { diagnostics }) => {
+                set_last(validation_failure_code(
+                    &diagnostics.iter().map(snapshot).collect::<Vec<_>>(),
+                ));
                 std::ptr::null_mut()
             }
             Err(EvalError::BudgetExceeded { .. }) => {
@@ -827,6 +977,7 @@ fn error_code_for(code: &str) -> i32 {
         // validate too (eval maps the error variant directly).
         "E047" => ACTIVE_ERR_PURE_REFUSED,
         "E048" => ACTIVE_ERR_SANDBOX_REFUSED,
+        "E049" => ACTIVE_ERR_CAPABILITY_DENIED,
         _ if code.starts_with('X') => ACTIVE_ERR_BUDGET_EXCEEDED,
         _ if code.starts_with('S') => ACTIVE_ERR_UNIT_MISMATCH,
         _ => ACTIVE_ERR_SCHEMA_FAIL,
@@ -1352,6 +1503,7 @@ pub unsafe extern "C" fn active_eval_sandboxed(
             }
         };
         let mut engine = Engine::hermetic();
+        engine.capabilities = sandbox_capabilities();
         if apply_budget(&mut engine, budget, false).is_err() {
             return std::ptr::null_mut();
         }
@@ -1367,12 +1519,17 @@ pub unsafe extern "C" fn active_eval_sandboxed(
                 set_last(ACTIVE_ERR_OK);
                 Box::into_raw(Box::new(ActiveValue { value }))
             }
+            Err(active_core::EvalError::CapabilityDenied { .. }) => {
+                set_last(ACTIVE_ERR_CAPABILITY_DENIED);
+                std::ptr::null_mut()
+            }
             Err(active_core::EvalError::SandboxRefused { .. }) => {
                 set_last(ACTIVE_ERR_SANDBOX_REFUSED);
                 std::ptr::null_mut()
             }
-            Err(active_core::EvalError::ValidationFailed { .. }) => {
-                set_last(ACTIVE_ERR_SCHEMA_FAIL);
+            Err(active_core::EvalError::ValidationFailed { diagnostics }) => {
+                let items = diagnostics.iter().map(snapshot).collect::<Vec<_>>();
+                set_last(validation_failure_code(&items));
                 std::ptr::null_mut()
             }
             Err(active_core::EvalError::BudgetExceeded { .. }) => {
@@ -1519,6 +1676,7 @@ pub unsafe extern "C" fn active_check_sandboxed(
             }
         };
         let mut engine = Engine::hermetic();
+        engine.capabilities = sandbox_capabilities();
         if apply_budget(&mut engine, budget, false).is_err() {
             return std::ptr::null_mut();
         }
@@ -1842,6 +2000,16 @@ mod tests {
         assert_eq!(error_code_for("B001"), ACTIVE_ERR_SCHEMA_FAIL);
         assert_eq!(error_code_for("E047"), ACTIVE_ERR_PURE_REFUSED);
         assert_eq!(error_code_for("X001"), ACTIVE_ERR_BUDGET_EXCEEDED);
+        // Review H4: a diagnostic-form E049 keeps the authority class,
+        // and a bound-result mismatch stays schema-class.
+        assert_eq!(
+            validation_failure_code(&[diag_snapshot_for("E049")]),
+            ACTIVE_ERR_CAPABILITY_DENIED
+        );
+        assert_eq!(
+            validation_failure_code(&[diag_snapshot_for("E044")]),
+            ACTIVE_ERR_SCHEMA_FAIL
+        );
     }
 
     #[test]

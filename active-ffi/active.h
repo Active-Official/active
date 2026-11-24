@@ -66,6 +66,11 @@ extern "C" {
 #define ACTIVE_ERR_SANDBOX_REFUSED 16
 
 /**
+ * L-P35: content authority was not granted (E049).
+ */
+#define ACTIVE_ERR_CAPABILITY_DENIED 17
+
+/**
  * Owned diagnostic set from check/eval (F-013). Empty means clean.
  */
 typedef struct ActiveDiagnosticSet ActiveDiagnosticSet;
@@ -183,6 +188,35 @@ void active_set_include_loader(struct ActiveModule *module, ActiveLookupFn cb, v
  * malloc-allocated return buffers.
  */
 void active_set_env_lookup(struct ActiveModule *module, ActiveLookupFn cb, void *userdata);
+
+/**
+ * L-P35: set the authorities this handle holds. `csv` is a
+ * comma-separated list of evaluate, read-secrets, inspect, apply, sign;
+ * empty means none. Unknown or duplicate names fail closed with
+ * BAD_ARGUMENT and leave the previous set unchanged.
+ *
+ * # Safety
+ *
+ * `module` must be a live handle on the calling thread; `csv` must be a
+ * NUL-terminated UTF-8 string or null (null = none).
+ */
+int32_t active_set_capabilities(struct ActiveModule *module, const char *csv);
+
+/**
+ * L-P35: set the authorities the sandboxed entry points hold.
+ *
+ * The sandboxed ABI (`active_eval_sandboxed`, `active_check_sandboxed`)
+ * has no handle, so the set is process-wide like the parse limits: call
+ * once at startup. `csv` is a comma-separated list of evaluate,
+ * read-secrets, inspect, apply, sign; empty means none; null means none.
+ * Unknown or duplicate names fail closed with BAD_ARGUMENT and leave the
+ * previous set unchanged.
+ *
+ * # Safety
+ *
+ * `csv` must be a NUL-terminated UTF-8 string or null.
+ */
+int32_t active_set_sandbox_capabilities(const char *csv);
 
 /**
  * Request pure evaluation on a live handle (L-P05): eval and check then

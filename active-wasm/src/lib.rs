@@ -290,6 +290,10 @@ fn eval_manifest_inner(manifest: &str) -> String {
 }
 
 fn eval_inner(source: &str, pure: bool) -> String {
+    eval_inner_caps(source, pure, None)
+}
+
+fn eval_inner_caps(source: &str, pure: bool, caps: Option<&str>) -> String {
     let module = match parse(source, "wasm") {
         Ok(m) => m,
         Err(diags) => {
@@ -303,7 +307,18 @@ fn eval_inner(source: &str, pure: bool) -> String {
     // Hermetic construction: Engine::new() snapshots the process ambient,
     // which aborts on wasm32-unknown-unknown. Hosts resolve env before
     // calling in (same rule as the FFI boundary).
-    let engine = Engine::hermetic().with_pure(pure);
+    let mut engine = Engine::hermetic().with_pure(pure);
+    if let Some(csv) = caps {
+        let names: Vec<&str> = csv
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .collect();
+        match active_core::CapabilitySet::parse_list(names) {
+            Ok(set) => engine.capabilities = set,
+            Err(error) => return envelope_err("BAD_ARGUMENT", &error, "null"),
+        }
+    }
     match engine.evaluate_with_seeds(&module) {
         Ok((value, diags, seeds)) => {
             // Structural material (plain locator sources and derived
@@ -838,6 +853,82 @@ pub unsafe extern "C" fn active_eval_sandboxed_json(
         }
     })) {
         Ok(envelope) => envelope,
+        Err(_) => envelope_err("PANIC", "evaluation panicked; input rejected", "null"),
+    };
+    let bytes = envelope.into_bytes();
+    let len = bytes.len();
+    let (ptr, _) = retain(bytes);
+    unsafe { *out_len = len };
+    ptr
+}
+
+/// L-P35: evaluate with a narrowed held-authority set (comma-separated
+/// names in `caps_ptr`/`caps_len`; empty means none).
+///
+/// # Safety
+///
+/// Both byte ranges must be registered with `active_alloc`.
+#[no_mangle]
+pub unsafe extern "C" fn active_eval_json_caps(
+    src_ptr: *const u8,
+    src_len: usize,
+    caps_ptr: *const u8,
+    caps_len: usize,
+    out_len: *mut usize,
+) -> *mut u8 {
+    eval_json_caps_impl(src_ptr, src_len, caps_ptr, caps_len, out_len, false)
+}
+
+/// L-P35 + L-P05: the capability export under pure evaluation. Refuses
+/// env reads, unpinned includes, and profile overrides (E047) after the
+/// authority set is applied.
+///
+/// # Safety
+///
+/// Both byte ranges must be registered with `active_alloc`.
+#[no_mangle]
+pub unsafe extern "C" fn active_eval_json_caps_pure(
+    src_ptr: *const u8,
+    src_len: usize,
+    caps_ptr: *const u8,
+    caps_len: usize,
+    out_len: *mut usize,
+) -> *mut u8 {
+    eval_json_caps_impl(src_ptr, src_len, caps_ptr, caps_len, out_len, true)
+}
+
+unsafe fn eval_json_caps_impl(
+    src_ptr: *const u8,
+    src_len: usize,
+    caps_ptr: *const u8,
+    caps_len: usize,
+    out_len: *mut usize,
+    pure: bool,
+) -> *mut u8 {
+    if out_len.is_null() {
+        return std::ptr::null_mut();
+    }
+    let envelope = match catch_unwind(AssertUnwindSafe(|| {
+        if src_ptr.is_null() || caps_ptr.is_null() {
+            return envelope_err("ABI", "null pointer argument", "null");
+        }
+        if let Some(message) = source_bounds_error(src_ptr, src_len) {
+            return envelope_err("ABI", message, "null");
+        }
+        let caps = match source_bounds_error(caps_ptr, caps_len) {
+            Some(message) => return envelope_err("ABI", message, "null"),
+            None => unsafe { slice::from_raw_parts(caps_ptr, caps_len) },
+        };
+        let Ok(caps) = str::from_utf8(caps) else {
+            return envelope_err("UTF8", "capabilities are not UTF-8", "null");
+        };
+        let bytes = unsafe { slice::from_raw_parts(src_ptr, src_len) };
+        match str::from_utf8(bytes) {
+            Ok(text) => eval_inner_caps(text, pure, Some(caps)),
+            Err(_) => envelope_err("UTF8", "source is not valid UTF-8", "null"),
+        }
+    })) {
+        Ok(env) => env,
         Err(_) => envelope_err("PANIC", "evaluation panicked; input rejected", "null"),
     };
     let bytes = envelope.into_bytes();

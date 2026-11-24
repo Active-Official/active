@@ -298,6 +298,24 @@ fn value_to_value(json: &JsonValue) -> Value {
     }
 }
 
+/// `W`'s tables carry only keys the importer emits verbatim:
+/// `sanitize_key` suffixes the reserved spellings and
+/// `contextual_rename` rewrites `schema`/`depends_on` when the value
+/// shape would change meaning (`spec/converters.md` §"Keys are ASCII
+/// identifiers"). `audit-pack/L-P38-DESIGN.md` §2 (P3b) excludes
+/// renamed keys from `W`; their round-trip is the separate
+/// `sanitization_collisions_are_announced` property.
+fn key_survives_import(key: &str, value: &JsonValue) -> bool {
+    const RESERVED: &[&str] = &["let", "env", "secret", "true", "false", "null"];
+    if RESERVED.contains(&key) {
+        return false;
+    }
+    !matches!(
+        (key, value),
+        ("schema", JsonValue::Object(_)) | ("depends_on", JsonValue::Array(_))
+    )
+}
+
 fn wire_value() -> impl Strategy<Value = JsonValue> {
     let leaf = prop_oneof![
         Just(JsonValue::Null),
@@ -323,10 +341,18 @@ fn wire_value() -> impl Strategy<Value = JsonValue> {
         prop_oneof![
             prop::collection::vec(inner.clone(), 0..4).prop_map(JsonValue::Array),
             prop::collection::btree_map("[a-z][a-z0-9_]{0,6}", inner, 0..4)
+                .prop_filter("keys survive import", |map| {
+                    map.iter()
+                        .all(|(key, value)| key_survives_import(key, value))
+                })
                 .prop_map(|map| JsonValue::Object(map.into_iter().collect())),
         ]
     });
     prop::collection::btree_map("[a-z][a-z0-9_]{0,6}", nested, 1..4)
+        .prop_filter("keys survive import", |map| {
+            map.iter()
+                .all(|(key, value)| key_survives_import(key, value))
+        })
         .prop_map(|map| JsonValue::Object(map.into_iter().collect()))
 }
 

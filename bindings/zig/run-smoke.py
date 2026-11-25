@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+_TARGET = Path(os.environ.get("CARGO_TARGET_DIR") or (ROOT / "target"))
 
 
 def run(argv: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -93,12 +94,26 @@ def main() -> int:
     # beside the exe. Linux/macOS link the static archive directly so no
     # runtime loader path is needed.
     link: list[str] = []
+    libdirs = (_TARGET / "release", _TARGET / "debug")
     if sys.platform == "win32":
-        link = ["-L", str(ROOT / "target" / "debug"), "-l", "active_ffi"]
+        libdir = next(
+            (d for d in libdirs if (d / "active_ffi.dll").is_file()), _TARGET / "debug"
+        )
+        link = ["-L", str(libdir), "-l", "active_ffi"]
     else:
-        staticlib = ROOT / "target" / "debug" / "libactive_ffi.a"
-        if not staticlib.is_file():
-            print(f"BUILD FAILED: missing static archive: {staticlib}")
+        staticlib = next(
+            (
+                d / "libactive_ffi.a"
+                for d in libdirs
+                if (d / "libactive_ffi.a").is_file()
+            ),
+            None,
+        )
+        if staticlib is None:
+            print(
+                "BUILD FAILED: missing static archive: "
+                f"{_TARGET / 'release' / 'libactive_ffi.a'}"
+            )
             return 1
         # The Rust staticlib needs the unwinder at link time.
         link = [str(staticlib), "-lunwind"]
@@ -118,8 +133,11 @@ def main() -> int:
         print("BUILD FAILED:\n" + (b.stderr or b.stdout)[-2000:])
         return 1
     if sys.platform == "win32":
-        dll = ROOT / "target" / "debug" / "active_ffi.dll"
-        if dll.is_file():
+        dll = next(
+            (d / "active_ffi.dll" for d in libdirs if (d / "active_ffi.dll").is_file()),
+            None,
+        )
+        if dll is not None:
             shutil.copy(dll, tmp / "active_ffi.dll")
     r = run([str(exe)], tmp)
     print(r.stdout + r.stderr)

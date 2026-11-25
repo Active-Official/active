@@ -17,6 +17,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+_TARGET = Path(os.environ.get("CARGO_TARGET_DIR") or (ROOT / "target"))
 HERE = Path(__file__).resolve().parent
 
 
@@ -42,17 +43,12 @@ def find_staticlib() -> Path | None:
     """Search release then debug for the platform static library."""
     candidates = []
     if sys.platform == "win32":
-        candidates = [
-            ROOT / "target" / p / "active_ffi.lib" for p in ("release", "debug")
-        ]
+        candidates = [_TARGET / p / "active_ffi.lib" for p in ("release", "debug")]
     else:
         candidates = [
-            ROOT
-            / "target"
-            / "x86_64-unknown-linux-gnu"
-            / "release"
-            / "libactive_ffi.a",
-            ROOT / "target" / "debug" / "libactive_ffi.a",
+            _TARGET / "x86_64-unknown-linux-gnu" / "release" / "libactive_ffi.a",
+            _TARGET / "release" / "libactive_ffi.a",
+            _TARGET / "debug" / "libactive_ffi.a",
         ]
     for c in candidates:
         if c.is_file():

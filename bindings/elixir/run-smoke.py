@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -10,13 +11,14 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+_TARGET = Path(os.environ.get("CARGO_TARGET_DIR") or (ROOT / "target"))
 
 
 def find_staticlib() -> Path | None:
     for base in (
-        ROOT / "target" / "x86_64-unknown-linux-gnu" / "release",
-        ROOT / "target" / "release",
-        ROOT / "target" / "debug",
+        _TARGET / "x86_64-unknown-linux-gnu" / "release",
+        _TARGET / "release",
+        _TARGET / "debug",
     ):
         cand = base / "libactive_ffi.a"
         if cand.is_file():
@@ -25,8 +27,6 @@ def find_staticlib() -> Path | None:
 
 
 def run(argv, cwd, extra_env=None) -> subprocess.CompletedProcess[str]:
-    import os
-
     env = dict(os.environ)
     if extra_env:
         env.update(extra_env)

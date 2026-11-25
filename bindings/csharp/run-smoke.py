@@ -7,11 +7,13 @@ stages active_ffi.dll beside the output, runs it, and checks SMOKE-OK.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+_TARGET = Path(os.environ.get("CARGO_TARGET_DIR") or (ROOT / "target"))
 PROJ = ROOT / "bindings" / "csharp" / "ActiveSmoke"
 
 
@@ -35,14 +37,22 @@ def main() -> int:
     if b.returncode != 0:
         print("BUILD FAILED:\n" + (b.stderr or b.stdout)[-2000:])
         return 1
-    dll = ROOT / "target" / "debug" / "active_ffi.dll"
-    solib = ROOT / "target" / "debug" / "libactive_ffi.so"
+
+    def _find(name: str) -> Path | None:
+        for d in (_TARGET / "release", _TARGET / "debug"):
+            cand = d / name
+            if cand.is_file():
+                return cand
+        return None
+
+    dll = _find("active_ffi.dll")
+    solib = _find("libactive_ffi.so")
     outdir = PROJ / "bin" / "Debug"
     tfm = sorted([d for d in outdir.iterdir() if d.is_dir()], key=lambda d: d.name)
     if tfm:
-        if dll.is_file():
+        if dll is not None:
             shutil.copy(dll, tfm[0] / "active_ffi.dll")
-        if solib.is_file():
+        if solib is not None:
             shutil.copy(solib, tfm[0] / "libactive_ffi.so")
     r = run(["dotnet", "run", "--project", str(PROJ), "--no-build"], ROOT)
     print(r.stdout + r.stderr)

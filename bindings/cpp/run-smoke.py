@@ -8,6 +8,7 @@ toolchain or static library is available.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -15,6 +16,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+_TARGET = Path(os.environ.get("CARGO_TARGET_DIR") or (ROOT / "target"))
 
 
 def run(argv: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -32,13 +34,13 @@ def run(argv: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
 def find_staticlib() -> Path | None:
     """Search release then debug for the platform static library."""
     if sys.platform == "win32":
-        roots = [ROOT / "target" / p for p in ("release", "debug")]
+        roots = [_TARGET / p for p in ("release", "debug")]
         names = ["active_ffi.lib"]
     else:
         roots = [
-            ROOT / "target" / "x86_64-unknown-linux-gnu" / "release",
-            ROOT / "target" / "release",
-            ROOT / "target" / "debug",
+            _TARGET / "x86_64-unknown-linux-gnu" / "release",
+            _TARGET / "release",
+            _TARGET / "debug",
         ]
         names = ["libactive_ffi.a"]
     for root in roots:

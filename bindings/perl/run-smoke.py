@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+_TARGET = Path(os.environ.get("CARGO_TARGET_DIR") or (ROOT / "target"))
 
 
 def find_sharedlib() -> Path | None:
@@ -19,9 +21,9 @@ def find_sharedlib() -> Path | None:
     else:
         names = ["libactive_ffi.so"]
     for d in (
-        ROOT / "target" / "x86_64-unknown-linux-gnu" / "release",
-        ROOT / "target" / "release",
-        ROOT / "target" / "debug",
+        _TARGET / "x86_64-unknown-linux-gnu" / "release",
+        _TARGET / "release",
+        _TARGET / "debug",
     ):
         for name in names:
             cand = d / name

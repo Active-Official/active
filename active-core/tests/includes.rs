@@ -278,7 +278,7 @@ fn a_material_union_never_exports_plaintext() {
     assert!(diags.is_empty(), "{diags:?}");
     let profile = active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
     let redacted = active_core::convert::redact_value(&profile, &value);
-    let json = active_core::convert::value_to_pretty_json(&redacted);
+    let json = active_core::convert::value_to_pretty_json(redacted.as_value());
     assert!(!json.contains("1234"), "material Int leaked: {json}");
     assert!(json.contains("SECRET"), "marker missing: {json}");
 }

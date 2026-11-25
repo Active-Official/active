@@ -224,7 +224,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 active_core::secret::SecretProfile::for_engine(&big_module, &big_engine, &seeds);
             assert!(!profile.truncated(), "LANG-K-001: path map truncated");
             let redacted = active_core::convert::redact_value(&profile, &value);
-            let json = active_core::convert::value_to_pretty_json(&redacted);
+            let json = active_core::convert::value_to_pretty_json(redacted.as_value());
             assert!(
                 !json.contains("***SECRET***"),
                 "LANG-K-001: benign value redacted"

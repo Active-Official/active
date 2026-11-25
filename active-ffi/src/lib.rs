@@ -602,8 +602,13 @@ pub struct ActiveDiagnosticSet {
 }
 
 /// Owned evaluated value handle (F-014/F-015).
+///
+/// Holds the sealed `active_core::convert::RedactedValue` (L-P36): the
+/// handle is always produced by `active_eval`, which redacts before it
+/// stores, and every query renders through the sealed view, so a host
+/// cannot hand a raw tree to a serializer.
 pub struct ActiveValue {
-    value: Value,
+    value: active_core::convert::RedactedValue,
 }
 
 /// C layout of the budget struct (docs/FFI.md section 4). Field zero is
@@ -1143,7 +1148,7 @@ pub unsafe extern "C" fn active_value_to_json(
         }
         // SAFETY: live handle per docs/FFI.md section 1.
         let value = unsafe { &*value };
-        let json = active_core::convert::value_to_pretty_json(&value.value);
+        let json = active_core::convert::value_to_pretty_json(value.value.as_value());
         set_last(ACTIVE_ERR_OK);
         cstring_lossy(&json).into_raw()
     })
@@ -1174,7 +1179,7 @@ pub unsafe extern "C" fn active_value_is_secret(value: *const ActiveValue) -> bo
                 _ => false,
             }
         }
-        contains_secret(&value.value)
+        contains_secret(value.value.as_value())
     })
 }
 
@@ -1206,7 +1211,7 @@ pub unsafe extern "C" fn active_value_is_tainted(value: *const ActiveValue) -> b
                 _ => false,
             }
         }
-        tainted(&value.value)
+        tainted(value.value.as_value())
     })
 }
 
@@ -1244,9 +1249,11 @@ pub unsafe extern "C" fn active_value_project(
                 return std::ptr::null_mut();
             }
         };
-        match active_core::convert::project_path(&value.value, path_str) {
+        // Project through the sealed type: the cone stays redacted and the
+        // document-relative selections are already applied (L-P36).
+        match value.value.project(path_str) {
             Ok(cone) => {
-                let json = active_core::convert::value_to_pretty_json(cone);
+                let json = active_core::convert::value_to_pretty_json(cone.as_value());
                 set_last(ACTIVE_ERR_OK);
                 cstring_lossy(&json).into_raw()
             }
@@ -1274,7 +1281,7 @@ pub unsafe extern "C" fn active_value_type(value: *const ActiveValue) -> u32 {
         }
         // SAFETY: live handle per docs/FFI.md section 1.
         let value = unsafe { &*value };
-        match &value.value {
+        match value.value.as_value() {
             Value::Null => 0,
             Value::Bool(_) => 1,
             Value::Int(_) => 2,

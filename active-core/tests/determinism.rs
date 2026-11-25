@@ -22,11 +22,11 @@ fn snapshot(engine: &Engine, module: &Module) -> String {
     format!(
         "{}\n--\n{}\n--\n{}\n--\n{}",
         value_to_pretty_json(&value),
-        value_to_pretty_json(&redacted),
+        value_to_pretty_json(redacted.as_value()),
         // The content hash is over the redacted tree (spec §3): hashing the
         // raw tree would be a secret-equality oracle for a plain string
         // that came from an env read.
-        content_hash(&redacted),
+        content_hash(redacted.as_value()),
         serde_json::to_string(&diagnostics).expect("diagnostics serialize")
     )
 }
@@ -133,7 +133,7 @@ fn redacted_secret_values_share_an_identity() {
         let engine = Engine::new();
         let (value, _, seeds) = engine.evaluate_with_seeds(module).expect("evaluate");
         let profile = SecretProfile::for_engine(module, &engine, &seeds);
-        content_hash(&redact_value(&profile, &value))
+        content_hash(redact_value(&profile, &value).as_value())
     };
     assert_eq!(hash_of(&a), hash_of(&b));
 }

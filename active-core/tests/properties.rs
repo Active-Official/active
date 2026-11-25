@@ -95,9 +95,9 @@ fn snapshot(source: &str) -> String {
             let redacted_debug = format!("{redacted:?}");
             format!(
                 "ok|{}|{:?}|{}|{}",
-                value_to_pretty_json(&redacted),
+                value_to_pretty_json(redacted.as_value()),
                 triples(&diags),
-                active_core::provenance::content_hash(&redacted),
+                active_core::provenance::content_hash(redacted.as_value()),
                 redacted_debug
             )
         }
@@ -116,7 +116,7 @@ fn evaluate_pair(module: &Module) -> (String, Option<Value>, Vec<Diagnostic>, St
         Ok((value, diags, seeds)) => {
             let profile = SecretProfile::for_engine(module, &engine, &seeds);
             let redacted = redact_value(&profile, &value);
-            let hash = active_core::provenance::content_hash(&redacted);
+            let hash = active_core::provenance::content_hash(redacted.as_value());
             (format!("ok|{hash}"), Some(value), diags, hash)
         }
     }

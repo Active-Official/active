@@ -551,7 +551,11 @@ fn generic_debug_and_serialize_never_emit_secrets() {
     let debug = format!("{value:?}");
     assert!(!debug.contains(RAW_A), "raw secret in Debug: {debug}");
     assert!(debug.contains("Secret(***)"), "{debug}");
-    let direct = serde_json::to_string(&value).expect("must serialize");
+    let sealed = active_core::convert::redact_value(
+        &active_core::secret::SecretProfile::analyze(&module),
+        &value,
+    );
+    let direct = serde_json::to_string(&sealed).expect("must serialize");
     assert!(!direct.contains(RAW_A), "raw secret in Serialize: {direct}");
     assert!(direct.contains("***SECRET***"), "{direct}");
     // Scalars keep their derived shapes through the custom impl.
@@ -1940,7 +1944,7 @@ fn blob_identity_and_payload_sweep_authored_secret_literals() {
     let (value, _) = engine.evaluate(&module).expect("evaluate");
     let profile = active_core::secret::SecretProfile::analyze(&module);
     let redacted = active_core::convert::redact_value(&profile, &value);
-    let json = active_core::convert::value_to_pretty_json(&redacted);
+    let json = active_core::convert::value_to_pretty_json(redacted.as_value());
     assert!(!json.contains(raw), "blob literal leaked: {json}");
 }
 

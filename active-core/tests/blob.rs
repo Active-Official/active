@@ -68,8 +68,20 @@ fn materialised_flag_embeds_payload() {
     assert!(value_to_json(&value)["f"]["$active.blob"]
         .get("payload_b64")
         .is_none());
-    let json = active_core::convert::value_to_json_materialised(&value);
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    let sealed = active_core::convert::redact_value(&profile, &value);
+    let json = active_core::convert::value_to_json_materialised(&sealed);
     assert_eq!(json["f"]["$active.blob"]["payload_b64"], "aGVsbG8=");
+    // The other two sealed materialised exporters take the same sealed
+    // value and emit the payload; without them the door is JSON-only in
+    // the test (L-P36 review, finding 5b).
+    let yaml = active_core::convert::value_to_yaml_string_materialised(&sealed).expect("yaml");
+    assert!(yaml.contains("payload_b64"), "{yaml}");
+    assert!(yaml.contains("aGVsbG8="), "{yaml}");
+    let (toml, _) = active_core::convert::value_to_toml_string_materialised(&sealed)
+        .expect("toml materialised");
+    assert!(toml.contains("payload_b64"), "{toml}");
+    assert!(toml.contains("aGVsbG8="), "{toml}");
 }
 
 #[test]
@@ -370,7 +382,9 @@ fn materialise_flag_flip_clears_incremental_memo() {
     let (v2, _) = engine
         .evaluate_incremental(&module, &mut memo)
         .expect("second eval");
-    assert!(active_core::convert::value_to_json_materialised(&v2)
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    let sealed = active_core::convert::redact_value(&profile, &v2);
+    assert!(active_core::convert::value_to_json_materialised(&sealed)
         .to_string()
         .contains("payload_b64"));
 }
@@ -388,11 +402,14 @@ fn generic_renderers_are_identity_only_even_for_host_payloads() {
     };
     let json = active_core::convert::value_to_json(&blob);
     assert!(json["$active.blob"].get("payload_b64").is_none(), "{json}");
-    let serde = serde_json::to_string(&blob).expect("serialize");
+    let doc = parse("", "doc").expect("must parse");
+    let profile = active_core::secret::SecretProfile::analyze(&doc);
+    let sealed = active_core::convert::redact_value(&profile, &blob);
+    let serde = serde_json::to_string(&sealed).expect("serialize");
     assert!(!serde.contains("payload_b64"), "{serde}");
     assert!(!serde.contains("c2VjcmV0"), "{serde}");
     // The explicit materialisation form still emits it.
-    let materialised = active_core::convert::value_to_json_materialised(&blob);
+    let materialised = active_core::convert::value_to_json_materialised(&sealed);
     assert!(
         materialised["$active.blob"].get("payload_b64").is_some(),
         "{materialised}"
@@ -418,9 +435,13 @@ fn content_hash_verifies_a_retained_payload_identity() {
         active_core::convert::value_to_json(&make(b"one")),
         active_core::convert::value_to_json(&make(b"two"))
     );
+    let doc = parse("", "doc").expect("must parse");
+    let profile = active_core::secret::SecretProfile::analyze(&doc);
+    let sealed_one = active_core::convert::redact_value(&profile, &make(b"one"));
+    let sealed_two = active_core::convert::redact_value(&profile, &make(b"two"));
     assert_ne!(
-        serde_json::to_string(&make(b"one")).expect("serde"),
-        serde_json::to_string(&make(b"two")).expect("serde")
+        serde_json::to_string(&sealed_one).expect("serde"),
+        serde_json::to_string(&sealed_two).expect("serde")
     );
     // Alternate identity renderers verify too: the size query and Debug.
     let one_query = active_core::graph::blobs_above_size(&make(b"one"), 1);
@@ -453,6 +474,9 @@ fn tainted_blob_payload_never_serializes() {
         .expect("toml")
         .0;
     assert!(!toml.contains("payload_b64"), "{toml}");
-    let serde = serde_json::to_string(&blob).expect("serialize");
+    let doc = parse("", "doc").expect("must parse");
+    let profile = active_core::secret::SecretProfile::analyze(&doc);
+    let sealed = active_core::convert::redact_value(&profile, &blob);
+    let serde = serde_json::to_string(&sealed).expect("serialize");
     assert!(!serde.contains("payload_b64"), "{serde}");
 }

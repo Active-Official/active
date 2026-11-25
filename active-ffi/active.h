@@ -85,6 +85,11 @@ typedef struct ActiveModule ActiveModule;
 
 /**
  * Owned evaluated value handle (F-014/F-015).
+ *
+ * Holds the sealed `active_core::convert::RedactedValue` (L-P36): the
+ * handle is always produced by `active_eval`, which redacts before it
+ * stores, and every query renders through the sealed view, so a host
+ * cannot hand a raw tree to a serializer.
  */
 typedef struct ActiveValue ActiveValue;
 

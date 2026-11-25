@@ -285,9 +285,9 @@ fn structural_material_never_reaches_exports_or_the_content_hash() {
     let first = evaluate("ENVSECRET-export");
     let profile = active_core::secret::SecretProfile::analyze(&module);
     let redacted = active_core::convert::redact_value(&profile, &first);
-    let json = active_core::convert::value_to_json(&redacted);
-    let yaml = active_core::convert::value_to_yaml_string(&redacted).expect("yaml");
-    let toml = active_core::convert::value_to_toml_string(&redacted)
+    let json = active_core::convert::value_to_json(redacted.as_value());
+    let yaml = active_core::convert::value_to_yaml_string(redacted.as_value()).expect("yaml");
+    let toml = active_core::convert::value_to_toml_string(redacted.as_value())
         .expect("toml")
         .0;
     for (label, text) in [("json", json.to_string()), ("yaml", yaml), ("toml", toml)] {
@@ -300,12 +300,12 @@ fn structural_material_never_reaches_exports_or_the_content_hash() {
             "{label} lost markers: {text}"
         );
     }
-    let first_hash = active_core::provenance::content_hash(&redacted);
+    let first_hash = active_core::provenance::content_hash(redacted.as_value());
     let second = evaluate("OTHER-SECRET-999");
     let second_redacted = active_core::convert::redact_value(&profile, &second);
     assert_eq!(
         first_hash,
-        active_core::provenance::content_hash(&second_redacted),
+        active_core::provenance::content_hash(second_redacted.as_value()),
         "the content hash must not depend on material values"
     );
 }
@@ -348,7 +348,7 @@ fn eval_past_100k_paths_keeps_benign_values() {
     let (value, _) = engine.evaluate(&module).expect("must evaluate");
     let profile = active_core::secret::SecretProfile::analyze(&module);
     let redacted = active_core::convert::redact_value(&profile, &value);
-    let json = active_core::convert::value_to_pretty_json(&redacted);
+    let json = active_core::convert::value_to_pretty_json(redacted.as_value());
     assert!(
         !json.contains("***SECRET***"),
         "benign values redacted past 100k paths"

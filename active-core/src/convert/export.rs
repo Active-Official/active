@@ -18,8 +18,10 @@ pub fn value_to_yaml_string(v: &Value) -> Result<String, String> {
 }
 
 /// The explicit materialisation form: emits `payload_b64` for a retained
-/// untainted payload. Call only on a profile-redacted tree.
-pub fn value_to_yaml_string_materialised(v: &Value) -> Result<String, String> {
+/// untainted payload. Takes the sealed [`super::RedactedValue`]: the profile
+/// precondition is enforced by the type, so a raw tree cannot reach the
+/// exporter (L-P36).
+pub fn value_to_yaml_string_materialised(v: &super::RedactedValue) -> Result<String, String> {
     serde_yaml::to_string(&super::value_to_json_materialised(v))
         .map_err(|e| format!("YAML serialization failed: {e}"))
 }
@@ -37,9 +39,12 @@ pub fn value_to_toml_string(v: &Value) -> Result<(String, Vec<Diagnostic>), Stri
     toml_document(v, false)
 }
 
-/// The explicit materialisation form of [`value_to_toml_string`].
-pub fn value_to_toml_string_materialised(v: &Value) -> Result<(String, Vec<Diagnostic>), String> {
-    toml_document(v, true)
+/// The explicit materialisation form of [`value_to_toml_string`]. Takes
+/// the sealed [`super::RedactedValue`] (L-P36).
+pub fn value_to_toml_string_materialised(
+    v: &super::RedactedValue,
+) -> Result<(String, Vec<Diagnostic>), String> {
+    toml_document(v.as_value(), true)
 }
 
 fn toml_document(v: &Value, include_payloads: bool) -> Result<(String, Vec<Diagnostic>), String> {

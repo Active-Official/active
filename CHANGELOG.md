@@ -10,6 +10,22 @@ standalone Infinity codec).
 
 ## [Unreleased]
 
+### L-P36: redaction membrane (type-enforced secrets)
+
+`Value` no longer implements `serde::Serialize`. The only generic
+serialization of an evaluated tree is the new sealed
+`active_core::convert::RedactedValue`, which only `redact_value` (and
+its `project` operation) can construct and whose `Serialize` is the
+canonical `value_to_json` mapping; a host that forgets to redact a tree
+cannot serialize it. `redact_value` now returns `RedactedValue`, the
+four materialised `*_materialised` exporters take `&RedactedValue`, and
+the profile-aware `*_with` exporters keep their signatures. This closes
+the whole class of "raw tree reached a serializer" leaks at the type
+level rather than by convention. `value_to_json`, `value_to_pretty_json`,
+`value_to_yaml_string`, `value_to_toml_string`, and `content_hash`
+remain the documented profile-unaware, identity-only surfaces.
+`spec/secrets.md` and `spec/blob.md` state the rule and the new type.
+
 ### L-P28: hermetic evaluation sandbox
 
 Adds `InputClosure`/`Sandbox`/`SandboxedModule` to active-core: a host

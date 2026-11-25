@@ -1579,8 +1579,11 @@ fn check_v2_value(
             ));
         }
         let payload = fields.get("payload").cloned().unwrap_or(Value::Null);
+        // The bound hash is taken on the redacted tree; `bound_content_hash`
+        // wants a `&Value`, so leave the sealed boundary here (the tree is
+        // already redacted, and the unwrap cannot un-redact it).
         let payload = match material {
-            Some(profile) => crate::convert::redact_value(profile, &payload),
+            Some(profile) => crate::convert::redact_value(profile, &payload).into_value(),
             None => payload,
         };
         let capability = Some(v2_budget_profile(fields)?);

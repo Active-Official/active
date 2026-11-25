@@ -171,7 +171,7 @@ pub fn replay_with_budget_and_capabilities(
     // materialised tree is live at a time.
     let profile = crate::secret::SecretProfile::for_engine(module, &engine, &first_seeds);
     let first_hash = crate::provenance::content_hash(&crate::convert::strip_blob_payloads(
-        &crate::convert::redact_value(&profile, &first),
+        crate::convert::redact_value(&profile, &first).as_value(),
     ));
     let first_codes: Vec<String> = first_diags.iter().map(|d| d.code.clone()).collect();
     let first_steps_digest = steps_digest(&first_steps);
@@ -185,7 +185,7 @@ pub fn replay_with_budget_and_capabilities(
         .map_err(|e| e.to_string())?;
     let second_profile = crate::secret::SecretProfile::for_engine(module, &engine, &second_seeds);
     let second_hash = crate::provenance::content_hash(&crate::convert::strip_blob_payloads(
-        &crate::convert::redact_value(&second_profile, &second),
+        crate::convert::redact_value(&second_profile, &second).as_value(),
     ));
     let second_codes: Vec<String> = second_diags.iter().map(|d| d.code.clone()).collect();
     let steps_match = first_steps_digest == steps_digest(&second_steps);

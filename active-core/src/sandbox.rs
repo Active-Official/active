@@ -805,11 +805,14 @@ impl Sandbox {
 
     /// Evaluate and redact through the real sandboxed module, so material
     /// paths and blob identities are known exactly (FFI/WASM boundary).
+    /// Returns the sealed [`crate::convert::RedactedValue`], so the host
+    /// that receives it cannot hand a raw tree to a generic serializer or
+    /// a materialised exporter (L-P36).
     pub fn evaluate_redacted(
         &self,
         engine: &Engine,
         module: &SandboxedModule,
-    ) -> Result<(Value, Vec<Diagnostic>), EvalError> {
+    ) -> Result<(crate::convert::RedactedValue, Vec<Diagnostic>), EvalError> {
         let checked = self.checked_module(module)?;
         let guarded = self.guarded_engine(engine)?;
         let (value, diagnostics, seeds) = guarded.evaluate_with_seeds(checked)?;

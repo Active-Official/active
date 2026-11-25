@@ -2592,7 +2592,7 @@ fn serve_evaluate(
                     refusal = Some(("E027", "other"));
                 } else if !failed {
                     if let Some(value) = &evaluated {
-                        payload = active_core::convert::redact_value(&profile, value);
+                        payload = active_core::convert::redact_value(&profile, value).into_value();
                         payload_json = serde_json::from_str(
                             &active_core::convert::value_to_pretty_json(&payload),
                         )
@@ -3944,7 +3944,7 @@ fn write_repair_receipt(
         Some(&engine.env),
         None,
     );
-    let payload = active_core::convert::redact_value(&material, &raw_payload);
+    let payload = active_core::convert::redact_value(&material, &raw_payload).into_value();
     let tainted = active_core::envelope::payload_tainted(&payload);
     let effective_profile = engine.profile_override.clone().or_else(|| {
         context.and_then(|module| {
@@ -4121,7 +4121,7 @@ fn gate_evidence(
                     Some(&verdict.env),
                     None,
                 );
-                active_core::convert::redact_value(&material, value)
+                active_core::convert::redact_value(&material, value).into_value()
             } else {
                 active_core::Value::Null
             }
@@ -4506,14 +4506,12 @@ fn build_semantic_diff(
     new_profile.absorb_environment(&engine.env);
     // Payload bytes never enter the comparison or the echoes; dropping
     // them halves the two-tree memory.
-    let old_redacted = strip_blob_payloads(&active_core::convert::redact_value(
-        &old_profile,
-        &old_value,
-    ));
-    let new_redacted = strip_blob_payloads(&active_core::convert::redact_value(
-        &new_profile,
-        &new_value,
-    ));
+    let old_redacted = strip_blob_payloads(
+        active_core::convert::redact_value(&old_profile, &old_value).as_value(),
+    );
+    let new_redacted = strip_blob_payloads(
+        active_core::convert::redact_value(&new_profile, &new_value).as_value(),
+    );
     // Compare the REDACTED trees: material values are never compared (a
     // secret or blob is always "changed"), so a guess can never be
     // confirmed by an "identical" answer.
@@ -5176,7 +5174,9 @@ fn sandboxed_outcome(
         engine.capabilities = *held;
     }
     let outcome = if redact {
-        sandbox.evaluate_redacted(&engine, &module)
+        sandbox
+            .evaluate_redacted(&engine, &module)
+            .map(|(value, diagnostics)| (value.into_value(), diagnostics))
     } else {
         sandbox.evaluate(&engine, &module)
     };
@@ -5851,20 +5851,19 @@ fn main() -> anyhow::Result<()> {
 
             // Demanded cone selection (PROPOSAL §2.2): project AFTER the
             // full budgeted evaluation, so safety stays whole-document
-            // while agents fetch only what they need. Structural
-            // material is redacted on the FULL tree before projection,
-            // so a cone keeps the document's path-relative taint.
-            // Structural material is redacted on the FULL tree, then
-            // projected: the cone is already redacted at document
-            // paths, so it must NOT be re-rooted and redacted again.
+            // while agents fetch only what they need. The FULL tree is
+            // redacted first, then projected: the cone is already
+            // redacted at document paths, so it must NOT be re-rooted
+            // and re-redacted, and the seal keeps the document as the
+            // redaction root so the path-relative taint survives.
             let profile = complete_profile(active_core::secret::SecretProfile::for_engine(
                 &module, &engine, &seeds,
             ))?;
             let full_value = active_core::convert::redact_value(&profile, &value);
             let value = match path.as_deref() {
-                Some(p) => active_core::convert::project_path(&full_value, p)
-                    .map_err(|e| anyhow::anyhow!("{e}"))?
-                    .clone(),
+                Some(p) => full_value
+                    .project(p)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?,
                 None => full_value.clone(),
             };
             // Explicit materialisation demand (spec/blob.md §5) runs on
@@ -5872,7 +5871,7 @@ fn main() -> anyhow::Result<()> {
             // is marked tainted there, so the demand fails closed with
             // B003 instead of silently dropping the payload.
             if materialise_blobs {
-                if let Err(e) = active_core::convert::require_materialised(&value) {
+                if let Err(e) = active_core::convert::require_materialised(value.as_value()) {
                     if let Some(path) = envelope.as_ref() {
                         write_envelope_v2(
                             path,
@@ -5931,26 +5930,28 @@ fn main() -> anyhow::Result<()> {
                 // pre-redaction payload, so a plain secret never becomes
                 // `tainted: false` (review M1).
                 let projected = path.is_some();
+                let selected = value.as_value();
                 let original_payload = if projected {
-                    value.clone()
+                    selected.clone()
                 } else {
-                    match &value {
+                    match selected {
                         active_core::Value::Table(root) => match root.get("envelope") {
                             Some(active_core::Value::Table(fields)) => fields
                                 .get("payload")
                                 .cloned()
-                                .unwrap_or_else(|| value.clone()),
-                            _ => value.clone(),
+                                .unwrap_or_else(|| selected.clone()),
+                            _ => selected.clone(),
                         },
-                        _ => value.clone(),
+                        _ => selected.clone(),
                     }
                 };
                 let computed_taint =
                     active_core::envelope::payload_tainted(&original_payload);
+                let full_view = full_value.as_value();
                 let (payload, capability, claimed_tainted) = if projected {
-                    (value.clone(), "agent".to_string(), computed_taint)
+                    (selected.clone(), "agent".to_string(), computed_taint)
                 } else {
-                    match &full_value {
+                    match full_view {
                         active_core::Value::Table(root) => match root.get("envelope") {
                             Some(active_core::Value::Table(fields)) => (
                                 fields
@@ -5966,9 +5967,9 @@ fn main() -> anyhow::Result<()> {
                                     Some(active_core::Value::Bool(true))
                                 ),
                             ),
-                            _ => (full_value.clone(), "agent".to_string(), false),
+                            _ => (full_view.clone(), "agent".to_string(), false),
                         },
-                        _ => (full_value.clone(), "agent".to_string(), false),
+                        _ => (full_view.clone(), "agent".to_string(), false),
                     }
                 };
                 let mut tainted = claimed_tainted || computed_taint;
@@ -6042,7 +6043,7 @@ fn main() -> anyhow::Result<()> {
                 // (never the demand cone): the promise is a property of the
                 // document, and a projected root has no schema root to walk.
                 if !envelope_failed {
-                    if let Some(member) = closed_tables_member(&module, &full_value) {
+                    if let Some(member) = closed_tables_member(&module, full_value.as_value()) {
                         receipt.insert("closed_tables".into(), member);
                     }
                 }
@@ -6070,7 +6071,7 @@ fn main() -> anyhow::Result<()> {
                 if materialise_blobs {
                     value_to_pretty_json_materialised(&value)
                 } else {
-                    value_to_pretty_json(&value)
+                    value_to_pretty_json(value.as_value())
                 }
             });
             let cache_json_fits = json_text.as_ref().is_none_or(|text| {
@@ -6081,14 +6082,14 @@ fn main() -> anyhow::Result<()> {
                 if materialise_blobs {
                     value_to_yaml_string_materialised(&value)
                 } else {
-                    value_to_yaml_string(&value)
+                    value_to_yaml_string(value.as_value())
                 }
             });
             let toml_render = (format == "toml" || cache_extras).then(|| {
                 if materialise_blobs {
                     value_to_toml_string_materialised(&value)
                 } else {
-                    value_to_toml_string(&value)
+                    value_to_toml_string(value.as_value())
                 }
             });
             if format == "json" {
@@ -6150,8 +6151,8 @@ fn main() -> anyhow::Result<()> {
                         &module,
                         effective_profile.as_deref(),
                         &engine.budget,
-                        &value,
-                        Some(&full_value),
+                        value.as_value(),
+                        Some(full_value.as_value()),
                         budget_label,
                         &diag_codes,
                         had_failure(&diags, resilient),
@@ -6258,7 +6259,7 @@ fn main() -> anyhow::Result<()> {
                     )?;
                     active_core::convert::redact_value(&canonical_profile, &canonical_value)
                 };
-                let audited = strip_blob_payloads(&canonical);
+                let audited = strip_blob_payloads(canonical.as_value());
                 write_audit_trail(
                     &audit_path,
                     &file,
@@ -8037,7 +8038,7 @@ fn main() -> anyhow::Result<()> {
             ))?;
             let items = collect_items_with_profile(
                 &module,
-                &active_core::convert::redact_value(&profile, &value),
+                active_core::convert::redact_value(&profile, &value).as_value(),
                 &profile,
             );
             match to.as_str() {
@@ -8125,7 +8126,7 @@ fn main() -> anyhow::Result<()> {
                     env!("CARGO_PKG_VERSION"),
                     active_core::VERSION
                 ),
-                &strip_blob_payloads(&canonical),
+                &strip_blob_payloads(canonical.as_value()),
                 provenance,
             );
             // A lock written to a file records its inputs relative to

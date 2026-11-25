@@ -354,8 +354,9 @@ fn direct_serialization_matches_the_canonical_export() {
     // The hand-kept `Serialize` impl promised to mirror value_to_json; it
     // had drifted (quantities used the old bare form, non-finite floats
     // would serialize as null). Every kind must agree.
-    use active_core::convert::value_to_json;
+    use active_core::convert::{redact_value, value_to_json};
     use serde_json::json;
+    let profile = active_core::secret::SecretProfile::analyze(&parse("", "key").expect("parse"));
     let values = [
         Value::Null,
         Value::Bool(true),
@@ -376,13 +377,15 @@ fn direct_serialization_matches_the_canonical_export() {
         ),
     ];
     for value in values {
-        let via_serde = serde_json::to_value(&value).expect("serialize");
-        assert_eq!(via_serde, value_to_json(&value), "{value:?}");
+        let sealed = redact_value(&profile, &value);
+        let via_serde = serde_json::to_value(&sealed).expect("serialize");
+        assert_eq!(via_serde, value_to_json(sealed.as_value()), "{value:?}");
     }
     // The tagged non-finite form is the one exception a live Value cannot
     // hold through evaluation; construct it directly to pin the serializer.
+    let inf = redact_value(&profile, &Value::Float(f64::INFINITY));
     assert_eq!(
-        serde_json::to_value(Value::Float(f64::INFINITY)).expect("serialize"),
+        serde_json::to_value(&inf).expect("serialize"),
         json!({"$active.float": "inf"})
     );
 }

@@ -148,8 +148,8 @@ fn l37_corpus_dump() {
                         true,
                         &diags,
                         Some((
-                            active_core::provenance::content_hash(&redacted),
-                            active_core::convert::value_to_json(&redacted),
+                            active_core::provenance::content_hash(redacted.as_value()),
+                            active_core::convert::value_to_json(redacted.as_value()),
                         )),
                     )
                 }

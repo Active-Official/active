@@ -267,7 +267,7 @@ fn eval_manifest_inner(manifest: &str) -> String {
     let engine = Engine::hermetic();
     match sandbox.evaluate_redacted(&engine, &module) {
         Ok((value, diags)) => {
-            let json = active_core::convert::value_to_pretty_json(&value);
+            let json = active_core::convert::value_to_pretty_json(value.as_value());
             let lines: Vec<String> = diags
                 .iter()
                 .map(|d| format!("[{}] {}", d.code, d.message))
@@ -327,7 +327,7 @@ fn eval_inner_caps(source: &str, pure: bool, caps: Option<&str>) -> String {
             // `let` name that never enters the exported tree.
             let profile = active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
             let redacted = active_core::convert::redact_value(&profile, &value);
-            let json = active_core::convert::value_to_pretty_json(&redacted);
+            let json = active_core::convert::value_to_pretty_json(redacted.as_value());
             let lines: Vec<String> = diags
                 .iter()
                 .map(|d| format!("[{}] {}", d.code, d.message))

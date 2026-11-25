@@ -192,8 +192,8 @@ fn same_closure_sandboxed_and_unsandboxed_bytes_diagnostics_hash_match() {
     let plain = redact_value(&profile, &plain);
 
     assert_eq!(
-        serde_json::to_string(&value_to_json(&sandboxed)).unwrap(),
-        serde_json::to_string(&value_to_json(&plain)).unwrap()
+        serde_json::to_string(&value_to_json(sandboxed.as_value())).unwrap(),
+        serde_json::to_string(&value_to_json(plain.as_value())).unwrap()
     );
     assert_eq!(
         sandboxed_diags
@@ -206,8 +206,8 @@ fn same_closure_sandboxed_and_unsandboxed_bytes_diagnostics_hash_match() {
             .collect::<Vec<_>>()
     );
     assert_eq!(
-        active_core::provenance::content_hash(&sandboxed),
-        active_core::provenance::content_hash(&plain)
+        active_core::provenance::content_hash(sandboxed.as_value()),
+        active_core::provenance::content_hash(plain.as_value())
     );
 }
 

@@ -94,20 +94,32 @@ media/payload, and a budget trip.
   export rule additionally prevents the presence of a scalar from
   revealing that a comparison happened. Shipped behavior, now normative.
 - `ACTIVE graph` prints node ids and edges only — no values at all.
-- `Value`'s `Debug` and `serde::Serialize` impls redact by
-  construction (`Secret(***)` / `"***SECRET***"` at every depth), so
-  generic logging, assertion output, and direct serialization can
-  never emit secret material. They are profile-less: they cannot
-  classify authored key text or content-identical copies, so any caller
-  that holds a `SecretProfile` must use the profile-aware exporters
-  (`value_to_json_with`, `value_to_pretty_json_with`, `redact_value`,
-  and the `*_with` TOML/YAML forms) to redact material keys and copies.
+- `Value`'s `Debug` impl redacts by construction (`Secret(***)` at
+  every depth), so generic logging and assertion output never emit
+  secret material. `Value` does **not** implement `serde::Serialize`
+  (L-P36): the only generic serialization of an evaluated tree is the
+  sealed `convert::RedactedValue`, which only `redact_value` and its
+  `project` operation can construct and whose `Serialize` is the
+  canonical `value_to_json` mapping. A host that forgets to redact
+  cannot serialize, so the type system keeps raw trees off the wire.
+- The mapping that serialization and the plain exporters share is
+  profile-less: `value_to_json` itself cannot classify authored key text
+  or content-identical copies, which is why only a profile-produced
+  `RedactedValue` may be serialized and why the plain `&Value` forms
+  carry a caller obligation. The profile-unaware, identity-only surfaces
+  are `value_to_json`, `value_to_pretty_json`, `value_to_yaml_string`,
+  `value_to_toml_string`, `value_to_simple_toml` (the brace-style unit
+  round-trip emitter), and `content_hash` (whose caller obligation
+  is stated on the function); any caller that holds a `SecretProfile`
+  must use the profile-aware exporters (`redact_value`,
+  `value_to_json_with`, `value_to_pretty_json_with`, and the `*_with`
+  TOML/YAML forms) to redact material keys and copies.
   The same rule covers a retained blob payload: evaluation only retains
   a payload for an explicitly materialised, untainted blob, and a
   profile-aware export drops a payload that is material under its
   profile. A host that hand-builds a `Value::Blob` must set `tainted`
-  and withhold the payload exactly as evaluation would; the raw
-  serializers cannot classify content without a profile.
+  and withhold the payload exactly as evaluation would; no
+  profile-unaware surface can classify content without a profile.
   Deserialization stays derived: the input direction cannot leak.
 - `ACTIVE fmt` re-emits `secret(…)` source calls (source-derived
   locators, never evaluated values).

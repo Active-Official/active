@@ -365,8 +365,8 @@ pub fn repair_with_engine_and_options(
                 &steps[index],
                 &before_codes,
                 &codes,
-                redacted_before.as_ref(),
-                redacted_after.as_ref(),
+                redacted_before.as_ref().map(|sealed| sealed.as_value()),
+                redacted_after.as_ref().map(|sealed| sealed.as_value()),
             ));
         }
         if codes.is_empty() {

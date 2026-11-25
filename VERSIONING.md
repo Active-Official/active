@@ -164,6 +164,11 @@ Breaking changes the 2.0.0 release notes must enumerate:
   merge instead of last-wins/W011 (same-priority disagreement is E046),
   profiles merge at Profile priority with W003 retired, and
   `active inspect --path` reports value report v2 with merge provenance.
+- L-P36 membrane: `active_core::Value` no longer implements
+  `serde::Serialize`; `convert::redact_value` returns the sealed
+  `RedactedValue`, the four `*_materialised` exporters take
+  `&RedactedValue`, and `Sandbox::evaluate_redacted` returns the sealed
+  `RedactedValue`.
 - `active compatibility` detects numeric-bound/pattern/format/closed
   tightenings.
 - MSRV 1.85 → 1.89.

@@ -96,7 +96,9 @@ fn memo_separates_materialise_modes() {
     let (v2, _) = engine
         .evaluate_incremental(&module, &mut memo)
         .expect("materialised eval");
-    assert!(active_core::convert::value_to_json_materialised(&v2)
+    let profile = active_core::secret::SecretProfile::analyze(&module);
+    let sealed = active_core::convert::redact_value(&profile, &v2);
+    assert!(active_core::convert::value_to_json_materialised(&sealed)
         .to_string()
         .contains("payload_b64"));
 }

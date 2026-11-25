@@ -84,7 +84,9 @@ fuzz_target!(|data: &[u8]| {
     };
     let profile = active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
     let redacted = active_core::convert::redact_value(&profile, &value);
-    assert_no_material(&redacted, &seeds);
-    // Serialisation is part of the shipped path: it must not panic.
-    let _ = active_core::convert::value_to_pretty_json(&redacted);
+    assert_no_material(redacted.as_value(), &seeds);
+    // Both shipped serialisation paths must stay clean and panic-free:
+    // the sealed generic `Serialize` and the profile-unaware pretty dump.
+    let _ = serde_json::to_string(&redacted);
+    let _ = active_core::convert::value_to_pretty_json(redacted.as_value());
 });

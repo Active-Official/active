@@ -29,6 +29,7 @@ version = "0.0.0"
 dependencies = [
  "active-core",
  "libfuzzer-sys",
+ "serde_json",
 ]
 
 [[package]]

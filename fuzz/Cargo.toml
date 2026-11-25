@@ -10,6 +10,10 @@ cargo-fuzz = true
 [dependencies]
 active-core = { path = "../active-core" }
 libfuzzer-sys = "0.4"
+# The sealed `RedactedValue::Serialize` path is a shipped serialization
+# surface (L-P36); the secrets target exercises it, so the target needs
+# a JSON serializer. Already resolved transitively through active-core.
+serde_json = "1"
 
 # Standalone workspace: not a member of the root workspace.
 [workspace]

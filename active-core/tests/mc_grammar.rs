@@ -354,8 +354,8 @@ fn check_document(family: usize, case: usize, src: &str) {
     if let Ok((value, _, seeds)) = engine.evaluate_with_seeds(&module) {
         let profile = active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
         let redacted = active_core::convert::redact_value(&profile, &value);
-        assert_no_material(&redacted, &seeds, &ctx);
-        let _ = active_core::convert::value_to_pretty_json(&redacted);
+        assert_no_material(redacted.as_value(), &seeds, &ctx);
+        let _ = active_core::convert::value_to_pretty_json(redacted.as_value());
     }
 }
 
@@ -426,9 +426,10 @@ fn dump_line(family: usize, case: usize, src: &str) -> serde_json::Value {
                     "span": span_json(d.span.as_ref()),
                 }))
                 .collect::<Vec<_>>());
-            out["content_hash"] =
-                serde_json::Value::String(active_core::provenance::content_hash(&redacted));
-            out["value"] = value_to_json(&redacted);
+            out["content_hash"] = serde_json::Value::String(active_core::provenance::content_hash(
+                redacted.as_value(),
+            ));
+            out["value"] = value_to_json(redacted.as_value());
         }
         Err(error) => {
             out["ok"] = serde_json::Value::Bool(false);

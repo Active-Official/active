@@ -12,6 +12,7 @@ pub mod export;
 pub mod gen;
 pub mod import;
 pub mod inspect;
+pub mod membrane;
 pub mod project;
 pub mod repair;
 pub mod suggest;
@@ -47,6 +48,7 @@ pub use import::{
     yaml_text_to_active,
 };
 pub use inspect::{schema_inspect, schema_inspect_with_profile, INSPECT_VERSION};
+pub use membrane::RedactedValue;
 pub use suggest::{
     suggest_patches, suggest_patches_structured, suggest_patches_structured_with_profile,
     PatchKind, PatchSuggestion,
@@ -72,11 +74,11 @@ pub fn value_to_json(v: &Value) -> JsonValue {
 }
 
 /// The EXPLICIT materialisation renderer: like [`value_to_json`] but it
-/// emits `payload_b64` for a retained untainted payload. Only call this
-/// after the value has been profile-redacted (the CLI materialisation
-/// path does); a generic caller must not hand arbitrary values to it.
-pub fn value_to_json_materialised(v: &Value) -> JsonValue {
-    json_of(v, true)
+/// emits `payload_b64` for a retained untainted payload. It takes the
+/// sealed [`RedactedValue`], so a raw evaluated tree cannot reach it: the
+/// profile-redaction precondition is enforced by the type (L-P36).
+pub fn value_to_json_materialised(v: &RedactedValue) -> JsonValue {
+    json_of(v.as_value(), true)
 }
 
 fn json_of(v: &Value, include_payloads: bool) -> JsonValue {
@@ -139,10 +141,9 @@ fn json_of(v: &Value, include_payloads: bool) -> JsonValue {
             JsonValue::Object(obj)
         }
         Value::Secret(_) => json!("***SECRET***"),
-        // Identity shape, same contract as the Serialize impl:
-        // payload bytes serialize ONLY when the value carries them,
-        // which happens exclusively under explicit materialisation
-        // (engine.materialise_blobs) on an untainted blob.
+        // Identity shape: payload bytes serialize ONLY when the
+        // value carries them, which happens exclusively under explicit
+        // materialisation (engine.materialise_blobs) on an untainted blob.
         Value::Blob {
             hash,
             size,
@@ -498,13 +499,28 @@ pub(crate) fn redacted_blob_json(hash: &[u8; 32], size: u64) -> JsonValue {
 /// Profile-unaware pretty JSON. Identity-only. Secret-bearing callers
 /// must use [`value_to_pretty_json_with`]; explicit materialisation uses
 /// [`value_to_pretty_json_materialised`].
+///
+/// Redact first: route a raw evaluated tree through [`redact_value`] with
+/// the profile that produced it (the pattern every shipped exporter
+/// follows).
+///
+/// ```
+/// # use active_core::{parse, Engine};
+/// # let module = parse("port = 8080\n", "doc").expect("parse");
+/// # let engine = Engine::hermetic();
+/// # let (value, _, seeds) = engine.evaluate_with_seeds(&module).expect("eval");
+/// let profile = active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
+/// let redacted = active_core::convert::redact_value(&profile, &value);
+/// let json = active_core::convert::value_to_pretty_json(redacted.as_value());
+/// # assert!(json.contains("8080"));
+/// ```
 pub fn value_to_pretty_json(v: &Value) -> String {
     serde_json::to_string_pretty(&value_to_json(v)).unwrap_or_else(|_| "{}".into())
 }
 
-/// The explicit materialisation form of [`value_to_pretty_json`]. Call
-/// only on a profile-redacted tree.
-pub fn value_to_pretty_json_materialised(v: &Value) -> String {
+/// The explicit materialisation form of [`value_to_pretty_json`]. Takes
+/// the sealed [`RedactedValue`] (L-P36).
+pub fn value_to_pretty_json_materialised(v: &RedactedValue) -> String {
     serde_json::to_string_pretty(&value_to_json_materialised(v)).unwrap_or_else(|_| "{}".into())
 }
 
@@ -519,7 +535,11 @@ pub fn value_to_pretty_json_materialised(v: &Value) -> String {
 /// material node values, `SecretProfile::absorb_secrets` merges them,
 /// and `absorb_environment` covers material environment values. The
 /// CLI, FFI, WASM, LSP, inspect, and replay front ends all do this.
-pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
+///
+/// Returns the sealed [`RedactedValue`]: the only generic serializer and
+/// the only materialised payload exporters accept it, so a raw evaluated
+/// tree cannot reach either without a compile error (L-P36).
+pub fn redact_value(profile: &SecretProfile, value: &Value) -> RedactedValue {
     profile.begin_redaction_pass();
     // Runtime secrets live in the evaluated tree; authored literals
     // live in the profile. Copies need both.
@@ -674,14 +694,14 @@ pub fn redact_value(profile: &SecretProfile, value: &Value) -> Value {
             _ => value.clone(),
         }
     }
-    walk(
+    RedactedValue::new(walk(
         profile,
         &redactor,
         &runtime_exact,
         &mut blob_material,
         "",
         value,
-    )
+    ))
 }
 
 /// Drop retained blob payloads, keeping identity and taint. Content
@@ -722,7 +742,7 @@ pub fn strip_blob_payloads(value: &Value) -> Value {
 
 /// JSON export with structural-material redaction.
 pub fn value_to_json_with(profile: &SecretProfile, value: &Value) -> JsonValue {
-    value_to_json(&redact_value(profile, value))
+    value_to_json(redact_value(profile, value).as_value())
 }
 
 /// Pretty JSON export with structural-material redaction.
@@ -733,7 +753,7 @@ pub fn value_to_pretty_json_with(profile: &SecretProfile, value: &Value) -> Stri
 
 /// YAML export with structural-material redaction.
 pub fn value_to_yaml_string_with(profile: &SecretProfile, value: &Value) -> Result<String, String> {
-    export::value_to_yaml_string(&redact_value(profile, value))
+    export::value_to_yaml_string(redact_value(profile, value).as_value())
 }
 
 /// TOML export with structural-material redaction.
@@ -741,7 +761,7 @@ pub fn value_to_toml_string_with(
     profile: &SecretProfile,
     value: &Value,
 ) -> Result<(String, Vec<crate::diag::Diagnostic>), String> {
-    export::value_to_toml_string(&redact_value(profile, value))
+    export::value_to_toml_string(redact_value(profile, value).as_value())
 }
 
 /// Enforce a materialisation demand (spec/blob.md §5, `--materialise-blobs`):

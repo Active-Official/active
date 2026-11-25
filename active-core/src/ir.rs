@@ -995,8 +995,8 @@ pub enum Value {
     /// `tainted` whenever its media type, payload, or serving path is
     /// material, so a retained payload is non-material. A host that
     /// constructs this variant directly must uphold the same rule: the
-    /// profile-unaware serializers (`Serialize`, `value_to_json`) are
-    /// type dumps and cannot classify content, while the profile-aware
+    /// profile-unaware serializer (`value_to_json`) is a type dump and
+    /// cannot classify content, while the profile-aware
     /// exporters (`convert::redact_value`, `*_with`) do.
     Blob {
         hash: [u8; 32],
@@ -1081,127 +1081,13 @@ const RESERVED_WIRE_TAGS: [&str; 4] = [
 /// a reserved key and a key that literally begins with `\` can never
 /// encode to the same string (host-built tables can carry any key, and
 /// two distinct values must not share a wire form or a `content_hash`).
-/// Shared by `convert::value_to_json`, the TOML exporter, and the
-/// `Serialize` impl below, so every wire path agrees.
+/// Shared by `convert::value_to_json` and the TOML exporter, so every
+/// wire path agrees.
 pub(crate) fn wire_key(key: &str) -> String {
     if key.starts_with('\\') || RESERVED_WIRE_TAGS.contains(&key) {
         format!("\\{key}")
     } else {
         key.to_owned()
-    }
-}
-
-impl Serialize for Value {
-    /// Redacting serializer (spec/secrets.md §3): serializing a Value
-    /// directly (`serde_json::to_string` and friends) can never emit
-    /// secret material — secrets become the export marker, mirroring
-    /// `convert::value_to_json` (kept in sync by hand; ir cannot depend
-    /// on convert). Deserialization stays derived: the input direction
-    /// cannot leak.
-    ///
-    /// Blob payloads never cross this impl (LANG-I-010, `cb973208`):
-    /// the shape is the verified identity only, because a generic
-    /// serializer must not be a payload path. Explicit materialisation
-    /// has named `convert::*_materialised` forms. This impl is still
-    /// profile-unaware for profile-selected plain values and runtime
-    /// secret copies, so library hosts must route exported values through
-    /// [`crate::convert::redact_value`] with the profile that produced the
-    /// tree (the pattern every shipped exporter follows):
-    ///
-    /// ```
-    /// # use active_core::{parse, Engine};
-    /// # let module = parse("port = 8080\n", "doc").expect("parse");
-    /// # let engine = Engine::hermetic();
-    /// # let (value, _, seeds) = engine.evaluate_with_seeds(&module).expect("eval");
-    /// let profile = active_core::secret::SecretProfile::for_engine(&module, &engine, &seeds);
-    /// let redacted = active_core::convert::redact_value(&profile, &value);
-    /// let json = active_core::convert::value_to_pretty_json(&redacted);
-    /// # assert!(json.contains("8080"));
-    /// ```
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let json = match self {
-            Value::Null => serde_json::Value::Null,
-            Value::Bool(b) => serde_json::Value::from(*b),
-            Value::Int(i) => serde_json::Value::from(*i),
-            Value::Float(x) if x.is_finite() => serde_json::Value::from(*x),
-            // Never a bare `null` for a non-finite value (LANG-F-003):
-            // the tagged object cannot collide with null or with "inf".
-            Value::Float(x) => serde_json::json!({
-                "$active.float": if x.is_nan() {
-                    "nan"
-                } else if x.is_sign_negative() {
-                    "-inf"
-                } else {
-                    "inf"
-                }
-            }),
-            Value::String(s) => serde_json::Value::from(s.clone()),
-            Value::DurationMs(ms) => serde_json::json!({ "$active.duration": { "ms": ms } }),
-            // Same reserved wrapper as `convert::value_to_json`: the bare
-            // `{ "<suffix>": n }` form was table-shaped and not injective
-            // (LANG-B-019).
-            Value::Quantity(n, unit) => serde_json::json!({
-                "$active.quantity": { "unit": unit.suffix(), "value": n }
-            }),
-            Value::Array(items) => serde_json::Value::Array(
-                items
-                    .iter()
-                    .map(|v| serde_json::to_value(v).unwrap_or(serde_json::Value::Null))
-                    .collect(),
-            ),
-            Value::Table(map) => {
-                let mut obj = serde_json::Map::new();
-                for (k, val) in map {
-                    obj.insert(
-                        wire_key(k),
-                        serde_json::to_value(val).unwrap_or(serde_json::Value::Null),
-                    );
-                }
-                serde_json::Value::Object(obj)
-            }
-            Value::Secret(_) => serde_json::Value::from("***SECRET***"),
-            // Identity shape (spec/blob.md §5): hash, size, media type,
-            // taint bit. Payload bytes are NEVER emitted here: this impl
-            // is profile-unaware and a generic serializer must not be a
-            // payload path. Explicit materialisation uses
-            // `convert::value_to_json_materialised` / the `*_materialised`
-            // exporters, after profile redaction.
-            Value::Blob {
-                hash,
-                size,
-                tainted,
-                media_type,
-                payload,
-            } => {
-                // A retained payload verifies the identity.
-                let identity =
-                    crate::blob::verified_identity(hash, *tainted, media_type, payload.as_ref());
-                let mut inner = serde_json::Map::new();
-                inner.insert(
-                    "hash".to_string(),
-                    serde_json::Value::from(format!("blake3:{}", crate::blob::hash_hex(&identity))),
-                );
-                inner.insert("size".to_string(), serde_json::Value::from(*size));
-                // A tainted identity may carry a material media type
-                // (an env lookup used as a locator); fail closed and
-                // redact it. `tainted` itself tells consumers why.
-                inner.insert(
-                    "media_type".to_string(),
-                    serde_json::Value::from(if *tainted {
-                        crate::secret::MARKER.to_string()
-                    } else {
-                        media_type.clone()
-                    }),
-                );
-                inner.insert("tainted".to_string(), serde_json::Value::from(*tainted));
-                serde_json::Value::Object(
-                    [("$active.blob".to_string(), serde_json::Value::Object(inner))]
-                        .into_iter()
-                        .collect(),
-                )
-            }
-        };
-        json.serialize(serializer)
     }
 }
 

@@ -2072,6 +2072,32 @@ fn eval_path_unknown_fails_closed() {
 }
 
 #[test]
+fn eval_path_cone_carries_document_redaction() {
+    // L-P36 review, finding 5d: the demand cone inherits the
+    // whole-document profile sweep. A PLAIN path selected only by the
+    // profile (the argument of `secret(plain)`) inside the cone is a
+    // marker, never the raw text, and the cone's other paths survive.
+    let f = fixture(
+        "cone_material.active",
+        "[db]\nplain = \"cone-7x-live\"\ntoken = secret(plain)\nport = 5432\n",
+    );
+    let out = active()
+        .args(["eval", "--path", "db"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.contains("cone-7x-live"), "cone leaked: {stdout}");
+    assert!(stdout.contains("***SECRET***"), "{stdout}");
+    assert!(stdout.contains("5432"), "{stdout}");
+}
+
+#[test]
 fn materialise_applies_to_cone_not_whole_tree() {
     // A tainted blob OUTSIDE the demanded cone must not fail the
     // fetch: the demand applies to the emitted cone only.

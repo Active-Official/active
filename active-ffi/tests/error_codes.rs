@@ -40,6 +40,14 @@ fn cdylib_path() -> Option<PathBuf> {
         // interpreter does not model. The library-level tests still run.
         return None;
     }
+    // An explicit override wins, mirroring
+    // `conformance/harness/diff_vectors.py::find_cdylib`: a container or
+    // CI build lands in an isolated `CARGO_TARGET_DIR`, and a stale
+    // in-repo artifact must never decide which cdylib this test drives.
+    if let Some(explicit) = std::env::var_os("ACTIVE_FFI_LIB") {
+        let candidate = PathBuf::from(explicit);
+        return candidate.is_file().then_some(candidate);
+    }
     let profile = if cfg!(debug_assertions) {
         "debug"
     } else {

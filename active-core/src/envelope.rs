@@ -1996,6 +1996,28 @@ fn envelope_fields(module: &Module) -> EnvelopeLookup {
     EnvelopeLookup::Found(EnvelopeRefs { envelope, version })
 }
 
+/// The envelope subtree root when the module carries a resolvable
+/// envelope, else `None`. The demand closure includes this subtree so a
+/// cone cannot skip sender verification (L-P40 §2.2.4).
+pub(crate) fn envelope_root(module: &Module) -> Option<crate::ir::NodeId> {
+    match envelope_fields(module) {
+        EnvelopeLookup::Found(refs) => Some(refs.envelope),
+        EnvelopeLookup::Absent | EnvelopeLookup::Unresolvable(_) => None,
+    }
+}
+
+/// True when a dotted patch path writes the interchange envelope: the
+/// root key `envelope`, or a member under it (`envelope.…`, `envelope[…]`).
+/// The envelope is always the document's root `envelope` key
+/// (`envelope_fields` looks up exactly that), so a directive that names it
+/// must run under a cone exactly as in the full run. Otherwise the
+/// post-transform gate would read an unpatched envelope and miss the E035
+/// the whole-document run reports (L-P40 §2.2.4). A sibling whose key
+/// merely starts with `envelope` (e.g. `envelope_extra`) does not match.
+pub(crate) fn is_envelope_path(path: &str) -> bool {
+    path == "envelope" || path.starts_with("envelope.") || path.starts_with("envelope[")
+}
+
 fn v1_has_v2_fields(module: &Module, refs: &EnvelopeRefs) -> bool {
     let Some(table) = deref_table(module, refs.envelope) else {
         return false;

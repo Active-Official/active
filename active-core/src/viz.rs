@@ -6,6 +6,8 @@
 use serde_json::{json, Value as JsonValue};
 use std::collections::HashSet;
 
+use crate::eval::cost::cost_model;
+use crate::eval::{ChargeReport, CostClass, CostModel, Demand};
 use crate::ir::{Module, Value};
 use crate::Budget;
 
@@ -166,7 +168,26 @@ pub fn budget_data_with_profile(
     profile_override: Option<&str>,
 ) -> JsonValue {
     let profile = crate::secret::SecretProfile::analyze_with_profile(module, profile_override);
-    budget_data_with_redactor(module, value, budget, diagnostics, &profile)
+    budget_data_with_redactor(
+        module,
+        value,
+        budget,
+        diagnostics,
+        &profile,
+        &Demand::All,
+        None,
+    )
+}
+
+/// The redaction context a dashboard is seeded from: the profile
+/// selector and the environment/runtime secrets that produced the tree.
+/// Grouped so the demand-aware dashboard form stays within the argument
+/// bound.
+#[derive(Clone, Copy, Default)]
+pub struct SeedContext<'a> {
+    pub profile_override: Option<&'a str>,
+    pub env: Option<&'a std::collections::HashMap<String, String>>,
+    pub seeds: Option<&'a crate::secret::SecretRedactor>,
 }
 
 /// Budget dashboard seeded with the environment and runtime secrets
@@ -181,8 +202,45 @@ pub fn budget_data_with_seeds(
     env: Option<&std::collections::HashMap<String, String>>,
     seeds: Option<&crate::secret::SecretRedactor>,
 ) -> JsonValue {
-    let profile = crate::secret::SecretProfile::with_context(module, profile_override, env, seeds);
-    budget_data_with_redactor(module, value, budget, diagnostics, &profile)
+    budget_data_with_seeds_demand(
+        module,
+        value,
+        budget,
+        diagnostics,
+        SeedContext {
+            profile_override,
+            env,
+            seeds,
+        },
+        &Demand::All,
+        None,
+    )
+}
+
+/// Budget dashboard seeded with the environment and runtime secrets, and
+/// scoped to a demand (L-P40 §3.2): the `cost_model` object describes the
+/// run that produced `value` — the whole document for [`Demand::All`], or
+/// a cone for `Cone(P)` — and `charge` reports what that run spent
+/// (`§3.4`). The demand and the charge must be the ones the evaluation
+/// used, so the report and the charge it explains agree. `charge` is
+/// `None` for a structural caller that never ran the accountant, and the
+/// dashboard then reports a `null` charge.
+pub fn budget_data_with_seeds_demand(
+    module: &Module,
+    value: &Value,
+    budget: &Budget,
+    diagnostics: &[crate::Diagnostic],
+    context: SeedContext<'_>,
+    demand: &Demand,
+    charge: Option<ChargeReport>,
+) -> JsonValue {
+    let profile = crate::secret::SecretProfile::with_context(
+        module,
+        context.profile_override,
+        context.env,
+        context.seeds,
+    );
+    budget_data_with_redactor(module, value, budget, diagnostics, &profile, demand, charge)
 }
 
 fn budget_data_with_redactor(
@@ -191,7 +249,20 @@ fn budget_data_with_redactor(
     budget: &Budget,
     diagnostics: &[crate::Diagnostic],
     profile: &crate::secret::SecretProfile,
+    demand: &Demand,
+    charge: Option<ChargeReport>,
 ) -> JsonValue {
+    // LANG-C-015: a zero field means "shipped default" at every consumer,
+    // so the report resolves the budget like the receipts and the audit
+    // do. A library embedder that hands `viz` a zeroed `Budget` would
+    // otherwise read `limits.nodes = 0` and a zero headroom, and the
+    // cost model would bound itself by a zero ceiling.
+    let budget = budget.resolve();
+    // `usage.nodes` is the whole-document arena length, not the demanded
+    // node count: `limits.nodes` (X001) bounds the arena, so this is the
+    // X001 observation and its `headroom` for `All` and any cone alike.
+    // The number of nodes the demand materialises is
+    // `cost_model.scope_nodes` (L-P40 §3.2).
     let nodes = module.arena.len() as u64;
     let mut keys = 0u64;
     let mut max_array = 0u64;
@@ -214,7 +285,10 @@ fn budget_data_with_redactor(
         &mut max_value_size,
     );
     let headroom = |used: u64, limit: u64| {
-        if limit == 0 {
+        // Disabled is the `UNLIMITED` sentinel, matching `charge.limit`
+        // and every other surface. A zero field means "shipped default"
+        // under `Budget::resolve`, so it is never the disabled signal.
+        if Budget::is_unlimited(limit) {
             JsonValue::Null
         } else {
             json!(limit.saturating_sub(used))
@@ -225,6 +299,8 @@ fn budget_data_with_redactor(
         .filter(|d| d.code == "W013")
         .map(|d| d.code.as_str())
         .collect();
+    // L-P40 §3.2: the cost report for the demand that produced this run.
+    let cost = cost_model(module, &budget, demand, profile);
     json!({
         "version": 1,
         "mode": match module.mode {
@@ -257,6 +333,68 @@ fn budget_data_with_redactor(
             "total_size": headroom(total_size, budget.max_total_value_size),
         },
         "warnings": warnings,
+        "cost_model": cost_model_json(&cost, profile),
+        // L-P40 §3.4: what the run that produced `value` spent. `total`
+        // is the demand's DP seed plus the measured dynamic growth the
+        // walk charged; `limit` is the effective `max_total_value_size`
+        // ceiling (`Budget::UNLIMITED` when disabled, matching
+        // `limits.total_size`).
+        // `null` for a structural view that never ran the accountant.
+        "charge": match charge {
+            Some(c) => json!({ "total": c.total, "limit": c.limit }),
+            None => JsonValue::Null,
+        },
+    })
+}
+
+/// Serialize a [`CostModel`] to the dashboard's `cost_model` object
+/// (L-P40 §3.2): per-class counts and charged units in class order, the
+/// bounded node ranking, whether it truncated, and the demand it
+/// describes (`"all"` or the cone path).
+///
+/// Every path is a claimed value of the report: an authored key can be
+/// secret text (a key named after a secret), so each segment is redacted
+/// through `profile` like any other whole-value copy. `charged_units`
+/// arrives already clamped (see `cost::material_flags`), so no number
+/// derives from material length.
+fn cost_model_json(model: &CostModel, profile: &crate::secret::SecretProfile) -> JsonValue {
+    let classes: Vec<JsonValue> = CostClass::ALL
+        .iter()
+        .map(|class| {
+            let index = class.index();
+            json!({
+                "class": class.name(),
+                "nodes": model.class_counts[index],
+                "charged_units": model.class_units[index],
+            })
+        })
+        .collect();
+    let nodes: Vec<JsonValue> = model
+        .top
+        .iter()
+        .map(|node| {
+            json!({
+                "path": node
+                    .path
+                    .as_deref()
+                    .map(|path| profile.redact_path(path)),
+                "node": node.node,
+                "class": node.class.name(),
+                "depth": node.depth,
+                "charged_units": node.charged_units,
+                "reason": node.reason,
+            })
+        })
+        .collect();
+    json!({
+        "demand": JsonValue::String(match &model.demand {
+            Some(path) => profile.redact_path(path),
+            None => "all".to_string(),
+        }),
+        "scope_nodes": model.scope_nodes,
+        "classes": classes,
+        "nodes": nodes,
+        "truncated": model.truncated,
     })
 }
 
@@ -467,7 +605,7 @@ fn shape_size(
 ) -> u64 {
     *depth = (*depth).max(level);
     let material = profile.path_is_secret(path);
-    let marker = "***SECRET***".len() as u64 + 2;
+    let marker = crate::secret::MARKER_SIZE;
     let size = match value {
         Value::Array(items) => {
             *max_array = (*max_array).max(items.len() as u64);

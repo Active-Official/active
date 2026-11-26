@@ -21,6 +21,11 @@ use crate::secret::{SecretProfile, SecretRedactor};
 use crate::types::Unit;
 use crate::unify::{MergeBudgetKind, MergeError, MergeProvenance};
 
+pub mod cost;
+pub mod demand;
+pub use cost::{CostClass, CostModel, CostNode};
+pub use demand::{ChargeReport, Closure, Demand, DemandOutcome};
+
 /// Host-provided environment lookup (F-016): consulted on map miss before
 /// defaults apply. Mirrors the map-hit charging exactly (bytes as delta),
 /// so lazy host values cost what eager values cost. `None` preserves all
@@ -273,8 +278,8 @@ impl Budget {
 
     /// Trusted profile: operator-trusted input (vendored standard
     /// library, generated configs) at production scale. Generous but
-    /// finite — `0` (unlimited) is never a preset; embedders accept
-    /// that risk field-by-field, never by profile name.
+    /// finite — the `UNLIMITED` sentinel is never a preset; embedders
+    /// accept that risk field-by-field, never by profile name.
     pub fn trusted() -> Self {
         Self {
             max_nodes: 10_000_000,
@@ -622,12 +627,45 @@ fn check_result_depth(result: &Value, max_depth: u64) -> Result<(), EvalError> {
     Ok(())
 }
 
+/// Context for the post-walk transforms (patch sets, profile merges). It
+/// groups the arguments those passes share so no pass grows past the
+/// argument-count lint: the demand `cone` a patch set must respect, the
+/// effective `budget` a profile merge enforces, and the `profile` plus
+/// closed `env` a material `String`'s report size needs — so a transform
+/// charge can never reveal a secret's length (C2).
+#[derive(Clone, Copy)]
+struct TransformCtx<'a> {
+    cone: Option<&'a str>,
+    budget: Budget,
+    profile: Option<&'a SecretProfile>,
+    env: &'a HashMap<String, String>,
+}
+
+#[cfg(test)]
+fn test_ctx() -> TransformCtx<'static> {
+    // The report measure reads `env` only when a secret profile is present,
+    // so the unit tests, which analyse no profile, share one empty snapshot.
+    static ENV: std::sync::OnceLock<HashMap<String, String>> = std::sync::OnceLock::new();
+    TransformCtx {
+        cone: None,
+        budget: Budget::default(),
+        profile: None,
+        env: ENV.get_or_init(HashMap::new),
+    }
+}
+
 /// Cumulative materialization account threaded through post-walk
 /// transforms (patch sets, profile merges, default fills). The DP
 /// pass seeds it with the arena total; each transform charges what
 /// it clones. Trips X006 past the total limit.
 pub(crate) struct Accountant {
     spent: u64,
+    /// Report-side total: what the walk charged for material nodes sized at
+    /// `secret::MARKER_SIZE` instead of their byte length. `spent` stays the
+    /// real-byte balance that enforces X006 (clamping it would open a
+    /// clone-amplification hole); `reported` is what surfaces print, so a
+    /// `ChargeReport` cannot reveal how long a secret is (C2).
+    reported: u64,
     limit: u64,
     /// Wall-clock sampling on materialised bytes (LANG-C-006). The walk
     /// samples the deadline every 64 nodes, which few-node/huge-work
@@ -681,13 +719,31 @@ pub fn canonical_budget(base: &Budget) -> Budget {
 pub const WALL_SAMPLE_BYTES: u64 = 1 << 20;
 
 impl Accountant {
+    /// Charge a non-material amount: the enforcement and report balances move
+    /// together. Material charges go through [`Self::charge_scoped`] with a
+    /// marker-sized report.
     pub(crate) fn charge(
         &mut self,
         module: &Module,
         node: Option<NodeId>,
         amount: u64,
     ) -> Result<(), EvalError> {
+        self.charge_scoped(module, node, amount, amount)
+    }
+
+    /// Charge `amount` to the X006 enforcement balance and `report` to the
+    /// printed total. For a material node the caller passes `amount =` its
+    /// real byte length and `report =` `secret::MARKER_SIZE`, so the report
+    /// never varies with the secret's length while enforcement stays exact.
+    pub(crate) fn charge_scoped(
+        &mut self,
+        module: &Module,
+        node: Option<NodeId>,
+        amount: u64,
+        report: u64,
+    ) -> Result<(), EvalError> {
         self.spent = self.spent.saturating_add(amount);
+        self.reported = self.reported.saturating_add(report);
         // `>= limit + 1` (not `> limit`): identical ordinarily, and
         // still correct at `u64::MAX`, where the saturating cap below
         // would otherwise go blind.
@@ -737,7 +793,9 @@ fn progressive_warnings(module: &Module, budget: &Budget) -> Vec<Diagnostic> {
     let Ok(order) = toposort(&module.graph, None) else {
         return Vec::new();
     };
-    let Ok((dp_total, dp_bounds, dp_max_depth)) = check_dp_bounds(module, &order, budget) else {
+    let Ok((dp_total, dp_bounds, _dp_depth, dp_max_depth)) =
+        check_dp_bounds(module, &order, budget)
+    else {
         return Vec::new();
     };
     let max_node_size = dp_bounds.iter().copied().max().unwrap_or(0);
@@ -809,10 +867,19 @@ fn attach_progressive_warnings(module: &Module, budget: &Budget, error: EvalErro
 /// the shared evaluation deadline, its configured limit for messages,
 /// and the cumulative materialization account. Bundled so validation
 /// entry points stay under the argument-count lint.
+///
+/// `material` and `env` are the runtime-aware secret analysis and the
+/// engine's environment snapshot. A schema default the validator fills
+/// is charged for enforcement at its real size and for the report at its
+/// redaction-safe size, so a filled default that copies a secret never
+/// varies the printed `charge.total` with the secret's length (L-P40
+/// §3.4, C2). Both are `None`/empty only when no analysis ran.
 pub(crate) struct BudgetCx<'a> {
     pub deadline: Option<Instant>,
     pub wall_limit: u64,
     pub account: &'a mut Accountant,
+    pub material: Option<&'a SecretProfile>,
+    pub env: &'a HashMap<String, String>,
 }
 
 /// Iterative value-size measure in DP units (scalars 1, strings and
@@ -840,7 +907,9 @@ fn apply_pending_merges(
     deadline: Option<std::time::Instant>,
     budget: &Budget,
     profile: Option<&SecretProfile>,
+    env: &HashMap<String, String>,
     reported: &mut usize,
+    cone: Option<&str>,
 ) -> Result<(), EvalError> {
     // Merge all entries for a path into one candidate list (deduplicated
     // by node), preserving source order across the parser's pairs.
@@ -849,6 +918,20 @@ fn apply_pending_merges(
     let mut seen: indexmap::IndexMap<String, std::collections::HashSet<NodeId>> =
         indexmap::IndexMap::new();
     for entry in pending {
+        // L-P40 §2.2.3: a merge outside the cone writes to another path
+        // and cannot change a demanded value, so a cone never runs it.
+        // Membership is scoped by the full-document `path`: `local` is
+        // relative to the scope table, so a nested merge (`local = "t.a"`,
+        // `path = "s.t.a"`) would never match the cone `s`. A merge into
+        // the envelope always runs: the envelope is always part of the cone
+        // (it gates E035), so skipping it would leave the gate reading an
+        // unmerged envelope (§2.2.4).
+        if cone.is_some_and(|cone| {
+            !demand::path_in_cone(&entry.path, cone)
+                && !crate::envelope::is_envelope_path(&entry.path)
+        }) {
+            continue;
+        }
         if let Some(end) = deadline {
             if std::time::Instant::now() >= end {
                 return Err(EvalError::budget_exceeded(
@@ -1044,14 +1127,24 @@ fn apply_pending_merges(
                 }
             }
         }
+        // Measure the subtree twice: enforcement bytes and the
+        // redaction-safe report size. They differ only when the merged
+        // value carries material, which is exactly when the report must not
+        // reveal the secret's length (C2); without material the two agree and
+        // the printed total is unchanged.
+        let measure_pair = |v: &Value| -> (u64, u64) {
+            let real = measure_merge_value(v);
+            let report = profile.map_or(real, |p| measure_report_value(v, p, env));
+            (real, report)
+        };
         let before = value_at_path(map, &local)
-            .map(measure_merge_value)
-            .unwrap_or(0);
+            .map(&measure_pair)
+            .unwrap_or((0, 0));
         if set_value_at(map, &local, current) {
             let after = value_at_path(map, &local)
-                .map(measure_merge_value)
-                .unwrap_or(0);
-            if budget.max_value_size != 0 && after > budget.max_value_size {
+                .map(&measure_pair)
+                .unwrap_or((0, 0));
+            if budget.max_value_size != 0 && after.0 > budget.max_value_size {
                 return Err(EvalError::budget_exceeded(
                     BudgetKind::ValueSize,
                     budget.max_value_size,
@@ -1059,7 +1152,12 @@ fn apply_pending_merges(
                     Some(scope),
                 ));
             }
-            account.charge(module, Some(scope), after.saturating_sub(before))?;
+            account.charge_scoped(
+                module,
+                Some(scope),
+                after.0.saturating_sub(before.0),
+                after.1.saturating_sub(before.1),
+            )?;
         } else if *reported < MAX_MERGE_DIAGNOSTICS {
             // A host-built module can name a path the tree does not
             // contain; dropping the merged value would be fail-open.
@@ -1187,6 +1285,120 @@ fn measure_merge_value(value: &Value) -> u64 {
     total
 }
 
+/// Whether `text` carries a runtime material env value. The profile knows
+/// authored literals and material env *names*, but an env *value* is only
+/// known at evaluation; the engine's closed snapshot is the one place it
+/// lives (the same rule the blob arm applies to a copied payload).
+fn text_carries_material_env(
+    text: &str,
+    profile: &SecretProfile,
+    env: &HashMap<String, String>,
+) -> bool {
+    profile.material_envs().iter().any(|name| {
+        env.get(name)
+            .is_some_and(|value| !value.is_empty() && text.contains(value))
+    })
+}
+
+/// Report-side value size (L-P40 §3.4, C2): like [`measure_merge_value`],
+/// material costs one constant so a printed `charge.total` cannot reveal a
+/// secret's length, but stricter — it also redacts a `String` that equals a
+/// secret literal, a `String` that embeds a material env value, and a
+/// tainted `Blob`'s plaintext size, the three places [`measure_merge_value`]
+/// still counts material bytes. `profile` is the same analysis the redacting
+/// surfaces use, so a byte the report hides is a byte every other surface
+/// hides too.
+pub(crate) fn measure_report_value(
+    value: &Value,
+    profile: &SecretProfile,
+    env: &HashMap<String, String>,
+) -> u64 {
+    let mut total = 0u64;
+    let mut stack = vec![value];
+    while let Some(v) = stack.pop() {
+        total = total.saturating_add(1);
+        match v {
+            // A whole-value copy of a secret redacts (exact match, at any
+            // length), and a string that embeds a material env value is a
+            // copy of secret bytes; cost the marker, never the length.
+            Value::String(s) => {
+                if profile.redact_text(s).is_some() || text_carries_material_env(s, profile, env) {
+                    total = total.saturating_add(crate::secret::MARKER_SIZE);
+                } else {
+                    total = total.saturating_add(s.len() as u64);
+                }
+            }
+            Value::Secret(_) => {
+                total = total.saturating_add(crate::secret::MARKER_SIZE);
+            }
+            // A tainted blob never retains a payload; its plaintext size is
+            // material, so report the marker instead of the byte count.
+            Value::Blob { size, tainted, .. } => {
+                if *tainted {
+                    total = total.saturating_add(crate::secret::MARKER_SIZE);
+                } else {
+                    total = total.saturating_add(*size);
+                }
+            }
+            Value::Array(items) => stack.extend(items.iter()),
+            Value::Table(map) => stack.extend(map.values()),
+            _ => {}
+        }
+    }
+    total
+}
+
+/// The report-side charge for a node whose enforcement charge is `amount`:
+/// the node's redaction-safe size minus its clamped DP bound, which is the
+/// enforcement delta with every material byte replaced by the marker. When
+/// the document carries no material the report equals enforcement, so the
+/// helper returns `amount` unchanged and the walk's hot path skips it.
+fn report_amount(
+    has_material: bool,
+    reported_sizes: &[u64],
+    report_bounds: &[u64],
+    idx: usize,
+    amount: u64,
+) -> u64 {
+    if !has_material {
+        return amount;
+    }
+    match (reported_sizes.get(idx), report_bounds.get(idx)) {
+        (Some(size), Some(bound)) => size.saturating_sub(*bound),
+        _ => amount,
+    }
+}
+
+/// Whether the walk must report the node at arena index `idx` at the
+/// marker: the report flags it (secret kind, secret-equal literal, material
+/// path) or it is an environment read of a name the profile marks material
+/// — the same env rule the redacting surfaces use, so the report hides
+/// every byte they hide.
+fn node_reports_material(
+    module: &Module,
+    idx: usize,
+    report_material: &[bool],
+    profile: Option<&SecretProfile>,
+) -> bool {
+    if report_material.get(idx).copied().unwrap_or(false) {
+        return true;
+    }
+    match (module.get(NodeId(idx as u32)), profile) {
+        (Some(Node::Env { name, .. }), Some(profile)) => profile.env_is_material(name),
+        _ => false,
+    }
+}
+
+/// Report-side size of a node: the marker when it reports material, else
+/// its real (redaction-safe) measure.
+fn report_node_size(material: bool, real: u64) -> u64 {
+    if material {
+        crate::secret::MARKER_SIZE
+    } else {
+        real
+    }
+}
+
 /// Replace every scalar leaf with a `Secret`, keeping container shape.
 /// Used before comparing or exporting a merge group that is material:
 /// a plaintext copy of a material Int/Bool/Quantity has no textual
@@ -1260,26 +1472,99 @@ fn check_static_budgets(module: &Module, budget: &Budget) -> Result<(), EvalErro
     Ok(())
 }
 
+/// One materialization-bound pass (`spec/budgets.md` §2, C-037).
+/// `size[i]` bounds the value at node `i` in materialized data units
+/// (scalars plus string bytes; each `Ref` clone costs its target's
+/// bound — this kills exponential reference expansion before anything
+/// materializes), `depth[i]` bounds its nesting through references,
+/// `total` is the sum of the `size` bounds this pass counted, and
+/// `max_depth` is the deepest bound seen (drives Data Mode progressive
+/// warnings).
+struct DpBounds {
+    total: u64,
+    size: Vec<u64>,
+    depth: Vec<u64>,
+    max_depth: u64,
+}
+
+/// Which children one bound pass counts, and whether it enforces the
+/// ceilings.
+///
+/// `Whole` counts every child and trips the budget the moment a bound
+/// crosses a limit: the whole-document static phase, which runs for
+/// every demand. `Closure(members)` counts a container's children only
+/// when they are members of the demanded set and never trips — it runs
+/// only for a cone, after the `Whole` pass has already cleared the
+/// whole document, and every closure-scoped bound is at most its
+/// whole-document bound (a container sums a subset of its children, a
+/// `Ref` copies its member target), so its total cannot cross a ceiling
+/// the whole pass passed. That total seeds the cone accountant
+/// (`spec/budgets.md` §2, L-P40 §4.2), so an undemanded sibling's
+/// static weight never counts against the cone.
+///
+/// `WholeReport` counts every child like `Whole` but enforces nothing:
+/// the L-P40 cost report recomputes the per-node bounds of a run that
+/// already cleared the whole static phase, so this pass is total and
+/// can never trip a ceiling the enforcing pass allowed.
+enum DpScope<'a> {
+    Whole,
+    WholeReport,
+    Closure(&'a [bool]),
+}
+
+impl DpScope<'_> {
+    /// Whether this pass counts the child at arena index `child` toward
+    /// its parent's bound, and materialises the node at arena index
+    /// `child` at all. `Whole` and `WholeReport` count everything;
+    /// `Closure` counts only members (a member's value dependencies are
+    /// members too, so its bound reads only computed member bounds).
+    fn counts(&self, child: usize) -> bool {
+        match self {
+            DpScope::Whole | DpScope::WholeReport => true,
+            DpScope::Closure(members) => members.get(child).copied().unwrap_or(false),
+        }
+    }
+
+    /// Whether this pass enforces the size/depth/total ceilings. Only
+    /// the enforcing `Whole` pass trips a budget; `WholeReport` and
+    /// `Closure` compute their bounds without one.
+    fn enforces(&self) -> bool {
+        matches!(self, DpScope::Whole)
+    }
+}
+
 /// Reference-aware materialization bounds (spec/budgets.md §2,
 /// C-037): one linear dynamic-programming pass over the topological
 /// order (dependencies first, so every bound is final when read).
-/// `size` bounds materialized data units (scalars plus string bytes;
-/// each `Ref` clone costs its target's bound — this is what kills
-/// exponential reference expansion before anything materializes).
-/// `depth` bounds value nesting through references. Both saturate at
-/// `limit + 1` so the numbers stay tiny; tripping either aborts with
-/// the offending node's span. Memoized per node, so shared subtrees
-/// cost O(1) — the pass itself is linear. Returns the cumulative
-/// bound total, the per-node bounds table (drives delta
-/// accounting for dynamic values during the walk), and the maximum
-/// value depth bound (drives Data Mode progressive warnings).
-fn check_dp_bounds(
+/// Both bounds saturate at `limit + 1` so the numbers stay tiny;
+/// tripping either aborts with the offending node's span. Memoized per
+/// node, so shared subtrees cost O(1) — the pass itself is linear. The
+/// scope decides which children count and whether the ceilings are
+/// enforced (see `DpScope`).
+fn materialization_bounds(
     module: &Module,
     order: &[petgraph::graph::NodeIndex],
     budget: &Budget,
-) -> Result<(u64, Vec<u64>, u64), EvalError> {
+    scope: DpScope<'_>,
+    clamp: Option<&[bool]>,
+) -> Result<DpBounds, EvalError> {
     if budget.max_value_size == 0 && budget.max_depth == 0 && budget.max_total_value_size == 0 {
-        return Ok((0, vec![1u64; module.arena.len()], 0));
+        // No size bound to compute (every ceiling disabled), but a cost
+        // report still clamps material nodes so it carries no length.
+        let mut size = vec![1u64; module.arena.len()];
+        if let Some(clamp) = clamp {
+            for (i, material) in clamp.iter().enumerate() {
+                if *material && i < size.len() {
+                    size[i] = crate::secret::MARKER_SIZE;
+                }
+            }
+        }
+        return Ok(DpBounds {
+            total: 0,
+            size,
+            depth: vec![0u64; module.arena.len()],
+            max_depth: 0,
+        });
     }
     // Separate saturation caps: comparing against `limit + 1` keeps
     // numbers tiny, and `>= cap` (instead of `> limit`) stays correct
@@ -1308,7 +1593,7 @@ fn check_dp_bounds(
     for node_idx in order {
         let id = module.graph[*node_idx];
         let i = id.0 as usize;
-        if i >= size.len() {
+        if i >= size.len() || !scope.counts(i) {
             continue;
         }
         // Child bounds: table/array fields and elements, reference
@@ -1322,7 +1607,7 @@ fn check_dp_bounds(
             Some(Node::Table { fields }) => {
                 for child in fields.values() {
                     let c = child.0 as usize;
-                    if c < size.len() {
+                    if c < size.len() && scope.counts(c) {
                         child_size = sat_size(child_size, size[c]);
                         child_depth = child_depth.max(depth[c]);
                     }
@@ -1337,7 +1622,7 @@ fn check_dp_bounds(
             Some(Node::Array { elements }) => {
                 for child in elements {
                     let c = child.0 as usize;
-                    if c < size.len() {
+                    if c < size.len() && scope.counts(c) {
                         child_size = sat_size(child_size, size[c]);
                         child_depth = child_depth.max(depth[c]);
                     }
@@ -1347,7 +1632,7 @@ fn check_dp_bounds(
             }
             Some(Node::Ref(target)) => {
                 let c = target.0 as usize;
-                if c < size.len() {
+                if c < size.len() && scope.counts(c) {
                     size[i] = size[c];
                     depth[i] = depth[c];
                 }
@@ -1360,7 +1645,7 @@ fn check_dp_bounds(
                     match part {
                         InterpPart::Expr(e) => {
                             let c = e.0 as usize;
-                            if c < size.len() {
+                            if c < size.len() && scope.counts(c) {
                                 child_size = sat_size(child_size, size[c]);
                                 child_depth = child_depth.max(depth[c]);
                             }
@@ -1380,7 +1665,7 @@ fn check_dp_bounds(
             Some(Node::Binary { lhs, rhs, .. }) => {
                 for child in [*lhs, *rhs] {
                     let c = child.0 as usize;
-                    if c < size.len() {
+                    if c < size.len() && scope.counts(c) {
                         child_size = sat_size(child_size, size[c]);
                     }
                 }
@@ -1388,7 +1673,7 @@ fn check_dp_bounds(
             }
             Some(Node::Unary { expr, .. }) => {
                 let c = expr.0 as usize;
-                if c < size.len() {
+                if c < size.len() && scope.counts(c) {
                     size[i] = sat_size(1, size[c]);
                 }
             }
@@ -1396,7 +1681,7 @@ fn check_dp_bounds(
             // the bound is the inner value's bound exactly.
             Some(Node::Semantic { inner, .. }) => {
                 let c = inner.0 as usize;
-                if c < size.len() {
+                if c < size.len() && scope.counts(c) {
                     size[i] = size[c];
                     depth[i] = depth[c];
                 }
@@ -1410,7 +1695,7 @@ fn check_dp_bounds(
                 let mut bound = 1u64;
                 for child in [*media_type, *data] {
                     let c = child.0 as usize;
-                    if c < size.len() {
+                    if c < size.len() && scope.counts(c) {
                         bound = sat_size(bound, size[c]);
                         child_depth = child_depth.max(depth[c]);
                     }
@@ -1420,10 +1705,21 @@ fn check_dp_bounds(
             }
             _ => {}
         }
+        // L-P40 §3.2: the cost report must carry no material, so a node
+        // whose own content is material is sized at the redacted marker
+        // and every later parent aggregates that clamped child (children
+        // precede parents in the topological order). Only the cost pass
+        // passes `clamp`; the enforcing passes pass `None` and are
+        // byte-identical to before.
+        if let Some(clamp) = clamp {
+            if clamp.get(i).copied().unwrap_or(false) {
+                size[i] = crate::secret::MARKER_SIZE;
+            }
+        }
         // `>= cap` (not `> limit`): identical for ordinary limits,
         // and still correct at `u64::MAX`, where `limit + 1`
         // saturates and only a truly astronomical bound trips.
-        if budget.max_value_size != 0 && size[i] >= size_cap {
+        if scope.enforces() && budget.max_value_size != 0 && size[i] >= size_cap {
             return Err(EvalError::budget_exceeded(
                 BudgetKind::ValueSize,
                 budget.max_value_size,
@@ -1431,7 +1727,7 @@ fn check_dp_bounds(
                 Some(id),
             ));
         }
-        if budget.max_depth != 0 && depth[i] >= depth_cap {
+        if scope.enforces() && budget.max_depth != 0 && depth[i] >= depth_cap {
             return Err(EvalError::budget_exceeded(
                 BudgetKind::Depth,
                 budget.max_depth,
@@ -1440,7 +1736,8 @@ fn check_dp_bounds(
             ));
         }
         total = total.saturating_add(size[i]);
-        if budget.max_total_value_size != 0
+        if scope.enforces()
+            && budget.max_total_value_size != 0
             && total >= budget.max_total_value_size.saturating_add(1)
         {
             return Err(EvalError::budget_exceeded(
@@ -1452,7 +1749,33 @@ fn check_dp_bounds(
         }
         max_depth_seen = max_depth_seen.max(depth[i]);
     }
-    Ok((total, size, max_depth_seen))
+    Ok(DpBounds {
+        total,
+        size,
+        depth,
+        max_depth: max_depth_seen,
+    })
+}
+
+/// Reference-aware materialization bounds for the whole document
+/// (`spec/budgets.md` §2, C-037): the `Whole` pass, which trips the
+/// budget on the first bound that crosses a ceiling. Returns the
+/// cumulative bound total, the per-node size bounds table (drives delta
+/// accounting for dynamic values during the walk, and the L-P40 cost
+/// model), the per-node depth bounds table, and the maximum value depth
+/// bound (drives Data Mode progressive warnings).
+fn check_dp_bounds(
+    module: &Module,
+    order: &[petgraph::graph::NodeIndex],
+    budget: &Budget,
+) -> Result<(u64, Vec<u64>, Vec<u64>, u64), EvalError> {
+    let DpBounds {
+        total,
+        size,
+        depth,
+        max_depth,
+    } = materialization_bounds(module, order, budget, DpScope::Whole, None)?;
+    Ok((total, size, depth, max_depth))
 }
 
 type MemoConfig = (
@@ -2093,6 +2416,18 @@ fn payload_has_material_path(value: &Value, profile: &SecretProfile, path: &str)
     }
 }
 
+/// The optional side channels of a walk — the incremental memo, the step
+/// trace, the runtime-seed collector, the demand charge report — plus the
+/// validation switch, bundled so `evaluate_walk` stays within clippy's
+/// argument bound. Fields are exactly the walk's previous parameters.
+struct WalkChannels<'a> {
+    memo: Option<&'a mut IncrementalMemo>,
+    steps: Option<&'a mut Vec<StepEvent>>,
+    seeds: Option<&'a mut SecretRedactor>,
+    validate: bool,
+    charge: Option<&'a mut ChargeReport>,
+}
+
 impl Engine {
     /// Engine with the process environment snapshotted.
     ///
@@ -2209,6 +2544,96 @@ impl Engine {
         self.evaluate_inner(module, None, None, None)
     }
 
+    /// L-P40: evaluate under an explicit demand and report what it cost.
+    ///
+    /// `Demand::All` is the default for every existing entry point and
+    /// stays byte-identical, diagnostics included. `Demand::Cone(P)`
+    /// materialises only the closure of the document path `P` — the node
+    /// at `P`, its value dependencies, the ancestor containers that shape
+    /// it, and the transform inputs that write into it — so an undemanded
+    /// pathological subtree cannot deny service to the cone (LANG-C-013).
+    /// The whole-document static phase and every safety gate still run
+    /// first, so a cone never hides a budget trip (spec/budgets.md §2).
+    ///
+    /// A `Cone(P)` whose `P` is not a document subtree — a top-level
+    /// binding name, an indexed path, or a missing key — cannot be shaped
+    /// into a cone, so the walk materialises the whole document and the
+    /// caller projects the path it asked for; the projected value is
+    /// identical either way (§6.4). The shipped `eval --path` and
+    /// `inspect --path` surfaces evaluate first and project (or report)
+    /// the path afterwards — they do not pre-resolve it — so for such a
+    /// spelling the printed value is still correct and only the charge is
+    /// whole-document, never the cone's.
+    pub fn evaluate_demanded(
+        &self,
+        module: &Module,
+        demand: &Demand,
+    ) -> Result<DemandOutcome, EvalError> {
+        let closure = self.demand_closure(module, demand);
+        // Seed collection mirrors `evaluate`: a plain Config document
+        // pays nothing, while a taint claim, Data mode, or a patch set
+        // needs the runtime seeds to redact its own diagnostics.
+        let needs_seeds = matches!(
+            crate::envelope::sender_taint(module),
+            crate::envelope::TaintClaim::Claim(_)
+        ) || module.mode == Mode::Data
+            || !module.patches.is_empty();
+        let mut seeds = SecretRedactor::new();
+        let mut charge = ChargeReport { total: 0, limit: 0 };
+        let seed_opt = needs_seeds.then_some(&mut seeds);
+        let (value, diagnostics) = self.evaluate_inner_demanded(
+            module,
+            &closure,
+            None,
+            None,
+            seed_opt,
+            Some(&mut charge),
+        )?;
+        Ok(DemandOutcome {
+            value,
+            diagnostics,
+            seeds,
+            charge,
+        })
+    }
+
+    /// L-P40: the demand-driven analogue of
+    /// [`Engine::evaluate_with_seeds`] — the runtime secret seeds are
+    /// always collected, whatever the document declares.
+    pub fn evaluate_with_seeds_demanded(
+        &self,
+        module: &Module,
+        demand: &Demand,
+    ) -> Result<DemandOutcome, EvalError> {
+        let closure = self.demand_closure(module, demand);
+        let mut seeds = SecretRedactor::new();
+        let mut charge = ChargeReport { total: 0, limit: 0 };
+        let (value, diagnostics) = self.evaluate_inner_demanded(
+            module,
+            &closure,
+            None,
+            None,
+            Some(&mut seeds),
+            Some(&mut charge),
+        )?;
+        Ok(DemandOutcome {
+            value,
+            diagnostics,
+            seeds,
+            charge,
+        })
+    }
+
+    /// Resolve a `Demand` to a concrete `Closure`. A `Cone` that is not a
+    /// document subtree path falls back to `All`; see
+    /// [`Engine::evaluate_demanded`].
+    fn demand_closure(&self, module: &Module, demand: &Demand) -> Closure {
+        match demand {
+            Demand::All => Closure::all(),
+            Demand::Cone(path) => demand::cone_closure(module, path).unwrap_or(Closure::All),
+        }
+    }
+
     /// Evaluate the tree without schema, annotation, or check validation.
     ///
     /// The repair planner (L-P53) needs the evaluated value while the
@@ -2220,8 +2645,18 @@ impl Engine {
         &self,
         module: &Module,
     ) -> Result<(Value, Vec<Diagnostic>), EvalError> {
-        self.evaluate_walk(module, None, None, None, false)
-            .map_err(|e| attach_progressive_warnings(module, &self.budget.resolve(), e))
+        self.evaluate_walk(
+            module,
+            &Closure::all(),
+            WalkChannels {
+                memo: None,
+                steps: None,
+                seeds: None,
+                validate: false,
+                charge: None,
+            },
+        )
+        .map_err(|e| attach_progressive_warnings(module, &self.budget.resolve(), e))
     }
 
     /// Evaluate and also return the runtime secret seeds observed by the
@@ -2363,17 +2798,42 @@ impl Engine {
         steps: Option<&mut Vec<StepEvent>>,
         seeds: Option<&mut SecretRedactor>,
     ) -> Result<(Value, Vec<Diagnostic>), EvalError> {
+        self.evaluate_inner_demanded(module, &Closure::all(), memo, steps, seeds, None)
+    }
+
+    /// The walk plus the abort-path warning re-derivation, parameterised
+    /// by demand (L-P40 §7): [`Engine::evaluate_inner`] is the `All` case
+    /// and the demand entry points pass their closure here.
+    fn evaluate_inner_demanded(
+        &self,
+        module: &Module,
+        demand: &Closure,
+        memo: Option<&mut IncrementalMemo>,
+        steps: Option<&mut Vec<StepEvent>>,
+        seeds: Option<&mut SecretRedactor>,
+        charge_out: Option<&mut ChargeReport>,
+    ) -> Result<(Value, Vec<Diagnostic>), EvalError> {
         // LANG-C-009: a budget trip replaces the diagnostic list with the
         // error, so re-derive the progressive warnings the walk had already
         // collected and carry them on the error. Only the abort path pays
         // for this (one extra static scan).
-        self.evaluate_walk(module, memo, steps, seeds, true)
-            .map_err(|e| {
-                // Resolve before deriving W013: an unresolved zero field would
-                // read as "limit 0" and skip the warning the success path
-                // emits (review finding on LANG-C-009).
-                attach_progressive_warnings(module, &self.budget.resolve(), e)
-            })
+        self.evaluate_walk(
+            module,
+            demand,
+            WalkChannels {
+                memo,
+                steps,
+                seeds,
+                validate: true,
+                charge: charge_out,
+            },
+        )
+        .map_err(|e| {
+            // Resolve before deriving W013: an unresolved zero field would
+            // read as "limit 0" and skip the warning the success path
+            // emits (review finding on LANG-C-009).
+            attach_progressive_warnings(module, &self.budget.resolve(), e)
+        })
     }
 
     /// L-P05: the ambient inputs a pure evaluation refuses, in a fixed
@@ -2431,11 +2891,16 @@ impl Engine {
     fn evaluate_walk(
         &self,
         module: &Module,
-        mut memo: Option<&mut IncrementalMemo>,
-        steps: Option<&mut Vec<StepEvent>>,
-        mut seeds: Option<&mut SecretRedactor>,
-        validate: bool,
+        demand: &Closure,
+        channels: WalkChannels<'_>,
     ) -> Result<(Value, Vec<Diagnostic>), EvalError> {
+        let WalkChannels {
+            mut memo,
+            steps,
+            mut seeds,
+            validate,
+            charge: charge_out,
+        } = channels;
         // L-P05: purity is a structural pre-scan, so every entry point
         // (value, seeds, tree-only) refuses the same ambient inputs and
         // dead code in an unselected profile cannot hide one.
@@ -2565,6 +3030,37 @@ impl Engine {
         let order = toposort(&module.graph, None).map_err(|_| EvalError::CycleDetected)?;
         // Budgets next: fail fast on monsters before any real work.
         check_static_budgets(module, &budget)?;
+        // Structural secret material: locator subtrees plus every node
+        // derived from one (containers, interpolations, references).
+        // Computed once when a stepper asked for a trace, the module builds
+        // blobs (their structural taint must match the tooling model), a
+        // caller asked for runtime seeds, a report is due (its total must be
+        // length-invariant, C2), or the module carries deferred merges. The
+        // same analysis backs `inspect` and hover, so all surfaces agree on
+        // what is material.
+        let has_blobs = module
+            .arena
+            .iter()
+            .any(|node| matches!(node, Node::ContentAddressed { .. }));
+        let secret_profile: Option<SecretProfile> = (steps.is_some()
+            || has_blobs
+            || seeds.is_some()
+            || charge_out.is_some()
+            || !module.merge_pending.is_empty())
+        // Absorb the engine's environment: a material env value copied
+        // into a plain literal must be flagged wherever it surfaces, so
+        // the report seed and the trace redactor clamp it (L-P40 §3.4,
+        // C2). Runtime seeds are collected during the walk, so only the
+        // engine's closed environment is available here; the walk adds
+        // the seeds afterwards.
+        .then(|| {
+            SecretProfile::with_context(
+                module,
+                self.profile_override.as_deref(),
+                Some(&self.env),
+                None,
+            )
+        });
         // Reference-aware materialization bounds (size and depth): the
         // billion-laughs killer. Runs on the topological order so every
         // bound is final when read; saturating arithmetic keeps it
@@ -2574,13 +3070,84 @@ impl Engine {
         // The walk needs the cumulative bound and per-node bounds; the
         // depth bound and max node size only feed the progressive warnings
         // (recomputed by `progressive_warnings` on the abort path).
-        let (dp_total, dp_bounds, _dp_max_depth) = check_dp_bounds(module, &order, &budget)?;
+        let (dp_total, dp_bounds, _dp_depth, _dp_max_depth) =
+            check_dp_bounds(module, &order, &budget)?;
+        // The printed total must not vary with a secret's length (C2). The
+        // unclamped DP seed counts a material `Literal(String)` as `1 + len`,
+        // and the runtime arms add `len` again, so the report would leak the
+        // length twice over. Size every material node at the redacted marker
+        // in the report seed and in each report charge, exactly as the cost
+        // model already does; enforcement keeps the real bytes.
+        let report_material: Vec<bool> = match &secret_profile {
+            Some(profile) => cost::material_flags(module, profile),
+            None => Vec::new(),
+        };
+        let has_material = report_material.iter().any(|flag| *flag)
+            || secret_profile
+                .as_ref()
+                .is_some_and(|profile| !profile.material_envs().is_empty());
+        // Demand seed (L-P40 §4.2): `All` inherits the whole-graph DP
+        // total, byte-identical to the pre-demand walk. A cone inherits
+        // the closure-scoped DP total — its members' bounds computed
+        // over the closure alone — so an undemanded sibling's static
+        // weight never seeds the accountant and cannot deny service to
+        // the demanded cone (LANG-C-013), while the whole-document
+        // static phase above still failed closed. The cone pass never
+        // trips (every closure bound is at most its whole-document
+        // bound, and the whole document already cleared the ceilings),
+        // and dynamic growth inside the closure still charges through
+        // `charge`, so the seed cannot hide a trip (§5).
+        let seed_total = match demand {
+            Closure::All => dp_total,
+            Closure::Cone { members, .. } => {
+                materialization_bounds(
+                    module,
+                    &order,
+                    &budget,
+                    DpScope::Closure(members.as_slice()),
+                    None,
+                )?
+                .total
+            }
+        };
+        // Report-side seed and per-node bounds: the same scope with material
+        // nodes clamped to the marker. Only a document that carries material
+        // pays the second pass; without material the two seeds are
+        // byte-identical and `report_bounds` stays empty.
+        let (seed_report, report_bounds) = if has_material {
+            let clamp = Some(report_material.as_slice());
+            let bounds = match demand {
+                Closure::All => {
+                    materialization_bounds(module, &order, &budget, DpScope::WholeReport, clamp)?
+                }
+                Closure::Cone { members, .. } => materialization_bounds(
+                    module,
+                    &order,
+                    &budget,
+                    DpScope::Closure(members.as_slice()),
+                    clamp,
+                )?,
+            };
+            (bounds.total, bounds.size)
+        } else {
+            (seed_total, Vec::new())
+        };
         let mut account = Accountant {
-            spent: dp_total,
+            spent: seed_total,
+            reported: seed_report,
             limit: budget.max_total_value_size,
             deadline,
             wall_limit: budget.max_wall_ms,
             bytes_since_sample: 0,
+        };
+        // Report-side per-node sizes, biased at `secret::MARKER_SIZE` for a
+        // material node. Mirrors `actuals`/`actual_sizes` and stays empty
+        // unless the document carries material, so the common path pays
+        // nothing. See [`report_amount`].
+        let mut reported_sizes: Vec<u64> = if has_material {
+            vec![0u64; module.arena.len()]
+        } else {
+            Vec::new()
         };
         // Actual materialized sizes for dynamic values (env- and
         // secret-backed strings): the DP counts 1 per node, so each
@@ -2659,26 +3226,8 @@ impl Engine {
             }
             paths
         });
-        // Structural secret material: locator subtrees plus every node
-        // derived from one (containers, interpolations, references).
-        // Computed once when a stepper asked for a trace or the module
-        // builds blobs (their structural taint must match the tooling
-        // model). The same analysis backs `inspect` and hover, so all
-        // surfaces agree on what is material.
-        let has_blobs = module
-            .arena
-            .iter()
-            .any(|node| matches!(node, Node::ContentAddressed { .. }));
-        // A caller that asked for runtime seeds needs the analysis even
-        // when the document has no `secret(...)` node: a profile can be
-        // material by selection alone, and a fail-closed bound trip
-        // marks every env read. Deferred merges need it too: material
-        // must never be compared or exported raw at a merged path.
-        let secret_profile: Option<SecretProfile> = (steps.is_some()
-            || has_blobs
-            || seeds.is_some()
-            || !module.merge_pending.is_empty())
-        .then(|| SecretProfile::analyze_with_profile(module, self.profile_override.as_deref()));
+        // `has_blobs` and `secret_profile` were computed above the seed,
+        // which needs the profile for its report-side bounds.
         // Whether a node still renders through a benign export path is
         // a property of the post-transform profile; no separate walk is
         // needed (and a pre-transform walk would miss overridden slots).
@@ -2707,6 +3256,9 @@ impl Engine {
         } else {
             Vec::new()
         };
+        // The demanded path, or `None` for `All`; a cone restricts the
+        // post-walk transforms to the paths it materialised (§2.3).
+        let cone = demand.path();
         for node_idx in order {
             visited += 1;
             if visited.is_multiple_of(1024) {
@@ -2728,6 +3280,13 @@ impl Engine {
             // graph, so their expression errors become T009, never fatal
             // evaluation errors.
             if module.check_nodes.contains(&node_id) {
+                continue;
+            }
+            // L-P40 §2.3: a cone materialises its closure only; any other
+            // node is skipped as check nodes already are. The whole-
+            // document static phase and every safety gate ran above, so
+            // skipping a value node here cannot skip a static trip.
+            if !demand.contains(node_id) {
                 continue;
             }
             let diag_start = diagnostics.len();
@@ -2833,8 +3392,34 @@ impl Engine {
                             // Operator-controlled dynamic content (like
                             // secrets below): charge the bytes as delta and
                             // record the actual for reference deltas.
-                            actuals.insert(node_id, 1u64.saturating_add(s.len() as u64));
-                            account.charge(module, Some(node_id), s.len() as u64)?;
+                            let real = 1u64.saturating_add(s.len() as u64);
+                            actuals.insert(node_id, real);
+                            // Report the marker for a material env read, so
+                            // the printed charge never varies with the
+                            // secret's length (C2).
+                            if has_material {
+                                reported_sizes[node_id.0 as usize] = report_node_size(
+                                    node_reports_material(
+                                        module,
+                                        node_id.0 as usize,
+                                        &report_material,
+                                        secret_profile.as_ref(),
+                                    ),
+                                    real,
+                                );
+                            }
+                            account.charge_scoped(
+                                module,
+                                Some(node_id),
+                                s.len() as u64,
+                                report_amount(
+                                    has_material,
+                                    &reported_sizes,
+                                    &report_bounds,
+                                    node_id.0 as usize,
+                                    s.len() as u64,
+                                ),
+                            )?;
                             Value::String(s.clone())
                         }
                         None => {
@@ -2844,8 +3429,31 @@ impl Engine {
                             // callback that knows nothing changes nothing.
                             if let Some(lookup) = self.env_fallback.clone() {
                                 if let Some(s) = lookup(&key) {
-                                    actuals.insert(node_id, 1u64.saturating_add(s.len() as u64));
-                                    account.charge(module, Some(node_id), s.len() as u64)?;
+                                    let real = 1u64.saturating_add(s.len() as u64);
+                                    actuals.insert(node_id, real);
+                                    if has_material {
+                                        reported_sizes[node_id.0 as usize] = report_node_size(
+                                            node_reports_material(
+                                                module,
+                                                node_id.0 as usize,
+                                                &report_material,
+                                                secret_profile.as_ref(),
+                                            ),
+                                            real,
+                                        );
+                                    }
+                                    account.charge_scoped(
+                                        module,
+                                        Some(node_id),
+                                        s.len() as u64,
+                                        report_amount(
+                                            has_material,
+                                            &reported_sizes,
+                                            &report_bounds,
+                                            node_id.0 as usize,
+                                            s.len() as u64,
+                                        ),
+                                    )?;
                                     Value::String(s)
                                 } else if let Some(def) = default {
                                     values.get(def).cloned().unwrap_or(Value::Null)
@@ -2873,7 +3481,22 @@ impl Engine {
                     if let Value::Secret(s) = &secret {
                         let actual = 1u64.saturating_add(s.len() as u64);
                         actuals.insert(node_id, actual);
-                        account.charge(module, Some(node_id), s.len() as u64)?;
+                        // A secret is material by kind: report the marker.
+                        if has_material {
+                            reported_sizes[node_id.0 as usize] = report_node_size(true, actual);
+                        }
+                        account.charge_scoped(
+                            module,
+                            Some(node_id),
+                            s.len() as u64,
+                            report_amount(
+                                has_material,
+                                &reported_sizes,
+                                &report_bounds,
+                                node_id.0 as usize,
+                                s.len() as u64,
+                            ),
+                        )?;
                     }
                     secret
                 }
@@ -2956,7 +3579,33 @@ impl Engine {
                         }
                     }
                     let size = bytes.len() as u64;
-                    account.charge(module, Some(node_id), size)?;
+                    // A tainted blob's payload is material, so the report
+                    // sizes it at the marker; the enforced charge keeps the
+                    // real bytes.
+                    if has_material {
+                        reported_sizes[node_id.0 as usize] = report_node_size(
+                            tainted
+                                || node_reports_material(
+                                    module,
+                                    node_id.0 as usize,
+                                    &report_material,
+                                    secret_profile.as_ref(),
+                                ),
+                            1u64.saturating_add(size),
+                        );
+                    }
+                    account.charge_scoped(
+                        module,
+                        Some(node_id),
+                        size,
+                        report_amount(
+                            has_material,
+                            &reported_sizes,
+                            &report_bounds,
+                            node_id.0 as usize,
+                            size,
+                        ),
+                    )?;
                     // Record the actual for reference deltas below:
                     // aliases re-charge through the Ref arm.
                     actuals.insert(node_id, 1u64.saturating_add(size));
@@ -3007,7 +3656,19 @@ impl Engine {
                         .unwrap_or_else(|| actual_sizes.get(id.0 as usize).copied().unwrap_or(0));
                     if actual > 0 {
                         let bound = dp_bounds.get(id.0 as usize).copied().unwrap_or(1);
-                        account.charge(module, Some(node_id), actual.saturating_sub(bound))?;
+                        let clone = actual.saturating_sub(bound);
+                        account.charge_scoped(
+                            module,
+                            Some(node_id),
+                            clone,
+                            report_amount(
+                                has_material,
+                                &reported_sizes,
+                                &report_bounds,
+                                id.0 as usize,
+                                clone,
+                            ),
+                        )?;
                     }
                     if !self.taint_probe {
                         if let Some(Value::Blob {
@@ -3124,8 +3785,11 @@ impl Engine {
                 }
 
                 Node::Array { elements } => {
+                    // A cone keeps only materialised elements: a non-member
+                    // was skipped above and has no value in the map.
                     let els: Vec<Value> = elements
                         .iter()
+                        .filter(|e| demand.contains(**e))
                         .map(|e| values.get(e).cloned().unwrap_or(Value::Null))
                         .collect();
                     Value::Array(els)
@@ -3134,6 +3798,11 @@ impl Engine {
                 Node::Table { fields } => {
                     let mut map = indexmap::IndexMap::new();
                     for (k, id) in fields {
+                        // A cone omits undemanded siblings, so the shape is
+                        // the demanded spine plus its subtree (§2.2.2).
+                        if !demand.contains(*id) {
+                            continue;
+                        }
                         map.insert(k.clone(), values.get(id).cloned().unwrap_or(Value::Null));
                     }
                     if let Some(pending) = module.merge_pending.get(&node_id) {
@@ -3152,7 +3821,9 @@ impl Engine {
                                 deadline,
                                 &budget,
                                 secret_profile.as_ref(),
+                                &self.env,
                                 &mut merge_reported,
+                                cone,
                             )?;
                         }
                     }
@@ -3202,9 +3873,81 @@ impl Engine {
                     _ => measure_value(&value),
                 };
                 actual_sizes[node_id.0 as usize] = actual;
+                // Mirror the node at the report bias, so a later `Ref` clone
+                // charges `report_size - report_bound` through `report_amount`
+                // — the enforcement delta with material bytes replaced by the
+                // marker. Containers aggregate their (already clamped) child
+                // reports; a leaf is sized by its redaction-safe measure,
+                // which matches the value its own arm charged. Leaves set the
+                // same entry at their charge site (their charge reads it), so
+                // this pass only re-affirms them and fills every other node.
+                if has_material {
+                    if let Some(profile) = secret_profile.as_ref() {
+                        let material = node_reports_material(
+                            module,
+                            node_id.0 as usize,
+                            &report_material,
+                            secret_profile.as_ref(),
+                        );
+                        let shape_material = matches!(&value, Value::Secret(_))
+                            || matches!(&value, Value::Blob { tainted: true, .. });
+                        let reported = match module.get(node_id) {
+                            Some(Node::Array { elements }) => report_node_size(
+                                material,
+                                1u64.saturating_add(
+                                    elements
+                                        .iter()
+                                        .map(|e| {
+                                            reported_sizes.get(e.0 as usize).copied().unwrap_or(0)
+                                        })
+                                        .fold(0u64, u64::saturating_add),
+                                ),
+                            ),
+                            Some(Node::Table { fields }) => report_node_size(
+                                material,
+                                if module.merge_pending.contains_key(&node_id) {
+                                    measure_report_value(&value, profile, &self.env)
+                                } else {
+                                    1u64.saturating_add(
+                                        fields
+                                            .values()
+                                            .map(|e| {
+                                                reported_sizes
+                                                    .get(e.0 as usize)
+                                                    .copied()
+                                                    .unwrap_or(0)
+                                            })
+                                            .fold(0u64, u64::saturating_add),
+                                    )
+                                },
+                            ),
+                            Some(Node::Ref(t)) => report_node_size(
+                                material,
+                                reported_sizes.get(t.0 as usize).copied().unwrap_or(0),
+                            ),
+                            _ => report_node_size(
+                                material || shape_material,
+                                measure_report_value(&value, profile, &self.env),
+                            ),
+                        };
+                        reported_sizes[node_id.0 as usize] = reported;
+                    }
+                }
                 if matches!(module.get(node_id), Some(Node::Interpolate { .. })) {
                     let bound = dp_bounds.get(node_id.0 as usize).copied().unwrap_or(1);
-                    account.charge(module, Some(node_id), actual.saturating_sub(bound))?;
+                    let growth = actual.saturating_sub(bound);
+                    account.charge_scoped(
+                        module,
+                        Some(node_id),
+                        growth,
+                        report_amount(
+                            has_material,
+                            &reported_sizes,
+                            &report_bounds,
+                            node_id.0 as usize,
+                            growth,
+                        ),
+                    )?;
                 }
             }
             // Memoize the fresh result under its fingerprint for
@@ -3362,16 +4105,29 @@ impl Engine {
 
         let root = module.root.ok_or(EvalError::MissingRoot)?;
         let result = values.get(&root).cloned().unwrap_or(Value::Null);
+        let transforms = TransformCtx {
+            cone,
+            budget,
+            profile: secret_profile.as_ref(),
+            env: &self.env,
+        };
         let result = self.apply_profile(
             module,
             &values,
             result,
             &mut diagnostics,
             &mut account,
-            &budget,
+            transforms,
         )?;
         let mut result = result;
-        self.apply_patches(module, &values, &mut result, &mut diagnostics, &mut account)?;
+        self.apply_patches(
+            module,
+            &values,
+            &mut result,
+            &mut diagnostics,
+            &mut account,
+            transforms,
+        )?;
         // Patch edits compose arena values at paths and can deepen the
         // tree past every statically-checked root (profile merges only
         // replace key-wise and cannot deepen). Re-check result depth
@@ -3399,7 +4155,10 @@ impl Engine {
                     deadline,
                     wall_limit: budget.max_wall_ms,
                     account: &mut account,
+                    material: secret_profile.as_ref(),
+                    env: &self.env,
                 },
+                demand,
             )?;
             self.validate_annotations(
                 module,
@@ -3418,6 +4177,7 @@ impl Engine {
                 &mut diagnostics,
                 deadline,
                 budget.max_wall_ms,
+                demand,
                 &mut account,
             )?;
         }
@@ -3607,6 +4367,18 @@ impl Engine {
             crate::trace::count_nodes(&result),
             &diagnostics,
         );
+        // Report what this demand cost (L-P40 §3.4): the accountant's
+        // final spend against the cumulative ceiling, so a caller sees
+        // the charge without a second evaluation.
+        if let Some(out) = charge_out {
+            // The printed total is the report-side balance: material bytes
+            // sized at the marker, so it never varies with a secret's length
+            // (C2). Enforcement still ran on `spent`.
+            *out = ChargeReport {
+                total: account.reported,
+                limit: account.limit,
+            };
+        }
         Ok((result, diagnostics))
     }
 
@@ -3679,6 +4451,41 @@ impl Engine {
         outcome.map(|(value, diagnostics)| (value, diagnostics, layers, provenance, seeds))
     }
 
+    /// The demanded form of [`Engine::evaluate_with_layers_merges_and_seeds`]
+    /// (L-P40 §2.4): `inspect --path P` walks the cone `P` and still needs
+    /// the layer, merge, and seed provenance its report renders, so one
+    /// demanded walk supplies all four (a second pass would double the wall
+    /// cost and could diverge on a marginal budget). `Demand::All` reproduces
+    /// the whole-document result byte for byte.
+    pub fn evaluate_with_layers_merges_and_seeds_demanded(
+        &self,
+        module: &Module,
+        demand: &Demand,
+    ) -> Result<
+        (
+            Value,
+            Vec<Diagnostic>,
+            LayerMap,
+            MergeProvenance,
+            crate::secret::SecretRedactor,
+        ),
+        EvalError,
+    > {
+        let closure = self.demand_closure(module, demand);
+        let owned_layers = crate::layers::begin();
+        let owned_merges = crate::unify::begin_recording();
+        let mut seeds = crate::secret::SecretRedactor::new();
+        let outcome =
+            self.evaluate_inner_demanded(module, &closure, None, None, Some(&mut seeds), None);
+        let layers = if owned_layers {
+            crate::layers::finish()
+        } else {
+            LayerMap::new()
+        };
+        let provenance = crate::unify::finish_recording(owned_merges).unwrap_or_default();
+        outcome.map(|(value, diagnostics)| (value, diagnostics, layers, provenance, seeds))
+    }
+
     /// Reject a patch whose targets overlap an `@ai_immutable` path
     /// (spec/annotations.md §4, C-034). Every target is checked; the first
     /// overlap fails the whole patch application with E019 at the
@@ -3728,6 +4535,72 @@ impl Engine {
         }
         None
     }
+    /// The static refusals a patch directive must pass before any tree
+    /// work, and the path that decides cone membership. They read only
+    /// the module — document-metadata rules, `ai_immutable` annotations,
+    /// and path syntax, never an evaluated value — so a document the
+    /// full evaluation refuses statically is refused for every cone
+    /// (L-P40 §5, §8.2). Returns the directive's target path and its
+    /// parsed segments for the in-cone application.
+    fn check_patch_static(
+        module: &Module,
+        patch_id: NodeId,
+        op: &PatchOp,
+    ) -> Result<(String, Vec<PathSeg>), EvalError> {
+        match op {
+            PatchOp::Set { path, .. } | PatchOp::Remove { path } => {
+                if path_targets_document_metadata(path) {
+                    return Err(EvalError::patch_error(
+                        format!("patch cannot rewrite document metadata `{path}`"),
+                        module,
+                        patch_id,
+                    ));
+                }
+                Self::check_immutable(module, patch_id, &[path])?;
+                let segs = validate_patch_path(path).map_err(|why| {
+                    EvalError::patch_error(
+                        format!("invalid patch path `{path}`: {why}"),
+                        module,
+                        patch_id,
+                    )
+                })?;
+                Ok((path.clone(), segs))
+            }
+            PatchOp::Rename { from, to } => {
+                // L-P41/M2: `to` is a plain leaf; checks that speak in
+                // dotted paths (metadata, ai_immutable) need the full
+                // destination under the source's parent. A host-built
+                // module could pass a dotted leaf, which the source
+                // parser rejects; refuse it here too.
+                if to.is_empty() || to.contains('.') || to.contains('[') || to.contains(']') {
+                    return Err(EvalError::patch_error(
+                        format!("rename target `{to}` must be a plain key name"),
+                        module,
+                        patch_id,
+                    ));
+                }
+                let to_path = crate::ir::rename_destination(from, to);
+                if path_targets_document_metadata(from) || path_targets_document_metadata(&to_path)
+                {
+                    return Err(EvalError::patch_error(
+                        format!("patch cannot rewrite document metadata `{from}` -> `{to_path}`"),
+                        module,
+                        patch_id,
+                    ));
+                }
+                Self::check_immutable(module, patch_id, &[from, &to_path])?;
+                let segs = validate_patch_path(from).map_err(|why| {
+                    EvalError::patch_error(
+                        format!("invalid patch path `{from}`: {why}"),
+                        module,
+                        patch_id,
+                    )
+                })?;
+                Ok((from.clone(), segs))
+            }
+        }
+    }
+
     /// Apply structural patch directives in source order (spec §2.9):
     /// after evaluation (and profile merge), before schema validation.
     /// Values were computed with the base tree intact, so a patch may
@@ -3740,8 +4613,18 @@ impl Engine {
         result: &mut Value,
         diagnostics: &mut Vec<Diagnostic>,
         account: &mut Accountant,
+        ctx: TransformCtx<'_>,
     ) -> Result<(), EvalError> {
         use crate::ir::PatchOp;
+
+        // Redaction-safe report size of a staged value: the enforcement
+        // measure when no analysis ran, else the marker-clamped size, so a
+        // patched-in secret never shows up as a length in `ChargeReport.total`
+        // (C2). Without material the two agree, keeping the total unchanged.
+        let report_size = |v: &Value| -> u64 {
+            ctx.profile
+                .map_or_else(|| measure_value(v), |p| measure_report_value(v, p, ctx.env))
+        };
 
         // L-P41: validate-then-commit. The whole set is applied to a
         // staging clone; only when every directive succeeds does it
@@ -3755,7 +4638,7 @@ impl Engine {
         }
         // The staging materialisation is real work: charge it so a large
         // patched tree cannot clone for free.
-        account.charge(module, None, measure_value(result))?;
+        account.charge_scoped(module, None, measure_value(result), report_size(result))?;
         let mut staged = result.clone();
 
         for &patch_id in &module.patches {
@@ -3767,6 +4650,33 @@ impl Engine {
                 ),
                 _ => continue,
             };
+            // Static refusals run for every patch, in or out of the cone
+            // (§5, §8.2). The cone then gates only the tree work: a patch
+            // outside the cone writes to another path and cannot change a
+            // demanded value, so a cone does not apply it (L-P40 §2.2.3).
+            // A rename writes its destination as well as its source, so it
+            // is demanded when either path is in the cone. A directive that
+            // writes the envelope always runs: the envelope is always part
+            // of the cone (it gates E035), so skipping it would leave the
+            // gate reading an unpatched envelope (§2.2.4).
+            let (target, segs) = Self::check_patch_static(module, patch_id, &op)?;
+            let demanded = match (&op, ctx.cone) {
+                (_, None) => true,
+                (PatchOp::Rename { from, to }, Some(cone)) => {
+                    let dest = crate::ir::rename_destination(from, to);
+                    demand::path_in_cone(&target, cone)
+                        || demand::path_in_cone(&dest, cone)
+                        || crate::envelope::is_envelope_path(&target)
+                        || crate::envelope::is_envelope_path(&dest)
+                }
+                (_, Some(cone)) => {
+                    demand::path_in_cone(&target, cone)
+                        || crate::envelope::is_envelope_path(&target)
+                }
+            };
+            if !demanded {
+                continue;
+            }
             let mut warn = |code: &str, message: String| {
                 diagnostics.push(Diagnostic {
                     severity: Severity::Warning,
@@ -3780,114 +4690,55 @@ impl Engine {
                 });
             };
             match op {
-                PatchOp::Set { path, value } => {
-                    if path_targets_document_metadata(&path) {
-                        return Err(EvalError::patch_error(
-                            format!("patch cannot rewrite document metadata `{path}`"),
-                            module,
-                            patch_id,
-                        ));
-                    }
-                    Self::check_immutable(module, patch_id, &[&path])?;
-                    let segs = validate_patch_path(&path).map_err(|why| {
-                        EvalError::patch_error(
-                            format!("invalid patch path `{path}`: {why}"),
-                            module,
-                            patch_id,
-                        )
-                    })?;
+                PatchOp::Set { value, .. } => {
                     let v = values.get(&value).cloned().unwrap_or(Value::Null);
                     // Cloned values cost against the cumulative budget:
                     // many patches sharing one large value must trip
                     // like many aliases do. Path intermediates cost one
                     // unit per segment (input-proportioned tables).
-                    account.charge(
+                    account.charge_scoped(
                         module,
                         Some(patch_id),
                         measure_value(&v).saturating_add(segs.len() as u64),
+                        report_size(&v).saturating_add(segs.len() as u64),
                     )?;
                     // Failed sets roll back: navigation may have
                     // materialized intermediate tables before hitting a
                     // blocked hop, and a failed patch must leave no trace.
                     // The snapshot is a real clone: charge it like one.
-                    account.charge(module, Some(patch_id), measure_value(&staged))?;
+                    account.charge_scoped(
+                        module,
+                        Some(patch_id),
+                        measure_value(&staged),
+                        report_size(&staged),
+                    )?;
                     let snapshot = staged.clone();
                     if !patch_set(&mut staged, &segs, v) {
                         staged = snapshot;
                         warn(
                             "W004",
-                            format!("patch target `{path}` is blocked or out of bounds"),
+                            format!("patch target `{target}` is blocked or out of bounds"),
                         );
                     } else if crate::layers::is_active() {
-                        crate::layers::record(&path, "patch:set");
+                        crate::layers::record(&target, "patch:set");
                     }
                 }
-                PatchOp::Remove { path } => {
-                    if path_targets_document_metadata(&path) {
-                        return Err(EvalError::patch_error(
-                            format!("patch cannot rewrite document metadata `{path}`"),
-                            module,
-                            patch_id,
-                        ));
-                    }
-                    Self::check_immutable(module, patch_id, &[&path])?;
-                    let segs = validate_patch_path(&path).map_err(|why| {
-                        EvalError::patch_error(
-                            format!("invalid patch path `{path}`: {why}"),
-                            module,
-                            patch_id,
-                        )
-                    })?;
+                PatchOp::Remove { .. } => {
                     // L-P41: every directive pays for its own work; a
                     // flood of removes cannot run unbudgeted.
                     account.charge(module, Some(patch_id), segs.len() as u64)?;
                     if !patch_remove(&mut staged, &segs) {
-                        warn("W004", format!("remove target `{path}` does not exist"));
+                        warn("W004", format!("remove target `{target}` does not exist"));
                     }
                 }
-                PatchOp::Rename { from, to } => {
-                    // L-P41/M2: `to` is a plain leaf; checks that speak in
-                    // dotted paths (metadata, ai_immutable) need the full
-                    // destination under the source's parent. A host-built
-                    // module could pass a dotted leaf, which the source
-                    // parser rejects; refuse it here too.
-                    if to.is_empty() || to.contains('.') || to.contains('[') || to.contains(']') {
-                        return Err(EvalError::patch_error(
-                            format!("rename target `{to}` must be a plain key name"),
-                            module,
-                            patch_id,
-                        ));
-                    }
-                    let to_path = match from.rsplit_once('.') {
-                        Some((parent, _)) => format!("{parent}.{to}"),
-                        None => to.clone(),
-                    };
-                    if path_targets_document_metadata(&from)
-                        || path_targets_document_metadata(&to_path)
-                    {
-                        return Err(EvalError::patch_error(
-                            format!(
-                                "patch cannot rewrite document metadata `{from}` -> `{to_path}`"
-                            ),
-                            module,
-                            patch_id,
-                        ));
-                    }
-                    Self::check_immutable(module, patch_id, &[&from, &to_path])?;
-                    let segs = validate_patch_path(&from).map_err(|why| {
-                        EvalError::patch_error(
-                            format!("invalid patch path `{from}`: {why}"),
-                            module,
-                            patch_id,
-                        )
-                    })?;
+                PatchOp::Rename { to, .. } => {
                     // A rename walks the source and writes the new key:
                     // charge both.
                     account.charge(module, Some(patch_id), segs.len().saturating_add(1) as u64)?;
                     match patch_rename(&mut staged, &segs, &to) {
                         RenameOutcome::Ok => {}
                         RenameOutcome::Missing => {
-                            warn("W004", format!("rename source `{from}` does not exist"));
+                            warn("W004", format!("rename source `{target}` does not exist"));
                         }
                         RenameOutcome::Exists => {
                             return Err(EvalError::patch_error(
@@ -3919,7 +4770,7 @@ impl Engine {
         result: Value,
         diagnostics: &mut Vec<Diagnostic>,
         account: &mut Accountant,
-        budget: &Budget,
+        ctx: TransformCtx<'_>,
     ) -> Result<Value, EvalError> {
         if module.profiles.is_empty() {
             // No profiles defined: the effective selector (override first,
@@ -4135,20 +4986,20 @@ impl Engine {
         );
         // Engine ceilings apply to the profile union, like any merge.
         let limits = crate::unify::MergeLimits {
-            max_depth: if budget.max_depth == 0 {
+            max_depth: if ctx.budget.max_depth == 0 {
                 crate::unify::MAX_MERGE_DEPTH
             } else {
-                (budget.max_depth as usize).min(crate::unify::MAX_MERGE_DEPTH)
+                (ctx.budget.max_depth as usize).min(crate::unify::MAX_MERGE_DEPTH)
             },
-            max_nodes: if budget.max_nodes == 0 {
+            max_nodes: if ctx.budget.max_nodes == 0 {
                 crate::unify::MAX_MERGE_NODES
             } else {
-                budget.max_nodes.min(crate::unify::MAX_MERGE_NODES)
+                ctx.budget.max_nodes.min(crate::unify::MAX_MERGE_NODES)
             },
-            max_bytes: if budget.max_total_value_size == 0 {
+            max_bytes: if ctx.budget.max_total_value_size == 0 {
                 crate::unify::MAX_MERGE_BYTES
             } else {
-                budget
+                ctx.budget
                     .max_total_value_size
                     .min(crate::unify::MAX_MERGE_BYTES)
             },
@@ -4180,21 +5031,31 @@ impl Engine {
         })?;
         crate::unify::record(&provenance);
         let after = measure_merge_value(&merged);
-        if budget.max_value_size != 0 && after > budget.max_value_size {
+        if ctx.budget.max_value_size != 0 && after > ctx.budget.max_value_size {
             return Err(EvalError::budget_exceeded(
                 BudgetKind::ValueSize,
-                budget.max_value_size,
+                ctx.budget.max_value_size,
                 module,
                 Some(profile_id),
             ));
         }
-        // Charge the larger of the copied profile and the true growth;
-        // material bytes are a constant, so the outcome cannot reveal a
-        // secret's length.
-        account.charge(
+        // Charge the larger of the copied profile and the true growth. The
+        // enforcement balance pays the real bytes; the printed total pays a
+        // marker for every material byte, so the outcome cannot reveal a
+        // secret's length (C2). A document with no profile analysed reports
+        // the merge measure itself, keeping its total unchanged.
+        let report_size = |v: &Value| -> u64 {
+            ctx.profile.map_or_else(
+                || measure_merge_value(v),
+                |p| measure_report_value(v, p, ctx.env),
+            )
+        };
+        account.charge_scoped(
             module,
             Some(profile_id),
             profile_size.max(after.saturating_sub(before)),
+            report_size(&profile_value)
+                .max(report_size(&merged).saturating_sub(report_size(&base_value))),
         )?;
         Ok(merged)
     }
@@ -5142,13 +6003,21 @@ mod patch_transaction_tests {
         let mut diagnostics = Vec::new();
         let mut account = Accountant {
             spent: 0,
+            reported: 0,
             limit: 1_000_000,
             deadline: None,
             wall_limit: 0,
             bytes_since_sample: 0,
         };
         let error = engine
-            .apply_patches(&module, &values, &mut value, &mut diagnostics, &mut account)
+            .apply_patches(
+                &module,
+                &values,
+                &mut value,
+                &mut diagnostics,
+                &mut account,
+                test_ctx(),
+            )
             .expect_err("a metadata rewrite is fatal");
         assert!(
             error.to_string().contains("metadata"),
@@ -5173,6 +6042,7 @@ mod patch_transaction_tests {
         let mut diagnostics = Vec::new();
         let mut account = Accountant {
             spent: 0,
+            reported: 0,
             limit: 1_000_000,
             deadline: None,
             wall_limit: 0,
@@ -5185,6 +6055,7 @@ mod patch_transaction_tests {
                 &mut value,
                 &mut diagnostics,
                 &mut account,
+                test_ctx(),
             )
             .expect("the set commits");
         let Value::Table(map) = &value else {
@@ -5221,6 +6092,7 @@ mod patch_charge_tests {
         let mut diagnostics = Vec::new();
         let mut account = Accountant {
             spent: 0,
+            reported: 0,
             limit: staging + 1,
             deadline: None,
             wall_limit: 0,
@@ -5233,8 +6105,745 @@ mod patch_charge_tests {
                 &mut value,
                 &mut diagnostics,
                 &mut account,
+                test_ctx(),
             )
             .expect_err("the snapshot charge must trip the total budget");
         assert_eq!(error.code(), "X006", "{error}");
+    }
+}
+
+#[cfg(test)]
+mod demand_eval_tests {
+    use super::*;
+
+    /// A document exercising the walk's value shapes: a `let` binding, a
+    /// reference, an interpolation, a binary expression, nested tables,
+    /// and an array. `Demand::All` must reproduce it byte-for-byte.
+    const MIXED: &str = "\
+let base = 5
+name: \"cfg\"
+keep:
+  b:
+    c: 1
+  arr: [1, 2, 3]
+  s: \"${name}-x\"
+  n: base
+  sum: 2 + 3
+other:
+  nested:
+    deep: true
+";
+
+    /// The acceptance tests for L-P40 (design §8). The charge assertions
+    /// are on `ChargeReport` and the X006 code, never on elapsed time.
+    #[test]
+    fn all_demand_is_byte_identical_to_evaluate() {
+        // §8.6 (core side): the default demand is the whole document, so
+        // the value AND the diagnostics match `evaluate` exactly.
+        let module = crate::parse(MIXED, "mixed").expect("parse");
+        let engine = Engine::hermetic();
+        let (value, diagnostics) = engine.evaluate(&module).expect("evaluate");
+        let outcome = engine
+            .evaluate_demanded(&module, &Demand::All)
+            .expect("demanded All");
+        assert_eq!(
+            crate::convert::value_to_pretty_json(&outcome.value),
+            crate::convert::value_to_pretty_json(&value),
+            "All must reproduce the whole tree byte-for-byte"
+        );
+        assert_eq!(
+            format!("{:?}", outcome.diagnostics),
+            format!("{:?}", diagnostics),
+            "All must reproduce the diagnostics byte-for-byte"
+        );
+    }
+
+    #[test]
+    fn cone_projects_the_same_value_as_the_full_tree() {
+        // §6.4/§8.4: for every demanded path, the cone's projection equals
+        // the full run's projection. The cone omits undemanded siblings.
+        let module = crate::parse(MIXED, "mixed").expect("parse");
+        let engine = Engine::hermetic();
+        let (full, _) = engine.evaluate(&module).expect("evaluate");
+        for path in [
+            "keep.b.c",
+            "keep.arr",
+            "keep.s",
+            "keep.n",
+            "keep.sum",
+            "other.nested.deep",
+        ] {
+            let outcome = engine
+                .evaluate_demanded(&module, &Demand::Cone(path.to_string()))
+                .expect("cone");
+            let cone = crate::convert::project_path(&outcome.value, path)
+                .expect("the cone holds the demanded path");
+            let whole = crate::convert::project_path(&full, path).expect("the full tree holds it");
+            assert_eq!(
+                crate::convert::value_to_pretty_json(cone),
+                crate::convert::value_to_pretty_json(whole),
+                "cone projection differs at {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn cone_spares_an_undemanded_amplifier_that_all_charges() {
+        // §8.1/§8.3/§8.7. `loud.a` doubles a large env string: the static
+        // DP pass bounds it at 3 units (env reads are opaque leaves), but
+        // its measured growth is ~2x the env bytes. Under a tight
+        // `max_total_value_size` the whole walk materialises it and trips
+        // X006; a cone that never touches it stays cheap. This is the
+        // permanent negative control: if the demand filter regressed, the
+        // `All` branch (X006, amplifier charged) is what would move.
+        let module = crate::parse(
+            "keep: 7\nloud:\n  a: \"${env.BIG}${env.BIG}\"\n",
+            "amplifier",
+        )
+        .expect("parse");
+        let big = "x".repeat(4096);
+        let env = std::collections::HashMap::from([("BIG".to_string(), big.clone())]);
+        let mut engine = Engine::hermetic().with_env(env);
+        engine.budget = Budget {
+            max_total_value_size: 1024,
+            ..Budget::unlimited()
+        };
+
+        let full = engine.evaluate_demanded(&module, &Demand::All);
+        let error = full.expect_err("All must charge the amplifier and trip X006");
+        assert_eq!(error.code(), "X006", "{error}");
+
+        let outcome = engine
+            .evaluate_demanded(&module, &Demand::Cone("keep".to_string()))
+            .expect("the cone does not pay for the undemanded amplifier");
+        assert!(
+            outcome.charge.total < big.len() as u64,
+            "the cone charged the amplifier: charge {} for {} env bytes",
+            outcome.charge.total,
+            big.len()
+        );
+        let keep =
+            crate::convert::project_path(&outcome.value, "keep").expect("keep is in the cone");
+        assert_eq!(crate::convert::value_to_pretty_json(keep), "7");
+    }
+
+    #[test]
+    fn the_charge_report_sizes_a_secret_at_the_marker_not_its_length() {
+        // C2: `ChargeReport.total` must not vary with a secret's byte
+        // length. `secret.env` is the sharpest case — the secret node and
+        // its `env` locator each materialise the bytes — and the aliases,
+        // interpolations, and container copies around it must clamp the
+        // same way. This is the negative control for the report-side
+        // accountant: before it, a 32-byte value charged 84 and an 8-byte
+        // one 36, so any regression moves these two totals apart.
+        let module = crate::parse(
+            "x = secret.env(\"ACTIVE_TEST_TOK\")\n\
+             alias = x\n\
+             pair: [x, x]\n\
+             deep:\n  a:\n    b: x\n",
+            "c2-report",
+        )
+        .expect("parse");
+        let totals: Vec<u64> = ["abcdefgh", &"x".repeat(32)]
+            .iter()
+            .map(|value| {
+                let env = HashMap::from([("ACTIVE_TEST_TOK".to_string(), value.to_string())]);
+                let engine = Engine::hermetic().with_env(env);
+                engine
+                    .evaluate_demanded(&module, &Demand::All)
+                    .expect("a marker-sized report stays inside the default budget")
+                    .charge
+                    .total
+            })
+            .collect();
+        assert_eq!(
+            totals[0], totals[1],
+            "the charge total leaked the secret's length: {totals:?}"
+        );
+    }
+
+    #[test]
+    fn a_cone_cannot_hide_an_undemanded_static_shape_trip() {
+        // §8.2: the static shape phase is whole-document, so an undemanded
+        // array over `max_array_len` refuses the cone with the same code
+        // and the same (path-independent) ordering as the full run.
+        let module = crate::parse("keep: 1\nbig: [0, 0, 0, 0, 0, 0, 0, 0]\n", "static-shape")
+            .expect("parse");
+        let mut engine = Engine::hermetic();
+        engine.budget = Budget {
+            max_array_len: 4,
+            ..Budget::unlimited()
+        };
+        let all = engine
+            .evaluate_demanded(&module, &Demand::All)
+            .expect_err("All trips the array bound");
+        let cone = engine
+            .evaluate_demanded(&module, &Demand::Cone("keep".to_string()))
+            .expect_err("the cone cannot hide the array bound");
+        assert_eq!(all.code(), cone.code(), "{all} vs {cone}");
+    }
+
+    #[test]
+    fn a_cone_refuses_ambient_input_exactly_like_the_full_run() {
+        // §8.5: purity is a whole-arena pre-scan, so a cone in a document
+        // with an env read refuses E047 just as the full run does - it
+        // cannot fetch around the gate by demanding a clean path.
+        let module = crate::parse("keep: 1\nread: env.SECRET\n", "pure").expect("parse");
+        let engine = Engine::hermetic().with_pure(true);
+        let all = engine
+            .evaluate_demanded(&module, &Demand::All)
+            .expect_err("pure refuses the env read");
+        let cone = engine
+            .evaluate_demanded(&module, &Demand::Cone("keep".to_string()))
+            .expect_err("the cone cannot fetch around the pure gate");
+        assert_eq!(all.code(), "E047", "{all}");
+        assert_eq!(cone.code(), "E047", "{cone}");
+    }
+
+    #[test]
+    fn cone_runs_are_deterministic() {
+        // §8.4: two runs of the same cone demand agree on value, charge,
+        // and diagnostics.
+        let module = crate::parse(MIXED, "mixed").expect("parse");
+        let engine = Engine::hermetic();
+        let first = engine
+            .evaluate_demanded(&module, &Demand::Cone("keep.b.c".to_string()))
+            .expect("cone run 1");
+        let second = engine
+            .evaluate_demanded(&module, &Demand::Cone("keep.b.c".to_string()))
+            .expect("cone run 2");
+        assert_eq!(
+            crate::convert::value_to_pretty_json(&first.value),
+            crate::convert::value_to_pretty_json(&second.value)
+        );
+        assert_eq!(first.charge, second.charge);
+        assert_eq!(
+            format!("{:?}", first.diagnostics),
+            format!("{:?}", second.diagnostics)
+        );
+    }
+
+    #[test]
+    fn cone_diagnostics_are_the_full_run_subsequence() {
+        // §8.4: W001 (unresolved identifier) fires per node during the
+        // walk, so a demanded and an undemanded subtree can each carry
+        // one. The cone reports only the demanded closure's warning, and
+        // its whole record list is an ordered subsequence of the full
+        // run's (the walk order is the same topological order filtered).
+        let module = crate::parse(
+            "keep:\n  u: undefined_keep\noutside:\n  u: undefined_outside\n",
+            "diag-subset",
+        )
+        .expect("parse");
+        let engine = Engine::hermetic();
+        let full = engine
+            .evaluate_demanded(&module, &Demand::All)
+            .expect("all");
+        let cone = engine
+            .evaluate_demanded(&module, &Demand::Cone("keep".to_string()))
+            .expect("cone");
+
+        let records = |diags: &[Diagnostic]| -> Vec<(Option<String>, String)> {
+            diags
+                .iter()
+                .map(|d| (d.path.clone(), d.code.clone()))
+                .collect()
+        };
+        let full_records = records(&full.diagnostics);
+        let cone_records = records(&cone.diagnostics);
+        let w001 = |rs: &[(Option<String>, String)]| -> usize {
+            rs.iter().filter(|(_, code)| code == "W001").count()
+        };
+        assert!(
+            w001(&full_records) > w001(&cone_records),
+            "the undemanded warning must be absent from the cone: full {full_records:?}, cone {cone_records:?}"
+        );
+        let mut remaining = full_records.iter();
+        for record in &cone_records {
+            assert!(
+                remaining.any(|candidate| candidate == record),
+                "cone record {record:?} is not an ordered subsequence of the full run"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cone_inside_the_envelope_reproduces_the_full_run() {
+        // Review-C1 repro B, case 0034: a Data-mode document whose
+        // envelope subtree holds `version` and `tainted` beside the
+        // payload. When the cone walk stopped at the first envelope
+        // member it dropped those structural fields, and the post-walk
+        // gate then read a partial envelope and fabricated E033/E035 the
+        // full run never emits. Value AND diagnostics must match.
+        let module = crate::parse(
+            "active_mode = \"data\"\n\
+             other = secret(\"root-only-secret\")\n\
+             envelope = { version = \"1.0.0\", tainted = false, payload = { ok = true, port = 8080 } }\n",
+            "0034-cone",
+        )
+        .expect("parse");
+        let engine = Engine::hermetic();
+        let full = engine
+            .evaluate_demanded(&module, &Demand::All)
+            .expect("the full Data-mode run is clean");
+        for path in ["envelope.payload", "envelope.version"] {
+            let cone = engine
+                .evaluate_demanded(&module, &Demand::Cone(path.to_string()))
+                .expect("the cone inside the envelope is clean too");
+            assert_eq!(
+                crate::convert::value_to_pretty_json(
+                    crate::convert::project_path(&cone.value, path).expect("path is in the cone")
+                ),
+                crate::convert::value_to_pretty_json(
+                    crate::convert::project_path(&full.value, path)
+                        .expect("path is in the full run")
+                ),
+                "the cone value at `{path}` must equal the full run's projection"
+            );
+            assert_eq!(
+                format!("{:?}", cone.diagnostics),
+                format!("{:?}", full.diagnostics),
+                "the cone at `{path}` fabricated or dropped diagnostics"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cone_of_a_container_valued_patch_projects_the_full_run_spine() {
+        // Review-C1 repro A: `@patch("a.b", a)` copies the whole table `a`
+        // into `a.b`, and `a` is also the demanded path's spine ancestor.
+        // The cone's `a.b` was truncated to the patch's own value because
+        // `a`'s other fields were left unmaterialised. The projected cone
+        // must equal the full run's projection.
+        let module = crate::parse(
+            "a:\n  x: 1\n  y: 2\n  b: 0\n@patch(\"a.b\", a)\nkeep: 5\n",
+            "cone-patch-ancestor",
+        )
+        .expect("parse");
+        let engine = Engine::hermetic();
+        let full = engine
+            .evaluate_demanded(&module, &Demand::All)
+            .expect("the full run is clean");
+        let cone = engine
+            .evaluate_demanded(&module, &Demand::Cone("a.b".to_string()))
+            .expect("the cone of the patched spine is clean");
+        let cone_at = crate::convert::project_path(&cone.value, "a.b").expect("in the cone");
+        let full_at = crate::convert::project_path(&full.value, "a.b").expect("in the full run");
+        let cone_json = crate::convert::value_to_pretty_json(cone_at);
+        assert_eq!(
+            cone_json,
+            crate::convert::value_to_pretty_json(full_at),
+            "the cone's `a.b` was truncated against the full run"
+        );
+        assert!(
+            cone_json.contains("\"x\""),
+            "the patched container's other fields were dropped: {cone_json}"
+        );
+    }
+
+    #[test]
+    fn demanded_inspect_walk_matches_the_whole_document_run() {
+        // §2.4: `inspect --path P` takes ONE demanded walk that still
+        // carries the layer, merge, and seed provenance the report renders.
+        // `Demand::All` must agree with the shipped whole-document method,
+        // and a cone must project to the same subtree as the full run does.
+        let module = crate::parse(MIXED, "mixed").expect("parse");
+        let engine = Engine::hermetic();
+
+        let (whole, whole_diags, _, _, _) = engine
+            .evaluate_with_layers_merges_and_seeds(&module)
+            .expect("whole");
+        let (all, all_diags, _, _, _) = engine
+            .evaluate_with_layers_merges_and_seeds_demanded(&module, &Demand::All)
+            .expect("demanded All");
+        assert_eq!(
+            crate::convert::value_to_pretty_json(&all),
+            crate::convert::value_to_pretty_json(&whole),
+            "All must reproduce the whole tree"
+        );
+        assert_eq!(format!("{all_diags:?}"), format!("{whole_diags:?}"));
+
+        let (cone, _, _, _, _) = engine
+            .evaluate_with_layers_merges_and_seeds_demanded(
+                &module,
+                &Demand::Cone("keep.b.c".to_string()),
+            )
+            .expect("cone");
+        let projected = crate::convert::project_path(&cone, "keep.b.c").expect("in the cone");
+        let leaf = crate::convert::project_path(&whole, "keep.b.c").expect("in the whole");
+        assert_eq!(
+            crate::convert::value_to_pretty_json(projected),
+            crate::convert::value_to_pretty_json(leaf),
+            "the demanded inspect walk must project to the full value's leaf"
+        );
+    }
+
+    #[test]
+    fn cone_of_a_reference_to_a_named_table_projects_its_fields() {
+        // Review-F1: the demanded path is a reference to a named table.
+        // That table's rooted paths (`a.x`, `a.y`) lie outside the cone
+        // `t`, so a member-only spine walk left its fields
+        // unmaterialised and the projection came back empty. The
+        // value-dependency walk must bring the whole referenced table in,
+        // so the cone's projection of `t` equals the whole run's subtree.
+        let module = crate::parse("a:\n  x: 1\n  y: 2\nt: a\n", "ref-table").expect("parse");
+        let engine = Engine::hermetic();
+        let (full, _) = engine.evaluate(&module).expect("evaluate");
+        let outcome = engine
+            .evaluate_demanded(&module, &Demand::Cone("t".to_string()))
+            .expect("cone of t");
+        let cone = crate::convert::project_path(&outcome.value, "t").expect("t is in the cone");
+        let whole = crate::convert::project_path(&full, "t").expect("t is in the whole");
+        let cone_json = crate::convert::value_to_pretty_json(cone);
+        assert_eq!(
+            cone_json,
+            crate::convert::value_to_pretty_json(whole),
+            "the cone of the reference must project the referenced table"
+        );
+        assert!(
+            cone_json.contains("\"x\"") && cone_json.contains("\"y\""),
+            "the referenced table's fields were dropped: {cone_json}"
+        );
+    }
+
+    #[test]
+    fn cone_does_not_fabricate_a_disabled_requires_trip() {
+        // Review-F2: `cert` `requires` the sibling `tls`. Under the cone
+        // `server.cert` that sibling lies outside the demand, so its
+        // absence from the evaluated table is an artifact of the cone,
+        // not a disabled trigger. The cone must return the value with no
+        // T010 and match the plain run. The genuinely-disabled document
+        // is the negative control: the plain run still trips T010, and
+        // the cone omits it (a subsequence of the full run's records).
+        let enabled = crate::parse(
+            "schema = { server = Table { closed = true, tls = Bool, cert = String(requires = \"tls\") } }\nserver = { tls = true, cert = \"c\" }\n",
+            "requires-cone",
+        )
+        .expect("parse");
+        let engine = Engine::hermetic();
+        let (full, full_diags) = engine.evaluate(&enabled).expect("the plain run is clean");
+        assert!(
+            !full_diags.iter().any(|d| d.code == "T010"),
+            "the plain run must not report T010: {full_diags:?}"
+        );
+        let cone = engine
+            .evaluate_demanded(&enabled, &Demand::Cone("server.cert".to_string()))
+            .expect("the cone must not fabricate a T010");
+        assert!(
+            !cone.diagnostics.iter().any(|d| d.code == "T010"),
+            "the cone fabricated a T010: {:?}",
+            cone.diagnostics
+        );
+        let projected = crate::convert::project_path(&cone.value, "server.cert").expect("in cone");
+        let whole = crate::convert::project_path(&full, "server.cert").expect("in full");
+        assert_eq!(
+            crate::convert::value_to_pretty_json(projected),
+            crate::convert::value_to_pretty_json(whole)
+        );
+
+        let disabled = crate::parse(
+            "schema = { server = Table { closed = true, tls = Bool, cert = String(requires = \"tls\") } }\nserver = { tls = false, cert = \"c\" }\n",
+            "requires-cone-disabled",
+        )
+        .expect("parse");
+        let (_, disabled_diags) = engine.evaluate(&disabled).expect("the plain run evaluates");
+        assert!(
+            disabled_diags.iter().any(|d| d.code == "T010"),
+            "the plain run must trip T010: {disabled_diags:?}"
+        );
+        let cone = engine
+            .evaluate_demanded(&disabled, &Demand::Cone("server.cert".to_string()))
+            .expect("the disabled trigger is out of the cone's demand");
+        assert!(
+            !cone.diagnostics.iter().any(|d| d.code == "T010"),
+            "the cone reported a T010 the cone's demand never evaluated: {:?}",
+            cone.diagnostics
+        );
+    }
+
+    #[test]
+    fn cone_still_refuses_a_static_patch_overlap() {
+        // Review-F3: patch targets are validated before the cone decides
+        // whether to apply them. A patch onto an `ai_immutable` key is a
+        // static refusal (§5, §8.2), so every cone refuses a document the
+        // full run refuses — even when the frozen target lies outside the
+        // cone. The negative control: the cone applies an in-cone patch.
+        let immutable_out_of_cone = crate::parse(
+            "# @ai_immutable: true\nkeep = 1\n# @ai_immutable: true\nother = 2\n@patch(\"other\", 9)\n",
+            "patch-overlap",
+        )
+        .expect("parse");
+        let engine = Engine::hermetic();
+        let full = engine
+            .evaluate(&immutable_out_of_cone)
+            .expect_err("plain run");
+        assert_eq!(full.code(), "E019", "{full:?}");
+        let cone = engine
+            .evaluate_demanded(&immutable_out_of_cone, &Demand::Cone("keep".to_string()))
+            .expect_err("the cone must run the static patch refusal");
+        assert_eq!(cone.code(), "E019", "{cone:?}");
+
+        let immutable_in_cone = crate::parse(
+            "# @ai_immutable: false\nkeep = 1\nother = 2\n@patch(\"keep\", 5)\n",
+            "patch-in-cone",
+        )
+        .expect("parse");
+        let cone = engine
+            .evaluate_demanded(&immutable_in_cone, &Demand::Cone("keep".to_string()))
+            .expect("an in-cone patch applies");
+        let projected = crate::convert::project_path(&cone.value, "keep").expect("in cone");
+        assert_eq!(crate::convert::value_to_pretty_json(projected), "5");
+    }
+
+    #[test]
+    fn cone_runs_a_rename_named_by_source_or_destination() {
+        // Review-M8: a rename writes its destination as well as its
+        // source, so a cone is in scope of the directive when either path
+        // lies in it. The pre-fix cone keyed only on `from`, so a demand
+        // that named the destination skipped the directive: its source
+        // never materialised, the move read as missing, and the cone
+        // exited clean where the full run raised `E019`.
+        let collision = crate::parse(
+            "a:\n  x: 1\n  y: 2\n@rename(\"a.x\", \"y\")\n",
+            "rename-collide",
+        )
+        .expect("parse");
+        let engine = Engine::hermetic();
+        let full = engine.evaluate(&collision).expect_err("plain run");
+        assert_eq!(full.code(), "E019", "{full:?}");
+        // The destination cone names `a.y`, the key the rename would
+        // overwrite: it must carry the directive, and the source value
+        // subtree with it, so the move collides exactly as the full run.
+        let dest = engine
+            .evaluate_demanded(&collision, &Demand::Cone("a.y".to_string()))
+            .expect_err("the destination cone must run the rename");
+        assert_eq!(dest.code(), "E019", "{dest:?}");
+        // The source cone names `a.x`, so the directive is in scope too;
+        // the colliding key is outside its demand, so the move applies.
+        let source = engine
+            .evaluate_demanded(&collision, &Demand::Cone("a.x".to_string()))
+            .expect("the source cone applies the rename");
+        let moved = crate::convert::project_path(&source.value, "a.y").expect("the moved key");
+        assert_eq!(crate::convert::value_to_pretty_json(moved), "1");
+    }
+
+    #[test]
+    fn cone_seed_excludes_an_undemanded_static_siblings_weight() {
+        // Review-F5: the cone accountant is seeded from the closure-scoped
+        // DP total, so an undemanded sibling's static weight never counts
+        // against the cone. Here `big` is a 901-unit static literal the
+        // cone never materialises, while the demanded `keep.dyn` reads a
+        // 1200-byte env value. The whole document is over
+        // `max_total_value_size` and trips X006, but the cone is not: its
+        // seed is its own members' bounds (the spine containers plus the
+        // env leaf), not the whole graph's. The pre-fix seed summed the
+        // whole-graph bounds of the members — root included — so it
+        // inherited `big`'s weight and tripped X006 on a cone that
+        // materialises ~1.2 KB.
+        let big = "x".repeat(900);
+        let source = format!("big = \"{big}\"\nkeep:\n  dyn: env.AMP\n");
+        let module = crate::parse(&source, "cone-seed").expect("parse");
+        let amp = "y".repeat(1200);
+        let env = std::collections::HashMap::from([("AMP".to_string(), amp.clone())]);
+        let mut engine = Engine::hermetic().with_env(env);
+        engine.budget = Budget {
+            max_total_value_size: 2000,
+            ..Budget::unlimited()
+        };
+
+        let full = engine.evaluate_demanded(&module, &Demand::All);
+        let error = full.expect_err("the whole document materialises big + the env value");
+        assert_eq!(error.code(), "X006", "{error}");
+
+        let outcome = engine
+            .evaluate_demanded(&module, &Demand::Cone("keep".to_string()))
+            .expect("the cone does not inherit the undemanded sibling's weight");
+        assert!(
+            outcome.charge.total < 1500,
+            "the cone seed inherited `big`: charge {}",
+            outcome.charge.total
+        );
+        let dyn_value = crate::convert::project_path(&outcome.value, "keep.dyn").expect("in cone");
+        assert_eq!(
+            crate::convert::value_to_pretty_json(dyn_value),
+            format!("\"{amp}\"")
+        );
+    }
+
+    #[test]
+    fn cone_seeds_the_same_secret_text_as_the_full_run() {
+        // Round-2 review (§2.2.6): the demanded path `keep` copies the text
+        // `secret(a)` computes from `env.A`, while `a` is undemanded. The
+        // cone must seed that same text, so the demanded value redacts
+        // exactly as its projection in the full run. Without the
+        // secret-locator rule the cone walk never evaluates `a`, the
+        // seed set misses `"xy"`, and `keep` prints in the clear.
+        let module = crate::parse(
+            "let a = \"x${env.A}\"\nloud = secret(a)\nkeep = \"xy\"\n",
+            "cone-secret",
+        )
+        .expect("parse");
+        let env = std::collections::HashMap::from([("A".to_string(), "y".to_string())]);
+        let engine = Engine::hermetic().with_env(env);
+
+        let redact_keep = |demand: &Demand| {
+            let outcome = engine
+                .evaluate_with_seeds_demanded(&module, demand)
+                .expect("evaluate");
+            let profile =
+                crate::secret::SecretProfile::for_engine(&module, &engine, &outcome.seeds);
+            crate::convert::redact_value(&profile, &outcome.value)
+                .project("keep")
+                .expect("keep is in the tree")
+        };
+
+        let cone = redact_keep(&Demand::Cone("keep".to_string()));
+        let projected = redact_keep(&Demand::All);
+        let cone_text = crate::convert::value_to_pretty_json_materialised(&cone);
+        assert_eq!(
+            cone_text,
+            crate::convert::value_to_pretty_json_materialised(&projected),
+            "the cone must redact exactly as the projection of the full run"
+        );
+        assert!(
+            cone_text.contains("***SECRET***"),
+            "demanded value not redacted: {cone_text}"
+        );
+        assert!(
+            !cone_text.contains("xy"),
+            "secret text leaked under the cone: {cone_text}"
+        );
+    }
+
+    #[test]
+    fn cone_reports_an_unknown_profile_selector() {
+        // Review-F8: `active_profile` names a profile that does not exist,
+        // so the plain run reports W002. With no profile bodies the old
+        // cone skipped every root selector, so the walk never evaluated
+        // `active_profile`, the merge saw no selector, and the cone lost
+        // W002 (and the gate saw no profile). The document-level selector
+        // keys are always demanded.
+        let module = crate::parse("active_profile = \"missing\"\nkeep = 1\n", "profile-cone")
+            .expect("parse");
+        let engine = Engine::hermetic();
+        let (_, full_diags) = engine.evaluate(&module).expect("the plain run evaluates");
+        assert!(
+            full_diags.iter().any(|d| d.code == "W002"),
+            "the plain run must report W002: {full_diags:?}"
+        );
+        let cone = engine
+            .evaluate_demanded(&module, &Demand::Cone("keep".to_string()))
+            .expect("the cone evaluates");
+        assert!(
+            cone.diagnostics.iter().any(|d| d.code == "W002"),
+            "the cone dropped the root selector and lost W002: {:?}",
+            cone.diagnostics
+        );
+    }
+
+    #[test]
+    fn cone_fills_a_demanded_fields_schema_defaults() {
+        // Review-C1: `validate_*` reads a field's constraint arguments from
+        // the evaluated node map, and `apply_fills` reads the `default`
+        // node there too. An in-cone field's default must therefore be a
+        // closure member: without it the resilient fill could not read the
+        // default, so the cone reported two spurious T004 and dropped the
+        // filled values. The full run fills `s.b` and `s.t.c`.
+        let module = crate::parse(
+            "schema {\n  s = Table { a = Int, b = Int(default = 3), t = Table { c = Int(default = 4) } }\n}\ns = { a = 1, t = {} }\nnoise = 5\n",
+            "cone-default-fill",
+        )
+        .expect("parse");
+        let engine = Engine::hermetic();
+        let (full, full_diags) = engine.evaluate(&module).expect("the full run evaluates");
+        assert!(
+            !full_diags.iter().any(|d| d.code == "T004"),
+            "the full run fills both defaults and reports no T004: {full_diags:?}"
+        );
+        let cone = engine
+            .evaluate_demanded(&module, &Demand::Cone("s".to_string()))
+            .expect("the cone fills the demanded defaults");
+        assert!(
+            !cone.diagnostics.iter().any(|d| d.code == "T004"),
+            "the cone reported a T004 the full run does not: {:?}",
+            cone.diagnostics
+        );
+        let s = crate::convert::project_path(&cone.value, "s").expect("s is in the cone");
+        let whole = crate::convert::project_path(&full, "s").expect("s is in the full tree");
+        assert_eq!(
+            crate::convert::value_to_pretty_json(s),
+            crate::convert::value_to_pretty_json(whole),
+            "the cone's filled subtree must equal the full run's"
+        );
+    }
+
+    #[test]
+    fn cone_materialises_an_in_cone_annotation_operand() {
+        // Review-H2: an annotation predicate reads its operands through the
+        // evaluated node map, and an `Ident` resolves through
+        // `module.bindings`. An in-cone annotation whose operand is an
+        // out-of-cone `let` binding must still see it, or the cone drops a
+        // T006 the full run reports.
+        let module = crate::parse(
+            "let max = 10\n# @constraint: value > max\nport = 5\nother = 7\n",
+            "cone-annotation",
+        )
+        .expect("parse");
+        let engine = Engine::hermetic();
+        let (_, full_diags) = engine.evaluate(&module).expect("the full run evaluates");
+        assert!(
+            full_diags.iter().any(|d| d.code == "T006"),
+            "the full run must report the failing constraint: {full_diags:?}"
+        );
+        let cone = engine
+            .evaluate_demanded(&module, &Demand::Cone("port".to_string()))
+            .expect("the cone evaluates");
+        assert!(
+            cone.diagnostics.iter().any(|d| d.code == "T006"),
+            "the cone dropped an in-cone T006: {:?}",
+            cone.diagnostics
+        );
+    }
+
+    #[test]
+    fn cone_applies_an_in_cone_merge_of_a_nested_repeated_table() {
+        // Review-H3: `PendingMerge` carries both the scope-relative
+        // `local` and the full-document `path`. A nested repeated table
+        // (`t` twice inside `s`) records `local = "t.a"` and
+        // `path = "s.t.a"`. The cone must scope the merge by the document
+        // path, or a merge that lands inside the cone is skipped: the cone
+        // then loses the E046 the full run reports and, separately, must
+        // still materialise the second body's candidate so the merge can
+        // read it.
+        let module = crate::parse(
+            "s {\n  t {\n    a = 1\n  }\n  t {\n    a = 2\n  }\n}\nother = 5\n",
+            "cone-nested-merge",
+        )
+        .expect("parse");
+        let engine = Engine::hermetic();
+        let (full, full_diags) = engine.evaluate(&module).expect("the full run evaluates");
+        assert!(
+            full_diags.iter().any(|d| d.code == "E046"
+                && d.path.as_deref() == Some("s.t.a")
+                && d.message.contains("disagree")),
+            "the full run reports the nested merge conflict: {full_diags:?}"
+        );
+        let cone = engine
+            .evaluate_demanded(&module, &Demand::Cone("s".to_string()))
+            .expect("the cone applies the demanded merge");
+        assert!(
+            cone.diagnostics.iter().any(|d| d.code == "E046"
+                && d.path.as_deref() == Some("s.t.a")
+                && d.message.contains("disagree")),
+            "the cone dropped the in-cone E046 (or read a missing candidate): {:?}",
+            cone.diagnostics
+        );
+        let s = crate::convert::project_path(&cone.value, "s").expect("s is in the cone");
+        let whole = crate::convert::project_path(&full, "s").expect("s is in the full tree");
+        assert_eq!(
+            crate::convert::value_to_pretty_json(s),
+            crate::convert::value_to_pretty_json(whole),
+            "the cone's merged subtree must equal the full run's"
+        );
     }
 }

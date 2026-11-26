@@ -160,7 +160,30 @@ active compatibility old.active new.active --format json
 active capability --require-major 1
 active mode --from svc.active --format json
 active budget explain --from svc.active
+active budget explain --from svc.active --path server.port
 ```
+
+`eval --path P` and `inspect --path P` walk only the demanded cone `P`
+(L-P40). The printed value equals the projection of the full value, and
+evaluation and validation diagnostics are scoped to the cone's closure
+(an ordered subsequence of the full run's records). The whole-document
+static phase still runs first and still fails closed, so a cone never
+hides a budget trip; the dynamic accountant charges only the closure, so
+an undemanded dynamic amplifier cannot deny service to the cone.
+`P` is a dotted path through the document root (`a.b`). A spelling the
+cone resolver does not accept — an indexed path such as `arr[1]`, or a
+top-level `let` binding name — keeps the pre-L-P40 whole-document walk;
+`--path` still projects the correct value, so only the reported cost
+model and `charge` describe the whole document for those spellings.
+`--whole-document` on `eval` and `inspect` restores the pre-L-P40
+behavior: walk the whole document and report its diagnostics while still
+printing the cone. Whole-document surfaces (`lock`, `convert`, `doc`,
+`gate`, envelopes, `debug --replay`) are unaffected. `--audit-trail` is
+one of them: it forces the whole-document walk, so the audit's hash and
+its `diagnostics` describe one reproducible whole-document run, while
+`--path` still projects the printed value.
+`budget explain --path P` runs the cone and reports that cone's cost
+model (its `demand` names `P`); without `--path` it reports the full run.
 
 ## Semantic diff
 

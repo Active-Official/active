@@ -48,6 +48,68 @@ struct Case {
     profile: Option<String>,
     /// L-P05: evaluate under `--pure` for this case.
     pure: bool,
+    /// L-P40: evaluate the cone of this document path (`Demand::Cone`).
+    /// `None` keeps the default `Demand::All`.
+    path: Option<String>,
+    /// L-P40: per-case budget overrides, applied field by field over the
+    /// hermetic engine (which holds the 60 s wall budget). A committed
+    /// fixture is too small to reach the shipped ceilings, so an
+    /// open-ended case needs a tight limit to be a test that can fail.
+    budget: Option<BudgetPatch>,
+}
+
+/// L-P40: the `budget` inline table of a case. Every field is optional and
+/// patches one `active_core::Budget` field; absent fields keep the
+/// engine's value. The reference runner is the only consumer; the L-P37
+/// dump and the oracle ignore `budget` so they stay in agreement.
+#[derive(Debug, Default)]
+struct BudgetPatch {
+    max_nodes: Option<u64>,
+    max_depth: Option<u64>,
+    max_array_len: Option<u64>,
+    max_keys: Option<u64>,
+    max_wall_ms: Option<u64>,
+    max_value_size: Option<u64>,
+    max_total_value_size: Option<u64>,
+}
+
+impl BudgetPatch {
+    fn apply(&self, budget: &mut active_core::Budget) {
+        macro_rules! patch {
+            ($($field:ident),*) => {
+                $(if let Some(value) = self.$field {
+                    budget.$field = value;
+                })*
+            };
+        }
+        patch!(
+            max_nodes,
+            max_depth,
+            max_array_len,
+            max_keys,
+            max_wall_ms,
+            max_value_size,
+            max_total_value_size
+        );
+    }
+
+    fn from_table(table: &toml::value::Table) -> Self {
+        let get = |key: &str| {
+            table
+                .get(key)
+                .and_then(|v| v.as_integer())
+                .map(|i| i as u64)
+        };
+        Self {
+            max_nodes: get("max_nodes"),
+            max_depth: get("max_depth"),
+            max_array_len: get("max_array_len"),
+            max_keys: get("max_keys"),
+            max_wall_ms: get("max_wall_ms"),
+            max_value_size: get("max_value_size"),
+            max_total_value_size: get("max_total_value_size"),
+        }
+    }
 }
 
 fn load_manifest() -> Vec<Case> {
@@ -75,6 +137,11 @@ fn load_manifest() -> Vec<Case> {
                     .and_then(|v| v.as_str())
                     .map(str::to_string),
                 pure: t.get("pure").and_then(|v| v.as_bool()).unwrap_or(false),
+                path: t.get("path").and_then(|v| v.as_str()).map(str::to_string),
+                budget: t
+                    .get("budget")
+                    .and_then(|v| v.as_table())
+                    .map(BudgetPatch::from_table),
             }
         })
         .collect()
@@ -126,6 +193,14 @@ fn records_json(diags: &[active_core::Diagnostic]) -> serde_json::Value {
 /// instead of the deduplicated committed sidecars. Written only when
 /// `ACTIVE_CORPUS_DUMP` names a file; the gate's own assertions are
 /// unchanged.
+///
+/// This dump deliberately ignores the per-case `path` and `budget` fields
+/// (it evaluates every case with `Demand::All` and the default budget), so
+/// its record matches the reference oracle, which reads the same manifest
+/// and also stays full-demand and default-budget. Honoring `path` here
+/// would record a cone projection while the oracle records the full
+/// document, and honoring `budget` would trip a case the oracle passes —
+/// either would fail the L-P37 gate.
 #[test]
 fn l37_corpus_dump() {
     let Ok(path) = std::env::var("ACTIVE_CORPUS_DUMP") else {
@@ -228,7 +303,20 @@ fn conformance_manifest_is_green() {
         let mut engine = hermetic_engine();
         engine.profile_override = case.profile.clone();
         engine.pure = case.pure;
-        match engine.evaluate(&module) {
+        if let Some(patch) = &case.budget {
+            patch.apply(&mut engine.budget);
+        }
+        // L-P40: a `path` case evaluates the cone of that document path;
+        // otherwise the default whole-document demand holds. Both arms
+        // share the `(value, diagnostics)` shape, so the assertions below
+        // are demand-agnostic.
+        let result = match &case.path {
+            Some(path) => engine
+                .evaluate_demanded(&module, &active_core::Demand::Cone(path.clone()))
+                .map(|outcome| (outcome.value, outcome.diagnostics)),
+            None => engine.evaluate(&module),
+        };
+        match result {
             Ok((value, diags)) => {
                 let got_codes = codes_of(&diags);
                 if case.kind == "refused" {

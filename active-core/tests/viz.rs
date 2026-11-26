@@ -171,6 +171,87 @@ fn budget_data_reports_limits_usage_and_headroom() {
 }
 
 #[test]
+fn budget_data_disabled_limit_reports_null_headroom_and_sentinel_charge() {
+    // A disabled limit is the `UNLIMITED` sentinel, not a zero field, so
+    // `headroom` reads null and `charge.limit` carries the sentinel — a
+    // consumer can tell "disabled" from a finite ceiling. Negative control:
+    // testing `limit == 0` reported a huge numeric headroom (and a zero
+    // field is "shipped default", never disabled).
+    let (module, value, diags) = fixture();
+    let data = viz::budget_data(&module, &value, &Budget::unlimited(), &diags);
+    assert_eq!(data["limits"]["nodes"], active_core::eval::UNLIMITED);
+    assert!(
+        data["headroom"]["nodes"].is_null(),
+        "a disabled limit must report null headroom: {data}"
+    );
+
+    let charge = active_core::eval::ChargeReport {
+        total: 7,
+        limit: active_core::eval::UNLIMITED,
+    };
+    let with_charge = viz::budget_data_with_seeds_demand(
+        &module,
+        &value,
+        &Budget::unlimited(),
+        &diags,
+        viz::SeedContext {
+            profile_override: None,
+            env: None,
+            seeds: None,
+        },
+        &active_core::Demand::All,
+        Some(charge),
+    );
+    assert_eq!(
+        with_charge["charge"]["limit"],
+        active_core::eval::UNLIMITED,
+        "disabled total-value ceiling must surface as the sentinel: {with_charge}"
+    );
+
+    // A finite ceiling still reports a numeric headroom.
+    let finite = viz::budget_data(&module, &value, &Budget::strict(), &diags);
+    assert!(finite["headroom"]["nodes"].is_u64(), "{finite}");
+}
+
+#[test]
+fn budget_data_resolves_a_zeroed_budget_like_every_other_surface() {
+    // LANG-C-015: a zero field means "shipped default" at every consumer,
+    // so a library embedder handing `viz` a zeroed `Budget` reads the
+    // shipped limits and a shipped headroom, never `limits.nodes = 0`.
+    // Negative control: without the `resolve` inside
+    // `budget_data_with_redactor`, every assertion below fails (limits and
+    // headroom read 0).
+    let (module, value, diags) = fixture();
+    let shipped = Budget::default();
+    let zeroed = Budget {
+        max_nodes: 0,
+        max_depth: 0,
+        max_array_len: 0,
+        max_keys: 0,
+        max_wall_ms: 0,
+        max_value_size: 0,
+        max_total_value_size: 0,
+    };
+    let data = viz::budget_data(&module, &value, &zeroed, &diags);
+    assert_eq!(data["limits"]["nodes"], shipped.max_nodes, "{data}");
+    assert_eq!(data["limits"]["depth"], shipped.max_depth, "{data}");
+    assert_eq!(
+        data["limits"]["total_size"], shipped.max_total_value_size,
+        "{data}"
+    );
+    let used = data["usage"]["nodes"].as_u64().expect("usage.nodes");
+    assert_eq!(
+        data["headroom"]["nodes"],
+        shipped.max_nodes - used,
+        "{data}"
+    );
+    assert!(
+        data["headroom"]["nodes"].as_u64().expect("headroom") > 0,
+        "a resolved ceiling must leave headroom: {data}"
+    );
+}
+
+#[test]
 fn schema_data_matches_introspection() {
     let (module, _, _) = fixture();
     let data = viz::schema_data(&module).expect("schema");
@@ -324,4 +405,210 @@ fn budget_data_with_seeds_ignores_a_runtime_copy_length() {
         size(&module_long, &long, &long_seeds),
         "secret length must not change the reported size"
     );
+}
+
+#[test]
+fn budget_data_redacts_the_cost_report_and_ignores_a_secret_length() {
+    // L-P40 §3.2 / LANG-C-010: the dashboard's `cost_model` sizes a
+    // material node at the redacted marker and redacts a path segment
+    // whose text is the secret, so neither the secret's length nor its
+    // cleartext reaches the report.
+    let module = parse(
+        "let tok = secret(\"secretshort1\")\ncopy = \"secretshort1\"\ntbl = { secretshort1 = 1 }\n",
+        "viz-cost-short",
+    )
+    .expect("parse");
+    let module_long = parse(
+        "let tok = secret(\"secretmuchlongervalue1\")\ncopy = \"secretmuchlongervalue1\"\ntbl = { secretmuchlongervalue1 = 1 }\n",
+        "viz-cost-long",
+    )
+    .expect("parse");
+    let mut engine = Engine::hermetic();
+    engine.materialise_blobs = true;
+    let cost = |module: &active_core::Module| {
+        let (value, _, seeds) = engine.evaluate_with_seeds(module).expect("evaluate");
+        viz::budget_data_with_seeds(
+            module,
+            &value,
+            &Budget::default(),
+            &[],
+            None,
+            None,
+            Some(&seeds),
+        )["cost_model"]
+            .clone()
+    };
+    let a = cost(&module);
+    let b = cost(&module_long);
+    assert_eq!(
+        a["classes"], b["classes"],
+        "the secret's length must not change the serialized class totals"
+    );
+    let paths: Vec<String> = a["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .filter_map(|n| n["path"].as_str().map(str::to_string))
+        .collect();
+    assert!(
+        paths
+            .iter()
+            .any(|p| p.contains(active_core::secret::MARKER)),
+        "the secret key path must render redacted: {paths:?}"
+    );
+    assert!(
+        paths.iter().all(|p| !p.contains("secretshort1")),
+        "no cleartext secret may appear in a path: {paths:?}"
+    );
+}
+
+#[test]
+fn budget_data_reports_a_bounded_deterministic_cost_model() {
+    // L-P40 §3.2: the dashboard carries the whole-document cost report.
+    let module = parse(
+        "let base = 5\nname: \"cfg\"\nkeep:\n  n: base\n  s: \"${name}-x\"\n",
+        "viz-cost",
+    )
+    .expect("parse");
+    let (value, diags) = Engine::hermetic().evaluate(&module).expect("evaluate");
+    let data = viz::budget_data_with_seeds(
+        &module,
+        &value,
+        &Budget::default(),
+        &diags,
+        None,
+        None,
+        None,
+    );
+    let cost = &data["cost_model"];
+    assert_eq!(cost["demand"], "all", "{cost}");
+    assert_eq!(cost["truncated"], false, "{cost}");
+    let classes = cost["classes"].as_array().expect("classes");
+    assert_eq!(classes.len(), 3, "one entry per class: {cost}");
+    assert_eq!(classes[0]["class"], "literal");
+    assert_eq!(classes[1]["class"], "alias");
+    assert_eq!(classes[2]["class"], "computed");
+    assert!(classes[0]["nodes"].as_u64().unwrap() >= 1, "{cost}");
+    assert!(classes[2]["nodes"].as_u64().unwrap() >= 1, "{cost}");
+    let nodes = cost["nodes"].as_array().expect("nodes");
+    assert!(!nodes.is_empty(), "{cost}");
+    for node in nodes {
+        for key in ["path", "node", "class", "depth", "charged_units", "reason"] {
+            assert!(node.get(key).is_some(), "missing {key} in {node}");
+        }
+    }
+    // The interpolation is the most charged node, and the ranking is
+    // stable across identical runs.
+    let again = viz::budget_data_with_seeds(
+        &module,
+        &value,
+        &Budget::default(),
+        &diags,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(data["cost_model"], again["cost_model"], "deterministic");
+}
+
+#[test]
+fn budget_data_cost_model_names_a_cone_demand() {
+    // L-P40 §3.2: a cone-scoped dashboard describes its cone and ranks
+    // only closure nodes. The value and diagnostics are the cone's own,
+    // so `usage` (cone-shaped) and `cost_model` (closure-scoped) are
+    // exercised together, not a whole-document value with a cone label.
+    let module = parse("keep:\n  n: 1\nother:\n  m: 2\n", "viz-cost-cone").expect("parse");
+    let engine = Engine::hermetic();
+    let cone = active_core::Demand::Cone("keep".to_string());
+    let outcome = engine
+        .evaluate_with_seeds_demanded(&module, &cone)
+        .expect("evaluate");
+    let data = viz::budget_data_with_seeds_demand(
+        &module,
+        &outcome.value,
+        &engine.budget,
+        &outcome.diagnostics,
+        viz::SeedContext::default(),
+        &cone,
+        Some(outcome.charge),
+    );
+    let cost = &data["cost_model"];
+    assert_eq!(cost["demand"], "keep", "{cost}");
+    let nodes = cost["nodes"].as_array().expect("nodes");
+    assert!(
+        nodes.iter().all(|n| {
+            n["path"]
+                .as_str()
+                .is_none_or(|p| p == "keep" || p.starts_with("keep."))
+        }),
+        "the cone must not rank an undemanded sibling: {nodes:?}"
+    );
+}
+
+#[test]
+fn budget_data_reports_the_run_charge_and_scope() {
+    // L-P40 §3.4: the dashboard reports what the run spent, and
+    // `cost_model.scope_nodes` names the demanded node count.
+    let module = parse("keep:\n  n: 1\nother:\n  m: 2\n", "viz-charge").expect("parse");
+    let engine = Engine::hermetic();
+    let all = active_core::Demand::All;
+    let outcome = engine
+        .evaluate_with_seeds_demanded(&module, &all)
+        .expect("evaluate");
+    let seeds = viz::SeedContext {
+        seeds: Some(&outcome.seeds),
+        ..viz::SeedContext::default()
+    };
+    let data = viz::budget_data_with_seeds_demand(
+        &module,
+        &outcome.value,
+        &engine.budget,
+        &outcome.diagnostics,
+        seeds,
+        &all,
+        Some(outcome.charge),
+    );
+    assert_eq!(data["charge"]["total"], outcome.charge.total, "{data}");
+    assert_eq!(data["charge"]["limit"], outcome.charge.limit, "{data}");
+    // The whole-document demand materialises the whole arena.
+    let arena = module.arena.len() as u64;
+    assert_eq!(data["cost_model"]["scope_nodes"], arena, "{data}");
+
+    // A cone scopes the dashboard to its closure, a strict subset.
+    let cone = active_core::Demand::Cone("keep".to_string());
+    let cone_outcome = engine
+        .evaluate_with_seeds_demanded(&module, &cone)
+        .expect("evaluate");
+    let cone_seeds = viz::SeedContext {
+        seeds: Some(&cone_outcome.seeds),
+        ..viz::SeedContext::default()
+    };
+    let cone_data = viz::budget_data_with_seeds_demand(
+        &module,
+        &cone_outcome.value,
+        &engine.budget,
+        &cone_outcome.diagnostics,
+        cone_seeds,
+        &cone,
+        Some(cone_outcome.charge),
+    );
+    let scope = cone_data["cost_model"]["scope_nodes"]
+        .as_u64()
+        .expect("scope_nodes");
+    assert!(
+        scope < arena,
+        "cone scope {scope} must be smaller than arena {arena}"
+    );
+
+    // A structural caller that ran no accountant reports a `null` charge.
+    let structural = viz::budget_data_with_seeds_demand(
+        &module,
+        &outcome.value,
+        &engine.budget,
+        &outcome.diagnostics,
+        viz::SeedContext::default(),
+        &all,
+        None,
+    );
+    assert!(structural["charge"].is_null(), "{structural}");
 }

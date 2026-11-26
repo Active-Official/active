@@ -30,6 +30,12 @@ use crate::ir::{InterpPart, Module, Node, NodeId, PatchOp, Value};
 /// JSON mapping so every surface emits the same marker.
 pub const MARKER: &str = "***SECRET***";
 
+/// Byte length a redacted material value reports on a JSON-sized surface:
+/// the quoted [`MARKER`] (`"***SECRET***"`). The budget dashboard and the
+/// L-P40 cost report both size a material node at this length, never at
+/// the material's own length (LANG-C-010).
+pub const MARKER_SIZE: u64 = MARKER.len() as u64 + 2;
+
 /// Shortest value allowed into a substring set. Whole-value (exact)
 /// matching still covers shorter secrets; spreading a 1-3 byte value as
 /// a substring would rewrite unrelated text (`secret("a")` must not

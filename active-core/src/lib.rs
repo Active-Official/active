@@ -33,7 +33,10 @@ pub mod viz;
 pub use authority::{Capability, CapabilitySet};
 pub use diag::{Diagnostic, Repair, RepairKind, Severity};
 pub use envelope::{EnvelopeGate, SUPPORTED_ENVELOPE_MAJORS};
-pub use eval::{Budget, BudgetKind, Engine, EnvLookup, EvalError, IncrementalMemo, StepEvent};
+pub use eval::{
+    Budget, BudgetKind, ChargeReport, Demand, DemandOutcome, Engine, EnvLookup, EvalError,
+    IncrementalMemo, StepEvent,
+};
 pub use ir::{
     Annotation, AnnotationKind, Attachment, BinOp, DependsOn, IncludeStmt, InterpPart, Mode,
     Module, Node, NodeId, PatchOp, SchemaField, SchemaMeta, SemanticTag, Style, TriviaComment,

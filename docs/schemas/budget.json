@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Active budget dashboard export",
   "type": "object",
-  "required": ["version", "mode", "limits", "usage", "headroom", "warnings"],
+  "required": ["version", "mode", "limits", "usage", "headroom", "warnings", "cost_model", "charge"],
   "properties": {
     "version": { "const": 1 },
     "mode": { "enum": ["config", "data"] },
@@ -20,7 +20,55 @@
       "type": "object",
       "additionalProperties": { "type": ["integer", "null"], "minimum": 0 }
     },
-    "warnings": { "type": "array", "items": { "type": "string" } }
+    "cost_model": {
+      "type": "object",
+      "required": ["demand", "scope_nodes", "classes", "nodes", "truncated"],
+      "properties": {
+        "demand": { "type": "string" },
+        "scope_nodes": { "type": "integer", "minimum": 0 },
+        "classes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["class", "nodes", "charged_units"],
+            "properties": {
+              "class": { "enum": ["literal", "alias", "computed"] },
+              "nodes": { "type": "integer", "minimum": 0 },
+              "charged_units": { "type": "integer", "minimum": 0 }
+            },
+            "additionalProperties": false
+          }
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "node", "class", "depth", "charged_units", "reason"],
+            "properties": {
+              "path": { "type": ["string", "null"] },
+              "node": { "type": "integer", "minimum": 0 },
+              "class": { "enum": ["literal", "alias", "computed"] },
+              "depth": { "type": "integer", "minimum": 0 },
+              "charged_units": { "type": "integer", "minimum": 0 },
+              "reason": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "truncated": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "warnings": { "type": "array", "items": { "type": "string" } },
+    "charge": {
+      "type": ["object", "null"],
+      "required": ["total", "limit"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "limit": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }

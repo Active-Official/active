@@ -137,24 +137,43 @@ the gate only for documents it already trusts.
    marker (lint L010 is the sender-side check; capability refusal is
    the receiver-side gate).
 
-## 4b. Cone fetches cost a full evaluation (LANG-C-013)
+## 4b. Cone fetches use demand-driven evaluation (LANG-C-013)
 
-`eval --path a.b` prints the demanded cone, and the cost is a FULL document
-evaluation: parse, schedule, walk, validate, redact, then the projection.
-That is deliberate - a cone must never become a way to hide a budget trip -
-so an agent loop that fetches cones one at a time pays the whole document per
-fetch. Budget for it: a 100k-node document costs its full walk on every cone
-request, and an undemanded pathological subtree can deny service to a
-demanded cone (the static budgets still run first and fail closed).
+`eval --path a.b` prints the demanded cone, and it walks only that cone:
+parse, then the whole-document static phase (schedule, shape scan,
+reference-aware DP bounds, and every safety gate - all still
+whole-document and fail-closed), then a value walk materialised for the
+cone's closure, then redact and project. The printed value equals the
+projection of the full value, and evaluation and validation diagnostics
+are scoped to the closure: they are the full run's records restricted to
+the demanded set, an ordered subsequence of the full run's.
 
-Demand-driven evaluation (walk only what the cone needs; whole-document
-static budgets still apply, the dynamic accountant charges the demanded
-closure) is the long-term fix. The engine capability lives in
-`active-core` and is consumed by the RPC/Infinity layer; its design is
-`audit-pack/L-P40-DESIGN.md`, tracked as a follow-up, not a 1.x promise.
-Until it lands, fetch the cones you need from one evaluation (`--path`
-per call, or project the exported document locally) rather than in a hot
-loop.
+`P` is a dotted path through the document root (`a.b`). A spelling the
+cone resolver does not accept - an indexed path such as `arr[1]`, or a
+top-level `let` binding name - keeps the pre-L-P40 whole-document walk:
+the projection still yields the correct value, so for those spellings
+the printed value is unchanged and only the reported cost model and
+charge describe the whole document rather than a cone.
+
+This is the LANG-C-013 fix: an undemanded pathological subtree can no
+longer deny service to a demanded cone. A cone never hides a *static*
+budget trip - the whole-document parse caps, static shape caps, and the
+whole-graph DP total and depth run first and fail closed - but the
+dynamic accountant that guards the walk charges only the demanded
+closure, so an undemanded dynamic amplifier does not abort the fetch.
+
+`--whole-document` on `eval` and `inspect` selects the pre-L-P40
+behavior: walk the whole document while still printing the cone (the
+compatibility door, for callers that need the whole-document
+diagnostics). Whole-document surfaces keep whole-document semantics
+regardless: `lock`, `convert`, `doc`, `gate`, envelopes, and
+`debug --replay` all hash and diagnose the whole document.
+`--audit-trail` on `eval` is one of them: it forces the
+whole-document walk so the audit's hash and its `diagnostics` describe
+one reproducible whole-document run, while `--path` still projects the
+printed value. The engine capability lives in `active-core` and is
+consumed by the RPC/Infinity layer; it lands with the L-P40 item
+(`audit-pack/L-P40-DESIGN-R2.md`) and ships in the 2.0.0 line.
 
 ## 5. Non-goals
 

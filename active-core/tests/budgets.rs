@@ -337,8 +337,8 @@ fn expired_deadline_takes_precedence_in_strict_validation() {
 fn budget_presets_are_ordered_and_strict_is_default() {
     use active_core::Budget;
     // CHECKLIST F.005: strict < interactive < trusted on every
-    // field; strict is exactly the shipped default. Unlimited (0)
-    // is never a preset.
+    // field; strict is exactly the shipped default. The `UNLIMITED`
+    // sentinel is never a preset.
     let (s, i, t) = (Budget::strict(), Budget::interactive(), Budget::trusted());
     assert_eq!(s, Budget::default());
     for (name, a, b) in [

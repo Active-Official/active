@@ -30,8 +30,8 @@
     },
     {
       "name": "eval",
-      "entry": "active eval <file> [--sandbox-closure MANIFEST] [--format json|yaml|toml] [--path a.b[0]] [--materialise-blobs] [--audit-trail FILE] [--cache DIR] [--resilient] [--profile NAME] [--trace] [--sandbox strict|data|agent|trusted]",
-      "description": "Evaluate a file and print a redacted document (JSON, YAML, or TOML per --format). Secrets always render as ***SECRET***; a raw secret in output is a defect, never data. --path emits only the demanded cone, --materialise-blobs includes blob payloads (refused for tainted blobs), --audit-trail writes a re-validatable redacted audit document, and --cache reuses a content-keyed local result.",
+      "entry": "active eval <file> [--sandbox-closure MANIFEST] [--format json|yaml|toml] [--path a.b[0]] [--whole-document] [--materialise-blobs] [--audit-trail FILE] [--cache DIR] [--resilient] [--profile NAME] [--trace] [--sandbox strict|data|agent|trusted]",
+      "description": "Evaluate a file and print a redacted document (JSON, YAML, or TOML per --format). Secrets always render as ***SECRET***; a raw secret in output is a defect, never data. --path emits only the demanded cone: the value walk materialises just that cone (the whole-document static phase still runs and still fails closed, so a cone never hides a budget trip), the printed value equals the projection of the full value, and evaluation/validation diagnostics are scoped to the cone. --whole-document walks the whole document and reports its diagnostics while still printing the cone (pre-L-P40 behavior). --materialise-blobs includes blob payloads (refused for tainted blobs), --audit-trail writes a re-validatable redacted audit document (always whole-document), and --cache reuses a content-keyed local result.",
       "input": {
         "file": "path to a .active source file"
       },
@@ -100,8 +100,8 @@
     },
     {
       "name": "value-inspect",
-      "entry": "active inspect --from <file> --path <path> [--format text|json]",
-      "description": "Inspect one value path: type, resolved schema slot and constraints, taint, blob identity and size, and the dependency summary. Material values render ***SECRET***.",
+      "entry": "active inspect --from <file> --path <path> [--whole-document] [--format text|json]",
+      "description": "Inspect one value path: type, resolved schema slot and constraints, taint, blob identity and size, and the dependency summary. --path walks only the demanded cone (the whole-document static phase still runs and fails closed); --whole-document walks the whole document and reports its diagnostics while still printing the cone. Material values render ***SECRET***.",
       "input": {
         "file": "path to a .active source file",
         "path": "dotted/index path to inspect"
@@ -218,7 +218,7 @@
     {
       "name": "viz",
       "entry": "active viz <graph|taint|budget|schema|repair> --from <file> [--format json|mermaid|dot]",
-      "description": "Export display data for the static viewer: dependency graph, taint nodes/edges, budget limits and usage, schema field tree with compatibility and migration hints, or a repair plan without source text.",
+      "description": "Export display data for the static viewer: dependency graph, taint nodes/edges, budget limits, usage, and the L-P40 cost model, schema field tree with compatibility and migration hints, or a repair plan without source text.",
       "input": {
         "file": "path to a .active source file",
         "kind": "graph|taint|budget|schema|repair"
@@ -229,13 +229,13 @@
     },
     {
       "name": "budget",
-      "entry": "active budget explain --from <file> [--format text|json]",
-      "description": "Explain the effective budget preset and the observed usage/headroom for one evaluation.",
+      "entry": "active budget explain --from <file> [--path P] [--format text|json]",
+      "description": "Explain the effective budget preset and the observed usage/headroom for one evaluation, plus the L-P40 three-class cost model (demand, per-class node/charge counts, and a deterministic top-256 node ranking). --path runs the cone P and reports that cone's cost model (its demand names P); without --path it reports the full run.",
       "input": {
         "file": "path to a .active source file"
       },
       "output": {
-        "budget": "limits, usage, and headroom (text or stable JSON)"
+        "budget": "limits, usage, headroom, and cost model (text or stable JSON)"
       }
     },
     {

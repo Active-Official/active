@@ -9,7 +9,7 @@ Every emitter returns redacted JSON. Taint and budget carry
 |---|---|---|
 | `graph` | `{nodes: [{id,label}], edges: [{from,to}]}` | `json` (default), `mermaid`, `dot` |
 | `taint` | `{version, nodes, edges, sources, export_points}` | `json` |
-| `budget` | `{version, mode, limits, usage, headroom, warnings}` | `json` |
+| `budget` | `{version, mode, limits, usage, headroom, warnings, cost_model, charge}` | `json` |
 | `schema` | INSPECT v2 document plus `mode` and `compatibility` | `json` |
 | `repair` | `RepairOutcome` without `repaired_source` (goal, steps, clean/stuck/unrepairable, final_codes, findings) | `json` |
 
@@ -31,8 +31,59 @@ is emitted.
 `limits` is the effective `Budget`; `usage` is the static observation
 (nodes = arena length, depth and keys from the evaluated tree, sizes
 from canonical redacted JSON); `headroom` is `limit - used` (null when
-the limit is disabled with `0`); `warnings` lists W013 codes recorded
-for the run. Walls are host-time and appear as limits only.
+the limit is the `UNLIMITED` sentinel, `18446744073709551615`, which the
+CLI's `--max-* 0` opt-out selects); `warnings` lists W013 codes recorded
+for the run. Walls are host-time and appear as limits only. `usage.nodes`
+is the whole-document arena length for every demand, because
+`limits.nodes` (X001) bounds the arena, so `headroom.nodes` stays the
+X001 observation; the demanded node count is `cost_model.scope_nodes`.
+The remaining `usage` fields follow the tree the demand materialised, so
+under a cone `usage.depth`, `usage.array_len`, `usage.keys`,
+`usage.value_size`, `usage.total_size` and their `headroom` entries
+describe the cone value, while `usage.nodes` and `headroom.nodes` stay
+the whole-document observation. `cost_model` below carries the cone's own
+node count and charged units.
+
+`cost_model` is the L-P40 three-class demand report, computed from one
+linear pass over the topological order that recomputes the same
+per-node DP bounds the enforcing budget pass already used (no
+enforcement, and no walk of the value tree):
+
+- `demand` — `"all"`, or the cone path when the run was a `Cone(P)`
+  (the shape is a string either way).
+- `scope_nodes` — the number of arena nodes the demand materialises:
+  the whole arena for `"all"`, the closure's member count for a cone.
+- `classes` — one `{class, nodes, charged_units}` per class, in the
+  fixed order `literal`, `alias`, `computed`. `nodes` counts the
+  nodes of that class; `charged_units` is their summed DP size.
+  A node's class is the maximum of its own class and its children's:
+  `literal` is a decided value, `alias` is a reference hop, `computed`
+  is anything evaluated from other nodes.
+- `nodes` — the top 256 `{path, node, class, depth, charged_units,
+  reason}` by `charged_units` descending, then `path`, then `node`
+  ascending; each node's `charged_units` is its DP `size[i]`.
+- `truncated` — true when the ranking was cut to 256.
+
+`charge` is what the run that produced the value spent (L-P40 §3.4):
+`{total, limit}`, where `total` is the demand-seeded accountant balance
+(the closure's DP total plus the measured dynamic growth the walk
+charged) and `limit` is the effective `max_total_value_size` ceiling
+(`18446744073709551615`, the `UNLIMITED` sentinel, when disabled,
+matching `limits.total_size`). It is `null` for a
+structural caller that never ran the accountant. Every `profile` body is
+a closure member whatever the demanded path, because profile selection
+is decided during the walk; a cone that does not reach a body still
+charges it, the safe over-approximating direction.
+
+The report is deterministic for a fixed input tuple and never carries
+secret material: every `path` and `demand` segment is mapped through the
+active profile's redactor, so a material segment renders as the
+redaction marker, and a material node is sized at the marker length, so
+neither the material's value nor its length appears; `reason` is a
+fixed phrase naming the class and, for a `computed` node, its
+constructor (`literal`, `alias chain depth N`, `schema shape`,
+`container shape`, `computed: env | secret | blob | interpolate |
+binary | unary | constraint | ...`).
 
 ### Repair
 

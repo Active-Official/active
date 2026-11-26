@@ -62,6 +62,8 @@ tuple is:
 - the injected environment snapshot (`Engine.env`);
 - the engine configuration: mode, resilient flag, profile override,
   budgets, reader version, and the pure flag (L-P05);
+- the demand (L-P40): `All` for the whole-tree walk, or a cone at a
+  document path;
 - the evaluator build.
 
 Given the same tuple, two runs produce:
@@ -72,7 +74,9 @@ Given the same tuple, two runs produce:
   order (G01). Message text is human-facing and may differ between
   implementations unless this spec defines a template; the differential
   and the conformance harness compare the structured record, never the
-  prose;
+  prose. Under a cone the set is the full run's restricted to the
+  demanded closure, an ordered subsequence in the same topological
+  order (L-P40 §5), so a cone never reorders what a full run reports;
 - the same `content_hash` over the redacted value (the §3 canonical form,
   keys sorted), and the same `bound_content_hash` for the same schema
   version, profile, resolved budget, mode, and capability.

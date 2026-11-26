@@ -558,6 +558,50 @@ fn secrets_never_reach_stdout_or_stderr() {
     }
 }
 
+#[test]
+fn cone_path_redaction_matches_the_projection() {
+    // L-P40 (§2.2.6): a cone run must seed the same runtime secret text
+    // the full walk does, so a demanded value that copies an undemanded
+    // secret's text is redacted identically to its projection. `keep`
+    // copies the text `secret(a)` computes from `env.A`, and the demanded
+    // path names `keep` while never referencing `a`.
+    let f = fixture(
+        "cone_secret_parity.active",
+        "let a = \"x${env.A}\"\nloud = secret(a)\nkeep = \"xy\"\n",
+    );
+    let cone = active()
+        .args(["eval", "--path", "keep"])
+        .env("A", "y")
+        .arg(&f)
+        .output()
+        .expect("run active");
+    let projected = active()
+        .args(["eval", "--path", "keep", "--whole-document"])
+        .env("A", "y")
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        cone.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cone.stderr)
+    );
+    let cone_out = String::from_utf8_lossy(&cone.stdout);
+    let projected_out = String::from_utf8_lossy(&projected.stdout);
+    assert_eq!(
+        cone_out, projected_out,
+        "cone value must equal the projection"
+    );
+    assert!(
+        cone_out.contains("***SECRET***"),
+        "demanded value not redacted: {cone_out}"
+    );
+    assert!(
+        !cone_out.contains("xy"),
+        "secret text leaked under the cone: {cone_out}"
+    );
+}
+
 // ------------------------------------------------------------------
 // Converter CLI contract (C-046, spec/converters.md §5).
 // ------------------------------------------------------------------
@@ -4658,6 +4702,103 @@ fn every_failed_attempt_leaves_an_audit_with_its_class_and_peer() {
         check.status.success(),
         "audit must re-parse: {}",
         String::from_utf8_lossy(&check.stderr)
+    );
+}
+
+#[test]
+fn a_failed_parse_audit_records_the_resolved_budget() {
+    // spec/audit-trail.md: the audit records "the resolved resource
+    // limits", and replay must be given the same limits. A parse failure
+    // used to record `Budget::default()` whatever the flags said, so
+    // replaying it could not reproduce the run. Negative control: this
+    // test fails against the pre-fix writer (it printed the shipped
+    // maxima, i.e. `total_size = 100000000`).
+    let dir = std::env::temp_dir().join("active-cli-tests");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let bad = dir.join("audit-parse-limit.active");
+    std::fs::write(&bad, "a = [1").expect("write");
+
+    let audit = dir.join("audit-parse-limit.out.active");
+    let _ = std::fs::remove_file(&audit);
+    let out = active()
+        .arg("eval")
+        .args(["--audit-trail"])
+        .arg(&audit)
+        .args(["--max-total-value-size", "1024"])
+        .arg(&bad)
+        .output()
+        .expect("run");
+    assert!(!out.status.success(), "parse failure exits non-zero");
+    let doc = std::fs::read_to_string(&audit).expect("parse-failure audit written");
+    assert!(doc.contains("failure_class = \"parse\""), "{doc}");
+    assert!(
+        doc.contains("total_size = 1024 }"),
+        "the resolved per-field limit must be recorded: {doc}"
+    );
+    assert!(
+        !doc.contains("total_size = 100000000"),
+        "the shipped maximum must not replace the resolved limit: {doc}"
+    );
+
+    // An explicit `0` is the documented unlimited opt-out; it round-trips
+    // as `0`, exactly like the success-path audit.
+    let audit = dir.join("audit-parse-unlimited.out.active");
+    let _ = std::fs::remove_file(&audit);
+    let out = active()
+        .arg("eval")
+        .args(["--audit-trail"])
+        .arg(&audit)
+        .args(["--max-total-value-size", "0"])
+        .arg(&bad)
+        .output()
+        .expect("run");
+    assert!(!out.status.success());
+    let doc = std::fs::read_to_string(&audit).expect("unlimited audit written");
+    assert!(
+        doc.contains("total_size = 0 }"),
+        "an unlimited ceiling is stored as `0`: {doc}"
+    );
+
+    // A limit the audit document cannot represent is refused before any
+    // work, and no audit is written.
+    let audit = dir.join("audit-parse-toobig.out.active");
+    let _ = std::fs::remove_file(&audit);
+    let out = active()
+        .arg("eval")
+        .args(["--audit-trail"])
+        .arg(&audit)
+        .args(["--max-total-value-size", "9223372036854775808"])
+        .arg(&bad)
+        .output()
+        .expect("run");
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("exceeds i64::MAX"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!audit.exists(), "a refused limit writes no audit");
+
+    // The resolved budget is also recorded when a named profile or a
+    // sandbox preset replaced the per-field limits.
+    let audit = dir.join("audit-parse-profile.out.active");
+    let _ = std::fs::remove_file(&audit);
+    let out = active()
+        .arg("eval")
+        .args(["--audit-trail"])
+        .arg(&audit)
+        .args(["--budget-profile", "trusted"])
+        .arg(&bad)
+        .output()
+        .expect("run");
+    assert!(!out.status.success());
+    let doc = std::fs::read_to_string(&audit).expect("profile audit written");
+    // Read the preset's ceiling from the library so the test cannot
+    // drift from `--budget-profile trusted`.
+    let trusted = active_core::Budget::trusted().max_total_value_size;
+    assert!(
+        doc.contains(&format!("total_size = {trusted} }}")),
+        "the profile's resolved limit must be recorded: {doc}"
     );
 }
 
@@ -8913,6 +9054,79 @@ fn eval_envelope_audits_closed_tables() {
 }
 
 #[test]
+fn eval_cone_still_audits_every_closed_table_in_a_document_receipt() {
+    // L-P40 review H4: a document-level receipt is a whole-document
+    // promise, so `--envelope` and `--cache` force `Demand::All`. A
+    // `--path` cone must not write a receipt whose `closed_tables` omits a
+    // table outside the cone: pre-fix, the run walked the cone and the
+    // receipt's audit (and `content_hash`) covered only `a`.
+    let source = "active_mode = \"data\"\n\
+                  schema = { a = Table { closed = true, k = String }, \
+                             b = Table { closed = true, j = String } }\n\
+                  a = { k = \"1\" }\n\
+                  b = { j = \"2\" }\n";
+    let file = lp62_fixture("cone_closed.active", source);
+    let expected = serde_json::json!([
+        { "path": "a", "keys": ["k"] },
+        { "path": "b", "keys": ["j"] },
+    ]);
+
+    // Envelope receipt.
+    let envelope_path = std::env::temp_dir().join("active-cli-lp62/cone_closed.json");
+    let _ = std::fs::remove_file(&envelope_path);
+    let out = active()
+        .args(["eval", "--path", "a", "--envelope"])
+        .arg(&envelope_path)
+        .arg(&file)
+        .output()
+        .expect("eval");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let envelope: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&envelope_path).expect("envelope"))
+            .expect("json");
+    assert_eq!(
+        envelope["receipt"]["closed_tables"], expected,
+        "the cone envelope dropped an out-of-cone closed table: {envelope}"
+    );
+
+    // Cache receipt: the stored entry carries the same whole-document audit.
+    let dir = std::env::temp_dir()
+        .join("active-cli-tests")
+        .join("cache-lp40-cone");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let cache = dir.join("cache");
+    let out = active()
+        .args(["eval", "--path", "a", "--cache"])
+        .arg(&cache)
+        .arg(&file)
+        .output()
+        .expect("eval");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let entries: Vec<_> = std::fs::read_dir(&cache)
+        .expect("cache dir")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+        .collect();
+    assert_eq!(entries.len(), 1, "one entry per input set");
+    let entry: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(entries[0].path()).expect("read"))
+            .expect("json");
+    assert_eq!(
+        entry["receipt"]["closed_tables"], expected,
+        "the cone cache entry dropped an out-of-cone closed table: {entry}"
+    );
+}
+
+#[test]
 fn serve_rejects_a_schema_failure_with_codes() {
     let mut child = serve_spawn(&[]);
     let request = serde_json::json!({
@@ -10321,4 +10535,444 @@ fn serve_honours_the_held_authority_set() {
         .as_array()
         .expect("diagnostics array");
     assert!(diagnostics.iter().any(|code| code == "E049"), "{response}");
+}
+
+// ------------------------------------------------------------------
+// L-P40 demand-driven cone (`eval --path` / `--whole-document`).
+// ------------------------------------------------------------------
+
+/// A demanded `--path` prints the projection of the full value; the full
+/// run prints the whole document (§2.2, invariant §2.1).
+#[test]
+fn lp40_cone_prints_the_projection_of_the_full_value() {
+    let f = fixture("lp40_cone_clean.active", "a = 1\nb = 2\n");
+    let cone = active()
+        .args(["eval", "--path", "a", "--format", "json"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        cone.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&cone.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&cone.stdout).trim(), "1");
+
+    let full = active()
+        .args(["eval", "--format", "json"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    let full_text = String::from_utf8_lossy(&full.stdout);
+    assert!(
+        full_text.contains("\"a\": 1") && full_text.contains("\"b\": 2"),
+        "{full_text}"
+    );
+}
+
+/// `--whole-document` selects the whole-document walk for diagnostics but
+/// still prints the cone. On a clean document the two agree; a type
+/// violation in an undemanded sibling is silent under the cone and
+/// reported under `--whole-document` (the compatibility door, §2.4).
+#[test]
+fn lp40_whole_document_flag_reports_the_whole_run_but_prints_the_cone() {
+    let clean = fixture("lp40_whole_clean.active", "a = 1\nb = 2\n");
+    let cone = active()
+        .args(["eval", "--path", "a", "--format", "json"])
+        .arg(&clean)
+        .output()
+        .expect("run active");
+    let whole = active()
+        .args([
+            "eval",
+            "--path",
+            "a",
+            "--whole-document",
+            "--format",
+            "json",
+        ])
+        .arg(&clean)
+        .output()
+        .expect("run active");
+    assert!(cone.status.success() && whole.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&cone.stdout),
+        String::from_utf8_lossy(&whole.stdout),
+        "the printed cone is the same with and without --whole-document"
+    );
+
+    // The p1 shape: an undemanded field violates its schema type.
+    let broken = fixture(
+        "lp40_whole_broken.active",
+        "schema = { n = Int, keep = Int }\nn = \"x\"\nkeep = 1\n",
+    );
+    let cone = active()
+        .args(["eval", "--path", "keep", "--format", "json"])
+        .arg(&broken)
+        .output()
+        .expect("run active");
+    assert!(
+        cone.status.success(),
+        "the cone must not see the undemanded violation: {}",
+        String::from_utf8_lossy(&cone.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&cone.stdout).trim(), "1");
+    assert!(
+        !String::from_utf8_lossy(&cone.stderr).contains("T002"),
+        "no spurious diagnostic under the cone"
+    );
+
+    let whole = active()
+        .args([
+            "eval",
+            "--path",
+            "keep",
+            "--whole-document",
+            "--format",
+            "json",
+        ])
+        .arg(&broken)
+        .output()
+        .expect("run active");
+    assert!(
+        !whole.status.success(),
+        "--whole-document restores the whole-document diagnostics"
+    );
+    assert!(
+        String::from_utf8_lossy(&whole.stderr).contains("T002"),
+        "{}",
+        String::from_utf8_lossy(&whole.stderr)
+    );
+}
+
+/// A cone cannot hide a whole-document static shape trip (X004): the
+/// static phase runs before any demand walk and fails closed (§4.1, §5).
+#[test]
+fn lp40_cone_cannot_hide_an_undemanded_static_shape_trip() {
+    let f = fixture(
+        "lp40_shape.active",
+        "keep = 1\nbig = [0, 0, 0, 0, 0, 0, 0, 0]\n",
+    );
+    for args in [
+        vec!["eval", "--format", "json"],
+        vec!["eval", "--path", "keep", "--format", "json"],
+    ] {
+        let out = active()
+            .args(&args)
+            .args(["--max-array-len", "4"])
+            .arg(&f)
+            .output()
+            .expect("run active");
+        assert!(!out.status.success(), "{args:?} must refuse");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("X004"),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+/// A cone that never demands an amplifier does not pay for it, while the
+/// full run trips X006. The `All` branch is the permanent negative
+/// control: if the demand filter regressed, it is what would move (§8.1,
+/// §8.3, §8.7).
+#[test]
+fn lp40_cone_spares_an_undemanded_amplifier_that_all_charges() {
+    let f = fixture(
+        "lp40_amp.active",
+        "keep = 7\nloud = \"${env.BIG}${env.BIG}\"\n",
+    );
+    let big = "x".repeat(4096);
+
+    let full = active()
+        .args(["eval", "--max-total-value-size", "1024", "--format", "json"])
+        .env("BIG", &big)
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        !full.status.success(),
+        "the full run must charge the amplifier"
+    );
+    assert!(
+        String::from_utf8_lossy(&full.stderr).contains("X006"),
+        "{}",
+        String::from_utf8_lossy(&full.stderr)
+    );
+
+    let cone = active()
+        .args([
+            "eval",
+            "--path",
+            "keep",
+            "--max-total-value-size",
+            "1024",
+            "--format",
+            "json",
+        ])
+        .env("BIG", &big)
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        cone.status.success(),
+        "the cone must not pay for the undemanded amplifier: {}",
+        String::from_utf8_lossy(&cone.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&cone.stdout).trim(), "7");
+}
+
+/// Cone diagnostics are the ordered subsequence for the closure (§8.4): the
+/// undemanded subtree's warning is absent, the demanded one stays.
+#[test]
+fn lp40_cone_diagnostics_are_the_full_run_subsequence() {
+    let f = fixture(
+        "lp40_diag.active",
+        "keep:\n  u: undefined_keep\noutside:\n  u: undefined_outside\n",
+    );
+    let full = active()
+        .args(["eval", "--resilient", "--format", "json"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(full.status.success());
+    let full_err = String::from_utf8_lossy(&full.stderr);
+    assert_eq!(full_err.matches("W001").count(), 2, "{full_err}");
+
+    let cone = active()
+        .args(["eval", "--path", "keep", "--resilient", "--format", "json"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(cone.status.success());
+    let cone_err = String::from_utf8_lossy(&cone.stderr);
+    assert_eq!(cone_err.matches("W001").count(), 1, "{cone_err}");
+    assert!(
+        cone_err.contains("undefined_keep") && !cone_err.contains("undefined_outside"),
+        "{cone_err}"
+    );
+    let cone_val: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&cone.stdout)).expect("json");
+    assert!(cone_val["u"].is_null(), "{cone_val}");
+}
+
+/// A default carried by a demanded check operand is materialised under the
+/// cone (§2.2.5): the p9 regression where the cone must still fill `b`.
+#[test]
+fn lp40_cone_carries_schema_defaults_for_demanded_check_operands() {
+    let f = fixture(
+        "lp40_p9.active",
+        "schema = { a = Int, b = Int(default = 1), check { both = a == b } }\na = 1\n",
+    );
+    let full = active()
+        .args(["eval", "--resilient", "--format", "json"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        full.status.success(),
+        "{}",
+        String::from_utf8_lossy(&full.stderr)
+    );
+    let full_val: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&full.stdout)).expect("json");
+    assert_eq!(full_val["a"], 1);
+    assert_eq!(
+        full_val["b"], 1,
+        "the full run fills the default: {full_val}"
+    );
+    assert!(String::from_utf8_lossy(&full.stderr).contains("W005"));
+
+    let cone = active()
+        .args(["eval", "--path", "a", "--resilient", "--format", "json"])
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        cone.status.success(),
+        "the cone must fill the demanded default: {}",
+        String::from_utf8_lossy(&cone.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&cone.stdout).trim(), "1");
+}
+
+/// `budget explain --path P` reports the cone's cost model and names its
+/// demand; without `--path` it names `all` (§3.2).
+#[test]
+fn lp40_budget_explain_path_reports_the_cone_demand() {
+    let f = fixture(
+        "lp40_budget.active",
+        "schema = { a = Int, b = Int(default = 1), check { both = a == b } }\na = 1\n",
+    );
+    let full = active()
+        .args(["budget", "explain", "--from"])
+        .arg(&f)
+        .args(["--format", "json"])
+        .output()
+        .expect("run active");
+    assert!(
+        full.status.success(),
+        "{}",
+        String::from_utf8_lossy(&full.stderr)
+    );
+    let full_json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&full.stdout)).expect("json");
+    assert_eq!(full_json["cost_model"]["demand"], "all");
+
+    let cone = active()
+        .args(["budget", "explain", "--from"])
+        .arg(&f)
+        .args(["--path", "a", "--format", "json"])
+        .output()
+        .expect("run active");
+    assert!(
+        cone.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cone.stderr)
+    );
+    let cone_json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&cone.stdout)).expect("json");
+    assert_eq!(cone_json["cost_model"]["demand"], "a");
+    assert!(cone_json["cost_model"]["classes"].is_array(), "{cone_json}");
+
+    // `--whole-document` is the compatibility door on `budget explain`
+    // (spec/partial-eval.md §1): with `--path` it is accepted and reports
+    // the whole document's cost model and charge, naming `all`.
+    let whole = active()
+        .args(["budget", "explain", "--from"])
+        .arg(&f)
+        .args(["--path", "a", "--whole-document", "--format", "json"])
+        .output()
+        .expect("run active");
+    assert!(
+        whole.status.success(),
+        "{}",
+        String::from_utf8_lossy(&whole.stderr)
+    );
+    let whole_json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&whole.stdout)).expect("json");
+    assert_eq!(
+        whole_json["cost_model"]["demand"], "all",
+        "--whole-document must report the whole document, not the cone: {whole_json}"
+    );
+    assert_eq!(
+        whole_json["charge"], full_json["charge"],
+        "--whole-document must reproduce the whole-document charge"
+    );
+}
+
+/// An explicitly unlimited limit is auditable: the audit stores the
+/// documented `0` opt-out, so `--max-* 0` does not trip the
+/// Active-integer guard whose own message says to pass `0`
+/// (spec/audit-trail.md §1). A finite value above `i64::MAX` is still
+/// refused, because it cannot be stored at all.
+#[test]
+fn audit_trail_stores_an_explicit_unlimited_limit_as_zero() {
+    let f = fixture("lp40_audit_unlimited.active", "x = 5\n");
+    let out = fixture("lp40_audit_unlimited_out.active", "");
+    let run = active()
+        .args(["eval"])
+        .arg(&f)
+        .args(["--audit-trail"])
+        .arg(&out)
+        .args(["--max-total-value-size", "0"])
+        .output()
+        .expect("run active");
+    assert!(
+        run.status.success(),
+        "an explicit 0 must be auditable: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let body = std::fs::read_to_string(&out).expect("read audit");
+    assert!(
+        body.contains("total_size = 0"),
+        "unlimited must be stored as the 0 opt-out: {body}"
+    );
+
+    let bad = active()
+        .args(["eval"])
+        .arg(&f)
+        .args(["--audit-trail"])
+        .arg(&out)
+        .args(["--max-total-value-size", "9223372036854775808"])
+        .output()
+        .expect("run active");
+    assert!(
+        !bad.status.success(),
+        "a finite value above i64::MAX is not storable and must be refused"
+    );
+}
+
+/// The audit hash is a whole-document receipt even under a cone (§2.4):
+/// `eval --path P --audit-trail` and `eval --audit-trail` write the same
+/// bytes, so `debug --replay` can reproduce either. The fixture carries
+/// an undemanded diagnostic so the audit's `diagnostics` list must also
+/// be the whole document's: an audit forces `Demand::All`.
+#[test]
+fn lp40_audit_hash_is_whole_document_under_a_cone() {
+    let f = fixture(
+        "lp40_audit.active",
+        "keep = undefined_keep\noutside = undefined_outside\n",
+    );
+    let dir = std::env::temp_dir().join("active-cli-tests");
+    let full_path = dir.join("lp40_audit_full.active");
+    let cone_path = dir.join("lp40_audit_cone.active");
+
+    let full = active()
+        .args(["eval", "--resilient", "--audit-trail"])
+        .arg(&full_path)
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        full.status.success(),
+        "{}",
+        String::from_utf8_lossy(&full.stderr)
+    );
+    let cone = active()
+        .args(["eval", "--resilient", "--path", "keep", "--audit-trail"])
+        .arg(&cone_path)
+        .arg(&f)
+        .output()
+        .expect("run active");
+    assert!(
+        cone.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cone.stderr)
+    );
+    let full_audit = std::fs::read_to_string(&full_path).expect("audit");
+    let cone_audit = std::fs::read_to_string(&cone_path).expect("audit");
+    assert_eq!(
+        full_audit, cone_audit,
+        "the audit is a whole-document receipt under a cone"
+    );
+    assert!(
+        cone_audit.contains("W001@undefined_outside"),
+        "the cone audit dropped the undemanded diagnostic: {cone_audit}"
+    );
+}
+
+/// `inspect --path P` reports the cone's value only (§2.4): an undemanded
+/// type violation does not appear in the cone's report.
+#[test]
+fn lp40_inspect_path_is_cone_scoped() {
+    let f = fixture(
+        "lp40_inspect.active",
+        "schema = { n = Int, keep = Int }\nn = \"x\"\nkeep = 1\n",
+    );
+    let out = active()
+        .args(["inspect", "--from"])
+        .arg(&f)
+        .args(["--path", "keep"])
+        .output()
+        .expect("run active");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).expect("json");
+    assert_eq!(json["path"], "keep");
+    assert_eq!(json["value"], 1);
 }

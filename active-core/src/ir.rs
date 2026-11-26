@@ -1113,3 +1113,16 @@ pub enum PatchOp {
     Remove { path: String },
     Rename { from: String, to: String },
 }
+
+/// The document path a `Rename { from, to }` writes: the destination key
+/// under the source's parent (`a.x` -> `a.to`), or the bare key when the
+/// source is a top-level field. `to` is a plain leaf (validated as one
+/// where the rename is checked), so only the parent is taken from `from`.
+/// A rename writes this path in addition to its source, so a demand that
+/// names either must treat the directive as in scope.
+pub fn rename_destination(from: &str, to: &str) -> String {
+    match from.rsplit_once('.') {
+        Some((parent, _)) => format!("{parent}.{to}"),
+        None => to.to_string(),
+    }
+}

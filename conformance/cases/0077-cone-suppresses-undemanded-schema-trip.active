@@ -1,0 +1,5 @@
+schema {
+  keep = Int
+  noise = Int
+}
+keep = 1

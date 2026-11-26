@@ -486,3 +486,63 @@ kind = "refused"
 id = "0074-envelope-attenuation-material-by"
 file = "cases/0074-envelope-attenuation-material-by.active"
 kind = "refused"
+
+# L-P40: demand-driven evaluation evidence (§4.4). A cone materialises only
+# the closure of one document path; the whole-document static phase and every
+# safety gate still run first. `path` picks the demanded document path and the
+# optional `budget` table patches the engine field by field (a tight
+# `max_total_value_size`/`max_array_len` is required for a small fixture to
+# exercise a budget; the default ceilings are unreachable for a committed
+# vector). Only the reference runner honors these two fields: the L-P37 corpus
+# dump and the oracle deliberately stay full-demand and default-budget so they
+# keep agreeing, and the shim embeddings skip these cases via pins. These
+# pins hold until a demand (`path`) host entry lands on the WASM and shim
+# surfaces; the differential runner is then the place to add the axis and
+# drop the pins, so the vectors reach a second embedding.
+
+# (1) A cone cannot hide an undemanded static shape trip: the whole-document
+# array bound refuses the cone with the same code the full run reports.
+[[cases]]
+id = "0075-cone-static-array-trip"
+file = "cases/0075-cone-static-array-trip.active"
+kind = "refused"
+path = "keep"
+budget = { max_array_len = 4 }
+
+# (2) A cone spares an undemanded dynamic amplifier: a 128-byte secret is
+# aliased twenty times under `loud`. The static DP counts each alias of a
+# secret as one unit, so the whole-document phase passes and only the dynamic
+# accountant trips. Demanding `keep` never walks `loud`, so the cone succeeds
+# and projects `{"keep": 7}`. Negative control: remove `path` and this becomes
+# an X006 refusal under the same 1024 ceiling.
+[[cases]]
+id = "0076-cone-spares-secret-amplifier"
+file = "cases/0076-cone-spares-secret-amplifier.active"
+kind = "clean"
+path = "keep"
+budget = { max_total_value_size = 1024 }
+
+# (3) A cone reports only the diagnostics inside its closure: the full run
+# trips T004 on the undemanded required key `noise`, while the cone of `keep`
+# is clean and projects `{"keep": 1}`. The ordered-subsequence property itself
+# is proven at the engine level (cone_diagnostics_are_the_full_run_subsequence).
+[[cases]]
+id = "0077-cone-suppresses-undemanded-schema-trip"
+file = "cases/0077-cone-suppresses-undemanded-schema-trip.active"
+kind = "clean"
+path = "keep"
+
+# Only `cargo test -p active-core --test conformance` (the reference path)
+# honours `path`/`budget`; every other consumer skips these cases wholesale,
+# so the reference core test is their single consumer (L-P40 §2.4).
+[[pins]]
+id = "0075-cone-static-array-trip"
+reason = "only the reference core test honours `path`/`budget`; the Python diff harness, the WASM runner, and the shim embeddings skip these vectors entirely (L-P40 §2.4)"
+
+[[pins]]
+id = "0076-cone-spares-secret-amplifier"
+reason = "only the reference core test honours `path`/`budget`; the Python diff harness, the WASM runner, and the shim embeddings skip these vectors entirely (L-P40 §2.4)"
+
+[[pins]]
+id = "0077-cone-suppresses-undemanded-schema-trip"
+reason = "only the reference core test honours `path`/`budget`; the Python diff harness, the WASM runner, and the shim embeddings skip these vectors entirely (L-P40 §2.4)"

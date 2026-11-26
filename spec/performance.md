@@ -120,6 +120,20 @@ test does exactly that):
   document to compound the wins: `Doc.memo` is carried across
   `didOpen`/`didChange` and passed to every analysis re-run, so
   repeat analyses of an untouched buffer are cache hits.
+- Demand-driven cone fetches (L-P40, C-013): a `--path`/`Cone(P)`
+  fetch walks only the demanded closure, so peak memory and the
+  dynamic budget charge stay proportional to the closure, never the
+  document. This cone is distinct from the memo-invalidation cone
+  above: that one is the set of fingerprints a changed node
+  invalidates; this one is the set of values one query fetches. The
+  closure is a superset of `P`'s dependency cone, so the printed
+  value equals the projection of the full evaluation, while every
+  static bound (parse and include caps, cycles, static shape, the
+  whole-graph DP total and depth) still runs over the whole document
+  and fails closed (`spec/budgets.md` §2;
+  `spec/agent-interchange-profile.md` §4b). Entry points:
+  `evaluate_demanded` in `active-core`; `eval --path`,
+  `inspect --path`, and `budget explain --path` on the CLI.
 
 ## 3. Measured numbers (reference hardware, release profile)
 

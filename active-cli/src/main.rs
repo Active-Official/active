@@ -225,23 +225,32 @@ struct BudgetArgs {
     budget_profile: Option<BudgetProfile>,
 }
 
-/// Reject limits the audit document cannot represent: it stores them
-/// as Active integers (i64), so `active check` would reject a larger
-/// value with E023.
-fn validate_audit_limits(budget: &Budget) -> anyhow::Result<()> {
+/// Reject limits the audit document cannot represent: it stores them as
+/// Active integers (i64), so `active check` would reject a larger value
+/// with E023.
+///
+/// The raw flag is inspected, not the resolved budget. An explicit `0` is
+/// the documented unlimited opt-out; it maps to the `UNLIMITED` sentinel,
+/// which `write_audit_trail` stores back as `0`, so the `0` round-trips.
+/// That mapping makes `0` and the sentinel's own magnitude
+/// (`i64::MAX + 1`, `u64::MAX`) indistinguishable once resolved, so a
+/// literal value above `i64::MAX` is caught here, on the flag itself.
+fn validate_audit_limits(args: &BudgetArgs) -> anyhow::Result<()> {
     for (flag, value) in [
-        ("max-nodes", budget.max_nodes),
-        ("max-depth", budget.max_depth),
-        ("max-array-len", budget.max_array_len),
-        ("max-keys", budget.max_keys),
-        ("max-wall-ms", budget.max_wall_ms),
-        ("max-value-size", budget.max_value_size),
-        ("max-total-value-size", budget.max_total_value_size),
+        ("max-nodes", args.max_nodes),
+        ("max-depth", args.max_depth),
+        ("max-array-len", args.max_array_len),
+        ("max-keys", args.max_keys),
+        ("max-wall-ms", args.max_wall_ms),
+        ("max-value-size", args.max_value_size),
+        ("max-total-value-size", args.max_total_value_size),
     ] {
-        if value > i64::MAX as u64 {
-            anyhow::bail!(
-                "--{flag} {value} exceeds i64::MAX; the audit document stores limits as Active integers (use 0 for unlimited)"
-            );
+        if let Some(v) = value {
+            if v > i64::MAX as u64 {
+                anyhow::bail!(
+                    "--{flag} {v} exceeds i64::MAX; the audit document stores limits as Active integers (use 0 for unlimited)"
+                );
+            }
         }
     }
     Ok(())
@@ -454,15 +463,24 @@ enum Commands {
         /// against the materialised-size budgets.
         #[arg(long)]
         materialise_blobs: bool,
-        /// Emit only the demanded cone of the evaluated value
-        /// (PROPOSAL §2.2): the budget accountant still guards the
-        /// whole graph; the path selects what gets printed. The cost is a
-        /// FULL evaluation (parse + walk + validate), so a cone fetch is a
-        /// whole-document fetch (LANG-C-013, spec/agent-interchange-profile.md
-        /// section 4b).
+        /// Evaluate only the demanded cone of this path (L-P40, PROPOSAL
+        /// §2.2). The whole-document static phase still runs and still
+        /// fails closed - parse and include caps, cycles, static shape,
+        /// the whole-graph DP bound, and the safety gates - but the value
+        /// walk materialises only the path's closure, so an undemanded
+        /// pathological subtree cannot deny service to the cone. The
+        /// printed cone equals the projection of the full value, and
+        /// evaluation and validation diagnostics are scoped to the closure
+        /// (LANG-C-013, spec/agent-interchange-profile.md section 4b).
         /// Dotted/index path (`server.host`, `ports[0]`).
         #[arg(long)]
         path: Option<String>,
+        /// With `--path`, report the whole document's traversal and
+        /// diagnostics instead of the cone (the pre-L-P40 behavior). The
+        /// path still selects what is printed, so the printed cone is
+        /// unchanged. Ignored without `--path`.
+        #[arg(long)]
+        whole_document: bool,
         /// Sender identity recorded in the audit trail when this process
         /// received the document from a peer (a transport supplies it;
         /// omitted for local runs). LANG-F-010.
@@ -658,9 +676,17 @@ enum Commands {
         /// Input .active file
         #[arg(short, long)]
         from: PathBuf,
-        /// Dotted/index path to inspect (defaults to the schema view)
+        /// Dotted/index path to inspect (defaults to the schema view).
+        /// With a path, only that path's cone is walked (L-P40 §2.4): the
+        /// static phase stays whole-document, the report is unchanged, and
+        /// evaluation and validation diagnostics scope to the closure.
         #[arg(long)]
         path: Option<String>,
+        /// With `--path`, walk the whole document instead of the cone
+        /// (the pre-L-P40 behavior). The report is unchanged. Ignored
+        /// without `--path`.
+        #[arg(long)]
+        whole_document: bool,
         /// Output format: json (default) or text (path mode)
         #[arg(long, default_value = "json")]
         format: String,
@@ -1332,9 +1358,14 @@ enum SchemaAction {
         /// Input .active file
         #[arg(short, long)]
         from: PathBuf,
-        /// Dotted/index path to inspect (defaults to the schema view)
+        /// Dotted/index path to inspect (defaults to the schema view).
+        /// With a path, only that path's cone is walked (L-P40 §2.4).
         #[arg(long)]
         path: Option<String>,
+        /// With `--path`, walk the whole document instead of the cone.
+        /// Ignored without `--path`.
+        #[arg(long)]
+        whole_document: bool,
         /// Output format: json (default) or text (path mode)
         #[arg(long, default_value = "json")]
         format: String,
@@ -1363,6 +1394,16 @@ enum BudgetAction {
         /// Select a profile by name, overriding the active_profile key
         #[arg(long)]
         profile: Option<String>,
+        /// Report one demanded cone's cost instead of the whole document
+        /// (L-P40 §3.2): the walk runs `Cone(P)` and `cost_model.demand`
+        /// names it. The JSON dashboard carries `cost_model` either way.
+        #[arg(long)]
+        path: Option<String>,
+        /// With `--path`, report the whole document's traversal and
+        /// diagnostics instead of the cone (the pre-L-P40 behavior).
+        /// Ignored without `--path`.
+        #[arg(long)]
+        whole_document: bool,
     },
 }
 
@@ -1778,6 +1819,7 @@ fn run_doctor(root: &Path, explicit_path: bool, format: &str) -> anyhow::Result<
 fn run_inspect(
     from: &Path,
     path: Option<&str>,
+    whole_document: bool,
     format: &str,
     trust_keys: &Option<PathBuf>,
     profile: &Option<String>,
@@ -1813,11 +1855,18 @@ fn run_inspect(
             // the taint check; the report strips payloads before output.
             evaluation_engine.materialise_blobs = true;
             evaluation_engine.taint_probe = true;
+            // L-P40 §2.4: `inspect --path P` walks the cone `P` (the static
+            // phase stays whole-document); `--whole-document` walks it all.
             // One evaluation supplies the tree, redaction seeds, layer
             // provenance, and merge provenance: a second pass would double
             // the wall cost and could diverge on a marginal budget.
+            let demand = if whole_document {
+                active_core::Demand::All
+            } else {
+                active_core::Demand::Cone(path.to_string())
+            };
             let (value, _, layers, merges, seeds) = evaluation_engine
-                .evaluate_with_layers_merges_and_seeds(&module)
+                .evaluate_with_layers_merges_and_seeds_demanded(&module, &demand)
                 .map_err(|e| {
                     anyhow::anyhow!("cannot evaluate for inspection: {}: {e}", e.code())
                 })?;
@@ -3164,15 +3213,19 @@ fn write_audit_trail(
         .unwrap_or_default();
     // The resolved evaluation inputs are recorded so an audit is
     // self-describing: replay must use the same limits and parse flags.
+    // A limit is stored as an Active integer; an explicitly unlimited
+    // field (`UNLIMITED`) is written as the documented `0` opt-out so the
+    // document stays valid and replaying `--max-* 0` reproduces the run.
+    let limit = |v: u64| if Budget::is_unlimited(v) { 0 } else { v };
     let budget_line = format!(
         "  budget = {{ nodes = {}, depth = {}, array_len = {}, keys = {}, wall_ms = {}, value_size = {}, total_size = {} }},\n  parse = {{ resilient = {}, allow_parent_escapes = {}, materialise_blobs = {} }},\n",
-        budget.max_nodes,
-        budget.max_depth,
-        budget.max_array_len,
-        budget.max_keys,
-        budget.max_wall_ms,
-        budget.max_value_size,
-        budget.max_total_value_size,
+        limit(budget.max_nodes),
+        limit(budget.max_depth),
+        limit(budget.max_array_len),
+        limit(budget.max_keys),
+        limit(budget.max_wall_ms),
+        limit(budget.max_value_size),
+        limit(budget.max_total_value_size),
         resilient,
         allow_parent_escapes,
         materialise_blobs,
@@ -3251,6 +3304,7 @@ fn write_failed_parse_audit(
     allow_parent_escapes: bool,
     materialise_blobs: bool,
     peer: Option<&str>,
+    budget: &Budget,
 ) -> anyhow::Result<()> {
     fn quote(s: &str) -> String {
         let mut out = String::with_capacity(s.len() + 2);
@@ -3281,17 +3335,21 @@ fn write_failed_parse_audit(
     let peer_line = peer
         .map(|id| format!("  peer = {},\n", quote(id)))
         .unwrap_or_default();
+    // Like `write_audit_trail`: a limit disabled by the `UNLIMITED`
+    // sentinel is written as the documented `0` opt-out, so the
+    // failed-parse document also re-parses and replays.
+    let limit = |v: u64| if Budget::is_unlimited(v) { 0 } else { v };
     let doc = format!(
         "audit = {{\n  tool = \"active\",\n  version = {},\n  source = {},\n  mode = \"unknown\",\n  budget = {{ nodes = {}, depth = {}, array_len = {}, keys = {}, wall_ms = {}, value_size = {}, total_size = {} }},\n  parse = {{ resilient = {}, allow_parent_escapes = {}, materialise_blobs = {} }},\n{}  nodes = 0,\n  diagnostics = [{}],\n  result = null,\n  failure_class = \"parse\",\n  outcome = \"failed\"\n}}\n",
         quote(env!("CARGO_PKG_VERSION")),
         quote(&file.to_string_lossy()),
-        active_core::eval::Budget::default().max_nodes,
-        active_core::eval::Budget::default().max_depth,
-        active_core::eval::Budget::default().max_array_len,
-        active_core::eval::Budget::default().max_keys,
-        active_core::eval::Budget::default().max_wall_ms,
-        active_core::eval::Budget::default().max_value_size,
-        active_core::eval::Budget::default().max_total_value_size,
+        limit(budget.max_nodes),
+        limit(budget.max_depth),
+        limit(budget.max_array_len),
+        limit(budget.max_keys),
+        limit(budget.max_wall_ms),
+        limit(budget.max_value_size),
+        limit(budget.max_total_value_size),
         resilient,
         allow_parent_escapes,
         materialise_blobs,
@@ -5486,6 +5544,7 @@ fn main() -> anyhow::Result<()> {
             trace,
             materialise_blobs,
             path,
+            whole_document,
             audit_trail,
             envelope,
             envelope_trust,
@@ -5538,6 +5597,49 @@ fn main() -> anyhow::Result<()> {
             // before `budget` is shadowed below and before any parse, so
             // the parse-failure receipt is labelled truthfully too.
             let budget_label = budget_profile_label(sandbox.as_deref(), budget.budget_profile);
+
+            // LANG-F-010: the effective limits are resolved before the
+            // parse. A parse-failure audit must record the budget the run
+            // would have used (spec/audit-trail.md), and a limit the
+            // audit document cannot represent is refused before any work.
+            // A raw --max-* flag only reaches the document when neither a
+            // named profile nor a sandbox replaces the per-field limits
+            // (both warn and ignore them), so only then is it checked.
+            let explicit_flags = budget.has_explicit();
+            if audit_trail.is_some() && budget.budget_profile.is_none() && sandbox.is_none() {
+                validate_audit_limits(&budget)?;
+            }
+            let mut budget = budget.resolve()?;
+            // The sandbox gate (PROPOSAL §3.5) selects the named profile's
+            // budget preset here, so the parse-failure audit records the
+            // preset's limits; the capability refusal runs after the parse
+            // because it needs the module.
+            let sandbox_def = match sandbox.as_deref() {
+                Some(name) => Some(active_core::convert::sandbox_profile(name).ok_or_else(
+                    || {
+                        anyhow::anyhow!(
+                            "unknown sandbox profile: {name} (want strict|data|agent|trusted)"
+                        )
+                    },
+                )?),
+                None => None,
+            };
+            if let Some(profile_def) = sandbox_def.as_ref() {
+                // Like --budget-profile: a named preset wins over
+                // explicit per-field flags — warn only when the user
+                // actually passed --max-* (not when another profile
+                // already selected non-default budgets).
+                if explicit_flags {
+                    eprintln!("warning: --sandbox overrides the explicit --max-* flags");
+                }
+                budget = match profile_def.budget {
+                    "strict" => Budget::strict(),
+                    "interactive" => Budget::interactive(),
+                    "trusted" => Budget::trusted(),
+                    other => anyhow::bail!("unknown profile budget: {other}"),
+                };
+            }
+
             let module = match parse_input_or_diags_locked(
                 &file,
                 resilient,
@@ -5561,6 +5663,7 @@ fn main() -> anyhow::Result<()> {
                             allow_parent_escapes,
                             materialise_blobs,
                             peer.as_deref(),
+                            &budget,
                         )?;
                     }
                     if let Some(envelope_path) = envelope.as_ref() {
@@ -5587,32 +5690,11 @@ fn main() -> anyhow::Result<()> {
                 }
             };
 
-            // Sandbox gate (PROPOSAL §3.5): the named profile selects
-            // its budget preset and refuses documents declaring
-            // capabilities outside the profile's tool set — the host
-            // refuses excess requests before evaluation.
-            let explicit_flags = budget.has_explicit();
-            let mut budget = budget.resolve()?;
-            if let Some(ref sandbox) = sandbox {
-                let profile_def =
-                    active_core::convert::sandbox_profile(sandbox).ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "unknown sandbox profile: {sandbox} (want strict|data|agent|trusted)"
-                        )
-                    })?;
-                // Like --budget-profile: a named preset wins over
-                // explicit per-field flags — warn only when the user
-                // actually passed --max-* (not when another profile
-                // already selected non-default budgets).
-                if explicit_flags {
-                    eprintln!("warning: --sandbox overrides the explicit --max-* flags");
-                }
-                budget = match profile_def.budget {
-                    "strict" => Budget::strict(),
-                    "interactive" => Budget::interactive(),
-                    "trusted" => Budget::trusted(),
-                    other => anyhow::bail!("unknown profile budget: {other}"),
-                };
+            // Sandbox gate (PROPOSAL §3.5): the budget preset was applied
+            // before the parse; the host now refuses a document declaring
+            // capabilities outside the profile's tool set — excess
+            // requests are refused before evaluation.
+            if let (Some(profile_def), Some(sandbox)) = (sandbox_def.as_ref(), sandbox.as_deref()) {
                 let host_tools: Vec<&str> = profile_def.tools.to_vec();
                 let refused =
                     active_core::convert::refused_capabilities(&module.capabilities, &host_tools);
@@ -5652,9 +5734,6 @@ fn main() -> anyhow::Result<()> {
             // filtering here, so FFI/WASM hosts get the same refusals.
             eng.pure = pure;
             let engine = eng;
-            if audit_trail.is_some() {
-                validate_audit_limits(&engine.budget)?;
-            }
             // The effective profile (override wins, else the document's
             // literal selector) is recorded in the audit so replay can
             // reproduce the same hash.
@@ -5674,7 +5753,7 @@ fn main() -> anyhow::Result<()> {
                 .copied()
                 .unwrap_or_else(active_core::CapabilitySet::all);
             let cache_variant = format!(
-                "source={:?};path={:?};materialise={materialise_blobs};reader={:?};resilient={resilient};capability={budget_label};caps={}",
+                "source={:?};path={:?};whole_document={whole_document};materialise={materialise_blobs};reader={:?};resilient={resilient};capability={budget_label};caps={}",
                 file.as_path(),
                 path.as_deref(),
                 reader_version.as_deref(),
@@ -5750,10 +5829,31 @@ fn main() -> anyhow::Result<()> {
                 }
             }
             active_core::trace::set_tracing(trace);
-            let (value, diags, seeds) = match engine.evaluate_with_seeds(&module) {
-                Ok(out) => {
+            // L-P40 §2.4: `eval --path P` walks the cone `P`; `--whole-document`
+            // (or no `--path`) walks the whole document. Under a cone the
+            // whole-document static phase still runs first and fails closed,
+            // and the printed cone equals the projection of the full value.
+            // A document-level receipt is a whole-document promise: its
+            // `content_hash` and its `closed_tables` audit describe the whole
+            // document, so `--audit-trail`, `--envelope`, and `--cache` all
+            // select `All` for the run. A cone walk would write a receipt
+            // whose hash and closed-table set are partial, contradicting
+            // `spec/tool-result-envelope.md` and §2.4. The printed value is
+            // projected below either way, so `--path` still selects the cone
+            // the caller sees.
+            let demand = match (path.as_deref(), whole_document) {
+                (Some(p), false)
+                    if audit_trail.is_none() && envelope.is_none() && cache_dir.is_none() =>
+                {
+                    active_core::Demand::Cone(p.to_string())
+                }
+                _ => active_core::Demand::All,
+            };
+            let (value, diags, seeds) = match engine.evaluate_with_seeds_demanded(&module, &demand)
+            {
+                Ok(outcome) => {
                     dump_trail(trace);
-                    out
+                    (outcome.value, outcome.diagnostics, outcome.seeds)
                 }
                 Err(e) => {
                     dump_trail(trace);
@@ -5850,12 +5950,14 @@ fn main() -> anyhow::Result<()> {
             }
 
             // Demanded cone selection (PROPOSAL §2.2): project AFTER the
-            // full budgeted evaluation, so safety stays whole-document
-            // while agents fetch only what they need. The FULL tree is
-            // redacted first, then projected: the cone is already
-            // redacted at document paths, so it must NOT be re-rooted
-            // and re-redacted, and the seal keeps the document as the
-            // redaction root so the path-relative taint survives.
+            // budgeted evaluation, so safety stays whole-document while
+            // agents fetch only what they need. The evaluated tree is
+            // redacted first, then projected: it is already redacted at
+            // document paths, so it must NOT be re-rooted and re-redacted,
+            // and the seal keeps the document as the redaction root so the
+            // path-relative taint survives. Under `Cone(P)` the tree is
+            // already cone-shaped, and `project(P)` selects the same
+            // subtree the full tree would (invariant §2.1).
             let profile = complete_profile(active_core::secret::SecretProfile::for_engine(
                 &module, &engine, &seeds,
             ))?;
@@ -6233,9 +6335,14 @@ fn main() -> anyhow::Result<()> {
                 // Canonical audit form: when the document builds blobs
                 // and the run did not materialise them, hash a
                 // materialised view so a payload-resident secret is
-                // detected. Payloads are stripped afterwards, so the
-                // result does not depend on `--materialise-blobs` and
-                // replay can reproduce it with one fixed policy.
+                // detected. An audit forces `Demand::All` above, so
+                // `full_value` is a whole-document view and `diags` are
+                // the whole document's; the audit is a whole-document
+                // receipt (L-P40 section 2.4), and `debug --replay` walks
+                // `All`, so its hash must be the whole document's, not a
+                // cone's. Payloads are stripped afterwards, so the result
+                // does not depend on `--materialise-blobs` and replay can
+                // reproduce it with one fixed policy.
                 let canonical = if materialise_blobs || !module_has_blobs(&module) {
                     full_value.clone()
                 } else {
@@ -6597,21 +6704,37 @@ fn main() -> anyhow::Result<()> {
         Commands::Inspect {
             from,
             path,
+            whole_document,
             format,
             trust_keys,
             profile,
         } => {
-            run_inspect(&from, path.as_deref(), &format, &trust_keys, &profile)?;
+            run_inspect(
+                &from,
+                path.as_deref(),
+                whole_document,
+                &format,
+                &trust_keys,
+                &profile,
+            )?;
         }
         Commands::Schema { action } => {
             let SchemaAction::Inspect {
                 from,
                 path,
+                whole_document,
                 format,
                 trust_keys,
                 profile,
             } = action;
-            run_inspect(&from, path.as_deref(), &format, &trust_keys, &profile)?;
+            run_inspect(
+                &from,
+                path.as_deref(),
+                whole_document,
+                &format,
+                &trust_keys,
+                &profile,
+            )?;
         }
         Commands::Mode { from, format } => {
             let module = parse_input(&from, false, false, &None)?;
@@ -6647,21 +6770,49 @@ fn main() -> anyhow::Result<()> {
                 from,
                 format,
                 profile,
+                path,
+                whole_document,
             } = action;
             let module = parse_input(&from, false, false, &None)?;
             let mut evaluation_engine = sandboxed_engine(Engine::new());
             set_profile_override(&mut evaluation_engine, profile.clone());
-            let (value, diagnostics, seeds) = evaluation_engine
-                .evaluate_with_seeds(&module)
+            // L-P40 §3.2: `budget explain --path P` runs `Cone(P)` and
+            // reports that cone's cost_model plus its charge; without
+            // `--path` it reports the whole-document run.
+            // `spec/partial-eval.md` §1: `--whole-document` is the
+            // compatibility door that selects `Demand::All`; `--path`
+            // still has to resolve, so an unknown path fails closed.
+            let demand = match (path.as_deref(), whole_document) {
+                (Some(p), false) => active_core::Demand::Cone(p.to_string()),
+                _ => active_core::Demand::All,
+            };
+            let outcome = evaluation_engine
+                .evaluate_with_seeds_demanded(&module, &demand)
                 .map_err(|e| anyhow::anyhow!("cannot evaluate: {e}"))?;
-            let data = active_core::viz::budget_data_with_seeds(
+            // M2: an unresolvable demand fails closed, exactly as
+            // `eval --path` and `inspect --path` do. This surface projects
+            // nothing, so without the check an unknown path silently fell
+            // back to the whole-document run and reported its dashboard.
+            // The cone-shaped value holds the demanded spine, so the
+            // projection succeeds for a real path; an unknown one reaches
+            // the whole tree and fails with the same message the other
+            // surfaces print.
+            if let Some(p) = path.as_deref() {
+                active_core::convert::project_path(&outcome.value, p)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+            }
+            let data = active_core::viz::budget_data_with_seeds_demand(
                 &module,
-                &value,
+                &outcome.value,
                 &evaluation_engine.budget,
-                &diagnostics,
-                profile.as_deref(),
-                Some(&evaluation_engine.env),
-                Some(&seeds),
+                &outcome.diagnostics,
+                active_core::viz::SeedContext {
+                    profile_override: profile.as_deref(),
+                    env: Some(&evaluation_engine.env),
+                    seeds: Some(&outcome.seeds),
+                },
+                &demand,
+                Some(outcome.charge),
             );
             if format == "text" {
                 let limits = &data["limits"];
@@ -6684,6 +6835,40 @@ fn main() -> anyhow::Result<()> {
                     "wall clock: {} ms (host-time limit; not sampled here)",
                     limits["wall_ms"]
                 );
+                // L-P40 §3.2: the cost report is display data (paths and
+                // DP units only, no values). Text form names the demand and
+                // the per-class charges; the JSON form carries the full
+                // bounded top-256 node ranking.
+                let cost = &data["cost_model"];
+                let demand_label = cost["demand"].as_str().unwrap_or("all");
+                outln!("cost model (demand {demand_label}):");
+                for class in cost["classes"].as_array().into_iter().flatten() {
+                    outln!(
+                        "  {:<9} {} nodes, {} charged units",
+                        class["class"].as_str().unwrap_or("?"),
+                        class["nodes"],
+                        class["charged_units"],
+                    );
+                }
+                if cost["truncated"].as_bool().unwrap_or(false) {
+                    outln!("  (node ranking truncated to the top 256)");
+                }
+                // L-P40 §3.4: what the run spent against the dynamic
+                // ceiling. `null` only for a caller that ran no accountant.
+                // A ceiling disabled by the `UNLIMITED` sentinel reads as a
+                // statement about that run rather than as a confusing
+                // `of 18446744073709551615`.
+                match data.get("charge") {
+                    Some(c) if !c.is_null() => {
+                        let limit = c["limit"].as_u64().unwrap_or(0);
+                        if Budget::is_unlimited(limit) {
+                            outln!("charge: {} (no total-value ceiling)", c["total"]);
+                        } else {
+                            outln!("charge: {} of {}", c["total"], limit);
+                        }
+                    }
+                    _ => outln!("charge: (not measured)"),
+                }
             } else if format == "json" {
                 outln!(
                     "{}",
@@ -6955,20 +7140,29 @@ fn main() -> anyhow::Result<()> {
                 "budget" => {
                     let mut evaluation_engine = sandboxed_engine(Engine::new());
                     set_profile_override(&mut evaluation_engine, profile.clone());
-                    let (value, diagnostics, seeds) = evaluation_engine
-                        .evaluate_with_seeds(&module)
+                    // L-P40 §3.4: report the whole-document run's charge.
+                    // `evaluate_with_seeds` returns no `ChargeReport`, so
+                    // use the demand-aware form with `Demand::All`.
+                    let outcome = evaluation_engine
+                        .evaluate_with_seeds_demanded(&module, &active_core::Demand::All)
                         .map_err(|e| anyhow::anyhow!("cannot evaluate: {e}"))?;
                     outln!(
                         "{}",
-                        serde_json::to_string_pretty(&active_core::viz::budget_data_with_seeds(
-                            &module,
-                            &value,
-                            &evaluation_engine.budget,
-                            &diagnostics,
-                            profile.as_deref(),
-                            Some(&evaluation_engine.env),
-                            Some(&seeds),
-                        ))
+                        serde_json::to_string_pretty(
+                            &active_core::viz::budget_data_with_seeds_demand(
+                                &module,
+                                &outcome.value,
+                                &evaluation_engine.budget,
+                                &outcome.diagnostics,
+                                active_core::viz::SeedContext {
+                                    profile_override: profile.as_deref(),
+                                    env: Some(&evaluation_engine.env),
+                                    seeds: Some(&outcome.seeds),
+                                },
+                                &active_core::Demand::All,
+                                Some(outcome.charge),
+                            )
+                        )
                         .map_err(|e| anyhow::anyhow!("{e}"))?
                     );
                 }

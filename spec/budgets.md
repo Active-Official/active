@@ -168,6 +168,26 @@ when read:
   actual-minus-bound deltas per clone during the walk, so large
   dynamic strings cannot hide behind static bounds either.
 
+Under a **cone demand** (L-P40, `eval --path P` / `inspect --path P`)
+the cumulative accountant is seeded with the *demanded closure's* DP
+total rather than the whole-graph total. The closure total recomputes
+each member's bound over the closure alone, counting only member
+children — a container sums its members, a `Ref` copies its member
+target — so an undemanded sibling contributes nothing, not even
+through the whole-graph bound of a spine container that holds it.
+Every closure bound is at most its whole-graph bound, so the seed is at
+most the whole-graph total and cannot seed a trip the whole document
+cleared. The whole-document static phase is unchanged and still runs
+first, still fails closed: parse caps (E029), include caps (E028),
+cycles (G16), the static shape scan (X001–X005), the whole-graph DP
+total (X006) and depth (X003), and the whole-arena safety gates. A cone
+therefore never hides a budget trip — the static bounds are
+whole-document, and only the dynamic accountant that guards the walk is
+scoped to what the walk materialises. An undemanded subtree that is
+statically over budget still trips its X-code; an undemanded *dynamic*
+amplifier that only the walk would materialise cannot deny service to
+the cone.
+
 Patch edits compose arena values at paths afterwards, so a
 conditional post-patch result-depth walk (iterative, only when
 patches ran) closes the remaining gap. Profile merges replace
@@ -252,7 +272,7 @@ stuck-loop detection).
 | `interactive` | 1,000,000 | 512 | 1,000,000 | 2,000 | 100M / 1G | Human present, bigger local files |
 | `trusted` | 10,000,000 | 2048 | 10,000,000 | 30,000 | 1G / 10G | Operator-trusted input at production scale |
 
-`0` (unlimited) is never a preset: embedders accept that risk
+`UNLIMITED` (`u64::MAX`) is never a preset: embedders accept that risk
 field-by-field, never by profile name. Depth scales modestly
 because shape protection is barely negotiable even for trusted
 input; wall-clock on `trusted` is generous because batch jobs own

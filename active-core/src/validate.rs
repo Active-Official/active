@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use crate::diag::{thresholds, Diagnostic, Repair, RepairKind, Severity, Span};
 use crate::eval::{
     eval_binary, eval_unary, measure_value, value_kind_name, Accountant, BudgetCx, BudgetKind,
-    Engine, EvalError,
+    Closure, Engine, EvalError,
 };
 use crate::heal::{best_key_match, coerce_string_to, normalized_levenshtein, sentinel_meaning};
 use crate::ir::{AnnotationKind, Module, Node, NodeId, SchemaField, Value};
@@ -32,6 +32,7 @@ impl Engine {
         result: &mut Value,
         diagnostics: &mut Vec<Diagnostic>,
         cx: BudgetCx<'_>,
+        demand: &Closure,
     ) -> Result<(), EvalError> {
         let Some(schema_id) = module.schema else {
             return Ok(());
@@ -39,6 +40,7 @@ impl Engine {
         let mut validator = Validator {
             module,
             values,
+            demand,
             diagnostics: Vec::new(),
             regexes: HashMap::new(),
             schema_bugs: std::collections::HashSet::new(),
@@ -51,6 +53,8 @@ impl Engine {
             ticks: 0,
             account: cx.account,
             material_guard: None,
+            material: cx.material,
+            env: cx.env,
         };
         validator.validate_node(schema_id, module.root, result, &mut Vec::new())?;
         if self.resilient {
@@ -331,6 +335,7 @@ impl Engine {
         diagnostics: &mut Vec<Diagnostic>,
         deadline: Option<std::time::Instant>,
         wall_limit: u64,
+        demand: &Closure,
         account: &mut Accountant,
     ) -> Result<(), EvalError> {
         const MAX_CHECK_DIAGNOSTICS: usize = 1024;
@@ -352,6 +357,15 @@ impl Engine {
         let mut local: Vec<Diagnostic> = Vec::new();
         let mut visited = 0u64;
         for rule in rules {
+            // L-P40 (§2.4): under a cone, a check outside the demanded
+            // closure is not evaluated — reporting its `T009` would be an
+            // artifact of the cone. §2.2.5 already forces every check
+            // whose predicate reads a demanded value into the closure
+            // (with its operand dependencies), so this skip cannot hide a
+            // check that would fail on materialised data.
+            if !demand.contains(rule.expr) {
+                continue;
+            }
             if let Some(end) = deadline {
                 if std::time::Instant::now() >= end {
                     return Err(EvalError::budget_exceeded(
@@ -791,6 +805,9 @@ struct CoerceRequest {
 struct Validator<'a> {
     module: &'a Module,
     values: &'a HashMap<NodeId, Value>,
+    /// The demanded closure (§2.4): validation diagnostics are reported
+    /// for it only. `All` validates the whole tree.
+    demand: &'a Closure,
     diagnostics: Vec<Diagnostic>,
     /// Compiled patterns by pattern-argument node: `None` means invalid
     /// (reported once at insert). Avoids recompiling per element and
@@ -824,9 +841,69 @@ struct Validator<'a> {
     /// pending: a rename may not move a material value to a target
     /// path the taint walk cannot follow.
     material_guard: Option<crate::secret::SecretProfile>,
+    /// Runtime-aware secret analysis and the engine's environment
+    /// snapshot. A filled schema default is charged for enforcement at
+    /// its real size and for the report at its redaction-safe size, so
+    /// a default that copies a secret never varies the printed
+    /// `charge.total` with the secret's length (L-P40 §3.4, C2).
+    material: Option<&'a crate::secret::SecretProfile>,
+    env: &'a HashMap<String, String>,
 }
 
 impl<'a> Validator<'a> {
+    /// Whether a field at `segments` — with arena node `value_id` when
+    /// the result tree still lines up with it — is inside the demanded
+    /// closure. `All` validates everything; a cone validates a field
+    /// when its value node is a member (which includes the check-driven
+    /// §2.2.5 inclusions) or its rendered path lies under the cone path.
+    fn in_demand(&self, segments: &[PathSeg], value_id: Option<NodeId>) -> bool {
+        let cone = match self.demand {
+            Closure::All => return true,
+            Closure::Cone { path, .. } => path,
+        };
+        if let Some(id) = value_id {
+            if self.demand.contains(id) {
+                return true;
+            }
+        }
+        let path = render_path(segments);
+        // The envelope subtree is always a member of the cone (it gates
+        // E035), so its fields are validated and a missing key is filled
+        // exactly as in the full run. A present envelope field already
+        // passes the membership check above; this admits a missing one,
+        // whose arena child id is `None`.
+        crate::envelope::is_envelope_path(&path)
+            || self.demand.demands_path(&path)
+            || crate::eval::demand::path_in_cone(&path, cone)
+    }
+
+    /// Whether the `requires` trigger `target` names is materialised in
+    /// this run. `All` materialises every value; under a cone the
+    /// trigger may lie outside the demand, so its absence from the
+    /// evaluated table is an artifact of the cone, not a disabled
+    /// trigger (L-P40 §2.4). The target is resolved sibling-relative
+    /// first, then document-root absolute — the order
+    /// [`Self::requires_enabled`] reads — so the caller decides the
+    /// present-while-disabled rule only on a value this run actually
+    /// evaluated.
+    fn requires_target_materialised(&self, segments: &[PathSeg], target: &str) -> bool {
+        if matches!(self.demand, Closure::All) {
+            return true;
+        }
+        let key_segments = || target.split('.').map(|k| PathSeg::Key(k.to_string()));
+        let mut candidates: Vec<Vec<PathSeg>> = Vec::new();
+        if segments.len() >= 2 {
+            let mut relative: Vec<PathSeg> = segments[..segments.len() - 1].to_vec();
+            relative.extend(key_segments());
+            candidates.push(relative);
+        }
+        candidates.push(key_segments().collect());
+        candidates.iter().any(|path| {
+            let value_id = self.module.resolve_value_path(&render_path(path));
+            self.in_demand(path, value_id)
+        })
+    }
+
     /// Validate one value against one schema node. `value_id` is the
     /// arena node for the value when the result tree still lines up
     /// with it (always true except under profile merges and patches);
@@ -946,6 +1023,19 @@ impl<'a> Validator<'a> {
         };
         for (name, field_id) in fields {
             segments.push(PathSeg::Key(name.clone()));
+            let child_id = arena_children
+                .as_ref()
+                .and_then(|children| children.get(name).copied());
+            // L-P40 (§2.4): under a cone, a field outside the demanded
+            // closure is not validated. Its value tree is absent by
+            // construction, so a missing-key (T004) or any other field
+            // diagnostic there is an artifact of the cone, not of the
+            // document; the full run reports it, so the cone's records
+            // stay an ordered subsequence of the full run's.
+            if !self.in_demand(segments, child_id) {
+                segments.pop();
+                continue;
+            }
             // L-P10: a schema default is the weakest disjunct, and it
             // must satisfy a branch. Check it eagerly and once per field
             // even when array elements re-walk the same node. When the
@@ -957,7 +1047,10 @@ impl<'a> Validator<'a> {
             let will_fill = self.resilient && !map.contains_key(name) && !root_metadata;
             // A field whose `requires` trigger is disabled is excused
             // entirely (L-P10 row 3): its never-used default is not a
-            // defect the document should fail on.
+            // defect the document should fail on. Under a cone a trigger
+            // outside the demand is not evaluated, so its absence cannot
+            // be read as "disabled": excusing the field there keeps the
+            // cone's records a subsequence of the full run's (L-P40 §2.4).
             let excused = match self.module.get(*field_id) {
                 Some(Node::SchemaField { field }) => {
                     field
@@ -970,7 +1063,8 @@ impl<'a> Validator<'a> {
                                     target,
                                 ) =>
                             {
-                                !self.requires_enabled(map, target)
+                                !self.requires_target_materialised(segments, target)
+                                    || !self.requires_enabled(map, target)
                             }
                             _ => false,
                         })
@@ -1019,9 +1113,6 @@ impl<'a> Validator<'a> {
             match map.get(name) {
                 None => self.check_missing(*field_id, segments, map),
                 Some(v) => {
-                    let child_id = arena_children
-                        .as_ref()
-                        .and_then(|children| children.get(name).copied());
                     // LANG-F-008: a field whose `removed_in` version is at
                     // or below the document schema's own version must not
                     // still be on the wire. Strict fails with T008; the
@@ -1095,7 +1186,9 @@ impl<'a> Validator<'a> {
                                         let text = text.clone();
                                         self.report_dangling_requires(*field_id, &text, segments);
                                     }
-                                } else if !self.requires_enabled(map, &target) {
+                                } else if self.requires_target_materialised(segments, &target)
+                                    && !self.requires_enabled(map, &target)
+                                {
                                     let path = render_path(segments);
                                     // Only authored text is echoed: an
                                     // evaluated target can be arbitrary
@@ -1761,9 +1854,20 @@ impl<'a> Validator<'a> {
                 continue;
             };
             // Charge the clone before inserting: many fills of one
-            // large default must trip like many aliases do.
+            // large default must trip like many aliases do. Enforcement
+            // pays the real bytes; the report pays the redaction-safe
+            // size, so a default that copies a secret never varies
+            // `ChargeReport.total` with the secret's length (L-P40
+            // §3.4, C2).
             let fill_size = measure_value(&default_value);
-            self.account.charge(self.module, None, fill_size)?;
+            let report_size = match self.material {
+                Some(profile) => {
+                    crate::eval::measure_report_value(&default_value, profile, self.env)
+                }
+                None => fill_size,
+            };
+            self.account
+                .charge_scoped(self.module, None, fill_size, report_size)?;
             if !insert_at(result, &fill.segments, default_value.clone()) {
                 self.push(
                     "T004",

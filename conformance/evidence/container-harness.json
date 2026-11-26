@@ -15,7 +15,7 @@
     "wasm": {
       "status": "pass",
       "exit": 0,
-      "tally": "19/21 pass, 2 pinned",
+      "tally": "65/77 pass, 12 pinned",
       "secret_clean": true
     },
     "go": {
